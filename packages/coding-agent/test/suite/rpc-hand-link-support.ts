@@ -16,7 +16,8 @@ import type { JsonObject } from "@earendil-works/pi-ai";
 import type { InlineExtension } from "../../src/core/extensions/types.ts";
 import { createHandPacketReader, encodeHandPackets } from "../../src/modes/hand/hand-packet-codec.ts";
 import { createHandLinkEndpoint } from "../../src/modes/rpc/hand-link-endpoint.ts";
-import { handLinkStatePath, openHandLinkFileStore } from "../../src/modes/rpc/hand-link-file-store.ts";
+import { handLinkStatePath } from "../../src/modes/rpc/hand-link-state.ts";
+import { openLockedFileStore } from "../../src/modes/rpc/locked-file-store.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { declare, type HandLinkFactory, type Peer, startHost, type WireRecord } from "./rpc-delegated-host-support.ts";
 
@@ -78,7 +79,7 @@ export function handLinkOn(probe: HandProbe): HandLinkFactory {
 		createHandLinkEndpoint({
 			openHand: () =>
 				createLooplessHand(configuration, { twoSidedHome: "hand", extensionFactories: [probeTools(probe)] }),
-			openStore: () => openHandLinkFileStore(handLinkStatePath(configuration.agentDir)),
+			openStore: () => openLockedFileStore(handLinkStatePath(configuration.agentDir)),
 			report: (message) => {
 				throw new Error(`hand_link report: ${message}`);
 			},
@@ -104,6 +105,8 @@ export interface Brain {
 	readonly host: ReturnType<typeof createRemoteToolHost>;
 	readonly outgoing: unknown[];
 	readonly read: ReturnType<typeof createHandPacketReader>;
+	/** The last link instance an answer named: sent on every later batch, as a brain must (a fresh brain has none). */
+	readonly link: { instance?: string };
 }
 
 export function brain(
@@ -140,14 +143,23 @@ export function brain(
 		host,
 		outgoing,
 		read: createHandPacketReader(),
+		link: {},
 	};
 }
 
 /** One `hand_link` record carrying everything the brain queued; the answer's packets are fed to the brain. */
 export async function batch(peer: Peer, from: Brain): Promise<WireRecord> {
 	const packets = from.outgoing.splice(0).flatMap((message) => encodeHandPackets(message) ?? []);
-	const answer = await peer.send({ type: "hand_link", session: from.session, loop: from.loop, packets });
+	const { instance } = from.link;
+	const answer = await peer.send({
+		type: "hand_link",
+		session: from.session,
+		loop: from.loop,
+		packets,
+		...(instance === undefined ? {} : { instance }),
+	});
 	if (answer.success !== true) return answer;
+	from.link.instance = (answer.data as { instance: string }).instance;
 	for (const wire of (answer.data as { packets: unknown[] }).packets) {
 		const packet = from.read(wire);
 		if (packet === undefined) throw new Error(`the hand sent a malformed packet: ${JSON.stringify(wire)}`);

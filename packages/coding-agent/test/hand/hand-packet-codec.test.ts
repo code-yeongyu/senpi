@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import {
 	createHandPacketReader,
 	encodeHandPackets,
+	HAND_PACKET_MAX_PARTS,
+	HAND_PACKET_MAX_PENDING_JOINS,
 	HAND_PACKET_PART_BYTES,
 	type HandWirePacket,
 } from "../../src/modes/hand/hand-packet-codec.ts";
@@ -47,6 +49,24 @@ describe("hand packet codec", () => {
 			"ack",
 		])
 			expect(createHandPacketReader()(malformed)).toBeUndefined();
+	});
+
+	it("bounds joins: no more parts than one record line can carry, and a capped number of unfinished frames", () => {
+		const part = (seq: number, count: number) => ({
+			kind: "data_part",
+			lane: "s",
+			seq,
+			index: 0,
+			count,
+			payload: "",
+		});
+		const read = createHandPacketReader();
+
+		expect(read(part(1, HAND_PACKET_MAX_PARTS + 1))).toBeUndefined();
+		for (let seq = 1; seq <= HAND_PACKET_MAX_PENDING_JOINS; seq++) expect(read(part(seq, 2))).toBeNull();
+		expect(read(part(HAND_PACKET_MAX_PENDING_JOINS + 1, 2))).toBeUndefined();
+		expect(read({ ...part(1, 2), index: 1 })).toMatchObject({ kind: "data", seq: 1 });
+		expect(read(part(HAND_PACKET_MAX_PENDING_JOINS + 1, HAND_PACKET_MAX_PARTS))).toBeNull();
 	});
 
 	it("never carries what is not a reference packet", () => {

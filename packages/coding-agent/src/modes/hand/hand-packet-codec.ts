@@ -6,10 +6,17 @@
  * A data frame over {@link HAND_PACKET_PART_BYTES} would not fit one relayed record, so it travels as `data_part`
  * packets (`index` 0..`count`-1, in order, possibly across records) that the receiver joins before its transport sees
  * the frame. A count conflict or any packet that does not decode is malformed.
+ *
+ * Joins are bounded: a frame has at most {@link HAND_PACKET_MAX_PARTS} parts (the largest frame one JSONL record line
+ * can carry), and a reader holds at most {@link HAND_PACKET_MAX_PENDING_JOINS} unfinished frames at once; a part past
+ * either bound is malformed, so a sender cannot grow a link's memory with frames it never finishes.
  */
 import type { ReferencePacket } from "@earendil-works/pi-agent-core";
+import { MAX_RPC_LINE_CHARACTERS } from "../rpc/jsonl.ts";
 
 export const HAND_PACKET_PART_BYTES = 512 * 1024;
+export const HAND_PACKET_MAX_PARTS = Math.ceil(MAX_RPC_LINE_CHARACTERS / HAND_PACKET_PART_BYTES);
+export const HAND_PACKET_MAX_PENDING_JOINS = 8;
 
 export type HandWirePacket =
 	| { readonly kind: "data"; readonly lane: string; readonly seq: number; readonly payload: string }
@@ -64,18 +71,26 @@ const isIndex = (value: unknown, below: number): value is number =>
  */
 export function createHandPacketReader(): HandPacketReader {
 	const joins = new Map<string, Map<number, Joining>>();
+	let pending = 0;
 	const join = (lane: string, seq: number, wire: Readonly<Record<string, unknown>>, bytes: Uint8Array) => {
 		const { count, index } = wire;
-		if (!isIndex(count, Number.MAX_SAFE_INTEGER) || count < 2 || !isIndex(index, count)) return undefined;
+		if (!isIndex(count, HAND_PACKET_MAX_PARTS + 1) || count < 2 || !isIndex(index, count)) return undefined;
 		const lanes = joins.get(lane) ?? new Map<number, Joining>();
+		const known = lanes.get(seq);
+		if (known === undefined && pending >= HAND_PACKET_MAX_PENDING_JOINS) return undefined;
 		joins.set(lane, lanes);
-		const joining = lanes.get(seq) ?? { count, parts: [], have: 0 };
+		const joining = known ?? { count, parts: [], have: 0 };
 		if (joining.count !== count) return undefined;
+		if (known === undefined) pending += 1;
 		lanes.set(seq, joining);
 		if (joining.parts[index] === undefined) joining.have += 1;
 		joining.parts[index] = bytes;
 		if (joining.have < count) return null;
-		for (const held of lanes.keys()) if (held <= seq) lanes.delete(held);
+		for (const held of lanes.keys())
+			if (held <= seq) {
+				lanes.delete(held);
+				pending -= 1;
+			}
 		const whole = Buffer.concat(joining.parts.map((part) => part ?? new Uint8Array()));
 		return { kind: "data", lane, seq, payload: new Uint8Array(whole) } satisfies ReferencePacket;
 	};

@@ -80,7 +80,7 @@ it("ends the session's link on a malformed packet; only a higher generation open
 	const brainA = brain("hosted-1", 1);
 	await pump(peer, brainA, call(brainA, host.cwd, "count", {}));
 	const send = (packets: unknown[]) =>
-		peer.send({ type: "hand_link", session: "hosted-1", loop: brainA.loop, packets });
+		peer.send({ type: "hand_link", session: "hosted-1", loop: brainA.loop, instance: brainA.link.instance, packets });
 
 	expect(
 		await send([

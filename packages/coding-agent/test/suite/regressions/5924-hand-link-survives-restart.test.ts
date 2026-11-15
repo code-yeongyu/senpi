@@ -2,7 +2,7 @@
 // daemon restarts: its next batch at generation 3 is admitted and its floor raise is acked (a fresh floor would refuse
 // generation 3 as `epoch_step_exceeded`), while a batch at generation 2 is still refused. Every answer names the link's
 // `instance`: the same on every answer within one daemon process and new after the restart, so the brain knows to reset
-// its hand transport.
+// its hand transport; a batch still naming the pre-restart instance is refused `hand_link_instance_mismatch`.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -60,6 +60,7 @@ it("a session at generation 3 keeps running across a daemon restart; generation 
 
 	const second = await daemon();
 	try {
+		expect(await batch(second.peer, hosted)).toMatchObject({ error: "hand_link_instance_mismatch" });
 		const resumed = brain("hosted-1", 3);
 		const after = instanceOf(await batch(second.peer, resumed));
 		expect(after).toEqual(expect.any(String));

@@ -129,6 +129,7 @@ export {
 export {
 	createHandEpochFence,
 	EPOCH_FLOOR_MAX_STEP,
+	EPOCH_FLOOR_PREFIX,
 	type FloorRaise,
 	HAND_SELF_SENDER,
 	type HandEpochFence,

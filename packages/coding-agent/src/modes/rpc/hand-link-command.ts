@@ -4,7 +4,7 @@
  * connection's principal as the forwarder declared it: the record names the session and its loop, never who sent it.
  */
 import type { DelegatedConnectionView } from "./connection-roles.ts";
-import type { HandLinkEndpoint } from "./hand-link-endpoint.ts";
+import type { HandLinkBatch, HandLinkEndpoint } from "./hand-link-endpoint.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { error } from "./session-router-errors.ts";
 
@@ -21,13 +21,21 @@ export interface HandLinkHost {
 const isGeneration = (value: unknown): value is number =>
 	typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
 
-function batchOf(command: HandLinkCommand) {
-	const { session, loop, packets } = command;
+function batchOf(command: HandLinkCommand): HandLinkBatch | undefined {
+	const { session, loop, packets, instance, close } = command;
 	if (typeof session !== "string" || session.length === 0 || !Array.isArray(packets)) return undefined;
 	if (typeof loop !== "object" || loop === null || typeof loop.id !== "string" || loop.id.length === 0)
 		return undefined;
 	if (!isGeneration(loop.generation)) return undefined;
-	return { session, loop: { id: loop.id, generation: loop.generation }, packets };
+	if (instance !== undefined && (typeof instance !== "string" || instance.length === 0)) return undefined;
+	if (close !== undefined && close !== true) return undefined;
+	return {
+		session,
+		loop: { id: loop.id, generation: loop.generation },
+		packets,
+		...(instance === undefined ? {} : { instance }),
+		...(close === true ? { close } : {}),
+	};
 }
 
 export async function answerHandLink(host: HandLinkHost, command: HandLinkCommand): Promise<RpcResponse> {

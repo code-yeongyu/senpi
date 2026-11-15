@@ -1585,49 +1585,6 @@ nothing. When the session opens again, the recorded hand is applied again. If it
 tool calls end as "The hand is unreachable" error results: a chosen hand never falls back to running the calls in this
 process.
 
-#### hand_link (tool-relay mode)
-
-A hosted brain reaches this machine through a relay, and each batch of its reference-transport packets arrives as one
-`hand_link` record. The host runs them on this machine's hand, the same engine as `senpi --hand`: the remote executor,
-the device file channel and the scopes' loop hooks, with this machine's tools, extensions and permission checks.
-
-```json
-{"id": "l1", "type": "hand_link", "session": "hosted-1", "loop": {"id": "loop-a", "generation": 1}, "packets": [{"kind": "data", "lane": "hand.control", "seq": 1, "payload": "<base64>"}]}
-```
-
-Response:
-```json
-{"id": "l1", "type": "response", "command": "hand_link", "success": true, "data": {"packets": [{"kind": "ack", "lane": "hand.control", "seq": 1}], "more": false, "instance": "6f1c…"}}
-```
-
-- Each packet is a hand wire packet (`modes/hand/hand-packet-codec.ts`): `{kind: "data", lane, seq, payload}`,
-  `{kind: "ack", lane, seq}`, or, for a frame over 512 KiB, `{kind: "data_part", lane, seq, index, count, payload}`
-  parts in index order, possibly across records. The socket carrier of `--hand` writes the same objects, one per line.
-- Only a delegated connection granted the `hand_link` class sends it (no other class implies it); any other connection
-  gets `hand_link_not_delegated`. The sender every epoch check sees is the connection's `principal.deviceId`.
-- `loop.generation` (an integer from 1) is the session's owner epoch, the brain's `RemoteFloor` epoch. A newer generation
-  replaces the session's link and ends the old one (its running calls are aborted, its scopes disposed). An older
-  generation is refused `hand_link_superseded`; another sender or loop at the admitted generation, `hand_link_generation_taken`.
-- A packet that does not read (a `data_part` count conflict among them, or one over 1,000,000 characters) ends the
-  session's link: `hand_link_malformed`. A batch on a scope another session holds ends it too: `hand_link_scope_taken`.
-  An ended link opens again only at a higher generation: the brain continues with a fresh transport at its next
-  generation.
-- Every answer names the session's link as `instance`: minted each time this host opens that link (its first batch
-  since the host started, or a new generation), and the same on every answer until then. When it changes, the brain
-  resets its hand transport: the host's side of the link starts fresh. A refusal carries no `instance`.
-- The answer carries what the hand has queued for the brain, late output of earlier calls included, at most about one
-  record (1,000,000 characters); the rest waits for the next batch, and `more: true` says so (poll again at once). A
-  batch is answered without waiting for a tool to finish, so a following batch (an abort among them) reaches the
-  running call. An empty batch is a poll.
-- The epoch floors, each session's lowest admissible generation with the owner and loop admitted at it, and the scope
-  bindings are kept in `<agentDir>/rpc/hand-link/state.json` (each write is a temporary file renamed over the old
-  one). A restarted host resumes a session at the generation it reached and still refuses an older one. If that state
-  cannot be read or written, the batch is refused `hand_link_unavailable` (`errorData.reason`) and nothing of it
-  reaches the hand.
-- A host started without a hand refuses it `hand_link_unsupported`. `hand_link` starts no turn here: a cross-account
-  sender's `hand_link` asks nothing of this host (its consent is the forwarder's), while the same sender's `drive`
-  records still follow the cross-account rule.
-
 Errors. Each of these carries `errorData.device`, and nothing is recorded:
 
 - `hand_not_listed`: the device is not in the hand directory.
@@ -1641,6 +1598,61 @@ Who may call it: only a connection attached to the session. It moves where the s
 the agent can reach (method class `device_admin`), so the attachment gate applies to it: under enforcement
 (`SENPI_RPC_REQUIRE_ATTACH=1`) an unattached connection is refused with `session_not_attached`. Until enforcement is
 the default, the host logs such a call and serves it, as for every gated command.
+
+#### hand_link (tool-relay mode)
+
+A hosted brain reaches this machine through a relay, and each batch of its reference-transport packets arrives as one
+`hand_link` record. The host runs them on this machine's hand, the same engine as `senpi --hand`: the remote executor,
+the device file channel and the scopes' loop hooks, with this machine's tools, extensions and permission checks.
+
+```json
+{"id": "l1", "type": "hand_link", "session": "hosted-1", "loop": {"id": "loop-a", "generation": 1}, "packets": [{"kind": "data", "lane": "hand.control", "seq": 1, "payload": "<base64>"}]}
+{"id": "l2", "type": "hand_link", "session": "hosted-1", "loop": {"id": "loop-a", "generation": 1}, "instance": "6f1c…", "packets": []}
+```
+
+Response:
+```json
+{"id": "l1", "type": "response", "command": "hand_link", "success": true, "data": {"packets": [{"kind": "ack", "lane": "hand.control", "seq": 1}], "more": false, "instance": "6f1c…"}}
+```
+
+- Each packet is a hand wire packet (`modes/hand/hand-packet-codec.ts`): `{kind: "data", lane, seq, payload}`,
+  `{kind: "ack", lane, seq}`, or, for a frame over 512 KiB, `{kind: "data_part", lane, seq, index, count, payload}`
+  parts in index order, possibly across records. A frame has at most 32 parts (the largest frame one record line
+  carries), and at most 8 frames per link may be unfinished at once. The socket carrier of `--hand` writes the same
+  objects, one per line.
+- Only a delegated connection granted the `hand_link` class sends it (no other class implies it); any other connection
+  gets `hand_link_not_delegated`. The sender every epoch check sees is the connection's `principal.deviceId`.
+- `loop.generation` (an integer from 1) is the session's owner epoch, the brain's `RemoteFloor` epoch. A newer generation
+  replaces the session's link and ends the old one (its running calls are aborted, its scopes disposed). An older
+  generation is refused `hand_link_superseded`; another sender or loop at the admitted generation, `hand_link_generation_taken`.
+- `instance` names the session's link. Every answer carries it: minted each time this host opens that link (the
+  session's first batch since the host started, or a new generation), and the same on every answer until then. A
+  batch carries the last `instance` its brain saw:
+  - none, before the brain saw one (the first batch of a generation, or after a reset): it opens the link at its
+    generation only when this host has none open there;
+  - the open link's `instance`: admitted;
+  - anything else, or an `instance` when the host has no link open there (it restarted): `hand_link_instance_mismatch`.
+    The brain resets its hand transport and sends its next batch without `instance`; if that is refused too, the
+    generation's link belongs to another transport, and the brain moves to a new generation.
+- A packet that does not read (a `data_part` count conflict, a frame past the bounds, or one over 1,000,000 characters)
+  ends the session's link: `hand_link_malformed`. A batch on a scope another session holds ends it too:
+  `hand_link_scope_taken`. An ended link opens again only at a higher generation.
+- `close: true` retires the session: its link ends, its scope bindings and their floors leave the state, and every
+  later batch for it is refused `hand_link_session_closed`.
+- The answer carries what the hand has queued for the brain, late output of earlier calls included, at most about one
+  record (1,000,000 characters); the rest waits for the next batch, and `more: true` says so (poll again at once). A
+  batch is answered without waiting for a tool to finish, so a following batch (an abort among them) reaches the
+  running call. An empty batch is a poll.
+- The epoch floors, each session's link record and the scope bindings are kept in
+  `<agentDir>/rpc/hand-link/state.json`, which every host under the agent dir shares. Each change is one locked
+  read-check-write and replaces the file atomically. A host claims the state on its first `hand_link`. A host whose
+  claim another host has superseded since (a successor during a handover, or another endpoint) refuses every batch
+  `hand_link_host_superseded` and ends its links. A restarted host resumes a session at the generation it reached and
+  still refuses an older one. If the state cannot be read (a corrupt record fails closed) or written, the batch is
+  refused `hand_link_unavailable` (`errorData.reason`) and nothing of it reaches the hand.
+- A host started without a hand refuses it `hand_link_unsupported`. `hand_link` starts no turn here: a cross-account
+  sender's `hand_link` asks nothing of this host (its consent is the forwarder's), while the same sender's `drive`
+  records still follow the cross-account rule.
 
 ### Host identity (`get_protocol_info`)
 
@@ -4056,7 +4068,7 @@ names a valid preset.
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_hands` | `sessionId?` | `{ hands: [{ device, label, platform, reachable }], selected? }` | Headless engine with a hand directory only (capability `hand_selection`; otherwise `hand_selection_unsupported`). See "Hand selection (headless engine)". |
 | `select_hand` | `sessionId`, `device: string \| null` | `{ sessionId, selected }` | Records which hand runs the session's tools (`null` = this process). Refusals: `hand_not_listed`, `hand_unreachable` (`errorData.device`), `session_busy`, `hand_selection_unsupported`, `unknown_session`, `session_closing`. Method class `device_admin`. |
-| `hand_link` | `session`, `loop: { id, generation }`, `packets` | `{ packets, more, instance }` | One packet batch of a hosted session's link to this machine's hand. Refusals: `hand_link_unsupported`, `hand_link_not_delegated`, `hand_link_malformed`, `hand_link_superseded`, `hand_link_generation_taken`, `hand_link_scope_taken`, `hand_link_closed`, `hand_link_unavailable`. Method class `hand_link`. See "hand_link (tool-relay mode)". |
+| `hand_link` | `session`, `loop: { id, generation }`, `packets`, `instance?`, `close?` | `{ packets, more, instance }` | One packet batch of a hosted session's link to this machine's hand. Refusals: `hand_link_unsupported`, `hand_link_not_delegated`, `hand_link_malformed`, `hand_link_superseded`, `hand_link_generation_taken`, `hand_link_scope_taken`, `hand_link_instance_mismatch`, `hand_link_session_closed`, `hand_link_host_superseded`, `hand_link_closed`, `hand_link_unavailable`. Method class `hand_link`. See "hand_link (tool-relay mode)". |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context? }] }` | Includes `opening`/`closing` entries. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
 | `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |

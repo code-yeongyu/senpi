@@ -7747,6 +7747,10 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/hand/hand-packet-codec.ts#HAND_PACKET_MAX_PARTS": {
+			"class": "constant",
+			"reason": "number derived once from two constants at load; never written after"
+		},
 		"packages/coding-agent/src/modes/headless/testing/kill-presence.ts#KILL_PRESENCE_CASES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"

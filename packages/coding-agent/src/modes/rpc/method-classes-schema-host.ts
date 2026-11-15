@@ -163,6 +163,8 @@ export const HOST_RECORD_SCHEMAS = {
 		session: Id,
 		loop: Type.Object({ id: Id, generation: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) }),
 		packets: Type.Array(Type.Unknown()),
+		instance: OptId,
+		close: Opt(Type.Literal(true)),
 	}),
 	reclaim_session: command("reclaim_session", {
 		sessionPath: PathStr,
