@@ -16,12 +16,15 @@ import type { FrameHandler, Transport } from "../../src/transport/transport.ts";
 /** A transport that tells the test each message kind as it is sent, can hold a kind's send unfinished, and replies. */
 function recordingTransport(options: { readonly hold?: RemoteHandMessage["kind"] } = {}) {
 	const sent: string[] = [];
+	const invoked: string[] = [];
 	const waiters = new Map<string, () => void>();
 	let handler: FrameHandler | undefined;
 	const transport: Transport = {
 		send: (_lane, payload) => {
-			const { kind } = decodeRemoteMessage(payload);
+			const message = decodeRemoteMessage(payload);
+			const { kind } = message;
 			sent.push(kind);
+			if (message.kind === "invoke") invoked.push(message.toolCallId);
 			waiters.get(kind)?.();
 			return kind === options.hold ? new Promise<void>(() => {}) : Promise.resolve();
 		},
@@ -34,6 +37,8 @@ function recordingTransport(options: { readonly hold?: RemoteHandMessage["kind"]
 	return {
 		transport,
 		sent,
+		/** The tool call ids of the invokes sent, in order. */
+		invoked,
 		/** Resolves when a message of `kind` is handed to the transport (at once if it already was). */
 		sending: (kind: string) =>
 			new Promise<void>((resolve) => (sent.includes(kind) ? resolve() : waiters.set(kind, resolve))),
@@ -43,10 +48,10 @@ function recordingTransport(options: { readonly hold?: RemoteHandMessage["kind"]
 
 const scope = { id: "s", root: "/w" };
 
-function runCall(host: ReturnType<typeof createRemoteToolHost>) {
+function runCall(host: ReturnType<typeof createRemoteToolHost>, id = "c") {
 	const ended: unknown[] = [];
 	const execution = host.execute(
-		{ scope, calls: [{ type: "toolCall", id: "c", name: "probe", arguments: {} }], mode: "parallel" },
+		{ scope, calls: [{ type: "toolCall", id, name: "probe", arguments: {} }], mode: "parallel" },
 		{ emit: (event) => void (event.type === "tool_execution_end" && ended.push(event.result)) },
 	);
 	return { done: execution.then(() => ended[0]) };
@@ -86,13 +91,19 @@ describe("a remote tool call when the hand link closes", () => {
 
 		host.close();
 		const result = await call.done;
+		// A later call on the same lane waits on the same floor. Once the ack opens the lane, its invoke goes out after
+		// every send the ack released, the closed call's included, so seeing it proves the closed call sent nothing.
+		const later = runCall(host, "later");
 		await wire.reply("s", { kind: "floor_ack", floor: 2 });
+		await wire.sending("invoke");
 
 		expect(result).toMatchObject({
 			isError: true,
 			details: { outcome: "cancelled", uncertain: false, hooksRan: false },
 		});
-		expect(wire.sent).toEqual(["floor"]);
+		expect(wire.invoked).toEqual(["later"]);
+		host.close();
+		await later.done;
 	});
 
 	it("ends as the non-error placeholder under split-local placement, as the session's own recovery decides", async () => {
