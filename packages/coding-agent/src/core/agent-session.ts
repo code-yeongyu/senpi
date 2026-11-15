@@ -6226,6 +6226,7 @@ export class AgentSession {
 	}
 
 	private async _prompt(text: string, options: PromptOptions): Promise<void> {
+		let claudeRecheckProvider: string | undefined;
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
 			const error = new Error("Prompt cancelled before acceptance");
@@ -6371,14 +6372,14 @@ export class AgentSession {
 						? await this._pooledAccountHealth(model.provider, model.id)
 						: undefined;
 				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
-				// The Claude pool owns the person's bounded stale-block recheck (senpi#6727). Its account-level
-				// evidence must decide admission; a coarse hold here would prevent the CLI from checking at all.
+				// Defer this hold to the Claude pool only if the person's input is ultimately admitted (senpi#6727).
 				if (
 					model?.provider === "anthropic-subscription" &&
+					!this._pendingModelSwitch &&
 					this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
 					attributionOf(options) === "user"
 				)
-					this._retryFallback.releaseAccountHold(model.provider);
+					claudeRecheckProvider = model.provider;
 				// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
 				// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
 				// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
@@ -6392,6 +6393,7 @@ export class AgentSession {
 				if (
 					model &&
 					!this._pendingModelSwitch &&
+					claudeRecheckProvider !== model.provider &&
 					this._retryFallback.isProviderSpent(model.provider) &&
 					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
 				) {
@@ -6741,7 +6743,7 @@ export class AgentSession {
 				...clientMessageIdentity(options),
 			};
 			this._userInputSources.set(userMessage, options?.source ?? "interactive");
-			markInputTurnOrigin(userMessage, inputTurnMark(options ?? {}));
+			markInputTurnOrigin(userMessage, inputTurnMark(options ?? {}), attributionOf(options) === "user");
 			messages.push(userMessage);
 
 			// Consume next-turn messages transactionally: a final admission rejection
@@ -6782,6 +6784,12 @@ export class AgentSession {
 				return;
 			}
 			await emitInputDisposition("started");
+			if (
+				claudeRecheckProvider !== undefined &&
+				!this._pendingModelSwitch &&
+				this.model?.provider === claudeRecheckProvider
+			)
+				this._retryFallback.releaseAccountHold(claudeRecheckProvider);
 		} catch (error) {
 			await emitInputDisposition("rejected");
 			if (consumedReleaseExtras !== undefined)
@@ -7331,7 +7339,8 @@ export class AgentSession {
 		// stays unstamped: unknown origin, never defaulted to a trusted source.
 		if (input.source !== undefined) this._userInputSources.set(message, input.source);
 		// Restored input with no source keeps no mark: an unmarked turn is engine work, never a trusted origin.
-		if (input.source !== undefined) markInputTurnOrigin(message, inputTurnMark(input));
+		if (input.source !== undefined)
+			markInputTurnOrigin(message, inputTurnMark(input), attributionOf(input) === "user");
 		else if (recordIsDelegated()) markInputTurnOrigin(message, "delegated");
 		if (input.inputId !== undefined) this._queuedInputDispositions.track(message, input.inputId);
 		this._queuedMessages.set(queuedId, message);

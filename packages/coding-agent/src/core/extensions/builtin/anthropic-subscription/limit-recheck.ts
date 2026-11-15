@@ -1,46 +1,39 @@
 import { subscriptionLimits } from "../../../subscription-limits/limit-store.ts";
-import type { ExtensionAPI, InputEvent } from "../../types.ts";
+import { currentPersonTurn } from "../../../turn-origin.ts";
+import type { ExtensionAPI } from "../../types.ts";
 import type { AccountSlot } from "./accounts.ts";
 
 /**
- * One allowance per account on an admitted person's turn (senpi#6727). Input attribution is already classified
- * by the session, including RPC's interactive-user role. Retries retain the same set; automation cannot mint one.
+ * One allowance per account on an admitted person's turn (senpi#6727). Its identity follows the actual message,
+ * not a predicted end event: a fresh run drops it even when the previous retry was cancelled or blocked.
  */
 export function registerLimitRecheck(pi: ExtensionAPI): {
 	readonly accounts: () => Set<string> | undefined;
 	readonly reset: () => void;
 } {
-	const pending = new Map<string, Pick<InputEvent, "attribution" | "streamingBehavior">>();
+	let sessionManager: object | undefined;
+	let turn: object | undefined;
 	let attempted: Set<string> | undefined;
-	let running = false;
 	const reset = () => {
-		pending.clear();
+		sessionManager = undefined;
+		turn = undefined;
 		attempted = undefined;
-		running = false;
 	};
-	pi.on("input", (event) => {
-		pending.set(event.inputId, { attribution: event.attribution, streamingBehavior: event.streamingBehavior });
-	});
-	pi.on("input_disposition", (event) => {
-		if (event.disposition === "queued") return;
-		const input = pending.get(event.inputId);
-		pending.delete(event.inputId);
-		if (event.disposition !== "started" || input === undefined) return;
-		// Steering joins an existing turn; it cannot refill that turn's allowance.
-		if (input.streamingBehavior === "steer" && running) return;
-		attempted = input.attribution === "user" ? new Set() : undefined;
-	});
-	pi.on("agent_start", () => {
-		running = true;
-	});
-	pi.on("agent_end", (event) => {
-		if (!event.willRetry) {
-			attempted = undefined;
-			running = false;
-		}
+	pi.on("agent_start", (_event, ctx) => {
+		sessionManager = ctx.sessionManager;
 	});
 	pi.on("session_start", reset);
-	return { accounts: () => attempted, reset };
+	return {
+		accounts: () => {
+			const activeTurn = sessionManager === undefined ? undefined : currentPersonTurn(sessionManager);
+			if (activeTurn !== turn) {
+				turn = activeTurn;
+				attempted = turn === undefined ? undefined : new Set();
+			}
+			return attempted;
+		},
+		reset,
+	};
 }
 
 /** A rate-limit block with no successful usage reading newer than the block. Errors are not usage evidence. */
