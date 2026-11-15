@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-11-15 - Vitest resolves the pi-agent-core read-folders subpath from source (senpi#6740)
+
+### What changed
+
+- `vitest.base.ts`: `agentReadFolders` source path and the `@earendil-works/pi-agent-core/read-folders` alias.
+
+### Why
+
+- The new subpath is imported by coding-agent source that tests load.
+
+### Why an extension could not handle it
+
+- Root test resolution is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the `workspaceSourcePaths` list and the alias list.
+
 ## 2026-11-13 - The hono and @hono/node-server overrides move past their npm audit advisories (senpi#6624)
 
 ### What changed

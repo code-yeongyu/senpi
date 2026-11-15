@@ -1065,6 +1065,8 @@ function describeCompactionRejection(cause: CompactionRejectionCause): string {
 			return "Compaction rejected: absolute compaction cap reached for this session.";
 		case "stale-revision":
 			return "Compaction rejected: the session changed while the summary was being prepared. Retry compaction against the latest context.";
+		case "transient-failure":
+			return "Compaction rejected: the summary request failed on a transient provider error. Retry compaction.";
 	}
 }
 
@@ -11505,12 +11507,7 @@ export class AgentSession {
 			// agent.continue() cannot continue from a completed assistant response.
 			if (!willRetry) {
 				const compacted = await this._runAutoCompaction("overflow", false);
-				if (
-					!compacted &&
-					this._compactionLifecycle.state.status === "failed" &&
-					this._compactionLifecycle.state.rejectionCause !== "external-owner" &&
-					getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
-				) {
+				if (!compacted && this._failedCompactionLatchesAdmission()) {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
 						contentTokens: this._blockedAdmissionContentTokens(),
@@ -11656,12 +11653,7 @@ export class AgentSession {
 				);
 			} else {
 				const compacted = await this._runAutoCompaction("threshold", retryAfterCompaction);
-				if (
-					!compacted &&
-					this._compactionLifecycle.state.status === "failed" &&
-					this._compactionLifecycle.state.rejectionCause !== "external-owner" &&
-					getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
-				) {
+				if (!compacted && this._failedCompactionLatchesAdmission()) {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
 						contentTokens: this._blockedAdmissionContentTokens(),
@@ -11671,6 +11663,27 @@ export class AgentSession {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Whether the automatic compaction that just failed proves the unchanged context cannot be
+	 * compacted, so the automatic loop must stop re-sending it (#7921 case 6). An external owner
+	 * and a transient provider failure (senpi#6760) say nothing about the context: latching on
+	 * them refused every automated send for good, while a later attempt can succeed. Neither does
+	 * a breaker cooldown rejection, which made no attempt at all. Three consecutive owned failures trip
+	 * the breaker, deterministic ones included, so this can leave a deterministic failure
+	 * unlatched for one cooldown (60 s, with #531 cooldown admission). The next real attempt
+	 * that fails deterministically latches again, and a latch already armed stays armed.
+	 */
+	private _failedCompactionLatchesAdmission(): boolean {
+		const state = this._compactionLifecycle.state;
+		return (
+			state.status === "failed" &&
+			state.rejectionCause !== "external-owner" &&
+			state.rejectionCause !== "transient-failure" &&
+			state.rejectionCause !== "circuit-breaker" &&
+			getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
+		);
 	}
 
 	private _isCompactionOnCooldown(): boolean {

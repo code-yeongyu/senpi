@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, JsonValue } from "@earendil-works/pi-ai";
 import type { ExtensionRunner } from "../../core/extensions/runner.ts";
 import type {
@@ -7,9 +8,10 @@ import type {
 	SessionStartEvent,
 } from "../../core/extensions/types.ts";
 import { hookModelOf, hookRequestOutputOf, parseHookRequestInput } from "../../core/hand/hook-contract.ts";
+import type { CustomEntry } from "../../core/session-manager.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
-import type { LoopHookCall, LoopHookEffects } from "./loop-hook-call.ts";
+import type { CarriedSession, LoopHookCall, LoopHookEffects } from "./loop-hook-call.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
 export type LooplessLoopHooks = (event: string, payload: JsonValue) => Promise<JsonValue>;
@@ -21,12 +23,17 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * The loop hooks of this runtime's own extensions, on the same runner (so the same extension instances) that runs its
  * tool calls: a two-sided extension keeps one state across its loop and tool hooks. Only a hand that is its extensions'
  * home (`twoSidedHome: "hand"`) runs them; any other hand refuses, because its extensions' loop hooks run where the loop
- * runs. The loop forwards the two events a session runs before a turn, in a session's order: `input` (the hooks
- * builtin's UserPromptSubmit runs there), whose result (`continue`, `handled`, or `transform` with the new text) the
- * loop returns from its own `input` handler, so its session acts on it as on a local one; then `before_agent_start`
- * with the prompt the session now has, whose combined result the loop returns from its `before_agent_start`. Each reply
- * also carries the messages its handlers sent (`sent`, which the loop sends with the same options) and their failures
- * (`errors`).
+ * runs. Every event runs only the user's loop hooks (`userLoopHooks`: non-builtin extensions the loader did not ship,
+ * plus the hooks builtin); the loop's own builtins run where the loop runs. The loop forwards, in a session's order:
+ * - `session_start`: the user's SessionStart hooks and extensions' `session_start` handlers;
+ * - `input` (the hooks builtin's UserPromptSubmit runs there), whose result (`continue`, `handled`, or `transform`
+ *   with the new text) the loop returns from its own `input` handler, so its session acts on it as on a local one;
+ * - `before_agent_start` with the prompt the session now has, whose combined result the loop returns from its own;
+ * - `before_provider_request` (CK21), whose reply's `output` carries the payload the user's hooks produced;
+ * - `agent_end`, carrying the session port's read half, where the user's Stop hooks run.
+ * Each reply also carries what its handlers did beyond the result: messages (`sent`, which the loop sends with the same
+ * options), notices, session writes (`entries`, `userMessages`), and failures (`errors`). What a call's work does after
+ * the call ended goes to the loop as a durable wake instead (H3), never in a later reply.
  */
 export function extensionLoopHooks(
 	runner: ExtensionRunner,
@@ -52,7 +59,7 @@ export function extensionLoopHooks(
 				!(streamingBehavior === undefined || isOneOf(streamingBehavior, STREAMING_BEHAVIORS))
 			)
 				throw new Error("malformed input payload");
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run({ sessionId, cwd, idle }, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
 					runner.emitInput(text, images, source, streamingBehavior, inputId, attribution, only),
 				),
@@ -71,7 +78,7 @@ export function extensionLoopHooks(
 			// The loop's options as the loop built them: only `cwd` is this machine's (its workspace); the rest (context files,
 			// skills, tools) describes the loop's machine. They are data for handlers to read; nothing here acts on them.
 			const options = { ...(systemPromptOptions as Partial<BuildSystemPromptOptions>), cwd };
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run({ sessionId, cwd, idle }, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
 					runner.emitBeforeAgentStart(prompt, images, systemPrompt, options, {
 						only,
@@ -86,7 +93,7 @@ export function extensionLoopHooks(
 			// no headers), and the reply's `output` carries the payload they produced.
 			const input = parseHookRequestInput(payload.input);
 			const model = hookModelOf(input);
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run({ sessionId, cwd, idle }, (effects) =>
 				dispatchLoopHook(runner, call, effects, async () => ({
 					output: hookRequestOutputOf(
 						input,
@@ -110,8 +117,20 @@ export function extensionLoopHooks(
 				reason,
 				...(previousSessionFile === undefined ? {} : { previousSessionFile }),
 			};
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run({ sessionId, cwd, idle }, (effects) =>
 				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(sessionStart, only)),
+			);
+		}
+		if (event === "agent_end") {
+			const { messages, aborted } = payload;
+			const carried = carriedSessionOf(payload);
+			if (!isAgentMessages(messages) || !(aborted === undefined || typeof aborted === "boolean") || carried === null)
+				throw new Error("malformed agent_end payload");
+			const agentEnd = { type: "agent_end" as const, messages, ...(aborted === undefined ? {} : { aborted }) };
+			// An agent_end ends the loop's turn: a Stop held for the hand's background work runs after this call, with the
+			// session it carried, and its writes ride the session's next reply.
+			return call.run({ sessionId, cwd, idle, carried, endsTurn: true }, (effects) =>
+				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(agentEnd, only)),
 			);
 		}
 		throw new Error(`no loop hooks run on a hand for ${event}`);
@@ -156,6 +175,24 @@ const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value
 const imagesOf = (value: unknown): ImageContent[] | undefined | null =>
 	value === undefined ? undefined : Array.isArray(value) && value.every(isImage) ? value : null;
 
+/** The loop's transcript messages of an `agent_end`, as data its handlers read (the Stop hook its last stop reason). */
+const isAgentMessages = (value: unknown): value is AgentMessage[] =>
+	Array.isArray(value) && value.every((message) => isRecord(message) && typeof message.role === "string");
+
+/**
+ * The session port's read half a call carries (`leafId`, `handEntries`; see `CarriedSession`), or `null` when
+ * malformed. Each hand entry is a custom entry: the hand only ever authored custom entries.
+ */
+function carriedSessionOf(payload: Record<string, unknown>): CarriedSession | null {
+	const { leafId, handEntries } = payload;
+	if (!(leafId === null || typeof leafId === "string")) return null;
+	if (!Array.isArray(handEntries) || !handEntries.every(isCustomEntry)) return null;
+	return { leafId, handEntries };
+}
+
+const isCustomEntry = (value: unknown): value is CustomEntry =>
+	isRecord(value) && value.type === "custom" && typeof value.customType === "string" && typeof value.id === "string";
+
 const isImage = (value: unknown): value is ImageContent =>
 	isRecord(value) && value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string";
 
@@ -174,13 +211,14 @@ async function dispatchLoopHook(
 	});
 	try {
 		const result = await dispatch();
-		const { sent, notices } = effects;
+		const { sent, notices, entries, userMessages } = effects;
 		return JSON.parse(
 			JSON.stringify({
 				...result,
 				...(sent.length > 0 ? { sent } : {}),
 				...(notices.length > 0 ? { notices } : {}),
-				...(effects.dropped > 0 ? { droppedLate: effects.dropped } : {}),
+				...(entries.length > 0 ? { entries } : {}),
+				...(userMessages.length > 0 ? { userMessages } : {}),
 				...(errors.length > 0 ? { errors } : {}),
 			}),
 		) as JsonValue;

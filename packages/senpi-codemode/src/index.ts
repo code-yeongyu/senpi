@@ -61,6 +61,8 @@ export interface CodemodeExtensionAPI {
 		message: { customType: string; content: EvalNotificationContent; display: boolean },
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): void;
+	/** True on a hand whose loop runs elsewhere (senpi H3); a host without it is never one. */
+	isLoopRemote?(): boolean;
 	/** Optional host event bus; a host without one turns extension event emission into a harmless no-op. */
 	events?: { emit(name: string, data: unknown): void };
 	/** Optional host RPC surface for forwarding extension-owned events to connected clients. */
@@ -104,6 +106,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		sendMessage: (message, notifyOptions) => pi.sendMessage(message, notifyOptions),
 		getContext: () => activeContext,
 		getMode: () => "wake",
+		loopRemote: () => pi.isLoopRemote?.() === true,
 	});
 	const statusTicker = new EvalStatusTicker({
 		...(options.now === undefined ? {} : { now: options.now }),

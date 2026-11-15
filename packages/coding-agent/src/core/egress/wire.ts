@@ -245,8 +245,6 @@ export interface HookModelRequestReply {
 	/** The messages and notices the hooks sent during the call, as on every loop-hook reply (S33). Absent: none. */
 	readonly sent?: readonly WireJson[];
 	readonly notices?: readonly WireJson[];
-	/** Late messages and notices the hand dropped past its per-session bound. Absent: none. */
-	readonly droppedLate?: number;
 }
 
 export interface HandSessionAdvertisement {
