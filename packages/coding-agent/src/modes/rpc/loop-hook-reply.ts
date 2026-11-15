@@ -56,7 +56,13 @@ export async function loopHookReply(
 		readonly call: LoopHookCall;
 		readonly effects: LoopHookEffects;
 		/** The hand's `wants` when it changed since it was last reported, read after the handlers ran. */
-		readonly wantsChange: () => readonly string[] | undefined;
+		readonly wants: {
+			changed(): readonly string[] | undefined;
+			/** Marks the set reported: only once this reply passed the wire check and the loop still waits for it. */
+			reported(wants: readonly string[]): void;
+		};
+		/** Whether the loop cancelled the call: its reply is then dropped, so a change it carries stays pending. */
+		readonly cancelled: () => boolean;
 	},
 	dispatch: () => Promise<object | undefined>,
 ): Promise<JsonValue> {
@@ -69,7 +75,7 @@ export async function loopHookReply(
 	try {
 		const result = await dispatch();
 		const { sent, notices, entries, userMessages } = effects;
-		const wants = run.wantsChange();
+		const wants = run.wants.changed();
 		const reply = {
 			...result,
 			...(sent.length > 0 ? { sent } : {}),
@@ -81,7 +87,10 @@ export async function loopHookReply(
 		};
 		assertWireJson(event, reply, "");
 		// A copy: a handler that keeps a reference to what it returned cannot change the reply after it was sent.
-		return JSON.parse(JSON.stringify(reply)) as JsonValue;
+		const wire = JSON.parse(JSON.stringify(reply)) as JsonValue;
+		// The reply now goes to the link (which redelivers it to a repeated call), so the change it carries is reported.
+		if (wants !== undefined && !run.cancelled()) run.wants.reported(wants);
+		return wire;
 	} finally {
 		stop();
 	}

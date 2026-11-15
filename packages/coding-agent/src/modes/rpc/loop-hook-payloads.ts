@@ -3,6 +3,7 @@ import type { ForwardedLoopEvent } from "../../core/extensions/event-placement.t
 import type { ExtensionRunner } from "../../core/extensions/runner.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
 import type { CarriedSession, LoopHookCallBinding } from "./loop-hook-call.ts";
+import type { BoundaryWalks } from "./loop-hook-boundary-walks.ts";
 import type { MessageStreams } from "./loop-hook-message-stream.ts";
 import { isCustomEntry, isSessionEntry } from "./session-entry-schema.ts";
 
@@ -28,11 +29,12 @@ export interface ParsedLoopHook {
 	readonly emit: (dispatch: LoopHookDispatch) => Promise<object | undefined>;
 }
 
-/** What a parser reads beyond its payload: this machine's workspace, the loop session, and its held stream. */
+/** What a parser reads beyond its payload: this machine's workspace, the loop session, its held stream and walk. */
 export interface LoopHookParseContext {
 	readonly cwd: string;
 	readonly sessionId: string;
 	readonly streams: MessageStreams;
+	readonly walks: BoundaryWalks;
 }
 
 /** Parses one event's payload. Throws when the payload is malformed. */
