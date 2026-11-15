@@ -9,7 +9,6 @@ import {
 	createMemoryStoreMedium,
 	createReliableTransport,
 	createWakeInbox,
-	type FrameHandler,
 	HAND_WAKE_LANE,
 	openMemoryStore,
 	serveHandWakes,
@@ -32,6 +31,8 @@ const WAITER = `const socket = require("node:net").connect(Number(process.argv[2
 socket.once("data", (data) => { process.stdout.write("H3_TAIL:" + data.toString() + "\\n"); socket.destroy(); });`;
 
 const HAND = "spawned-hand";
+
+type FrameHandler = Parameters<Transport["onFrame"]>[0];
 
 /** The brain's end of one hand connection: the wake lane to the brain's inbox, every other lane to `rest`. */
 async function brainLink(endpoint: string, wakes: (wake: Transport) => void) {
@@ -70,7 +71,11 @@ async function brainLink(endpoint: string, wakes: (wake: Transport) => void) {
 		},
 		() => {},
 	);
-	return { brain, rest: view(""), acks, close: () => (socket.destroy(), brain.close()) };
+	const close = (): void => {
+		socket.destroy();
+		brain.close();
+	};
+	return { brain, rest: view(""), acks, close };
 }
 
 it("--hand delivers a background exit notice on its wake lane and re-offers it from disk after a restart", async () => {
