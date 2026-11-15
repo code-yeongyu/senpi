@@ -34,8 +34,11 @@ export interface LooplessHand {
 	 * that its tool calls run on (S33, K5), opened here first when no call has opened it yet.
 	 */
 	runLoopHooks(scope: ExecutionScope, event: string, payload: JsonValue): Promise<JsonValue>;
-	/** `runLoopHooks` for `serveLoopHooks`: the scope comes from the payload's `scope` (`{ id, root }`); refused without one. */
-	readonly loopHooks: (event: string, payload: JsonValue) => Promise<JsonValue>;
+	/**
+	 * `runLoopHooks` for `serveLoopHooks`: the scope comes from the payload's `scope` (`{ id, root }`); refused without one.
+	 * `cancel` aborts when the loop host cancels the call.
+	 */
+	readonly loopHooks: (event: string, payload: JsonValue, cancel?: AbortSignal) => Promise<JsonValue>;
 	/** Disposes every runtime this hand opened, including one only loop hooks opened; every later call is refused. */
 	close(): Promise<void>;
 }
@@ -119,7 +122,8 @@ export function createLooplessHand(
 			};
 		},
 		runLoopHooks: async (scope, event, payload) => (await runtimeOf(scope, false)).runLoopHooks(event, payload),
-		loopHooks: async (event, payload) => (await runtimeOf(scopeOf(payload), false)).runLoopHooks(event, payload),
+		loopHooks: async (event, payload, cancel) =>
+			(await runtimeOf(scopeOf(payload), false)).runLoopHooks(event, payload, cancel),
 		async close() {
 			closed = true;
 			const open = [...runtimes.values()];
