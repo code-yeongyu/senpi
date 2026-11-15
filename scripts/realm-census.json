@@ -8854,6 +8854,10 @@
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
 		},
+		"packages/coding-agent/src/modes/rpc/locked-file-store.ts#TRANSIENT_READ_ERRORS": {
+			"class": "constant",
+			"reason": "lookup set of error codes built at load; never written after"
+		},
 		"packages/coding-agent/src/modes/rpc/loop-blocked-time.ts#blockedMsTotal": {
 			"class": "per-copy-safe",
 			"reason": "counter or id sequence for this copy's own objects; a split cannot collide across them"
