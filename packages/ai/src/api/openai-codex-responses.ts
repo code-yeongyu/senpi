@@ -39,6 +39,7 @@ import type {
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { extractChatGptSubscriptionAccountId } from "../utils/chatgpt-subscription-auth.ts";
+import { assertNoSharedSubscriptionToolItems } from "./subscription-sharing-items.ts";
 import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
@@ -630,6 +631,7 @@ function buildRequestBody(
 		supportsToolSearch,
 		toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
 	});
+	assertNoSharedSubscriptionToolItems(model, messages);
 
 	const initialSystemMessage = getInitialSystemMessage(context.messages);
 	const instructions = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";

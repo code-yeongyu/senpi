@@ -13,6 +13,7 @@ import {
 } from "../models.ts";
 import { supportsAllowedToolChoice } from "../openai-responses-compat.ts";
 import { readProviderDiagnostic } from "../provider-diagnostic.ts";
+import { assertNoSharedSubscriptionToolItems } from "./subscription-sharing-items.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -777,6 +778,7 @@ function buildParams(
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		},
 	});
+	assertNoSharedSubscriptionToolItems(model, messages);
 
 	const isNativeEndpoint = isOpenAIResponsesNativeEndpoint(model, options?.env);
 	// senpi#2096: ask the platform why this request missed the prefix of the previous same-model response.
