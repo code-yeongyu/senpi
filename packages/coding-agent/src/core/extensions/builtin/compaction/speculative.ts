@@ -172,7 +172,7 @@ const UPSTREAM_STREAM_TRUNCATED_PATTERN = /(?:^|[^A-Za-z0-9_])upstream_stream_tr
  * mirrored from that classifier rather than imported, because
  * `deterministic-fallback.ts` imports this module.
  */
-function isRetryableSummaryAttempt(error: unknown): boolean {
+export function isRetryableSummaryAttempt(error: unknown): boolean {
 	if (error instanceof StreamDurationBudgetError || error instanceof StreamIdleTimeoutError) return false;
 	if (error instanceof SummarizationTotalBudgetError) return false;
 	if (error instanceof SummarizationOverflowExhaustedError) return false;

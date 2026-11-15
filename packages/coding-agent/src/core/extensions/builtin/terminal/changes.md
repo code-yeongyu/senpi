@@ -1,3 +1,24 @@
+## 2026-11-14 - Background sessions belong to the turn that started them
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension-state.ts`: every background session (`run_in_background` or auto-detached) is recorded with `ctx.registerRunBackgroundJob` as a `bash` job whose stop is the bundle's.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`: `stopForInterrupt(id, turnId)` tree-kills the session through `manager.stop` and fails typed when it lives on the tool child or is still running after the stop; `trackRunJob` holds the release, dropped at the session's exit or the bundle's teardown; the exit of a session an interrupt stopped carries `stoppedByInterrupt`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: `TerminalExitView.stoppedByInterrupt?: { turnId }`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/notify.ts`: such an exit's notice reads `was stopped when turn <id> was interrupted` and is sent `nextTurn` with no `triggerTurn`, so it reaches the next turn and starts none; the notifier's `sendMessage` dependency accepts `deliverAs: "nextTurn"`.
+
+### Why
+
+- Stopping the interrupted turn's background bash must not itself wake the session: its exit notice is what woke it before.
+
+### Why an extension could not handle it
+
+- This is the terminal builtin; the change is inside it.
+
+### Expected merge conflict zones
+
+- LOW: `onBackgroundStart` in `extension-state.ts`, `notifyBackgroundExit` and `teardown` in `session-bundle.ts`, `buildNotice`/`deliverCompletion` in `notify.ts`.
+
 ## 2026-11-08 - A still-running background session reports its age; auto-reap is opt-in (senpi#6201)
 
 ### What changed

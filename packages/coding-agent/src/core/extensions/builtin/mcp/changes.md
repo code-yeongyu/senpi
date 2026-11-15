@@ -1,3 +1,21 @@
+## 2026-11-12 - The MCP config loader checks a candidate without loading it (senpi#6485)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`: `assertLoadableMcpConfig(raw, path)` runs the trusted-file steps (schema, interpolation, endpoint checks) the loader runs, through the same `resolveTrustedConfig` the loader now uses, without recording reference origins.
+
+### Why
+
+- `set_project_mcp_servers` must refuse a candidate the engine would reject before it writes it.
+
+### Why an extension could not handle it
+
+- The check has to be the loader's own; a copy would drift from what the engine actually loads.
+
+### Expected merge conflict zones
+
+- LOW: `readTrustedConfig` in `config.ts`.
+
 ## 2026-11-10 - Keep offered MCP operations across proven OAuth refresh (senpi#2861)
 
 ### What changed
