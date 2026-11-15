@@ -6,7 +6,8 @@ import type { CustomEntry, SessionEntry, SessionHeader } from "../../core/sessio
 import type { ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
 import type { RelocationTarget } from "../../core/session-relocation.ts";
 import { parseDocuments, parseWakes, SessionStateContractError } from "../../core/hand/session-state-effects.ts";
-import { type CarriedSession, effectsReply, type LoopHookCall } from "./loop-hook-call.ts";
+import type { CarriedSession, LoopHookCall } from "./loop-hook-call.ts";
+import { effectsReply } from "./loop-hook-effects.ts";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);

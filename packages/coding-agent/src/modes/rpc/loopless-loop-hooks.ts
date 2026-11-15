@@ -11,7 +11,8 @@ import { hookModelOf, hookRequestOutputOf, parseHookRequestInput } from "../../c
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
 import { parseCarriedSession } from "./hand-session-port.ts";
-import { effectsReply, type LoopHookCall, type LoopHookEffects } from "./loop-hook-call.ts";
+import type { LoopHookCall } from "./loop-hook-call.ts";
+import { effectsReply, type LoopHookEffects } from "./loop-hook-effects.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
 export type LooplessLoopHooks = (event: string, payload: JsonValue) => Promise<JsonValue>;

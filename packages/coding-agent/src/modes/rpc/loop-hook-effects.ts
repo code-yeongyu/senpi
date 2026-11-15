@@ -1,0 +1,85 @@
+/**
+ * What a hand's loop-hook or tool call did to the loop's session beyond its result (session port, write), collected
+ * during the call and sent back with its reply for the loop to do in turn.
+ */
+import type { ActiveToolsChange } from "../../core/hand/session-effects.ts";
+import type { LoopHookCallFacts } from "../../core/extensions/runner.ts";
+import type { SessionWakeChange } from "../../core/session-wakes.ts";
+import type { SessionDocumentChanges } from "./session-documents.ts";
+import type { RelocationRequestEffect } from "./session-port-hosts.ts";
+
+/** A message a loop hook sent during its call, for the loop to send with the same options. */
+export interface SentLoopMessage {
+	readonly message: Parameters<LoopHookCallFacts["sendMessage"]>[0];
+	readonly options?: Parameters<LoopHookCallFacts["sendMessage"]>[1];
+}
+
+/** An entry a loop hook appended during its call, for the loop to append to its own session (session port, write). */
+export interface AppendedLoopEntry {
+	readonly customType: string;
+	readonly data?: unknown;
+}
+
+/** A user message a loop hook sent during its call, for the loop to send with the same options (session port, write). */
+export interface SentLoopUserMessage {
+	readonly content: Parameters<LoopHookCallFacts["sendUserMessage"]>[0];
+	readonly options?: Parameters<LoopHookCallFacts["sendUserMessage"]>[1];
+}
+
+/** What a loop-hook call's handlers did beyond their result, which the loop does in turn (session port, write). */
+export interface LoopHookEffects {
+	readonly sent: SentLoopMessage[];
+	readonly notices: LoopNotice[];
+	readonly entries: AppendedLoopEntry[];
+	readonly userMessages: SentLoopUserMessage[];
+	/**
+	 * The call's change to the active tool set (`pi.setActiveTools`), relative to the set it carried, so the changes of
+	 * calls that ran at once compose when the loop applies each to its current set; unset: unchanged.
+	 */
+	activeTools: ActiveToolsChange | undefined;
+	/** The documents the call changed, `null` for a removed one; unset: it carried none. */
+	documents: SessionDocumentChanges | undefined;
+	/** The call's changes to the loop's wakes, in order. */
+	readonly wakes: SessionWakeChange[];
+	/** The move the call asked for, which the loop applies when its turn ends. */
+	relocation: RelocationRequestEffect | undefined;
+	/** Settles what the call wrote into its session directory into {@link documents}; await it before the reply. */
+	settle: () => Promise<void>;
+	/** Late messages and notices dropped because the loop session already held {@link LATE_PER_SESSION}. */
+	dropped: number;
+}
+
+/** A notice a loop hook showed during its call, for the loop to show on its own UI. */
+export interface LoopNotice {
+	readonly message: string;
+	readonly type?: Parameters<LoopHookCallFacts["notify"]>[1];
+}
+
+export const emptyEffects = (): LoopHookEffects => ({
+	sent: [],
+	notices: [],
+	entries: [],
+	userMessages: [],
+	activeTools: undefined,
+	documents: undefined,
+	wakes: [],
+	relocation: undefined,
+	settle: () => Promise.resolve(),
+	dropped: 0,
+});
+
+/** The effects a reply carries back to the loop, each only when there is one. */
+export function effectsReply(effects: LoopHookEffects): Record<string, unknown> {
+	const { sent, notices, entries, userMessages, activeTools, documents, wakes, relocation, dropped } = effects;
+	return {
+		...(sent.length > 0 ? { sent } : {}),
+		...(notices.length > 0 ? { notices } : {}),
+		...(entries.length > 0 ? { entries } : {}),
+		...(userMessages.length > 0 ? { userMessages } : {}),
+		...(activeTools === undefined ? {} : { activeTools }),
+		...(documents === undefined || Object.keys(documents).length === 0 ? {} : { documents }),
+		...(wakes.length > 0 ? { wakes } : {}),
+		...(relocation === undefined ? {} : { relocation }),
+		...(dropped > 0 ? { droppedLate: dropped } : {}),
+	};
+}
