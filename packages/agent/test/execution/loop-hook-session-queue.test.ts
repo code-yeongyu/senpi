@@ -1,6 +1,6 @@
 // senpi#5898 (#6782 review L1, L3): a waiting loop-hook call's bound restarts only when a call ahead of it actually
 // settles, never when a call ahead merely leaves (timed out or cancelled while it waited), and entering a session's
-// queue costs the same however long the queue is.
+// queue fans out to no earlier entry: a call waits on the session's one tail, never on a list of the calls ahead.
 import { createHook } from "node:async_hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLoopHookSessionQueues, type LoopHookTurnOutcome } from "../../src/execution/loop-hook-session-queue.ts";
@@ -28,10 +28,26 @@ function promisesCreatedDuring(run: () => void): number {
 	return created;
 }
 
+/** The most entries any `Promise` combinator was handed while `run` ran synchronously (a list copied per call shows here). */
+function widestCombinatorDuring(run: () => void): number {
+	let widest = 0;
+	const spies = (["all", "allSettled", "any", "race"] as const).map((name) => vi.spyOn(Promise, name));
+	try {
+		run();
+		for (const spy of spies)
+			for (const [entries] of spy.mock.calls)
+				widest = Math.max(widest, Array.from(entries as Iterable<unknown>).length);
+	} finally {
+		for (const spy of spies) spy.mockRestore();
+	}
+	return widest;
+}
+
 describe("loop-hook session queue (senpi#5898)", () => {
 	it.each([
 		[
 			"times out",
+			"queue_timeout",
 			async (_middle: AbortController): Promise<number> => {
 				await vi.advanceTimersByTimeAsync(400);
 				return 400;
@@ -39,6 +55,7 @@ describe("loop-hook session queue (senpi#5898)", () => {
 		],
 		[
 			"is cancelled",
+			"cancelled",
 			async (middle: AbortController): Promise<number> => {
 				await vi.advanceTimersByTimeAsync(100);
 				middle.abort();
@@ -47,7 +64,7 @@ describe("loop-hook session queue (senpi#5898)", () => {
 		],
 	] as const)(
 		"a middle call that %s while it waits does not restart the bound of the call behind it",
-		async (_case, endMiddle) => {
+		async (_case, middleOutcome, endMiddle) => {
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 			const enter = createLoopHookSessionQueues();
 			// The first call holds its turn and never leaves: it is stuck.
@@ -65,24 +82,27 @@ describe("loop-hook session queue (senpi#5898)", () => {
 			// The last call arrived at 600 ms; with nothing ahead settling, its bound ends at 1600 ms, never later.
 			await vi.advanceTimersByTimeAsync(1_600 - elapsed);
 
-			expect(await middle.ready).not.toBe("turn");
+			expect(await middle.ready).toBe(middleOutcome);
 			expect(last).toBe("queue_timeout");
 		},
 	);
 
-	it("enters a stuck session's queue in constant work per call, however many calls are already waiting", () => {
+	it("entering a stuck session's queue fans out to no earlier entry: one tail, not a list of the calls ahead", () => {
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-		const workToEnter = (calls: number): number => {
+		const arrivals = (calls: number) => {
 			const enter = createLoopHookSessionQueues();
-			return promisesCreatedDuring(() => {
+			return () => {
 				for (let index = 0; index < calls; index++) enter("stuck", new AbortController().signal, CAP_MS);
-			});
+			};
 		};
 
-		const small = workToEnter(50);
-		const large = workToEnter(200);
+		const small = promisesCreatedDuring(arrivals(50));
+		const large = promisesCreatedDuring(arrivals(200));
+		const widest = widestCombinatorDuring(arrivals(200));
 
-		// Linear: four times the calls cost about four times the work (a copy per call would cost about sixteen times).
+		// No per-entry promise fan-out: four times the calls create about four times the promises (sixteen if each call
+		// chained on every call ahead). No combinator ever gathers the calls ahead: each call waits on one tail.
 		expect(large / small).toBeLessThan(5);
+		expect(widest).toBeLessThanOrEqual(1);
 	});
 });
