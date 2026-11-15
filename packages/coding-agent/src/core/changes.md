@@ -1,3 +1,42 @@
+## 2026-11-13 - A fallback rung's level is the configuration_update in force (senpi#6655)
+
+### What changed
+
+- `packages/coding-agent/src/core/reasoning-baseline.ts`: new `withLiveConfigurationUpdate(messages, thinkingLevel, timestamp)`. When the newest `configurationUpdate` message names another level than the live one, it returns the messages with one more update for the live level, placed before the turn's last user message; otherwise it returns them unchanged.
+- `packages/coding-agent/src/core/agent-session.ts`: the request-context wrapper installed by `_installAgentNextTurnRefresh` applies `withLiveConfigurationUpdate` when the current model supports configuration updates. The update rides the request only and is never appended to the session file.
+
+### Why
+
+- On a flagged model the newest update is the effort the request carries (replayed item, or the Sign in with ChatGPT `reasoning.effort` fold). A retry-fallback rung brings its level as `ephemeralThinkingLevel` without an update entry, so the older update stayed in force and the rung's requests ran at the wrong effort. Writing the rung's level into the session file instead would pin it over the user's level when a session is resumed inside the fallback window, so the live level is added per request.
+
+### Why an extension could not handle it
+
+- The model switch and the session's transcript entries are owned by `AgentSession`; no extension hook runs between the switch's level change and the next request's context build.
+
+### Expected merge conflict zones
+
+- LOW: the `transformed` assignment in the `_installAgentNextTurnRefresh` request-context wrapper and the `reasoning-baseline.ts` import in `agent-session.ts`.
+
+## 2026-11-12 - Only an account the pool can select may release a usage-limit hold (senpi#6536)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: `accountsNeedingUser` names every account whose block is not a usage limit, instead of an allowlist of `auth_error` and `disabled`. A usage limit is a `rate_limit` block or a `paused` one (a ChatGPT subscription's usage-limit pause, which reaches the summary with no reason); the Claude lane's billing and organization blocks also carry no reason but are not paused, so they were missed and are now named. The doc comment also names a slot of the other credential kind (senpi#3486) rather than another lane's slot.
+- `packages/coding-agent/src/core/agent-session.ts`: `_usageOfSelectableAccounts` logs `usage_accounts_unread` (provider and error) through the session's `fallback.log` logger when `getCredentialAccounts` fails, instead of swallowing it. The fallback itself is unchanged: unfiltered usage only widens what may release the hold.
+
+### Why
+
+- A billing- or organization-blocked account's fresh under-limit usage could release the provider's hold although the pool never selects that account (`affinity.ts` `OUT_OF_POOL_REASONS`): the same class as the hold-release narrowing, left open because those blocks carry no summary reason.
+- A silent `catch` hid the one condition that makes the release read unfiltered usage, so a failing credential read looked identical to a healthy one.
+
+### Why an extension could not handle it
+
+- The turn-boundary hold release and the account summary are `AgentSession` and core credential internals.
+
+### Expected merge conflict zones
+
+- LOW: `accountsNeedingUser` in `credential-accounts.ts` and the `_usageOfSelectableAccounts` body in `agent-session.ts`.
+
 ## 2026-11-12 - A limit lifted before its stated reset releases the session's account hold (senpi#6536)
 
 ### What changed

@@ -97,7 +97,7 @@ test("shard membership is deterministic regardless of discovery order", async ()
 
 // senpi#4131: dependency downloads must not consume a shard's entire job budget.
 test("every CI apt step has a short budget and uses the shared installer", () => {
-	const aptJobs = ["check", "test-coding-agent", "grep-native-contract", "test-workspaces"];
+	const aptJobs = ["check", "test-coding-agent", "grep-native-contract", "test-workspaces", "test-scripts"];
 	for (const name of aptJobs) {
 		const step = workflow.jobs[name].steps.find((entry) => entry.name === "Install system dependencies");
 		assert.equal(step["timeout-minutes"], 5, name);

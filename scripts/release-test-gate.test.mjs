@@ -9,6 +9,7 @@ import {
 	awaitCiEvidence,
 	CATALOG_MANIFEST,
 	catalogChangedSinceHead,
+	changedCatalogPaths,
 	discardTimestampOnlyCatalogChange,
 	isTimestampOnlyManifestChange,
 	planCiEvidence,
@@ -292,6 +293,36 @@ describe("catalogChangedSinceHead (senpi#2645)", () => {
 			assert.equal(catalogChangedSinceHead(root), true);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+// senpi#6645 review (32e83a5610, finding 4): changedCatalogPaths reads `git status --porcelain -z`, so a path git
+// would quote (spaces, special characters) and both sides of a rename come back as real paths for `git add -A --`.
+describe("changedCatalogPaths (senpi#6645)", () => {
+	it("returns paths with spaces unquoted, and a staged rename by its destination, all stageable", () => {
+		const dir = mkdtempSync(join(tmpdir(), "catalog-paths-"));
+		const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+		try {
+			git("init", "-q", "-b", "main");
+			const data = join(dir, "packages/ai/src/providers/data");
+			mkdirSync(data, { recursive: true });
+			writeFileSync(join(data, "old name.json"), "{\"provider\":\"renamed\",\"models\":[1,2,3]}\n");
+			writeFileSync(join(data, "kept.json"), "{\"provider\":\"kept\"}\n");
+			git("add", "-A");
+			git("-c", "user.name=t", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base");
+			git("mv", "packages/ai/src/providers/data/old name.json", "packages/ai/src/providers/data/new name.json");
+			writeFileSync(join(data, "kept.json"), "{\"changed\":true}\n");
+			writeFileSync(join(data, "brand new.json"), "[]\n");
+			assert.deepEqual([...changedCatalogPaths(dir)].sort(), [
+				"packages/ai/src/providers/data/brand new.json",
+				"packages/ai/src/providers/data/kept.json",
+				"packages/ai/src/providers/data/new name.json",
+			]);
+			git("add", "-A", "--", ...changedCatalogPaths(dir));
+			assert.match(git("diff", "--cached", "--name-status"), /^R\d*\tpackages\/ai\/src\/providers\/data\/old name\.json\tpackages\/ai\/src\/providers\/data\/new name\.json$/m);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });
