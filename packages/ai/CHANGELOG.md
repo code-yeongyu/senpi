@@ -12,6 +12,34 @@
 
 ### Removed
 
+## [2026.11.15-2] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A shared ChatGPT subscription's item-limit 400 now surfaces as a typed error naming the route and the switch-model remedy instead of a raw provider error ([#6718](https://github.com/code-yeongyu/senpi/pull/6718))
+
+### Removed
+
+## [2026.11.15] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- ChatGPT subscription (Sign in with ChatGPT): a session whose thinking level changed no longer fails every turn with `subscription_sharing_unsupported_capability`; the level is sent as the request's reasoning effort ([#6607](https://github.com/code-yeongyu/senpi/issues/6607))
+
+### Removed
+
 ## [2026.11.13] - 2026-11-13
 
 ### Breaking Changes

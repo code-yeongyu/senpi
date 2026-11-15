@@ -2624,7 +2624,7 @@ A connection without an attachment receives `errorCode: "session_not_attached"` 
 ```
 
 - `status`: `opening`, `idle`, `running`, `waiting_input` (a question is pending), `compacting`, `unloaded` (the routing handle ended and the session reopens by `sessionPath`; `reason` is `idle`, `unload_session` or `handoff`), or `closed` (`reason` is the `session_closed.reason`). After an abort ends a run, `idle` carries `reason: "aborted"`.
-- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close` or `context`; `by` is `client`, `agent` or `host`.
+- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close`, `context` or `rename` (the session's name changed: `set_session_name` or a generated title); `by` is `client`, `agent` or `host`.
 - `context` is present only with `include_context`. `lastEffect: { effectId, kind, state }` names the session's most recent effect receipt (an input with a `clientMessageId`, an abort, a model or thinking-level switch) and is absent on hosts without the `effect_ledger` capability or before the session's first effect.
 - On `new_session`, `switch_session` or `fork` the routing id stays; the record carries the new `durableSessionId` and `sessionPath` with cause `replace`.
 
@@ -3403,10 +3403,11 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   endpoint's daemon directory (`handover-parked/`, one entry per session path, the same record a handoff park writes)
   as soon as its open succeeds; the entry follows the session's `set_session_context` patches and its park, and a
   transcript switch (`new_session`, `switch_session`, a fork) moves it to the new file, so only the transcript the
-  session is on comes back. An explicit `close_session` or a reclaim removes every key the session was recorded
-  under. While the session is open the entry names the process that holds it; a park drops that, and a host never
-  reopens an entry whose holding process is still alive. So during a generation handoff the successor does not open
-  a session its draining predecessor still has loaded, idle and detached ones included: it reopens the predecessor's
+  session is on comes back. An explicit `close_session`, a `release_session` (the file is another runtime's then) or
+  a reclaim removes every key the session was recorded under. While the session is open the entry names the process
+  that holds it; a park drops that, and a host never reopens an entry whose holding process is still alive. So during
+  a generation handoff the successor does not open a session its draining predecessor still has loaded, idle and
+  detached ones included: it reopens the predecessor's
   park once the drain writes it (or the entry, if the predecessor dies without parking). A host
   that starts on the same socket and agent dir - after a handoff, a clean stop, a crash, or a kill in the middle of a
   turn - reopens, in the background right after it binds, every entry an earlier process wrote, replaying the
@@ -4023,7 +4024,7 @@ names a valid preset.
 
 ### The folder an open_session works in
 
-`open_session.cwd` is the folder the session works in: its tools run there and its project files are read from there. An open that names one works in it. An open that names none and a `sessionPath` at which a session file exists works in the folder that file's header names, as `--session` does; the host maps a folder the desktop moved to where it lives now. A header folder that is not on this host refuses the open with `open_failed` (`Stored session working directory does not exist: <folder>`): the session is never opened in the host's own folder instead. Name a `cwd` to open it somewhere else. Any other open without `cwd` (no `sessionPath`, a `sessionPath` no file is at yet, or a file whose header names no folder) works in the folder the host was started in. An open that attaches to a session this host already holds leaves its folder as it is.
+`open_session.cwd` is the folder the session works in: its tools run there and its project files are read from there. An open that names one works in it. An open that names none and a `sessionPath` at which a session file exists works in the folder that file's header names, as `--session` does; the host maps a folder the desktop moved to where it lives now. A header folder that is not on this host refuses the open with `open_failed` (`Stored session working directory does not exist: <folder>`): the session is never opened in the host's own folder instead. A folder that exists but is not a directory (a file, a socket), named or taken from a header, refuses the open with `session_cwd_not_directory` (`errorData { cwd }`) before any session is opened or created. Name a `cwd` to open it somewhere else. Any other open without `cwd` (no `sessionPath`, a `sessionPath` no file is at yet, or a file whose header names no folder) works in the folder the host was started in. An open that attaches to a session this host already holds leaves its folder as it is.
 
 An open that names no folder never falls back to the host's own for a session file it could not read: a file that exists but cannot be read, and a moved-path probe whose step timed out, refuse the open (`open_failed`) instead. A `cwd` of `null` means no folder was named, as the host's launch profile already reads it.
 
@@ -4231,6 +4232,7 @@ codes or code prefixes in `error`:
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
 - `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
 - `invalid_path` (relative `sessionPath`/`cwd`)
+- `session_cwd_not_directory` (`open_session` whose `cwd`, named or taken from a session file's header, exists but is not a directory; `errorData { cwd }`; nothing is opened or created)
 - `open_failed: <detail>`. `open_failed: model_unavailable: <reason>` means the open named a model (`provider`/`modelId`) that could not be resolved, for example an unknown provider; the session is not opened, rather than running on the default model. The in-process runtime adds `errorData { reason: "model_unavailable", requestedModel }`; a worker runtime relays the same error text, so match on the prefix
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_subscription: <reason>` (`subscribe_sessions` with a malformed `sessions`, `mirror` or flag; `errorData { reason, action }`)
@@ -4674,6 +4676,20 @@ answers after the turn settled.
 
 ```json
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
+```
+
+With `"background": "stop"` the command also stops the background jobs the interrupted turn started: each bash
+session that turn ran with `run_in_background`, or that auto-detached from the foreground, while that turn was running.
+Sessions an earlier turn started keep running. The stop happens after the turn settled, and the answer then carries
+`background: { stopped, failed }`: `stopped` names each job as `{ kind: "bash", id, description? }`, and `failed`
+names a job it could not stop with its `reason` (a session on the tool child under `--tool-runtime child`, or one
+still running after TERM then KILL). An idle session, or a `turnId` naming another turn, answers both lists empty.
+A stopped session's exit notice does not start a turn: the model reads `Background terminal session <id> was stopped
+when turn <turnId> was interrupted` at its next turn. Without the field nothing but the turn stops, as before.
+
+```json
+{"type": "interrupt", "turnId": "3", "background": "stop"}
+{"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3", "background": {"stopped": [{"kind": "bash", "id": "bash_1", "description": "sleep 60"}], "failed": []}}}
 ```
 
 With `"intent": "stop"` (on `abort` or `interrupt`) the command is a user Stop: the session is paused before the
@@ -6377,7 +6393,6 @@ and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: co
 Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path }`) for any
 other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
-
 
 #### The folder a project write is for
 
