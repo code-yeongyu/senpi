@@ -150,10 +150,10 @@ if (${JSON.stringify(name)} === "npm" && args[0] === "view") {
 	}
 }
 
-const runRelease = ({ root, env }, { ref = "refs/heads/main" } = {}) =>
+const runRelease = ({ root, env }) =>
 	spawnSync(process.execPath, [join(repoRoot, "scripts", "release.mjs"), "--version", "2026.11.13-9", "--force-tests"], {
 		cwd: root,
-		env: { ...env, GITHUB_ACTIONS: "true", GITHUB_REF: ref },
+		env: { ...env, GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main" },
 		encoding: "utf8",
 		timeout: 15000,
 	});
