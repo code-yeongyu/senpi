@@ -215,6 +215,7 @@ export const RPC_METHOD_CLASS = {
 	set_label: "drive",
 	set_session_name: "drive",
 	set_session_archived: "drive",
+	set_session_settled: "drive",
 	// drive only for this turn's level; otherwise it remembers the model's level in the device-wide settings
 	set_thinking_level: { classify: thinkingLevelClass, version: 1 },
 	// drive only for this session's model; otherwise it persists the default model in the device-wide settings

@@ -22,6 +22,7 @@ import {
 	Strings,
 	session,
 	ThinkingLevel,
+	ThreadSettledBy,
 } from "./method-classes-schema-fields.ts";
 import { DELIVERY_RECORD_SCHEMAS } from "./method-classes-schema-delivery.ts";
 
@@ -221,6 +222,7 @@ const BASH_AND_TREE_SCHEMAS = {
 	get_last_assistant_text: session("get_last_assistant_text", {}),
 	set_session_name: session("set_session_name", { name: Str }),
 	set_session_archived: session("set_session_archived", { archived: Bool }),
+	set_session_settled: session("set_session_settled", { settled: Bool, by: Opt(ThreadSettledBy) }),
 	record_user_activity: session("record_user_activity", { kind: Type.Literal("draft") }),
 	import_jsonl: session("import_jsonl", { inputPath: PathStr, cwdOverride: OptPath }),
 	get_messages: session("get_messages", {}),

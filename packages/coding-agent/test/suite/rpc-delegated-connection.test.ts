@@ -39,8 +39,8 @@ import {
  * Delegated connections add methods outside the table, never a table entry.
  */
 // senpi#6344 adds two cwd-naming device_admin commands: park_session and claim_session.
-// set_session_archived (drive) writes a session's archived flag.
-const DIGEST_ON_BASE = "e206605098ab26895e389753a54b3c60adebf6f640824edf061091746d720b19";
+// set_session_archived (drive) writes a session's archived flag; set_session_settled (drive) its Done flag.
+const DIGEST_ON_BASE = "de5ede21bdfb8a9473c394417118ba97487e26b1d8fe7e675ae4156440e01f79";
 const FORWARDABLE = [
 	"observe",
 	"drive",

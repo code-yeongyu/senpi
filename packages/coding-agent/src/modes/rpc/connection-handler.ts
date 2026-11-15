@@ -75,6 +75,7 @@ import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.t
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
 import { setSessionArchived } from "../../core/session-archived.ts";
+import { parseSessionSettled, setSessionSettled, settledFields } from "../../core/session-settled.ts";
 import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
@@ -2197,6 +2198,15 @@ export function createRpcConnectionHandler(
 				setSessionArchived(session.sessionManager, command.archived);
 				outputEvent({ type: "session_archived_changed", archived: command.archived });
 				return success(id, "set_session_archived");
+			}
+
+			case "set_session_settled": {
+				// Read as unknown: a local client's `by` is unchecked by the inbound schema.
+				const parsed = parseSessionSettled(command);
+				if (!parsed.ok) return error(id, "set_session_settled", parsed.error, RPC_ERROR_INVALID_ARGUMENT);
+				setSessionSettled(session.sessionManager, parsed.value);
+				outputEvent({ type: "session_settled_changed", ...settledFields(parsed.value) });
+				return success(id, "set_session_settled");
 			}
 
 			case "record_user_activity": {

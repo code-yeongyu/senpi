@@ -2619,13 +2619,14 @@ A connection without an attachment receives `errorCode: "session_not_attached"` 
 ```json
 {"type": "session_status", "subscriptionId": "sub-1", "seq": 4, "sessionId": "rpc-1", "durableSessionId": "<id>", "sessionPath": "<path>",
  "kind": "interactive", "cwd": "<cwd>", "status": "idle", "reason": "aborted", "attachments": 3,
- "archived": false, "model": {"provider": "anthropic", "id": "<model>"}, "thinkingLevel": "high", "pendingQueue": {"steering": 1, "followUp": 0},
+ "archived": false, "settled": false, "model": {"provider": "anthropic", "id": "<model>"}, "thinkingLevel": "high", "pendingQueue": {"steering": 1, "followUp": 0},
  "lastChange": {"at": "2026-10-12T08:00:00.000Z", "cause": "abort", "by": "client"}}
 ```
 
 - `status`: `opening`, `idle`, `running`, `waiting_input` (a question is pending), `compacting`, `unloaded` (the routing handle ended and the session reopens by `sessionPath`; `reason` is `idle`, `unload_session` or `handoff`), or `closed` (`reason` is the `session_closed.reason`). After an abort ends a run, `idle` carries `reason: "aborted"`.
-- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close`, `context`, `rename` (the session's name changed: `set_session_name` or a generated title) or `archive` (`set_session_archived`); `by` is `client`, `agent` or `host`.
+- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close`, `context`, `rename` (the session's name changed: `set_session_name` or a generated title), `archive` (`set_session_archived`) or `settle` (`set_session_settled`); `by` is `client`, `agent` or `host`.
 - `archived` is the session file's archived flag (`set_session_archived`); it is always present.
+- `settled` is the session file's Done flag (`set_session_settled`); it is always present. `settledBy` says how the session reached Done and is present only while `settled` is true and the flag was written with a `by`.
 - `context` is present only with `include_context`. `lastEffect: { effectId, kind, state }` names the session's most recent effect receipt (an input with a `clientMessageId`, an abort, a model or thinking-level switch) and is absent on hosts without the `effect_ledger` capability or before the session's first effect.
 - On `new_session`, `switch_session` or `fork` the routing id stays; the record carries the new `durableSessionId` and `sessionPath` with cause `replace`.
 
@@ -3478,7 +3479,7 @@ registrant opens no socket and writes no registry directory.
     host's answer carries (one builder serves both). A terminal from before the session controls below lists no
     `commands`; one from before senpi#6158 carries no `method_classes`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`, plus the same
-    `archived`, `activity` and `model?` fields a host row carries.
+    `archived`, `settled`, `settledBy?`, `activity` and `model?` fields a host row carries.
   - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
     `editor_has_draft` and `state_version`.
   - `get_messages`.
@@ -4015,7 +4016,7 @@ names a valid preset.
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_hands` | `sessionId?` | `{ hands: [{ device, label, platform, reachable }], selected? }` | Headless engine with a hand directory only (capability `hand_selection`; otherwise `hand_selection_unsupported`). See "Hand selection (headless engine)". |
 | `select_hand` | `sessionId`, `device: string \| null` | `{ sessionId, selected }` | Records which hand runs the session's tools (`null` = this process). Refusals: `hand_not_listed`, `hand_unreachable` (`errorData.device`), `session_busy`, `hand_selection_unsupported`, `unknown_session`, `session_closing`. Method class `device_admin`. |
-| `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context?, archived, activity, model? }] }` | Includes `opening`/`closing` entries. `archived` is the session file's archived flag (see `set_session_archived`); a thread list hides archived rows by default, and the host lists them like any other row. `activity` is `running` while a turn is in flight (the same streaming state `session_status` reports as `running`) and `idle` otherwise, including an opening row. `model` is the session's current `{ provider, id }`, the same value `session_status.model` carries, and is absent while it is unknown. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
+| `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context?, archived, settled, settledBy?, activity, model? }] }` | Includes `opening`/`closing` entries. `archived` is the session file's archived flag (see `set_session_archived`); a thread list hides archived rows by default, and the host lists them like any other row. `settled` is the session file's Done flag (see `set_session_settled`) and is always present; `settledBy` is present only on a settled row whose flag was written with a `by`. `activity` is `running` while a turn is in flight (the same streaming state `session_status` reports as `running`) and `idle` otherwise, including an opening row. `model` is the session's current `{ provider, id }`, the same value `session_status.model` carries, and is absent while it is unknown. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
 | `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
 | `move_session` | `op` and its fields (see "Moving a session to another device (`move_session`)") | per `op` | Drives one step of a session move between hosts. Capability `move_session`. |
@@ -6065,6 +6066,29 @@ Response:
 ```
 
 Every attached connection then receives `session_archived_changed { archived }`, and every matching `subscribe_sessions` subscriber, attached or not, receives a `session_status` with `archived` set and `lastChange.cause: "archive"`. `list_sessions` reports the flag on each row as `archived`. Like every custom entry, the flag reaches the file with the session's next persisted write: a session that has never had a message stays unsaved, so its flag lasts only as long as the session is open.
+
+#### set_session_settled
+
+Mark the session Done, or reopen it (method class `drive`). The flag is written into the session file as a `custom` entry (`customType: "session_settled"`, `data: { settled, by?, at, sessionId }`, `at` an ISO timestamp), so every surface that reads the file sees the same value; the newest such entry wins and a session without one is not settled. Done is a flag, not a state: the session stays open, listed and drivable, and Done does not hide it.
+
+`by` says how the session reached Done. It is one of `{ kind: "user" }`, `{ kind: "agent", threadId?, threadTitle? }`, `{ kind: "pr-merged", pullRequestNumber? }`, `{ kind: "pr-closed", pullRequestNumber? }` or `{ kind: "inactivity", days }` (the desktop app's `ThreadSettledBy`): `pullRequestNumber` is an integer of at least 1, `days` an integer of at least 0, and `threadId` and `threadTitle` non-empty strings, stored trimmed; fields a kind does not carry are dropped. An unknown kind or a malformed field is refused with `invalid_argument`, and nothing is written. `by` is optional, and it is ignored when `settled` is false.
+
+As with `set_session_archived`, an entry counts only for the session id it names: a fork or clone starts not settled while the source keeps its flag, a reopen or move keeps it, and reading it never loads the session's history.
+
+```json
+{"type": "set_session_settled", "sessionId": "rpc-1", "settled": true, "by": {"kind": "pr-merged", "pullRequestNumber": 42}}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "set_session_settled",
+  "success": true
+}
+```
+
+Every attached connection then receives `session_settled_changed { settled, settledBy? }`, and every matching `subscribe_sessions` subscriber, attached or not, receives a `session_status` with `settled` (and `settledBy`) set and `lastChange.cause: "settle"`. `list_sessions` reports the flag on each row as `settled` and `settledBy`. Like every custom entry, the flag reaches the file with the session's next persisted write.
 
 #### record_user_activity
 
