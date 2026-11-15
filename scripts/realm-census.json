@@ -8906,6 +8906,50 @@
 			"class": "per-copy-safe",
 			"reason": "loopless worker runtime; the worker realm evaluates one copy of this module"
 		},
+		"packages/coding-agent/src/modes/rpc/machine-op/core-ops.ts#utf8": {
+			"class": "constant",
+			"reason": "stateless decoder used without streaming; holds no state between calls"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/executor.ts#OS_REFUSALS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/handler.ts#NO_PTY_HOLDER": {
+			"class": "constant",
+			"reason": "stateless holder that refuses every spawn; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/live-handle.ts#ENDED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/live-handle.ts#MACHINE_LIFECYCLES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/op-registry.ts#SERVED": {
+			"class": "constant",
+			"reason": "lookup data literal of op decoders and run functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/terminal-input.ts#NAMED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/terminal-input.ts#PASTE_END": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/terminal-input.ts#PASTE_START": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/terminal-input.ts#encoder": {
+			"class": "constant",
+			"reason": "stateless encoder; holds no state between calls"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/wire.ts#COMMANDS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/mcp-form-dialog.ts#mcpFormClock": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
