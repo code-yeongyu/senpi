@@ -39,7 +39,10 @@ import type {
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { extractChatGptSubscriptionAccountId } from "../utils/chatgpt-subscription-auth.ts";
-import { assertNoSharedSubscriptionToolItems } from "./subscription-sharing-items.ts";
+import {
+	isSharedSubscriptionItemLimitMessage,
+	sharedSubscriptionItemLimitMessage,
+} from "./subscription-sharing-items.ts";
 import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
@@ -484,6 +487,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					});
 					const info = await parseErrorResponse(fakeResponse, response.headers);
 					let errorMessage = info.friendlyMessage || info.message;
+					if (fakeResponse.status === 400 && isSharedSubscriptionItemLimitMessage(errorMessage)) {
+						errorMessage = sharedSubscriptionItemLimitMessage(model.provider, errorMessage);
+					}
 					if (response.status === 429) {
 						const hintMs = extract429RetryAfterMs({
 							status: response.status,
@@ -631,7 +637,6 @@ function buildRequestBody(
 		supportsToolSearch,
 		toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
 	});
-	assertNoSharedSubscriptionToolItems(model, messages);
 
 	const initialSystemMessage = getInitialSystemMessage(context.messages);
 	const instructions = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";

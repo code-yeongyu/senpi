@@ -62,7 +62,7 @@ function toolLoopContext(): Context {
 					totalTokens: 0,
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				},
-				stopReason: "toolCalls",
+				stopReason: "toolUse",
 				timestamp: 2,
 			},
 			{
@@ -77,21 +77,34 @@ function toolLoopContext(): Context {
 	};
 }
 
-function plainContext(): Context {
-	return {
-		systemPrompt: "You are a helpful assistant.",
-		messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
-	};
+const SHARING_400 = JSON.stringify({
+	error: {
+		message:
+			"User subscription sharing currently supports only text, image, and file messages. Remove unsupported input items or use an API key instead.",
+	},
+});
+
+function makeSse(text: string): ReadableStream<Uint8Array> {
+	const encoder = new TextEncoder();
+	return new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(encoder.encode(text));
+			controller.close();
+		},
+	});
 }
 
 /* ------------------------------------------------------------------ */
 /* Tests                                                               */
 /* ------------------------------------------------------------------ */
 
-describe("chatgpt-subscription shared-subscription tool items are refused pre-flight (#6715)", () => {
-	it("a tool round-trip on a chatgpt-subscription model refuses with the typed error before any request", async () => {
+describe("chatgpt-subscription shared-subscription item-limit 400 is surfaced typed (#6715)", () => {
+	it("a route that rejects the tool items answers the typed error naming the route and remedy, once", async () => {
 		const fetchMock = vi.fn(async () => {
-			throw new Error("fetch must not be called for a refused request");
+			return new Response(SHARING_400, {
+				status: 400,
+				headers: { "content-type": "application/json" },
+			});
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -102,14 +115,18 @@ describe("chatgpt-subscription shared-subscription tool items are refused pre-fl
 		}).result();
 
 		expect(result.stopReason).toBe("error");
-		expect(result.errorMessage).toMatch(/subscription sharing/i);
-		expect(result.errorMessage).toMatch(/function_call/);
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(result.errorMessage).toMatch(/User subscription sharing currently supports only/);
+		expect(result.errorMessage).toMatch(/chatgpt-subscription/);
+		expect(result.errorMessage).toMatch(/switch this session to a model/i);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("a child session replaying the same transcript on the same route hits the same refusal", async () => {
+	it("a child session replaying the same transcript gets the same typed error", async () => {
 		const fetchMock = vi.fn(async () => {
-			throw new Error("fetch must not be called for a refused request");
+			return new Response(SHARING_400, {
+				status: 400,
+				headers: { "content-type": "application/json" },
+			});
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -121,30 +138,51 @@ describe("chatgpt-subscription shared-subscription tool items are refused pre-fl
 		}).result();
 
 		expect(result.stopReason).toBe("error");
-		expect(result.errorMessage).toMatch(/subscription sharing/i);
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(result.errorMessage).toMatch(/chatgpt-subscription/);
+		expect(result.errorMessage).toMatch(/switch this session to a model/i);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("a text-only conversation on the same model still builds a request", async () => {
-		const fetchMock = vi.fn(async () => {
-			return new Response(
-				new ReadableStream<Uint8Array>({
-					start(controller) {
-						controller.close();
-					},
-				}),
-				{ status: 200, headers: { "content-type": "text/event-stream" } },
-			);
+	it("a route that accepts the tool items sends them unchanged", async () => {
+		const events = [
+			{
+				type: "response.output_item.added",
+				item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] },
+			},
+			{ type: "response.content_part.added", part: { type: "output_text", text: "" } },
+			{ type: "response.output_text.delta", delta: "ok" },
+			{
+				type: "response.output_item.done",
+				item: {
+					type: "message",
+					id: "msg_1",
+					role: "assistant",
+					status: "completed",
+					content: [{ type: "output_text", text: "ok" }],
+				},
+			},
+			{ type: "response.completed", response: { id: "r", status: "completed", output: [] } },
+		];
+		const sseBody = events.map((event) => `data: ${JSON.stringify(event)}`).join("\n\n") + "\n\n";
+		let requestedUrl = "";
+		const fetchMock = vi.fn(async (input: string | URL) => {
+			requestedUrl = typeof input === "string" ? input : input.toString();
+			return new Response(makeSse(sseBody), {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			});
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(plainContext()), {
+		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(toolLoopContext()), {
 			apiKey: mockToken(),
 			transport: "sse",
 			maxRetries: 0,
 		}).result();
 
-		expect(fetchMock).toHaveBeenCalled();
-		expect(result.stopReason).not.toMatch(/subscription sharing/i);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(requestedUrl).toContain("/codex/responses");
+		expect(result.stopReason).not.toBe("error");
+		expect(result.errorMessage ?? "").not.toMatch(/subscription sharing/i);
 	});
 });
