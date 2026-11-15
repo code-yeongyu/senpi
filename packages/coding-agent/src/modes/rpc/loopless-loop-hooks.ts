@@ -14,7 +14,7 @@ import { SESSION_MOVE_LOOP_HOOKS } from "./loop-hook-session-move.ts";
 import { TURN_LOOP_HOOKS } from "./loop-hook-turn-events.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
-export type LooplessLoopHooks = (event: string, payload: JsonValue) => Promise<JsonValue>;
+export type LooplessLoopHooks = (event: string, payload: JsonValue, cancel?: AbortSignal) => Promise<JsonValue>;
 
 /** Every forwarded loop-side event's parser; an event `LOOP_HOOK_FORWARDING` forwards fails to compile without one. */
 const LOOP_HOOK_PARSERS = {
@@ -49,7 +49,7 @@ const DESCRIBE_HOOKS = "describe_hooks";
  * session's order, each parsed at this boundary by its family's module. An interceptor's reply carries the result its
  * handlers merged as a session's emit merges it (the loop returns it from its own handler); every reply also carries
  * what the handlers sent (`sent`), notified (`notices`), wrote to the session (`entries`, `userMessages`) and their
- * failures (`errors`).
+ * failures (`errors`). `cancel` aborts when the loop cancels the call; the handlers' signal then aborts while they run.
  */
 export function extensionLoopHooks(
 	runner: ExtensionRunner,
@@ -57,7 +57,7 @@ export function extensionLoopHooks(
 	cwd: string,
 	call: LoopHookCall,
 ): LooplessLoopHooks {
-	return async (event, payload) => {
+	return async (event, payload, cancel) => {
 		if (twoSidedHome !== "hand") throw new Error("this hand is not the home of its extensions' loop hooks");
 		const only = userLoopHooks(runner);
 		if (event === DESCRIBE_HOOKS) return { wants: FORWARDED_EVENTS.filter((name) => runner.hasHandlers(name, only)) };
@@ -65,16 +65,15 @@ export function extensionLoopHooks(
 			throw new Error(`malformed ${event} payload`);
 		if (!isForwarded(event)) throw new Error(`no loop hooks run on a hand for ${event}`);
 		const parsed = LOOP_HOOK_PARSERS[event](payload, cwd);
-		return call.run(
-			payload.sessionId,
+		const scope = {
+			sessionId: payload.sessionId,
 			cwd,
-			payload.idle,
-			(effects, signal) =>
-				loopHookReply(event, { runner, call, effects }, () =>
-					// The handlers' own signal, aborted when the call's is.
-					parsed.emit({ runner, only, signal: AbortSignal.any([signal]) }),
-				),
-			parsed.carried,
+			idle: payload.idle,
+			...(parsed.carried === undefined ? {} : { carried: parsed.carried }),
+			...(cancel === undefined ? {} : { cancel }),
+		};
+		return call.run(scope, (effects, signal) =>
+			loopHookReply(event, { runner, call, effects }, () => parsed.emit({ runner, only, signal })),
 		);
 	};
 }

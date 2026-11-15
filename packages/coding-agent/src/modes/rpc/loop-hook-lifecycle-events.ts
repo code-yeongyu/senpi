@@ -18,7 +18,7 @@ import {
 	malformed,
 	forwarded,
 } from "./loop-hook-payloads.ts";
-import { isAgentMessages } from "./loop-hook-message-shapes.ts";
+import { isAgentMessages } from "./agent-message-schema.ts";
 
 // The session and agent lifecycle a hosted loop forwards (senpi#5898): start, park/resume, holds, wakes, abort,
 // shutdown, and an agent run's start, end and settle. Each handler returns nothing; its effects ride the reply.

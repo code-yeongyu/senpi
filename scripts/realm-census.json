@@ -8235,6 +8235,82 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#BY_ROLE": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#agentMessageSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#agentMessagesSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#count": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#editableContentSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#image": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#providerNative": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#text": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#textOrImage": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#thinking": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#timestamp": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#toolCall": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#usageSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#userContentSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/assistant-stream-schema.ts#BY_TYPE": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/assistant-stream-schema.ts#assistant": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/assistant-stream-schema.ts#assistantMessageEventSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/assistant-stream-schema.ts#at": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/assistant-stream-schema.ts#toolCall": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/child-reaper.ts#orphanSyscalls": {
 			"class": "per-copy-safe",
 			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
@@ -8513,6 +8589,22 @@
 		"packages/coding-agent/src/modes/rpc/compact-transport-refusal.ts#COMPACT_TRANSPORT_METHODS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/compaction-settings-schema.ts#SHAPE": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/compaction-settings-schema.ts#compactionSettingsSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/compaction-settings-schema.ts#flag": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/compaction-settings-schema.ts#ratio": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/connection-question-bridge.ts#sessionQuestionBridges": {
 			"class": "per-copy-safe",
@@ -8866,30 +8958,6 @@
 			"class": "constant",
 			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
 		},
-		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#ASSISTANT_PARTS": {
-			"class": "constant",
-			"reason": "lookup data literal of shape checks; never written after load"
-		},
-		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#COST": {
-			"class": "constant",
-			"reason": "lookup data literal of shape checks; never written after load"
-		},
-		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#INDEXED": {
-			"class": "constant",
-			"reason": "lookup data literal of shape checks; never written after load"
-		},
-		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#MESSAGE_ROLES": {
-			"class": "constant",
-			"reason": "lookup data literal of shape checks; never written after load"
-		},
-		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#PARTIAL": {
-			"class": "constant",
-			"reason": "lookup data literal of shape checks; never written after load"
-		},
-		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#STREAM_EVENTS": {
-			"class": "constant",
-			"reason": "lookup data literal of shape checks; never written after load"
-		},
 		"packages/coding-agent/src/modes/rpc/loop-hook-provider-events.ts#PROVIDER_LOOP_HOOKS": {
 			"class": "constant",
 			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
@@ -9130,6 +9198,10 @@
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/model-schema.ts#modelSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/pause-command-validation.ts#RUN_REF_KINDS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -9271,6 +9343,14 @@
 		"packages/coding-agent/src/modes/rpc/session-effect-status.ts#sinks": {
 			"class": "per-copy-safe",
 			"reason": "listener or subscriber set; subscribers register with the copy whose module emits"
+		},
+		"packages/coding-agent/src/modes/rpc/session-entry-schema.ts#BY_TYPE": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/session-entry-schema.ts#sessionEntrySchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/session-event-fanout.ts#BROADCAST_LIFECYCLE_RECORDS": {
 			"class": "constant",

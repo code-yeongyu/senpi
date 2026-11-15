@@ -419,7 +419,7 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		let during: { id: string; file: string | undefined; idle: boolean } | undefined;
 		let captured: ReturnType<typeof call.current>;
 
-		await call.run("loop-session-1", "/work", true, async () => {
+		await call.run({ sessionId: "loop-session-1", cwd: "/work", idle: true }, async () => {
 			captured = call.current();
 			const facts = captured;
 			if (facts === undefined) throw new Error("no facts inside the call");
@@ -446,13 +446,13 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 	it("holds late messages up to its cap, then drops the oldest and counts them, never throwing", async () => {
 		const call = createLoopHookCall();
 		let kept: ReturnType<typeof call.current>;
-		await call.run("loop-session-3", "/work", true, async () => {
+		await call.run({ sessionId: "loop-session-3", cwd: "/work", idle: true }, async () => {
 			kept = call.current();
 		});
 
 		for (let index = 0; index < LATE_PER_SESSION + 2; index++)
 			expect(() => kept?.sendMessage({ customType: "late", content: `m${index}`, display: false })).not.toThrow();
-		const next = await call.run("loop-session-3", "/work", true, async (effects) => ({
+		const next = await call.run({ sessionId: "loop-session-3", cwd: "/work", idle: true }, async (effects) => ({
 			sent: effects.sent.map((entry) => entry.message.content),
 			dropped: effects.dropped,
 		}));
@@ -465,14 +465,14 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 	it("past its cap drops held notices before any message: messages reach the model, notices only the UI", async () => {
 		const call = createLoopHookCall();
 		let kept: ReturnType<typeof call.current>;
-		await call.run("loop-session-4", "/work", true, async () => {
+		await call.run({ sessionId: "loop-session-4", cwd: "/work", idle: true }, async () => {
 			kept = call.current();
 		});
 
 		kept?.notify("oldest-notice");
 		for (let index = 0; index < LATE_PER_SESSION; index++)
 			kept?.sendMessage({ customType: "late", content: `m${index}`, display: false });
-		const next = await call.run("loop-session-4", "/work", true, async (effects) => ({
+		const next = await call.run({ sessionId: "loop-session-4", cwd: "/work", idle: true }, async (effects) => ({
 			sent: effects.sent.map((entry) => entry.message.content),
 			notices: effects.notices.map((entry) => entry.message),
 			dropped: effects.dropped,
@@ -489,7 +489,7 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		const call = createLoopHookCall();
 		const outside = Promise.withResolvers<ReturnType<typeof call.current>>();
 
-		await call.run("loop-session-2", "/work", true, async () => {});
+		await call.run({ sessionId: "loop-session-2", cwd: "/work", idle: true }, async () => {});
 		queueMicrotask(() => outside.resolve(call.current()));
 
 		expect(await outside.promise).toBeUndefined();

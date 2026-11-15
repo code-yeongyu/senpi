@@ -1,20 +1,20 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ForwardedLoopEvent } from "../../core/extensions/event-placement.ts";
 import type { ExtensionRunner } from "../../core/extensions/runner.ts";
-import type { CustomEntry, SessionEntry } from "../../core/session-manager.ts";
+import type { SessionEntry } from "../../core/session-manager.ts";
 import type { CarriedSession } from "./loop-hook-call.ts";
-import { isImage } from "./loop-hook-message-shapes.ts";
+import { isCustomEntry, isSessionEntry } from "./session-entry-schema.ts";
 
 // The hand's boundary for the loop events a hosted loop forwards (senpi#5898): each payload is parsed by its event
 // family's module into the event its handlers see in a session, or refused as malformed; nothing past the parse
-// re-checks a payload. This module holds what every family shares.
+// re-checks a payload. This module holds what every family shares; the transcript schemas live in `*-schema.ts`.
 
 /** What a forwarded event's handlers run with on the hand. */
 export interface LoopHookDispatch {
 	readonly runner: ExtensionRunner;
 	/** The user's loop hooks (provenance-filtered); a builtin is the loop's own machinery and runs there. */
 	readonly only: (extensionPath: string) => boolean;
-	/** The handlers' own signal, aborted when the call is. */
+	/** The call's own signal: aborted when the loop cancels the call or the call ends. */
 	readonly signal: AbortSignal;
 }
 
@@ -53,6 +53,8 @@ export const isOptional = <T>(value: unknown, is: (value: unknown) => value is T
 	value === undefined || is(value);
 export const isStrings = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
 export const isNullableString = (value: unknown): value is string | null => value === null || isString(value);
+export const isSessionEntries = (value: unknown): value is SessionEntry[] =>
+	Array.isArray(value) && value.every(isSessionEntry);
 
 export const malformed = (event: string): Error => new Error(`malformed ${event} payload`);
 
@@ -60,18 +62,8 @@ export const malformed = (event: string): Error => new Error(`malformed ${event}
 export const imagesOf = (value: unknown): ImageContent[] | undefined | null =>
 	value === undefined ? undefined : Array.isArray(value) && value.every(isImage) ? value : null;
 
-export const isSessionEntry = (value: unknown): value is SessionEntry =>
-	isRecord(value) &&
-	typeof value.type === "string" &&
-	typeof value.id === "string" &&
-	isNullableString(value.parentId) &&
-	typeof value.timestamp === "string";
-
-export const isSessionEntries = (value: unknown): value is SessionEntry[] =>
-	Array.isArray(value) && value.every(isSessionEntry);
-
-const isCustomEntry = (value: unknown): value is CustomEntry =>
-	isSessionEntry(value) && value.type === "custom" && typeof value.customType === "string";
+const isImage = (value: unknown): value is ImageContent =>
+	isRecord(value) && value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string";
 
 /**
  * The session port's read half a call carries (`leafId`, `handEntries`; see `CarriedSession`), or `null` when

@@ -1,25 +1,25 @@
-import type { CompactionPreparation, CompactionSettings, FileOperations } from "../../core/compaction/index.ts";
+import type { CompactionPreparation, FileOperations } from "../../core/compaction/index.ts";
 import type {
 	CompactionReason,
 	CompactionRejectionCause,
 	SessionCompactEvent,
 	SessionCompactFailedEvent,
 } from "../../core/extensions/types.ts";
-import type { CompactionEntry } from "../../core/session-manager.ts";
 import {
 	isBoolean,
 	isOneOf,
 	isOptional,
 	isRecord,
 	isSessionEntries,
-	isSessionEntry,
 	isString,
 	isStrings,
 	loopHookFamily,
 	malformed,
 	forwarded,
 } from "./loop-hook-payloads.ts";
-import { isAgentMessages } from "./loop-hook-message-shapes.ts";
+import { isAgentMessages, isCount } from "./agent-message-schema.ts";
+import { isCompactionSettings } from "./compaction-settings-schema.ts";
+import { isCompactionEntry } from "./session-entry-schema.ts";
 
 // A hosted loop's compaction (senpi#5898): `session_before_compact` returns its combined result (`cancel`,
 // `compaction`) as a session's emit does; `session_compact` and `session_compact_failed` are notifications.
@@ -46,24 +46,11 @@ const COMPACTION_FAILED_REASONS = [
 	"overflow",
 ] as const satisfies readonly SessionCompactFailedEvent["reason"][];
 
-const isCompactionEntry = (value: unknown): value is CompactionEntry =>
-	isSessionEntry(value) &&
-	value.type === "compaction" &&
-	typeof value.summary === "string" &&
-	typeof value.firstKeptEntryId === "string" &&
-	typeof value.tokensBefore === "number";
-
 /** The file sets of a preparation, which travel as arrays (a `Set` has no JSON form); `null` when malformed. */
 function fileOpsOf(value: unknown): FileOperations | null {
 	if (!isRecord(value) || !isStrings(value.read) || !isStrings(value.written) || !isStrings(value.edited)) return null;
 	return { read: new Set(value.read), written: new Set(value.written), edited: new Set(value.edited) };
 }
-
-const isCompactionSettings = (value: unknown): value is CompactionSettings =>
-	isRecord(value) &&
-	typeof value.enabled === "boolean" &&
-	typeof value.reserveTokens === "number" &&
-	typeof value.keepRecentTokens === "number";
 
 function preparationOf(value: unknown): CompactionPreparation | null {
 	if (!isRecord(value)) return null;
@@ -78,7 +65,7 @@ function preparationOf(value: unknown): CompactionPreparation | null {
 		!isAgentMessages(turnPrefixMessages) ||
 		!isOptional(turnPrefixSourceMessages, isAgentMessages) ||
 		typeof isSplitTurn !== "boolean" ||
-		typeof tokensBefore !== "number" ||
+		!isCount(tokensBefore) ||
 		!isOptional(previousSummary, isString) ||
 		fileOps === null ||
 		!isCompactionSettings(settings)

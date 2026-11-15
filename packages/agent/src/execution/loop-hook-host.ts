@@ -16,7 +16,10 @@ import { decodeLoopHookMessage, encodeLoopHookMessage, type LoopHookCall } from 
  * `loop-hook-host-protocol.ts`).
  */
 export interface LoopHookHost {
-	/** Runs the user's hooks for `event` on the user's machine. Rejects with the hook's failure, a restart or an abort. */
+	/**
+	 * Runs the user's hooks for `event` on the user's machine. Rejects with the hook's failure, a restart or an abort; an
+	 * abort also tells the user's machine to stop the hooks still running for the call (their signal aborts).
+	 */
 	run(event: string, payload: JsonValue, signal?: AbortSignal): Promise<JsonValue>;
 	/** IDs of the calls still waiting for the user's machine. */
 	waiting(): readonly string[];
@@ -95,6 +98,7 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 				}
 				return;
 			case "hook.call":
+			case "hook.cancel":
 				return;
 		}
 	});
@@ -107,7 +111,15 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 			const result = new Promise<JsonValue>((resolve, reject) => {
 				pending.set(call.callId, { call, resolve, reject });
 			});
-			const onAbort = (): void => settle(call.callId, (waiter) => waiter.reject(new Error("Operation aborted")));
+			const onAbort = (): void =>
+				settle(call.callId, (waiter) => {
+					waiter.reject(new Error("Operation aborted"));
+					void transport
+						.send(lane, encodeLoopHookMessage({ kind: "hook.cancel", callId: call.callId }))
+						.catch(() => {
+							// The link closed: the hand's call ends with it, so there is nothing left to cancel.
+						});
+				});
 			signal?.addEventListener("abort", onAbort, { once: true });
 			void result.then(
 				() => signal?.removeEventListener("abort", onAbort),

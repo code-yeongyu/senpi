@@ -7,12 +7,12 @@ import {
 	isOptional,
 	isRecord,
 	isSessionEntries,
-	isSessionEntry,
 	isString,
 	loopHookFamily,
 	malformed,
 	forwarded,
 } from "./loop-hook-payloads.ts";
+import { isSessionEntry } from "./session-entry-schema.ts";
 
 // A hosted loop's session navigation (senpi#5898): `session_before_switch`, `session_before_fork` and
 // `session_before_tree` return their combined result (the last one, the first `cancel` ending the walk) as a session's
@@ -49,7 +49,7 @@ function treePreparationOf(value: unknown): TreePreparation {
 }
 
 const isBranchSummary = (value: unknown): value is BranchSummaryEntry =>
-	isSessionEntry(value) && value.type === "branch_summary" && isString(value.fromId) && isString(value.summary);
+	isSessionEntry(value) && value.type === "branch_summary";
 
 export const SESSION_LOOP_HOOKS = loopHookFamily({
 	session_before_switch: ({ reason, targetSessionFile }) => {

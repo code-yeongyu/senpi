@@ -1,5 +1,6 @@
 import { isOneOf, isOptional, loopHookFamily, malformed, forwarded } from "./loop-hook-payloads.ts";
-import { isAgentMessage, isAgentMessages, isAssistantMessageEvent } from "./loop-hook-message-shapes.ts";
+import { isAgentMessage, isAgentMessages } from "./agent-message-schema.ts";
+import { isAssistantMessageEvent } from "./assistant-stream-schema.ts";
 
 // A hosted loop's messages (senpi#5898): each message's start, per-token update and end (whose handlers may replace the
 // message, as in a session), and the two `context` phases before each provider request, each phase returning the

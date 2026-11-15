@@ -5,7 +5,6 @@ import type {
 	BoundaryContextPreview,
 	InputAttribution,
 	InputDispositionEvent,
-	InputSource,
 	SessionBoundaryDraft,
 } from "../../core/extensions/types.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
@@ -17,19 +16,18 @@ import {
 	isOneOf,
 	isOptional,
 	isRecord,
-	isSessionEntry,
 	isString,
 	isStrings,
 	loopHookFamily,
 	malformed,
 	forwarded,
 } from "./loop-hook-payloads.ts";
-import { isAgentMessage, isAgentMessages } from "./loop-hook-message-shapes.ts";
+import { editableContentSchema, isAgentMessage, isAgentMessages, userContentSchema } from "./agent-message-schema.ts";
+import { INPUT_SOURCES, isSessionEntry } from "./session-entry-schema.ts";
 
 // A hosted loop's turn (senpi#5898): its input and the start of the agent run, each turn's start, and the
 // two boundaries that may append session entries and ask for one more request (`turn_end`, `agent_before_settle`).
 
-const INPUT_SOURCES = ["interactive", "rpc", "extension"] as const satisfies readonly InputSource[];
 const INPUT_ATTRIBUTIONS = ["user", "agent"] as const satisfies readonly InputAttribution[];
 const STREAMING_BEHAVIORS = ["steer", "followUp"] as const;
 const TRIGGERS = ["prompt", "delivery", "extension"] as const satisfies readonly BeforeAgentStartEvent["trigger"][];
@@ -47,9 +45,6 @@ const DRAFT_TYPES = [
 	"compaction",
 ] as const satisfies readonly SessionBoundaryDraft["type"][];
 
-const isDraftContent = (value: unknown): boolean =>
-	isString(value) || (Array.isArray(value) && value.every((part) => isRecord(part) && isOneOf(part.type, PART_TYPES)));
-
 /** A session draft a boundary handler returned, checked by its type (the loop validates it against its session). */
 function isDraft(value: unknown): value is SessionBoundaryDraft {
 	if (!isRecord(value) || !isOneOf(value.type, DRAFT_TYPES)) return false;
@@ -57,11 +52,14 @@ function isDraft(value: unknown): value is SessionBoundaryDraft {
 		case "custom":
 			return isString(value.customType);
 		case "custom_message":
-			return isString(value.customType) && isDraftContent(value.content) && isBoolean(value.display);
+			return (
+				isString(value.customType) && userContentSchema.safeParse(value.content).success && isBoolean(value.display)
+			);
 		case "context_edit":
 			return (
 				isString(value.targetId) &&
-				(value.replacement === null || (isRecord(value.replacement) && isDraftContent(value.replacement.content)))
+				(value.replacement === null ||
+					(isRecord(value.replacement) && editableContentSchema.safeParse(value.replacement.content).success))
 			);
 		case "compaction":
 			return isString(value.summary) && isNullableString(value.firstKeptEntryId);
@@ -69,7 +67,6 @@ function isDraft(value: unknown): value is SessionBoundaryDraft {
 }
 
 const LLM_ROLES = ["user", "assistant", "toolResult", "system", "configurationUpdate"] as const;
-const PART_TYPES = ["text", "image"] as const;
 
 const isPreview = (value: unknown): value is BoundaryContextPreview =>
 	isRecord(value) &&

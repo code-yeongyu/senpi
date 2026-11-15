@@ -12,7 +12,7 @@ import {
 	malformed,
 	forwarded,
 } from "./loop-hook-payloads.ts";
-import { isModel } from "./loop-hook-message-shapes.ts";
+import { isModel } from "./model-schema.ts";
 
 // A hosted loop's provider and model events (senpi#5898). The request hooks get the projected request (CK21); the
 // request headers never leave the loop (`before_provider_headers` is loop-only, see `LOOP_HOOK_FORWARDING`).
