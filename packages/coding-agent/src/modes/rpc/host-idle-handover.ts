@@ -91,6 +91,13 @@ export interface HostIdleHandoverOptions {
 	readonly identity: () => HostIdentityView;
 	readonly isIdle: () => boolean;
 	readonly perform: (request: IdleHandoverRequest) => Promise<HandoverOutcome>;
+	/**
+	 * Called in the same synchronous step as the idle check that starts the switch, before anything is awaited, so work
+	 * the idle check does not see (machine ops, senpi#6752) cannot start between that check and the end of this host;
+	 * `releaseNewWork` reopens it when the handover is blocked and this host keeps serving.
+	 */
+	readonly holdNewWork?: () => void;
+	readonly releaseNewWork?: () => void;
 	/** How often a pending operation re-checks for idle between request settlements. */
 	readonly pollMs?: number;
 	readonly log?: (line: string) => void;
@@ -206,6 +213,7 @@ export class HostIdleHandover {
 		if (operation.view.state !== "handover_pending") return;
 		this.stopTimer();
 		operation.view = { ...operation.view, state: "handover_switching" };
+		this.options.holdNewWork?.();
 		const outcome = await this.options
 			.perform(operation.request)
 			.catch(
@@ -214,6 +222,7 @@ export class HostIdleHandover {
 		operation.view = outcome.ok
 			? { ...operation.view, state: "handover_completed", successor: outcome.successor }
 			: { ...operation.view, state: "handover_blocked", reason: outcome.reason };
+		if (!outcome.ok) this.options.releaseNewWork?.();
 		this.options.log?.(`handover ${operation.view.operationId} ${operation.view.state}`);
 	}
 

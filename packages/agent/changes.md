@@ -1,3 +1,21 @@
+## 2026-11-15 - A read-folders subpath without the agent loop (senpi#6740)
+
+### What changed
+
+- `packages/agent/package.json`: new `./read-folders` export (`src/read-folders.ts`): the read folder, `prepareReadFolder` and `createDefaultReadSummary`, without the agent loop or the AI package.
+
+### Why
+
+- The worker-safe read core folds like the local read tool; through the root entry it would pull the AI package (all providers, and a guarded `node:fs` require) into a Worker bundle.
+
+### Why an extension could not handle it
+
+- Package exports are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one added entry in the `exports` map.
+
 ## 2026-11-11 - Test alias for the realm-registry helper (omo#12965)
 
 ### What changed

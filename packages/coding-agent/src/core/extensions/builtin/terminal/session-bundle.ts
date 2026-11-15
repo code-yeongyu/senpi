@@ -40,6 +40,9 @@ export class TerminalSessionBundle {
 	readonly #ages = new BackgroundAgeSchedule((event) => this.#dispatchAge(event));
 	/** Age events that came due while parked: only the newest per session is worth delivering. */
 	#parkedAges = new Map<string, TerminalBackgroundAgeEvent>();
+	/** Background sessions an interrupted turn's stop ended, by the turn id: their exit notice does not wake. */
+	readonly #interruptStops = new Map<string, string>();
+	readonly #runJobReleases = new Map<string, () => void>();
 	#torndown = false;
 
 	constructor(options: TerminalManagerOptions) {
@@ -95,6 +98,23 @@ export class TerminalSessionBundle {
 		this.#sinks?.onBackgroundState(this.backgroundSnapshot());
 	}
 
+	/** Hold the release of the run job `id` was recorded as; its exit drops it. */
+	trackRunJob(id: string, release: () => void): void {
+		if (this.#torndown) return release();
+		this.#runJobReleases.set(id, release);
+	}
+
+	/** Stop a session the interrupted turn `turnId` started; its exit notice then reaches the next turn without waking. */
+	async stopForInterrupt(id: string, turnId: string): Promise<void> {
+		const runtime = this.manager.get(id);
+		if (runtime === null) throw new Error(`${id} runs on the session's tool child, which this stop does not reach`);
+		this.#interruptStops.set(id, turnId);
+		const stopped = await this.manager.stop(id);
+		if (stopped && runtime.exited) return;
+		this.#interruptStops.delete(id);
+		throw new Error(`${id} was still running after the stop (TERM, then KILL)`);
+	}
+
 	/** The auto-reap's stop did not end a session still on the schedule: one notice; its age notices go on. */
 	notifyBackgroundReapFailed(id: string, autoReapMinutes: number, reason: string): void {
 		if (this.#torndown) return;
@@ -104,8 +124,13 @@ export class TerminalSessionBundle {
 		this.#dispatchAge({ ...event, reason });
 	}
 
-	notifyBackgroundExit(id: string, runtime: TerminalExitView): void {
+	notifyBackgroundExit(id: string, exited: TerminalExitView): void {
 		if (this.#torndown) return;
+		this.#runJobReleases.get(id)?.();
+		this.#runJobReleases.delete(id);
+		const interruptedTurn = this.#interruptStops.get(id);
+		this.#interruptStops.delete(id);
+		const runtime = interruptedTurn === undefined ? exited : stoppedByInterruptView(exited, interruptedTurn);
 		const subject = this.#ages.remove(id);
 		this.#parkedAges.delete(id);
 		if (subject && runtime.autoReapedAfterMinutes !== undefined) {
@@ -127,6 +152,9 @@ export class TerminalSessionBundle {
 		this.#parkedExits.clear();
 		this.#ages.dispose();
 		this.#parkedAges.clear();
+		for (const release of this.#runJobReleases.values()) release();
+		this.#runJobReleases.clear();
+		this.#interruptStops.clear();
 		this.monitors.dispose();
 		if (this.#backgrounds.size > 0) {
 			this.#backgrounds.clear();
@@ -153,6 +181,17 @@ export class TerminalSessionBundle {
 		this.#parkedMonitorEvents.push(event);
 		if (this.#parkedMonitorEvents.length > MAX_PARKED_MONITOR_EVENTS) this.#parkedMonitorEvents.shift();
 	}
+}
+
+function stoppedByInterruptView(runtime: TerminalExitView, turnId: string): TerminalExitView {
+	return {
+		exitResult: runtime.exitResult,
+		...(runtime.autoReapedAfterMinutes === undefined
+			? {}
+			: { autoReapedAfterMinutes: runtime.autoReapedAfterMinutes }),
+		stoppedByInterrupt: { turnId },
+		fullOutput: () => runtime.fullOutput(),
+	};
 }
 
 const parkedBundles = new Map<string, TerminalSessionBundle>();

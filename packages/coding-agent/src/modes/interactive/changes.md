@@ -1,3 +1,21 @@
+## 2026-11-14 - The terminal control endpoint's `interrupt` takes `background: "stop"`
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-session-commands.ts`: the control endpoint's `interrupt` passes `background` to the shared `interruptRunningTurn`, so a terminal session answers the same shape as a host session. Esc in the TUI is unchanged: it is a user Stop, which holds automatic wakes, and it leaves background sessions running.
+
+### Why
+
+- One interrupt contract for every endpoint `thread_interrupt` reaches.
+
+### Why an extension could not handle it
+
+- The control endpoint is interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: the `interrupt` case of `runSessionControlCommand`.
+
 ## 2026-11-03 - Preserve Markdown selection provenance in transcript caches
 
 ### What changed

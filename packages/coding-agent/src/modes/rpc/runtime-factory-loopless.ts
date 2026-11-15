@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { NestedRequest, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
 import { type AgentSessionRuntimeDiagnostic, createAgentSessionServices } from "../../core/agent-session-services.ts";
+import { type HandWake, lateLoopRoute, loopWakeRoute } from "../../core/execution/hand-wake-route.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import { PresentationBroker } from "../../core/extensions/ui-presentation.ts";
 import { bootstrapRuntime, buildToolRegistry, type ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
@@ -70,6 +71,11 @@ export interface LooplessRuntime {
 export interface LooplessRuntimeProfile {
 	cwd: string;
 	launchProfile?: Readonly<AgentSessionLaunchProfile>;
+	/**
+	 * On a hand, this runtime's scope's wake outbox (H3): what its work sends to the loop after the call that started it
+	 * ended (messages, user messages, notices) goes there. Absent, that work stays loop-side and unbound.
+	 */
+	wake?: (wake: HandWake) => void;
 }
 
 export type LooplessRuntimeFactory = (profile: LooplessRuntimeProfile) => Promise<LooplessRuntime>;
@@ -187,13 +193,20 @@ export function createLooplessRuntimeFactory(
 		});
 		toolNames = () => [...registry.toolRegistry.keys()];
 		const getLoadedHookSources = services.resourceLoader.getLoadedHookSources?.bind(services.resourceLoader);
-		const loopHookCall = createLoopHookCall();
+		const { wake } = profile;
+		const loopWake = wake === undefined ? undefined : loopWakeRoute(wake);
+		const loopHookCall = createLoopHookCall(
+			lateLoopRoute(wake, (error) =>
+				runtime.extensionRunner.emitError({ extensionPath: "<loop-hook-call>", event: "late_effect", error }),
+			),
+		);
 		runtime.extensionRunner.bindSessionlessFacts({
 			getAllTools: () => Array.from(registry.definitions.values(), toolInfoOf),
 			loopHookCall: () => loopHookCall.current(),
 			loopHookSend: () => loopHookCall.sender(),
 			loopHookWrite: () => loopHookCall.writer(),
 			getAgentDir: () => agentDir,
+			...(loopWake === undefined ? {} : { loopWake }),
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
 		// A forwarded loop event's handlers are bounded as a session bounds them, by this runtime's own settings.
@@ -209,13 +222,16 @@ export function createLooplessRuntimeFactory(
 					);
 			},
 		);
-		// On a hand, a call's extension UI is presented by the loop that owns the call (S30).
-		const presentation = new PresentationBroker((error) =>
-			runtime.extensionRunner.emitError({
-				extensionPath: "<presentation-port>",
-				event: "ui_presentation",
-				error: `A presentation could not reach the attached client: ${error instanceof Error ? error.message : String(error)}`,
-			}),
+		// On a hand, a call's extension UI is presented by the loop that owns the call (S30); a notice made outside any
+		// call, or after its call ended, goes to the loop as a wake (H3).
+		const presentation = new PresentationBroker(
+			(error) =>
+				runtime.extensionRunner.emitError({
+					extensionPath: "<presentation-port>",
+					event: "ui_presentation",
+					error: `A presentation could not reach the attached client: ${error instanceof Error ? error.message : String(error)}`,
+				}),
+			loopWake?.notify,
 		);
 		runtime.extensionRunner.setUiBroker(presentation);
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
