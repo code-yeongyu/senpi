@@ -11,7 +11,7 @@ import { createLoopHookCall } from "../../src/modes/rpc/loop-hook-call.ts";
 import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
-import { hooksOf, loopEventMachine, NOTIFICATIONS } from "./loop-event-fixture.ts";
+import { hooksOf, loopEventMachine, NOTIFICATIONS, noLateEffects } from "./loop-event-fixture.ts";
 import { cleanupHands } from "./remote-hand-fixture.ts";
 
 afterEach(cleanupHands);
@@ -71,7 +71,7 @@ describe("the hand's wants (senpi#5898)", () => {
 			await createInMemoryModelRegistry(AuthStorage.inMemory()),
 			loaded.eventBus,
 		);
-		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
+		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall(noLateEffects));
 
 		expect(await hooks("describe_hooks", {})).toEqual({ wants: ["provider_stream_event"] });
 	});

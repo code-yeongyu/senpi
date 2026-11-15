@@ -10,7 +10,7 @@ import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { fieldsOf, loopEventMachine, MODEL, NOTIFICATIONS, toJson } from "./loop-event-fixture.ts";
+import { fieldsOf, loopEventMachine, MODEL, NOTIFICATIONS, toJson, noLateEffects } from "./loop-event-fixture.ts";
 import { cleanupHands } from "./remote-hand-fixture.ts";
 
 let user: Awaited<ReturnType<typeof loopEventMachine>>;
@@ -29,7 +29,7 @@ async function handOf(extensions: { path: string; factory: ExtensionFactory }[])
 		await createInMemoryModelRegistry(AuthStorage.inMemory()),
 		loaded.eventBus,
 	);
-	return extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
+	return extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall(noLateEffects));
 }
 
 describe("a hosted loop's notifications run the user's handlers on the hand (senpi#5898)", () => {

@@ -1,3 +1,22 @@
+## 2026-11-16 - The private-fd capture releases startup fillers first (senpi#6769)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts`: `capturedState()` runs `releaseInheritedStartupFillers(process.env)` on the main thread before it reads and removes `SENPI_PRIVATE_FDS` / `SENPI_PRIVATE_FDS_FINAL`. The release is idempotent: it strips the hand-off's filler list, so an entry's own earlier or later release does nothing more.
+- `packages/coding-agent/src/private-fd-startup-release.ts`: the doc comment states that the capture runs the same release.
+
+### Why
+
+- The bundled CLI entry (`dist/bundle/cli.js`) evaluates the release's side effect in its own body, after every imported chunk, so the capture had already deleted the table. The release then treated the slots the table named as fillers and closed them. A supervisor-started engine (`host ensure`) lost its private descriptors, for example a desktop's memory-sync socket at fd 5.
+
+### Why an extension could not handle it
+
+- The descriptor is closed during the engine's startup, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the top of `capturedState()` in `private-fds.ts`; its import list.
+
 ## 2026-11-15 - The public entry exports the device machine pieces (senpi#6720)
 
 ### What changed

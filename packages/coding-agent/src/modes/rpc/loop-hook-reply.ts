@@ -46,7 +46,7 @@ function assertWireJson(event: string, value: unknown, path: string): asserts va
 
 /**
  * Runs one forwarded event's handlers as `call`'s dispatch and builds its reply: their merged result, what they sent,
- * notified and wrote (session port), late messages dropped, their failures, which are reported, not thrown, as in a
+ * notified and wrote (session port), their failures, which are reported, not thrown, as in a
  * session, and the hand's new `wants` when a subscription changed it (review M1). The runner is shared with tool calls, so only failures inside this call's own async context are its own.
  */
 export async function loopHookReply(
@@ -82,7 +82,6 @@ export async function loopHookReply(
 			...(notices.length > 0 ? { notices } : {}),
 			...(entries.length > 0 ? { entries } : {}),
 			...(userMessages.length > 0 ? { userMessages } : {}),
-			...(effects.dropped > 0 ? { droppedLate: effects.dropped } : {}),
 			...(errors.length > 0 ? { errors } : {}),
 			...(wants === undefined ? {} : { wants }),
 		};
