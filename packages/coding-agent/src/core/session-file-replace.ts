@@ -84,7 +84,7 @@ function writeDurably(
 	}
 }
 
-function syncDirectory(directory: string): void {
+export function syncDirectory(directory: string): void {
 	if (process.platform === "win32") return;
 	const fd = openSync(directory, "r");
 	try {

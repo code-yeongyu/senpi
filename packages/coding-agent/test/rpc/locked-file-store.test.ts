@@ -1,7 +1,7 @@
 // senpi#5924 review M1/M2/L2/L3: the locked durable-file store several daemons share under one agent dir. A claim
 // supersedes the earlier owner and its commits are refused, a retried claim keeps its epoch, the cross-process lock
 // serializes claims, the file stays owner-only, a crashed writer's temp files go, and a corrupt file fails closed.
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -78,5 +78,38 @@ describe("locked file store", () => {
 
 		await expect(store.readEpoch()).rejects.toMatchObject({ name: "LockedFileStoreCorruptError" });
 		await expect(store.claimFor("b")).rejects.toMatchObject({ name: "LockedFileStoreCorruptError" });
+	});
+
+	it("refuses a write whose temp file cannot be created and leaves the file as it was, never rewriting in place", async () => {
+		const path = storePath();
+		const store = openLockedFileStore(path);
+		const epoch = await store.claimFor("a");
+		await store.commit(epoch, [put("k", "before")], () => {});
+		const before = readFileSync(path, "utf8");
+		chmodSync(dirname(path), 0o500);
+		try {
+			await expect(store.commit(epoch, [put("k", "after")], () => {})).rejects.toMatchObject({
+				name: "LockedFileStoreWriteError",
+				code: "store_write_refused",
+			});
+		} finally {
+			chmodSync(dirname(path), 0o700);
+		}
+		expect(readFileSync(path, "utf8")).toBe(before);
+		expect(await store.getDocument("k")).toBe("before");
+	});
+
+	it("reports a new owner to a watcher as soon as another process claims the store", async () => {
+		const path = storePath();
+		const store = openLockedFileStore(path);
+		await store.claimFor("a");
+		const seen = Promise.withResolvers<string | undefined>();
+		const stop = store.watchOwner((owner) => seen.resolve(owner));
+		try {
+			await openLockedFileStore(path).claimFor("b");
+			expect(await seen.promise).toBe("b");
+		} finally {
+			stop();
+		}
 	});
 });

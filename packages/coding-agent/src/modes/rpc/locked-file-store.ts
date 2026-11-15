@@ -3,20 +3,34 @@
  * agent dir during a handover, or several endpoints sharing it). agent-core's memory backend (`openMemoryStore`, which
  * passes the STORE conformance cases) runs over a medium that reads the file fresh on every access. Every claim and
  * commit runs under the repo's cross-process lock (`acquireOwnershipSafeLock` on `<path>.lock`), so each one is a
- * single read-check-write against the current file. Each write replaces the file atomically (`replaceFileAtomically`:
- * a temp file, fsync, rename, then a directory fsync where the platform supports one).
+ * single read-check-write against the current file. Each write is atomic or does not happen: a temp file created
+ * exclusively beside the file, fsynced, renamed over it, then the directory fsynced (`syncDirectory`, which skips win32
+ * and directories that cannot be synced). When the temp file cannot be created, the write is refused
+ * (`LockedFileStoreWriteError`) and the file stays as it was: there is no in-place rewrite a crash could truncate.
  *
  * Ownership: `claimFor(token)` makes `token` the store's owner under the next owner epoch, and is idempotent while
  * `token` still owns it, so a retried claim never moves the epoch twice. A commit under an epoch that is no longer the
  * file's is refused `stale-epoch` (`DurableStoreError`), so a superseded process can never overwrite its successor's
- * state. `owner()` reads the current owner, for a process that must stop acting once it is superseded.
+ * state. `owner()` reads the current owner; `watchOwner` reports each change of it as it happens (a watch on the file's
+ * directory, plus a bounded re-check for file systems whose watch misses a rename), so a superseded process can stop
+ * at once instead of on its next write.
  */
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+	closeSync,
+	fsyncSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	watch,
+	writeSync,
+} from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { createMemoryStoreMedium, openMemoryStore } from "@earendil-works/pi-agent-core";
 import type { DurableStore, StoreRecord, StoreValue } from "@earendil-works/pi-agent-core/conformance";
-import { replaceFileAtomically } from "../../core/session-file-replace.ts";
+import { syncDirectory } from "../../core/session-file-replace.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 
 type MediumState = ReturnType<typeof createMemoryStoreMedium>["current"];
@@ -26,6 +40,19 @@ export interface LockedFileStore extends DurableStore {
 	claimFor(token: string): Promise<number>;
 	/** The token that owns the store on disk now; `undefined` before any claim. */
 	owner(): Promise<string | undefined>;
+	/** Calls `listener` with the owner each time it changes on disk; returns the stop. */
+	watchOwner(listener: (owner: string | undefined) => void): () => void;
+}
+
+/** How often the owner is re-read when no watch event came: a bound for a file system whose watch misses a rename. */
+const OWNER_RECHECK_MS = 2_000;
+
+export class LockedFileStoreWriteError extends Error {
+	readonly code = "store_write_refused" as const;
+	constructor(path: string, cause: unknown) {
+		super(`the store file ${path} was not written: its temp file could not be created (${String(cause)})`);
+		this.name = "LockedFileStoreWriteError";
+	}
 }
 
 export class LockedFileStoreCorruptError extends Error {
@@ -81,7 +108,26 @@ function readFileState(path: string): { readonly owner: string | undefined; read
 
 function writeFileState(path: string, owner: string | undefined, state: MediumState): void {
 	const { epoch, records, documents } = state;
-	replaceFileAtomically(path, [JSON.stringify({ owner, epoch, records, documents: [...documents] })]);
+	const temp = join(dirname(path), `.${basename(path)}.${crypto.randomUUID()}.tmp`);
+	let fd: number;
+	try {
+		fd = openSync(temp, "wx", 0o600);
+	} catch (error) {
+		throw new LockedFileStoreWriteError(path, error);
+	}
+	try {
+		try {
+			writeSync(fd, JSON.stringify({ owner, epoch, records, documents: [...documents] }));
+			fsyncSync(fd);
+		} finally {
+			closeSync(fd);
+		}
+		renameSync(temp, path);
+	} catch (error) {
+		rmSync(temp, { force: true });
+		throw error;
+	}
+	syncDirectory(dirname(path));
 }
 
 /** Temp files of `path` a writer left by crashing before its rename; only called while holding the lock. */
@@ -89,6 +135,15 @@ function removeStaleTemps(path: string): void {
 	const prefix = `.${basename(path)}.`;
 	for (const name of readdirSync(dirname(path)))
 		if (name.startsWith(prefix) && name.endsWith(".tmp")) rmSync(join(dirname(path), name), { force: true });
+}
+
+/** The owner on disk, or the unreadable marker: a file being replaced reads whole or not at all (atomic rename). */
+function readOwnerQuietly(path: string): string | undefined {
+	try {
+		return readFileState(path).owner;
+	} catch {
+		return "\u0000unreadable";
+	}
 }
 
 export function openLockedFileStore(path: string): LockedFileStore {
@@ -133,5 +188,24 @@ export function openLockedFileStore(path: string): LockedFileStore {
 				return epoch;
 			}),
 		owner: async () => readFileState(path).owner,
+		watchOwner(listener) {
+			let last: string | undefined = readOwnerQuietly(path);
+			const recheck = (): void => {
+				const now = readOwnerQuietly(path);
+				if (now === last) return;
+				last = now;
+				listener(now);
+			};
+			const watcher = watch(dirname(path), (_event, name) => {
+				if (name === null || name === basename(path)) recheck();
+			});
+			watcher.on("error", recheck);
+			const timer = setInterval(recheck, OWNER_RECHECK_MS);
+			timer.unref();
+			return () => {
+				clearInterval(timer);
+				watcher.close();
+			};
+		},
 	};
 }
