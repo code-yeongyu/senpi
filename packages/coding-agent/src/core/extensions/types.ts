@@ -135,6 +135,7 @@ import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
 import type { SessionDialogApi } from "./session-dialog-api.ts";
 import type { UserActivityKind } from "./user-activity.ts";
+import type { RunBackgroundJob } from "../run-background-jobs.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
@@ -151,7 +152,11 @@ export type CompactionRejectionCause =
 	| "would-overflow"
 	| "circuit-breaker"
 	| "per-turn-cap"
-	| "stale-revision";
+	| "stale-revision"
+	// The summary request failed on a transient provider error after its bounded retries;
+	// it says nothing about the context, so the session does not latch admission on it and a
+	// later attempt can retry compaction.
+	| "transient-failure";
 
 // ============================================================================
 // UI Context
@@ -608,6 +613,11 @@ export interface ExtensionContext {
 	fenceRun?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
 	/** Drop this run's fence once the run is journaled cancelled; a run with no fence is a no-op (senpi#3811). */
 	releaseRunFence?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
+	/**
+	 * Record a background job the running turn started, so `interrupt { background: "stop" }` on that turn stops it.
+	 * Outside a turn nothing is recorded. The returned release drops the job once it ended on its own.
+	 */
+	registerRunBackgroundJob?(job: RunBackgroundJob): () => void;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -3110,6 +3120,13 @@ export interface ExtensionAPI {
 		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): void;
 
+	/**
+	 * True on a hand whose agent loop runs on another machine (brain/hand split): `sendMessage` and `sendUserMessage`
+	 * from background work reach that loop as durable wakes, and the loop applies its own delivery guards (its mode, its
+	 * model). A notifier that waits for `session_start` before it notifies notifies here without one.
+	 */
+	isLoopRemote(): boolean;
+
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T, options?: AppendEntryOptions): void;
 
@@ -3745,6 +3762,8 @@ export type PendingProviderRegistration =
  */
 export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
+	/** Backs `pi.isLoopRemote()`; a hand's runner with a wake route sets it (H3). */
+	isLoopRemote: () => boolean;
 	/** The device the session's tools run on, and the extension that registered it (registerDeviceMachine). */
 	deviceMachine: { readonly machine: ToolMachine; readonly extensionPath: string } | undefined;
 	/** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
@@ -3842,6 +3861,7 @@ export interface ExtensionContextActions {
 	getPauseState?: () => { pauseSeq: number; holds: SessionHoldRecord[] };
 	fenceRun?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
 	releaseRunFence?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
+	registerRunBackgroundJob?: (job: RunBackgroundJob) => () => void;
 	/** Internal delivery for a human-settled builtin question, never exposed on ExtensionAPI. */
 	questionInput?: () => void;
 	isProjectTrusted: () => boolean;

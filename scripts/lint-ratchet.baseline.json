@@ -787,9 +787,6 @@
   "packages/coding-agent/src/core/tools/ls.ts": {
     "typescript/no-explicit-any": 2
   },
-  "packages/coding-agent/src/core/tools/read.ts": {
-    "typescript/no-explicit-any": 1
-  },
   "packages/coding-agent/src/core/tools/renderers/bash.ts": {
     "typescript/no-explicit-any": 2
   },
