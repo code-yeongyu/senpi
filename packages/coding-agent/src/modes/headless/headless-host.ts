@@ -18,6 +18,7 @@ import {
 	type HandSelection,
 	type HandSelectionOptions,
 } from "./hand-selection.ts";
+import { createLoopSessionPort } from "./loop-session-port.ts";
 import { gatePresence } from "./presence-gates.ts";
 
 /** The headless engine's socket under `<agentDir>/rpc/`, apart from the shared host's `rpc.sock`. */
@@ -55,10 +56,18 @@ export function headlessEndpoint(
 export function headlessHostOptions(options: HeadlessHostOptions): MultiSessionHostOptions {
 	const { presence, hands, ...host } = options;
 	const runtimes = new Map<string, CreateAgentSessionRuntimeResult>();
+	// A session's calls carry its session to the chosen hand, so its session tools run there too (senpi#6754).
+	const sessionPort = (sessionId: string) => {
+		const session = runtimes.get(sessionId)?.session;
+		return session === undefined ? undefined : createLoopSessionPort(session);
+	};
 	const handSelection =
 		hands === undefined
 			? undefined
-			: createHandSelection(hands, presence === undefined ? {} : presenceHooks(presence, runtimes));
+			: createHandSelection(hands, {
+					...(presence === undefined ? {} : presenceHooks(presence, runtimes)),
+					sessionPort,
+				});
 	// Presence gates the session first; the hand selection then installs every host through the same gate, so a
 	// chosen hand's calls wait for presence and `null` gives back the gated host the session started with.
 	const gated = presence === undefined ? host.createRuntime : presenceRuntime(host.createRuntime, presence);

@@ -12,6 +12,23 @@ import { cleanupHands, handDirs } from "./remote-hand-fixture.ts";
 
 afterEach(cleanupHands);
 
+/** An extension tool the session finds through tool search: deferred, activated on its first call unless `lazy: false`. */
+const deferredTool =
+	(name: string, options: { readonly lazy?: boolean } = {}) =>
+	(pi: ExtensionAPI) =>
+		pi.registerTool({
+			name,
+			label: name,
+			description: `Draft the ${name.replaceAll("_", " ")} for a version.`,
+			exposure: "search",
+			...(options.lazy === false ? { allowLazyActivation: false } : {}),
+			parameters: Type.Object({ version: Type.String() }),
+			execute: async (_id, params) => ({
+				content: [{ type: "text", text: `${name} for ${params.version}` }],
+				details: {},
+			}),
+		});
+
 describe("a hosted loop's session tools run on the user's machine through the session port (senpi#6754)", () => {
 	it("todo returns its list, the loop commits its entry, and a later call carrying that entry sees the list", async () => {
 		const dirs = await handDirs("st-todo");
@@ -42,27 +59,49 @@ describe("a hosted loop's session tools run on the user's machine through the se
 	it("a deferred tool's first call activates it in the loop's tool set, and tool_search runs there", async () => {
 		const dirs = await handDirs("st-search");
 		const { loop, port } = hostedLoop({ activeTools: ["read"] });
-		const releaseNotes = (pi: ExtensionAPI) =>
-			pi.registerTool({
-				name: "release_notes",
-				label: "Release notes",
-				description: "Draft the release notes for a version.",
-				exposure: "search",
-				parameters: Type.Object({ version: Type.String() }),
-				execute: async (_id, params) => ({
-					content: [{ type: "text", text: `notes for ${params.version}` }],
-					details: {},
-				}),
-			});
-		const machine = userMachine(dirs, port, [releaseNotes]);
+		const machine = userMachine(dirs, port, [deferredTool("release_notes")]);
 
 		const notes = await machine.call("n1", "release_notes", { version: "1.2.0" });
 		const search = await machine.call("s1", "tool_search", { query: "draft release notes" });
 		await machine.close();
 
-		expect([notes.isError, textOf(notes)]).toEqual([false, "notes for 1.2.0"]);
+		expect([notes.isError, textOf(notes)]).toEqual([false, "release_notes for 1.2.0"]);
 		expect(loop.activeTools).toEqual(expect.arrayContaining(["read", "release_notes", "tool_search"]));
 		expect(search.isError, textOf(search)).toBe(false);
 		expect(textOf(search)).toContain("release_notes");
+	}, 90_000);
+
+	it("calls of one parallel batch each change the tool set they carried, and the loop keeps every change", async () => {
+		const dirs = await handDirs("st-parallel");
+		const { loop, port } = hostedLoop({ activeTools: ["read"] });
+		const machine = userMachine(dirs, port, [deferredTool("alpha_notes"), deferredTool("beta_notes")]);
+
+		// Both calls carry the same set ["read"]: neither sees the other's activation before it commits.
+		const results = await machine.batch(
+			[
+				["a1", "alpha_notes", { version: "1" }],
+				["b1", "beta_notes", { version: "2" }],
+			],
+			"parallel",
+		);
+		await machine.close();
+
+		expect(results.map((result) => [result.isError, textOf(result)])).toEqual([
+			[false, "alpha_notes for 1"],
+			[false, "beta_notes for 2"],
+		]);
+		expect([...loop.activeTools].sort()).toEqual(["alpha_notes", "beta_notes", "read", "tool_search"]);
+	}, 90_000);
+
+	it("a tool the session cannot activate is refused on the hand, as the session refuses it, and never runs", async () => {
+		const dirs = await handDirs("st-refused");
+		const { loop, port } = hostedLoop({ activeTools: ["read"] });
+		const machine = userMachine(dirs, port, [deferredTool("pinned_notes", { lazy: false })]);
+
+		const refused = await machine.call("p1", "pinned_notes", { version: "1" });
+		await machine.close();
+
+		expect([refused.isError, textOf(refused)]).toEqual([true, "Tool pinned_notes not found"]);
+		expect(loop.activeTools).not.toContain("pinned_notes");
 	}, 90_000);
 });

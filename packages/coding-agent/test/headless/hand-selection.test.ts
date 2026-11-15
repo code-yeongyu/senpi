@@ -483,7 +483,16 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			sessionId: "s-gated",
 			agent: { toolHost: undefined as ToolHost | undefined },
 			isStreaming: false,
-			sessionManager: { getEntries: () => [] as SessionEntry[], appendCustomEntry: () => "e" },
+			sessionManager: {
+				getEntries: () => [] as SessionEntry[],
+				appendCustomEntry: () => "e",
+				// What the session port carries to the chosen hand (senpi#6754): an empty session.
+				getBranch: () => [] as SessionEntry[],
+				getLeafId: () => null,
+				getHeader: () => null,
+			},
+			getActiveToolNames: () => [],
+			setActiveToolsByName: () => {},
 			dispose: () => {},
 		};
 		const options = headlessHostOptions({

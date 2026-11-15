@@ -4,6 +4,7 @@ import type { HistoryReducer } from "../../core/session-history-reduce.ts";
 import type { ReadonlySessionManager, SessionEntry, SessionHeader } from "../../core/session-manager.ts";
 import type { SessionWake, SessionWakeChange } from "../../core/session-wakes.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
+import { type ActiveToolsChange, applyActiveToolsChange } from "../../core/hand/session-effects.ts";
 import {
 	collectDocumentChanges,
 	materializeDocuments,
@@ -68,8 +69,11 @@ export interface LoopHookEffects {
 	readonly notices: LoopNotice[];
 	readonly entries: AppendedLoopEntry[];
 	readonly userMessages: SentLoopUserMessage[];
-	/** The active tool set the call's work left, for the loop to apply (`pi.setActiveTools`); unset: unchanged. */
-	activeTools: string[] | undefined;
+	/**
+	 * The call's change to the active tool set (`pi.setActiveTools`), relative to the set it carried, so the changes of
+	 * calls that ran at once compose when the loop applies each to its current set; unset: unchanged.
+	 */
+	activeTools: ActiveToolsChange | undefined;
 	/** The documents the call changed, `null` for a removed one; unset: it carried none. */
 	documents: SessionDocumentChanges | undefined;
 	/** The call's changes to the loop's wakes, in order. */
@@ -194,15 +198,23 @@ export function createLoopHookCall(): LoopHookCall {
 				},
 				hasPendingMessages: () => effects.userMessages.length > 0,
 				getActiveTools: () => {
-					const active = effects.activeTools ?? carried?.activeTools;
-					return active === undefined ? undefined : [...active];
+					const active = carried?.activeTools;
+					if (active === undefined) return undefined;
+					return effects.activeTools === undefined
+						? [...active]
+						: applyActiveToolsChange(active, effects.activeTools);
 				},
 				getSystemPromptOptions: () => ({ ...carried?.systemPromptOptions, cwd }),
 				relocationHost: () => relocation,
 				sessionWakes: () => wakes,
 				// Only a set the loop carried can change: the loop applies the change to that set.
 				setActiveTools: (names: readonly string[]) => {
-					if (live && carried?.activeTools !== undefined) effects.activeTools = [...names];
+					const active = carried?.activeTools;
+					if (!live || active === undefined) return;
+					effects.activeTools = {
+						activate: names.filter((name, index) => !active.includes(name) && names.indexOf(name) === index),
+						deactivate: active.filter((name) => !names.includes(name)),
+					};
 				},
 			});
 			try {
