@@ -1,4 +1,5 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 
 export interface SessionCwdIssue {
 	sessionFile?: string;
@@ -68,14 +69,20 @@ export class SessionCwdNotDirectoryError extends Error {
 	}
 }
 
-export function assertSessionCwdExists(sessionManager: SessionCwdSource, fallbackCwd: string): void {
+/**
+ * Async on purpose: the RPC session path may not reach a synchronous filesystem call
+ * (test/suite/no-sync-in-session-path.test.ts), so the directory probe is awaited here rather
+ * than taken with statSync.
+ */
+export async function assertSessionCwdExists(sessionManager: SessionCwdSource, fallbackCwd: string): Promise<void> {
 	const issue = getMissingSessionCwdIssue(sessionManager, fallbackCwd);
 	if (issue) {
 		throw new MissingSessionCwdError(issue);
 	}
 	const sessionCwd = sessionManager.getCwd();
 	// A missing cwd is the case above (or a session with no file, which keeps today's behaviour); one that exists must be a folder.
-	if (sessionCwd && statSync(sessionCwd, { throwIfNoEntry: false })?.isDirectory() === false) {
+	const stats = sessionCwd ? await stat(sessionCwd).catch(() => undefined) : undefined;
+	if (sessionCwd && stats !== undefined && !stats.isDirectory()) {
 		const sessionFile = sessionManager.getSessionFile();
 		throw new SessionCwdNotDirectoryError({ ...(sessionFile ? { sessionFile } : {}), sessionCwd });
 	}
