@@ -202,9 +202,12 @@ export async function tearDownReleased(host: RouterContext, sessionId: string, s
 	const binding = host.bindings.get(sessionId);
 	binding?.cancelPendingExtensionUiRequests?.();
 	forgetSessionOwnership(host, sessionId);
-	if (claim.finalizer)
+	if (claim.finalizer) {
+		// The file is another runtime's now: drop its handover-parked record entry as an explicit close does, or the
+		// next host on this endpoint would reopen it (senpi#6444).
+		if (host.handoverParkedDir !== undefined) await clearRetainedRecord(host, host.registry.peek(sessionId));
 		await finalizeClose(host, sessionId, binding, () => host.writer.releaseSession(sessionId, sessionPath));
-	else await host.finalizations.get(sessionId)?.promise;
+	} else await host.finalizations.get(sessionId)?.promise;
 	host.writer.forgetSession(sessionId);
 	return true;
 }
