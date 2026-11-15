@@ -12,6 +12,7 @@ import {
 	restoreLineEndings,
 } from "./edit-diff.ts";
 import { decodeUtf8, encodeUtf8 } from "./encoding.ts";
+import { fsErrorCode } from "./fs-error-code.ts";
 import {
 	type FileMutationQueue,
 	inProcessFileMutationQueue,
@@ -218,7 +219,9 @@ export function createCoreEditToolDefinition(
 				} catch (error: unknown) {
 					throwIfAborted();
 					const errorMessage =
-						error instanceof Error && "code" in error ? `Error code: ${error.code}` : String(error);
+						error instanceof Error && "code" in error
+							? `Error code: ${fsErrorCode(error) ?? error.code}`
+							: String(error);
 					throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
 				}
 				throwIfAborted();

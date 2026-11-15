@@ -7299,6 +7299,10 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/core/tools/fs-error-code.ts#FS_CODE_OF_OP_CODE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/tools/grep/index.ts#grepSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
@@ -7326,6 +7330,14 @@
 		"packages/coding-agent/src/core/tools/machine.ts#processMachineOps": {
 			"class": "per-copy-safe",
 			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
+		},
+		"packages/coding-agent/src/core/tools/posix-signals.ts#DARWIN": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/posix-signals.ts#LINUX": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/tools/powershell.ts#powershellToolConfig": {
 			"class": "constant",
@@ -7390,10 +7402,6 @@
 		"packages/coding-agent/src/core/tools/shell-operations.ts#MAX_TIMEOUT_SECONDS": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/tools/shell-operations.ts#POSIX_SIGNALS": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/tools/tool-machine.ts#NEVER_ABORTED": {
 			"class": "constant",

@@ -11,7 +11,7 @@ function randomHex(bytes: number): string {
 /**
  * Spills to a file on the tool machine, so the path a truncation notice names is one the model can read there.
  * Chunks are written in order at their byte offsets as they arrive. The operation layer has no delete, so `remove`
- * empties the file instead.
+ * empties the file instead, and does nothing when no chunk ever reached the machine.
  */
 export function createMachineOutputSpill(machine: ToolMachine, options?: { tempDir?: string }): OutputSpillFactory {
 	const tempDir = options?.tempDir ?? "/tmp";
@@ -19,9 +19,10 @@ export function createMachineOutputSpill(machine: ToolMachine, options?: { tempD
 		const path = `${tempDir}/${prefix}-${randomHex(8)}.log`;
 		const ctx = machine.context(undefined);
 		let size = 0;
+		let written = false;
 		let writeFailed = false;
 		let writeError: unknown;
-		let written: Promise<void> = Promise.resolve();
+		let pending: Promise<void> = Promise.resolve();
 		const read = (offset: number, limitBytes: number) =>
 			machine.ops.files.read({ path, offset, limitBytes }, ctx).then((result) => result.bytes);
 		return {
@@ -30,10 +31,11 @@ export function createMachineOutputSpill(machine: ToolMachine, options?: { tempD
 				const bytes = typeof chunk === "string" ? encodeUtf8(chunk) : chunk;
 				const offset = size;
 				size += bytes.length;
-				written = written.then(async () => {
+				pending = pending.then(async () => {
 					if (writeFailed) return;
 					try {
 						await machine.ops.files.write({ path, bytes, offset, createParentDirs: true }, ctx);
+						written = true;
 					} catch (error) {
 						writeFailed = true;
 						writeError = error;
@@ -41,11 +43,13 @@ export function createMachineOutputSpill(machine: ToolMachine, options?: { tempD
 				});
 			},
 			close: async () => {
-				await written;
+				await pending;
 				if (writeFailed) throw writeError;
 			},
 			remove: async () => {
-				await written;
+				await pending;
+				// Nothing reached the machine (the first write failed): there is no file to empty.
+				if (!written) return;
 				await machine.ops.files.write({ path, bytes: new Uint8Array() }, ctx);
 			},
 			readFull: async (maxBytes): Promise<FullOutput> => {

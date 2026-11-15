@@ -2,6 +2,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { decodeUtf8, encodeUtf8 } from "./encoding.ts";
+import { fsErrorCode } from "./fs-error-code.ts";
 import {
 	type FileMutationQueue,
 	inProcessFileMutationQueue,
@@ -60,7 +61,7 @@ function machineWriteBaseline(machine: ToolMachine): (absolutePath: string) => P
 			const { bytes } = await machine.ops.files.read({ path: absolutePath }, machine.context(undefined, "caller"));
 			return { kind: "present", content: decodeUtf8(bytes) };
 		} catch (error) {
-			if (error instanceof Error && "code" in error && error.code === "ENOENT") return { kind: "missing" };
+			if (error instanceof Error && fsErrorCode(error) === "ENOENT") return { kind: "missing" };
 			if (error instanceof Error) return { kind: "unavailable" };
 			throw error;
 		}

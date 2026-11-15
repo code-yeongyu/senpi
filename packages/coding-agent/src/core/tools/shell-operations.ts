@@ -1,4 +1,5 @@
 import type { ExecShell } from "@code-yeongyu/senpi-machine-ops";
+import { posixSignalTable } from "./posix-signals.ts";
 import type { ToolMachine } from "./tool-machine.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -61,22 +62,10 @@ export interface ShellExecHost {
 	afterExec?(): void;
 }
 
-const POSIX_SIGNALS: Readonly<Record<string, number>> = {
-	SIGHUP: 1,
-	SIGINT: 2,
-	SIGQUIT: 3,
-	SIGILL: 4,
-	SIGTRAP: 5,
-	SIGABRT: 6,
-	SIGFPE: 8,
-	SIGKILL: 9,
-	SIGSEGV: 11,
-	SIGPIPE: 13,
-	SIGALRM: 14,
-	SIGTERM: 15,
-};
-
-/** A host that knows only the tool machine: the machine's shell and environment, the cwd checked there. */
+/**
+ * A host that knows only the tool machine: the machine's shell and environment, the cwd checked there, and the signal
+ * numbers of the machine's own OS.
+ */
 export function machineShellExecHost(machine: ToolMachine, shell?: ExecShell): ShellExecHost {
 	return {
 		resolveShell: () => shell,
@@ -85,7 +74,7 @@ export function machineShellExecHost(machine: ToolMachine, shell?: ExecShell): S
 		},
 		envMode: "overlay",
 		defaultEnv: () => undefined,
-		signalNumber: (signal) => POSIX_SIGNALS[signal],
+		signalNumber: (signal) => posixSignalTable(machine.ops.info.host().os)?.[signal],
 	};
 }
 
