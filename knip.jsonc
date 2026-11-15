@@ -224,6 +224,8 @@
       "packages/ai/src/providers/cloudflare-stream.ts": ["resolveCloudflareModel"],
       // pre-existing at origin main aceb1cc1d9: unused exports CLOUDFLARE_WORKERS_AI_IMAGE_MODELS
       "packages/ai/src/providers/cloudflare-workers-ai.models.ts": ["CLOUDFLARE_WORKERS_AI_IMAGE_MODELS"],
+      // generated shard: unused exports COMMANDCODE_IMAGE_MODELS, COMMANDCODE_CLASSIFIER_MODELS
+      "packages/ai/src/providers/commandcode.models.ts": ["COMMANDCODE_CLASSIFIER_MODELS", "COMMANDCODE_IMAGE_MODELS"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEEPSEEK_IMAGE_MODELS, DEEPSEEK_CLASSIFIER_MODELS
       "packages/ai/src/providers/deepseek.models.ts": ["DEEPSEEK_CLASSIFIER_MODELS", "DEEPSEEK_IMAGE_MODELS"],
       // pre-existing at origin main aceb1cc1d9: unused exports FIREWORKS_IMAGE_MODELS, FIREWORKS_CLASSIFIER_MODELS

@@ -1774,6 +1774,26 @@
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
+		"packages/ai/src/providers/commandcode-config.ts#COMMANDCODE_MODELS_URL": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/ai/src/providers/commandcode-config.ts#COMMANDCODE_PLAN_NAMESPACES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/ai/src/providers/commandcode.models.ts#COMMANDCODE_CLASSIFIER_MODELS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/ai/src/providers/commandcode.models.ts#COMMANDCODE_IMAGE_MODELS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/ai/src/providers/commandcode.models.ts#COMMANDCODE_MODELS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
 		"packages/ai/src/providers/deepseek.models.ts#DEEPSEEK_CLASSIFIER_MODELS": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"

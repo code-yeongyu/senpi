@@ -27,7 +27,7 @@ google-shared.ts         Shared google/google-vertex catalog logic
 openai-responses-shared.ts Shared openai/azure Responses catalog logic
 ```
 
-Newer providers on disk (each `<name>.ts` + `<name>.models.ts`): ant-ling, kimi-coding, opencode, opencode-go, vercel-ai-gateway, xiaomi + xiaomi-token-plan-{ams,cn,sgp}, zai, zai-coding-cn.
+Newer providers on disk (each `<name>.ts` + `<name>.models.ts`): ant-ling, commandcode, kimi-coding, opencode, opencode-go, vercel-ai-gateway, xiaomi + xiaomi-token-plan-{ams,cn,sgp}, zai, zai-coding-cn.
 
 ## ADD OR CHANGE A PROVIDER
 
