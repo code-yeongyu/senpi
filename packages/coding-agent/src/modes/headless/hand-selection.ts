@@ -10,9 +10,11 @@ import {
 	createReliableTransport,
 	createRemoteToolHost,
 	type HandPlacement,
+	type RemoteSessionPort,
 	type ToolHost,
 	type Transport,
 } from "@earendil-works/pi-agent-core";
+import type { SessionEffects } from "../../core/hand/session-effects.ts";
 import type { SessionManager } from "../../core/session-manager.ts";
 
 export interface HandRow {
@@ -84,6 +86,11 @@ export interface HandSelectionOptions {
 	readonly onChange?: (durableSessionId: string, device: string | null) => void;
 	/** Called when a session ends and its hand state is forgotten. */
 	readonly onRelease?: (durableSessionId: string) => void;
+	/**
+	 * The session port a session's calls carry to its hand (senpi#6754), so its session tools run there with the session's
+	 * facts and their writes come back into it; absent, the calls carry no session.
+	 */
+	readonly sessionPort?: (durableSessionId: string) => RemoteSessionPort<SessionEffects> | undefined;
 }
 
 /** A remote host on a transport that never connects: each call it gets ends as "The hand is unreachable". */
@@ -132,9 +139,14 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 	};
 
 	const unreachable = (): Remote => ({ host: unreachableHost(), linked: false });
-	const linkTo = (device: string): Remote => {
+	const linkTo = (device: string, durableSessionId: string): Remote => {
 		try {
-			return { host: createRemoteToolHost(directory.link(device)), linked: true };
+			const sessionPort = options.sessionPort?.(durableSessionId);
+			const link = directory.link(device);
+			return {
+				host: createRemoteToolHost(sessionPort === undefined ? link : { ...link, sessionPort }),
+				linked: true,
+			};
 		} catch {
 			return unreachable();
 		}
@@ -154,7 +166,7 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 				const row = directory.list().find((hand) => hand.device === device);
 				if (row === undefined) return { ok: false, refusal: "hand_not_listed" };
 				if (!row.reachable) return { ok: false, refusal: "hand_unreachable" };
-				remote = linkTo(device);
+				remote = linkTo(device, durableSessionId);
 				if (!remote.linked) {
 					remote.host.close();
 					return { ok: false, refusal: "hand_unreachable" };
@@ -177,7 +189,12 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 			const device = recordedDevice(session);
 			if (device === null) return;
 			const row = directory.list().find((hand) => hand.device === device);
-			install(durableSessionId, session, device, row?.reachable === true ? linkTo(device) : unreachable());
+			install(
+				durableSessionId,
+				session,
+				device,
+				row?.reachable === true ? linkTo(device, durableSessionId) : unreachable(),
+			);
 		},
 		release: (durableSessionId) => {
 			sessions.get(durableSessionId)?.remote?.close();
