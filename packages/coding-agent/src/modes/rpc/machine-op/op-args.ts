@@ -1,7 +1,6 @@
 /**
  * The relay host's own decoders of each op's args (its `op-args.ts`, ported unchanged so every refusal reads the same):
- * any missing, mistyped or unknown key is malformed, refused before any effect. Bytes are base64 text in JSON; a write
- * may name `bytes_path` instead of `bytes` (senpi#6752, `bytes-path.ts`).
+ * any missing, mistyped or unknown key is malformed, refused before any effect. Bytes are base64 text in JSON.
  */
 import type {
 	EditRequest,
@@ -11,6 +10,7 @@ import type {
 	ListRequest,
 	ReadRequest,
 	StatRequest,
+	WriteRequest,
 } from "@code-yeongyu/senpi-machine-ops";
 import type { Args } from "./wire.ts";
 
@@ -54,34 +54,6 @@ type Defined<T> = { [K in keyof T as undefined extends T[K] ? never : K]: T[K] }
 const some = <T extends object>(o: T): Defined<T> =>
 	Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Defined<T>;
 
-export type Payload = Readonly<{ kind: "inline"; bytes: Uint8Array }> | Readonly<{ kind: "file"; path: string }>;
-export type WriteArgs = Readonly<{
-	path: string;
-	payload: Payload;
-	createParentDirs?: boolean;
-	offset?: number;
-	total?: number;
-}>;
-
-/**
- * `bytes` or `bytes_path`, exactly one, checked where the relay host checks `bytes` among the required keys (`before`,
- * then the bytes, then `after`), so a record without either is refused with the relay host's own words.
- */
-const payloadOf = (
-	a: Args,
-	required: Readonly<{ before: readonly string[]; after: readonly string[] }>,
-	optional: readonly string[],
-): Payload => {
-	for (const k of required.before) if (a[k] === undefined) bad(`${k} is required`);
-	if (a.bytes === undefined && a.bytes_path === undefined) bad("bytes is required");
-	for (const k of required.after) if (a[k] === undefined) bad(`${k} is required`);
-	if (a.bytes !== undefined && a.bytes_path !== undefined) bad("bytes and bytes_path are exclusive");
-	keys(a, [...required.before, ...required.after], [...optional, "bytes", "bytes_path"]);
-	return a.bytes_path === undefined
-		? { kind: "inline", bytes: bytes(a.bytes, "bytes") }
-		: { kind: "file", path: nonEmpty(a.bytes_path, "bytes_path") };
-};
-
 export const readArgs = (a: Args): ReadRequest => {
 	keys(a, ["path"], ["offset", "limit_bytes"]);
 	return some({
@@ -96,17 +68,22 @@ export const readRangeArgs = (a: Args): ReadRequest => {
 	if (length > READ_RANGE_MAX_BYTES) bad(`length is above ${READ_RANGE_MAX_BYTES}`);
 	return { path: nonEmpty(a.path, "path"), offset: uint(a.offset, "offset"), limitBytes: length };
 };
-export const writeArgs = (a: Args): WriteArgs => {
-	const payload = payloadOf(a, { before: ["path"], after: [] }, ["create_parent_dirs"]);
+export const writeArgs = (a: Args): WriteRequest => {
+	keys(a, ["path", "bytes"], ["create_parent_dirs"]);
 	return some({
 		path: nonEmpty(a.path, "path"),
-		payload,
+		bytes: bytes(a.bytes, "bytes"),
 		createParentDirs: opt(a.create_parent_dirs, flag, "create_parent_dirs"),
 	});
 };
-export const writeRangeArgs = (a: Args): WriteArgs => {
-	const payload = payloadOf(a, { before: ["path", "offset"], after: ["total"] }, []);
-	return { path: nonEmpty(a.path, "path"), offset: uint(a.offset, "offset"), payload, total: uint(a.total, "total") };
+export const writeRangeArgs = (a: Args): WriteRequest => {
+	keys(a, ["path", "offset", "bytes", "total"]);
+	return {
+		path: nonEmpty(a.path, "path"),
+		offset: uint(a.offset, "offset"),
+		bytes: bytes(a.bytes, "bytes"),
+		total: uint(a.total, "total"),
+	};
 };
 export const editArgs = (a: Args): EditRequest => {
 	keys(a, ["path", "exact", "replacement"]);

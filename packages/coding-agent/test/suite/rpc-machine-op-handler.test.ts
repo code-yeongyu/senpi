@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MachineOpHandler } from "../../src/modes/rpc/machine-op/handler.ts";
 import type { LiveHandle } from "../../src/modes/rpc/machine-op/live-handle.ts";
-import { MachineTerminals } from "../../src/modes/rpc/machine-op/machine-terminals.ts";
+import { MACHINE_TERMINAL_KILL_WAIT_MS, MachineTerminals } from "../../src/modes/rpc/machine-op/machine-terminals.ts";
 
 describe("senpi#6752 review: machine_op handler failure edges", () => {
 	it("answers machine_op_unavailable when the machine state dir cannot be made, and makes it on the next op", async () => {
@@ -62,7 +62,7 @@ describe("senpi#6752 review: machine_op handler failure edges", () => {
 			const killing = terminals.kill(stuck).then(() => {
 				settled = true;
 			});
-			await vi.advanceTimersByTimeAsync(4_999);
+			await vi.advanceTimersByTimeAsync(MACHINE_TERMINAL_KILL_WAIT_MS - 1);
 			expect(settled).toBe(false);
 			await vi.advanceTimersByTimeAsync(1);
 			await killing;

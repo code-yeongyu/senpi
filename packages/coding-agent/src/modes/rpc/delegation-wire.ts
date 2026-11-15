@@ -28,7 +28,11 @@ export type DelegationRefusal =
 export type PrivateRefusal = "delegation_unclassified" | "delegation_not_granted" | "presenter_not_authorized";
 
 /** senpi#6752: a `machine_op` record on a connection that may not run device operations, or one that does not parse. */
-export type MachineOpRefusal = "machine_op_not_authorized" | "machine_op_malformed" | "machine_op_conflict";
+export type MachineOpRefusal =
+	| "machine_op_not_authorized"
+	| "machine_op_malformed"
+	| "machine_op_conflict"
+	| "machine_op_unavailable";
 
 /**
  * `pass`: dispatch as today. `consumed`: nothing to answer. `reply`: answer this instead of dispatching.

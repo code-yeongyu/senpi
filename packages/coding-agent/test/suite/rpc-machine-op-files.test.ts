@@ -174,10 +174,16 @@ describe("senpi#6752: machine_op file, shell and mesh ops", () => {
 		const secret = join(outside, "id_test");
 		await writeFile(secret, "secret", { mode: 0o600 });
 		const target = join(root, "copied.bin");
+		// Refused with the relay host's own words: required keys are checked first, then unknown ones.
+		const refusals: ReadonlyArray<readonly [Record<string, unknown>, string]> = [
+			[{ path: target, bytes_path: secret }, "bytes is required"],
+			[{ path: target, bytes: base64("x"), bytes_path: secret }, "unknown argument bytes_path"],
+		];
 		for (const confined of [true, false])
-			expect(await runOp(peer, "fs.write", { path: target, bytes_path: secret }, { root, confined })).toEqual(
-				outcome({ state: "refused", error: { code: "malformed", message: "unknown argument bytes_path" } }),
-			);
+			for (const [args, message] of refusals)
+				expect(await runOp(peer, "fs.write", args, { root, confined })).toEqual(
+					outcome({ state: "refused", error: { code: "malformed", message } }),
+				);
 		expect(await readFile(secret, "utf8")).toBe("secret");
 		expect(existsSync(target)).toBe(false);
 	});

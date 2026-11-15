@@ -15,9 +15,8 @@ import {
 	type OpContext,
 	type ReadRequest,
 	type StatRequest,
+	type WriteRequest,
 } from "@code-yeongyu/senpi-machine-ops";
-import { takeHandedBytes } from "./bytes-path.ts";
-import type { WriteArgs } from "./op-args.ts";
 import { spawnPathIn } from "./real-path.ts";
 import type { OpOutcome } from "./wire.ts";
 
@@ -61,11 +60,8 @@ export const runRead = async (req: ReadRequest, c: CoreCall): Promise<OpOutcome>
 	});
 	return applied({ path: r.path, bytes: Buffer.from(r.bytes).toString("base64"), size: r.size, offset: r.offset });
 };
-export const runWrite = async (req: WriteArgs, c: CoreCall): Promise<OpOutcome> => {
-	const { payload, ...rest } = req;
-	const bytes = payload.kind === "inline" ? payload.bytes : await takeHandedBytes(payload.path);
-	if (typeof bytes === "string") return { state: "refused", error: { code: "malformed", message: bytes } };
-	const r = await c.ops.files.write({ ...rest, bytes }, c.ctx);
+export const runWrite = async (req: WriteRequest, c: CoreCall): Promise<OpOutcome> => {
+	const r = await c.ops.files.write(req, c.ctx);
 	return applied({ path: r.path, writtenBytes: r.writtenBytes });
 };
 export const runEdit = async (req: EditRequest, c: CoreCall): Promise<OpOutcome> => {
@@ -88,11 +84,11 @@ export const runList = async (req: ListRequest, c: CoreCall): Promise<OpOutcome>
 	const r = await c.ops.files.list(req, c.ctx);
 	return applied({ path: r.path, entries: r.entries.map((e) => ({ ...e })) });
 };
-// A shell cwd is resolved against the scope root (its real location), not the engine's own working directory.
+// A shell runs in the scope root, or where its cwd really resolves under it; never in the engine's own working
+// directory (review L2: the relay host ran a cwd-less shell in its own).
 export const runShell = async (req: ExecRequest, c: CoreCall): Promise<OpOutcome> => {
-	const told = { ...req, env: { ...req.env, ...c.envOverlay } };
-	const run = req.cwd === undefined ? told : { ...told, cwd: await spawnPathIn(c.root, req.cwd, c.confined) };
-	return shellOutcome(await c.ops.process.exec(run, c.ctx));
+	const cwd = req.cwd === undefined ? c.root : await spawnPathIn(c.root, req.cwd, c.confined);
+	return shellOutcome(await c.ops.process.exec({ ...req, cwd, env: { ...req.env, ...c.envOverlay } }, c.ctx));
 };
 
 const processNotFound = (message: string): OpOutcome => ({

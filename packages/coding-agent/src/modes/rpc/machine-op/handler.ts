@@ -28,7 +28,9 @@ import {
 	machineOpConflict,
 	machineOpMalformed,
 	type MachineOpRequest,
+	machineOpUnavailable,
 	nonEmptyText,
+	parseOwnedOpLookup,
 	type OpOutcome,
 	parseMachineOp,
 } from "./wire.ts";
@@ -55,7 +57,7 @@ export class MachineOpHandler {
 	private readonly terminalOps = createTerminalOps(this.terminals, after);
 	private readonly cache = new MachineOpAnswerCache<OpOutcome>();
 	private readonly stopping = new AbortController();
-	private readonly running = new Map<string, AbortController>();
+	private readonly running = new Map<string, Readonly<{ abort: AbortController; sender: string }>>();
 	private ops: Promise<MachineOps> | undefined;
 
 	constructor(options: { readonly agentDir: string }) {
@@ -69,22 +71,32 @@ export class MachineOpHandler {
 				const request = parseMachineOp(fields);
 				if (typeof request === "string") return machineOpMalformed(id, command, request);
 				const owner = this.cache.ownerOf(request.opId);
-				if (owner !== undefined && owner !== request.sender) return machineOpConflict(id);
-				const outcome = await this.cache.answer(request.opId, request.sender, () => this.run(request));
-				return machineOpAnswer(id, command, outcome);
+				if (owner !== undefined && owner !== request.sender) return machineOpConflict(id, command);
+				try {
+					const outcome = await this.cache.answer(request.opId, request.sender, () => this.run(request));
+					return machineOpAnswer(id, command, outcome);
+				} catch (cause) {
+					// Review L3: the op never started (the machine state dir could not be made); nothing is cached.
+					return machineOpUnavailable(id, cause);
+				}
 			}
 			case "machine_op_cancel": {
-				const opId = nonEmptyText(fields, "op_id");
-				if (opId === undefined) return machineOpMalformed(id, command, "op_id must be a non-empty string");
-				const running = this.running.get(opId);
-				const cancelled = running !== undefined && !running.signal.aborted;
-				running?.abort();
+				const lookup = parseOwnedOpLookup(fields);
+				if (typeof lookup === "string") return machineOpMalformed(id, command, lookup);
+				const running = this.running.get(lookup.opId);
+				if (running !== undefined && running.sender !== lookup.sender && !lookup.crossOwner)
+					return machineOpConflict(id, command);
+				const cancelled = running !== undefined && !running.abort.signal.aborted;
+				running?.abort.abort();
 				return machineOpAnswer(id, command, { cancelled });
 			}
 			case "machine_op_result": {
-				const opId = nonEmptyText(fields, "op_id");
-				if (opId === undefined) return machineOpMalformed(id, command, "op_id must be a non-empty string");
-				const outcome = this.cache.settled(opId);
+				const lookup = parseOwnedOpLookup(fields);
+				if (typeof lookup === "string") return machineOpMalformed(id, command, lookup);
+				const owner = this.cache.ownerOf(lookup.opId);
+				if (owner !== undefined && owner !== lookup.sender && !lookup.crossOwner)
+					return machineOpConflict(id, command);
+				const outcome = this.cache.settled(lookup.opId);
 				return machineOpAnswer(id, command, outcome === undefined ? { known: false } : { known: true, outcome });
 			}
 			case "machine_op_owner": {
@@ -103,6 +115,11 @@ export class MachineOpHandler {
 		}
 	}
 
+	/** Review M3: an op in flight or a live terminal keeps the host from being idle (no idle handover, no empty exit). */
+	busy(): boolean {
+		return this.running.size > 0 || this.terminals.running > 0;
+	}
+
 	async dispose(): Promise<void> {
 		this.stopping.abort();
 		await this.terminals.dispose();
@@ -111,7 +128,7 @@ export class MachineOpHandler {
 	// Registered before the first await, so a cancel read right behind the op on the same connection finds it.
 	private async run(request: MachineOpRequest): Promise<OpOutcome> {
 		const cancel = new AbortController();
-		this.running.set(request.opId, cancel);
+		this.running.set(request.opId, { abort: cancel, sender: request.sender });
 		const deadline =
 			request.deadlineMs === undefined ? [] : [AbortSignal.timeout(Math.max(0, request.deadlineMs - Date.now()))];
 		try {
@@ -119,6 +136,7 @@ export class MachineOpHandler {
 				ops: await this.machineOps(),
 				terminal: this.terminalOps,
 				pidOf: (handleId) => this.terminals.pidOf(handleId),
+				ownerOf: (handleId) => this.terminals.ownerOf(handleId),
 			});
 		} finally {
 			this.running.delete(request.opId);
@@ -126,12 +144,18 @@ export class MachineOpHandler {
 	}
 
 	private machineOps(): Promise<MachineOps> {
-		this.ops ??= mkdir(join(this.stateDir, "machine"), { recursive: true, mode: 0o700 }).then(() =>
-			createLocalMachineOps({
-				stateDir: this.stateDir,
-				holder: NO_PTY_HOLDER,
-				limits: { ...DEFAULT_LIMITS, readMaxBytes: RELAY_HOST_READ_MAX_BYTES },
-			}),
+		// A failed preparation is never kept: the next op tries again (review L3).
+		this.ops ??= mkdir(join(this.stateDir, "machine"), { recursive: true, mode: 0o700 }).then(
+			() =>
+				createLocalMachineOps({
+					stateDir: this.stateDir,
+					holder: NO_PTY_HOLDER,
+					limits: { ...DEFAULT_LIMITS, readMaxBytes: RELAY_HOST_READ_MAX_BYTES },
+				}),
+			(cause: unknown) => {
+				this.ops = undefined;
+				throw cause;
+			},
 		);
 		return this.ops;
 	}

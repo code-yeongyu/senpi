@@ -7,11 +7,13 @@
  * `machine_op { op, args, op_id, deadline_ms?, scope: { root, confined }, sender }`: `op_id` is opaque (the relay host
  * sends `JSON.stringify([sender, op_id])`) and its cached answer is bound to `sender`; `deadline_ms` is an absolute
  * epoch-ms time on this machine's clock, absent for an op with no deadline; `scope` is the relay host's own scope
- * verdict for the op, `sender` the device it runs for. `machine_op_cancel { op_id }` aborts that op if it is running.
+ * verdict for the op, `sender` the device it runs for. `machine_op_result` and `machine_op_cancel { op_id, sender }`
+ * read or abort only that sender's op, and the terminal ops act only on that sender's handles: another sender's is
+ * refused (`machine_op_conflict`, `not_owner`) unless the record carries `cross_owner: true`, which the relay host sets
+ * only after its own admin verdict on another sender's op or handle.
  * `env_overlay` (optional, string values, set only by the relay host) is laid LAST over the environment of a `shell` or
  * `exec_command` child, over `args.env` too: the relay host tells its children its own state dir this way (#1247).
- * Byte payloads travel base64 in JSON (`args.bytes`, `response.bytes`); a write may instead name `args.bytes_path`, a
- * 0600 regular file this user owns, which the engine reads and unlinks (`bytes-path.ts`).
+ * Byte payloads travel base64 in JSON (`args.bytes`, `response.bytes`); an 8 MiB write fits in one 16 MiB line.
  */
 import { type DelegationResponse, refused } from "../delegation-wire.ts";
 
@@ -45,6 +47,14 @@ export interface MachineOpRequest {
 	readonly scope: OpScope;
 	readonly sender: string;
 	readonly envOverlay: Readonly<Record<string, string>>;
+	readonly crossOwner: boolean;
+}
+
+/** `machine_op_result` / `machine_op_cancel`: whose op it is asking about. */
+export interface OwnedOpLookup {
+	readonly opId: string;
+	readonly sender: string;
+	readonly crossOwner: boolean;
 }
 
 export function machineOpRefusal(id: string | undefined, command: MachineOpCommand): DelegationResponse {
@@ -60,8 +70,18 @@ export function machineOpMalformed(id: string | undefined, command: MachineOpCom
 	return refused(id, command, "machine_op_malformed", problem);
 }
 
-export function machineOpConflict(id: string | undefined): DelegationResponse {
-	return refused(id, "machine_op", "machine_op_conflict", "op_id is bound to another sender");
+export function machineOpConflict(id: string | undefined, command: MachineOpCommand): DelegationResponse {
+	return refused(id, command, "machine_op_conflict", "op_id is bound to another sender");
+}
+
+export function machineOpUnavailable(id: string | undefined, cause: unknown): DelegationResponse {
+	const detail = cause instanceof Error ? cause.message : String(cause);
+	return refused(
+		id,
+		"machine_op",
+		"machine_op_unavailable",
+		`the engine's machine state could not be prepared: ${detail}`,
+	);
 }
 
 export function machineOpAnswer(id: string | undefined, command: MachineOpCommand, data: unknown): DelegationResponse {
@@ -75,6 +95,21 @@ export const nonEmptyText = (record: Args, key: string): string | undefined => {
 	const value = record[key];
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 };
+
+const crossOwnerOf = (record: Args): boolean | string =>
+	record.cross_owner === undefined || typeof record.cross_owner === "boolean"
+		? record.cross_owner === true
+		: "cross_owner must be a boolean";
+
+/** The op a `machine_op_result` / `machine_op_cancel` names and who asks, or the first problem with them. */
+export function parseOwnedOpLookup(record: Args): OwnedOpLookup | string {
+	const opId = nonEmptyText(record, "op_id");
+	if (opId === undefined) return "op_id must be a non-empty string";
+	const sender = nonEmptyText(record, "sender");
+	if (sender === undefined) return "sender must be a non-empty string";
+	const crossOwner = crossOwnerOf(record);
+	return typeof crossOwner === "string" ? crossOwner : { opId, sender, crossOwner };
+}
 
 /** The `machine_op` record's fields, or the first problem with them. */
 export function parseMachineOp(record: Args): MachineOpRequest | string {
@@ -104,5 +139,8 @@ export function parseMachineOp(record: Args): MachineOpRequest | string {
 	if (!isArgs(overlay) || !Object.values(overlay).every((value) => typeof value === "string"))
 		return "env_overlay must be a map of strings";
 	const envOverlay = Object.fromEntries(Object.entries(overlay).map(([key, value]) => [key, String(value)]));
-	return { op, args, opId, deadlineMs, scope: { root: scope.root, confined: scope.confined }, sender, envOverlay };
+	const crossOwner = crossOwnerOf(record);
+	if (typeof crossOwner === "string") return crossOwner;
+	const scoped = { root: scope.root, confined: scope.confined };
+	return { op, args, opId, deadlineMs, scope: scoped, sender, envOverlay, crossOwner };
 }

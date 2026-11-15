@@ -3,7 +3,9 @@
  * machine-ops its root, so any path or symlink resolving outside it fails policy_denied. An unconfined scope (a device's
  * default) gives no root: relative fs paths and glob's cwd are anchored at the root here, the OS user's permissions
  * decide, and an OS refusal (EACCES, EPERM, EROFS) fails os_permission_denied naming the errno, the path and the fix.
- * The relay host already decided the op (admission, grants, consent), so the engine adds no policy of its own.
+ * The relay host already decided the op (admission, grants, consent), so the engine adds no policy of its own beyond
+ * one owner rule (review L1): an op naming a terminal handle acts only on its own sender's handle, unless the relay host
+ * marked it `cross_owner` after its admin verdict; another sender's handle fails `not_owner`.
  */
 import { resolve } from "node:path";
 import { MachineOpError, type MachineOps, opErrorCode } from "@code-yeongyu/senpi-machine-ops";
@@ -56,7 +58,19 @@ export interface ExecutorDeps {
 	readonly ops: MachineOps;
 	readonly terminal: TerminalOps;
 	readonly pidOf: (handleId: string) => number | undefined;
+	readonly ownerOf: (handleId: string) => string | undefined;
 }
+
+const foreignHandle = (
+	request: MachineOpRequest,
+	handleArg: string | undefined,
+	deps: ExecutorDeps,
+): string | undefined => {
+	const handle = handleArg === undefined ? undefined : request.args[handleArg];
+	if (typeof handle !== "string" || request.crossOwner) return undefined;
+	const owner = deps.ownerOf(handle);
+	return owner !== undefined && owner !== request.sender ? handle : undefined;
+};
 
 export async function runMachineOp(
 	request: MachineOpRequest,
@@ -66,6 +80,9 @@ export async function runMachineOp(
 	const entry = servedOp(request.op);
 	if (entry === undefined)
 		return { state: "refused", error: { code: "malformed", message: `unknown op ${request.op}` } };
+	const foreign = foreignHandle(request, entry.handleArg, deps);
+	if (foreign !== undefined)
+		return { state: "failed", error: { code: "not_owner", message: `handle ${foreign} belongs to another sender` } };
 	const { root, confined } = request.scope;
 	const call: OpCall = {
 		ctx: {

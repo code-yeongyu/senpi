@@ -14,6 +14,8 @@ export type OpCall = core.CoreCall &
 	Readonly<{ terminal: TerminalOps; pidOf: (handleId: string) => number | undefined }>;
 
 export interface MachineOpEntry {
+	/** The argument naming a terminal handle: the op acts only on its sender's own handles (review L1). */
+	readonly handleArg?: string;
 	readonly decode: (a: Args) => string | undefined;
 	readonly run: (a: Args, call: OpCall) => Promise<OpOutcome>;
 }
@@ -26,7 +28,12 @@ const decoded = <D>(decode: (a: Args) => D, a: Args): { readonly d: D } | { read
 		throw error;
 	}
 };
-const entry = <D>(decode: (a: Args) => D, run: (d: D, call: OpCall) => Promise<OpOutcome>): MachineOpEntry => ({
+const entry = <D>(
+	decode: (a: Args) => D,
+	run: (d: D, call: OpCall) => Promise<OpOutcome>,
+	handleArg?: string,
+): MachineOpEntry => ({
+	...(handleArg === undefined ? {} : { handleArg }),
 	decode: (a) => {
 		const r = decoded(decode, a);
 		return "problem" in r ? r.problem : undefined;
@@ -50,12 +57,12 @@ const SERVED: Readonly<Record<string, MachineOpEntry>> = {
 	"fs.stat": entry(args.statArgs, core.runStat),
 	"fs.list": entry(args.listArgs, core.runList),
 	shell: entry(args.shellArgs, core.runShell),
-	"process.info": entry(args.processInfoArgs, (d, call) => core.runProcessInfo(d, call, call.pidOf)),
+	"process.info": entry(args.processInfoArgs, (d, call) => core.runProcessInfo(d, call, call.pidOf), "handleId"),
 	"mesh.message": entry(args.meshMessageArgs, core.runMeshMessage),
 	exec_command: entry(term.execCommandArgs, (d, call) => call.terminal.execCommand(d, call)),
-	write_stdin: entry(term.writeStdinArgs, (d, call) => call.terminal.writeStdin(d, call)),
-	wait_for_command: entry(term.waitForCommandArgs, (d, call) => call.terminal.waitForCommand(d, call)),
-	kill_terminal: entry(term.killTerminalArgs, (d, call) => call.terminal.killTerminal(d)),
+	write_stdin: entry(term.writeStdinArgs, (d, call) => call.terminal.writeStdin(d, call), "handle_id"),
+	wait_for_command: entry(term.waitForCommandArgs, (d, call) => call.terminal.waitForCommand(d, call), "handle_id"),
+	kill_terminal: entry(term.killTerminalArgs, (d, call) => call.terminal.killTerminal(d), "handle_id"),
 };
 
 /** The served op's entry (own keys only: an op named like an Object prototype key has none). */

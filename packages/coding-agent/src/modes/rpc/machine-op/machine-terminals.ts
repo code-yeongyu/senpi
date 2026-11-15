@@ -12,6 +12,8 @@ import { type After, createLiveHandle, ended, type LiveHandle, type MachineLifec
 
 /** Live terminals at once; a further `exec_command` fails until one ends. */
 export const MACHINE_TERMINALS_MAX = 256;
+/** How long a kill waits for the process to end after the manager's stop (review L4); it then answers what it reached. */
+export const MACHINE_TERMINAL_KILL_WAIT_MS = 5_000;
 const FINISHED_KEPT = 64;
 const RETIRED_KEPT = 4_096;
 const PTY_COLS = 80;
@@ -93,7 +95,13 @@ export class MachineTerminals {
 		if (h.exit() !== null) return;
 		h.markKilled();
 		await this.manager?.stop(h.id);
-		await h.ended;
+		await new Promise<void>((resolve) => {
+			const cancel = this.after(MACHINE_TERMINAL_KILL_WAIT_MS, resolve);
+			void h.ended.then(() => {
+				cancel();
+				resolve();
+			});
+		});
 	}
 
 	async dispose(): Promise<void> {

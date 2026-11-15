@@ -56,7 +56,16 @@ export const createTerminalOps = (terminals: MachineTerminals, after: After) => 
 				...(d.cols === undefined ? {} : { cols: d.cols }),
 				...(d.rows === undefined ? {} : { rows: d.rows }),
 			});
-			const reason = await waitForHandle(h, { yieldMs: d.yieldMs, until: { states: ENDED } }, call.signal, after);
+			// Review M2: an initial wait aborted (deadline, cancel, shutdown) returns no handle, so nothing may keep running.
+			const reason = await waitForHandle(
+				h,
+				{ yieldMs: d.yieldMs, until: { states: ENDED } },
+				call.signal,
+				after,
+			).catch(async (error: unknown) => {
+				await terminals.kill(h);
+				throw error;
+			});
 			return applied(terminalResult(h, 0, now(), { pid: h.pid, reason }));
 		},
 		writeStdin: async (d: WriteStdinArgs, call: TerminalRun): Promise<OpOutcome> => {

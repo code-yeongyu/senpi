@@ -185,6 +185,7 @@ export function createHostCore(
 				...(hooks.onSessionCountChange ? { onSizeChange: hooks.onSessionCountChange } : {}),
 				pathReservations,
 			});
+	const machineOps = new MachineOpHandler({ agentDir: options.agentDir });
 	const router = new SessionCommandRouter(
 		registry,
 		writer,
@@ -205,7 +206,8 @@ export function createHostCore(
 							agentDir: options.agentDir,
 						}).dir,
 					}),
-			canExitWhenEmpty: idle.canExitWhenEmpty,
+			// The host's own gate first, then machine work: an empty exit would end every relay-host terminal (senpi#6752).
+			canExitWhenEmpty: () => (idle.canExitWhenEmpty?.() ?? true) && !machineOps.busy(),
 		},
 	);
 	if (endpointSocket !== undefined)
@@ -231,8 +233,10 @@ export function createHostCore(
 		).catch((cause: unknown) => {
 			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
 		});
-	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);
-	const machineOps = new MachineOpHandler({ agentDir: options.agentDir });
+	const gate = new HostCoreGate(registry, (command) => router.handle(command), {
+		...hooks,
+		busy: () => machineOps.busy(),
+	});
 	const handle = async (line: string): Promise<void> => {
 		const connection = writer.currentConnection();
 		let parsed: unknown;
