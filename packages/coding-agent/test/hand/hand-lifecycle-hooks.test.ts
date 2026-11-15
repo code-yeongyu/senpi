@@ -182,16 +182,20 @@ describe("a hosted loop's lifecycle hooks run on the user's machine (senpi#5898)
 					vi.useRealTimers();
 				}
 				await ran;
-				const wakes = [await brain.committed.next("the stop state"), await brain.committed.next("the follow-up")];
+				// The held Stop's writes arrive in order: its recorded output and stop state, then the block's follow-up.
+				const wakes = [await brain.committed.next("the held Stop's first write")];
+				while (wakes.at(-1)?.source !== "user_message") wakes.push(await brain.committed.next("the follow-up"));
+				const stopState = wakes.find(
+					(wake) => wake.source === "entry" && JSON.stringify(wake.payload).includes(STOP_STATE_CUSTOM_TYPE),
+				);
 
 				expect([stopCounts(held), held.userMessages]).toEqual([[], undefined]);
-				expect(wakes.map((wake) => [wake.source, wake.payload])).toEqual([
-					[
-						"entry",
-						{ customType: STOP_STATE_CUSTOM_TYPE, data: expect.objectContaining({ count: 1 }), sessionId },
-					],
-					["user_message", { content: "keep going", options: { deliverAs: "followUp" }, sessionId }],
-				]);
+				expect(stopState?.payload).toMatchObject({ data: { count: 1 }, sessionId });
+				expect(wakes.at(-1)?.payload).toEqual({
+					content: "keep going",
+					options: { deliverAs: "followUp" },
+					sessionId,
+				});
 				const pi = brainPi;
 				if (pi === undefined) throw new Error("the brain's extension did not load");
 				loop.setResponses([fauxAssistantMessage("continued")]);
@@ -216,7 +220,7 @@ describe("a hosted loop's lifecycle hooks run on the user's machine (senpi#5898)
 				});
 				await turn;
 
-				expect(outcomes).toEqual(["delivered", "delivered"]);
+				expect(outcomes).toEqual(wakes.map(() => "delivered"));
 				expect(JSON.stringify(loop.faux.getCallLog().map((entry) => entry.context))).toContain("keep going");
 			} finally {
 				link.close();
