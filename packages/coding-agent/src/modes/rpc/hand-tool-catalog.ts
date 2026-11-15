@@ -12,7 +12,7 @@ import {
 	requestedActiveToolNames,
 	resolveEvalOnlyToolNames,
 } from "../../core/runtime/active-tools.ts";
-import type { ToolDefinitionEntry, ToolRegistryBuild } from "../../core/runtime/bootstrap.ts";
+import type { ToolRegistryBuild } from "../../core/runtime/bootstrap.ts";
 import { toolCatalog } from "../hand/tool-catalog.ts";
 import type { LooplessLoopHooks } from "./loopless-loop-hooks.ts";
 
@@ -30,22 +30,13 @@ export interface HandToolCatalogSource {
 }
 
 /**
- * A tool only the loop can serve: it declares that it acts on the calling session (todo, goals, tool search, wakeups,
- * relocation), and a hand has none. The declared split-session side (`runs`) is not that fact: a tool declared for the
- * loop's side of a split session (web search, web fetch, questions) still works here, so it is advertised, and a loop
- * that registers the same name itself keeps serving it.
- */
-const isLoopTool = ({ definition }: ToolDefinitionEntry): boolean => definition.sessionBound === true;
-
-/**
- * The answer to `describe_tools`: every tool this hand serves, as the catalog projection; the subset a local session
- * would make active at its start, before its extensions bind; the tools that session routes through `eval`; and the
- * machine's prompt resources (context files and skills) for the scope's cwd.
+ * The answer to `describe_tools`: every tool this hand serves, as the catalog projection, nothing left out (a tool that
+ * acts on the calling session says so with `sessionBound: true`, so the loop calls it with its session's state); the
+ * subset a local session would make active at its start, before its extensions bind; the tools that session routes
+ * through `eval`; and the machine's prompt resources (context files and skills) for the scope's cwd.
  */
 export function describeHandTools(source: HandToolCatalogSource): JsonValue {
 	const { registry } = source;
-	const handTools = [...registry.definitions.values()].filter((entry) => !isLoopTool(entry));
-	const handNames = new Set(handTools.map(({ definition }) => definition.name));
 	const requested = requestedActiveToolNames(registry, {
 		requested: source.initialActiveToolNames,
 		explicit: true,
@@ -61,9 +52,9 @@ export function describeHandTools(source: HandToolCatalogSource): JsonValue {
 	const evalOnly = [...(armed ?? [])].filter((name) => registry.toolRegistry.has(name));
 	return JSON.parse(
 		JSON.stringify({
-			tools: toolCatalog(handTools.map(({ definition }) => definition)),
-			active: active.filter((name) => handNames.has(name)),
-			evalOnly: evalOnly.filter((name) => handNames.has(name)),
+			tools: toolCatalog(Array.from(registry.definitions.values(), ({ definition }) => definition)),
+			active,
+			evalOnly,
 			context: {
 				contextFiles: source.resources.getAgentsFiles().agentsFiles,
 				skills: source.resources.getSkills().skills,

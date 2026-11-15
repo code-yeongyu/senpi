@@ -8,14 +8,15 @@ import { attachSocketCarrier } from "../../../src/modes/hand/socket-carrier.ts";
 import { scratch, spawnRpc, stopChild, waitForStderr } from "../../helpers/rpc-socket-host-support.ts";
 
 interface DescribeToolsReply {
-	readonly tools: readonly { readonly name: string; readonly parameters: unknown }[];
+	readonly tools: readonly { readonly name: string; readonly parameters: unknown; readonly sessionBound: boolean }[];
 	readonly active: readonly string[];
 	readonly evalOnly: readonly string[];
 	readonly context: { readonly contextFiles: readonly { readonly path: string; readonly content: string }[] };
 }
 
 // senpi#6749: a loop on another machine asks a spawned `--hand` over its socket for the tool list a local session
-// there would show its model: eval-only routing applied (the shipped `eval` arms it), and the scope's context files.
+// there would show its model: eval-only routing applied (the shipped `eval` arms it), the session-state tools marked
+// `sessionBound`, and the scope's context files.
 it("a spawned --hand answers describe_tools over its socket with its eval-only routing and context files", async () => {
 	const qa = scratch("s6749h");
 	writeFileSync(join(qa.cwd, "AGENTS.md"), "# Hand project\n\nProbe rule 6749.\n");
@@ -56,6 +57,8 @@ it("a spawned --hand answers describe_tools over its socket with its eval-only r
 		expect(reply.active).toEqual(expect.arrayContaining(["read", "eval"]));
 		expect(reply.active).not.toContain("bash");
 		expect(reply.evalOnly).toContain("bash");
+		expect(reply.tools.find((tool) => tool.name === "todo")?.sessionBound).toBe(true);
+		expect(reply.tools.find((tool) => tool.name === "read")?.sessionBound).toBe(false);
 		for (const name of [...reply.active, ...reply.evalOnly]) expect(names).toContain(name);
 		expect(reply.context.contextFiles.some((file) => file.content.includes("Probe rule 6749."))).toBe(true);
 		expect(failures).toEqual([]);

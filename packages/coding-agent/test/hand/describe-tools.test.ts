@@ -1,8 +1,9 @@
 // senpi#6749 (S-CAT): a hosted loop learns the tool list a local session on the hand's machine would show its model,
 // through the hand's `describe_tools` loop hook. The oracle is a real local session on the same cwd, flags and settings:
 // its active tools, its eval-only routing (the redirect hints it publishes for withheld tools), its definitions and its
-// prompt resources. The loop's own tools (session state: todo, goals, tool_search, wakeups, relocation) stay with the
-// loop, so the hand never advertises them (architecture contract of the hosted parity design, section 3).
+// prompt resources. Nothing is left out: the session-state tools (todo, goals, tool_search, wakeups, relocation) run on
+// the hand too, marked `sessionBound` so the loop calls them with its session's state (architecture contract of the
+// hosted parity design v4: the loop registers no tool of its own).
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,8 +22,8 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-/** The loop's own tools: they act on the loop's session, which a hand never has. */
-const LOOP_TOOLS = [
+/** The session-state tools: advertised like every other tool, marked so the loop calls them with its session's state. */
+const SESSION_TOOLS = [
 	"todo",
 	"create_goal",
 	"update_goal",
@@ -147,27 +148,25 @@ describe("describe_tools answers the tool list a local session on the hand's mac
 			})) as unknown as DescribeToolsReply;
 
 			const sessionTools = session.getAllTools().map((tool) => tool.name);
-			const loopTools = sessionTools.filter((name) => LOOP_TOOLS.includes(name));
-			expect(loopTools).toContain("todo");
-			const handSide = (names: readonly string[]) => names.filter((name) => !loopTools.includes(name));
-
-			expect(reply.tools.map((tool) => tool.name)).toEqual(handSide(sessionTools));
-			const sessionCatalog = toolCatalog(
-				handSide(sessionTools).flatMap((name) => session.getToolDefinition(name) ?? []),
-			);
+			expect(reply.tools.map((tool) => tool.name)).toEqual(sessionTools);
+			const sessionCatalog = toolCatalog(sessionTools.flatMap((name) => session.getToolDefinition(name) ?? []));
 			reply.tools.forEach((declaration, index) => {
 				const fused = sessionCatalog[index];
 				if (fused === undefined) throw new Error(`no session declaration at ${index}`);
 				expect(declaration, declaration.name).toEqual(plain(expectedOnHand(fused, declaration)));
 			});
 
-			expect(reply.active).toEqual(handSide(session.getActiveToolNames()));
+			const marked = reply.tools.filter((tool) => tool.sessionBound).map((tool) => tool.name);
+			expect(marked).toContain("todo");
+			expect(marked).toEqual(sessionTools.filter((name) => SESSION_TOOLS.includes(name)));
+
+			expect(reply.active).toEqual(session.getActiveToolNames());
 			// The session's own eval-only redirects, not the hints other publishers (tool search, extensions) add.
 			const withheld = Object.entries(session.agent.removedToolHints)
 				.filter(([name, hint]) => hint.startsWith(`Run ${name} inside an eval cell`))
 				.map(([name]) => name);
 			expect(withheld.length > 0).toBe(armed);
-			expect([...reply.evalOnly].sort()).toEqual(handSide(withheld).sort());
+			expect([...reply.evalOnly].sort()).toEqual(withheld.sort());
 			if (armed) expect(reply.evalOnly).toContain("bash");
 			if (extension === evalExtension) expect(reply.tools.map((tool) => tool.name)).toContain("loop_side_probe");
 

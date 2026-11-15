@@ -1239,9 +1239,9 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 */
 	runs?: ExtensionSide;
 	/**
-	 * The tool acts on the session that calls it (its entries, goal, tool search, wakeups or placement), so it does
-	 * nothing on a runtime that has no session. A hand, which never has one, leaves it out of the tool list it gives a
-	 * loop that runs elsewhere (`describe_tools`, senpi#6749); that loop serves such tools itself.
+	 * The tool acts on the session that calls it (its entries, goal, tool search, wakeups or placement). A hand still
+	 * advertises it to a loop that runs elsewhere, marked with this flag in its `describe_tools` declaration
+	 * (senpi#6749), so that loop calls it with its session's state. Recorded only; nothing else reads it.
 	 */
 	sessionBound?: boolean;
 	/**
