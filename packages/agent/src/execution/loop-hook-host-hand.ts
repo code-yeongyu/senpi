@@ -9,12 +9,16 @@ import {
 } from "./loop-hook-host-protocol.ts";
 import { createLoopHookSessionQueues } from "./loop-hook-session-queue.ts";
 
-/** How long a call waits for its session's previous call by default: a session's default event handler cap (20 min). */
+/**
+ * How long a call waits, by default, for each call ahead of it in its session to settle (the bound restarts each time one
+ * does): a session's default event handler cap (20 min).
+ */
 export const DEFAULT_LOOP_HOOK_QUEUE_WAIT_MS = 1_200_000;
 
 const REFUSAL_MESSAGES: Record<LoopHookRefusal, string> = {
 	cancelled: "the loop cancelled this call before its hooks started",
-	queue_timeout: "this session's previous call still held its hooks past the queue cap; this call's hooks did not run",
+	queue_timeout:
+		"a call ahead of this one in its session did not settle within the queue cap; this call's hooks did not run",
 };
 
 /**
@@ -40,7 +44,11 @@ export interface LoopHookHandOptions {
 	 * calls run one at a time and different sessions' side by side (a lane may carry many sessions).
 	 */
 	readonly sessionOf: (event: string, payload: JsonValue) => string | undefined;
-	/** How long a call waits for its session's previous call before it is refused (`queue_timeout`). */
+	/**
+	 * How long a call waits for each call ahead of it in its session to settle before it is refused (`queue_timeout`).
+	 * The bound restarts each time a call ahead settles, so it catches a stuck call, never a slow queue that keeps moving.
+	 * A value past `MAX_TIMER_DELAY_MS` (about 24.8 days) waits that long instead.
+	 */
 	readonly queueWaitMs?: number;
 	/** This process's identity; a new one per process start. */
 	readonly instance?: string;

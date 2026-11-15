@@ -107,4 +107,60 @@ describe("loop-hook call order on the hand (senpi#5898)", () => {
 		expect(started).toEqual(["first"]);
 		expect(await second).toBeInstanceOf(LoopHookQueueTimeoutError);
 	});
+
+	// #6774 review L1: a cap past the timer range reached setTimeout raw, which fires it after 1 ms.
+	it("a cap past the timer range waits as long as a timer can, and never refuses at once", async () => {
+		const { link, host, release } = stuckHand({ queueWaitMs: 1e10 });
+		void host.run("first", { session: "A" });
+		const second = host.run("second", { session: "A" }).catch((error: unknown) => error);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			await link.flush();
+			vi.advanceTimersByTime(1_000);
+			await link.flush();
+		} finally {
+			vi.useRealTimers();
+		}
+		const answeredWhileWaiting = link.sentByHand.filter(
+			(message) => "callId" in message && message.callId === "call-2",
+		);
+
+		release();
+		await link.flush();
+
+		expect(answeredWhileWaiting).toEqual([]);
+		expect(await second).toEqual({ event: "second" });
+	});
+
+	// #6774 review L2: the cap bounds each call ahead (a stuck one), never the whole queue (a slow one that keeps moving).
+	it("two slow calls ahead, each within the cap, do not time out the third", async () => {
+		const link = transportPair();
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			serveLoopHooks({
+				transport: link.hand,
+				lane: "hooks",
+				sessionOf: bySession,
+				queueWaitMs: 1_000,
+				run: async (event) => {
+					if (event !== "third") await new Promise((resolve) => setTimeout(resolve, 800));
+					return { event };
+				},
+			});
+			const host = createLoopHookHost({ transport: link.loop, lane: "hooks" });
+			const calls = ["first", "second", "third"].map((event) =>
+				host.run(event, { session: "A" }).catch((error: unknown) => error),
+			);
+			await link.flush();
+			vi.advanceTimersByTime(800);
+			await link.flush();
+			vi.advanceTimersByTime(800);
+			await link.flush();
+			await link.flush();
+
+			expect(await Promise.all(calls)).toEqual([{ event: "first" }, { event: "second" }, { event: "third" }]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

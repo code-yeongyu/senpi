@@ -201,6 +201,7 @@ export {
 	LoopHookRestartedError,
 } from "./execution/loop-hook-host.ts";
 export type { LoopHookRefusal } from "./execution/loop-hook-host-protocol.ts";
+export { MAX_TIMER_DELAY_MS } from "./execution/loop-hook-session-queue.ts";
 export {
 	DEFAULT_LOOP_HOOK_QUEUE_WAIT_MS,
 	type LoopHookHand,
