@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.11.15] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- ChatGPT subscription (Sign in with ChatGPT): a session whose thinking level changed no longer fails every turn with `subscription_sharing_unsupported_capability`; the level is sent as the request's reasoning effort ([#6607](https://github.com/code-yeongyu/senpi/issues/6607))
+
+### Removed
+
 ## [2026.11.13] - 2026-11-13
 
 ### Breaking Changes
