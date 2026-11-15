@@ -9092,7 +9092,7 @@
 		},
 		"packages/coding-agent/src/modes/rpc/project-file-store.ts#writeChains": {
 			"class": "per-copy-safe",
-			"reason": "per-path write chain: writes of one project file queue behind each other inside this copy, and every write is a temp file plus rename, so a split only loses ordering between copies and lets two copies land the file in either order, as other local writers already can; not A1-A3 (design 3.3)"
+			"reason": "per-path write chain: wraps the read, the ifEtag compare and the temp-file plus rename of one project file inside this copy; a split makes the etag check stop binding across copies (two copies holding the same etag can both pass, and one write silently overwrites the other), as another local writer can already race the same window; not A1-A3 (design 3.3)"
 		},
 		"packages/coding-agent/src/modes/rpc/project-mcp-commands.ts#MCP_FILE": {
 			"class": "constant",
