@@ -248,19 +248,19 @@ describe("#7921 case 6: an insufficient accepted compaction keeps its blocked st
 	// senpi#6760: a transient provider failure, and the breaker cooldown repeated ones trip, say
 	// nothing about the context, so they must not latch admission; an automated session would
 	// otherwise never compact again.
-	it.each([
-		"transient-failure",
-		"circuit-breaker",
-	] as const)("retries compaction on the next automated prompt after a %s rejection", async (rejectionCause) => {
-		const { harness, attempts, allowRetry } = await createFailedCompactionHarness(rejectionCause);
+	it.each(["transient-failure", "circuit-breaker"] as const)(
+		"retries compaction on the next automated prompt after a %s rejection",
+		async (rejectionCause) => {
+			const { harness, attempts, allowRetry } = await createFailedCompactionHarness(rejectionCause);
 
-		expect(Reflect.get(harness.session, "_blockedPostCompactionAssistant")).toBeUndefined();
-		allowRetry(true);
-		harness.setResponses([fauxAssistantMessage("answered the automated nudge")]);
-		await expect(harness.session.prompt("automated nudge", { source: "extension" })).resolves.toBeUndefined();
-		expect(attempts()).toBe(2);
-		expect(harness.faux.state.callCount).toBe(1);
-	});
+			expect(Reflect.get(harness.session, "_blockedPostCompactionAssistant")).toBeUndefined();
+			allowRetry(true);
+			harness.setResponses([fauxAssistantMessage("answered the automated nudge")]);
+			await expect(harness.session.prompt("automated nudge", { source: "extension" })).resolves.toBeUndefined();
+			expect(attempts()).toBe(2);
+			expect(harness.faux.state.callCount).toBe(1);
+		},
+	);
 
 	it("clears the block once a real compaction reduces the context", async () => {
 		const { harness, assistant } = await createBlockedHarness();
