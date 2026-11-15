@@ -1,11 +1,29 @@
 // A loop-hook call's facts on a hand (S33): the session it binds, what its work keeps after it ended, and the late
-// effects one loop session holds until its next reply. Split from loop-hook-host.test.ts, which drives a real hand.
+// effects that go to its session's late route. Split from loop-hook-host.test.ts, which drives a real hand.
 import { describe, expect, it } from "vitest";
-import { createLoopHookCall, LATE_PER_SESSION, LoopHookCallEndedError } from "../../src/modes/rpc/loop-hook-call.ts";
+import { createLoopHookCall, type LateLoopRoute, LoopHookCallEndedError } from "../../src/modes/rpc/loop-hook-call.ts";
+
+/** A late route that records what reaches it, as `[sessionId, kind, what]`. */
+function recordingRoute(): { readonly late: unknown[]; readonly route: LateLoopRoute } {
+	const late: unknown[] = [];
+	return {
+		late,
+		route: (sessionId) => ({
+			sendMessage: (message) => void late.push([sessionId, "message", message.content]),
+			sendUserMessage: (content) => void late.push([sessionId, "user_message", content]),
+			appendEntry: (customType) => void late.push([sessionId, "entry", customType]),
+			notify: (message) => void late.push([sessionId, "notice", message]),
+		}),
+	};
+}
+
+const noLateEffects: LateLoopRoute = () => {
+	throw new Error("this test's calls have no work that outlives them");
+};
 
 describe("a loop-hook call's bound session (S33, option A)", () => {
 	it("is the loop session's id, read-only, during the call only", async () => {
-		const call = createLoopHookCall();
+		const call = createLoopHookCall(noLateEffects);
 		let during: { id: string; file: string | undefined; idle: boolean } | undefined;
 		let captured: ReturnType<typeof call.current>;
 
@@ -33,80 +51,34 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		expect(captured?.signal.aborted).toBe(true);
 	});
 
-	it("holds late messages up to its cap, then drops the oldest and counts them, never throwing", async () => {
-		const call = createLoopHookCall();
+	it("sends every kind of effect its work makes after it ended to its session's late route, in order (H3)", async () => {
+		const { late, route } = recordingRoute();
+		const call = createLoopHookCall(route);
 		let kept: ReturnType<typeof call.current>;
-		await call.run({ sessionId: "loop-session-3", cwd: "/work", idle: true }, async () => {
+		const reply = await call.run({ sessionId: "loop-session-3", cwd: "/work", idle: true }, async (effects) => {
 			kept = call.current();
+			kept?.sendMessage({ customType: "during", content: "in the reply", display: false });
+			return effects;
 		});
 
-		for (let index = 0; index < LATE_PER_SESSION + 2; index++)
-			expect(() => kept?.sendMessage({ customType: "late", content: `m${index}`, display: false })).not.toThrow();
-		const next = await call.run({ sessionId: "loop-session-3", cwd: "/work", idle: true }, async (effects) => ({
-			sent: effects.sent.map((entry) => entry.message.content),
-			dropped: effects.dropped,
-		}));
-
-		expect(next.dropped).toBe(2);
-		expect(next.sent).toHaveLength(LATE_PER_SESSION);
-		expect(next.sent[0]).toBe("m2");
-	});
-
-	it("past its cap drops held notices before any message: messages reach the model, notices only the UI", async () => {
-		const call = createLoopHookCall();
-		let kept: ReturnType<typeof call.current>;
-		await call.run({ sessionId: "loop-session-4", cwd: "/work", idle: true }, async () => {
-			kept = call.current();
-		});
-
-		kept?.notify("oldest-notice");
-		for (let index = 0; index < LATE_PER_SESSION; index++)
-			kept?.sendMessage({ customType: "late", content: `m${index}`, display: false });
-		const next = await call.run({ sessionId: "loop-session-4", cwd: "/work", idle: true }, async (effects) => ({
-			sent: effects.sent.map((entry) => entry.message.content),
-			notices: effects.notices.map((entry) => entry.message),
-			dropped: effects.dropped,
-		}));
-
-		expect(next).toEqual({
-			sent: Array.from({ length: LATE_PER_SESSION }, (_, index) => `m${index}`),
-			notices: [],
-			dropped: 1,
-		});
-	});
-
-	it("past its cap drops notices, then messages, then user messages, and a held entry last (#6751 review L3)", async () => {
-		const call = createLoopHookCall();
-		let kept: ReturnType<typeof call.current>;
-		await call.run({ sessionId: "loop-session-5", cwd: "/work", idle: true }, async () => {
-			kept = call.current();
-		});
-
-		// The oldest held effect is a stop-state entry: dropping it would lower the Stop reentry count.
-		kept?.appendEntry("senpi.hooks.stop-state", { count: 7 });
-		kept?.notify("notice");
+		// A held Stop's stop state and its block follow-up are such effects: they must reach an idle loop on their own.
+		expect(() => kept?.appendEntry("senpi.hooks.stop-state", { count: 7 })).not.toThrow();
+		expect(() => kept?.sendUserMessage("continue: the stop hook blocked")).not.toThrow();
+		kept?.notify("n0");
 		kept?.sendMessage({ customType: "late", content: "m0", display: false });
-		kept?.sendMessage({ customType: "late", content: "m1", display: false });
-		for (let index = 0; index < LATE_PER_SESSION; index++) kept?.sendUserMessage(`u${index}`);
-		const next = await call.run({ sessionId: "loop-session-5", cwd: "/work", idle: true }, async (effects) => ({
-			entries: effects.entries.map((entry) => entry.customType),
-			notices: effects.notices.length,
-			sent: effects.sent.length,
-			userMessages: effects.userMessages.map((entry) => entry.content),
-			dropped: effects.dropped,
-		}));
 
-		expect(next).toEqual({
-			entries: ["senpi.hooks.stop-state"],
-			notices: 0,
-			sent: 0,
-			userMessages: Array.from({ length: LATE_PER_SESSION - 1 }, (_, index) => `u${index + 1}`),
-			dropped: 4,
-		});
+		expect(reply.sent.map((entry) => entry.message.content)).toEqual(["in the reply"]);
+		expect(late).toEqual([
+			["loop-session-3", "entry", "senpi.hooks.stop-state"],
+			["loop-session-3", "user_message", "continue: the stop hook blocked"],
+			["loop-session-3", "notice", "n0"],
+			["loop-session-3", "message", "m0"],
+		]);
 	});
 
-	it("has pending messages only for user messages it sent, not late ones it carries (#6751 review L2)", async () => {
-		const call = createLoopHookCall();
+	it("has pending messages only for user messages it sent; a late one goes to the late route (#6751 review L2)", async () => {
+		const { late, route } = recordingRoute();
+		const call = createLoopHookCall(route);
 		let kept: ReturnType<typeof call.current>;
 		await call.run({ sessionId: "loop-session-6", cwd: "/work", idle: true }, async () => {
 			kept = call.current();
@@ -120,11 +92,12 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 			return [before, facts?.hasPendingMessages()];
 		});
 
-		expect(pending).toEqual([{ carried: 1, pending: false }, true]);
+		expect(pending).toEqual([{ carried: 0, pending: false }, true]);
+		expect(late).toEqual([["loop-session-6", "user_message", "late from an earlier call"]]);
 	});
 
 	it("keeps the session it carried for its own work after it ended, and its identity for the call only (#6751 M1)", async () => {
-		const call = createLoopHookCall();
+		const call = createLoopHookCall(noLateEffects);
 		const handEntries = [
 			{ type: "custom" as const, id: "h1", parentId: null, timestamp: "t", customType: "x", data: 1 },
 		];
@@ -162,7 +135,7 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 	});
 
 	it("for work that holds it, answers idle after a turn's end until a turn is seen running (#6751 M1, L2; #6770 M1)", async () => {
-		const call = createLoopHookCall();
+		const call = createLoopHookCall(noLateEffects);
 		const session = { sessionId: "loop-session-8", cwd: "/work" };
 		let kept: ReturnType<typeof call.current>;
 		let release: (() => void) | undefined;
@@ -183,7 +156,7 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 	});
 
 	it("without a hold, keeps the idle value it carried after it ended", async () => {
-		const call = createLoopHookCall();
+		const call = createLoopHookCall(noLateEffects);
 		let kept: ReturnType<typeof call.current>;
 		await call.run({ sessionId: "loop-session-10", cwd: "/work", idle: false, turn: "ended" }, async () => {
 			kept = call.current();
@@ -193,7 +166,7 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 	});
 
 	it("a turn that starts while the call ending the previous one still runs wins over it (#6770 review L2)", async () => {
-		const call = createLoopHookCall();
+		const call = createLoopHookCall(noLateEffects);
 		const session = { sessionId: "loop-session-9", cwd: "/work" };
 		const release = Promise.withResolvers<void>();
 		let kept: ReturnType<typeof call.current>;
@@ -214,7 +187,7 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 	});
 
 	it("is not visible to work that runs outside the call", async () => {
-		const call = createLoopHookCall();
+		const call = createLoopHookCall(noLateEffects);
 		const outside = Promise.withResolvers<ReturnType<typeof call.current>>();
 
 		await call.run({ sessionId: "loop-session-2", cwd: "/work", idle: true }, async () => {});

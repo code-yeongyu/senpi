@@ -493,6 +493,12 @@ journaled terminal. Later wakes tagged with the run are admitted again, fences f
 run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
 emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
 
+`ctx.registerRunBackgroundJob({ kind, id, description?, stop })` records a background job under the turn running at
+that moment (outside a turn it records nothing), and returns the release to call once the job ended on its own. An RPC
+`interrupt` with `background: "stop"` calls `stop(turnId)` for each job that turn recorded and names it in its answer;
+`stop` ends the job without waking the session and rejects with the reason it could not. The terminal builtin records
+every background bash session this way.
+
 #### held_wakes_released
 
 `pi.on("held_wakes_released", (event, ctx) => ...)` receives
@@ -2341,6 +2347,10 @@ When not streaming, the message is sent immediately and triggers a new turn; fro
 From a command handler, send the text before the handler returns: messages another session delivers are held behind the user's own input only until the command's handler settles, so text sent after that (a detached timer, a background task) can land behind a delivered message.
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
+
+### pi.isLoopRemote()
+
+`true` when this extension runs on a hand whose agent loop runs on another machine (a hosted loop). There, `pi.sendMessage()` and `pi.sendUserMessage()` from work that outlives the call that started it (a background command, a watch, a detached task) reach that loop as durable wakes, and so does a `ctx.ui.notify()` made outside any call. The loop delivers each one as a local session would, and applies its own delivery checks (its mode, its model). A notifier that normally waits for `session_start` before it sends anything should send on a hand without one, because a hand never gets `session_start` for builtins. Everywhere else it is `false`.
 
 ### pi.appendEntry(customType, data?, options?)
 

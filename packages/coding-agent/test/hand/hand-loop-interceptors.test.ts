@@ -5,12 +5,16 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
-import { createLoopHookCall } from "../../src/modes/rpc/loop-hook-call.ts";
+import { createLoopHookCall, type LateLoopRoute } from "../../src/modes/rpc/loop-hook-call.ts";
 import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
 import { localRunner, type LoopReply, loopEventMachine, MODEL, PREVIOUS_MODEL, toJson } from "./loop-event-fixture.ts";
 import { cleanupHands } from "./remote-hand-fixture.ts";
+
+const noLateEffects: LateLoopRoute = () => {
+	throw new Error("this test's hooks have no work that outlives their call");
+};
 
 let user: Awaited<ReturnType<typeof loopEventMachine>>;
 let local: ExtensionRunner;
@@ -176,7 +180,7 @@ describe("a hosted loop's interceptors run the user's handlers on the hand (senp
 			await createInMemoryModelRegistry(AuthStorage.inMemory()),
 			loaded.eventBus,
 		);
-		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
+		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall(noLateEffects));
 
 		await expect(hooks("session_before_tree", toJson({ sessionId: "s", idle: true, preparation }))).rejects.toThrow(
 			"session_before_tree reply has no JSON form at summary.details (a Map)",
@@ -204,7 +208,7 @@ describe("a hosted loop's interceptors run the user's handlers on the hand (senp
 			await createInMemoryModelRegistry(AuthStorage.inMemory()),
 			loaded.eventBus,
 		);
-		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
+		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall(noLateEffects));
 		const call = (from: number, entries: unknown[], pending: unknown[]) =>
 			hooks(
 				"turn_end",

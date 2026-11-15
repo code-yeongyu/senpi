@@ -73,6 +73,8 @@ export interface TerminalExitView {
 	readonly exitResult: Pick<TerminalSessionExit, "exitCode" | "signal" | "cancelled" | "timedOut"> | null;
 	/** Set when the opt-in auto-reap stopped the session at this age (senpi#6201). */
 	readonly autoReapedAfterMinutes?: number;
+	/** Set when `interrupt { background: "stop" }` on turn `turnId` stopped the session: its notice does not wake. */
+	readonly stoppedByInterrupt?: { readonly turnId: string };
 	fullOutput(): string;
 }
 
