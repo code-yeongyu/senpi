@@ -1,6 +1,7 @@
 import { closeSync, fstatSync } from "node:fs";
 import type { Duplex } from "node:stream";
 import { isMainThread } from "node:worker_threads";
+import { releaseInheritedStartupFillers } from "./private-fd-startup-fillers.ts";
 import { decodePrivateFdTable, PRIVATE_FDS_TABLE_ENV } from "./private-fd-table.ts";
 import { inheritedDuplex, isFifoMode } from "./utils/inherited-duplex.ts";
 import { clearPrivateFdInherit } from "./utils/private-fd-inherit.ts";
@@ -204,6 +205,10 @@ export function closeDiscarded(fd: number, close: (fd: number) => void = closeSy
 function capturedState(): PrivateFdState {
 	const previous: unknown = Reflect.get(globalThis, STATE);
 	if (isState(previous)) return previous;
+	// The filler release must see the table it exempts, so it runs here, before the table leaves the environment, not
+	// only from an entry's earlier import: a bundled entry evaluates its own body after every imported chunk, which put
+	// the release after this capture and closed the private slots as fillers (senpi#6769). It is idempotent.
+	if (isMainThread) releaseInheritedStartupFillers(process.env);
 	const encoded = isMainThread ? process.env[PRIVATE_FDS_TABLE_ENV] : undefined;
 	const final = isMainThread && process.env[PRIVATE_FDS_FINAL_ENV] === "1";
 	if (isMainThread) {
