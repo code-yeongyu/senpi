@@ -65,6 +65,69 @@ export const EXTENSION_EVENT_PLACEMENT = {
 	tool_result: "runtime",
 } as const satisfies Record<ExtensionEvent["type"], ExtensionEventPlacement>;
 
+/** The events that belong, wholly or in part, to where the agent loop runs. */
+export type LoopSideEvent = {
+	[E in keyof typeof EXTENSION_EVENT_PLACEMENT]: (typeof EXTENSION_EVENT_PLACEMENT)[E] extends "runtime" ? never : E;
+}[keyof typeof EXTENSION_EVENT_PLACEMENT];
+
+/**
+ * How a loop that runs away from its extensions' home (a hosted loop) reaches each loop-side event's user hooks on the
+ * hand (senpi#5898): an `interceptor` is request/reply and the loop waits for its result (or effects) before it goes
+ * on; a `notification` is delivered once, in order, and its effects ride the reply; `loop-only` never leaves the loop.
+ */
+export type LoopHookForwarding = "interceptor" | "notification" | "loop-only";
+
+/** Every loop-side event's forwarding; adding a loop-side event fails to compile until it is classified here. */
+export const LOOP_HOOK_FORWARDING = {
+	session_start: "interceptor",
+	held_wakes_released: "notification",
+	session_hold_changed: "notification",
+	session_info_changed: "notification",
+	session_parked: "notification",
+	session_resumed: "notification",
+	session_before_switch: "interceptor",
+	session_before_fork: "interceptor",
+	session_before_compact: "interceptor",
+	session_compact: "notification",
+	session_compact_failed: "notification",
+	session_shutdown: "notification",
+	session_abort: "notification",
+	// A handler failure refuses the move (export) or keeps the state for the next open (import), so the loop waits.
+	session_move_export: "interceptor",
+	session_move_import: "interceptor",
+	session_before_tree: "interceptor",
+	session_tree: "notification",
+	context: "interceptor",
+	context_with_system: "interceptor",
+	before_provider_request: "interceptor",
+	// The request headers can carry a credential and never leave the side that dials (CK21, `hand/hook-contract.ts`).
+	before_provider_headers: "loop-only",
+	after_provider_response: "notification",
+	provider_stream_event: "notification",
+	before_agent_start: "interceptor",
+	agent_start: "notification",
+	agent_end: "notification",
+	agent_before_settle: "interceptor",
+	agent_settled: "notification",
+	session_control_wake: "notification",
+	turn_start: "notification",
+	turn_end: "interceptor",
+	message_start: "notification",
+	message_update: "notification",
+	message_end: "interceptor",
+	model_select: "interceptor",
+	provider_login_start: "interceptor",
+	system_prompt_change: "notification",
+	thinking_level_select: "notification",
+	input: "interceptor",
+	input_disposition: "notification",
+} as const satisfies Record<LoopSideEvent, LoopHookForwarding>;
+
+/** The loop-side events whose user hooks a hosted loop's hand runs. */
+export type ForwardedLoopEvent = {
+	[E in LoopSideEvent]: (typeof LOOP_HOOK_FORWARDING)[E] extends "loop-only" ? never : E;
+}[LoopSideEvent];
+
 /** Whether an event belongs, wholly or in part, to where the agent loop runs (`loop` or `split`). */
 export function isLoopSideEvent(event: ExtensionEvent["type"]): boolean {
 	return EXTENSION_EVENT_PLACEMENT[event] !== "runtime";

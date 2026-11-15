@@ -8854,6 +8854,58 @@
 			"class": "per-copy-safe",
 			"reason": "counter or id sequence for this copy's own objects; a split cannot collide across them"
 		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-compaction-events.ts#COMPACTION_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-lifecycle-events.ts#LIFECYCLE_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-message-events.ts#MESSAGE_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#ASSISTANT_PARTS": {
+			"class": "constant",
+			"reason": "lookup data literal of shape checks; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#COST": {
+			"class": "constant",
+			"reason": "lookup data literal of shape checks; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#INDEXED": {
+			"class": "constant",
+			"reason": "lookup data literal of shape checks; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#MESSAGE_ROLES": {
+			"class": "constant",
+			"reason": "lookup data literal of shape checks; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#PARTIAL": {
+			"class": "constant",
+			"reason": "lookup data literal of shape checks; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-message-shapes.ts#STREAM_EVENTS": {
+			"class": "constant",
+			"reason": "lookup data literal of shape checks; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-provider-events.ts#PROVIDER_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-session-events.ts#SESSION_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-session-move.ts#SESSION_MOVE_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-turn-events.ts#TURN_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts#HEARTBEAT_EARLY_TOLERANCE_MS": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
@@ -8861,6 +8913,14 @@
 		"packages/coding-agent/src/modes/rpc/loopless-execute-grant.ts#issued": {
 			"class": "per-copy-safe",
 			"reason": "issued and checked inside one copy's RPC host; a split fails closed (design 3.3)"
+		},
+		"packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts#FORWARDED_EVENTS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts#LOOP_HOOK_PARSERS": {
+			"class": "constant",
+			"reason": "lookup data literal merging the family parser tables; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/loopless-worker.ts#port": {
 			"class": "constant",
