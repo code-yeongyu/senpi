@@ -325,7 +325,8 @@ export function createShellToolDefinition(
 	const machine = options?.machine ?? defaultToolMachine();
 	// OMO_TOOLS_VIA_DAEMON=bash (default off): run on the session's device, never on this machine. The flag decides even
 	// when the session injects its dispatcher's operations (bootstrap.ts always does), so the promise holds in a real session.
-	const viaDevice = toolsViaDaemon("bash");
+	// Only the bash tool: powershell shares this definition with its own local operations and stays on them.
+	const viaDevice = config.name === "bash" && toolsViaDaemon("bash");
 	const deviceMachine = options?.deviceMachine;
 	const ops = viaDevice
 		? deviceMachine !== undefined

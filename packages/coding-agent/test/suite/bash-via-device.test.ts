@@ -1,6 +1,7 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createBashTool, DeviceUnavailableError } from "../../src/core/tools/bash.ts";
+import { createPowerShellTool } from "../../src/core/tools/powershell.ts";
 import type { ToolMachine } from "../../src/core/tools/machine.ts";
 import { createHarness, getMessageText } from "./harness.ts";
 
@@ -91,5 +92,23 @@ describe("bash tool with an injected device machine (slice 1a seam)", () => {
 		expect(error).toBeInstanceOf(DeviceUnavailableError);
 		expect((error as DeviceUnavailableError).message).toContain("device is unavailable");
 		expect(localRuns).toBe(0);
+	});
+
+	it("flag on: the powershell tool, which shares the shell definition, keeps running its own operations", async () => {
+		process.env.OMO_TOOLS_VIA_DAEMON = "bash";
+		let psRuns = 0;
+		const tool = createPowerShellTool(process.cwd(), {
+			exposeSessionEnvironment: false,
+			operations: {
+				exec: async (_command, _cwd, { onData }) => {
+					psRuns++;
+					onData(Buffer.from("from-powershell\n"));
+					return { exitCode: 0 };
+				},
+			},
+		});
+		const result = await tool.execute("t3", { command: "Write-Output x" });
+		expect(psRuns).toBe(1);
+		expect(JSON.stringify(result)).toContain("from-powershell");
 	});
 });
