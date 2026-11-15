@@ -18,6 +18,10 @@
 			"types": "./dist/conformance/index.d.ts",
 			"import": "./dist/conformance/index.js"
 		},
+		"./read-folders": {
+			"types": "./dist/read-folders.d.ts",
+			"import": "./dist/read-folders.js"
+		},
 		"./harness/context": {
 			"types": "./dist/harness/context.d.ts",
 			"import": "./dist/harness/context.js"

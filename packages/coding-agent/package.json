@@ -63,6 +63,10 @@
 		"./presenter-authority": {
 			"types": "./dist/presenter-authority-slot.d.ts",
 			"import": "./dist/presenter-authority-slot.js"
+		},
+		"./tools-core": {
+			"types": "./dist/tools-core.d.ts",
+			"import": "./dist/tools-core.js"
 		}
 	},
 	"files": [
