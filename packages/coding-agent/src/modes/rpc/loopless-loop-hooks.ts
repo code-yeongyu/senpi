@@ -13,6 +13,7 @@ import { loopHookReply } from "./loop-hook-reply.ts";
 import { SESSION_LOOP_HOOKS } from "./loop-hook-session-events.ts";
 import { SESSION_MOVE_LOOP_HOOKS } from "./loop-hook-session-move.ts";
 import { TURN_LOOP_HOOKS } from "./loop-hook-turn-events.ts";
+import { TURN_EVIDENCE } from "./loop-hook-turn-evidence.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
 export type LooplessLoopHooks = (event: string, payload: JsonValue, cancel?: AbortSignal) => Promise<JsonValue>;
@@ -98,11 +99,13 @@ export function extensionLoopHooks(
 		const { sessionId } = payload;
 		const parsed = LOOP_HOOK_PARSERS[event](payload, { cwd, sessionId, streams });
 		if (event === "session_shutdown") streams.end(sessionId);
+		const turn = TURN_EVIDENCE[event](payload);
 		const binding = {
 			sessionId,
 			cwd,
 			idle: payload.idle,
 			...parsed.binding,
+			...(turn === undefined ? {} : { turn }),
 			...(cancel === undefined ? {} : { cancel }),
 		};
 		return call.run(binding, (effects, signal) =>
