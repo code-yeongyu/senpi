@@ -76,7 +76,9 @@ export interface HandEntryOptions {
 export async function runHand(options: HandEntryOptions): Promise<never> {
 	const { agentDir } = options.configuration;
 	const report = (message: string): void => void process.stderr.write(`senpi hand: ${message}\n`);
+	// The loop runs elsewhere (a hosted loop), so this machine is its extensions' home: their loop hooks run here (S33).
 	const hand = createLooplessHand(options.configuration, {
+		twoSidedHome: "hand",
 		...(options.extensionFactories === undefined ? {} : { extensionFactories: options.extensionFactories }),
 	});
 	const transport = createReliableTransport({
