@@ -91,8 +91,10 @@ describe("a remote tool call when the hand link closes", () => {
 
 		host.close();
 		const result = await call.done;
-		// A later call on the same lane waits on the same floor. Once the ack opens the lane, its invoke goes out after
-		// every send the ack released, the closed call's included, so seeing it proves the closed call sent nothing.
+		// The ack decides the lane's floor: the closed call's continuation is queued right then, when the floor promise
+		// resolves. The later call reaches the gate only after its own tool_execution_start, finds the lane already open
+		// and sends its invoke after that continuation ran, so seeing it proves the closed call sent nothing.
+		// (This relies on the link still sending a call made after close(), see #6785 review L2.)
 		const later = runCall(host, "later");
 		await wire.reply("s", { kind: "floor_ack", floor: 2 });
 		await wire.sending("invoke");
