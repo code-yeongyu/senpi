@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { readOnlySession } from "./loop-hook-session.ts";
+import { LoopHookCallEndedError, readOnlySession } from "./loop-hook-session.ts";
 import type { LoopHookCallFacts, LoopWakeRoute } from "../../core/extensions/runner.ts";
 import type { SessionEntry, SessionHeader } from "../../core/session-manager.ts";
 import type { SessionWake } from "../../core/session-wakes.ts";
@@ -71,8 +71,8 @@ export interface LoopHookCall {
 	 * goes to the call's late route (on a hand, a durable wake to the loop), in order.
 	 */
 	sender(): LoopHookCallFacts["sendMessage"] | undefined;
-	/** The call's session writes (`appendEntry`, `sendUserMessage`) for its work, routed like {@link sender}. */
-	writer(): Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
+	/** The call's facts for its work's session writes (`appendEntry`, `sendUserMessage`, `setActiveTools`), like {@link sender}. */
+	writer(): LoopHookCallFacts | undefined;
 	/** Runs `dispatch` as the call bound to `binding`; `effects` collects what its handlers send, notify and write. */
 	run<T>(binding: LoopHookCallBinding, dispatch: (effects: LoopHookEffects) => Promise<T>): Promise<T>;
 }
@@ -129,10 +129,12 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 				});
 				return settling;
 			};
+			// The call itself, or its own work after it ended (its async context): what the call carried stays readable there.
+			const ownWork = (): boolean => live || calls.getStore()?.facts === facts;
 			const facts: LoopHookCallFacts = Object.freeze({
 				sessionManager: readOnlySession(binding, sessionDir, {
 					live: () => live,
-					ownWork: () => live || calls.getStore()?.facts === facts,
+					ownWork,
 				}),
 				signal: controller.signal,
 				isIdle: () => (live || binding.endsTurn !== true ? idle : latest.get(sessionId) === token),
@@ -157,7 +159,7 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 					if (live) effects.userMessages.push(entry);
 					else late(sessionId).sendUserMessage(content, options);
 				},
-				// Only what this call (or its work) sent.
+				// Only what this call (or its work) sent; a held Stop reads it after the call ended.
 				hasPendingMessages: () => userMessagesSent > 0,
 				getActiveTools: () => {
 					const active = carried?.activeTools;
@@ -171,8 +173,9 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 				sessionWakes: () => wakes,
 				// Only a set the loop carried can change: the loop applies the change to that set.
 				setActiveTools: (names: readonly string[]) => {
+					if (!live) throw new LoopHookCallEndedError("pi.setActiveTools");
 					const active = carried?.activeTools;
-					if (!live || active === undefined) return;
+					if (active === undefined) return;
 					effects.activeTools = {
 						activate: names.filter((name, index) => !active.includes(name) && names.indexOf(name) === index),
 						deactivate: active.filter((name) => !names.includes(name)),

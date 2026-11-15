@@ -70,8 +70,9 @@ export const emptyEffects = (): LoopHookEffects => ({
 
 /**
  * The effects a reply carries back to the loop, each only when there is one. Building it ends the call (`seal`) before
- * anything is read, so work still running afterwards is refused or goes to the call's late route, never collected into a reply
- * that was already built; then the session directory's changes are settled.
+ * anything is read, so work still running afterwards is refused or goes to the call's late route, never collected into a
+ * reply that was already built; then the session directory's changes are settled. A dispatch that throws builds no
+ * reply: its call ends only in `run`'s cleanup, and what it collected is discarded with the error.
  */
 export async function effectsReply(effects: LoopHookEffects): Promise<Record<string, unknown>> {
 	effects.seal();
