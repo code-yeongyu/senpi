@@ -122,7 +122,15 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/agent/src/execution/loop-hook-host-hand.ts#REFUSAL_MESSAGES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/agent/src/execution/loop-hook-host-protocol.ts#KINDS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/agent/src/execution/loop-hook-host-protocol.ts#REFUSALS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -8986,6 +8994,14 @@
 			"class": "per-copy-safe",
 			"reason": "counter or id sequence for this copy's own objects; a split cannot collide across them"
 		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-envelope.ts#ENVELOPE_FIELDS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-envelope.ts#SESSION_FIELDS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts#HEARTBEAT_EARLY_TOLERANCE_MS": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
@@ -9579,6 +9595,22 @@
 		"packages/coding-agent/src/modes/rpc/socket-closing.ts#closing": {
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
+		},
+		"packages/coding-agent/src/modes/rpc/system-prompt-options-schema.ts#SHAPE": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/system-prompt-options-schema.ts#stringRecord": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/system-prompt-options-schema.ts#strings": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/system-prompt-options-schema.ts#systemPromptOptionsSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/testing/kill-attach.ts#KILL_ATTACH_CASES": {
 			"class": "constant",

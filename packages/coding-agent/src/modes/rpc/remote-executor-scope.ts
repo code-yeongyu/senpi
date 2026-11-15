@@ -1,9 +1,15 @@
 import { isAbsolute } from "node:path";
-import type { AgentToolResult, ExecutionScope, HandScope, OpenHandScope } from "@earendil-works/pi-agent-core";
+import {
+	type AgentToolResult,
+	DEFAULT_LOOP_HOOK_QUEUE_WAIT_MS,
+	type ExecutionScope,
+	type HandScope,
+	type OpenHandScope,
+} from "@earendil-works/pi-agent-core";
 import type { JsonValue } from "@earendil-works/pi-ai";
 import type { HandWake } from "../../core/execution/hand-wake-route.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
-import type { SettingsManager } from "../../core/settings-manager.ts";
+import { SettingsManager } from "../../core/settings-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { createHandFileOps } from "./hand-file-ops.ts";
 import { loadFlock } from "./hand-flock-binding.ts";
@@ -52,6 +58,13 @@ export interface LooplessHand {
 	 * `cancel` aborts when the loop host cancels the call.
 	 */
 	readonly loopHooks: (event: string, payload: JsonValue, cancel?: AbortSignal) => Promise<JsonValue>;
+	/**
+	 * The session a loop-hook call belongs to (its scope and loop session), for `serveLoopHooks`'s per-session order; none
+	 * when the payload names neither, and such a call is refused when it runs.
+	 */
+	readonly loopHookSessionOf: (event: string, payload: JsonValue) => string | undefined;
+	/** How long a call waits behind its session's previous call: this hand's event handler cap, or the shipped default. */
+	readonly loopHookQueueWaitMs: number;
 	/** Disposes every runtime this hand opened, including one only loop hooks opened; every later call is refused. */
 	close(): Promise<void>;
 }
@@ -63,7 +76,29 @@ function scopeOf(payload: JsonValue): ExecutionScope {
 	const scope = isRecord(payload) ? payload.scope : undefined;
 	if (!isRecord(scope) || typeof scope.id !== "string" || typeof scope.root !== "string")
 		throw new Error("a loop-hook call names no scope");
+	// The scope is a part the loop-hook lane defines, so it is strict (loop-hook-envelope.ts).
+	const unknownField = Object.keys(scope).find((key) => key !== "id" && key !== "root");
+	if (unknownField !== undefined)
+		throw new Error(`a loop-hook call's scope carries a field it does not name: ${unknownField}`);
 	return { id: scope.id, root: scope.root };
+}
+
+function loopHookSessionOf(_event: string, payload: JsonValue): string | undefined {
+	if (!isRecord(payload) || typeof payload.sessionId !== "string") return undefined;
+	const { scope } = payload;
+	if (!isRecord(scope) || typeof scope.id !== "string") return undefined;
+	return JSON.stringify([scope.id, payload.sessionId]);
+}
+
+function loopHookQueueWaitOf(settings: SettingsManager): number {
+	// A cap of 0 turns the handler cap off, never the queue wait. An invalid setting falls back to the default here as it
+	// does for the runtime's handler budget, which reports it.
+	try {
+		return settings.getExtensionEventHandlerTimeoutMs() || DEFAULT_LOOP_HOOK_QUEUE_WAIT_MS;
+	} catch (error) {
+		if (error instanceof Error) return DEFAULT_LOOP_HOOK_QUEUE_WAIT_MS;
+		throw error;
+	}
 }
 
 /**
@@ -76,8 +111,11 @@ export function createLooplessHand(
 	configuration: CliRuntimeConfiguration,
 	local: LooplessHandOptions = {},
 ): LooplessHand {
+	const startupSettingsManager =
+		local.startupSettingsManager ?? SettingsManager.create(configuration.cwd, configuration.agentDir);
 	const factory = createLooplessRuntimeFactory(configuration, {
 		...local,
+		startupSettingsManager,
 		executeGrant: grantLooplessExecuteToRemoteExecutor(),
 	});
 	// One runtime per scope ID, bound to the root it was opened with. A scope's loop hooks need its extensions' state, so
@@ -140,6 +178,8 @@ export function createLooplessHand(
 			};
 		},
 		runLoopHooks: async (scope, event, payload) => (await runtimeOf(scope, false)).runLoopHooks(event, payload),
+		loopHookSessionOf,
+		loopHookQueueWaitMs: loopHookQueueWaitOf(startupSettingsManager),
 		loopHooks: async (event, payload, cancel) =>
 			(await runtimeOf(scopeOf(payload), false)).runLoopHooks(event, payload, cancel),
 		async close() {

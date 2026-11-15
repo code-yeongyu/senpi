@@ -161,6 +161,7 @@ async function hostedSession() {
 		transport: hooks.hand,
 		lane: "loop-hooks",
 		run: hand.loopHooks,
+		sessionOf: hand.loopHookSessionOf,
 	});
 	closers.push(() => served.close());
 	const host = createLoopHookHost({ transport: hooks.loop, lane: "loop-hooks" });

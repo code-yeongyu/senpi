@@ -1,6 +1,11 @@
 import type { JsonValue } from "@earendil-works/pi-ai";
 import type { Transport, TransportFrame } from "../transport/transport.ts";
-import { decodeLoopHookMessage, encodeLoopHookMessage, type LoopHookCall } from "./loop-hook-host-protocol.ts";
+import {
+	decodeLoopHookMessage,
+	encodeLoopHookMessage,
+	type LoopHookCall,
+	type LoopHookFailed,
+} from "./loop-hook-host-protocol.ts";
 
 /**
  * The loop host's side of the loop-hook link (brain/hand split S33; decisions C8, K5, K7). When the loop runs on a
@@ -39,6 +44,29 @@ export class LoopHookFailedError extends Error {
 	constructor(message: string) {
 		super(message);
 		this.name = "LoopHookFailedError";
+	}
+}
+
+/**
+ * The call waited for its session's previous call past the hand's queue cap and was refused; its hooks never ran (the
+ * previous call's hooks may still be running on the user's machine).
+ */
+export class LoopHookQueueTimeoutError extends Error {
+	readonly event: string;
+	constructor(event: string, message: string) {
+		super(message);
+		this.name = "LoopHookQueueTimeoutError";
+		this.event = event;
+	}
+}
+
+function failureOf(event: string, failed: LoopHookFailed): Error {
+	switch (failed.reason) {
+		case "queue_timeout":
+			return new LoopHookQueueTimeoutError(event, failed.error);
+		case "cancelled":
+		case undefined:
+			return new LoopHookFailedError(failed.error);
 	}
 }
 
@@ -89,7 +117,7 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 			case "hook.reply":
 				return settle(message.callId, (waiter) => waiter.resolve(message.result));
 			case "hook.failed":
-				return settle(message.callId, (waiter) => waiter.reject(new LoopHookFailedError(message.error)));
+				return settle(message.callId, (waiter) => waiter.reject(failureOf(waiter.call.event, message)));
 			case "hook.hello":
 				for (const waiter of [...pending.values()]) {
 					if (waiter.startedBy === undefined) send(waiter.call);

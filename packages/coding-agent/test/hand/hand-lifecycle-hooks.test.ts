@@ -76,6 +76,14 @@ const HUNG_EXTENSION = `export default (pi) => {
 	pi.on("agent_end", () => new Promise(() => {}));
 };`;
 
+/** A user extension whose shutdown handler runs until its own `event.signal` aborts; it announces that it started. */
+const CANCELLABLE_SHUTDOWN_EXTENSION = `export default (pi) => {
+	pi.on("session_shutdown", (event) => new Promise((resolve) => {
+		event.signal?.addEventListener("abort", () => { globalThis.l2ShutdownAborted = true; resolve(); }, { once: true });
+		globalThis.l2ShutdownStarted?.();
+	}));
+};`;
+
 /** Short caps, so a hung handler is stopped within the test (the shipped caps are 10 s and 20 min). */
 const SHORT_BUDGETS = {
 	sessionShutdownHandlerWarnMs: 0,
@@ -262,6 +270,46 @@ describe("a hosted loop's lifecycle hooks run on the user's machine (senpi#5898)
 		expect(reply.errors).toEqual([
 			expect.objectContaining({ event: "session_shutdown", error: "handler timed out after 300ms" }),
 		]);
+	});
+
+	// #6753 review: the loop's cancel reached a shutdown handler's ctx.signal but not its event.signal, which only the cap aborted.
+	it("the loop cancelling a session_shutdown call aborts its handlers' event.signal before the cap", async () => {
+		const user = await userMachine({
+			extension: CANCELLABLE_SHUTDOWN_EXTENSION,
+			settings: { sessionShutdownHandlerWarnMs: 0, sessionShutdownHandlerTimeoutMs: 600_000 },
+		});
+		const started = new Promise<void>((resolve) => Object.assign(globalThis, { l2ShutdownStarted: resolve }));
+		Object.assign(globalThis, { l2ShutdownAborted: false });
+		const loopCall = new AbortController();
+
+		const reply = user.machine.loopHooks(
+			"session_shutdown",
+			{ ...user.base, reason: "quit" },
+			loopCall.signal,
+		) as Promise<LifecycleReply>;
+		await started;
+		loopCall.abort();
+
+		expect((await reply).errors).toBeUndefined();
+		expect((globalThis as { l2ShutdownAborted?: boolean }).l2ShutdownAborted).toBe(true);
+	});
+
+	// #6774 review L3: the parts the loop-hook lane defines itself are strict, the call's scope and prompt options included.
+	it.each([
+		["a scope with a field it does not name", "session_start", { reason: "startup", scopeExtra: true }],
+		[
+			"system prompt options with a field they do not name",
+			"before_agent_start",
+			{ prompt: "go", systemPrompt: "base", trigger: "prompt", systemPromptOptions: { cwd: "/loop", bogus: true } },
+		],
+	] as const)("refuses %s", async (_case, event, fields) => {
+		const user = await userMachine({});
+		const { scopeExtra, ...rest } = { scopeExtra: false, ...fields };
+		const scope = scopeExtra ? { ...user.base.scope, injected: true } : user.base.scope;
+
+		await expect(user.machine.loopHooks(event, toJson({ ...user.base, scope, ...rest }))).rejects.toThrow(
+			/malformed|scope/,
+		);
 	});
 
 	it("any other forwarded lifecycle handler that never settles is stopped at the hand's event handler cap", async () => {
