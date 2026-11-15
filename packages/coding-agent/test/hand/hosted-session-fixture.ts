@@ -69,6 +69,7 @@ export function hostedLoop(options: HostedLoopOptions) {
 				wakes: loop.wakes,
 				...(options.relocationTargets === undefined ? {} : { relocation: { targets: options.relocationTargets } }),
 			}),
+		sessionId: () => sessionId,
 		parse: parseSessionEffects,
 		commit: (call: AgentToolCall, effects: SessionEffects) => {
 			loop.committed.push({ toolCallId: call.id, effects });
@@ -104,11 +105,7 @@ export function hostedLoop(options: HostedLoopOptions) {
 type ToolCallSpec = readonly [id: string, name: string, args: Record<string, JsonValue>];
 
 /** One hand process on the user's machine and the brain's link to it; `extra` adds extensions beside the builtins. */
-export function userMachine<E>(
-	dirs: HandDirs,
-	port: RemoteSessionPort<E>,
-	extra: ((pi: ExtensionAPI) => void)[] = [],
-) {
+export function userMachine<E>(dirs: HandDirs, port: RemoteSessionPort<E>, extra: ((pi: ExtensionAPI) => void)[] = []) {
 	const link = openLink();
 	const hand = createLooplessHand(handConfiguration(dirs), {
 		twoSidedHome: "hand",

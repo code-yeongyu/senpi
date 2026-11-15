@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { getAgentDir } from "../../src/config.ts";
 import { createLoopScheduler } from "../../src/core/extensions/builtin/loop/scheduler.ts";
 import { loopStateFilePath, writeLoopState } from "../../src/core/extensions/builtin/loop/store.ts";
+import type { SessionEntry } from "../../src/core/session-manager.ts";
 import { hostedLoop, textOf, userMachine, userMessage } from "./hosted-session-fixture.ts";
 import { cleanupHands, handDirs } from "./remote-hand-fixture.ts";
 
@@ -29,12 +30,21 @@ describe("a hosted loop's stores, wakes and moves stay with the loop (senpi#6754
 		const blocked = await second.call("g3", "update_goal", { status: "blocked", reason: "waiting on review" });
 		await second.close();
 
-		expect([created.isError, current.isError, blocked.isError], textOf(created)).toEqual([false, false, false]);
+		expect([created, current, blocked].map((result) => [result.isError, textOf(result)])).toEqual([
+			[false, expect.any(String)],
+			[false, expect.any(String)],
+			[false, expect.any(String)],
+		]);
 		expect(textOf(current)).toContain("ship the release");
 		const goalFiles = Object.keys(loop.documents ?? {});
 		expect(goalFiles.length).toBeGreaterThan(0);
 		expect(goalFiles.every((path) => path.startsWith("extensions/goal/"))).toBe(true);
-		expect(JSON.stringify(loop.documents)).toContain('\\"status\\":\\"blocked\\"');
+		const goals = Object.values(loop.documents ?? {}).flatMap((text) => {
+			const parsed: unknown = JSON.parse(text);
+			const goal = typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "goal") : undefined;
+			return goal === undefined ? [] : [goal];
+		});
+		expect(goals).toEqual([expect.objectContaining({ objective: "ship the release", status: "blocked" })]);
 		expect(existsSync(join(getAgentDir(), "extensions", "goal"))).toBe(false);
 	}, 90_000);
 
@@ -96,7 +106,8 @@ describe("a hosted loop's stores, wakes and moves stay with the loop (senpi#6754
 				customType: "loop-tick",
 				data: { loopId: "loop-1", deliveryId: "delivery-1" },
 			},
-			userMessage("user-2", "check the deploy"),
+			// The tick's prompt, delivered as extension input as a fired wake is.
+			{ ...userMessage("user-2", "check the deploy"), inputSource: "extension" } as SessionEntry,
 		);
 		const machine = userMachine(dirs, port);
 		const before = Date.now();
@@ -119,10 +130,27 @@ describe("a hosted loop's stores, wakes and moves stay with the loop (senpi#6754
 		expect(loop.wakes).toEqual([
 			expect.objectContaining({ id: "loop:loop-1", source: "schedule_wakeup", prompt: "/loop check the deploy" }),
 		]);
+		// When it fires the loop appends this tick, which attributes the next call to the same loop.
+		expect(loop.wakes[0]?.entry).toMatchObject({
+			customType: "loop-tick",
+			data: { loopId: "loop-1", mode: "dynamic" },
+		});
 		expect(loop.wakes[0]?.dueAt).toBeGreaterThanOrEqual(before + 1_200_000);
 		expect(Object.values(loop.documents ?? {}).join("")).toContain("nothing changed yet");
 		expect(unattributed.isError).toBe(true);
 		expect(textOf(unattributed)).toContain("can only be used while a dynamic /loop is active");
+	}, 90_000);
+
+	it("tool_search is callable on the first call of a fresh hand runtime", async () => {
+		const dirs = await handDirs("st-first-search");
+		const { port } = hostedLoop({ activeTools: ["read", "tool_search"] });
+		const machine = userMachine(dirs, port);
+
+		const search = await machine.call("q1", "tool_search", { query: "goal status" });
+		await machine.close();
+
+		expect(search.isError, textOf(search)).toBe(false);
+		expect(textOf(search)).toContain("get_goal");
 	}, 90_000);
 
 	it("relocate tools list the loop's targets and return the move for the loop to apply", async () => {

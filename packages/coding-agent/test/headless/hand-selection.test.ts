@@ -493,6 +493,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			},
 			getActiveToolNames: () => [],
 			setActiveToolsByName: () => {},
+			appendCustomSessionEntry: () => "e",
 			dispose: () => {},
 		};
 		const options = headlessHostOptions({

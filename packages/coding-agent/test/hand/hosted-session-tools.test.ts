@@ -66,7 +66,8 @@ describe("a hosted loop's session tools run on the user's machine through the se
 		await machine.close();
 
 		expect([notes.isError, textOf(notes)]).toEqual([false, "release_notes for 1.2.0"]);
-		expect(loop.activeTools).toEqual(expect.arrayContaining(["read", "release_notes", "tool_search"]));
+		// tool_search is active on registration (its catalog boots with the runtime), so the loop's set needs no change.
+		expect([...loop.activeTools].sort()).toEqual(["read", "release_notes"]);
 		expect(search.isError, textOf(search)).toBe(false);
 		expect(textOf(search)).toContain("release_notes");
 	}, 90_000);
@@ -90,7 +91,7 @@ describe("a hosted loop's session tools run on the user's machine through the se
 			[false, "alpha_notes for 1"],
 			[false, "beta_notes for 2"],
 		]);
-		expect([...loop.activeTools].sort()).toEqual(["alpha_notes", "beta_notes", "read", "tool_search"]);
+		expect([...loop.activeTools].sort()).toEqual(["alpha_notes", "beta_notes", "read"]);
 	}, 90_000);
 
 	it("a tool the session cannot activate is refused on the hand, as the session refuses it, and never runs", async () => {
