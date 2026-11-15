@@ -197,9 +197,12 @@ export {
 	type LoopHookHost,
 	type LoopHookHostOptions,
 	LoopHookFailedError,
+	LoopHookQueueTimeoutError,
 	LoopHookRestartedError,
 } from "./execution/loop-hook-host.ts";
+export type { LoopHookRefusal } from "./execution/loop-hook-host-protocol.ts";
 export {
+	DEFAULT_LOOP_HOOK_QUEUE_WAIT_MS,
 	type LoopHookHand,
 	type LoopHookHandOptions,
 	type LoopHookPoint,

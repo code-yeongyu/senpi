@@ -5,7 +5,17 @@ import {
 	encodeLoopHookMessage,
 	type LoopHookCall,
 	type LoopHookMessage,
+	type LoopHookRefusal,
 } from "./loop-hook-host-protocol.ts";
+import { createLoopHookSessionQueues } from "./loop-hook-session-queue.ts";
+
+/** How long a call waits for its session's previous call by default: a session's default event handler cap (20 min). */
+export const DEFAULT_LOOP_HOOK_QUEUE_WAIT_MS = 1_200_000;
+
+const REFUSAL_MESSAGES: Record<LoopHookRefusal, string> = {
+	cancelled: "the loop cancelled this call before its hooks started",
+	queue_timeout: "this session's previous call still held its hooks past the queue cap; this call's hooks did not run",
+};
 
 /**
  * Runs the user's hooks for one loop event on this machine and returns what they produced. `signal` aborts when the loop
@@ -25,6 +35,13 @@ export interface LoopHookHandOptions {
 	readonly transport: Transport;
 	readonly lane: string;
 	readonly run: LoopHookRunner;
+	/**
+	 * The session a call belongs to, read from its event and payload; `undefined` puts the call in no queue. One session's
+	 * calls run one at a time and different sessions' side by side (a lane may carry many sessions).
+	 */
+	readonly sessionOf: (event: string, payload: JsonValue) => string | undefined;
+	/** How long a call waits for its session's previous call before it is refused (`queue_timeout`). */
+	readonly queueWaitMs?: number;
 	/** This process's identity; a new one per process start. */
 	readonly instance?: string;
 	/** Test-only probe: throwing here stops this process at that point, as a kill does. */
@@ -41,9 +58,9 @@ export interface LoopHookHand {
 /**
  * The user machine's side of the loop-hook link (S33): runs each hook call once per process and answers a repeated call
  * from its stored answer. It announces itself first, and says `started` before any hook runs, so the loop host can tell
- * a call this process never began (safe to send again) from one it may have run (never sent again). It runs the lane's
- * calls one at a time and still reads the lane while one runs, so a cancel reaches its call (see the ordering paragraph
- * of `loop-hook-host-protocol.ts`).
+ * a call this process never began (safe to send again) from one it may have run (never sent again). It runs each
+ * session's calls one at a time and still reads the lane while they run, so a cancel reaches its call (see the ordering
+ * paragraph of `loop-hook-host-protocol.ts`).
  */
 export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 	const { transport, lane } = options;
@@ -51,8 +68,8 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 	const answers = new Map<string, LoopHookMessage | undefined>();
 	/** The calls received and not yet answered, by ID, so a cancel reaches them, running or waiting their turn. */
 	const running = new Map<string, AbortController>();
-	/** Settles once the last received call's hooks have settled: the next call's hooks start after it. */
-	let previous: Promise<void> = Promise.resolve();
+	const turnOf = createLoopHookSessionQueues();
+	const queueWaitMs = options.queueWaitMs ?? DEFAULT_LOOP_HOOK_QUEUE_WAIT_MS;
 	let dead = false;
 
 	const send = (message: LoopHookMessage): Promise<void> => transport.send(lane, encodeLoopHookMessage(message));
@@ -74,15 +91,25 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 		}
 		point("received", call.callId);
 		answers.set(call.callId, undefined);
-		// Registered and queued before the first await: a cancel the lane delivers right behind its call finds it, and the
-		// calls of a lane (one session) run one at a time, in the order they arrived.
+		// Registered and queued before the first await: a cancel the lane delivers right behind its call finds it, and a
+		// session's calls run one at a time, in the order they arrived.
 		const controller = new AbortController();
 		running.set(call.callId, controller);
-		const turn = previous;
-		const settled = Promise.withResolvers<void>();
-		previous = settled.promise;
+		const turn = turnOf(options.sessionOf(call.event, call.payload), controller.signal, queueWaitMs);
 		try {
-			await turn;
+			const outcome = await turn.ready;
+			if (outcome !== "turn") {
+				// No `started` is sent: the hooks never ran, so the loop host may treat the call as never begun.
+				const refused: LoopHookMessage = {
+					kind: "hook.failed",
+					callId: call.callId,
+					error: REFUSAL_MESSAGES[outcome],
+					reason: outcome,
+				};
+				answers.set(call.callId, refused);
+				await send(refused);
+				return;
+			}
 			await send({ kind: "hook.started", callId: call.callId, instance });
 			point("started", call.callId);
 			let answer: LoopHookMessage;
@@ -102,7 +129,7 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 			point("replied", call.callId);
 		} finally {
 			running.delete(call.callId);
-			settled.resolve();
+			turn.leave();
 		}
 	};
 

@@ -1,7 +1,6 @@
 import type { JsonValue } from "@earendil-works/pi-ai";
 import type { ExtensionRunner } from "../../core/extensions/runner.ts";
 import { hookModelOf, hookRequestOutputOf, parseHookRequestInput } from "../../core/hand/hook-contract.ts";
-import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
 import type { LoopHookCall, LoopHookEffects } from "./loop-hook-call.ts";
 import { isAgentMessages } from "./agent-message-schema.ts";
@@ -17,6 +16,7 @@ import {
 	TRIGGERS,
 } from "./loop-hook-payloads.ts";
 import { unknownEnvelopeField } from "./loop-hook-envelope.ts";
+import { systemPromptOptionsOf } from "./system-prompt-options-schema.ts";
 import { INPUT_SOURCES } from "./session-entry-schema.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
@@ -85,13 +85,14 @@ export function extensionLoopHooks(
 				typeof prompt !== "string" ||
 				typeof systemPrompt !== "string" ||
 				!isOneOf(trigger, TRIGGERS) ||
-				!(preview === undefined || typeof preview === "boolean") ||
-				!isRecord(systemPromptOptions)
+				!(preview === undefined || typeof preview === "boolean")
 			)
 				throw new Error("malformed before_agent_start payload");
+			const promptOptions = systemPromptOptionsOf(systemPromptOptions);
+			if (promptOptions === undefined) throw new Error("malformed before_agent_start payload: systemPromptOptions");
 			// The loop's options as the loop built them: only `cwd` is this machine's (its workspace); the rest (context files,
 			// skills, tools) describes the loop's machine. They are data for handlers to read; nothing here acts on them.
-			const options = { ...(systemPromptOptions as Partial<BuildSystemPromptOptions>), cwd };
+			const options = { ...promptOptions, cwd };
 			return call.run(scope, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
 					runner.emitBeforeAgentStart(prompt, images, systemPrompt, options, {

@@ -245,6 +245,24 @@ describe("a hosted loop's lifecycle hooks run on the user's machine (senpi#5898)
 		expect((globalThis as { l2ShutdownAborted?: boolean }).l2ShutdownAborted).toBe(true);
 	});
 
+	// #6774 review L3: the parts the loop-hook lane defines itself are strict, the call's scope and prompt options included.
+	it.each([
+		["a scope with a field it does not name", "session_start", { reason: "startup", scopeExtra: true }],
+		[
+			"system prompt options with a field they do not name",
+			"before_agent_start",
+			{ prompt: "go", systemPrompt: "base", trigger: "prompt", systemPromptOptions: { cwd: "/loop", bogus: true } },
+		],
+	] as const)("refuses %s", async (_case, event, fields) => {
+		const user = await userMachine({});
+		const { scopeExtra, ...rest } = { scopeExtra: false, ...fields };
+		const scope = scopeExtra ? { ...user.base.scope, injected: true } : user.base.scope;
+
+		await expect(user.machine.loopHooks(event, toJson({ ...user.base, scope, ...rest }))).rejects.toThrow(
+			/malformed|scope/,
+		);
+	});
+
 	it("any other forwarded lifecycle handler that never settles is stopped at the hand's event handler cap", async () => {
 		const user = await userMachine({ extension: HUNG_EXTENSION, settings: SHORT_BUDGETS });
 

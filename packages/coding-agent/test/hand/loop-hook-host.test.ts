@@ -217,6 +217,7 @@ async function hostedSession(options: { block?: boolean; userExtension?: string 
 		transport: link.hand,
 		lane: "loop-hooks",
 		run: machine.loopHooks,
+		sessionOf: machine.loopHookSessionOf,
 	});
 	closers.push(() => hand.close());
 	const host = createLoopHookHost({ transport: link.loop, lane: "loop-hooks" });

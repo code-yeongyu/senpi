@@ -77,6 +77,7 @@ async function runKillCase(adapters: TransportCaseAdapters, kill: KillHookCase, 
 		serveLoopHooks({
 			transport: handSide,
 			lane: LANE,
+			sessionOf: () => "session",
 			run: async (event, payload) => {
 				runs.push(event);
 				return { context: `hook saw ${JSON.stringify(payload)}` };

@@ -103,6 +103,9 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 		transport: lanes.own,
 		lane: HAND_LOOP_HOOK_LANE,
 		run: hand.loopHooks,
+		// Every scope's sessions share this lane: calls are ordered per session, so one session's stuck call holds no other.
+		sessionOf: hand.loopHookSessionOf,
+		queueWaitMs: hand.loopHookQueueWaitMs,
 		onFault: (error) => report(`loop hook fault: ${String(error)}`),
 	});
 
