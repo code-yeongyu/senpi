@@ -84,7 +84,7 @@ No native build is needed: every Bun build of the release entry graph keeps link
 `bun test scripts/release-graph-exclusions.test.ts`. The codemode suite rebuilds
 all workspace entries and prepares compile assets before measuring real Bun output
 contributions, so direct invocation also replaces stale `dist` from another branch.
-The CI `Test (workspaces + scripts)` job runs these commands in its
+The CI `Test (scripts)` job runs these commands in its
 `Fresh release entry graphs (codemode and exclusions)` step, before either script
 suite can invalidate generated output. These Bun `.ts` tests are not part of the
 Node `.mjs` script-test glob. Run them only in a checkout whose generated outputs

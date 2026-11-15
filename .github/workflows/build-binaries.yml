@@ -278,9 +278,13 @@ jobs:
   # (workflow_ref), so this workflow must never publish directly. Dispatch
   # publish-npm.yml in publish-only mode — the same mechanism used for manual
   # release recovery — and gate the public GitHub Release on its result.
+  # The dispatch waits for build only (senpi#6627): the smoke matrix checks the
+  # standalone binaries, which ship in the GitHub Release and never in the npm
+  # packages, and its macos-latest row could hold the npm publish for 30+ minutes
+  # in the account's runner queue. The GitHub Release still needs the full smoke.
   publish-npm:
     runs-on: ubuntu-latest
-    needs: stage-github-release
+    needs: build
     if: ${{ inputs.dry_run != true }}
     # The dispatched run can sit queued for hosted runners for hours (senpi#4173);
     # the await below keeps its own ceiling (AWAIT_MAX_SECONDS) under this limit.
@@ -353,6 +357,38 @@ jobs:
           AWAIT_INTERVAL: "30"
         run: bash scripts/await-dispatched-run.sh
 
+  # npm no longer waits for the standalone-binary smoke (senpi#6627). When that smoke fails after npm
+  # published the version, fail loudly and open an issue naming the version and each failing OS, with the
+  # one-command rollback of npm `latest` for the release owner. This job never moves a dist-tag itself.
+  report-smoke-failure-after-npm:
+    runs-on: ubuntu-latest
+    needs:
+      - smoke-test-binaries
+      - publish-npm
+    if: ${{ always() && inputs.dry_run != true && needs.publish-npm.result == 'success' && needs.smoke-test-binaries.result == 'failure' }}
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+
+      - name: Open an issue for the failed smoke and fail
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/release-smoke-failure-issue.mjs
+
   publish-github-release:
     runs-on: ubuntu-latest
     needs:
@@ -411,4 +447,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLISH_RUN_ID: ${{ needs.publish-npm.outputs.run_id }}
           PUBLISH_JOB_RESULT: ${{ needs.publish-npm.result }}
+          STAGE_JOB_RESULT: ${{ needs.stage-github-release.result }}
         run: bash scripts/release-draft-cleanup.sh

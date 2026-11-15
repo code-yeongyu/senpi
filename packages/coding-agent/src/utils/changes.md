@@ -1,5 +1,41 @@
 # changes
 
+## 2026-11-15 - The image byte sniffer moves to a module without Node imports (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/src/utils/mime.ts`: `detectSupportedImageMimeType` and its helpers move to `image-mime.ts`, re-exported here; this module keeps `detectSupportedImageMimeTypeFromFile`.
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- The sniffer is a core utility the built-in read tool imports.
+
+### Expected merge conflict zones
+
+- LOW: `mime.ts` is now the file reader plus a re-export.
+
+## 2026-11-13 - Binary installs read the update version from the latest GitHub Release (senpi#6633)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: when the running install is a standalone binary (`detectInstallMethod() === "bun-binary"`) and no branded channel is set, `getLatestPiRelease` reads `https://api.github.com/repos/code-yeongyu/senpi/releases/latest` and takes the version from `tag_name` (`readLatestReleaseVersion`, which refuses drafts and prereleases). npm-based installs keep npm `latest`; branded channels keep their dist-tag. `getLatestPiRelease`, `getLatestPiVersion` and `checkForNewPiVersion` accept an optional `installMethod`.
+
+### Why
+
+- A binary can only be updated from a GitHub Release, but its notice came from npm `latest`. Since senpi#6627 npm can publish before the release exists, which told binary users about a version they could not download.
+
+### Why an extension could not handle it
+
+- The startup update notice and `senpi update` call this module directly; no extension hook decides where the installable version comes from.
+
+### Expected merge conflict zones
+
+- LOW: the request URL and headers in `getLatestPiRelease` and the `checkForNewPiVersion` signature in `version-check.ts`.
+
 ## 2026-11-06 - Copy reaches a remote viewer without SSH/Mosh markers (senpi#6108, PR #6109)
 
 ### What changed

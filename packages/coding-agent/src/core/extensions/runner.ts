@@ -147,6 +147,7 @@ import {
 	type ToolEventDispatchOptions,
 	twoSidedExtensions,
 } from "./two-sided-forwarding.ts";
+import { combinedToolCallSignal } from "./tool-call-signal.ts";
 
 const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
 	"offload",
@@ -166,6 +167,7 @@ const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRunt
 	"getImageSettings",
 	"getRegisteredMcpServers",
 	"extensionConnectsMcpServers",
+	"signal",
 ]);
 
 /** Session identity a context of a runner without a session does not have; dispatchers treat its absence as context-free. */
@@ -660,6 +662,7 @@ export class ExtensionRunner {
 	private engineTurnsHeldFn: () => boolean = () => false;
 	private noteHeldWakeFn: (source: string) => void = () => {};
 	private pauseActions: Pick<ExtensionContextActions, "getPauseState" | "fenceRun" | "releaseRunFence"> = {};
+	private registerRunBackgroundJobFn: ExtensionContextActions["registerRunBackgroundJob"];
 	private questionInput: ExtensionContextActions["questionInput"];
 	private personAnswerPending = false;
 	private isProjectTrustedFn: () => boolean = () => true;
@@ -881,6 +884,7 @@ export class ExtensionRunner {
 			fenceRun: contextActions.fenceRun,
 			releaseRunFence: contextActions.releaseRunFence,
 		};
+		this.registerRunBackgroundJobFn = contextActions.registerRunBackgroundJob;
 		this.questionInput = contextActions.questionInput;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
@@ -1799,6 +1803,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				runner.pauseActions.releaseRunFence?.(runRef);
 			},
+			registerRunBackgroundJob: (job) => {
+				runner.assertActive();
+				return runner.registerRunBackgroundJobFn?.(job) ?? (() => {});
+			},
 			isProjectTrusted: () => {
 				runner.assertActive();
 				return runner.isProjectTrustedFn();
@@ -2535,10 +2543,21 @@ export class ExtensionRunner {
 				own,
 				"tool_call",
 				options,
+				// The forwarder carries the event only, never the call's signal (senpi#6679 L1): a handler served on the
+				// loop side of a forward sees the loop-hook signal, the exception ToolEventDispatchOptions.signal documents.
 				(index) => async () => options.forward?.toolCall(ext.path, index, event),
 			);
 			for (const handler of handlers) {
-				const hookRun = this.beginToolHookRun(this.createContext(), {
+				const baseContext = this.createContext();
+				if (options.signal !== undefined) {
+					const callSignal = combinedToolCallSignal(options.signal, baseContext.signal);
+					Object.defineProperty(baseContext, "signal", {
+						get: () => callSignal,
+						configurable: true,
+						enumerable: true,
+					});
+				}
+				const hookRun = this.beginToolHookRun(baseContext, {
 					hookName: "PreToolUse",
 					toolName: event.toolName,
 					toolCallId: event.toolCallId,

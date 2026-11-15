@@ -130,8 +130,15 @@ if (${JSON.stringify(name)} === "npm" && args[0] === "view") {
 			chmodSync(join(bin, name), 0o755);
 		}
 	}
+	// The runner's GITHUB_ACTIONS/GITHUB_REF must not leak into a spawned release: these tests
+	// exercise the registry preflight, which sits behind the live-run ref guard (#6690). Every case
+	// sets the pair it means in the child's env (runRelease / the publish case below).
 	const env = {
-		...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^npm_/i.test(key))),
+		...Object.fromEntries(
+			Object.entries(process.env).filter(
+				([key]) => !/^npm_/i.test(key) && key !== "GITHUB_ACTIONS" && key !== "GITHUB_REF",
+			),
+		),
 		PATH: `${bin}${delimiter}${dirname(process.execPath)}`,
 	};
 	const commands = () =>
@@ -146,7 +153,7 @@ if (${JSON.stringify(name)} === "npm" && args[0] === "view") {
 const runRelease = ({ root, env }) =>
 	spawnSync(process.execPath, [join(repoRoot, "scripts", "release.mjs"), "--version", "2026.11.13-9", "--force-tests"], {
 		cwd: root,
-		env,
+		env: { ...env, GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main" },
 		encoding: "utf8",
 		timeout: 15000,
 	});
@@ -180,7 +187,8 @@ describe("publish.mjs registry preflight", () => {
 		withStubs("unknown", ({ env, commands }) => {
 			const result = spawnSync(process.execPath, [join(repoRoot, "scripts", "publish.mjs")], {
 				cwd: repoRoot,
-				env: { ...env, GITHUB_ACTIONS: "true" },
+				// A live publish runs only from main (senpi#6645's ref guard); on any other ref it stops before this preflight.
+				env: { ...env, GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main" },
 				encoding: "utf8",
 				timeout: 15000,
 			});

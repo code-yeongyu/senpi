@@ -98,7 +98,7 @@ describe("SettingsManager retry fallback settings", () => {
 			"claude-fable-5": ["claude-opus-5-5", "claude-opus-5"],
 			"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
 			"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"],
-			"claude-opus-5-5": ["claude-fable-5-2", "claude-opus-5"],
+			"claude-opus-5-5": ["claude-fable-5-2:medium", "kimi-k3.1-pro:max"],
 		};
 		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings()).toEqual({
 			modelFallback: true,
@@ -140,7 +140,7 @@ describe("SettingsManager retry fallback settings", () => {
 				"claude-fable-5": ["ccapi/kimi-k3:max"],
 				"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
 				"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"],
-				"claude-opus-5-5": ["claude-fable-5-2", "claude-opus-5"],
+				"claude-opus-5-5": ["claude-fable-5-2:medium", "kimi-k3.1-pro:max"],
 			},
 			revertPolicy: "never",
 		});
@@ -156,7 +156,7 @@ describe("SettingsManager retry fallback settings", () => {
 			"claude-fable-5": ["claude-opus-5-5", "claude-opus-5"],
 			"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
 			"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"],
-			"claude-opus-5-5": ["claude-fable-5-2", "claude-opus-5"],
+			"claude-opus-5-5": ["claude-fable-5-2:medium", "kimi-k3.1-pro:max"],
 		});
 	});
 
@@ -188,7 +188,7 @@ describe("SettingsManager retry fallback settings", () => {
 			"claude-fable-5": ["claude-opus-5-5", "claude-opus-5"],
 			"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
 			"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"],
-			"claude-opus-5-5": ["claude-fable-5-2", "claude-opus-5"],
+			"claude-opus-5-5": ["claude-fable-5-2:medium", "kimi-k3.1-pro:max"],
 		});
 	});
 

@@ -493,6 +493,12 @@ journaled terminal. Later wakes tagged with the run are admitted again, fences f
 run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
 emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
 
+`ctx.registerRunBackgroundJob({ kind, id, description?, stop })` records a background job under the turn running at
+that moment (outside a turn it records nothing), and returns the release to call once the job ended on its own. An RPC
+`interrupt` with `background: "stop"` calls `stop(turnId)` for each job that turn recorded and names it in its answer;
+`stop` ends the job without waking the session and rejects with the reason it could not. The terminal builtin records
+every background bash session this way.
+
 #### held_wakes_released
 
 `pi.on("held_wakes_released", (event, ctx) => ...)` receives
@@ -2567,6 +2573,18 @@ pi.registerShortcut("ctrl+shift+p", {
     ctx.ui.notify("Toggled!");
   },
 });
+```
+
+### pi.registerDeviceMachine(machine)
+
+Register the operation layer of the device this session's tools run on (a `ToolMachine`, for example from `createToolMachine({ ops })`). Only tools named in `OMO_TOOLS_VIA_DAEMON` use it, today `bash`, and the bash tool reads it when a command runs. With the flag on and no machine registered, bash fails with `DeviceUnavailableError` and never runs locally.
+
+One registration per session: a second one, from any extension, throws `DeviceMachineConflictError` (`code: "device_machine_conflict"`, with `registeredBy` and `attemptedBy`). A registration made by an extension whose factory then throws is discarded with the rest of that load. If another extension registers a device machine while this load's registration is still staged (for example from an event fired during this factory), the conflict is found when the load commits: the factory cannot catch it, and the extension fails to load as a whole with `DeviceMachineConflictError`.
+
+```typescript
+import { createToolMachine } from "@code-yeongyu/senpi";
+
+pi.registerDeviceMachine(createToolMachine({ ops: myDeviceOps }));
 ```
 
 ### pi.registerFlag(name, options)

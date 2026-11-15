@@ -1,3 +1,78 @@
+## 2026-11-13 - The workspace matrix comment names the job that owns the senpi-codemode suite (senpi#6631)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the comment above `test-workspaces` says `codemode-tests` (not `codemode-gate`) runs the senpi-codemode `test` script, and that `scripts/ci-workspace-coverage.test.mjs` also fails when a workspace suite runs in two CI steps. Comment only; no job changes.
+
+### Why
+
+- senpi#6623 moved the codemode package suite from `codemode-gate` into `codemode-tests`, and the comment still named the old job. The coverage test now scans every step for every suite, so the comment states both of its failure modes.
+
+### Why an extension could not handle it
+
+- This is the repository's own CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the comment block above the `test-workspaces` job.
+
+## 2026-11-13 - CI runs the workspace suites in parallel and the senpi-codemode suite once (senpi#6620)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-workspaces` is a matrix of two groups, `ai` and `agent, tui and the rest`, each running `node scripts/run-workspaces.mjs --if-present <its --workspace flags> test`. Each leg needs `build-coding-agent` and restores its `workspace-dist` artifact first, because the workspace suites import packages through their built `dist` (the old job got it from its release-graph step). `scripts/ci-workspace-coverage.test.mjs` fails when a workspace test script runs in no CI job or in two, or when a suite-owning job is missing from `Check and test`'s `needs`. The script tests, release entry graphs and bundle smoke moved unchanged into the new `test-scripts` job ("Test (scripts)"). The codemode package tests moved out of `codemode-gate` into the new parallel `codemode-tests` job, and `packages/senpi-codemode` left the workspace list, so its suite runs once per run. `Check and test` needs both new jobs and lists them in its summary; its name is unchanged.
+
+### Why
+
+- In main run 43347262747 the workspace step ran ten suites one after another for 13.0 min, making `Test (workspaces + scripts)` the longest job (17.7 min), and 8 min of it repeated the senpi-codemode suite that `codemode-gate` also ran in full (339 files and 3079 tests in both steps). `codemode-gate` itself took 17.1 min with its eval gate and the package tests in series, although the tests read nothing the gate writes.
+
+### Why an extension could not handle it
+
+- This is the repository's own CI workflow.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `test-workspaces` job, the `codemode-gate` job and the `needs` list and summary of `check-and-test`.
+
+## 2026-11-13 - CI checks the publish set against the npm registry (senpi#6636)
+
+### What changed
+
+- `.github/workflows/registry-packages-published.yml` (new): on a PR that changes `scripts/registry-packages.mjs`, `scripts/npm-registry.mjs` or the workflow, and on main, runs `node scripts/npm-registry.mjs` and fails while a publish-set name is unknown to the npm registry.
+
+### Why
+
+- A PR that adds a package to the publish set should see the missing first publish at review time, not at the next release's publish step (senpi#6636).
+
+### Why an extension could not handle it
+
+- CI configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- None: the workflow is new.
+
+## 2026-11-13 - The npm publish dispatch no longer waits for the binary smoke (senpi#6627)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `publish-npm` job, which dispatches `publish-npm.yml` publish-only and awaits it, now needs `build` instead of `stage-github-release`. `stage-github-release` still needs the full `smoke-test-binaries` matrix, and `publish-github-release` still needs both `stage-github-release` and `publish-npm`.
+- `.github/workflows/build-binaries.yml`: the "Delete draft GitHub Release after failure" step of `cleanup-draft-github-release` passes `STAGE_JOB_RESULT: ${{ needs.stage-github-release.result }}` to `scripts/release-draft-cleanup.sh`, which now advises publishing a kept draft only when staging succeeded and otherwise prints re-stage steps.
+- `.github/workflows/build-binaries.yml`: a new job, `report-smoke-failure-after-npm`, needs `smoke-test-binaries` and `publish-npm` and runs only when the smoke failed after npm published and the run is not a dry run. It has only `actions: read` and `issues: write`, and nothing waits for it. It runs `scripts/release-smoke-failure-issue.mjs`, which opens an issue naming the version, each failing smoke OS, the run, and the rollback command `npm dist-tag add @code-yeongyu/senpi@<previous> latest`, and then exits non-zero so the run fails loudly. The previous version is read by npm publish time. No job moves a dist-tag.
+
+### Why
+
+- The smoke matrix checks the standalone binaries, which ship only as GitHub Release assets and never in the npm packages. Its macos-latest row queued 30.0 min in run 43048337284, and the npm publish waited behind it.
+- That smoke was the only pre-npm check that starts the CLI on macOS and Windows. A startup bug that shows only there no longer holds npm, so its failure after npm is reported with the rollback command instead.
+
+### Why an extension could not handle it
+
+- Release workflow job ordering is repository CI configuration, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `needs:` line and comment of the `publish-npm` job, and the env block of the cleanup step, in `build-binaries.yml`; the new `report-smoke-failure-after-npm` job sits between `publish-npm` and `publish-github-release`.
+
 ## 2026-11-11 - CI tests the realm-registry package (omo#12965)
 
 ### What changed

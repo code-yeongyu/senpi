@@ -35,6 +35,7 @@ export type SessionStatusCause =
 	| "park"
 	| "close"
 	| "context"
+	| "rename"
 	| "archive";
 
 export type SessionStatusActor = "client" | "agent" | "host";
@@ -234,6 +235,8 @@ export function causeOfRecord(record: {
 			return "set_model";
 		case "session_replaced":
 			return "replace";
+		case "session_info_changed":
+			return "rename";
 		case "session_parked":
 			return "park";
 		case "session_closed":
