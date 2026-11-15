@@ -78,6 +78,8 @@ export type AuthenticatedQueryInput = {
 	 * is tried even while blocked, and no block is stored or cleared. Requires `pinnedAccount`.
 	 */
 	probe?: boolean;
+	/** Accounts already attempted on this person's turn; absent on automated and auxiliary requests. */
+	recheckedAccounts?: Set<string>;
 	/** The account this session's SDK transcript lives under; preferred while it can serve (senpi#2891). */
 	preferredAccount?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
@@ -325,6 +327,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 	let askedLegacyLongContext = false;
 	yield* runFailover({
 		accounts: pool.accounts,
+		recheckedAccounts: input.probe === true ? undefined : input.recheckedAccounts,
 		accountFallback: input.providerSettings.accountFallback,
 		selectFn: (accounts) =>
 			selectAccount(accounts, {

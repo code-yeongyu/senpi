@@ -6371,6 +6371,14 @@ export class AgentSession {
 						? await this._pooledAccountHealth(model.provider, model.id)
 						: undefined;
 				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
+				// The Claude pool owns the person's bounded stale-block recheck (senpi#6727). Its account-level
+				// evidence must decide admission; a coarse hold here would prevent the CLI from checking at all.
+				if (
+					model?.provider === "anthropic-subscription" &&
+					this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
+					attributionOf(options) === "user"
+				)
+					this._retryFallback.releaseAccountHold(model.provider);
 				// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
 				// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
 				// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
