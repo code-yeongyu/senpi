@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ImageContent, JsonValue } from "@earendil-works/pi-ai";
-import type { ExtensionRunner, LoopHookCallFacts } from "../../core/extensions/runner.ts";
+import type { ExtensionRunner, LoopHookCallFacts, LoopWakeRoute } from "../../core/extensions/runner.ts";
 import type { BeforeAgentStartEvent, InputAttribution, InputSource } from "../../core/extensions/types.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import type { ReadonlySessionManager } from "../../core/session-manager.ts";
@@ -173,8 +173,6 @@ export interface SentLoopMessage {
 export interface LoopHookEffects {
 	readonly sent: SentLoopMessage[];
 	readonly notices: LoopNotice[];
-	/** Late messages and notices dropped because the loop session already held {@link LATE_PER_SESSION}. */
-	dropped: number;
 }
 
 /** A notice a loop hook showed during its call, for the loop to show on its own UI. */
@@ -204,7 +202,6 @@ async function dispatchLoopHook(
 				...result,
 				...(sent.length > 0 ? { sent } : {}),
 				...(notices.length > 0 ? { notices } : {}),
-				...(effects.dropped > 0 ? { droppedLate: effects.dropped } : {}),
 				...(errors.length > 0 ? { errors } : {}),
 			}),
 		) as JsonValue;
@@ -224,7 +221,7 @@ export interface LoopHookCall {
 	current(): LoopHookCallFacts | undefined;
 	/**
 	 * The sender of the call whose work runs in this async context, also after that call ended: a message sent then
-	 * travels with the next reply for the same loop session (the link has no other way back), in order.
+	 * goes to the call's late route (on a hand, a durable wake to the loop), in order.
 	 */
 	sender(): LoopHookCallFacts["sendMessage"] | undefined;
 	/** Runs `dispatch` as the call, with the loop's idle state; `effects` collects what its handlers send and notify. */
@@ -237,26 +234,14 @@ export interface LoopHookCall {
 }
 
 /**
- * Messages and notices from a call's work after that call ended, which one loop session holds until its next reply
- * (the loop-hook link has no hand-to-loop push). Past this many the oldest held notice is dropped, or the oldest
- * message when no notice is held, and counted in that reply:
- * late work never throws into the user's hook code.
+ * Where a call's messages and notices go once that call ended, for its loop session (brain/hand split H3): on a hand,
+ * the durable wake outbox, so they reach the loop at least once whether or not the session makes another call, and
+ * never through a reply that may be lost. Late work never throws into the user's hook code.
  */
-export const LATE_PER_SESSION = 256;
+export type LateLoopRoute = (sessionId: string) => Pick<LoopWakeRoute, "sendMessage" | "notify">;
 
-export function createLoopHookCall(): LoopHookCall {
+export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 	const calls = new AsyncLocalStorage<{ readonly live: () => boolean; readonly facts: LoopHookCallFacts }>();
-	const late = new Map<string, LoopHookEffects>();
-	const holdLate = (sessionId: string, add: (held: LoopHookEffects) => void) => {
-		const held = late.get(sessionId) ?? { sent: [], notices: [], dropped: 0 };
-		add(held);
-		while (held.sent.length + held.notices.length > LATE_PER_SESSION) {
-			// Notices only reach the loop's UI, messages reach its model, so the oldest notice goes first.
-			(held.notices.length > 0 ? held.notices : held.sent).shift();
-			held.dropped++;
-		}
-		late.set(sessionId, held);
-	};
 	return {
 		current: () => {
 			const call = calls.getStore();
@@ -266,8 +251,7 @@ export function createLoopHookCall(): LoopHookCall {
 		async run(sessionId, cwd, idle, dispatch) {
 			let live = true;
 			const controller = new AbortController();
-			const effects: LoopHookEffects = late.get(sessionId) ?? { sent: [], notices: [], dropped: 0 };
-			late.delete(sessionId);
+			const effects: LoopHookEffects = { sent: [], notices: [] };
 			const facts: LoopHookCallFacts = Object.freeze({
 				sessionManager: readOnlySession(sessionId, cwd, () => live),
 				signal: controller.signal,
@@ -275,12 +259,12 @@ export function createLoopHookCall(): LoopHookCall {
 				sendMessage: (message: SentLoopMessage["message"], options?: SentLoopMessage["options"]) => {
 					const entry = options === undefined ? { message } : { message, options };
 					if (live) effects.sent.push(entry);
-					else holdLate(sessionId, (held) => held.sent.push(entry));
+					else late(sessionId).sendMessage(message, options);
 				},
 				notify: (message: string, type?: Parameters<LoopHookCallFacts["notify"]>[1]) => {
 					const entry = type === undefined ? { message } : { message, type };
 					if (live) effects.notices.push(entry);
-					else holdLate(sessionId, (held) => held.notices.push(entry));
+					else late(sessionId).notify(message, type);
 				},
 			});
 			try {
@@ -296,7 +280,7 @@ export function createLoopHookCall(): LoopHookCall {
 /**
  * The one deliberate refusal after a loop-hook call ended (option A): the loop session's identity is bound to that call
  * only, so reading it from a kept context afterwards throws this instead of answering. Every other member a call binds
- * keeps working after it (late messages and notices ride the next reply; idle and signal keep their values).
+ * keeps working after it (late messages and notices go to the call's late route; idle and signal keep their values).
  */
 export class LoopHookCallEndedError extends Error {
 	override readonly name = "LoopHookCallEndedError";

@@ -27,11 +27,14 @@ import type {
 	InputEventResult,
 } from "../../src/core/extensions/types.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
+import { deliverHandWake } from "../../src/core/execution/wake-delivery.ts";
+import { openHandWakeOutbox } from "../../src/modes/hand/hand-wakes.ts";
 import {
 	createLoopHookCall,
-	LATE_PER_SESSION,
+	type LateLoopRoute,
 	LoopHookCallEndedError,
 } from "../../src/modes/rpc/loopless-tool-handlers.ts";
+import { brainInbox, connect } from "./hand-wake-fixture.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture.ts";
 
@@ -42,6 +45,10 @@ const RECORDING_EXTENSION = `export default (pi) => {
 	pi.on("input", (event, ctx) => record({ event: "input", text: event.text, images: event.images?.length ?? 0, source: event.source, attribution: event.attribution, streamingBehavior: event.streamingBehavior ?? null, inputId: typeof event.inputId, idle: ctx.isIdle() }));
 	pi.on("before_agent_start", (event, ctx) => record({ event: "before_agent_start", prompt: event.prompt, trigger: event.trigger, images: event.images?.length ?? 0, preview: event.preview ?? null, options: defined(event.systemPromptOptions), idle: ctx.isIdle() }));
 };`;
+
+const noLateEffects: LateLoopRoute = () => {
+	throw new Error("this test's hooks have no work that outlives their call");
+};
 
 const harnesses: Harness[] = [];
 const closers: Array<() => void> = [];
@@ -213,9 +220,12 @@ async function hostedSession(options: { block?: boolean; userExtension?: string 
 	writePromptHook(dirs.cwd, options.block);
 	const extension = join(dirs.cwd, "..", "user-ext.ts");
 	if (options.userExtension !== undefined) writeFileSync(extension, options.userExtension);
+	const brain = await brainInbox();
+	const wakeLink = connect(brain, await openHandWakeOutbox(join(dirs.agentDir, "hand-wakes.json")));
+	closers.push(() => wakeLink.close());
 	const machine = createLooplessHand(
 		handConfiguration(dirs, options.userExtension === undefined ? [] : ["-e", extension]),
-		{ twoSidedHome: "hand" },
+		{ twoSidedHome: "hand", wakes: wakeLink.wakes },
 	);
 	const link = hookLink();
 	const hand = serveLoopHooks({
@@ -228,15 +238,28 @@ async function hostedSession(options: { block?: boolean; userExtension?: string 
 	const issued = Promise.withResolvers<void>();
 	const hookErrors: string[] = [];
 	const notices: string[] = [];
+	let loopPi: ExtensionAPI | undefined;
 	const loop = await createHarness({
-		extensionFactories: [forwardLoopHooks(host, dirs.cwd, () => issued.resolve(), hookErrors, notices)],
+		extensionFactories: [
+			forwardLoopHooks(host, dirs.cwd, () => issued.resolve(), hookErrors, notices),
+			(pi) => void (loopPi = pi),
+		],
 	});
 	harnesses.push(loop);
 	loop.setResponses([fauxAssistantMessage("done")]);
 	const marker = join(dirs.cwd, "hook-ran.txt");
 	const marks = () => (existsSync(marker) ? readFileSync(marker, "utf-8") : "");
 	const requestText = () => JSON.stringify(loop.faux.getCallLog().map((entry) => entry.context));
+	// The brain's side of the wake link: a taken wake becomes the very call this loop session's extension API makes.
+	const deliverWakes = () =>
+		brain.inbox.drain(async (wake) => {
+			const pi = loopPi;
+			if (pi === undefined) throw new Error("the loop's extension did not load");
+			deliverHandWake(wake, { sendMessage: pi.sendMessage, sendUserMessage: pi.sendUserMessage, notify: () => {} });
+		});
 	return {
+		brain,
+		deliverWakes,
 		loop,
 		link,
 		host,
@@ -351,7 +374,7 @@ describe("the user's loop hooks run on the user's machine when the loop runs els
 		expect(JSON.stringify(next)).not.toContain("context from the user machine");
 	});
 
-	it("a message a handler's async work sends after its call ended reaches the loop with the next reply", async () => {
+	it("a message a handler's async work sends after its call ended reaches the loop as a wake, with no further call", async () => {
 		const gate = Promise.withResolvers<void>();
 		Object.assign(globalThis, { s33LateGate: gate.promise });
 		const session = await hostedSession({
@@ -361,8 +384,9 @@ describe("the user's loop hooks run on the user's machine when the loop runs els
 
 		await session.loop.session.prompt("first");
 		gate.resolve();
-		await gate.promise;
-		await session.loop.session.prompt("second");
+		await session.brain.committed.next("the late message's wake");
+		expect(await session.deliverWakes()).toBe(1);
+		await session.loop.session.waitForSettledSessionWork();
 
 		expect(session.hookErrors).toEqual([]);
 		expect(JSON.stringify(session.loop.session.messages).split("sent after the call")).toHaveLength(2);
@@ -419,7 +443,7 @@ describe("the user's loop hooks run on the user's machine when the loop runs els
 
 describe("a loop-hook call's bound session (S33, option A)", () => {
 	it("is the loop session's id, read-only, during the call only", async () => {
-		const call = createLoopHookCall();
+		const call = createLoopHookCall(noLateEffects);
 		let during: { id: string; file: string | undefined; idle: boolean } | undefined;
 		let captured: ReturnType<typeof call.current>;
 
@@ -447,50 +471,33 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		expect(captured?.signal.aborted).toBe(true);
 	});
 
-	it("holds late messages up to its cap, then drops the oldest and counts them, never throwing", async () => {
-		const call = createLoopHookCall();
-		let kept: ReturnType<typeof call.current>;
-		await call.run("loop-session-3", "/work", true, async () => {
-			kept = call.current();
-		});
-
-		for (let index = 0; index < LATE_PER_SESSION + 2; index++)
-			expect(() => kept?.sendMessage({ customType: "late", content: `m${index}`, display: false })).not.toThrow();
-		const next = await call.run("loop-session-3", "/work", true, async (effects) => ({
-			sent: effects.sent.map((entry) => entry.message.content),
-			dropped: effects.dropped,
+	it("sends what its work does after the call ended to the late route of its session, in order, never throwing", async () => {
+		const late: unknown[] = [];
+		const call = createLoopHookCall((sessionId) => ({
+			sendMessage: (message) => late.push([sessionId, "message", message.content]),
+			notify: (message) => late.push([sessionId, "notice", message]),
 		}));
-
-		expect(next.dropped).toBe(2);
-		expect(next.sent).toHaveLength(LATE_PER_SESSION);
-		expect(next.sent[0]).toBe("m2");
-	});
-
-	it("past its cap drops held notices before any message: messages reach the model, notices only the UI", async () => {
-		const call = createLoopHookCall();
 		let kept: ReturnType<typeof call.current>;
-		await call.run("loop-session-4", "/work", true, async () => {
+		const reply = await call.run("loop-session-3", "/work", true, async (effects) => {
 			kept = call.current();
+			kept?.sendMessage({ customType: "during", content: "in the reply", display: false });
+			return effects;
 		});
 
-		kept?.notify("oldest-notice");
-		for (let index = 0; index < LATE_PER_SESSION; index++)
-			kept?.sendMessage({ customType: "late", content: `m${index}`, display: false });
-		const next = await call.run("loop-session-4", "/work", true, async (effects) => ({
-			sent: effects.sent.map((entry) => entry.message.content),
-			notices: effects.notices.map((entry) => entry.message),
-			dropped: effects.dropped,
-		}));
+		expect(() => kept?.sendMessage({ customType: "late", content: "m0", display: false })).not.toThrow();
+		expect(() => kept?.notify("n0")).not.toThrow();
+		kept?.sendMessage({ customType: "late", content: "m1", display: false });
 
-		expect(next).toEqual({
-			sent: Array.from({ length: LATE_PER_SESSION }, (_, index) => `m${index}`),
-			notices: [],
-			dropped: 1,
-		});
+		expect(reply.sent.map((entry) => entry.message.content)).toEqual(["in the reply"]);
+		expect(late).toEqual([
+			["loop-session-3", "message", "m0"],
+			["loop-session-3", "notice", "n0"],
+			["loop-session-3", "message", "m1"],
+		]);
 	});
 
 	it("is not visible to work that runs outside the call", async () => {
-		const call = createLoopHookCall();
+		const call = createLoopHookCall(noLateEffects);
 		const outside = Promise.withResolvers<ReturnType<typeof call.current>>();
 
 		await call.run("loop-session-2", "/work", true, async () => {});
@@ -502,17 +509,18 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 
 describe("what a handler's kept ctx and pi do after its call ended (S33 review)", () => {
 	/**
-	 * Every member a loop-hook call binds, used from a handler's async work after its call ended: each either rides
-	 * the same loop session's next reply or behaves as after any ended turn; none throws into the user's hook code. The
+	 * Every member a loop-hook call binds, used from a handler's async work after its call ended: each either reaches
+	 * the loop as a durable wake for the same loop session (H3: never through a reply, which may be lost, and whether or
+	 * not the session makes another call) or behaves as after any ended turn; none throws into the user's hook code. The
 	 * loop session's identity is the one deliberate refusal (option A: bound to that call only).
 	 */
-	const rows: { member: string; use: string; expect: "next-reply" | "value" | "refused" }[] = [
+	const rows: { member: string; use: string; expect: "wake" | "value" | "refused" }[] = [
 		{
 			member: "pi.sendMessage",
 			use: 'pi.sendMessage({ customType: "late", content: "late message", display: true })',
-			expect: "next-reply",
+			expect: "wake",
 		},
-		{ member: "ctx.ui.notify", use: 'ctx.ui.notify("late notice", "info")', expect: "next-reply" },
+		{ member: "ctx.ui.notify", use: 'ctx.ui.notify("late notice", "info")', expect: "wake" },
 		{ member: "ctx.isIdle", use: "ctx.isIdle()", expect: "value" },
 		{ member: "ctx.signal", use: "ctx.signal.aborted", expect: "value" },
 		{ member: "ctx.sessionManager.getSessionId", use: "ctx.sessionManager.getSessionId()", expect: "refused" },
@@ -525,7 +533,13 @@ describe("what a handler's kept ctx and pi do after its call ended (S33 review)"
 			extension,
 			`export default (pi) => { pi.on("input", (event, ctx) => { if (event.text !== "first") return; const gate = Promise.withResolvers(); globalThis.s33Fire = gate.resolve; globalThis.s33Late = gate.promise.then(() => { try { ${row.use}; return "value"; } catch (error) { return error?.name === "LoopHookCallEndedError" ? "refused" : "threw: " + String(error); } }); }); };`,
 		);
-		const machine = createLooplessHand(handConfiguration(dirs, ["-e", extension]), { twoSidedHome: "hand" });
+		const brain = await brainInbox();
+		const link = connect(brain, await openHandWakeOutbox(join(dirs.agentDir, "hand-wakes.json")));
+		closers.push(() => link.close());
+		const machine = createLooplessHand(handConfiguration(dirs, ["-e", extension]), {
+			twoSidedHome: "hand",
+			wakes: link.wakes,
+		});
 		closers.push(() => void machine.close());
 		const input = (text: string) =>
 			machine.loopHooks("input", {
@@ -538,15 +552,19 @@ describe("what a handler's kept ctx and pi do after its call ended (S33 review)"
 				scope: { id: "late-scope", root: dirs.cwd },
 			});
 
+		// The first call's reply is never looked at: a late effect does not depend on it reaching the loop.
 		await input("first");
 		const late = globalThis as { s33Fire?: () => void; s33Late?: Promise<string> };
 		late.s33Fire?.();
 		const outcome = await late.s33Late;
-		const next = JSON.stringify(await input("second"));
 
-		if (row.expect === "next-reply") {
+		if (row.expect === "wake") {
 			expect(outcome).toBe("value");
-			expect(next).toMatch(/late (message|notice)/);
+			const wake = await brain.committed.next("the late effect's wake");
+			expect(wake.scope).toBe("late-scope");
+			expect(JSON.stringify(wake.payload)).toMatch(/late (message|notice)/);
+			expect(wake.payload).toMatchObject({ sessionId: "late-session" });
+			expect(JSON.stringify(await input("second"))).not.toMatch(/late (message|notice)/);
 		} else expect(outcome).toBe(row.expect);
 	});
 });

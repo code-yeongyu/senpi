@@ -91,6 +91,7 @@ import type {
 	ExtensionEvent,
 	ExtensionFlag,
 	ExtensionMode,
+	ExtensionAPI,
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
@@ -181,6 +182,16 @@ export interface LoopHookCallFacts {
 	/** `pi.sendMessage` from the call's work: the hand carries the message back to the loop, which sends it there. */
 	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
 	/** `ctx.ui.notify` during the call: the hand carries the notice back to the loop, which shows it there. */
+	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
+}
+
+/**
+ * Where a hand runtime's loop-side effects from work outside any live loop-hook call go (brain/hand split H3): to the
+ * brain that owns the runtime's scope, as durable wakes, delivered there as a local session would deliver them.
+ */
+export interface LoopWakeRoute {
+	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
+	sendUserMessage(...args: Parameters<ExtensionAPI["sendUserMessage"]>): void;
 	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
 }
 
@@ -792,16 +803,27 @@ export class ExtensionRunner {
 		 * still deliver it): the call's sender, which carries it to the loop. None outside any call's work.
 		 */
 		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
+		/**
+		 * A hand's route to the brain that owns its scope (H3): `pi.sendMessage` from work no loop-hook call started (a
+		 * background command, a monitor, a detached eval cell, a subagent) and every `pi.sendUserMessage` go there, and
+		 * `pi.isLoopRemote()` answers true. Without it they stay loop-side and unbound.
+		 */
+		readonly loopWake?: LoopWakeRoute;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
 		this.loopHookCallFn = facts.loopHookCall;
 		const send = facts.loopHookSend;
-		if (send !== undefined)
+		const wake = facts.loopWake;
+		if (send !== undefined || wake !== undefined)
 			this.runtime.sendMessage = (message, options) => {
-				const sendMessage = send();
+				const sendMessage = send?.() ?? wake?.sendMessage;
 				if (sendMessage === undefined) throw loopSideUnbound("sendMessage");
 				sendMessage(message, options);
 			};
+		if (wake !== undefined) {
+			this.runtime.sendUserMessage = (content, options) => wake.sendUserMessage(content, options);
+			this.runtime.isLoopRemote = () => true;
+		}
 		this.runtime.getActiveTools = () => this.getActiveTools();
 		this.runtime.setActiveTools = () => {};
 		if (facts.getLoadedHookSources === undefined) return;
