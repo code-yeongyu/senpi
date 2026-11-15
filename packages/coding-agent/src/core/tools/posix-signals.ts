@@ -1,5 +1,22 @@
-// Signal numbers by platform, for the 128 + n exit code of a signal-killed shell on a machine this process cannot
-// ask `os.constants.signals` about (test/tools-core/posix-signals.test.ts checks each table against Node's).
+// Signal numbers by machine OS, for the 128 + n exit code of a signal-killed shell on a machine this process cannot
+// ask `os.constants.signals` about (test/tools-core/posix-signals.test.ts checks the host's table against Node's).
+
+// The table every OS got before the tables were split by OS; no OS may number fewer of these.
+const COMMON: Readonly<Record<string, number>> = {
+	SIGHUP: 1,
+	SIGINT: 2,
+	SIGQUIT: 3,
+	SIGILL: 4,
+	SIGTRAP: 5,
+	SIGABRT: 6,
+	SIGFPE: 8,
+	SIGKILL: 9,
+	SIGSEGV: 11,
+	SIGPIPE: 13,
+	SIGALRM: 14,
+	SIGTERM: 15,
+};
+
 const LINUX: Readonly<Record<string, number>> = {
 	SIGHUP: 1,
 	SIGINT: 2,
@@ -36,7 +53,8 @@ const LINUX: Readonly<Record<string, number>> = {
 	SIGSYS: 31,
 };
 
-const DARWIN: Readonly<Record<string, number>> = {
+// Darwin and the BSDs share this numbering.
+const BSD: Readonly<Record<string, number>> = {
 	SIGHUP: 1,
 	SIGINT: 2,
 	SIGQUIT: 3,
@@ -71,9 +89,27 @@ const DARWIN: Readonly<Record<string, number>> = {
 	SIGUSR2: 31,
 };
 
-/** The signal table of a machine's OS; undefined where signals carry no POSIX numbers (Windows). */
-export function posixSignalTable(os: string): Readonly<Record<string, number>> | undefined {
+// Node's win32 numbers (libuv), over COMMON for the names Node does not define there.
+const WIN32: Readonly<Record<string, number>> = {
+	...COMMON,
+	SIGHUP: 1,
+	SIGINT: 2,
+	SIGILL: 4,
+	SIGABRT: 22,
+	SIGFPE: 8,
+	SIGKILL: 9,
+	SIGSEGV: 11,
+	SIGTERM: 15,
+	SIGBREAK: 21,
+	SIGWINCH: 28,
+};
+
+const BSD_FAMILY = new Set(["darwin", "freebsd", "openbsd", "netbsd", "dragonfly"]);
+
+/** The signal table of a machine's OS; an OS without its own table gets the common POSIX numbers. */
+export function posixSignalTable(os: string): Readonly<Record<string, number>> {
 	if (os === "linux" || os === "android") return LINUX;
-	if (os === "darwin") return DARWIN;
-	return undefined;
+	if (BSD_FAMILY.has(os)) return BSD;
+	if (os === "win32") return WIN32;
+	return COMMON;
 }

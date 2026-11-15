@@ -74,7 +74,7 @@ export function machineShellExecHost(machine: ToolMachine, shell?: ExecShell): S
 		},
 		envMode: "overlay",
 		defaultEnv: () => undefined,
-		signalNumber: (signal) => posixSignalTable(machine.ops.info.host().os)?.[signal],
+		signalNumber: (signal) => posixSignalTable(machine.ops.info.host().os)[signal],
 	};
 }
 

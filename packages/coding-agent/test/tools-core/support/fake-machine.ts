@@ -17,6 +17,7 @@ export interface ScriptedExec {
 export function createFakeMachine(options: {
 	scripts: Readonly<Record<string, ScriptedExec>>;
 	errorCodes: "fs" | "op";
+	os?: NodeJS.Platform;
 }): MachineOps & { readonly calls: string[] } {
 	const calls: string[] = [];
 	const asOpError = (error: unknown): unknown =>
@@ -97,7 +98,13 @@ export function createFakeMachine(options: {
 			sweep: async () => {},
 		},
 		info: {
-			host: () => ({ os: process.platform, arch: process.arch, load1: 0, cores: 1, runtime: "parity-fake" }),
+			host: () => ({
+				os: options.os ?? process.platform,
+				arch: process.arch,
+				load1: 0,
+				cores: 1,
+				runtime: "parity-fake",
+			}),
 			processInfo: unused("info.processInfo"),
 			message: unused("info.message"),
 		},

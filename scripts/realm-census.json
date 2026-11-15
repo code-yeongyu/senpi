@@ -7331,11 +7331,23 @@
 			"class": "per-copy-safe",
 			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
 		},
-		"packages/coding-agent/src/core/tools/posix-signals.ts#DARWIN": {
+		"packages/coding-agent/src/core/tools/posix-signals.ts#BSD": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/posix-signals.ts#BSD_FAMILY": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/posix-signals.ts#COMMON": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/tools/posix-signals.ts#LINUX": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/posix-signals.ts#WIN32": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
