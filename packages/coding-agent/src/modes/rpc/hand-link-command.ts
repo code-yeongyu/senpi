@@ -48,6 +48,6 @@ export async function answerHandLink(host: HandLinkHost, command: HandLinkComman
 		});
 	}
 	if (answer.kind === "refused") return error(command.id, command.type, answer.reason);
-	const { packets, more } = answer;
-	return { id: command.id, type: "response", command: "hand_link", success: true, data: { packets, more } };
+	const { packets, more, instance } = answer;
+	return { id: command.id, type: "response", command: "hand_link", success: true, data: { packets, more, instance } };
 }

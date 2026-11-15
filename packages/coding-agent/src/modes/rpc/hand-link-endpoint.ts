@@ -14,7 +14,8 @@
  * - A batch is answered at once with what the hand has queued for the brain; a tool still running answers in a later
  *   batch, so a following batch (an abort among them) never waits behind it. A frame over the part size goes as
  *   `data_part` packets, and an answer holds at most one record's worth: the rest waits for the next batch, and
- *   `more` tells the brain to poll at once.
+ *   `more` tells the brain to poll at once. Every answer names the link's `instance`, minted when this daemon opens the
+ *   session's link: a changed one tells the brain to reset its hand transport (a restart, or a new generation).
  * - Packets are read in full before any reaches the hand, parts joined across batches; one that does not read (a
  *   count conflict among them) ends the session's link.
  */
@@ -54,7 +55,12 @@ export type HandLinkRefusal =
 	| "hand_link_closed";
 
 export type HandLinkAnswer =
-	| { readonly kind: "packets"; readonly packets: readonly HandWirePacket[]; readonly more: boolean }
+	| {
+			readonly kind: "packets";
+			readonly packets: readonly HandWirePacket[];
+			readonly more: boolean;
+			readonly instance: string;
+	  }
 	| { readonly kind: "refused"; readonly reason: HandLinkRefusal };
 
 export interface HandLinkEndpoint {
@@ -72,6 +78,7 @@ export interface HandLinkEndpointOptions {
 
 interface Link {
 	readonly generation: number;
+	readonly instance: string;
 	readonly transport: TransportSide;
 	readonly endpoint: HandEndpoint;
 	readonly read: HandPacketReader;
@@ -197,6 +204,7 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 		});
 		return {
 			generation: batch.loop.generation,
+			instance: crypto.randomUUID(),
 			transport,
 			endpoint,
 			read: createHandPacketReader(),
@@ -245,7 +253,7 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 		// still running answers in a later batch.
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		const answer = takeAnswer(link.outbox);
-		return { kind: "packets", packets: answer, more: link.outbox.size > 0 };
+		return { kind: "packets", packets: answer, more: link.outbox.size > 0, instance: link.instance };
 	};
 
 	return {
