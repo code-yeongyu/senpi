@@ -149,22 +149,16 @@ export function runInSession(
 	});
 	for (const extension of tools.extensions)
 		for (const activator of extension.lazyToolActivators ?? []) activation.register(activator);
-	return tools.call.run(
-		sessionId,
-		tools.cwd,
-		idle,
-		async (effects) => {
-			const definition = tools.definition(toolName)?.definition;
-			const callable =
-				carried.activeTools === undefined ||
-				carried.activeTools.includes(toolName) ||
-				(definition !== undefined && activeOnRegistration(definition)) ||
-				activation.activate(toolName);
-			const result = callable ? await run() : notCallable(toolName);
-			return { ...result, sessionEffects: JSON.parse(JSON.stringify(await effectsReply(effects))) as JsonValue };
-		},
-		carried,
-	);
+	return tools.call.run({ sessionId, cwd: tools.cwd, idle, carried }, async (effects) => {
+		const definition = tools.definition(toolName)?.definition;
+		const callable =
+			carried.activeTools === undefined ||
+			carried.activeTools.includes(toolName) ||
+			(definition !== undefined && activeOnRegistration(definition)) ||
+			activation.activate(toolName);
+		const result = callable ? await run() : notCallable(toolName);
+		return { ...result, sessionEffects: JSON.parse(JSON.stringify(await effectsReply(effects))) as JsonValue };
+	});
 }
 
 /**
@@ -177,7 +171,7 @@ export function runAsSession(
 	sessionId: string,
 	run: () => Promise<AgentToolResult<unknown>>,
 ): Promise<HandToolResult> {
-	return tools.call.run(sessionId, tools.cwd, false, async (effects) => {
+	return tools.call.run({ sessionId, cwd: tools.cwd, idle: false }, async (effects) => {
 		const result = await run();
 		const reply = await effectsReply(effects);
 		return Object.keys(reply).length === 0

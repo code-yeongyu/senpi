@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { LoopHookCallEndedError, readOnlySession } from "./loop-hook-session.ts";
-import type { LoopHookCallFacts } from "../../core/extensions/runner.ts";
+import type { LoopHookCallFacts, LoopWakeRoute } from "../../core/extensions/runner.ts";
 import type { SessionEntry, SessionHeader } from "../../core/session-manager.ts";
 import type { SessionWake } from "../../core/session-wakes.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
@@ -41,57 +41,54 @@ export interface CarriedSession {
 	readonly relocation?: CarriedRelocation;
 }
 
+/** What a loop-hook call binds its handlers' facts to: the loop session's state the call carries. */
+export interface LoopHookCallBinding {
+	readonly sessionId: string;
+	readonly cwd: string;
+	/** The loop's idle state the call carries. */
+	readonly idle: boolean;
+	/** The session port's read half, when the call carries it (an `agent_end` does). */
+	readonly carried?: CarriedSession;
+	/**
+	 * Whether the loop's turn has ended by this call (an `agent_end`): after the call, its work sees the session idle until
+	 * the loop starts another call for that session, as a local session is idle after a turn until the next one starts.
+	 */
+	readonly endsTurn?: boolean;
+}
+
 /**
- * The loop facts a hand's runner sees during one loop-hook call, and only during it (S33): the loop session's id,
- * read-only (no transcript path, since the transcript lives where the loop runs, and nothing writes), the call's own
- * abort signal, and idle (a forwarded `before_agent_start` starts a turn from idle). Outside the call, and after it
- * ended even through a captured reference, every loop-side member is unbound again.
+ * The loop facts a hand's runner sees during one loop-hook call (S33): the loop session's id, read-only (no transcript
+ * path: the transcript lives where the loop runs), the session port (the read half the call carries, and writes the
+ * loop applies to its own session: `appendEntry`, `sendUserMessage`), the call's own abort signal, and idle (a
+ * forwarded `before_agent_start` starts a turn from idle). Outside the call no loop-side member is bound. After the call
+ * ended, its work keeps what {@link LoopHookCallEndedError} lists; the session's identity is bound to the call only.
  */
 export interface LoopHookCall {
 	/** The facts of the loop-hook call in progress in this async context; none outside one. */
 	current(): LoopHookCallFacts | undefined;
 	/**
 	 * The sender of the call whose work runs in this async context, also after that call ended: a message sent then
-	 * travels with the next reply for the same loop session (the link has no other way back), in order.
+	 * goes to the call's late route (on a hand, a durable wake to the loop), in order.
 	 */
 	sender(): LoopHookCallFacts["sendMessage"] | undefined;
 	/** The call's facts for its work's session writes (`appendEntry`, `sendUserMessage`, `setActiveTools`), like {@link sender}. */
 	writer(): LoopHookCallFacts | undefined;
-	/** Runs `dispatch` as the call, with the loop's idle state; `effects` collects what its handlers send and notify. */
-	run<T>(
-		sessionId: string,
-		cwd: string,
-		idle: boolean,
-		dispatch: (effects: LoopHookEffects) => Promise<T>,
-		carried?: CarriedSession,
-	): Promise<T>;
+	/** Runs `dispatch` as the call bound to `binding`; `effects` collects what its handlers send, notify and write. */
+	run<T>(binding: LoopHookCallBinding, dispatch: (effects: LoopHookEffects) => Promise<T>): Promise<T>;
 }
 
 /**
- * Messages and notices from a call's work after that call ended, which one loop session holds until its next reply
- * (the loop-hook link has no hand-to-loop push). Past this many the oldest held notice is dropped, or the oldest
- * message when no notice is held, and counted in that reply:
- * late work never throws into the user's hook code.
+ * Where a call's effects go once that call ended, for its loop session (brain/hand split H3): on a hand, the durable
+ * wake outbox, so they reach the loop at least once whether or not the session makes another call, and never through a
+ * reply that may be lost. A held Stop's stop-state entries and its block follow-up travel this way too, so a block from
+ * an idle loop's Stop wakes that loop. Late work never throws into the user's hook code.
  */
-export const LATE_PER_SESSION = 256;
+export type LateLoopRoute = (sessionId: string) => LoopWakeRoute;
 
-export function createLoopHookCall(): LoopHookCall {
+export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 	const calls = new AsyncLocalStorage<{ readonly live: () => boolean; readonly facts: LoopHookCallFacts }>();
-	const late = new Map<string, LoopHookEffects>();
-	const holdLate = (sessionId: string, add: (held: LoopHookEffects) => void) => {
-		const held = late.get(sessionId) ?? emptyEffects();
-		add(held);
-		while (
-			held.sent.length + held.notices.length + held.entries.length + held.userMessages.length >
-			LATE_PER_SESSION
-		) {
-			// Notices only reach the loop's UI, messages reach its model, so the oldest notice goes first.
-			const oldest = [held.notices, held.entries, held.sent, held.userMessages].find((list) => list.length > 0);
-			oldest?.shift();
-			held.dropped++;
-		}
-		late.set(sessionId, held);
-	};
+	// The latest call each loop session started: a newer one means the loop acts on that session again.
+	const latest = new Map<string, object>();
 	return {
 		current: () => {
 			const call = calls.getStore();
@@ -99,11 +96,14 @@ export function createLoopHookCall(): LoopHookCall {
 		},
 		sender: () => calls.getStore()?.facts.sendMessage,
 		writer: () => calls.getStore()?.facts,
-		async run(sessionId, cwd, idle, dispatch, carried) {
+		async run(binding, dispatch) {
+			const { sessionId, cwd, idle, carried } = binding;
+			const token = {};
+			latest.set(sessionId, token);
 			let live = true;
+			let userMessagesSent = 0;
 			const controller = new AbortController();
-			const effects: LoopHookEffects = late.get(sessionId) ?? emptyEffects();
-			late.delete(sessionId);
+			const effects: LoopHookEffects = emptyEffects();
 			const documents = carried?.documents;
 			const sessionDir = documents === undefined ? undefined : await materializeDocuments(documents);
 			const relocation =
@@ -130,32 +130,37 @@ export function createLoopHookCall(): LoopHookCall {
 				return settling;
 			};
 			const facts: LoopHookCallFacts = Object.freeze({
-				sessionManager: readOnlySession(sessionId, cwd, () => live, { carried, sessionDir }),
+				sessionManager: readOnlySession(binding, sessionDir, {
+					live: () => live,
+					ownWork: () => live || calls.getStore()?.facts === facts,
+				}),
 				signal: controller.signal,
-				isIdle: () => idle,
+				isIdle: () => (live || binding.endsTurn !== true ? idle : latest.get(sessionId) === token),
 				sendMessage: (message: SentLoopMessage["message"], options?: SentLoopMessage["options"]) => {
 					const entry = options === undefined ? { message } : { message, options };
 					if (live) effects.sent.push(entry);
-					else holdLate(sessionId, (held) => held.sent.push(entry));
+					else late(sessionId).sendMessage(message, options);
 				},
 				notify: (message: string, type?: Parameters<LoopHookCallFacts["notify"]>[1]) => {
 					const entry = type === undefined ? { message } : { message, type };
 					if (live) effects.notices.push(entry);
-					else holdLate(sessionId, (held) => held.notices.push(entry));
+					else late(sessionId).notify(message, type);
 				},
 				appendEntry: (customType: string, data?: unknown) => {
 					const entry = data === undefined ? { customType } : { customType, data };
 					if (live) effects.entries.push(entry);
-					else holdLate(sessionId, (held) => held.entries.push(entry));
+					else late(sessionId).appendEntry(customType, data);
 				},
 				sendUserMessage: (content: SentLoopUserMessage["content"], options?: SentLoopUserMessage["options"]) => {
 					const entry = options === undefined ? { content } : { content, options };
+					userMessagesSent++;
 					if (live) effects.userMessages.push(entry);
-					else holdLate(sessionId, (held) => held.userMessages.push(entry));
+					else late(sessionId).sendUserMessage(content, options);
 				},
+				// Only what this call (or its work) sent.
 				hasPendingMessages: () => {
 					if (!live) throw new LoopHookCallEndedError("ctx.hasPendingMessages");
-					return effects.userMessages.length > 0;
+					return userMessagesSent > 0;
 				},
 				getActiveTools: () => {
 					const active = carried?.activeTools;

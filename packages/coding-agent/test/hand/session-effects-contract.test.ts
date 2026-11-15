@@ -40,7 +40,6 @@ const VALID: SessionEffects = {
 		{ op: "cancel", id: "sch_000000000000" },
 	],
 	relocation: { target: "studio", reason: "heavier build", moveId: "m1" },
-	droppedLate: 2,
 };
 
 const wake = { id: "w", source: "schedule_prompt", dueAt: 2, prompt: "p", createdAt: 1 };
@@ -67,7 +66,7 @@ describe("the session port's write half is a closed contract (senpi#6754)", () =
 			{ sent: [{ message: { customType: "x", content: "y" } }] },
 			"display is not a boolean",
 		],
-		["a negative drop count", { droppedLate: -1 }, "droppedLate is not a count"],
+		["a drop count (late writes travel as wakes)", { droppedLate: 1 }, "unknown members: droppedLate"],
 		["a tool activated twice", { activeTools: { activate: ["a", "a"], deactivate: [] } }, "names a twice"],
 		// A wake is the schedule and what to run: anything else, a key or token included, has no place in it.
 		[

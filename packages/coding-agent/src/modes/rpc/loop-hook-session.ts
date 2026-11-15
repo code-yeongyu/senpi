@@ -5,18 +5,21 @@
 import { join } from "node:path";
 import type { HistoryReducer } from "../../core/session-history-reduce.ts";
 import type { ReadonlySessionManager } from "../../core/session-manager.ts";
-import type { CarriedSession } from "./loop-hook-call.ts";
+import type { LoopHookCallBinding } from "./loop-hook-call.ts";
 
 /**
  * The refusal of what a call bound to itself, used from a kept reference after the call ended. A call ends when its
  * reply is built (`effectsReply`), before its own cleanup runs. After that these throw it instead of answering or
  * collecting a write no reply would carry:
- * - `ctx.sessionManager` members (the loop session's identity and what the call carried);
+ * - the loop session's identity (`getSessionId`, `getSessionFile`, `getCwd`) and the rest of `ctx.sessionManager`,
+ *   except that the session the call carried (`getLeafId`, `reduceHistory`) stays readable by the call's own work (its
+ *   async context: a Stop it held for background work);
  * - the wake port's `arm` and `cancel` (`pi.session.sessionWakes()`);
  * - the relocation host's `request` (`pi.session.requestRelocation`);
  * - `pi.setActiveTools` (its change is relative to the active set the call carried) and `ctx.hasPendingMessages`.
- * The rest keeps working: late messages, notices, entries and user messages ride the next reply for the same loop
- * session, and idle and the signal keep their values.
+ * The rest keeps working: late messages, notices, entries and user messages go to the call's late route; the signal stays
+ * aborted; idle keeps its value, except that after a call that ended the loop's turn it answers idle until the loop
+ * starts another call.
  */
 export class LoopHookCallEndedError extends Error {
 	override readonly name = "LoopHookCallEndedError";
@@ -29,19 +32,20 @@ export class LoopHookCallEndedError extends Error {
 }
 
 export function readOnlySession(
-	sessionId: string,
-	cwd: string,
-	live: () => boolean,
-	session: { readonly carried: CarriedSession | undefined; readonly sessionDir: string | undefined },
+	{ sessionId, cwd, carried }: LoopHookCallBinding,
+	sessionDir: string | undefined,
+	gates: { readonly live: () => boolean; readonly ownWork: () => boolean },
 ): ReadonlySessionManager {
-	const { carried, sessionDir } = session;
-	const bound =
+	const gated =
+		(open: () => boolean) =>
 		<T>(member: string, read: () => T) =>
 		(): T => {
-			if (!live()) throw new LoopHookCallEndedError(`sessionManager.${member}`);
+			if (!open()) throw new LoopHookCallEndedError(`sessionManager.${member}`);
 			return read();
 		};
 	const header = carried?.header;
+	const bound = gated(gates.live);
+	const durable = gated(gates.ownWork);
 	const unbound = (member: string) => (): never => {
 		throw new Error(
 			`sessionManager.${member} is loop-side: a loop-hook call on a hand carries only the session's id`,
@@ -57,7 +61,7 @@ export function readOnlySession(
 		getCwd: bound("getCwd", () => cwd),
 		// The session's documents, when the loop carried them; otherwise the session has no directory here (as in memory).
 		getSessionDir: carried === undefined ? unbound("getSessionDir") : bound("getSessionDir", () => sessionDir ?? ""),
-		getLeafId: carried === undefined ? unbound("getLeafId") : bound("getLeafId", () => carried.leafId),
+		getLeafId: carried === undefined ? unbound("getLeafId") : durable("getLeafId", () => carried.leafId),
 		getLeafEntry: unbound("getLeafEntry"),
 		getEntry: unbound("getEntry"),
 		getLabel: unbound("getLabel"),
@@ -78,7 +82,7 @@ export function readOnlySession(
 			carried === undefined
 				? unbound("reduceHistory")
 				: <T>(reducer: HistoryReducer<T>): T =>
-						bound("reduceHistory", () => carried.handEntries.reduce(reducer.add, reducer.initial()))(),
+						durable("reduceHistory", () => carried.handEntries.reduce(reducer.add, reducer.initial()))(),
 		getTree: unbound("getTree"),
 		getSessionName: unbound("getSessionName"),
 	});
