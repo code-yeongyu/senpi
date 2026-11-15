@@ -118,6 +118,9 @@ export function createLoopHookCall(): LoopHookCall {
 						);
 			const wakes =
 				carried?.wakes === undefined ? undefined : carriedWakePort(carried.wakes, effects.wakes, () => live);
+			effects.seal = () => {
+				live = false;
+			};
 			let settling: Promise<void> | undefined;
 			effects.settle = () => {
 				if (sessionDir === undefined || documents === undefined) return Promise.resolve();

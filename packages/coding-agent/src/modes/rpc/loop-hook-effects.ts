@@ -43,8 +43,10 @@ export interface LoopHookEffects {
 	readonly wakes: SessionWakeChange[];
 	/** The move the call asked for, which the loop applies when its turn ends. */
 	relocation: RelocationRequestEffect | undefined;
-	/** Settles what the call wrote into its session directory into {@link documents}; await it before the reply. */
+	/** Settles what the call wrote into its session directory into {@link documents}; {@link effectsReply} awaits it. */
 	settle: () => Promise<void>;
+	/** Ends the call for its writes: from then on nothing more is collected here ({@link effectsReply} calls it). */
+	seal: () => void;
 	/** Late messages and notices dropped because the loop session already held {@link LATE_PER_SESSION}. */
 	dropped: number;
 }
@@ -65,11 +67,18 @@ export const emptyEffects = (): LoopHookEffects => ({
 	wakes: [],
 	relocation: undefined,
 	settle: () => Promise.resolve(),
+	seal: () => {},
 	dropped: 0,
 });
 
-/** The effects a reply carries back to the loop, each only when there is one. */
-export function effectsReply(effects: LoopHookEffects): Record<string, unknown> {
+/**
+ * The effects a reply carries back to the loop, each only when there is one. Building it ends the call (`seal`) before
+ * anything is read, so work still running afterwards is refused or rides the next reply, never collected into a reply
+ * that was already built; then the session directory's changes are settled.
+ */
+export async function effectsReply(effects: LoopHookEffects): Promise<Record<string, unknown>> {
+	effects.seal();
+	await effects.settle();
 	const { sent, notices, entries, userMessages, activeTools, documents, wakes, relocation, dropped } = effects;
 	return {
 		...(sent.length > 0 ? { sent } : {}),

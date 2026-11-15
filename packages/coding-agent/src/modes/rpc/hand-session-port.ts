@@ -161,8 +161,7 @@ export function runInSession(
 				(definition !== undefined && activeOnRegistration(definition)) ||
 				activation.activate(toolName);
 			const result = callable ? await run() : notCallable(toolName);
-			await effects.settle();
-			return { ...result, sessionEffects: JSON.parse(JSON.stringify(effectsReply(effects))) as JsonValue };
+			return { ...result, sessionEffects: JSON.parse(JSON.stringify(await effectsReply(effects))) as JsonValue };
 		},
 		carried,
 	);
@@ -180,8 +179,7 @@ export function runAsSession(
 ): Promise<HandToolResult> {
 	return tools.call.run(sessionId, tools.cwd, false, async (effects) => {
 		const result = await run();
-		await effects.settle();
-		const reply = effectsReply(effects);
+		const reply = await effectsReply(effects);
 		return Object.keys(reply).length === 0
 			? result
 			: { ...result, sessionEffects: JSON.parse(JSON.stringify(reply)) as JsonValue };

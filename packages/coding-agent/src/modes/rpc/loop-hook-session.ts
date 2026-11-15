@@ -8,9 +8,14 @@ import type { ReadonlySessionManager } from "../../core/session-manager.ts";
 import type { CarriedSession } from "./loop-hook-call.ts";
 
 /**
- * The one deliberate refusal after a loop-hook call ended (option A): the loop session's identity is bound to that call
- * only, so reading it from a kept context afterwards throws this instead of answering. Every other member a call binds
- * keeps working after it (late messages and notices ride the next reply; idle and signal keep their values).
+ * The refusal of what a call bound to itself, used from a kept reference after the call ended. A call ends when its
+ * reply is built (`effectsReply`), before its own cleanup runs. After that these throw it instead of answering or
+ * collecting a write no reply would carry:
+ * - `ctx.sessionManager` members (the loop session's identity and what the call carried);
+ * - the wake port's `arm` and `cancel` (`pi.session.sessionWakes()`);
+ * - the relocation host's `request` (`pi.session.requestRelocation`).
+ * The rest keeps working: late messages, notices, entries and user messages ride the next reply for the same loop
+ * session, and idle and the signal keep their values.
  */
 export class LoopHookCallEndedError extends Error {
 	override readonly name = "LoopHookCallEndedError";

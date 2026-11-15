@@ -195,10 +195,8 @@ async function dispatchLoopHook(
 	});
 	try {
 		const result = await dispatch();
-		await effects.settle();
-		return JSON.parse(
-			JSON.stringify({ ...result, ...effectsReply(effects), ...(errors.length > 0 ? { errors } : {}) }),
-		) as JsonValue;
+		const reply = await effectsReply(effects);
+		return JSON.parse(JSON.stringify({ ...result, ...reply, ...(errors.length > 0 ? { errors } : {}) })) as JsonValue;
 	} finally {
 		stop();
 	}
