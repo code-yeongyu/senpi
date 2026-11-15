@@ -27,7 +27,7 @@ import type {
 	InputEventResult,
 } from "../../src/core/extensions/types.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
-import { deliverHandWake } from "../../src/core/execution/wake-delivery.ts";
+import { deliverHandWake } from "@earendil-works/pi-agent-core";
 import { openHandWakeOutbox } from "../../src/modes/hand/hand-wakes.ts";
 import {
 	createLoopHookCall,

@@ -18,7 +18,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { decodeReferencePacket } from "@earendil-works/pi-agent-core/conformance";
 import { expect, it } from "vitest";
-import { parseHandWake } from "../../../src/core/execution/wake-delivery.ts";
+import { parseHandWake } from "@earendil-works/pi-agent-core";
 import { TERMINAL_NOTIFICATION_CUSTOM_TYPE } from "../../../src/core/extensions/builtin/terminal/notify.ts";
 import { handSocketPath, handWakeStorePath } from "../../../src/modes/hand/hand-entry.ts";
 import { openHandWakeOutbox } from "../../../src/modes/hand/hand-wakes.ts";

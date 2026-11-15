@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { WakeRefusedError } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { deliverHandWake, scopeSessionCheck } from "../../src/core/execution/wake-delivery.ts";
+import { deliverHandWake, scopeSessionCheck } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import { openHandWakeOutbox } from "../../src/modes/hand/hand-wakes.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
@@ -58,8 +58,8 @@ describe("a hand's wake on the brain", () => {
 		});
 		await within(loop.session.waitForSettledSessionWork(), "the brain settling");
 
-		expect(outcome).toBe("skipped");
 		expect(loop.faux.getCallLog()).toEqual([]);
+		expect(outcome).toBe("skipped");
 	});
 
 	it("starts no turn in a session without a model, and still delivers what starts none", () => {

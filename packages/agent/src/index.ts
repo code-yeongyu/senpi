@@ -220,7 +220,27 @@ export {
 	type WakeLinkMessage,
 	WakeRefusedError,
 } from "./execution/wake-link.ts";
-export { createWakeInbox, type WakeInbox, type WakeInboxOptions } from "./execution/wake-inbox.ts";
+export {
+	deliverHandDrop,
+	deliverHandWake,
+	type HandWakeDelivery,
+	type HandWakeMessage,
+	type HandWakeMessageOptions,
+	type HandWakeNoticeType,
+	type HandWakeOutcome,
+	type HandWakeSession,
+	type HandWakeUserMessageOptions,
+	MalformedHandWakeError,
+	ONE_SHOT_MODES,
+	parseHandWake,
+	scopeSessionCheck,
+} from "./execution/wake-delivery.ts";
+export {
+	createWakeInbox,
+	type WakeDeliveryFailure,
+	type WakeInbox,
+	type WakeInboxOptions,
+} from "./execution/wake-inbox.ts";
 export {
 	createWakeOutbox,
 	MalformedWakeError,

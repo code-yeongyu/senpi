@@ -12,7 +12,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { deliverHandWake, parseHandWake } from "../../src/core/execution/wake-delivery.ts";
+import { deliverHandWake, parseHandWake } from "@earendil-works/pi-agent-core";
 import { TERMINAL_NOTIFICATION_CUSTOM_TYPE } from "../../src/core/extensions/builtin/terminal/notify.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { CustomMessage } from "../../src/core/messages.ts";
