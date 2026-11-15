@@ -159,6 +159,11 @@ export const HOST_RECORD_SCHEMAS = {
 	release_attachment: command("release_attachment", { sessionId: Id }),
 	list_hands: command("list_hands", { sessionId: OptId }),
 	select_hand: command("select_hand", { sessionId: Id, device: Type.Union([Id, Type.Null()]) }),
+	hand_link: command("hand_link", {
+		session: Id,
+		loop: Type.Object({ id: Id, generation: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) }),
+		packets: Type.Array(Type.Unknown()),
+	}),
 	reclaim_session: command("reclaim_session", {
 		sessionPath: PathStr,
 		durableSessionId: Id,

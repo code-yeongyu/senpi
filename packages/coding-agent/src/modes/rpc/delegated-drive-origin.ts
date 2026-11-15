@@ -7,7 +7,9 @@ const ACTING_CLASSES: ReadonlySet<RpcMethodClass> = new Set(["drive", "device_ad
  * The origin a record's own handling runs under (senpi#6342): delegated for a cross-account record that can act on the
  * session's work, decided by the engine's own method-class table (`drive`, and `device_admin`, which grants more),
  * never by a hand-kept list of commands, so a new run starter (`continue_from_leaf`, `wake`, `resume_for_run`, ...)
- * cannot slip past the rule. Any other record runs as local.
+ * cannot slip past the rule. Any other record runs as local. `hand_link` is not an acting class on purpose (R3
+ * MEDIUM-5): it starts no turn, its consent is the forwarder's, and a managed peer stays cross-account, so the same
+ * peer's `admit_external_message` (`drive`) still runs delegated and asks.
  */
 export function recordTurnOrigin(command: object, origin: ConnectionOrigin): ConnectionOrigin {
 	if (origin !== "delegated") return "local";

@@ -14,7 +14,8 @@ import { fauxProvider } from "@earendil-works/pi-ai/compat";
 import { expect, vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
-import { createCliRuntimeFactory } from "../../src/main.ts";
+import { type CliRuntimeConfiguration, createCliRuntimeFactory } from "../../src/main.ts";
+import type { HandLinkEndpoint } from "../../src/modes/rpc/hand-link-endpoint.ts";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { ConnectionDelegations } from "../../src/modes/rpc/delegated-connection.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
@@ -27,6 +28,9 @@ import { ANSWER_DEADLINE_MS, Peer, type WireRecord } from "./rpc-delegated-peer.
 import { waitForFifoReader } from "./rpc-worker-host-support.ts";
 
 export { ANSWER_DEADLINE_MS, Peer, type WireRecord };
+
+/** Builds this host's `hand_link` endpoint (R3) on the host's own runtime configuration. */
+export type HandLinkFactory = (configuration: CliRuntimeConfiguration) => HandLinkEndpoint;
 
 export const PRINCIPAL = { deviceId: "x5632-device" };
 export const LEAN_ARGS = ["--mode", "rpc", "--multi-session", "--no-extensions", "--no-skills", "--no-context-files"];
@@ -63,6 +67,8 @@ export async function startHost(
 		readonly hostArgs?: readonly string[];
 		/** Replaces the worker-side extension (`workers: true`), e.g. a scripted faux provider. */
 		readonly workerExtensionSource?: string;
+		/** This host as a hosted brain's hand (R3 `hand_link`), built on the host's own runtime configuration. */
+		readonly handLink?: HandLinkFactory;
 	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "x5632-"));
@@ -118,6 +124,7 @@ export async function startHost(
 				],
 			}),
 			...(options.workers ? { workerConfiguration: configuration } : {}),
+			...(options.handLink === undefined ? {} : { handLink: options.handLink(configuration) }),
 			creationModel: { provider: options.workers ? "x307-faux" : faux.getModel().provider, modelId: "faux-1" },
 		},
 		writer,

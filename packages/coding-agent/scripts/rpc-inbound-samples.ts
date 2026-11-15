@@ -51,6 +51,7 @@ export const RPC_INBOUND_SAMPLES = {
 	list_sessions: { type: "list_sessions" },
 	list_hands: { type: "list_hands" },
 	select_hand: { type: "select_hand", sessionId: SAMPLE_ID, device: null },
+	hand_link: { type: "hand_link", session: SAMPLE_ID, loop: { id: SAMPLE_ID, generation: 1 }, packets: [] },
 	subscribe_sessions: { type: "subscribe_sessions", sessions: { ids: [SAMPLE_ID] } },
 	unsubscribe_sessions: { type: "unsubscribe_sessions", subscriptionId: SAMPLE_ID },
 	set_session_context: { type: "set_session_context", sessionId: SAMPLE_ID, patch: { sample: "rpc-inbound" } },

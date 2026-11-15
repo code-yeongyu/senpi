@@ -1,5 +1,6 @@
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { HandSelection } from "../headless/hand-selection.ts";
+import type { HandLinkEndpoint } from "./hand-link-endpoint.ts";
 import type { AttachLedger } from "./attach-ledger.ts";
 import type { HeadlessPresence } from "../headless/presence.ts";
 
@@ -26,6 +27,8 @@ export type RpcHostSessionDefaults = Pick<
 	readonly sessionPresence?: HeadlessPresence;
 	/** A headless host's hand selection (`modes/headless`): answers `list_hands` and `select_hand`. */
 	readonly handSelection?: HandSelection;
+	/** This machine as a hosted brain's hand (R3 tool-relay mode): answers `hand_link`; absent, it is refused. */
+	readonly handLink?: HandLinkEndpoint;
 	/** The host's `--tool-runtime`; absent means `in-process`. */
 	readonly toolRuntime?: ToolRuntimeKind;
 	/** `"machine"` on a headless engine; takeover needs it and `sessionTakeover`. */

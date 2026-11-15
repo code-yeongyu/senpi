@@ -7,6 +7,7 @@ const FORWARDABLE_CLASSES: ReadonlySet<string> = new Set<Exclude<RpcMethodClass,
 	"answer",
 	"thread",
 	"device_admin",
+	"hand_link",
 ]);
 const MAX_PRINCIPAL_FIELD = 256;
 const MAX_CONN_FIELD = 64;
@@ -47,7 +48,7 @@ export function parseDeclaration(record: object): Declaration | string {
 	const classes = new Set<RpcMethodClass>();
 	for (const entry of granted) {
 		if (typeof entry !== "string" || !FORWARDABLE_CLASSES.has(entry) || classes.has(entry as RpcMethodClass))
-			return "granted holds each of observe, drive, answer, thread, device_admin at most once";
+			return "granted holds each of observe, drive, answer, thread, device_admin, hand_link at most once";
 		classes.add(entry as RpcMethodClass);
 	}
 	const roles = parseRoles(Reflect.get(record, "roles"));

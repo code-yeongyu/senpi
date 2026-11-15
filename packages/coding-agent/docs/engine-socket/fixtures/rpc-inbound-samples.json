@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "bca41dd6cac2eff3dc82c24d763e4143d90f44ee75920da9bca1c2c8a98c5156",
+	"methodClassesDigest": "40f9e4c378508baf4d8291365a0ababf24c88bdf1085b431bd55ff6628b83d28",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 128,
+	"methodCount": 129,
 	"methods": [
 		{
 			"method": "abort",
@@ -664,6 +664,21 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "get_tree"
+			}
+		},
+		{
+			"method": "hand_link",
+			"class": "hand_link",
+			"sampleClass": "hand_link",
+			"connectionLocal": false,
+			"sample": {
+				"type": "hand_link",
+				"session": "00000000-0000-7000-8000-000000000000",
+				"loop": {
+					"id": "00000000-0000-7000-8000-000000000000",
+					"generation": 1
+				},
+				"packets": []
 			}
 		},
 		{

@@ -1423,6 +1423,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const sessionRuntime = resolveSessionRuntime(parsed);
 		const { runMultiSessionHost } = await import("./modes/rpc/multi-session-host.ts");
 		const { headlessHostOptions } = await import("./modes/headless/headless-host.ts");
+		const { createHostHandLink } = await import("./modes/rpc/hand-link-endpoint.ts");
 		// In-process sessions share the host's model runtime: one agent dir, one
 		// catalog. Worker sessions build their own inside the isolate - an object
 		// cannot cross that boundary - so the shared one is offered only here.
@@ -1463,6 +1464,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialThinkingLevel: parsed.thinking,
 			listen: parsed.listen,
 			toolRuntime,
+			handLink: createHostHandLink(runtimeConfiguration),
 		};
 		await runMultiSessionHost(parsed.headless ? headlessHostOptions(hostOptions) : hostOptions);
 	}

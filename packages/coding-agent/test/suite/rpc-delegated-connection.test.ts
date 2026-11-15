@@ -39,13 +39,15 @@ import {
  * Delegated connections add methods outside the table, never a table entry.
  */
 // senpi#6344 adds two cwd-naming device_admin commands: park_session and claim_session.
-const DIGEST_ON_BASE = "bca41dd6cac2eff3dc82c24d763e4143d90f44ee75920da9bca1c2c8a98c5156";
+// senpi#5924 adds hand_link in its own class (R3 tool-relay mode).
+const DIGEST_ON_BASE = "40f9e4c378508baf4d8291365a0ababf24c88bdf1085b431bd55ff6628b83d28";
 const FORWARDABLE = [
 	"observe",
 	"drive",
 	"answer",
 	"thread",
 	"device_admin",
+	"hand_link",
 ] as const satisfies readonly RpcMethodClass[];
 /** The `connection_local` methods that reach beyond the asking connection: they need `device_admin`. */
 /** DS2b section 2c: the `connection_local` records that need a grant on a delegated connection; the rest act on it alone. */

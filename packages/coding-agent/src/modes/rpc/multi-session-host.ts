@@ -71,6 +71,7 @@ import type { AttachLedger } from "./attach-ledger.ts";
 import { startMcpPresenterControl } from "./mcp-presenter-control-start.ts";
 import type { HeadlessPresence } from "../headless/presence.ts";
 import type { HandSelection } from "../headless/hand-selection.ts";
+import type { HandLinkEndpoint } from "./hand-link-endpoint.ts";
 
 export { presenterPipePath } from "./mcp-presenter-control-start.ts";
 
@@ -109,6 +110,8 @@ export interface MultiSessionHostOptions {
 	sessionPresence?: HeadlessPresence;
 	/** Set only by a headless host with a hand directory (`modes/headless`): `list_hands` and `select_hand`. */
 	handSelection?: HandSelection;
+	/** This machine as a hosted brain's hand (R3 tool-relay mode): answers `hand_link`. */
+	handLink?: HandLinkEndpoint;
 }
 
 export {

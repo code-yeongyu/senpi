@@ -213,6 +213,18 @@ type RpcCommandBody =
 	| {
 			id?: string;
 			/**
+			 * One packet batch of a hosted session's link to this machine's hand (R3 tool-relay mode); class `hand_link`,
+			 * sent only on a delegated connection. `session` is the hosted session, `loop.generation` its owner epoch, each
+			 * packet a hand wire packet (`hand-packet-codec.ts`). The answer carries what the hand queued for the brain.
+			 */
+			type: "hand_link";
+			session: string;
+			loop: { id: string; generation: number };
+			packets: unknown[];
+	  }
+	| {
+			id?: string;
+			/**
 			 * Subscribe this connection to `session_status` records (docs/rpc.md, "Session status stream"). The
 			 * answer carries a snapshot at `seq: 0`; every later record of the subscription is strictly +1.
 			 * Activity-neutral: never an attachment, never refreshes a session's idle window. Requires the host
