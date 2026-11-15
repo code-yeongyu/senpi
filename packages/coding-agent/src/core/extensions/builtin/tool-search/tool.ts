@@ -41,6 +41,7 @@ type ToolSearchTool = ToolDefinition<typeof ParamsSchema, ToolSearchDetails, unk
 export function createToolSearchTool(service: ToolSearchService): ToolSearchTool {
 	return {
 		name: TOOL_SEARCH_TOOL_NAME,
+		sessionBound: true,
 		workspaceEffect: "read",
 		label: "Tool search",
 		description:

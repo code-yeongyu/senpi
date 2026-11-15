@@ -1239,6 +1239,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 */
 	runs?: ExtensionSide;
 	/**
+	 * The tool acts on the session that calls it (its entries, goal, tool search, wakeups or placement), so it does
+	 * nothing on a runtime that has no session. A hand, which never has one, leaves it out of the tool list it gives a
+	 * loop that runs elsewhere (`describe_tools`, senpi#6749); that loop serves such tools itself.
+	 */
+	sessionBound?: boolean;
+	/**
 	 * The file-backed body a `"child"`-placed tool runs on the session's tool child (senpi#3566). `path` is absolute or
 	 * relative to the registering extension file and must stay inside that extension's directory; `export` names a
 	 * function that receives `{ params, toolCallId }` and returns a structured-cloneable tool result. Without it a

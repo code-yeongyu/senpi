@@ -12,7 +12,7 @@ import { childModuleRoots } from "../../core/tool-dispatch/offload.ts";
 import { createToolChildRuntime } from "../../core/tool-dispatch/tool-child-runtime.ts";
 import { builtInExtensions } from "../../extensions/index.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
-import { looplessToolFilters, resolveCliPaths, resolveLooplessSettings } from "./loopless-runtime-settings.ts";
+import { looplessToolSelection, resolveCliPaths, resolveLooplessSettings } from "./loopless-runtime-settings.ts";
 import {
 	isLooplessExecuteGranted,
 	type LooplessExecuteGrant,
@@ -22,6 +22,7 @@ import {
 import { runLooplessToolCall } from "./loopless-tool-call.ts";
 import { createLoopHookCall } from "./loop-hook-call.ts";
 import { extensionLoopHooks, type LooplessLoopHooks } from "./loopless-loop-hooks.ts";
+import { withToolCatalog } from "./hand-tool-catalog.ts";
 import { extensionToolHandlers, type TwoSidedHome } from "./loopless-tool-handlers.ts";
 import { toolChildModuleRoots } from "./tool-child/session-child.ts";
 
@@ -55,7 +56,8 @@ export interface LooplessRuntime {
 	): Promise<AgentToolResult<unknown>>;
 	/**
 	 * Runs this runtime's extensions' loop hooks for a loop that runs elsewhere, on the same runner as its tool calls
-	 * (S33). Refused unless the runtime was built as its extensions' home (`twoSidedHome: "hand"`).
+	 * (S33). Refused unless the runtime was built as its extensions' home (`twoSidedHome: "hand"`). `describe_tools`
+	 * (the tool list a local session here would show its model, senpi#6749) is answered on any runtime.
 	 */
 	readonly runLoopHooks: LooplessLoopHooks;
 	/**
@@ -179,11 +181,12 @@ export function createLooplessRuntimeFactory(
 			modelRegistry: services.modelRegistry,
 			toolDispatcher: dispatcher,
 		});
+		const toolSelection = looplessToolSelection(parsed, services.settingsManager);
 		const registry = buildToolRegistry({
 			baseToolDefinitions: runtime.baseToolDefinitions,
 			runner: runtime.extensionRunner,
 			dispatcher,
-			...looplessToolFilters(parsed, services.settingsManager),
+			...toolSelection.filters,
 		});
 		toolNames = () => [...registry.toolRegistry.keys()];
 		const getLoadedHookSources = services.resourceLoader.getLoadedHookSources?.bind(services.resourceLoader);
@@ -247,11 +250,14 @@ export function createLooplessRuntimeFactory(
 			diagnostics,
 			fileGuards,
 			execute: (name, toolCallId, params, signal, nested) => execute(name, toolCallId, params, signal, nested),
-			runLoopHooks: extensionLoopHooks(
-				runtime.extensionRunner,
-				local.twoSidedHome ?? "loop",
-				services.cwd,
-				loopHookCall,
+			runLoopHooks: withToolCatalog(
+				extensionLoopHooks(runtime.extensionRunner, local.twoSidedHome ?? "loop", services.cwd, loopHookCall),
+				{
+					registry,
+					initialActiveToolNames: toolSelection.initialActiveToolNames,
+					allowedToolNames: toolSelection.filters.allowedToolNames,
+					resources: services.resourceLoader,
+				},
 			),
 			dispose: async () => {
 				// Stale first, as a session disposes: a close that fails must not leave the contexts usable.
