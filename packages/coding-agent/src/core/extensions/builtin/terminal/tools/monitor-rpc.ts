@@ -4,6 +4,7 @@
  * arming is missed and nothing before arming is injected as an event.
  */
 import { getAgentDir } from "../../../../../config.ts";
+import { SessionUnavailableError } from "../../../../session-unavailable.ts";
 import { defaultEvents, parseRpcTarget, type RpcEvents } from "../rpc-monitor-targets.ts";
 import { DURABLE_MONITOR_EXPIRY_MS } from "../shared.ts";
 import type { TerminalManifestRpcCheckpoint } from "../terminal-manifest-model.ts";
@@ -53,6 +54,9 @@ export async function createRpcMonitor(ctx: TerminalToolContext, input: MonitorI
 	}
 	const sessionKey = manifestSessionKey(ctx);
 	const target = parseRpcTarget(input.target ?? "", sessionKey);
+	// Watching the calling session's children needs its identity, which every remote call carries; refused typed without it.
+	if ("error" in target && target.identityUnavailable === true)
+		throw new SessionUnavailableError("session_identity_unavailable", "sessionManager.getSessionId");
 	if ("error" in target) return errorResult(target.error);
 	const events: RpcEvents | undefined = input.events;
 	const persistent = input.persistent === true;

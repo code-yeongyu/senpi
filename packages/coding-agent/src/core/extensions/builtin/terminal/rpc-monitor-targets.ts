@@ -23,18 +23,25 @@ const DRIVE_LETTER = /^[A-Za-z]:$/;
 
 export type RpcEvents = "all" | readonly string[];
 
+/** Why a target cannot be watched; `identityUnavailable` when it needs the calling session's id and there is none. */
+export interface RpcTargetError {
+	readonly error: string;
+	readonly identityUnavailable?: true;
+}
+
 const STATUS_KINDS = new Set(["session_status", "effect_status"]);
 
 export function parseRpcTarget(
 	target: string,
 	selfDurableId: string | undefined,
-): RpcTarget | { readonly error: string } {
+): RpcTarget | RpcTargetError {
 	const trimmed = target.trim();
 	if (trimmed === "") return { error: 'target is empty; pass "children", "all" or a session id, path or st_ task id' };
 	if (trimmed === "children") {
 		if (selfDurableId === undefined)
 			return {
 				error: 'target "children" needs a session with a durable id; save the session first, or watch "all"',
+				identityUnavailable: true,
 			};
 		return { kind: "children", parent: selfDurableId };
 	}

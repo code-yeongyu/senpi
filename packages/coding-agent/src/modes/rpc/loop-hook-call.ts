@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { LoopHookCallFacts } from "../../core/extensions/runner.ts";
 import type { ReadonlySessionManager } from "../../core/session-manager.ts";
+import { SessionUnavailableError } from "../../core/session-unavailable.ts";
 
 /** A message a loop hook sent during its call, for the loop to send with the same options. */
 export interface SentLoopMessage {
@@ -124,10 +125,9 @@ function readOnlySession(sessionId: string, cwd: string, live: () => boolean): R
 			if (!live()) throw new LoopHookCallEndedError(`sessionManager.${member}`);
 			return read();
 		};
+	// A call carries the session's identity, never its record: the record stays loop-side.
 	const unbound = (member: string) => (): never => {
-		throw new Error(
-			`sessionManager.${member} is loop-side: a loop-hook call on a hand carries only the session's id`,
-		);
+		throw new SessionUnavailableError("session_record_unavailable", `sessionManager.${member}`);
 	};
 	return Object.freeze({
 		getSessionId: bound("getSessionId", () => sessionId),
