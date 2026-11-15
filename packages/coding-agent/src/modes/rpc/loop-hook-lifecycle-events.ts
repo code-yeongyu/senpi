@@ -111,8 +111,9 @@ export const LIFECYCLE_LOOP_HOOKS = loopHookFamily({
 			throw malformed("agent_end");
 		return {
 			...forwarded({ type: "agent_end", messages, ...(aborted === undefined ? {} : { aborted }) }),
-			// A Stop held for the hand's background work runs after this call, with the session it carried, and its
-			// writes ride the session's next reply. That an agent_end ends the turn is TURN_EVIDENCE's.
+			// A Stop held for the hand's background work runs after this call, with the session it carried; its writes
+			// reach the loop as durable wakes through the hand's outbox (H3). That an agent_end ends the turn is
+			// TURN_EVIDENCE's.
 			binding: { carried },
 		};
 	},
