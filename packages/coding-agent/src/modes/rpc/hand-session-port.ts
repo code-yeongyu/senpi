@@ -6,7 +6,8 @@ import type { CustomEntry, SessionEntry, SessionHeader } from "../../core/sessio
 import type { ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
 import type { RelocationTarget } from "../../core/session-relocation.ts";
 import { parseDocuments, parseWakes, SessionStateContractError } from "../../core/hand/session-state-effects.ts";
-import { type CarriedSession, effectsReply, type LoopHookCall } from "./loop-hook-call.ts";
+import type { CarriedSession, LoopHookCall } from "./loop-hook-call.ts";
+import { effectsReply } from "./loop-hook-effects.ts";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
@@ -156,8 +157,7 @@ export function runInSession(
 			(definition !== undefined && activeOnRegistration(definition)) ||
 			activation.activate(toolName);
 		const result = callable ? await run() : notCallable(toolName);
-		await effects.settle();
-		return { ...result, sessionEffects: JSON.parse(JSON.stringify(effectsReply(effects))) as JsonValue };
+		return { ...result, sessionEffects: JSON.parse(JSON.stringify(await effectsReply(effects))) as JsonValue };
 	});
 }
 
@@ -173,8 +173,7 @@ export function runAsSession(
 ): Promise<HandToolResult> {
 	return tools.call.run({ sessionId, cwd: tools.cwd, idle: false }, async (effects) => {
 		const result = await run();
-		await effects.settle();
-		const reply = effectsReply(effects);
+		const reply = await effectsReply(effects);
 		return Object.keys(reply).length === 0
 			? result
 			: { ...result, sessionEffects: JSON.parse(JSON.stringify(reply)) as JsonValue };

@@ -8,12 +8,17 @@ import type { ReadonlySessionManager } from "../../core/session-manager.ts";
 import type { LoopHookCallBinding } from "./loop-hook-call.ts";
 
 /**
- * The deliberate refusal after a loop-hook call ended (option A): the loop session's identity (`getSessionId`,
- * `getSessionFile`, `getCwd`) is bound to that call only, so reading it from a kept context afterwards throws this
- * instead of answering. The session the call carried (`getLeafId`, `reduceHistory`) stays readable by the call's own
- * work (its async context: a Stop it held for background work), and refused from any other context. Every other member
- * keeps working: late writes, messages and notices go to the call's late route; the signal stays aborted; idle keeps
- * its value, except that after a call that ended the loop's turn it answers idle until the loop starts another call.
+ * The refusal of what a call bound to itself, used from a kept reference after the call ended. A call ends when its
+ * reply is built (`effectsReply`), before its own cleanup runs. After that these throw it instead of answering or
+ * collecting a write no reply would carry:
+ * - the loop session's identity (`getSessionId`, `getSessionFile`, `getCwd`) and the rest of `ctx.sessionManager`,
+ *   except that the session the call carried (`getLeafId`, `reduceHistory`) stays readable by the call's own work (its
+ *   async context: a Stop it held for background work);
+ * - the wake port's `arm` and `cancel` (`pi.session.sessionWakes()`);
+ * - the relocation host's `request` (`pi.session.requestRelocation`).
+ * The rest keeps working: late messages, notices, entries and user messages go to the call's late route; the signal stays
+ * aborted; idle keeps its value, except that after a call that ended the loop's turn it answers idle until the loop
+ * starts another call.
  */
 export class LoopHookCallEndedError extends Error {
 	override readonly name = "LoopHookCallEndedError";

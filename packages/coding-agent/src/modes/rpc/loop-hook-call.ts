@@ -2,39 +2,17 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readOnlySession } from "./loop-hook-session.ts";
 import type { LoopHookCallFacts, LoopWakeRoute } from "../../core/extensions/runner.ts";
 import type { SessionEntry, SessionHeader } from "../../core/session-manager.ts";
-import type { SessionWake, SessionWakeChange } from "../../core/session-wakes.ts";
+import type { SessionWake } from "../../core/session-wakes.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
-import { type ActiveToolsChange, applyActiveToolsChange } from "../../core/hand/session-effects.ts";
+import { applyActiveToolsChange } from "../../core/hand/session-effects.ts";
+import { collectDocumentChanges, materializeDocuments, type SessionDocuments } from "./session-documents.ts";
+import { type CarriedRelocation, carriedRelocationHost, carriedWakePort } from "./session-port-hosts.ts";
 import {
-	collectDocumentChanges,
-	materializeDocuments,
-	type SessionDocumentChanges,
-	type SessionDocuments,
-} from "./session-documents.ts";
-import {
-	type CarriedRelocation,
-	carriedRelocationHost,
-	carriedWakePort,
-	type RelocationRequestEffect,
-} from "./session-port-hosts.ts";
-
-/** A message a loop hook sent during its call, for the loop to send with the same options. */
-export interface SentLoopMessage {
-	readonly message: Parameters<LoopHookCallFacts["sendMessage"]>[0];
-	readonly options?: Parameters<LoopHookCallFacts["sendMessage"]>[1];
-}
-
-/** An entry a loop hook appended during its call, for the loop to append to its own session (session port, write). */
-export interface AppendedLoopEntry {
-	readonly customType: string;
-	readonly data?: unknown;
-}
-
-/** A user message a loop hook sent during its call, for the loop to send with the same options (session port, write). */
-export interface SentLoopUserMessage {
-	readonly content: Parameters<LoopHookCallFacts["sendUserMessage"]>[0];
-	readonly options?: Parameters<LoopHookCallFacts["sendUserMessage"]>[1];
-}
+	emptyEffects,
+	type LoopHookEffects,
+	type SentLoopMessage,
+	type SentLoopUserMessage,
+} from "./loop-hook-effects.ts";
 
 /**
  * The session port's read half (r3 N2): the loop facts a call carries beyond the session's id. The loop owns the
@@ -63,27 +41,6 @@ export interface CarriedSession {
 	readonly relocation?: CarriedRelocation;
 }
 
-/** What a loop-hook call's handlers did beyond their result, which the loop does in turn (session port, write). */
-export interface LoopHookEffects {
-	readonly sent: SentLoopMessage[];
-	readonly notices: LoopNotice[];
-	readonly entries: AppendedLoopEntry[];
-	readonly userMessages: SentLoopUserMessage[];
-	/**
-	 * The call's change to the active tool set (`pi.setActiveTools`), relative to the set it carried, so the changes of
-	 * calls that ran at once compose when the loop applies each to its current set; unset: unchanged.
-	 */
-	activeTools: ActiveToolsChange | undefined;
-	/** The documents the call changed, `null` for a removed one; unset: it carried none. */
-	documents: SessionDocumentChanges | undefined;
-	/** The call's changes to the loop's wakes, in order. */
-	readonly wakes: SessionWakeChange[];
-	/** The move the call asked for, which the loop applies when its turn ends. */
-	relocation: RelocationRequestEffect | undefined;
-	/** Settles what the call wrote into its session directory into {@link documents}; await it before the reply. */
-	settle: () => Promise<void>;
-}
-
 /** What a loop-hook call binds its handlers' facts to: the loop session's state the call carries. */
 export interface LoopHookCallBinding {
 	readonly sessionId: string;
@@ -97,12 +54,6 @@ export interface LoopHookCallBinding {
 	 * the loop starts another call for that session, as a local session is idle after a turn until the next one starts.
 	 */
 	readonly endsTurn?: boolean;
-}
-
-/** A notice a loop hook showed during its call, for the loop to show on its own UI. */
-export interface LoopNotice {
-	readonly message: string;
-	readonly type?: Parameters<LoopHookCallFacts["notify"]>[1];
 }
 
 /**
@@ -152,17 +103,7 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 			let live = true;
 			let userMessagesSent = 0;
 			const controller = new AbortController();
-			const effects: LoopHookEffects = {
-				sent: [],
-				notices: [],
-				entries: [],
-				userMessages: [],
-				activeTools: undefined,
-				documents: undefined,
-				wakes: [],
-				relocation: undefined,
-				settle: () => Promise.resolve(),
-			};
+			const effects: LoopHookEffects = emptyEffects();
 			const documents = carried?.documents;
 			const sessionDir = documents === undefined ? undefined : await materializeDocuments(documents);
 			const relocation =
@@ -177,6 +118,9 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 						);
 			const wakes =
 				carried?.wakes === undefined ? undefined : carriedWakePort(carried.wakes, effects.wakes, () => live);
+			effects.seal = () => {
+				live = false;
+			};
 			let settling: Promise<void> | undefined;
 			effects.settle = () => {
 				if (sessionDir === undefined || documents === undefined) return Promise.resolve();
@@ -244,20 +188,5 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 				await effects.settle();
 			}
 		},
-	};
-}
-
-/** The effects a reply carries back to the loop, each only when there is one. */
-export function effectsReply(effects: LoopHookEffects): Record<string, unknown> {
-	const { sent, notices, entries, userMessages, activeTools, documents, wakes, relocation } = effects;
-	return {
-		...(sent.length > 0 ? { sent } : {}),
-		...(notices.length > 0 ? { notices } : {}),
-		...(entries.length > 0 ? { entries } : {}),
-		...(userMessages.length > 0 ? { userMessages } : {}),
-		...(activeTools === undefined ? {} : { activeTools }),
-		...(documents === undefined || Object.keys(documents).length === 0 ? {} : { documents }),
-		...(wakes.length > 0 ? { wakes } : {}),
-		...(relocation === undefined ? {} : { relocation }),
 	};
 }
