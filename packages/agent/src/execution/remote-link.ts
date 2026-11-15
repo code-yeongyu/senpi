@@ -95,7 +95,8 @@ export function createHandLink(
 	};
 
 	transport.onFrame((frame: TransportFrame) => {
-		// A closed link writes nothing: no ack for a late reply, no floor re-send on a hello, no nested answer.
+		// A closed link ignores every inbound frame, so it writes nothing: no ack for a late settled or terminal reply, no
+		// floor re-send on a hello, and no plane.refused (or any other plane answer) for a nested plane.request.
 		if (closed) return;
 		const nested = decodePlaneMessage(frame.payload);
 		if (nested !== undefined) return planes.receive(frame.lane, nested);

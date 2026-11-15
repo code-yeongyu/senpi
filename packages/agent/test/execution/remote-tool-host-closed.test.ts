@@ -11,6 +11,7 @@ import {
 	type RemoteHandMessage,
 } from "../../src/execution/remote-protocol.ts";
 import { createRemoteToolHost } from "../../src/execution/remote-tool-host.ts";
+import { decodePlaneMessage, encodePlaneMessage, type PlaneMessage } from "../../src/execution/plane.ts";
 import type { FrameHandler, Transport } from "../../src/transport/transport.ts";
 
 /** A transport that tells the test each message kind as it is sent, can hold a kind's send unfinished, and replies. */
@@ -21,10 +22,11 @@ function recordingTransport(options: { readonly hold?: RemoteHandMessage["kind"]
 	const handlers: FrameHandler[] = [];
 	const transport: Transport = {
 		send: (_lane, payload) => {
-			const message = decodeRemoteMessage(payload);
-			const { kind } = message;
+			const plane = decodePlaneMessage(payload);
+			const message = plane === undefined ? decodeRemoteMessage(payload) : undefined;
+			const kind = plane?.kind ?? message?.kind ?? "unknown";
 			sent.push(kind);
-			if (message.kind === "invoke") invoked.push(message.toolCallId);
+			if (message?.kind === "invoke") invoked.push(message.toolCallId);
 			waiters.get(kind)?.();
 			return kind === options.hold ? new Promise<void>(() => {}) : Promise.resolve();
 		},
@@ -47,8 +49,11 @@ function recordingTransport(options: { readonly hold?: RemoteHandMessage["kind"]
 				waiters.set(kind, () => check() && resolve());
 			}),
 		/** Delivers one frame to every link on this transport, in the order they attached, in one synchronous pass. */
-		reply: (lane: string, message: RemoteHandMessage) => {
-			for (const handler of handlers) void handler({ lane, payload: encodeRemoteMessage(message) });
+		reply: (lane: string, message: RemoteHandMessage | PlaneMessage) => {
+			const payload = message.kind.startsWith("plane.")
+				? encodePlaneMessage(message as PlaneMessage)
+				: encodeRemoteMessage(message as RemoteHandMessage);
+			for (const handler of handlers) void handler({ lane, payload });
 		},
 	};
 }
@@ -131,7 +136,7 @@ describe("a remote tool call when the hand link closes", () => {
 		expect(wire.sent).toEqual([]);
 	});
 
-	it("writes nothing for frames that arrive after close(): no ack for a settled call, no floor re-send on a hello (#6791 review L1)", async () => {
+	it("writes nothing for frames that arrive after close(): no ack, no floor re-send on a hello, no plane.refused (#6791 L1, #6796 L1)", async () => {
 		const wire = recordingTransport();
 		const host = createRemoteToolHost({ transport: wire.transport, placement: "cross-machine", epoch: 2 });
 		const call = runCall(host);
@@ -144,6 +149,7 @@ describe("a remote tool call when the hand link closes", () => {
 		await call.done;
 		wire.reply("s", { kind: "settled", executionId: "late", result: { content: [], details: {}, isError: false } });
 		wire.reply(HAND_CONTROL_LANE, { kind: "hello", instance: "restarted", durable: true, ops: [] });
+		wire.reply("s", { kind: "plane.request", parent: "late", childRequestId: "r1", plane: "probe", body: null });
 		// A frame's handler hands its writes to the transport synchronously, so every write it would make is recorded now.
 
 		expect(before).toEqual(["floor", "invoke"]);
