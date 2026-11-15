@@ -135,3 +135,12 @@ export function formatScheduledMessage(job: ScheduledJob, firedAt: number): stri
 	const recurrence = job.everyMs === null ? "" : `, repeats every ${Math.round(job.everyMs / 1000)}s`;
 	return `[Scheduled prompt ${job.id}: created ${new Date(job.createdAt).toISOString()}, due ${new Date(job.dueAt).toISOString()}, fired ${new Date(firedAt).toISOString()}${recurrence}]\n${job.prompt}`;
 }
+
+/** One line describing a job for the tool's answers: id, state, due time, recurrence, last error, prompt head. */
+export function describeJob(job: ScheduledJob, state: string): string {
+	const due = new Date(job.dueAt);
+	const every = job.everyMs === null ? "" : `, every ${Math.round(job.everyMs / 1000)}s`;
+	const error = job.lastError === null ? "" : `, last error: ${job.lastError}`;
+	const prompt = job.prompt.length > 120 ? `${job.prompt.slice(0, 117)}...` : job.prompt;
+	return `${job.id} [${state}] due ${due.toISOString()} (${due.toString()})${every}${error}: ${prompt}`;
+}

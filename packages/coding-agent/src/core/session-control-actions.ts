@@ -100,8 +100,7 @@ export function callSessionControlActions(call: () => CallSessionControl | undef
 	return {
 		...unboundSessionControlActions(),
 		relocationOffered: () => call()?.relocationHost()?.offered() ?? false,
-		relocationTargets: async (signal) =>
-			(await call()?.relocationHost()?.targets(signal)) ?? RELOCATION_NOT_OFFERED,
+		relocationTargets: async (signal) => (await call()?.relocationHost()?.targets(signal)) ?? RELOCATION_NOT_OFFERED,
 		requestRelocation: async (request, signal) =>
 			(await call()?.relocationHost()?.request(request, signal)) ?? RELOCATION_NOT_OFFERED,
 		sessionWakes: () => call()?.sessionWakes(),

@@ -4551,6 +4551,10 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/loop/hosted-wakeup.ts#NO_TIMERS": {
+			"class": "constant",
+			"reason": "timer port of no-op functions; never written after load"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/loop/index.ts#default": {
 			"class": "constant",
 			"reason": "extension factory or entry value built once; holds no module-level state"
@@ -7746,6 +7750,10 @@
 		"packages/coding-agent/src/migrations-state.ts#SCAN_MIGRATION_NAMES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/headless/loop-session-port.ts#SESSION_BOUND_TOOLS": {
+			"class": "constant",
+			"reason": "lookup set of tool names; never written after load"
 		},
 		"packages/coding-agent/src/modes/headless/testing/kill-presence.ts#KILL_PRESENCE_CASES": {
 			"class": "constant",

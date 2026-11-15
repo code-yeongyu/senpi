@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { join } from "node:path";
 import type { LoopHookCallFacts } from "../../core/extensions/runner.ts";
 import type { HistoryReducer } from "../../core/session-history-reduce.ts";
 import type { ReadonlySessionManager, SessionEntry, SessionHeader } from "../../core/session-manager.ts";
@@ -294,11 +295,14 @@ function readOnlySession(
 	};
 	return Object.freeze({
 		getSessionId: bound("getSessionId", () => sessionId),
-		getSessionFile: bound("getSessionFile", (): string | undefined => undefined),
+		// With carried documents the call's session has a directory here, and so a file in it (never written): extensions
+		// that key their stores by a persisted session's directory (goal, /loop) then keep them with the session's documents.
+		getSessionFile: bound("getSessionFile", (): string | undefined =>
+			sessionDir === undefined ? undefined : join(sessionDir, `${sessionId}.jsonl`),
+		),
 		getCwd: bound("getCwd", () => cwd),
 		// The session's documents, when the loop carried them; otherwise the session has no directory here (as in memory).
-		getSessionDir:
-			carried === undefined ? unbound("getSessionDir") : bound("getSessionDir", () => sessionDir ?? ""),
+		getSessionDir: carried === undefined ? unbound("getSessionDir") : bound("getSessionDir", () => sessionDir ?? ""),
 		getLeafId: carried === undefined ? unbound("getLeafId") : bound("getLeafId", () => carried.leafId),
 		getLeafEntry: unbound("getLeafEntry"),
 		getEntry: unbound("getEntry"),

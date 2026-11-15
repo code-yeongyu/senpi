@@ -5,6 +5,14 @@
  * loop-hook reply's contract (`hook-contract.ts`).
  */
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { SessionWakeChange } from "../session-wakes.ts";
+import {
+	parseDocuments,
+	parseRelocationRequest,
+	parseWakeChanges,
+	type RelocationRequestEffect,
+	SessionStateContractError,
+} from "./session-state-effects.ts";
 
 export interface SessionEffectMessage {
 	readonly message: {
@@ -37,6 +45,12 @@ export interface SessionEffects {
 	readonly entries?: readonly { readonly customType: string; readonly data?: unknown }[];
 	readonly userMessages?: readonly SessionEffectUserMessage[];
 	readonly activeTools?: ActiveToolsChange;
+	/** The session documents the call changed (`null`: removed), for the loop to keep with the session. */
+	readonly documents?: Readonly<Record<string, string | null>>;
+	/** The call's changes to the session's durable wakes, in order. */
+	readonly wakes?: readonly SessionWakeChange[];
+	/** A move the call asked for, which the loop applies when its turn ends. */
+	readonly relocation?: RelocationRequestEffect;
 	/** Late messages and notices the hand dropped past its per-session bound. */
 	readonly droppedLate?: number;
 }
@@ -133,10 +147,40 @@ function userMessage(value: unknown, at: string): SessionEffectUserMessage {
 }
 
 function names(value: unknown, at: string): string[] {
-	return list(value, at, text);
+	const parsed = list(value, at, text);
+	const repeated = parsed.find((name, index) => parsed.indexOf(name) !== index);
+	if (repeated !== undefined) throw new SessionEffectsContractError(`${at} names ${repeated} twice`);
+	return parsed;
 }
 
-const KINDS = ["sent", "notices", "entries", "userMessages", "activeTools", "droppedLate"] as const;
+const KINDS = [
+	"sent",
+	"notices",
+	"entries",
+	"userMessages",
+	"activeTools",
+	"documents",
+	"wakes",
+	"relocation",
+	"droppedLate",
+] as const;
+
+/** The state kinds, refused through the same contract error. */
+function stateEffects(shape: Shape): Pick<SessionEffects, "documents" | "wakes" | "relocation"> {
+	const { documents, wakes, relocation } = shape;
+	try {
+		return {
+			...(documents === undefined ? {} : { documents: parseDocuments(documents, "sessionEffects.documents", true) }),
+			...(wakes === undefined ? {} : { wakes: parseWakeChanges(wakes, "sessionEffects.wakes") }),
+			...(relocation === undefined
+				? {}
+				: { relocation: parseRelocationRequest(relocation, "sessionEffects.relocation") }),
+		};
+	} catch (error) {
+		if (error instanceof SessionStateContractError) throw new SessionEffectsContractError(error.message);
+		throw error;
+	}
+}
 
 /** Reads a call's `sessionEffects` as the closed shape; anything else is refused with a `SessionEffectsContractError`. */
 export function parseSessionEffects(value: unknown): SessionEffects {
@@ -181,12 +225,13 @@ export function parseSessionEffects(value: unknown): SessionEffects {
 						},
 					};
 				})()),
+		...stateEffects(shape),
 		...(droppedLate === undefined ? {} : { droppedLate }),
 	};
 }
 
 /** The loop's active set after a call's change: its current set less what the call deactivated, plus what it activated. */
 export function applyActiveToolsChange(current: readonly string[], change: ActiveToolsChange): string[] {
-	const kept = current.filter((name) => !change.deactivate.includes(name));
-	return [...kept, ...change.activate.filter((name) => !kept.includes(name))];
+	const kept = [...new Set(current)].filter((name) => !change.deactivate.includes(name));
+	return [...kept, ...new Set(change.activate.filter((name) => !kept.includes(name)))];
 }

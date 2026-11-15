@@ -108,7 +108,9 @@ export function createLooplessHand(
 					const execute = () =>
 						runtime.execute(call.name, call.toolCallId, call.arguments, call.signal, call.nested);
 					// A loop that carries its session runs its session tools here (ST); without one the call has no session.
-					return call.session === undefined ? execute() : runtime.runInSession(call.session, call.name, execute);
+					if (call.session !== undefined) return runtime.runInSession(call.session, call.name, execute);
+					// Only the session's id: tools here that key by session (monitor's `children`) read it, nothing else.
+					return call.sessionId === undefined ? execute() : runtime.runAsSession(call.sessionId, execute);
 				},
 				isSequential: (name) => runtime.definitions.get(name)?.definition.executionMode === "sequential",
 				...(runtime.fileGuards === undefined

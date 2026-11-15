@@ -21,8 +21,11 @@ import {
 	MAX_PROMPT_BYTES,
 	MAX_SCHEDULE_AHEAD_MS,
 	MIN_EVERY_SECONDS,
-	type ScheduledJob,
+	describeJob,
 } from "./types.ts";
+import type { SessionWakePort } from "../../../session-wakes.ts";
+import { armWakeJob, cancelWakeJob, listWakeJobs, type WakeJob } from "./session-wake-jobs.ts";
+import type { ScheduledJob } from "./types.ts";
 
 export const SCHEDULE_PROMPT_TOOL = "schedule_prompt";
 
@@ -82,14 +85,6 @@ export interface SchedulePromptDeps {
 	readonly liveDelivery?: LiveDelivery;
 }
 
-function describeJob(job: ScheduledJob, state: ScheduledJobState): string {
-	const due = new Date(job.dueAt);
-	const every = job.everyMs === null ? "" : `, every ${Math.round(job.everyMs / 1000)}s`;
-	const error = job.lastError === null ? "" : `, last error: ${job.lastError}`;
-	const prompt = job.prompt.length > 120 ? `${job.prompt.slice(0, 117)}...` : job.prompt;
-	return `${job.id} [${state}] due ${due.toISOString()} (${due.toString()})${every}${error}: ${prompt}`;
-}
-
 function resolveDueAt(delaySeconds: number | undefined, at: string | undefined, now: number): number {
 	const trimmedAt = at?.trim() ?? "";
 	if ((delaySeconds === undefined) === (trimmedAt.length === 0)) {
@@ -124,12 +119,7 @@ function checkCapacity(jobs: readonly JobRecord[], sessionId: string): void {
 	}
 }
 
-async function create(
-	params: SchedulePromptParams,
-	ctx: ExtensionContext,
-	now: number,
-	liveDelivery: LiveDelivery | undefined,
-): Promise<AgentToolResult<SchedulePromptDetails>> {
+function validatedJob(params: SchedulePromptParams, now: number): WakeJob {
 	const prompt = params.prompt?.trim() ?? "";
 	if (prompt.length === 0) throw new Error("create needs a non-empty prompt.");
 	if (Buffer.byteLength(prompt, "utf8") > MAX_PROMPT_BYTES) {
@@ -147,6 +137,16 @@ async function create(
 		}
 		everyMs = params.everySeconds * 1000;
 	}
+	return { prompt, dueAt, everyMs };
+}
+
+async function create(
+	params: SchedulePromptParams,
+	ctx: ExtensionContext,
+	now: number,
+	liveDelivery: LiveDelivery | undefined,
+): Promise<AgentToolResult<SchedulePromptDetails>> {
+	const { prompt, dueAt, everyMs } = validatedJob(params, now);
 	const dir = scheduleDir(ctx.agentDir);
 	const sessionId = ctx.sessionManager.getSessionId();
 	checkCapacity((await listScheduledJobs(dir)).jobs, sessionId);
@@ -210,6 +210,25 @@ async function cancel(
 	};
 }
 
+function scheduleOnWakes(
+	params: SchedulePromptParams,
+	ctx: ExtensionContext,
+	now: number,
+	wakes: SessionWakePort,
+): AgentToolResult<SchedulePromptDetails> {
+	switch (params.action) {
+		case "create":
+			return armWakeJob(wakes, validatedJob(params, now), ctx, now);
+		case "list":
+			return listWakeJobs(wakes, ctx);
+		case "cancel": {
+			const id = params.id?.trim() ?? "";
+			if (id.length === 0) throw new Error("cancel needs the job id.");
+			return cancelWakeJob(wakes, id, ctx);
+		}
+	}
+}
+
 export function registerScheduleTool(pi: ExtensionAPI, deps: SchedulePromptDeps): void {
 	pi.registerTool({
 		name: SCHEDULE_PROMPT_TOOL,
@@ -220,6 +239,9 @@ export function registerScheduleTool(pi: ExtensionAPI, deps: SchedulePromptDeps)
 		searchKeywords: ["reminder", "remind", "later", "schedule", "cron", "timer", "alarm", "follow up", "recurring"],
 		executionMode: "sequential",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<SchedulePromptDetails>> {
+			// A session whose loop keeps its wakes (a hosted loop, senpi#6754) schedules there, never in job files here.
+			const wakes = pi.session.sessionWakes();
+			if (wakes !== undefined) return scheduleOnWakes(params, ctx, deps.now(), wakes);
 			switch (params.action) {
 				case "create":
 					return create(params, ctx, deps.now(), deps.liveDelivery);

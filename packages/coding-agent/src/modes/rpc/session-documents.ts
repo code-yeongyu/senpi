@@ -1,22 +1,15 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 
 /**
  * A loop session's documents on a hand (session port, senpi#6754): the files extensions keep beside a session (the goal
  * and /loop stores under `getSessionDir()`), which the loop owns and carries with a call as `relative path -> text`. A
  * call's work sees them as a private session directory; what it changed there goes back as `path -> text`, or `null`
- * for a removed file. Nothing outlives the call on this machine.
+ * for a removed file. Nothing outlives the call on this machine. Paths were checked when the call was parsed.
  */
 export type SessionDocuments = Readonly<Record<string, string>>;
 export type SessionDocumentChanges = Record<string, string | null>;
-
-/** A document path names a file inside the session directory: relative, with no `..` step. */
-export function isDocumentPath(path: string): boolean {
-	if (path.length === 0 || isAbsolute(path)) return false;
-	const normalized = normalize(path);
-	return normalized === path.split("/").join(sep) && !normalized.split(sep).includes("..");
-}
 
 export async function materializeDocuments(documents: SessionDocuments): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-session-documents-"));

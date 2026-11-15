@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { RelocationRequestResult, RelocationTarget, SessionRelocationHost } from "../../core/session-relocation.ts";
+import type {
+	RelocationRequestResult,
+	RelocationTarget,
+	SessionRelocationHost,
+} from "../../core/session-relocation.ts";
+import type { RelocationRequestEffect } from "../../core/hand/session-state-effects.ts";
 import type { SessionWake, SessionWakeChange, SessionWakePort } from "../../core/session-wakes.ts";
 
-/** A move a call asked for, for the loop to apply when its turn ends (session port, write). */
-export interface RelocationRequestEffect {
-	readonly target: string;
-	readonly reason: string;
-	readonly moveId: string;
-}
+export type { RelocationRequestEffect };
 
 /** The relocation offer a loop carries with a call: the user's computers its host offers. */
 export interface CarriedRelocation {

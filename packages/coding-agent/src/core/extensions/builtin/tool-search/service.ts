@@ -332,6 +332,14 @@ export function getToolSearchServiceForExtension(pi: object): ToolSearchService 
 	return load === undefined ? undefined : servicesByExtensionLoad.get(load);
 }
 
+/**
+ * The service an extension load (keyed by its runtime) created, for a runtime without a session (a hand), which boots
+ * it as a session does at its start; unlike a session it does not adopt it as a live session's service.
+ */
+export function toolSearchServiceOfLoad(extensionLoad: object): ToolSearchService | undefined {
+	return servicesByExtensionLoad.get(extensionLoad);
+}
+
 /** A session takes the service its extension load (keyed by that load's runtime) created. */
 export function adoptToolSearchServiceForSession(extensionLoad: object): ToolSearchService | undefined {
 	const value = servicesByExtensionLoad.get(extensionLoad);

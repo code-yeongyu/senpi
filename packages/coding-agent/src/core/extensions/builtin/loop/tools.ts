@@ -21,7 +21,7 @@
  */
 
 import { Type } from "typebox";
-import type { AgentToolResult, ExtensionAPI } from "../../types.ts";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "../../types.ts";
 import type { EpochMs, LoopId, WakeupId } from "./types.ts";
 
 /** Model-visible tool name. */
@@ -159,6 +159,8 @@ export interface ScheduleWakeupSchedulerPort {
 
 export interface LoopToolRegistrationDeps {
 	readonly scheduler: ScheduleWakeupSchedulerPort;
+	/** The port of a call whose session's loop keeps its wakes (a hosted loop); `undefined` uses `scheduler`. */
+	readonly hostedScheduler?: (ctx: ExtensionContext) => Promise<ScheduleWakeupSchedulerPort | undefined>;
 }
 
 export const NO_ACTIVE_DYNAMIC_LOOP_ERROR = `${SCHEDULE_WAKEUP_TOOL} can only be used while a dynamic /loop is active.`;
@@ -275,8 +277,9 @@ export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolRegistrationDe
 		allowLazyActivation: false,
 		// Sequential so two concurrent model tool calls cannot race scheduler state.
 		executionMode: "sequential",
-		async execute(_toolCallId, params): Promise<AgentToolResult<ScheduleWakeupDetails>> {
-			return params.stop === true ? executeStop(deps.scheduler, params) : executeSchedule(deps.scheduler, params);
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<ScheduleWakeupDetails>> {
+			const scheduler = (await deps.hostedScheduler?.(ctx)) ?? deps.scheduler;
+			return params.stop === true ? executeStop(scheduler, params) : executeSchedule(scheduler, params);
 		},
 	});
 }

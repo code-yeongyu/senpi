@@ -22,10 +22,19 @@ export interface SessionWake {
 	readonly prompt: string;
 	/** When the wake was first armed, epoch ms (a scheduled prompt's delivery header names it). */
 	readonly createdAt: number;
+	/** An entry the loop appends to the session when the wake fires, just before it delivers `prompt` (a /loop tick). */
+	readonly entry?: SessionWakeEntry;
+}
+
+export interface SessionWakeEntry {
+	readonly customType: string;
+	readonly data?: unknown;
 }
 
 /** What a call did to the loop's wakes, in order. */
-export type SessionWakeChange = { readonly op: "arm"; readonly wake: SessionWake } | { readonly op: "cancel"; readonly id: string };
+export type SessionWakeChange =
+	| { readonly op: "arm"; readonly wake: SessionWake }
+	| { readonly op: "cancel"; readonly id: string };
 
 /** A session's wakes as its loop keeps them: the pending ones, and the changes a call makes to them. */
 export interface SessionWakePort {

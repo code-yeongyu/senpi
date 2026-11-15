@@ -22,7 +22,8 @@ import {
 } from "./loopless-execute-grant.ts";
 import { runLooplessToolCall } from "./loopless-tool-call.ts";
 import { createLoopHookCall } from "./loop-hook-call.ts";
-import { runInSession } from "./hand-session-port.ts";
+import { runAsSession, runInSession } from "./hand-session-port.ts";
+import { toolSearchServiceOfLoad } from "../../core/extensions/builtin/tool-search/service.ts";
 import { extensionLoopHooks, type LooplessLoopHooks } from "./loopless-loop-hooks.ts";
 import { extensionToolHandlers, type TwoSidedHome } from "./loopless-tool-handlers.ts";
 import { toolChildModuleRoots } from "./tool-child/session-child.ts";
@@ -64,6 +65,8 @@ export interface LooplessRuntime {
 		toolName: string,
 		run: () => Promise<AgentToolResult<unknown>>,
 	): Promise<HandToolResult>;
+	/** Runs `run` for a call that carries only its loop session's id: its tools read that id, nothing more. */
+	runAsSession(sessionId: string, run: () => Promise<AgentToolResult<unknown>>): Promise<HandToolResult>;
 	/**
 	 * Runs this runtime's extensions' loop hooks for a loop that runs elsewhere, on the same runner as its tool calls
 	 * (S33). Refused unless the runtime was built as its extensions' home (`twoSidedHome: "hand"`).
@@ -212,6 +215,9 @@ export function createLooplessRuntimeFactory(
 			},
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
+		// The tool catalog boots as a session's does at its start, so `tool_search` is callable (and a loop that asks this
+		// runtime for its tools sees it) from the first call on, not only after some other tool ran (senpi#6754).
+		toolSearchServiceOfLoad(extensionsResult.runtime)?.beginSession();
 		// On a hand, a call's extension UI is presented by the loop that owns the call (S30).
 		const presentation = new PresentationBroker((error) =>
 			runtime.extensionRunner.emitError({
@@ -274,6 +280,7 @@ export function createLooplessRuntimeFactory(
 			fileGuards,
 			execute: (name, toolCallId, params, signal, nested) => execute(name, toolCallId, params, signal, nested),
 			runInSession: (session, toolName, run) => runInSession(sessionTools, session, toolName, run),
+			runAsSession: (sessionId, run) => runAsSession(sessionTools, sessionId, run),
 			runLoopHooks: extensionLoopHooks(
 				runtime.extensionRunner,
 				local.twoSidedHome ?? "loop",
