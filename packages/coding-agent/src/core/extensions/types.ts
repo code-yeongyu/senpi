@@ -154,7 +154,8 @@ export type CompactionRejectionCause =
 	| "per-turn-cap"
 	| "stale-revision"
 	// The summary request failed on a transient provider error after its bounded retries;
-	// like `circuit-breaker` it says nothing about the context, so the next send retries.
+	// it says nothing about the context, so the session does not latch admission on it and a
+	// later attempt can retry compaction.
 	| "transient-failure";
 
 // ============================================================================
