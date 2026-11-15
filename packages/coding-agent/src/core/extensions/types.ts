@@ -1239,9 +1239,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 */
 	runs?: ExtensionSide;
 	/**
-	 * The tool acts on the session that calls it (its entries, goal, tool search, wakeups or placement). A hand still
-	 * advertises it to a loop that runs elsewhere, marked with this flag in its `describe_tools` declaration
-	 * (senpi#6749), so that loop calls it with its session's state. Recorded only; nothing else reads it.
+	 * The tool cannot run without the calling session's record: it reads or writes the session's entries, active tools,
+	 * system prompt options, goal, scheduled prompts or placement, so it fails on a runtime that has no session. A hand
+	 * still advertises it to a loop that runs elsewhere, marked with this flag in its `describe_tools` declaration
+	 * (senpi#6749), so that loop's calls carry the session port's read half. A tool whose only tie to the session is a
+	 * later wake (a background command's exit, a monitor event: late results) or device-local state keyed by the
+	 * session's id is not session-bound. Recorded only; nothing else reads it.
 	 */
 	sessionBound?: boolean;
 	/**
