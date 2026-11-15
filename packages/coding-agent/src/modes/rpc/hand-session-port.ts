@@ -1,6 +1,6 @@
 import type { AgentToolResult, HandToolResult } from "@earendil-works/pi-agent-core";
 import type { JsonValue } from "@earendil-works/pi-ai";
-import type { Extension } from "../../core/extensions/types.ts";
+import { type Extension, normalizeToolExposure, type ToolDefinition } from "../../core/extensions/types.ts";
 import { LazyToolActivation } from "../../core/lazy-tool-activation.ts";
 import type { CustomEntry, SessionEntry, SessionHeader } from "../../core/session-manager.ts";
 import type { ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
@@ -63,6 +63,21 @@ function parseSessionCall(session: JsonValue): SessionCall {
 	return { sessionId: session.sessionId, idle: session.idle ?? false, carried };
 }
 
+/** The result a session's loop gives a call to a tool it cannot resolve (agent-core `executor.ts`, no hint). */
+const notCallable = (toolName: string): AgentToolResult<unknown> => ({
+	content: [{ type: "text", text: `Tool ${toolName} not found` }],
+	details: {},
+	isError: true,
+});
+
+/** Whether a session activates the tool when it registers (`direct`, `eval`, `model-only` exposure, unless opted out). */
+const activeOnRegistration = (definition: ToolDefinition): boolean => {
+	const { exposure } = normalizeToolExposure(definition);
+	return (
+		(exposure === "direct" || exposure === "eval" || exposure === "model-only") && definition.defaultActive !== false
+	);
+};
+
 /** What runs a hosted loop's session tool on a hand: its runtime's session-call state and tool registry. */
 export interface HandSessionTools {
 	readonly call: LoopHookCall;
@@ -74,8 +89,11 @@ export interface HandSessionTools {
 /**
  * Runs one tool call of a loop that runs elsewhere with that loop's session (senpi#6754, ST): the tool and its handlers
  * read the session the call carried and their writes come back as the result's `sessionEffects`, which the loop commits.
- * A tool the carried active set lacks is activated first, as a session's lazy activation does on its first call, so the
- * loop applies the new set. Malformed carried facts refuse the call before anything runs.
+ * A tool that needs activation (one a session does not activate on registration) and that the carried active set lacks
+ * is activated first, as a session's lazy activation does on its first call, so the loop applies the new set; one that
+ * cannot be activated is refused as the session refuses a tool it cannot call, and never runs. A tool active on
+ * registration is callable as in any session, whether or not the loop's set names it (it may be this machine's own).
+ * Malformed carried facts refuse the call before anything runs.
  */
 export function runInSession(
 	tools: HandSessionTools,
@@ -96,9 +114,13 @@ export function runInSession(
 		tools.cwd,
 		idle,
 		async (effects) => {
-			if (carried.activeTools !== undefined && !carried.activeTools.includes(toolName))
+			const definition = tools.definition(toolName)?.definition;
+			const callable =
+				carried.activeTools === undefined ||
+				carried.activeTools.includes(toolName) ||
+				(definition !== undefined && activeOnRegistration(definition)) ||
 				activation.activate(toolName);
-			const result = await run();
+			const result = callable ? await run() : notCallable(toolName);
 			return { ...result, sessionEffects: JSON.parse(JSON.stringify(effectsReply(effects))) as JsonValue };
 		},
 		carried,

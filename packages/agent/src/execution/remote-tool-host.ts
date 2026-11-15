@@ -18,16 +18,26 @@ export type HandPlacement = "split-local" | "cross-machine";
 
 /**
  * A loop's session port on its tool calls (senpi#6754): for a loop whose session tools run on the hand. `carry` gives
- * the session facts a call carries, read when the call is dispatched (after every earlier call of a sequential batch
- * committed its writes); `undefined` carries nothing. `commit` applies the writes a call returns, before the call's
- * `tool_execution_end`; a failing commit becomes that call's error result.
+ * the session facts a call carries, read when the call is dispatched; `undefined` carries nothing. Calls of a parallel
+ * batch are all dispatched before any commits, so each carries the same snapshot: their writes must compose (a change
+ * relative to what was carried, never a whole replacement), whatever order they commit in.
  */
-export interface RemoteSessionPort {
+export interface RemoteSessionPort<E> {
 	carry(call: AgentToolCall): JsonValue | undefined;
-	commit(call: AgentToolCall, effects: JsonValue): void | Promise<void>;
+	/**
+	 * The closed parser of a call's `sessionEffects`, run at this boundary before anything is committed: it refuses (by
+	 * throwing) any kind or shape it does not know. A refusal becomes that call's error result, with nothing committed.
+	 */
+	parse(effects: JsonValue): E;
+	/**
+	 * Applies the writes a call returned, exactly as `parse` accepted them (never the raw wire value), before the call's
+	 * `tool_execution_end`, applying each change to the session's current state. A failing commit becomes that call's
+	 * error result.
+	 */
+	commit(call: AgentToolCall, effects: E): void | Promise<void>;
 }
 
-export interface RemoteToolHostOptions {
+export interface RemoteToolHostOptions<E = unknown> {
 	/** The session's end of the link to the hand; lanes are execution scope IDs. */
 	readonly transport: Transport;
 	readonly placement: HandPlacement;
@@ -53,7 +63,7 @@ export interface RemoteToolHostOptions {
 	 */
 	readonly epoch?: number;
 	/** The session port its calls carry; absent, no call carries a session (a loop whose session tools run loop-side). */
-	readonly sessionPort?: RemoteSessionPort;
+	readonly sessionPort?: RemoteSessionPort<E>;
 }
 
 function errorResult(text: string): RemoteToolResult {
@@ -81,8 +91,8 @@ function terminalResult(placement: HandPlacement, terminal: RemoteTerminal): Rem
  * source order. A call whose send is refused (the transport closed) becomes an error result, never a retry. The one
  * re-send is on a durable hand's `hello` (see `createHandLink`). `deviceFiles(scope)` reaches the hand's files (S40).
  */
-export function createRemoteToolHost(
-	options: RemoteToolHostOptions,
+export function createRemoteToolHost<E = unknown>(
+	options: RemoteToolHostOptions<E>,
 ): ToolHost & { deviceFiles(scope: ExecutionScope): DeviceFiles; close(): void } {
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
 	const link = createHandLink(options.transport, options.planes ?? {}, options.filePlanes ?? [], options.epoch);
@@ -108,14 +118,20 @@ export function createRemoteToolHost(
 	// The session writes are the loop's to apply, never part of the result the model and the events see.
 	const committed = async (raw: AgentToolCall, settled: RemoteToolResult): Promise<RemoteToolResult> => {
 		const { sessionEffects, ...result } = settled;
-		if (sessionEffects === undefined || options.sessionPort === undefined) return result;
+		const port = options.sessionPort;
+		if (sessionEffects === undefined || port === undefined) return result;
+		const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+		let effects: E;
 		try {
-			await options.sessionPort.commit(raw, sessionEffects);
+			effects = port.parse(sessionEffects);
+		} catch (error) {
+			return errorResult(`The hand returned session writes this session does not accept: ${messageOf(error)}`);
+		}
+		try {
+			await port.commit(raw, effects);
 			return result;
 		} catch (error) {
-			return errorResult(
-				`The session could not commit this call's writes: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			return errorResult(`The session could not commit this call's writes: ${messageOf(error)}`);
 		}
 	};
 	const dispatch = (
