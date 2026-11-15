@@ -281,6 +281,7 @@ import {
 	type TurnStartEvent,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { combinedToolCallSignal } from "./extensions/tool-call-signal.ts";
 import type {
 	ApplyCompactionOptions,
 	ApplyCompactionResult,
@@ -2519,7 +2520,7 @@ export class AgentSession {
 			warnStalled("tool_call_preflight_stalled", elapsedMs),
 		);
 		try {
-			const signal = options.signal ?? this.agent.signal;
+			const signal = combinedToolCallSignal(options.signal, this.agent.signal);
 			// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
 			// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
 			if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
@@ -2538,7 +2539,7 @@ export class AgentSession {
 					toolCallId: toolCall.id,
 					...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
 					input: args as Record<string, unknown>,
-				});
+				}, signal === undefined ? {} : { signal });
 			} catch (err) {
 				if (err instanceof Error) {
 					throw err;
@@ -5486,6 +5487,7 @@ export class AgentSession {
 
 		const beforeResult = await this.preflightToolCall(prepared.toolCall, prepared.args, {
 			waitForEventQueue: this._toolExecutionDepth === 0,
+			...(options?.signal === undefined ? {} : { signal: options.signal }),
 		});
 		if (beforeResult?.block) {
 			throw new ExecuteToolError(
