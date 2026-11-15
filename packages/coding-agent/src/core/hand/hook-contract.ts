@@ -155,11 +155,6 @@ function wireList(value: unknown, at: string): readonly WireJson[] {
 	return value.map((item, index) => wireJson(item, `${at}[${index}]`));
 }
 
-function droppedCount(value: unknown): number {
-	if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
-	throw new HookContractError("the hand's request-hook reply has a malformed droppedLate");
-}
-
 /**
  * `runRequestHooks` over a hand's loop-hook runner (`LooplessHand.loopHooks`): the session's hooks run on the runtime of
  * `scope`, inside a loop-hook call bound to that session, with the loop busy (a model request is mid-turn). The hooks'
@@ -177,13 +172,12 @@ export function loopHookRequestHooks(
 			input,
 		});
 		if (!isPlainObject(reply)) throw new HookContractError("the hand's request-hook reply is not an object");
-		const { errors, sent, notices, droppedLate } = reply;
+		const { errors, sent, notices } = reply;
 		return {
 			output: parseHookRequestInput(reply.output),
 			...(errors === undefined ? {} : { errors: hookFailures(errors) }),
 			...(sent === undefined ? {} : { sent: wireList(sent, "sent") }),
 			...(notices === undefined ? {} : { notices: wireList(notices, "notices") }),
-			...(droppedLate === undefined ? {} : { droppedLate: droppedCount(droppedLate) }),
 		};
 	};
 }

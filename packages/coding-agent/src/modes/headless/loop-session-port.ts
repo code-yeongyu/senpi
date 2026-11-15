@@ -107,8 +107,6 @@ export function createLoopSessionPort(session: LoopPortSession): RemoteSessionPo
 				for (const { content, options } of effects.userMessages ?? [])
 					session.sendUserMessage(content, options).catch(report);
 				for (const { message, type } of effects.notices ?? []) ui().notify(message, type);
-				if ((effects.droppedLate ?? 0) > 0)
-					ui().notify(`${effects.droppedLate} late messages from the hand were dropped`, "warning");
 			} catch (error) {
 				session.setActiveToolsByName(before);
 				throw new SessionCommitError(landed, error);

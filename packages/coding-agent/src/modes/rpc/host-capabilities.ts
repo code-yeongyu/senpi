@@ -47,6 +47,7 @@ import {
 	PARK_CLAIM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
+import { MACHINE_OP_CAPABILITY } from "./machine-op/wire.ts";
 import { SESSION_MODEL_SCOPE_CAPABILITY } from "./rpc-session-command-types.ts";
 import { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-types.ts";
 import {
@@ -143,6 +144,8 @@ export function multiSessionHostCapabilities(options: {
 			PEER_AGENT_ROLE_CAPABILITY,
 			// ...and lets the forwarder state a device is the host's own account, whose turns then ask nothing extra.
 			SAME_ACCOUNT_DELEGATION_CAPABILITY,
+			// ...and runs the local relay host's device ops on a launch-proven, non-delegated connection (senpi#6752).
+			MACHINE_OP_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.

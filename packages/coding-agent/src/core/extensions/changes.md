@@ -1,3 +1,76 @@
+## 2026-11-16 - `transient-failure` doc comment no longer ties it to `circuit-breaker` (senpi#6772)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the comment on the `transient-failure` member of `CompactionRejectionCause` says the session does not latch admission on it and a later attempt can retry compaction. Comment only; the union is unchanged.
+
+### Why
+
+- Review finding on #6764: the breaker also trips on deterministic failures, so "like `circuit-breaker`" was misleading.
+
+### Why an extension could not handle it
+
+- The comment documents the public extension type.
+
+### Expected merge conflict zones
+
+- LOW: the `CompactionRejectionCause` union in `types.ts`.
+
+## 2026-11-16 - `CompactionRejectionCause` gains `transient-failure` (senpi#6760)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `CompactionRejectionCause` adds `"transient-failure"`: the summary request failed on a transient provider error after its bounded retries. An extension returns it from `session_before_compact` with `cancel: true`; it reaches `compaction_end` and rejected `session_compact` events like the other causes.
+
+### Why
+
+- The session must tell a failure that says nothing about the context from one that proves the context cannot be compacted. Only the latter may latch automatic admission.
+
+### Why an extension could not handle it
+
+- The cause is part of the public `session_before_compact` result contract that core reads.
+
+### Expected merge conflict zones
+
+- LOW: the `CompactionRejectionCause` union in `types.ts`.
+
+## 2026-11-15 - A device machine registered during another load's staging fails that load whole (senpi#6728)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: `commit()` checks, before applying anything, whether a device machine was registered while this load's registration was staged; the load then fails with `DeviceMachineConflictError` and the first registration stays.
+
+### Why
+
+- senpi#6720 review L2: the staged write overwrote a registration made meanwhile, silently.
+
+### Why an extension could not handle it
+
+- The loader owns staging and commit.
+
+### Expected merge conflict zones
+
+- LOW: the top of `commit()` in `loader.ts`.
+
+## 2026-11-14 - `ctx.registerRunBackgroundJob`
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.registerRunBackgroundJob?(job)` and the matching `ExtensionContextActions` member; `RunBackgroundJob` is `{ kind: "bash", id, description?, stop(turnId) }`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds the action and exposes it on every runner-built context behind `assertActive`; an unbound runner answers a no-op release.
+
+### Why
+
+- An RPC `interrupt { background: "stop" }` must reach the jobs an extension started for that turn (the terminal builtin's background sessions).
+
+### Why an extension could not handle it
+
+- The job has to be recorded against the session's running turn, which only the host knows.
+
+### Expected merge conflict zones
+
+- LOW: next to `releaseRunFence` in `ExtensionContext`, `ExtensionContextActions` and the runner's context builder.
+
 ## 2026-11-15 - Extensions register the session's device machine (senpi#6720)
 
 ### What changed

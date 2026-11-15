@@ -51,8 +51,6 @@ export interface SessionEffects {
 	readonly wakes?: readonly SessionWakeChange[];
 	/** A move the call asked for, which the loop applies when its turn ends. */
 	readonly relocation?: RelocationRequestEffect;
-	/** Late messages and notices the hand dropped past its per-session bound. */
-	readonly droppedLate?: number;
 }
 
 /** A call's `sessionEffects` that are not exactly the closed shape. */
@@ -162,7 +160,6 @@ const KINDS = [
 	"documents",
 	"wakes",
 	"relocation",
-	"droppedLate",
 ] as const;
 
 /** The state kinds, refused through the same contract error. */
@@ -185,12 +182,7 @@ function stateEffects(shape: Shape): Pick<SessionEffects, "documents" | "wakes" 
 /** Reads a call's `sessionEffects` as the closed shape; anything else is refused with a `SessionEffectsContractError`. */
 export function parseSessionEffects(value: unknown): SessionEffects {
 	const shape = record(value, "sessionEffects", KINDS);
-	const { sent, notices, entries, userMessages, activeTools, droppedLate } = shape;
-	if (
-		droppedLate !== undefined &&
-		!(typeof droppedLate === "number" && Number.isSafeInteger(droppedLate) && droppedLate >= 0)
-	)
-		throw new SessionEffectsContractError("sessionEffects.droppedLate is not a count");
+	const { sent, notices, entries, userMessages, activeTools } = shape;
 	return {
 		...(sent === undefined ? {} : { sent: list(sent, "sessionEffects.sent", sentMessage) }),
 		...(notices === undefined
@@ -226,7 +218,6 @@ export function parseSessionEffects(value: unknown): SessionEffects {
 					};
 				})()),
 		...stateEffects(shape),
-		...(droppedLate === undefined ? {} : { droppedLate }),
 	};
 }
 

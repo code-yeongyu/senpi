@@ -23,12 +23,17 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * The loop hooks of this runtime's own extensions, on the same runner (so the same extension instances) that runs its
  * tool calls: a two-sided extension keeps one state across its loop and tool hooks. Only a hand that is its extensions'
  * home (`twoSidedHome: "hand"`) runs them; any other hand refuses, because its extensions' loop hooks run where the loop
- * runs. The loop forwards the two events a session runs before a turn, in a session's order: `input` (the hooks
- * builtin's UserPromptSubmit runs there), whose result (`continue`, `handled`, or `transform` with the new text) the
- * loop returns from its own `input` handler, so its session acts on it as on a local one; then `before_agent_start`
- * with the prompt the session now has, whose combined result the loop returns from its `before_agent_start`. Each reply
- * also carries the messages its handlers sent (`sent`, which the loop sends with the same options) and their failures
- * (`errors`).
+ * runs. Every event runs only the user's loop hooks (`userLoopHooks`: non-builtin extensions the loader did not ship,
+ * plus the hooks builtin); the loop's own builtins run where the loop runs. The loop forwards, in a session's order:
+ * - `session_start`: the user's SessionStart hooks and extensions' `session_start` handlers;
+ * - `input` (the hooks builtin's UserPromptSubmit runs there), whose result (`continue`, `handled`, or `transform`
+ *   with the new text) the loop returns from its own `input` handler, so its session acts on it as on a local one;
+ * - `before_agent_start` with the prompt the session now has, whose combined result the loop returns from its own;
+ * - `before_provider_request` (CK21), whose reply's `output` carries the payload the user's hooks produced;
+ * - `agent_end`, carrying the session port's read half, where the user's Stop hooks run.
+ * Each reply also carries what its handlers did beyond the result: messages (`sent`, which the loop sends with the same
+ * options), notices, session writes (`entries`, `userMessages`), and failures (`errors`). What a call's work does after
+ * the call ended goes to the loop as a durable wake instead (H3), never in a later reply.
  */
 export function extensionLoopHooks(
 	runner: ExtensionRunner,
@@ -54,7 +59,7 @@ export function extensionLoopHooks(
 				!(streamingBehavior === undefined || isOneOf(streamingBehavior, STREAMING_BEHAVIORS))
 			)
 				throw new Error("malformed input payload");
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run({ sessionId, cwd, idle }, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
 					runner.emitInput(text, images, source, streamingBehavior, inputId, attribution, only),
 				),
@@ -73,7 +78,7 @@ export function extensionLoopHooks(
 			// The loop's options as the loop built them: only `cwd` is this machine's (its workspace); the rest (context files,
 			// skills, tools) describes the loop's machine. They are data for handlers to read; nothing here acts on them.
 			const options = { ...(systemPromptOptions as Partial<BuildSystemPromptOptions>), cwd };
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run({ sessionId, cwd, idle }, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
 					runner.emitBeforeAgentStart(prompt, images, systemPrompt, options, {
 						only,
@@ -88,7 +93,7 @@ export function extensionLoopHooks(
 			// no headers), and the reply's `output` carries the payload they produced.
 			const input = parseHookRequestInput(payload.input);
 			const model = hookModelOf(input);
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run({ sessionId, cwd, idle }, (effects) =>
 				dispatchLoopHook(runner, call, effects, async () => ({
 					output: hookRequestOutputOf(
 						input,
@@ -112,7 +117,7 @@ export function extensionLoopHooks(
 				reason,
 				...(previousSessionFile === undefined ? {} : { previousSessionFile }),
 			};
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run({ sessionId, cwd, idle }, (effects) =>
 				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(sessionStart, only)),
 			);
 		}
@@ -122,12 +127,10 @@ export function extensionLoopHooks(
 			if (!isAgentMessages(messages) || !(aborted === undefined || typeof aborted === "boolean") || carried === null)
 				throw new Error("malformed agent_end payload");
 			const agentEnd = { type: "agent_end" as const, messages, ...(aborted === undefined ? {} : { aborted }) };
-			return call.run(
-				sessionId,
-				cwd,
-				idle,
-				(effects) => dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(agentEnd, only)),
-				carried,
+			// An agent_end ends the loop's turn: a Stop held for the hand's background work runs after this call, with the
+			// session it carried, and its writes ride the session's next reply.
+			return call.run({ sessionId, cwd, idle, carried, endsTurn: true }, (effects) =>
+				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(agentEnd, only)),
 			);
 		}
 		throw new Error(`no loop hooks run on a hand for ${event}`);

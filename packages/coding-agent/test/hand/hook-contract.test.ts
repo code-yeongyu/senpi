@@ -23,8 +23,12 @@ import {
 } from "../../src/core/hand/hook-contract.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
-import { createLoopHookCall } from "../../src/modes/rpc/loop-hook-call.ts";
+import { createLoopHookCall, type LateLoopRoute } from "../../src/modes/rpc/loop-hook-call.ts";
 import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
+
+const noLateEffects: LateLoopRoute = () => {
+	throw new Error("this test's hooks have no work that outlives their call");
+};
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
@@ -186,7 +190,7 @@ describe("CK21: a hand serves hook.model_request", () => {
 			await createInMemoryModelRegistry(AuthStorage.inMemory()),
 			loaded.eventBus,
 		);
-		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
+		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall(noLateEffects));
 
 		const reply = await hooks("before_provider_request", { sessionId: "loop-session", idle: false, input: GOLDEN });
 
@@ -212,7 +216,7 @@ describe("CK21: a hand serves hook.model_request", () => {
 			await createInMemoryModelRegistry(AuthStorage.inMemory()),
 			loaded.eventBus,
 		);
-		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
+		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall(noLateEffects));
 
 		const reply = await serveHookModelRequest(request(GOLDEN), {
 			verifyClaim: async () => "valid",

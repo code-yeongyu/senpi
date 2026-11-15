@@ -7,7 +7,13 @@
 import { RPC_ERROR_INVALID_ARGUMENT, RPC_ERROR_PROJECT_CWD_MISMATCH } from "./rpc-error-types.ts";
 
 /** The project writes that may state the folder they mean. */
-const PROJECT_WRITES: ReadonlySet<string> = new Set(["set_project_trust", "set_project_setting", "write_project_file"]);
+const PROJECT_WRITES: ReadonlySet<string> = new Set([
+	"set_project_trust",
+	"set_project_setting",
+	"write_project_file",
+	"set_project_mcp_servers",
+	"write_project_skill_file",
+]);
 
 /**
  * A folder path for comparison. Trailing separators of the path's own style are dropped (only `/` for a POSIX path;
