@@ -164,8 +164,13 @@ describe("a hand exposes the same tool catalog as the fused engine for the same 
 				expect(removed.filter((name) => narrowsUnfilteredKeeping.includes(name))).toEqual([]);
 			}
 
-			expect(names(handCatalog)).toEqual(fusedNames);
-			handCatalog.forEach((declaration, index) => {
+			// The one start-time difference: a hand boots its tool catalog when it is built, as a session does at its start
+			// (senpi#6754), so `tool_search` is there (unless a tool filter removes it) while this baseline has not started yet.
+			const comparable = handCatalog.filter(
+				(declaration) => declaration.name !== "tool_search" || fusedNames.includes("tool_search"),
+			);
+			expect(names(comparable)).toEqual(fusedNames);
+			comparable.forEach((declaration, index) => {
 				const fused = fusedCatalog[index];
 				if (fused === undefined) throw new Error(`no fused declaration at ${index}`);
 				expect(JSON.parse(JSON.stringify(declaration)), declaration.name).toEqual(

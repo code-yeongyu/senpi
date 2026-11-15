@@ -5422,6 +5422,17 @@ export class AgentSession {
 		return this.agent.state.tools.map((t) => t.name);
 	}
 
+	/**
+	 * Appends a custom entry as `pi.appendEntry` does, telling attached clients (`entry_appended`): for writers outside
+	 * the extension runtime, such as a hand's session writes (senpi#6754). Returns the entry's id.
+	 */
+	appendCustomSessionEntry(customType: string, data?: unknown, options?: { startupBookkeeping?: boolean }): string {
+		const entryId = this.sessionManager.appendCustomEntry(customType, data, options);
+		const entry = this.sessionManager.getEntry(entryId);
+		if (entry) this._emit({ type: "entry_appended", entry });
+		return entryId;
+	}
+
 	/** Get the names of the tools that tools can call through `ctx.executeTool()`. */
 	getCallableToolNames(): string[] {
 		return this._getCallableTools().map((t) => t.name);
@@ -12418,11 +12429,7 @@ export class AgentSession {
 					this.sendUserMessage(content, options, undefined, inputOrigin).catch(reportError);
 				},
 				appendEntry: (customType, data, options) => {
-					const entryId = this.sessionManager.appendCustomEntry(customType, data, options);
-					const entry = this.sessionManager.getEntry(entryId);
-					if (entry) {
-						this._emit({ type: "entry_appended", entry });
-					}
+					this.appendCustomSessionEntry(customType, data, options);
 				},
 				setSessionName: (name) => {
 					this.setSessionName(name);

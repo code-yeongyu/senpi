@@ -39,8 +39,10 @@ import {
 import { sessionHeld, userStopped } from "./session-hold.ts";
 import { formatLoopStatus, formatNoopFold, LoopStatusTicker } from "./status.ts";
 import { readLoopState, writeLoopState } from "./store.ts";
-import { buildTickMessage, type LoopFileSnapshot, type LoopMode, type TickDelivery } from "./tick-prompt.ts";
+import { buildTickMessage, type LoopFileSnapshot, type LoopMode } from "./tick-prompt.ts";
 import { registerLoopTools, SCHEDULE_WAKEUP_TOOL, type ScheduleWakeupTarget } from "./tools.ts";
+import { hostedWakeupScheduler } from "./hosted-wakeup.ts";
+import { LOOP_TICK_ENTRY_TYPE, type LoopTickEntryData } from "./tick-entry.ts";
 import type {
 	CronEntry,
 	DeliveryId,
@@ -55,21 +57,7 @@ import type {
 	SentinelDeliveryState,
 } from "./types.ts";
 
-/** Custom entry type carrying one dispatched tick, used for attribution and folding. */
-export const LOOP_TICK_ENTRY_TYPE = "loop-tick";
-
-export interface LoopTickEntryData {
-	readonly loopId: LoopId;
-	readonly deliveryId: DeliveryId;
-	readonly scheduledForAt: EpochMs;
-	readonly mode: LoopMode;
-	readonly delivery: TickDelivery;
-	readonly sentinel?: LoopSentinel;
-	/** Consecutive quiet dynamic iterations at the moment this tick was dispatched. */
-	readonly noopStreak: number;
-	/** True when this tick continues a quiet streak and should render folded. */
-	readonly folded: boolean;
-}
+export { LOOP_TICK_ENTRY_TYPE, type LoopTickEntryData } from "./tick-entry.ts";
 
 export interface LoopCreateOk {
 	readonly ok: true;
@@ -343,6 +331,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 
 		pi.registerEntryRenderer(LOOP_TICK_ENTRY_TYPE, renderLoopTickEntry);
 		registerLoopTools(pi, {
+			hostedScheduler: hostedWakeupScheduler(pi, { clock, ids, storeRefOf, readState, writeState }),
 			scheduler: {
 				getWakeupTarget: (): ScheduleWakeupTarget => {
 					if (scheduler === undefined || attributedLoopId === undefined) return null;

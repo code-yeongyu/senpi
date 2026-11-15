@@ -1,7 +1,8 @@
 // A loop-hook call's facts on a hand (S33): the session it binds, what its work keeps after it ended, and the late
 // effects that go to its session's late route. Split from loop-hook-host.test.ts, which drives a real hand.
 import { describe, expect, it } from "vitest";
-import { createLoopHookCall, type LateLoopRoute, LoopHookCallEndedError } from "../../src/modes/rpc/loop-hook-call.ts";
+import { createLoopHookCall, type LateLoopRoute } from "../../src/modes/rpc/loop-hook-call.ts";
+import { LoopHookCallEndedError } from "../../src/modes/rpc/loop-hook-session.ts";
 
 /** A late route that records what reaches it, as `[sessionId, kind, what]`. */
 function recordingRoute(): { readonly late: unknown[]; readonly route: LateLoopRoute } {

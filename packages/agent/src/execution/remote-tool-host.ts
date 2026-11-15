@@ -24,6 +24,8 @@ export type HandPlacement = "split-local" | "cross-machine";
  */
 export interface RemoteSessionPort<E> {
 	carry(call: AgentToolCall): JsonValue | undefined;
+	/** The session's id, sent with every call (identity only), whether or not the call carries the session. */
+	sessionId(): string;
 	/**
 	 * The closed parser of a call's `sessionEffects`, run at this boundary before anything is committed: it refuses (by
 	 * throwing) any kind or shape it does not know. A refusal becomes that call's error result, with nothing committed.
@@ -147,6 +149,7 @@ export function createRemoteToolHost<E = unknown>(
 			const batchId = mintId();
 			const invokeOf = (raw: AgentToolCall, index: number): RemoteInvoke => {
 				const session = options.sessionPort?.carry(raw);
+				const sessionId = options.sessionPort?.sessionId();
 				return {
 					kind: "invoke",
 					executionId: mintId(),
@@ -158,6 +161,7 @@ export function createRemoteToolHost<E = unknown>(
 					arguments: raw.arguments,
 					...(options.sessionRef === undefined ? {} : { sessionRef: options.sessionRef }),
 					...(session === undefined ? {} : { session }),
+					...(sessionId === undefined ? {} : { sessionId }),
 				};
 			};
 			const finish = async (raw: AgentToolCall, settled: RemoteToolResult): Promise<RemoteToolResult> => {

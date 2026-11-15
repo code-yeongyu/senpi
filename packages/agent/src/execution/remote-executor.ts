@@ -28,6 +28,8 @@ export interface HandCall {
 	readonly nested: NestedRequest;
 	/** The session port's read half the call carried ({@link RemoteInvoke.session}); absent: the call has no session. */
 	readonly session?: JsonValue;
+	/** The calling loop session's id ({@link RemoteInvoke.sessionId}): identity only. */
+	readonly sessionId?: string;
 }
 
 /**
@@ -194,6 +196,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 								signal: controller.signal,
 								nested: planes.requestFor(call.executionId, lane, controller.signal),
 								...(call.session === undefined ? {} : { session: call.session }),
+								...(call.sessionId === undefined ? {} : { sessionId: call.sessionId }),
 							})
 						: scope.file === undefined
 							? fileRefusal("unsupported", "this hand serves no file channel")

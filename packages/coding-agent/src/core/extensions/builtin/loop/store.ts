@@ -154,6 +154,11 @@ export async function writeLoopState(ref: LoopStoreRef, state: LoopState): Promi
 }
 
 /** Drops cached snapshots; used when a session ends or tests reset global state. */
+/** Forgets the cached store of a file that will not be used again (a hosted call's private session directory). */
+export function releaseLoopStore(ref: LoopStoreRef): void {
+	stores.delete(loopStateFilePath(ref));
+}
+
 export function clearLoopStateSnapshot(ref: LoopStoreRef): void {
 	storeFor(ref).clear();
 }

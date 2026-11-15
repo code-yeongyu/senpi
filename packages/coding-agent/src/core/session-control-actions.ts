@@ -13,6 +13,7 @@ import type {
 import type { ExternalAdmission } from "./external-admission.ts";
 import type { SessionManager } from "./session-manager.ts";
 import { RELOCATION_NOT_OFFERED, type SessionRelocationHost } from "./session-relocation.ts";
+import type { SessionWakePort } from "./session-wakes.ts";
 
 export interface ControlEndpointHost {
 	register(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration>;
@@ -80,6 +81,29 @@ export function createSessionControlActions(deps: SessionControlActionDeps): Gen
 		relocationTargets: async (signal) => (await deps.relocationHost()?.targets(signal)) ?? RELOCATION_NOT_OFFERED,
 		requestRelocation: async (request, signal) =>
 			(await deps.relocationHost()?.request(request, signal)) ?? RELOCATION_NOT_OFFERED,
+		// A session in this process keeps its own timers and schedule jobs.
+		sessionWakes: () => undefined,
+	};
+}
+
+/** What a runtime without a session reaches of the session whose call it is running (session port, senpi#6754). */
+export interface CallSessionControl {
+	relocationHost(): SessionRelocationHost | undefined;
+	sessionWakes(): SessionWakePort | undefined;
+}
+
+/**
+ * `pi.session` for a runtime without a session (a hand's loopless runtime): relocation and wakes answer for the loop
+ * session whose call is running, when the loop carried them; every other member stays unbound.
+ */
+export function callSessionControlActions(call: () => CallSessionControl | undefined): SessionControlActions {
+	return {
+		...unboundSessionControlActions(),
+		relocationOffered: () => call()?.relocationHost()?.offered() ?? false,
+		relocationTargets: async (signal) => (await call()?.relocationHost()?.targets(signal)) ?? RELOCATION_NOT_OFFERED,
+		requestRelocation: async (request, signal) =>
+			(await call()?.relocationHost()?.request(request, signal)) ?? RELOCATION_NOT_OFFERED,
+		sessionWakes: () => call()?.sessionWakes(),
 	};
 }
 
@@ -96,5 +120,6 @@ export function unboundSessionControlActions(): SessionControlActions {
 		relocationOffered: notBound,
 		relocationTargets: () => Promise.reject(new Error("Extension runtime not initialized")),
 		requestRelocation: () => Promise.reject(new Error("Extension runtime not initialized")),
+		sessionWakes: notBound,
 	};
 }

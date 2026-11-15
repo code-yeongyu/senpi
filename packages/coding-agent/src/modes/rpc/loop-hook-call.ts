@@ -1,9 +1,22 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { readOnlySession } from "./loop-hook-session.ts";
 import type { LoopHookCallFacts, LoopWakeRoute } from "../../core/extensions/runner.ts";
-import type { HistoryReducer } from "../../core/session-history-reduce.ts";
-import type { ReadonlySessionManager, SessionEntry, SessionHeader } from "../../core/session-manager.ts";
+import type { SessionEntry, SessionHeader } from "../../core/session-manager.ts";
+import type { SessionWake, SessionWakeChange } from "../../core/session-wakes.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import { type ActiveToolsChange, applyActiveToolsChange } from "../../core/hand/session-effects.ts";
+import {
+	collectDocumentChanges,
+	materializeDocuments,
+	type SessionDocumentChanges,
+	type SessionDocuments,
+} from "./session-documents.ts";
+import {
+	type CarriedRelocation,
+	carriedRelocationHost,
+	carriedWakePort,
+	type RelocationRequestEffect,
+} from "./session-port-hosts.ts";
 
 /** A message a loop hook sent during its call, for the loop to send with the same options. */
 export interface SentLoopMessage {
@@ -42,6 +55,12 @@ export interface CarriedSession {
 	readonly activeTools?: readonly string[];
 	/** The loop's system prompt options a call reads (its `surface`, ...); only `cwd` is this machine's own. */
 	readonly systemPromptOptions?: Readonly<Partial<BuildSystemPromptOptions>>;
+	/** The session's documents (`getSessionDir()` stores, see `session-documents.ts`); absent: the session has no directory here. */
+	readonly documents?: SessionDocuments;
+	/** The loop's pending wakes for the session (`pi.session.sessionWakes()`); absent: wakes stay with this process. */
+	readonly wakes?: readonly SessionWake[];
+	/** The computers the loop's host offers to continue on (`pi.session` relocation); absent: not offered. */
+	readonly relocation?: CarriedRelocation;
 }
 
 /** What a loop-hook call's handlers did beyond their result, which the loop does in turn (session port, write). */
@@ -55,6 +74,14 @@ export interface LoopHookEffects {
 	 * calls that ran at once compose when the loop applies each to its current set; unset: unchanged.
 	 */
 	activeTools: ActiveToolsChange | undefined;
+	/** The documents the call changed, `null` for a removed one; unset: it carried none. */
+	documents: SessionDocumentChanges | undefined;
+	/** The call's changes to the loop's wakes, in order. */
+	readonly wakes: SessionWakeChange[];
+	/** The move the call asked for, which the loop applies when its turn ends. */
+	relocation: RelocationRequestEffect | undefined;
+	/** Settles what the call wrote into its session directory into {@link documents}; await it before the reply. */
+	settle: () => Promise<void>;
 }
 
 /** What a loop-hook call binds its handlers' facts to: the loop session's state the call carries. */
@@ -131,9 +158,30 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 				entries: [],
 				userMessages: [],
 				activeTools: undefined,
+				documents: undefined,
+				wakes: [],
+				relocation: undefined,
+				settle: () => Promise.resolve(),
+			};
+			const documents = carried?.documents;
+			const sessionDir = documents === undefined ? undefined : await materializeDocuments(documents);
+			const relocation =
+				carried?.relocation === undefined
+					? undefined
+					: carriedRelocationHost(carried.relocation, (request) => {
+							if (live) effects.relocation = request;
+						});
+			const wakes = carried?.wakes === undefined ? undefined : carriedWakePort(carried.wakes, effects.wakes);
+			let settling: Promise<void> | undefined;
+			effects.settle = () => {
+				if (sessionDir === undefined || documents === undefined) return Promise.resolve();
+				settling ??= collectDocumentChanges(sessionDir, documents).then((changes) => {
+					effects.documents = changes;
+				});
+				return settling;
 			};
 			const facts: LoopHookCallFacts = Object.freeze({
-				sessionManager: readOnlySession(binding, {
+				sessionManager: readOnlySession(binding, sessionDir, {
 					live: () => live,
 					ownWork: () => live || calls.getStore()?.facts === facts,
 				}),
@@ -170,6 +218,8 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 						: applyActiveToolsChange(active, effects.activeTools);
 				},
 				getSystemPromptOptions: () => ({ ...carried?.systemPromptOptions, cwd }),
+				relocationHost: () => relocation,
+				sessionWakes: () => wakes,
 				// Only a set the loop carried can change: the loop applies the change to that set.
 				setActiveTools: (names: readonly string[]) => {
 					const active = carried?.activeTools;
@@ -185,88 +235,24 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 			} finally {
 				live = false;
 				controller.abort();
+				// The session directory never outlives the call, also when its work threw before the reply settled it.
+				await effects.settle();
 			}
 		},
 	};
 }
 
-/**
- * The deliberate refusal after a loop-hook call ended (option A): the loop session's identity (`getSessionId`,
- * `getSessionFile`, `getCwd`) is bound to that call only, so reading it from a kept context afterwards throws this
- * instead of answering. The session the call carried (`getLeafId`, `reduceHistory`) stays readable by the call's own
- * work (its async context: a Stop it held for background work), and refused from any other context. Every other member
- * keeps working: late writes, messages and notices go to the call's late route; the signal stays aborted; idle keeps
- * its value, except that after a call that ended the loop's turn it answers idle until the loop starts another call.
- */
-export class LoopHookCallEndedError extends Error {
-	override readonly name = "LoopHookCallEndedError";
-	/** The member that was read, e.g. `sessionManager.getSessionId`. */
-	readonly member: string;
-	constructor(member: string) {
-		super(`this loop-hook call has ended; ${member} is bound to that call only`);
-		this.member = member;
-	}
-}
-
 /** The effects a reply carries back to the loop, each only when there is one. */
 export function effectsReply(effects: LoopHookEffects): Record<string, unknown> {
-	const { sent, notices, entries, userMessages, activeTools } = effects;
+	const { sent, notices, entries, userMessages, activeTools, documents, wakes, relocation } = effects;
 	return {
 		...(sent.length > 0 ? { sent } : {}),
 		...(notices.length > 0 ? { notices } : {}),
 		...(entries.length > 0 ? { entries } : {}),
 		...(userMessages.length > 0 ? { userMessages } : {}),
 		...(activeTools === undefined ? {} : { activeTools }),
+		...(documents === undefined || Object.keys(documents).length === 0 ? {} : { documents }),
+		...(wakes.length > 0 ? { wakes } : {}),
+		...(relocation === undefined ? {} : { relocation }),
 	};
-}
-
-function readOnlySession(
-	{ sessionId, cwd, carried }: LoopHookCallBinding,
-	gates: { readonly live: () => boolean; readonly ownWork: () => boolean },
-): ReadonlySessionManager {
-	const gated =
-		(open: () => boolean) =>
-		<T>(member: string, read: () => T) =>
-		(): T => {
-			if (!open()) throw new LoopHookCallEndedError(`sessionManager.${member}`);
-			return read();
-		};
-	const header = carried?.header;
-	const bound = gated(gates.live);
-	const durable = gated(gates.ownWork);
-	const unbound = (member: string) => (): never => {
-		throw new Error(
-			`sessionManager.${member} is loop-side: a loop-hook call on a hand carries only the session's id`,
-		);
-	};
-	return Object.freeze({
-		getSessionId: bound("getSessionId", () => sessionId),
-		getSessionFile: bound("getSessionFile", (): string | undefined => undefined),
-		getCwd: bound("getCwd", () => cwd),
-		getSessionDir: unbound("getSessionDir"),
-		getLeafId: carried === undefined ? unbound("getLeafId") : durable("getLeafId", () => carried.leafId),
-		getLeafEntry: unbound("getLeafEntry"),
-		getEntry: unbound("getEntry"),
-		getLabel: unbound("getLabel"),
-		getBranch:
-			carried === undefined
-				? unbound("getBranch")
-				: bound("getBranch", () => [...(carried.branch ?? carried.handEntries)]),
-		getFullBranch: unbound("getFullBranch"),
-		buildContextEntries: unbound("buildContextEntries"),
-		buildSessionContext: unbound("buildSessionContext"),
-		buildSessionProjection: unbound("buildSessionProjection"),
-		getHeader: header === undefined ? unbound("getHeader") : bound("getHeader", () => ({ ...header })),
-		getEntries:
-			carried === undefined
-				? unbound("getEntries")
-				: bound("getEntries", () => [...(carried.branch ?? carried.handEntries)]),
-		reduceHistory:
-			carried === undefined
-				? unbound("reduceHistory")
-				: <T>(reducer: HistoryReducer<T>): T =>
-						durable("reduceHistory", () => carried.handEntries.reduce(reducer.add, reducer.initial()))(),
-		getTree: unbound("getTree"),
-		getSessionName: unbound("getSessionName"),
-	});
 }

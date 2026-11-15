@@ -4,6 +4,8 @@ import { type Extension, normalizeToolExposure, type ToolDefinition } from "../.
 import { LazyToolActivation } from "../../core/lazy-tool-activation.ts";
 import type { CustomEntry, SessionEntry, SessionHeader } from "../../core/session-manager.ts";
 import type { ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
+import type { RelocationTarget } from "../../core/session-relocation.ts";
+import { parseDocuments, parseWakes, SessionStateContractError } from "../../core/hand/session-state-effects.ts";
 import { type CarriedSession, effectsReply, type LoopHookCall } from "./loop-hook-call.ts";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -33,6 +35,8 @@ const isNames = (value: unknown): value is string[] =>
  */
 export function parseCarriedSession(payload: Record<string, unknown>): CarriedSession | null {
 	const { leafId, handEntries, branch, header, activeTools, systemPromptOptions } = payload;
+	const state = carriedState(payload);
+	if (state === null) return null;
 	if (!(leafId === null || typeof leafId === "string")) return null;
 	if (!Array.isArray(handEntries) || !handEntries.every(isCustomEntry)) return null;
 	if (!(branch === undefined || (Array.isArray(branch) && branch.every(isBranchEntry)))) return null;
@@ -45,7 +49,42 @@ export function parseCarriedSession(payload: Record<string, unknown>): CarriedSe
 		...(header === undefined ? {} : { header }),
 		...(activeTools === undefined ? {} : { activeTools }),
 		...(systemPromptOptions === undefined ? {} : { systemPromptOptions }),
+		...state,
 	};
+}
+
+/** The session state a call carries beside the transcript (documents, wakes, relocation offer), or `null` if malformed. */
+function carriedState(
+	payload: Record<string, unknown>,
+): Pick<CarriedSession, "documents" | "wakes" | "relocation"> | null {
+	const { documents, wakes, relocation } = payload;
+	try {
+		const targets = relocation === undefined ? undefined : relocationTargets(relocation);
+		return {
+			...(documents === undefined ? {} : { documents: parseDocuments(documents, "documents", false) }),
+			...(wakes === undefined ? {} : { wakes: parseWakes(wakes, "wakes") }),
+			...(targets === undefined ? {} : { relocation: { targets } }),
+		};
+	} catch (error) {
+		if (error instanceof SessionStateContractError) return null;
+		throw error;
+	}
+}
+
+function relocationTargets(value: unknown): RelocationTarget[] {
+	const targets = isRecord(value) ? value.targets : undefined;
+	if (!Array.isArray(targets)) throw new SessionStateContractError("relocation.targets is not a list");
+	return targets.map((target, index) => {
+		if (!isRecord(target) || typeof target.name !== "string" || typeof target.online !== "boolean")
+			throw new SessionStateContractError(`relocation.targets[${index}] is not a computer`);
+		const { name, online, capacity, aboutToSleep } = target;
+		return {
+			name,
+			online,
+			...(typeof capacity === "string" ? { capacity } : {}),
+			...(aboutToSleep === true ? { aboutToSleep } : {}),
+		};
+	});
 }
 
 /** A tool call's carried session: the loop session it belongs to, its idle state and its read half. */
@@ -117,6 +156,27 @@ export function runInSession(
 			(definition !== undefined && activeOnRegistration(definition)) ||
 			activation.activate(toolName);
 		const result = callable ? await run() : notCallable(toolName);
+		await effects.settle();
 		return { ...result, sessionEffects: JSON.parse(JSON.stringify(effectsReply(effects))) as JsonValue };
+	});
+}
+
+/**
+ * Runs one tool call that carries only the calling loop session's id (identity, no record): its tools read the id
+ * (`ctx.sessionManager.getSessionId()`), nothing else of the session. Writes its handlers still make go back as
+ * `sessionEffects`, as for a call that carries the session.
+ */
+export function runAsSession(
+	tools: Pick<HandSessionTools, "call" | "cwd">,
+	sessionId: string,
+	run: () => Promise<AgentToolResult<unknown>>,
+): Promise<HandToolResult> {
+	return tools.call.run({ sessionId, cwd: tools.cwd, idle: false }, async (effects) => {
+		const result = await run();
+		await effects.settle();
+		const reply = effectsReply(effects);
+		return Object.keys(reply).length === 0
+			? result
+			: { ...result, sessionEffects: JSON.parse(JSON.stringify(reply)) as JsonValue };
 	});
 }

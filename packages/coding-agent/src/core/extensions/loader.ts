@@ -970,6 +970,10 @@ function createExtensionAPI(
 				runtime.assertActive();
 				return sessionControlOf(runtime).requestRelocation(request, signal);
 			},
+			sessionWakes() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).sessionWakes();
+			},
 		},
 
 		rpc: {

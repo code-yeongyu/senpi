@@ -15,6 +15,8 @@ import {
 	type SessionEffects,
 } from "../../src/core/hand/session-effects.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
+import type { RelocationTarget } from "../../src/core/session-relocation.ts";
+import type { SessionWake } from "../../src/core/session-wakes.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { handConfiguration, type HandDirs, openLink } from "./remote-hand-fixture.ts";
 
@@ -28,18 +30,30 @@ export const userMessage = (id: string, text: string): SessionEntry => ({
 	message: { role: "user", content: [{ type: "text", text }], timestamp: 0 },
 });
 
+export interface HostedLoopOptions {
+	readonly activeTools: string[];
+	/** Carry the session's documents (the hand's session-dir stores); absent: the loop carries none. */
+	readonly documents?: Record<string, string>;
+	readonly wakes?: SessionWake[];
+	readonly relocationTargets?: RelocationTarget[];
+}
+
 /**
  * The loop's side of the session port: its branch (the user's request first), the facts it carries with every call,
  * and the commit of what a call returns, parsed by the closed contract and applied to its current state. A real loop
- * appends each entry to its log; this one to its branch.
+ * appends each entry to its log and keeps documents, wakes and the relocation request as its own session state; this
+ * one keeps them in memory.
  */
-export function hostedLoop(options: { readonly activeTools: string[] }) {
+export function hostedLoop(options: HostedLoopOptions) {
 	const sessionId = `hosted-${crypto.randomUUID()}`;
 	const branch: SessionEntry[] = [userMessage("user-1", "plan the release")];
 	const loop = {
 		sessionId,
 		branch,
 		activeTools: options.activeTools,
+		documents: options.documents === undefined ? undefined : { ...options.documents },
+		wakes: [...(options.wakes ?? [])],
+		moves: [] as NonNullable<SessionEffects["relocation"]>[],
 		committed: [] as { readonly toolCallId: string; readonly effects: SessionEffects }[],
 	};
 	const port: RemoteSessionPort<SessionEffects> = {
@@ -51,7 +65,11 @@ export function hostedLoop(options: { readonly activeTools: string[] }) {
 				handEntries: branch.filter((entry) => entry.type === "custom"),
 				branch,
 				activeTools: loop.activeTools,
+				...(loop.documents === undefined ? {} : { documents: loop.documents }),
+				wakes: loop.wakes,
+				...(options.relocationTargets === undefined ? {} : { relocation: { targets: options.relocationTargets } }),
 			}),
+		sessionId: () => sessionId,
 		parse: parseSessionEffects,
 		commit: (call: AgentToolCall, effects: SessionEffects) => {
 			loop.committed.push({ toolCallId: call.id, effects });
@@ -66,6 +84,19 @@ export function hostedLoop(options: { readonly activeTools: string[] }) {
 				});
 			if (effects.activeTools !== undefined)
 				loop.activeTools = applyActiveToolsChange(loop.activeTools, effects.activeTools);
+			if (effects.documents !== undefined) {
+				const documents = loop.documents ?? {};
+				for (const [path, text] of Object.entries(effects.documents))
+					if (text === null) delete documents[path];
+					else documents[path] = text;
+				loop.documents = documents;
+			}
+			for (const change of effects.wakes ?? []) {
+				const id = change.op === "arm" ? change.wake.id : change.id;
+				loop.wakes = loop.wakes.filter((wake) => wake.id !== id);
+				if (change.op === "arm") loop.wakes.push(change.wake);
+			}
+			if (effects.relocation !== undefined) loop.moves.push(effects.relocation);
 		},
 	};
 	return { loop, port };
