@@ -72,8 +72,8 @@ import type {
 	ExtensionContext,
 	ExtensionFactory,
 	ExtensionRuntime,
+	ExtensionPlacement,
 	ExtensionSessionProfile,
-	ExtensionSide,
 	ExtensionVirtualModel,
 	FilesystemPolicy,
 	LazyToolActivator,
@@ -98,21 +98,22 @@ import type {
 	ToolDefinition,
 } from "./types.ts";
 import type { ToolMachine } from "../tools/machine.ts";
+import { registersSide } from "./placement.ts";
 import { DEFAULT_EXTENSION_SESSION_PROFILE, DeviceMachineConflictError, EMPTY_SESSION_CONTEXT } from "./types.ts";
 
 /** Per-session extension inputs a caller may name; every absent one takes its classic default. */
 export interface ExtensionSessionOptions {
 	sessionKind?: SessionKind;
 	sessionContext?: SessionContext;
-	/** The side of a split session to load for; a handler declared `runs` for the other side is not registered. Absent: fused. */
-	side?: ExtensionSide;
+	/** Where this generation runs; it decides which `runs` declarations register. Absent: fused. */
+	placement?: ExtensionPlacement;
 }
 
 function sessionProfile(options: ExtensionSessionOptions | undefined): ExtensionSessionProfile {
 	return {
 		sessionKind: options?.sessionKind ?? "interactive",
 		sessionContext: options?.sessionContext ?? EMPTY_SESSION_CONTEXT,
-		...(options?.side === undefined ? {} : { side: options.side }),
+		placement: options?.placement ?? "fused",
 	};
 }
 
@@ -489,6 +490,7 @@ function createExtensionAPI(
 		cwd,
 		sessionKind: session.sessionKind,
 		sessionContext: session.sessionContext,
+		placement: session.placement,
 		get engine() {
 			return _bundledPiCodingAgent;
 		},
@@ -507,7 +509,7 @@ function createExtensionAPI(
 				PROVIDER_HOOK_EVENTS.includes(event) && options?.providers !== undefined
 					? declaredProviders(extension, options.providers, `"${event}"`)
 					: undefined;
-			if (runs !== undefined && session.side !== undefined && runs !== session.side) return () => {};
+			if (runs !== undefined && !registersSide(session.placement, runs)) return () => {};
 			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => {
 				// A child event can run inside its parent's task-tool async scope.
 				// Bind the host context here, preserving registered-handler metadata.

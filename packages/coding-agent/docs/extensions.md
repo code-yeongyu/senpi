@@ -1873,6 +1873,7 @@ can decide what to register before it registers anything:
 | `pi.cwd` | `string` | Absolute working directory of this session |
 | `pi.sessionKind` | `"interactive" \| "worker"` | Visibility class the opener chose (`open_session.kind`); `interactive` for classic launches and any open that omits it |
 | `pi.sessionContext` | `Readonly<Record<string, string>>` | Opaque labels the opener attached (`open_session.context`), or `{}` |
+| `pi.placement` | `"fused" \| "hand" \| "hosted-hand"` | Where this instance runs, set by the host that built its runtime (see below); `fused` for every classic launch |
 
 ```typescript
 export default function ({ pi }) {
@@ -1890,6 +1891,29 @@ or any other host decision, and it is republished only on `list_sessions { inclu
 enforced at the RPC boundary (at most 32 keys matching `^[a-z][a-z0-9_]*$`, each value at most 16 KiB, at most 32 KiB
 of JSON in total), so an extension receives an already-validated map. Both values are frozen for the session's life;
 there is no setter. See [Session kind and context](rpc.md#session-kind-and-context-open_session) for the wire side.
+
+### pi.placement
+
+`pi.placement` says where this extension instance runs when a session's agent loop and its tool execution can run as
+separate processes, and so which `runs` declarations it registers:
+
+| Placement | Runs where | Handlers declared `runs: "brain"` | Handlers declared `runs: "hand"` |
+|---|---|---|---|
+| `fused` | One process is both the loop and tool execution (every classic launch) | registered | registered |
+| `hand` | The tool side of a split-local session; the loop runs elsewhere on the same machine and runs the loop-side handlers | not registered | registered |
+| `hosted-hand` | The tool side of a hosted session; the loop runs remotely and this machine is the extensions' home, so their loop events (`input`, `before_agent_start`, ...) come here | registered | registered |
+
+It is fixed for the instance's life and readable at factory time, before the first event, because a loopless hand has
+no session of its own and never fires `session_start`. Compose by it instead of guessing:
+
+```typescript
+export default function (pi) {
+  // `runs` already keeps each handler on its side; the placement covers what `runs` cannot declare.
+  pi.on("input", (event) => recordPrompt(event.text), { runs: "brain" });
+  pi.on("tool_call", checkPermission, { runs: "hand" });
+  if (pi.placement !== "hand") pi.registerCommand("prompt-history", promptHistoryCommand);
+}
+```
 
 ### pi.session
 
