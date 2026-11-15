@@ -8,6 +8,7 @@ import { applyActiveToolsChange } from "../../core/hand/session-effects.ts";
 import { collectDocumentChanges, materializeDocuments, type SessionDocuments } from "./session-documents.ts";
 import { type CarriedRelocation, carriedRelocationHost, carriedWakePort } from "./session-port-hosts.ts";
 import {
+	appendHeld,
 	emptyEffects,
 	type LoopHookEffects,
 	type SentLoopMessage,
@@ -102,8 +103,11 @@ export function createLoopHookCall(): LoopHookCall {
 		async run(sessionId, cwd, idle, dispatch, carried) {
 			let live = true;
 			const controller = new AbortController();
-			const effects: LoopHookEffects = late.get(sessionId) ?? emptyEffects();
+			// What earlier calls' late work left rides this reply; the held set itself stays untouched until it did.
+			const held = late.get(sessionId);
 			late.delete(sessionId);
+			const effects: LoopHookEffects = emptyEffects();
+			if (held !== undefined) appendHeld(effects, held);
 			const documents = carried?.documents;
 			const sessionDir = documents === undefined ? undefined : await materializeDocuments(documents);
 			const relocation =
@@ -180,6 +184,14 @@ export function createLoopHookCall(): LoopHookCall {
 			});
 			try {
 				return await calls.run({ live: () => live, facts }, () => dispatch(effects));
+			} catch (error) {
+				// No reply carried them: the held writes go back ahead of any newer late work, for the next reply.
+				if (held !== undefined) {
+					const newer = late.get(sessionId);
+					late.set(sessionId, held);
+					if (newer !== undefined) holdLate(sessionId, (restored) => appendHeld(restored, newer));
+				}
+				throw error;
 			} finally {
 				live = false;
 				controller.abort();
