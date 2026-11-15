@@ -42,8 +42,8 @@ function runtimeView(entry: RpcSessionEntry): SessionStatusRuntimeView | undefin
 		isCompacting: state.isCompacting,
 		...(model !== undefined ? { model } : {}),
 		...(state.thinkingLevel !== undefined ? { thinkingLevel: state.thinkingLevel } : {}),
-		steering: state.steering?.length ?? 0,
-		followUp: state.followUp?.length ?? 0,
+		steering: state.steering.length,
+		followUp: state.followUp.length,
 		pendingQuestions: state.pendingQuestions?.length ?? 0,
 	};
 }

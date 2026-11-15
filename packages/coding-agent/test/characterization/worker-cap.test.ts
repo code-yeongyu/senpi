@@ -52,7 +52,9 @@ async function workerRuntimeHost(options: { holdPrepare?: Promise<void> } = {}) 
 				},
 				commit: async () => {
 					snapshot = {
-						state: { sessionId: `durable-${serial}`, sessionFile: path, cwd: scratch },
+						// The real producer (rpc-session-state.ts:91-92 buildRpcSessionState) always emits these two arrays;
+						// a snapshot without them is not a shape any worker sends.
+						state: { sessionId: `durable-${serial}`, sessionFile: path, cwd: scratch, steering: [], followUp: [] },
 						sessionPath: path,
 						liveSessionPaths: [path],
 						busy: false,
