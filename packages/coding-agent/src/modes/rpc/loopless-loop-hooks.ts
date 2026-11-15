@@ -106,7 +106,7 @@ export function extensionLoopHooks(
 		const parsed = LOOP_HOOK_PARSERS[event](payload, { cwd, sessionId, streams, walks });
 		if (event === "session_shutdown") {
 			streams.end(sessionId);
-			walks.close(sessionId);
+			walks.end(sessionId);
 		}
 		const binding = {
 			sessionId,

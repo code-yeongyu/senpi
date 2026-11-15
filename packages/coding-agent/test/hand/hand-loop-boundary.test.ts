@@ -156,6 +156,57 @@ describe("a hosted loop's boundary walks the user's handlers on the hand in step
 		expect(copied).toMatchObject({ status: "rejected", reason: { message: expect.stringMatching(/in flight/) } });
 	});
 
+	it("a step that fails releases its claim, so the loop may send it again (#6806 review L1)", async () => {
+		const seen: string[] = [];
+		const hooks = await hooksOf([
+			{ path: "/user/a.ts", factory: drafting("a", seen) },
+			{ path: "/user/b.ts", factory: drafting("b", seen) },
+		]);
+		const first = await step(hooks, {});
+		const walk = first.resume?.walk;
+		// A step of another boundary event cannot resume this turn_end walk: the hand's dispatch throws.
+		const wrong = hooks(
+			"agent_before_settle",
+			toJson({ ...turnEnd, context: preview, entries: first.entries, from: 1, walk }),
+		);
+
+		await expect(wrong).rejects.toThrow(/cannot resume/);
+		const retried = await step(hooks, { entries: first.entries, from: 1, walk });
+
+		expect(retried.resume).toMatchObject({ next: 2, extensionPath: "/user/b.ts" });
+		expect(seen).toEqual(["a", "b"]);
+	});
+
+	it("a step still running across a shutdown leaves the session's next walk alone (#6806 review L2)", async () => {
+		const seen: string[] = [];
+		const held = Promise.withResolvers<void>();
+		let holdNext = true;
+		const holding: ExtensionFactory = (pi) =>
+			void pi.on("turn_end", async (event) => {
+				seen.push("b");
+				if (holdNext) {
+					holdNext = false;
+					await held.promise;
+				}
+				return { entries: [...event.entries, { type: "custom", customType: "b" }] };
+			});
+		const hooks = await hooksOf([
+			{ path: "/user/a.ts", factory: drafting("a", seen) },
+			{ path: "/user/b.ts", factory: holding },
+		]);
+		const old = await step(hooks, {});
+		const stale = step(hooks, { entries: old.entries, from: 1, walk: old.resume?.walk });
+		await hooks("session_shutdown", toJson({ sessionId: "s", idle: true, reason: "quit" }));
+		const fresh = await step(hooks, {});
+
+		held.resolve();
+		await stale;
+		const next = await step(hooks, { entries: fresh.entries, from: 1, walk: fresh.resume?.walk });
+
+		expect(next.resume).toMatchObject({ next: 2, walk: fresh.resume?.walk });
+		expect(seen).toEqual(["a", "b", "a", "b"]);
+	});
+
 	it.each([0.5, 1.5])("refuses a resume point that is not a whole index: from %s (review L6)", async (from) => {
 		const hooks = await hooksOf([{ path: "/user/a.ts", factory: drafting("a", []) }]);
 		const payload: JsonValue = toJson({ ...turnEnd, context: preview, entries: [], from, walk: "w" });

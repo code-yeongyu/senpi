@@ -130,11 +130,11 @@ const steppedBoundary =
 		try {
 			result = await runner.emitBoundary(base, () => step.context, forwarded);
 		} catch (error) {
-			walks.release(sessionId);
+			walks.release(sessionId, id);
 			throw error;
 		}
-		if (result.resume === undefined) walks.close(sessionId);
-		else walks.advance(sessionId, result.resume.next);
+		if (result.resume === undefined) walks.close(sessionId, id);
+		else walks.advance(sessionId, id, result.resume.next);
 		return {
 			entries: result.entries,
 			continue: result.continue,

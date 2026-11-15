@@ -23,11 +23,18 @@ export interface BoundaryWalks {
 	 * last step named, or while a step of the walk is in flight.
 	 */
 	resume(sessionId: string, id: string, from: number): BoundaryWalk;
-	/** Ends the claimed step: records the point it named (`resume.next`), the only one the next step may send. */
-	advance(sessionId: string, next: number): void;
-	/** Releases a claimed step that failed, so the loop may send it again. */
-	release(sessionId: string): void;
-	close(sessionId: string): void;
+	/**
+	 * Ends walk `id`'s claimed step: records the point it named (`resume.next`), the only one the next step may send.
+	 * This, `release` and `close` act on that walk only: a step still running across a session's shutdown never
+	 * touches the walk the session opens next (#6806 review L2).
+	 */
+	advance(sessionId: string, id: string, next: number): void;
+	/** Releases walk `id`'s claimed step that failed, so the loop may send it again. */
+	release(sessionId: string, id: string): void;
+	/** Closes walk `id` after its last step. */
+	close(sessionId: string, id: string): void;
+	/** Drops the session's walk, whatever it is doing (the session shut down). */
+	end(sessionId: string): void;
 }
 
 export function createBoundaryWalks(): BoundaryWalks {
@@ -52,16 +59,19 @@ export function createBoundaryWalks(): BoundaryWalks {
 			open.inFlight = true;
 			return open.walk;
 		},
-		advance(sessionId, next) {
+		advance(sessionId, id, next) {
 			const open = walks.get(sessionId);
-			if (open === undefined) return;
+			if (open?.id !== id) return;
 			open.next = next;
 			open.inFlight = false;
 		},
-		release(sessionId) {
+		release(sessionId, id) {
 			const open = walks.get(sessionId);
-			if (open !== undefined) open.inFlight = false;
+			if (open?.id === id) open.inFlight = false;
 		},
-		close: (sessionId) => void walks.delete(sessionId),
+		close(sessionId, id) {
+			if (walks.get(sessionId)?.id === id) walks.delete(sessionId);
+		},
+		end: (sessionId) => void walks.delete(sessionId),
 	};
 }
