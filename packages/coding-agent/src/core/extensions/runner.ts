@@ -1487,17 +1487,28 @@ export class ExtensionRunner {
 
 	/**
 	 * One loop-side event a hosted loop forwarded to this hand (senpi#5898): only the extensions `only` accepts run it,
-	 * serially under the host's event handler budget, with failures reported as in a session.
+	 * serially under the host's event handler budget, with failures reported as in a session. A `session_before_*`
+	 * event returns its result as a session's emit does: the last handler result, and the first `cancel` ends the walk.
 	 */
-	emitForwardedLoopEvent(event: RunnerEmitEvent, only: (extensionPath: string) => boolean): Promise<undefined> {
-		return this.dispatchLifecycle(event, only);
+	emitForwardedLoopEvent<TEvent extends RunnerEmitEvent>(
+		event: TEvent,
+		only: (extensionPath: string) => boolean,
+	): Promise<RunnerEmitResult<TEvent>> {
+		return this.dispatchLifecycle(event, only) as Promise<RunnerEmitResult<TEvent>>;
 	}
 
-	/** Agent lifecycle events: every handler runs, serially, under the host budget (senpi#3650). */
-	private dispatchLifecycle(event: RunnerEmitEvent, only?: (extensionPath: string) => boolean): Promise<undefined> {
+	/**
+	 * Agent lifecycle events: every handler runs, serially, under the host budget (senpi#3650). Only a forwarded
+	 * `session_before_*` event has a result (see `emitForwardedLoopEvent`).
+	 */
+	private dispatchLifecycle(
+		event: RunnerEmitEvent,
+		only?: (extensionPath: string) => boolean,
+	): Promise<SessionBeforeEventResult | undefined> {
 		const all = flattenHandlers(this.extensions, event.type);
 		const entries = only === undefined ? all : all.filter((entry) => only(entry.path));
-		return this.walkHandlers<undefined>({
+		let result: SessionBeforeEventResult | undefined;
+		return this.walkHandlers<SessionBeforeEventResult | undefined>({
 			event: event.type,
 			length: entries.length,
 			extensionPath: (index) => entryAt(entries, index).path,
@@ -1507,10 +1518,13 @@ export class ExtensionRunner {
 			},
 			settle: (index, outcome) => {
 				if (!outcome.ok) this.reportHandlerFailure(entryAt(entries, index).path, event.type, outcome.error);
+				else if (this.isSessionBeforeEvent(event) && outcome.value)
+					result = outcome.value as SessionBeforeEventResult;
 			},
 			skip: (index, verdict, budget) =>
 				this.reportStoppedHandler(entryAt(entries, index).path, event.type, verdict, budget),
-			finish: () => undefined,
+			halted: () => result?.cancel === true,
+			finish: () => result,
 		});
 	}
 

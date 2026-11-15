@@ -63,12 +63,15 @@ export interface LoopHookCall {
 	sender(): LoopHookCallFacts["sendMessage"] | undefined;
 	/** The call's session writes (`appendEntry`, `sendUserMessage`) for its work, routed like {@link sender}. */
 	writer(): Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
-	/** Runs `dispatch` as the call, with the loop's idle state; `effects` collects what its handlers send and notify. */
+	/**
+	 * Runs `dispatch` as the call, with the loop's idle state; `effects` collects what its handlers send and notify, and
+	 * `signal` is the call's own, aborted when the call ends.
+	 */
 	run<T>(
 		sessionId: string,
 		cwd: string,
 		idle: boolean,
-		dispatch: (effects: LoopHookEffects) => Promise<T>,
+		dispatch: (effects: LoopHookEffects, signal: AbortSignal) => Promise<T>,
 		carried?: CarriedSession,
 	): Promise<T>;
 }
@@ -137,7 +140,7 @@ export function createLoopHookCall(): LoopHookCall {
 				hasPendingMessages: () => effects.userMessages.length > 0,
 			});
 			try {
-				return await calls.run({ live: () => live, facts }, () => dispatch(effects));
+				return await calls.run({ live: () => live, facts }, () => dispatch(effects, controller.signal));
 			} finally {
 				live = false;
 				controller.abort();

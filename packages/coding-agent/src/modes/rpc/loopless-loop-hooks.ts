@@ -1,23 +1,25 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, JsonValue } from "@earendil-works/pi-ai";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import type { ExtensionRunner } from "../../core/extensions/runner.ts";
-import type {
-	BeforeAgentStartEvent,
-	InputAttribution,
-	InputSource,
-	SessionStartEvent,
-} from "../../core/extensions/types.ts";
 import { hookModelOf, hookRequestOutputOf, parseHookRequestInput } from "../../core/hand/hook-contract.ts";
-import type { CustomEntry } from "../../core/session-manager.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
-import type { CarriedSession, LoopHookCall, LoopHookEffects } from "./loop-hook-call.ts";
+import type { LoopHookCall, LoopHookEffects } from "./loop-hook-call.ts";
+import {
+	carriedSessionOf,
+	imagesOf,
+	INPUT_ATTRIBUTIONS,
+	INPUT_SOURCES,
+	isAgentMessages,
+	isOneOf,
+	isRecord,
+	loopNotificationOf,
+	STREAMING_BEHAVIORS,
+	sessionBeforeCompactOf,
+	TRIGGERS,
+} from "./loop-hook-payloads.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
 export type LooplessLoopHooks = (event: string, payload: JsonValue) => Promise<JsonValue>;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * The loop hooks of this runtime's own extensions, on the same runner (so the same extension instances) that runs its
@@ -26,8 +28,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * runs. The loop forwards the two events a session runs before a turn, in a session's order: `input` (the hooks
  * builtin's UserPromptSubmit runs there), whose result (`continue`, `handled`, or `transform` with the new text) the
  * loop returns from its own `input` handler, so its session acts on it as on a local one; then `before_agent_start`
- * with the prompt the session now has, whose combined result the loop returns from its `before_agent_start`. Each reply
- * also carries the messages its handlers sent (`sent`, which the loop sends with the same options) and their failures
+ * with the prompt the session now has, whose combined result the loop returns from its `before_agent_start`. The loop
+ * also forwards its request, lifecycle, compaction and shutdown events (senpi#5898); `session_before_compact` returns
+ * its combined result (`cancel`, `compaction`) as a session's emit does. Each reply also carries the messages its
+ * handlers sent (`sent`, which the loop sends with the same options), their other session writes and their failures
  * (`errors`).
  */
 export function extensionLoopHooks(
@@ -100,22 +104,20 @@ export function extensionLoopHooks(
 				})),
 			);
 		}
-		if (event === "session_start") {
-			const { reason, previousSessionFile } = payload;
-			if (
-				!isOneOf(reason, SESSION_START_REASONS) ||
-				!(previousSessionFile === undefined || typeof previousSessionFile === "string")
-			)
-				throw new Error("malformed session_start payload");
-			const sessionStart = {
-				type: "session_start" as const,
-				reason,
-				...(previousSessionFile === undefined ? {} : { previousSessionFile }),
-			};
-			return call.run(sessionId, cwd, idle, (effects) =>
-				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(sessionStart, only)),
+		if (event === "session_before_compact") {
+			const beforeCompact = sessionBeforeCompactOf(payload);
+			return call.run(sessionId, cwd, idle, (effects, signal) =>
+				dispatchLoopHook(runner, call, effects, () =>
+					// The handlers' own signal, aborted when the call's is.
+					runner.emitForwardedLoopEvent({ ...beforeCompact, signal: AbortSignal.any([signal]) }, only),
+				),
 			);
 		}
+		const notification = loopNotificationOf(event, payload);
+		if (notification !== undefined)
+			return call.run(sessionId, cwd, idle, (effects) =>
+				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(notification, only)),
+			);
 		if (event === "agent_end") {
 			const { messages, aborted } = payload;
 			const carried = carriedSessionOf(payload);
@@ -152,46 +154,6 @@ function userLoopHooks(runner: ExtensionRunner): (extensionPath: string) => bool
 	const shipped = runner.getBuiltinProvenancePaths();
 	return (path) => isUserLoopHook(path) && (path === HOOKS_BUILTIN_PATH || !shipped.has(path));
 }
-
-const INPUT_SOURCES = ["interactive", "rpc", "extension"] as const satisfies readonly InputSource[];
-const INPUT_ATTRIBUTIONS = ["user", "agent"] as const satisfies readonly InputAttribution[];
-const STREAMING_BEHAVIORS = ["steer", "followUp"] as const;
-const SESSION_START_REASONS = [
-	"startup",
-	"reload",
-	"new",
-	"resume",
-	"fork",
-] as const satisfies readonly SessionStartEvent["reason"][];
-const TRIGGERS = ["prompt", "delivery", "extension"] as const satisfies readonly BeforeAgentStartEvent["trigger"][];
-
-const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value is T =>
-	typeof value === "string" && (allowed as readonly string[]).includes(value);
-
-/** The images of a loop event, `undefined` when it has none, `null` when they are malformed. */
-const imagesOf = (value: unknown): ImageContent[] | undefined | null =>
-	value === undefined ? undefined : Array.isArray(value) && value.every(isImage) ? value : null;
-
-/** The loop's transcript messages of an `agent_end`, as data its handlers read (the Stop hook its last stop reason). */
-const isAgentMessages = (value: unknown): value is AgentMessage[] =>
-	Array.isArray(value) && value.every((message) => isRecord(message) && typeof message.role === "string");
-
-/**
- * The session port's read half a call carries (`leafId`, `handEntries`; see `CarriedSession`), or `null` when
- * malformed. Each hand entry is a custom entry: the hand only ever authored custom entries.
- */
-function carriedSessionOf(payload: Record<string, unknown>): CarriedSession | null {
-	const { leafId, handEntries } = payload;
-	if (!(leafId === null || typeof leafId === "string")) return null;
-	if (!Array.isArray(handEntries) || !handEntries.every(isCustomEntry)) return null;
-	return { leafId, handEntries };
-}
-
-const isCustomEntry = (value: unknown): value is CustomEntry =>
-	isRecord(value) && value.type === "custom" && typeof value.customType === "string" && typeof value.id === "string";
-
-const isImage = (value: unknown): value is ImageContent =>
-	isRecord(value) && value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string";
 
 async function dispatchLoopHook(
 	runner: ExtensionRunner,

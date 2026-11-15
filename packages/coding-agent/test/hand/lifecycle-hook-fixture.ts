@@ -4,7 +4,7 @@ import { parseHookConfig } from "../../src/core/extensions/builtin/hooks/index.t
 import { createHookTrustEntry, hookTrustId } from "../../src/core/extensions/builtin/hooks/trust.ts";
 import type { HookSourceMetadata, HookTrustEntry } from "../../src/core/extensions/builtin/hooks/types.ts";
 
-export type LifecycleHookEvent = "SessionStart" | "Stop";
+export type LifecycleHookEvent = "SessionStart" | "Stop" | "PreCompact" | "PostCompact";
 
 /**
  * A trusted project shell hook for `event` that appends its event name to `hook-ran.txt` in its own cwd, then writes
