@@ -37,7 +37,15 @@ export function jobExpression(job, key) {
 	return match[1];
 }
 
-const TOKEN = /\s*(\(|\)|&&|\|\||==|!=|!|'(?:[^']|'')*'|-?\d+(?:\.\d+)?|[A-Za-z_][\w.-]*\(\)|[A-Za-z_][\w.-]*)/y;
+const TOKEN = /\s*(\(|\)|,|&&|\|\||==|!=|!|'(?:[^']|'')*'|-?\d+(?:\.\d+)?|[A-Za-z_][\w.-]*\(\)|[A-Za-z_][\w.-]*)/y;
+
+/** The functions runs-on expressions use, with GitHub's semantics (format's `{N}` and `{{`/`}}` escapes). */
+const FUNCTIONS = {
+	format: (template, ...args) =>
+		String(template).replace(/\{\{|\}\}|\{(\d+)\}/g, (match, index) => (match === "{{" ? "{" : match === "}}" ? "}" : String(args[Number(index)] ?? ""))),
+	toJSON: (value) => JSON.stringify(value, null, 2),
+	fromJSON: (text) => JSON.parse(text),
+};
 
 function tokenize(source) {
 	const tokens = [];
@@ -65,7 +73,8 @@ function looseEqual(left, right) {
 
 /**
  * Evaluate a GitHub Actions expression over `context` (`{inputs, needs, ...}`); a missing property reads as null.
- * Supports what job conditions use: `&&`, `||`, `!`, `==`, `!=`, parentheses, literals, `always()`.
+ * Supports what job conditions and runs-on use: `&&`, `||`, `!`, `==`, `!=`, parentheses, literals, `always()`, `format()`,
+ * `toJSON()` and `fromJSON()`.
  */
 export function evaluateExpression(source, context) {
 	const tokens = tokenize(source);
@@ -81,6 +90,19 @@ export function evaluateExpression(source, context) {
 		}
 		if (token === "always()") return true;
 		if (token.endsWith("()")) throw new Error(`unsupported function ${token}`);
+		if (peek() === "(" && /^[A-Za-z_]\w*$/.test(token)) {
+			const fn = FUNCTIONS[token];
+			if (!fn) throw new Error(`unsupported function ${token}`);
+			take();
+			const args = [];
+			while (peek() !== ")") {
+				args.push(or());
+				if (peek() === ",") take();
+				else if (peek() !== ")") throw new Error(`expected , or ) in ${source}`);
+			}
+			take();
+			return fn(...args);
+		}
 		if (token.startsWith("'")) return token.slice(1, -1).replaceAll("''", "'");
 		if (/^-?\d/.test(token)) return Number(token);
 		if (token === "true" || token === "false") return token === "true";

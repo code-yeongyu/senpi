@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: ''
+      boat_run_label:
+        description: "publish-npm.yml's boat_run_label: the Linux build rows run on that run's Boat self-hosted runners (senpi#6850)"
+        required: false
+        type: string
+        default: ''
     outputs:
       ready:
         description: "'true' when every target's prebuild was reused or built in this run (see job ready)"
@@ -254,7 +259,10 @@ jobs:
     name: Build ${{ matrix.artifact }}
     needs: plan
     if: ${{ needs.plan.outputs.missing_count != '0' }}
-    runs-on: ${{ matrix.runner }}
+    # senpi#6850: a Linux row runs on the caller's Boat self-hosted runners only in a release dispatch that names
+    # boat_run_label while RELEASE_BOAT_ENABLED is 'true'. A pull request, a push, a direct dispatch and the run-full-ci call
+    # never pass the label, and only a workflow_dispatch event qualifies, so they keep the row's own runner.
+    runs-on: ${{ (matrix.linux && vars.RELEASE_BOAT_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.boat_run_label != '') && fromJSON(format('["self-hosted","boat-large",{0}]', toJSON(inputs.boat_run_label))) || matrix.runner }}
     continue-on-error: ${{ matrix.best_effort }}
     timeout-minutes: 75
     strategy:

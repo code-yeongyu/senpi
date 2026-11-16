@@ -94,7 +94,9 @@ describe("pull request runners across every workflow (senpi#6834)", () => {
 			const { jobs } = workflow(file);
 			for (const [name, job] of Object.entries(jobs)) {
 				if (job.uses) continue;
-				const runsOn = String(job["runs-on"]);
+				// senpi#6850: a Boat row's runs-on takes Boat only on a workflow_dispatch, so on a pull request it is the
+				// row's own runner (scripts/release-boat-runner.test.mjs evaluates that).
+				const runsOn = String(job["runs-on"]).replace(/^\$\{\{ \([^)]*github\.event_name == 'workflow_dispatch'[^)]*\) && fromJSON\(.*\) \|\| (matrix\.runner) \}\}$/, "${{ $1 }}");
 				if (LINUX.test(runsOn)) continue;
 				const where = `${file}: ${name} (runs-on ${runsOn})`;
 				if (/macos|windows/.test(runsOn)) {

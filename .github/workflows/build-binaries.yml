@@ -19,6 +19,14 @@ on:
         required: false
         type: boolean
         default: false
+      # senpi#6850: a label of the ephemeral self-hosted runners an external dispatcher started in Boat sandboxes for this run.
+      # Empty (the default) or the repository variable RELEASE_BOAT_ENABLED not 'true' keeps every job on GitHub-hosted
+      # runners. See .github/agent/skills/release-publish/SKILL.md ("Boat runners").
+      boat_run_label:
+        description: 'Boat runs only: the per-run label of the self-hosted Boat runners started for this run (requires RELEASE_BOAT_ENABLED). Empty = GitHub-hosted runners.'
+        required: false
+        type: string
+        default: ''
 
 permissions: {}
 
@@ -29,8 +37,11 @@ concurrency:
 jobs:
   # Keep the public GitHub Release publication last. Binary assets are staged in
   # a draft release first; cleanup removes the draft if later publishing fails.
+  # senpi#6850: only this job can run on a Boat self-hosted runner, and only in a dispatch that names boat_run_label while
+  # RELEASE_BOAT_ENABLED is 'true'; a tag push always builds on ubuntu-latest. Every job that writes the GitHub Release or
+  # dispatches the npm publish stays on GitHub-hosted runners.
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.RELEASE_BOAT_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.boat_run_label != '') && fromJSON(format('["self-hosted","boat-large",{0}]', toJSON(inputs.boat_run_label))) || 'ubuntu-latest' }}
     permissions:
       contents: read
     env:
@@ -113,6 +124,38 @@ jobs:
           path: release-assets/*
           if-no-files-found: error
           retention-days: 14
+
+  # senpi#6850 hosted fallback: while this run's Boat jobs wait for their self-hosted runners, this GitHub-hosted job checks
+  # them every 30 s. When one has sat queued for 10 minutes (no runner picked it), it dispatches build-binaries.yml again with the
+  # same inputs and an empty boat_run_label (so every job runs on GitHub-hosted runners), then cancels this run. It stops
+  # once `build` has started. It has no secrets and only actions: write.
+  boat-watchdog:
+    if: ${{ (vars.RELEASE_BOAT_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.boat_run_label != '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+
+      - name: Fall back to GitHub-hosted runners when no Boat runner picks a job
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          BOAT_RUN_LABEL: ${{ inputs.boat_run_label }}
+          DONE_JOB: build
+          WORKFLOW_FILE: build-binaries.yml
+          DISPATCH_REF: ${{ github.ref_name }}
+          DISPATCH_INPUTS: ${{ toJSON(inputs) }}
+        run: node scripts/boat-watchdog.mjs
 
   smoke-test-binaries:
     runs-on: ${{ matrix.runner }}
