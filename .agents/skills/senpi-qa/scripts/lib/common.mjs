@@ -86,6 +86,14 @@ const SCRUBBED_SESSION_ENV = [
 	"PI_SESSION_ID",
 ];
 
+/**
+ * Prefixes of the RPC host lane a session hands its descendants, mirroring the unit-test quarantine
+ * (packages/coding-agent/test/support/quarantine.ts). SENPI_RPC_INTERNAL_KEY_STDIN=1 makes the CLI
+ * read a key from its unrelated stdin and exit internal_key_unavailable at boot (senpi#5548), and the
+ * SENPI_RPC_HOST_* lifecycle names point a spawned host at the outer supervisor.
+ */
+const SCRUBBED_SESSION_ENV_PREFIXES = ["SENPI_RPC_INTERNAL_KEY", "SENPI_RPC_HOST_"];
+
 /** envPrefix of the inherited brand profile, if any (mirrors parseBrandProfile's fallback). */
 function brandEnvPrefix(raw) {
 	try {
@@ -102,7 +110,11 @@ export function scrubSandboxEnv(env) {
 	const scrubbed = [];
 	const prefix = brandEnvPrefix(env.SENPI_BRAND);
 	for (const name of Object.keys(env)) {
-		if (SCRUBBED_SESSION_ENV.includes(name) || (prefix !== undefined && name.startsWith(`${prefix}_`))) {
+		if (
+			SCRUBBED_SESSION_ENV.includes(name) ||
+			SCRUBBED_SESSION_ENV_PREFIXES.some((scrubbed) => name.startsWith(scrubbed)) ||
+			(prefix !== undefined && name.startsWith(`${prefix}_`))
+		) {
 			delete env[name];
 			scrubbed.push(name);
 		}
