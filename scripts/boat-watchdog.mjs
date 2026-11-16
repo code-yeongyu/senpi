@@ -11,7 +11,8 @@
  *
  * Env: GH_REPO, RUN_ID, RUN_ATTEMPT, BOAT_RUN_LABEL, DONE_JOB, WORKFLOW_FILE, DISPATCH_REF, DISPATCH_INPUTS (the run's
  * `toJSON(inputs)`), PIN_SHA (optional: replaces an empty `sha` input so the re-dispatch releases the same commit),
- * QUEUE_LIMIT_SECONDS (default 600), POLL_SECONDS (default 30), GH_BIN (default gh).
+ * QUEUE_LIMIT_SECONDS (default 600), POLL_SECONDS (default 30), MAX_LIST_FAILURES (default 10 consecutive failed job
+ * listings, after which it fails instead of holding the run open), GH_BIN (default gh).
  */
 import { spawnSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -57,13 +58,22 @@ async function main() {
 	const bin = env.GH_BIN || "gh";
 	const limitSeconds = Number(env.QUEUE_LIMIT_SECONDS || 600);
 	const pollSeconds = Number(env.POLL_SECONDS || 30);
+	const maxListFailures = Number(env.MAX_LIST_FAILURES || 10);
 	const jobsPath = `repos/${env.GH_REPO}/actions/runs/${env.RUN_ID}/attempts/${env.RUN_ATTEMPT || 1}/jobs`;
+	let listFailures = 0;
 	for (;;) {
 		let jobs;
 		try {
 			jobs = JSON.parse(gh(bin, ["api", "--paginate", "--slurp", jobsPath])).flatMap((page) => page.jobs);
+			listFailures = 0;
 		} catch (error) {
-			// A transient API error is not a verdict on the runners; look again on the next poll.
+			// A transient API error is not a verdict on the runners; look again on the next poll. A persistent one fails
+			// the watchdog instead of keeping the run (and its concurrency group) open until the job timeout.
+			listFailures += 1;
+			if (listFailures >= maxListFailures) {
+				process.stdout.write(`::error::could not list the jobs of run ${env.RUN_ID} ${listFailures} times in a row (${error.message}); the Boat jobs are unwatched. If one never starts, cancel the run and dispatch it again with boat_run_label empty.\n`);
+				return 1;
+			}
 			process.stdout.write(`::warning::could not list the jobs of run ${env.RUN_ID}: ${error.message}\n`);
 			await sleep(pollSeconds * 1000);
 			continue;

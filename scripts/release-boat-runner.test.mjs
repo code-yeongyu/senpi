@@ -212,6 +212,23 @@ describe("hosted fallback watchdog (senpi#6850)", () => {
 		assert.deepEqual(binaries.slice(5), ["-f", "tag=v1", "-f", "source_ref=", "-f", "dry_run=true", "-f", "boat_run_label="]);
 	});
 
+	it("stops after MAX_LIST_FAILURES consecutive failed job listings instead of holding the run open", () => {
+		const dir = mkdtempSync(join(tmpdir(), "boat-watchdog-"));
+		const log = join(dir, "calls.log");
+		const fakeGh = join(dir, "gh");
+		writeFileSync(fakeGh, `#!/usr/bin/env node\nrequire("fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2))+"\\n");\nprocess.stderr.write("HTTP 403");process.exit(1);\n`);
+		chmodSync(fakeGh, 0o755);
+		const result = spawnSync(process.execPath, [fileURLToPath(new URL("./boat-watchdog.mjs", import.meta.url))], {
+			encoding: "utf8",
+			env: { PATH: process.env.PATH, GH_BIN: fakeGh, GH_REPO: "owner/repo", RUN_ID: "77", BOAT_RUN_LABEL: LABEL, DONE_JOB: "release", WORKFLOW_FILE: "publish-npm.yml", DISPATCH_REF: "main", DISPATCH_INPUTS: "{}", POLL_SECONDS: "0", MAX_LIST_FAILURES: "3" },
+		});
+		assert.equal(result.status, 1, result.stdout + result.stderr);
+		const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+		assert.equal(calls.length, 3);
+		assert.ok(calls.every((call) => call[0] === "api"), "it never dispatches or cancels on a listing failure");
+		assert.match(result.stdout, /3 times in a row/);
+	});
+
 	it("dispatches the hosted run before cancelling this one, through gh", () => {
 		const dir = mkdtempSync(join(tmpdir(), "boat-watchdog-"));
 		const log = join(dir, "calls.log");
