@@ -37,10 +37,7 @@ describe("reference file contract", () => {
 		if (kind === "oversize") files.file(kind, "x".repeat(65_537));
 		if (kind === "utf8") files.file(kind, new Uint8Array([0xc0, 0xaf]));
 		// Explicit owner-only modes: the runner's umask must not make these group-writable (senpi#6827).
-		if (kind === "directory") {
-			mkdirSync(path, { mode: 0o700 });
-			chmodSync(path, 0o700);
-		}
+		if (kind === "directory") mkdirSync(path, { mode: 0o700 });
 		await expect(resolveReference({ $file: path }, { root: files.root })).rejects.toMatchObject({
 			name: "ConfigReferenceError",
 			reason,
