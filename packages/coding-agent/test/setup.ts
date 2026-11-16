@@ -10,11 +10,18 @@
  * tools (e.g. tokscale) then mis-count them as real usage.
  */
 import { dirname } from "node:path";
+import { afterAll, afterEach } from "vitest";
 import { trackTempDir } from "../../../scripts/vitest-temp.ts";
+import { joinPendingCleanups } from "./support/pending-cleanups.ts";
 import { installHostScratchRemovalGuard } from "./support/host-scratch-removal-guard.ts";
 import { resolveQuarantineAgentDir, scrubAmbientAgentDirEnv, scrubHostLifecycleEnv } from "./support/quarantine.ts";
 
 installHostScratchRemovalGuard();
+
+// Setup-file hooks run after the test file's own, so a fixture cleanup that file started without awaiting it (the
+// suite harness cleanup(), senpi#6488) settles before the next test starts.
+afterEach(joinPendingCleanups);
+afterAll(joinPendingCleanups);
 
 // Run from inside a host generation (the normal agent case), the suite would otherwise inherit that
 // host's lifecycle and hand it to every host it spawns.

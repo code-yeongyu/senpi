@@ -92,6 +92,6 @@ harness.session.releaseSettledSessionMemory();
 fullGc();
 const afterIdleMB = Number((process.memoryUsage().heapUsed / 1e6).toFixed(1));
 console.log(JSON.stringify({ megabytes, turns, samples, afterIdleReleaseMB: afterIdleMB }, null, 1));
-harness.cleanup();
+await harness.cleanup();
 rmSync(dir, { recursive: true, force: true });
 process.exit(0);
