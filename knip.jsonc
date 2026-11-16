@@ -1372,8 +1372,6 @@
       "scripts/check-pr-changelog-facts.mjs": ["CHANGELOG_PATTERN"],
       // pre-existing at origin main aceb1cc1d9: unused exports validateGitRevision, isRuntimeSourceChange, main (run-by-path entry, newly export-checked)
       "scripts/check-pr-changelog.mjs": ["isRuntimeSourceChange", "main", "validateGitRevision"],
-      // pre-existing at origin main aceb1cc1d9: unused export PR_FILES_API_LIMIT (run-by-path entry, newly export-checked)
-      "scripts/ci-platform-scope.mjs": ["PR_FILES_API_LIMIT"],
       // pre-existing at origin main aceb1cc1d9: unused export updateClaudeAgentSdkPlatformLock (run-by-path entry, newly export-checked)
       "scripts/generate-claude-agent-sdk-platform-lock.mjs": ["updateClaudeAgentSdkPlatformLock"],
       // pre-existing at origin main aceb1cc1d9: unused export RATCHET_RULES (run-by-path entry, newly export-checked)

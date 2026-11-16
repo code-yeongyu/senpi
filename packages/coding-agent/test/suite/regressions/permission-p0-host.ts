@@ -44,6 +44,11 @@ export interface PermissionTurn {
 	readonly args: ToolCall["arguments"];
 }
 
+/** A call in a scripted batch, with the id its `tool_execution_*` frames carry. */
+export interface ScriptedCall extends PermissionTurn {
+	readonly id: string;
+}
+
 export interface PermissionHostSetup {
 	readonly globalSettings?: Record<string, unknown>;
 	readonly projectSettings?: Record<string, unknown>;
@@ -132,32 +137,44 @@ export async function createPermissionP0Host(
 		return found.promise;
 	};
 
+	/**
+	 * Opens a session (default preset unless `permissionPreset`) and starts a turn whose first assistant message issues
+	 * `calls` as one batch. `sent` is the turn's `prompt` request.
+	 */
+	const begin = async (permissionPreset: string | undefined, calls: readonly ScriptedCall[]) => {
+		const opened = await send({
+			type: "open_session",
+			cwd,
+			...(permissionPreset === undefined ? {} : { permissionPreset }),
+		});
+		const sessionId = opened?.data?.sessionId;
+		if (!sessionId) throw new Error(`Session failed to open: ${JSON.stringify(opened)}`);
+		faux.setResponses([
+			fauxAssistantMessage(
+				calls.map((call) => fauxToolCall(call.name, call.args, { id: call.id })),
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("finished"),
+		]);
+		return { sessionId, sent: send({ type: "prompt", sessionId, message: "perform the scripted action" }) };
+	};
+
 	return {
 		cwd,
 		outsidePath,
 		send,
 		next,
+		begin,
 		/**
 		 * Opens an `ask` session and leaves its turn parked on the permission prompt for `turn`: nobody answers it.
 		 * Resolves with the session id once the prompt has reached the client.
 		 */
 		async park(turn: PermissionTurn): Promise<string> {
-			const opened = await send({ type: "open_session", cwd, permissionPreset: "ask" });
-			const sessionId = opened?.data?.sessionId;
-			if (!sessionId) throw new Error(`Session failed to open: ${JSON.stringify(opened)}`);
-			faux.setResponses([
-				fauxAssistantMessage([fauxToolCall(turn.name, turn.args, { id: "permission-call" })], {
-					stopReason: "toolUse",
-				}),
-				fauxAssistantMessage("finished"),
-			]);
 			const asked = next(
 				(frame) =>
-					frame.sessionId === sessionId &&
-					frame.type === "extension_ui_request" &&
-					frame.title?.startsWith("Permission required:") === true,
+					frame.type === "extension_ui_request" && frame.title?.startsWith("Permission required:") === true,
 			);
-			const sent = send({ type: "prompt", sessionId, message: "perform the scripted action" });
+			const { sessionId, sent } = await begin("ask", [{ ...turn, id: "permission-call" }]);
 			await Promise.race([asked, sent.then(() => asked)]);
 			return sessionId;
 		},

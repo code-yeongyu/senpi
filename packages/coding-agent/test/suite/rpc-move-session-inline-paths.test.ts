@@ -6,6 +6,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { MAX_BUNDLE_PATH_SEGMENTS } from "../../src/core/session-move/bundle.ts";
 import { move } from "./rpc-move-session-support.ts";
 import {
 	exported,
@@ -65,6 +66,14 @@ describe("move_session import with files: the paths it takes (senpi#6267)", () =
 		["a listed path with a segment longer than a file name may be", listed(`files/${"n".repeat(256)}`)],
 		["a listed path longer than a sent path may be", listed(`files/${"ab/".repeat(400)}x`)],
 		["a listed path that is both a file and another file's folder", listed("files/x", "files/x/y")],
+		[
+			"a listed path one folder deeper than a bundle path may be",
+			listed(`files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`),
+		],
+		[
+			"a listed path one folder deeper than a bundle path may be, written with backslashes",
+			listed(`files\\${"d\\".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`),
+		],
 	])(
 		"#given %s #then import refuses move_bundle_invalid before a folder is made and the move stays importable",
 		async (_case, tamper) => {
@@ -84,4 +93,18 @@ describe("move_session import with files: the paths it takes (senpi#6267)", () =
 			});
 		},
 	);
+
+	it("#given a listed path exactly as deep as a bundle path may be #then import takes it and the session lands", async () => {
+		const { fixture, a, b, reply } = await exported("move-p2");
+		await using _a = a;
+		await using _b = b;
+		// `files/` is the first segment and the file name the last: the folders between make the depth the cap exactly.
+		const deepest = `files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 2)}x`;
+
+		const imported = await move(b, { op: "import", files: listed(deepest)(inlineOf(reply)), cwd: fixture.repoB });
+
+		expect(deepest.split("/")).toHaveLength(MAX_BUNDLE_PATH_SEGMENTS);
+		expect(imported).toMatchObject({ success: true, data: { session_id: SESSION_ID } });
+		expect(existsSync(landedOn(fixture))).toBe(true);
+	});
 });

@@ -12,7 +12,8 @@
  *   bash, an admitted delivery or another request for the session. `interrupt` aborts the run and bash
  *   and waits (bounded) before the final check. A run whose only work is waiting on a dialog nobody
  *   answered (a permission prompt) is no refusal: the unload aborts it, which cancels the dialog, as if
- *   `interrupt` were set (senpi#6683).
+ *   `interrupt` were set (senpi#6683). A run with a tool body executing is not parked, even when a dialog
+ *   is open: the body may be doing real work beside the dialog.
  * - `extension_work`: a published wake source other than child tasks (background terminal jobs, monitors,
  *   detached eval cells, a pending question). The teardown stops that work and most of it does not come
  *   back on reopen, so only `force` unloads past it; the refusal names the sources.
@@ -147,10 +148,13 @@ function blockers(
 		activity.hasSessionWork && "session work",
 	].filter((label): label is string => typeof label === "string");
 	// The run's own `prompt` call stays pending while it streams, so `pendingPrompts` does not count against a parked run.
+	// A tool body that is executing is real work, even when a dialog is open beside it: a dialog cannot be told apart
+	// from its opener (an MCP elicitation arrives on the server's channel), so any executing body rules out parked.
 	const parked =
 		activity.isStreaming &&
 		!activity.isCompacting &&
 		!activity.hasSessionWork &&
+		session.toolDispatcher.executing === 0 &&
 		(sessionDialogRequests.get(session)?.snapshot().length ?? 0) > 0;
 	if (parked)
 		found.push({

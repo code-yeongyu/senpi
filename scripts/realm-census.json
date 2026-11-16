@@ -6979,6 +6979,10 @@
 			"class": "per-copy-safe",
 			"reason": "test seam or dependency override set and read inside one copy"
 		},
+		"packages/coding-agent/src/core/session-move/name-folding.ts#EVERY_FOLDING": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/session-move/ownership.ts#NONE": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"

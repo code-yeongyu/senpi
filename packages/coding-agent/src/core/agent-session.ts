@@ -13149,6 +13149,7 @@ export class AgentSession {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			!this._isLocalFailure(message) &&
+			!this._isRequiredCompactionError(message) &&
 			!isModelConfigFailure(message) &&
 			!this._isClaudeSdkAuthMissError(message) &&
 			!this._isClaudeSdkSameModelRemintError(message) &&

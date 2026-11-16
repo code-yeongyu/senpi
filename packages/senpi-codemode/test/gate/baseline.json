@@ -6183,6 +6183,7 @@
       "test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given an active cell when Bun.spawn uses the object form with the default stderr then stderr is piped as well": "passed",
       "test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given deleted session keys when capture installs then Bun spawns pin the worker's environment view": "passed",
       "test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given a session environment applied without deletions when Bun.spawn runs without env then the worker view is pinned": "passed",
+      "test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given a session environment and no active cell when Bun.spawn runs without env then the worker view is still pinned": "passed",
       "test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given a session environment when Bun.spawnSync runs without env then the worker view is pinned and explicit env is kept": "passed",
       "test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given no session environment when Bun.spawnSync runs then it passes through unchanged and restore reinstates it": "passed",
       "test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given no session environment when capture installs then spawn options pass through unchanged": "passed",
