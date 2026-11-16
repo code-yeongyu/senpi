@@ -24,6 +24,22 @@ const failureDetails: Record<RecoveryStreamFailure, { diagnosticType: string; er
 		},
 	};
 
+const failureDiagnosticTypes: ReadonlySet<string> = new Set(
+	Object.values(failureDetails).map((details) => details.diagnosticType),
+);
+
+/**
+ * Whether the text tool-call recovery stream ended this message with one of its own failures. Keyed on the
+ * diagnostic `terminateRecoveryStreamForFailure` attaches, never on the error text: the failure is a defect in
+ * our stream recovery, so callers must not treat it as a model failure another model could fix (senpi#5723).
+ */
+export function isToolCallRecoveryStreamFailure(message: AssistantMessage): boolean {
+	return (
+		message.stopReason === "error" &&
+		(message.diagnostics ?? []).some((diagnostic) => failureDiagnosticTypes.has(diagnostic.type))
+	);
+}
+
 export function terminateRecoveryStreamForFailure(
 	stream: AssistantMessageEventStream,
 	projection: StreamMessageProjection,

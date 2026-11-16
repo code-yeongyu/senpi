@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { wrapStreamWithInvokeRecovery } from "../../src/index.ts";
+import { isToolCallRecoveryStreamFailure, wrapStreamWithInvokeRecovery } from "../../src/index.ts";
 import type { AssistantMessageEvent, Tool, ToolCall } from "../../src/types.ts";
 import { collectEvents, NativeStreamHarness } from "./invoke-recovery-stream-fixtures.ts";
 
@@ -164,6 +164,7 @@ export function registerInvokeRecoveryNativeCases(tool: Tool): void {
 				details: { protocol: "antml", status: "collision" },
 			},
 		]);
+		expect(isToolCallRecoveryStreamFailure(result)).toBe(true);
 		expect(JSON.stringify(result.diagnostics)).not.toContain("NativeCollision");
 		expect(JSON.stringify(result.diagnostics)).not.toContain("recovered-antml-0");
 		expect(JSON.stringify(result.diagnostics)).not.toContain("hidden");
