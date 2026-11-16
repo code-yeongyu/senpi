@@ -4096,12 +4096,13 @@ export class AgentSession {
 		return true;
 	}
 
-	/** Whether a run ended on a provider error that leaves its queued input to the agent_end decision (senpi#6868). */
+	/** Whether a run ended on a provider error (not a local journal or step-commit failure) that leaves its queued follow-ups to the agent_end decision (senpi#6868). */
 	private _endedOnProviderError(messages: AgentMessage[]): boolean {
 		const lastAssistant = messages.findLast((message) => message.role === "assistant");
 		return (
 			lastAssistant?.role === "assistant" &&
 			lastAssistant.stopReason === "error" &&
+			!this._isLocalFailure(lastAssistant) &&
 			this._getRequiredAutoCompactionReason(lastAssistant) === undefined
 		);
 	}

@@ -5,7 +5,7 @@ import {
 	type UserMessage,
 } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { Agent, type AgentMessage, type QueuedInputPort, type StreamFn } from "../src/index.ts";
+import { Agent, type AgentMessage, type QueuedInputPort, StepCommitError, type StreamFn } from "../src/index.ts";
 
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
 	constructor() {
@@ -136,6 +136,22 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 			}),
 		});
 		agent.followUp(user("later"));
+
+		await agent.prompt("first");
+
+		const failure = agent.state.messages.at(-1);
+		expect(failure?.role === "assistant" && failure.stopReason).toBe("error");
+		expect(failure?.role === "assistant" && failure.failureSource).toBe("local");
+	});
+
+	it("marks a run whose hosted step commit failed as a local failure, not a provider one (senpi#6868)", async () => {
+		const log: string[] = [];
+		const agent = new Agent({
+			streamFn: recordingStream(log),
+			commitStep: async () => {
+				throw new StepCommitError("step-1", "storage_unavailable");
+			},
+		});
 
 		await agent.prompt("first");
 
