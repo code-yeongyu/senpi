@@ -20,7 +20,7 @@ import { type LandedFile, outcomeIn, readLanding } from "./landed-file.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
 import { type NameFolding, refuseNamesThatFold } from "./name-folding.ts";
-import { STAGED_PAYLOADS, stagedName, stagedNames } from "./staged-layout.ts";
+import { STAGED_PAYLOADS, stagedName, stagedNames, stagedTwice } from "./staged-layout.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
@@ -166,6 +166,10 @@ export async function importMovedSession(
 		options.probeNameFolding,
 	);
 	try {
+		// Two different files staged under one name can be imported nowhere, so unlike names that only fold here this
+		// settles the move: the sender takes the session back.
+		const twice = stagedTwice(manifest);
+		if (twice !== undefined) throw new MoveBundleInvalidError(twice);
 		await verifyBundle(options.bundleDir, manifest, options.sent);
 	} catch (error) {
 		if (error instanceof MoveBundleInvalidError)
@@ -290,16 +294,27 @@ async function stage(bundleDir: string, manifest: MoveManifest, staging: string,
 	const file = join(staging, manifest.sessionFileName);
 	if (!((await pathExists(file)) && (await movedInFor(file, manifest.moveId)))) {
 		await rm(staging, { recursive: true, force: true });
-		for (const item of [manifest.session, ...manifest.sidecars]) {
-			const to = item === manifest.session ? file : join(staging, stagedName(manifest, item));
-			await mkdir(dirname(to), { recursive: true });
-			await copyFile(join(bundleDir, item.path), to);
+		const listed = [manifest.session, ...manifest.sidecars];
+		const stagedAt = (item: (typeof listed)[number]) =>
+			item === manifest.session ? file : join(staging, stagedName(manifest, item));
+		for (const item of listed) {
+			await mkdir(dirname(stagedAt(item)), { recursive: true });
+			await copyFile(join(bundleDir, item.path), stagedAt(item));
 		}
 		await stagePayloads(bundleDir, manifest, staging);
+		// The entry below names the listed session's hash, a retry trusts a staged file that carries it, and sidecars
+		// land with the session. So every staged copy of the session file and of a sidecar is hashed first, once all
+		// are in place: neither the entry nor the landing carries bytes that are not the listed ones (senpi#6575).
+		// Payload files are hashed as they are staged.
+		for (const item of listed)
+			if ((await sha256File(stagedAt(item))) !== item.sha256)
+				throw new MoveBundleInvalidError(`${item.path} changed in transit`);
 		(await SessionManager.openAsync(file, staging)).appendCustomEntry(SESSION_MOVED_IN, {
 			move_id: manifest.moveId,
 			session_id: manifest.sessionId,
 			from,
+			// The hash of the session's bytes as they were staged from the bundle. The landed file is not those bytes:
+			// this entry and the queued input are appended to it. Nothing in this repository reads the field.
 			bundle_sha256: manifest.session.sha256,
 			moved_in_at: new Date().toISOString(),
 		});

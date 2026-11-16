@@ -52,7 +52,9 @@ async function sweepStaleProbes(folder: string): Promise<void> {
 			(entry) => entry.mtimeMs,
 			() => undefined,
 		);
-		if (modified !== undefined && Date.now() - modified > STALE_PROBE_MS) await rm(file, { force: true });
+		// One it cannot remove (another user's, or not a file) is left where it is: the sweep is tidying, not the probe.
+		if (modified !== undefined && Date.now() - modified > STALE_PROBE_MS)
+			await rm(file, { force: true }).catch(() => undefined);
 	}
 }
 
