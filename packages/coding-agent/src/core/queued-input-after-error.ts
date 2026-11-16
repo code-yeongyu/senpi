@@ -77,7 +77,9 @@ type QueuedEntry = ClientMessageIdentity & {
 /**
  * Fails every queued follow-up under `hold`, in queue order. Each failure is published BEFORE its dequeue: the
  * per-input receipt (RPC client admissions) records the typed refusal first, so the dequeue's `queue_update` cannot
- * store the vanished input as completed (senpi#6869 review M1). Queued steering keeps its own rules.
+ * store the vanished input as completed (senpi#6869 review M1). Queued steering keeps its own rules. `queued` is a
+ * snapshot; an input that left the queue while an earlier dequeue awaited its durable record (a Stop or
+ * `clear_queue` settled it) is skipped, so it never gets a refusal after its clear (senpi#6869 review L4).
  */
 export async function failQueuedFollowUps(
 	queued: readonly QueuedEntry[],
@@ -85,10 +87,11 @@ export async function failQueuedFollowUps(
 	session: {
 		readonly emit: (event: QueuedInputFailedEvent) => void;
 		readonly dequeue: (queuedId: string) => Promise<unknown>;
+		readonly isQueued: (queuedId: string) => boolean;
 	},
 ): Promise<void> {
 	for (const input of queued) {
-		if (input.mode !== "followUp") continue;
+		if (input.mode !== "followUp" || !session.isQueued(input.queuedId)) continue;
 		session.emit({
 			type: "queued_input_failed",
 			queuedId: input.queuedId,
