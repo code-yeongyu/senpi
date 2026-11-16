@@ -263,6 +263,8 @@ describe("JS kernel shell output capture", () => {
 			fake.bun.spawn(["sh", "-c", "true"]);
 			fake.bun.spawn({ cmd: ["true"] });
 			fake.bun.spawn(["keep"], { env: { CUSTOM: "1" } });
+			fake.bun.spawn(["null-options"], null);
+			fake.bun.spawn(["null-env"], { env: null });
 
 			expect(fake.spawnCalls[0]?.options?.env).toHaveProperty(
 				"TEST_CRED_6820",
@@ -273,6 +275,8 @@ describe("JS kernel shell output capture", () => {
 				"senpi-credential-proxy-placeholder",
 			);
 			expect(fake.spawnCalls[2]?.options?.env).toEqual({ CUSTOM: "1" });
+			for (const call of fake.spawnCalls.slice(3))
+				expect(call.options?.env).toHaveProperty("TEST_CRED_6820", "senpi-credential-proxy-placeholder");
 		} finally {
 			delete process.env.TEST_CRED_6820;
 		}
