@@ -10,24 +10,22 @@ describe("#6869 review L4: the fail loop works from a snapshot of the queue", ()
 		const emitted: QueuedInputFailedEvent[] = [];
 		const dequeueOpen = Promise.withResolvers<void>();
 		const releaseDequeue = Promise.withResolvers<void>();
-		const failing = failQueuedFollowUps(
-			[
-				{ queuedId: "q_1", text: "first", mode: "followUp" },
-				{ queuedId: "q_2", text: "second", mode: "followUp" },
-			],
-			HOLD,
-			{
-				emit: (event) => emitted.push(event),
-				isQueued: (queuedId) => queued.has(queuedId),
-				dequeue: async (queuedId) => {
-					if (queuedId === "q_1") {
-						dequeueOpen.resolve();
-						await releaseDequeue.promise;
-					}
-					queued.delete(queuedId);
-				},
+		const entries = [
+			{ queuedId: "q_1", text: "first", mode: "followUp" as const },
+			{ queuedId: "q_2", text: "second", mode: "followUp" as const },
+		];
+		const failing = failQueuedFollowUps(entries, HOLD, {
+			emit: (event) => emitted.push(event),
+			current: (queuedId) =>
+				queued.has(queuedId) ? entries.find((entry) => entry.queuedId === queuedId) : undefined,
+			dequeue: async (queuedId) => {
+				if (queuedId === "q_1") {
+					dequeueOpen.resolve();
+					await releaseDequeue.promise;
+				}
+				queued.delete(queuedId);
 			},
-		);
+		});
 
 		// when: clear_queue lands during the first dequeue's await
 		await dequeueOpen.promise;
