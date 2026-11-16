@@ -2619,12 +2619,13 @@ A connection without an attachment receives `errorCode: "session_not_attached"` 
 ```json
 {"type": "session_status", "subscriptionId": "sub-1", "seq": 4, "sessionId": "rpc-1", "durableSessionId": "<id>", "sessionPath": "<path>",
  "kind": "interactive", "cwd": "<cwd>", "status": "idle", "reason": "aborted", "attachments": 3,
- "model": {"provider": "anthropic", "id": "<model>"}, "thinkingLevel": "high", "pendingQueue": {"steering": 1, "followUp": 0},
+ "archived": false, "model": {"provider": "anthropic", "id": "<model>"}, "thinkingLevel": "high", "pendingQueue": {"steering": 1, "followUp": 0},
  "lastChange": {"at": "2026-10-12T08:00:00.000Z", "cause": "abort", "by": "client"}}
 ```
 
 - `status`: `opening`, `idle`, `running`, `waiting_input` (a question is pending), `compacting`, `unloaded` (the routing handle ended and the session reopens by `sessionPath`; `reason` is `idle`, `unload_session` or `handoff`), or `closed` (`reason` is the `session_closed.reason`). After an abort ends a run, `idle` carries `reason: "aborted"`.
-- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close` or `context`; `by` is `client`, `agent` or `host`.
+- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close`, `context`, `rename` (the session's name changed: `set_session_name` or a generated title) or `archive` (`set_session_archived`); `by` is `client`, `agent` or `host`.
+- `archived` is the session file's archived flag (`set_session_archived`); it is always present.
 - `context` is present only with `include_context`. `lastEffect: { effectId, kind, state }` names the session's most recent effect receipt (an input with a `clientMessageId`, an abort, a model or thinking-level switch) and is absent on hosts without the `effect_ledger` capability or before the session's first effect.
 - On `new_session`, `switch_session` or `fork` the routing id stays; the record carries the new `durableSessionId` and `sessionPath` with cause `replace`.
 
@@ -3403,10 +3404,11 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   endpoint's daemon directory (`handover-parked/`, one entry per session path, the same record a handoff park writes)
   as soon as its open succeeds; the entry follows the session's `set_session_context` patches and its park, and a
   transcript switch (`new_session`, `switch_session`, a fork) moves it to the new file, so only the transcript the
-  session is on comes back. An explicit `close_session` or a reclaim removes every key the session was recorded
-  under. While the session is open the entry names the process that holds it; a park drops that, and a host never
-  reopens an entry whose holding process is still alive. So during a generation handoff the successor does not open
-  a session its draining predecessor still has loaded, idle and detached ones included: it reopens the predecessor's
+  session is on comes back. An explicit `close_session`, a `release_session` (the file is another runtime's then) or
+  a reclaim removes every key the session was recorded under. While the session is open the entry names the process
+  that holds it; a park drops that, and a host never reopens an entry whose holding process is still alive. So during
+  a generation handoff the successor does not open a session its draining predecessor still has loaded, idle and
+  detached ones included: it reopens the predecessor's
   park once the drain writes it (or the entry, if the predecessor dies without parking). A host
   that starts on the same socket and agent dir - after a handoff, a clean stop, a crash, or a kill in the middle of a
   turn - reopens, in the background right after it binds, every entry an earlier process wrote, replaying the
@@ -3475,7 +3477,8 @@ registrant opens no socket and writes no registry directory.
     `instanceId`, `commands`: every command this endpoint accepts, and `method_classes`: the same table and digest a
     host's answer carries (one builder serves both). A terminal from before the session controls below lists no
     `commands`; one from before senpi#6158 carries no `method_classes`.
-  - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
+  - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`, plus the same
+    `archived`, `activity` and `model?` fields a host row carries.
   - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
     `editor_has_draft` and `state_version`.
   - `get_messages`.
@@ -3790,6 +3793,37 @@ It comes after the run's `agent_end`, and only when no new run has started meanw
 
 If the schedule is cleared because the offering connection left, the user aborted, or the offering capability was withdrawn or taken over by another connection, the agent receives exactly one custom session message of type `session_relocation`, with `details: { status: "dropped", reason, moveId, target }`. The reason is respectively `disconnected`, `aborted`, or `withdrawn`; `moveId` and `target` identify the accepted request. A withdrawal during a long run is reported when the run settles. After a user abort, the notice is appended at `agent_settled`, before another prompt is needed, and is saved even if the session then closes. The message says the session stays on this computer and the agent should keep working here. It is context only (`display: false`, `triggerTurn: false`): it never starts another turn or resumes a user-stopped run. This is a session message through the existing message events, not another host request or a new RPC event type. Session disposal and process exit still have no later agent notice.
 
+### Device operations for the local relay host (`machine_op`)
+
+A multi-session host advertising `machine_op_v1` runs the `run` step of one device operation for the local relay host (senpi#6752). The relay host keeps admission, grants, consent, the run-once ledger, audit, blob relay and deadlines; the host runs the op and answers the relay host's own `OpOutcome`. The five records below are not in `RPC_METHOD_CLASS` (the method-class digest is unchanged). They are answered only on a connection that proved the endpoint's launch key and declared no delegation; any other connection gets `errorCode: "machine_op_not_authorized"` and nothing runs. A record that does not parse gets `machine_op_malformed`.
+
+```json
+{ "id": "m1", "type": "machine_op", "op": "fs.write", "args": { "path": "notes.txt", "bytes": "aGk=" }, "op_id": "op-7", "deadline_ms": 1763251200000, "scope": { "root": "/home/me", "confined": false }, "sender": "device-a", "env_overlay": { "RELAY_STATE_DIR": "/home/me/.relay" } }
+{ "id": "m1", "type": "response", "command": "machine_op", "success": true, "data": { "state": "applied", "response": { "path": "/home/me/notes.txt", "writtenBytes": 2 } } }
+```
+
+- `op`: one of `fs.read`, `fs.read_range`, `fs.write`, `fs.write_range`, `fs.edit`, `fs.glob`, `fs.grep`, `fs.stat`, `fs.list`, `shell`, `exec_command`, `write_stdin`, `wait_for_command`, `kill_terminal`, `process.info`, `mesh.message`. Any other op answers `{ state: "refused", error: { code: "malformed", message: "unknown op <op>" } }`. `args` and every response are the relay host's own shapes; bytes travel base64 (`args.bytes`, the read response's `bytes`).
+- Writes carry their bytes inline: one RPC line carries up to 16 MiB of JSON, so an 8 MiB write fits. No other carrier exists; an `args` key the op does not take (`bytes_path` included) is refused `malformed`.
+- `op_id`: opaque (the relay host sends `JSON.stringify([sender, batch_id, op_id])`). The answer is cached by the whole string (4,096 answers, 24 hours after settling) and bound to `sender`. A repeat from the same sender answers the first outcome and never runs again; a repeat that arrives while the op still runs joins it; a repeat from another sender is refused `errorCode: "machine_op_conflict"` and runs nothing.
+- `deadline_ms` (optional): absolute epoch ms on this machine's clock; absent means the op has no deadline. The op is aborted then (`state: "cancelled"`, code `aborted`); a shell's own `timeoutMs` still answers `timed_out`.
+- `scope`: the relay host's scope verdict. `confined: true` refuses any path or symlink resolving outside `root` (`policy_denied`). `confined: false` anchors relative fs paths and glob's `cwd` at `root`, and an OS refusal answers `os_permission_denied`. A `shell` or `exec_command` with no `cwd` runs in `root`.
+- `sender`: the device the op runs for; it owns the terminals its `exec_command` creates. `write_stdin`, `wait_for_command`, `kill_terminal` and `process.info { handleId }` act only on their own sender's handle; another sender's answers `{ state: "failed", error: { code: "not_owner" } }`.
+- `cross_owner` (optional, boolean): set by the relay host only after its own admin verdict on another sender's op or handle; it lifts the owner checks above and on `machine_op_result` / `machine_op_cancel`.
+- `env_overlay` (optional, string values): laid last over a `shell` or `exec_command` child's environment, `args.env` included.
+
+Terminals run on one host-owned terminal manager and outlive the connection that created them; handle ids are the manager's. An `exec_command` whose first wait is aborted (deadline, cancel, shutdown) kills its terminal before answering `cancelled`, so nothing is left running without a handle. A `kill_terminal` waits at most 5 s for the process to end and answers the lifecycle it reached. While an op runs or a machine terminal lives the host is not idle: no idle handover and no empty-host exit. From the idle check that starts a handover's switch, or the empty-host exit, a new `machine_op` is refused `machine_op_unavailable` (retry it) and runs nothing; a blocked handover admits machine ops again. A wait without `last_seq` answers the newest retained page; `lastSeq` and `totalBytes` are byte offsets; a `last_seq` older than the retained output (1 MiB per handle) fails `replay_gap`, and an unknown handle `unknown_handle`. The engine's mesh inbox is `<agentDir>/machine/inbox/<topic>.jsonl`.
+
+```json
+{ "id": "r1", "type": "machine_op_result", "op_id": "op-7", "sender": "device-a" }
+{ "id": "r1", "type": "response", "command": "machine_op_result", "success": true, "data": { "known": true, "outcome": { "state": "applied", "response": { "path": "/home/me/notes.txt", "writtenBytes": 2 } } } }
+{ "id": "o1", "type": "machine_op_owner", "handle_id": "bash_3f2a_1" }
+{ "id": "o1", "type": "response", "command": "machine_op_owner", "success": true, "data": { "sender": "device-a" } }
+{ "id": "h1", "type": "machine_op_health" }
+{ "id": "h1", "type": "response", "command": "machine_op_health", "success": true, "data": { "ok": true, "terminals": 1, "cache": 12, "version": "2026.11.15-2" } }
+```
+
+`machine_op_cancel { op_id, sender }` aborts that op if it is running (it then answers `state: "cancelled"`, code `aborted`) and answers `{ cancelled: true }`; an op that is not running answers `{ cancelled: false }`. `machine_op_result` and `machine_op_cancel` for another sender's op are refused `machine_op_conflict` unless `cross_owner: true`. A `machine_op` whose engine state cannot be prepared (its `<agentDir>/machine` directory) is refused `machine_op_unavailable` on that line, nothing is cached, and the next op tries again. `machine_op_result` answers `{ known: false }` for an op_id it does not hold or whose op is still running (send the `machine_op` again to join it). `machine_op_owner` answers `{}` for an unknown handle. `machine_op_health` is read-only: running terminals, cached answers and the engine version.
+
 ### Host self-observation (event-loop stalls and memory pressure)
 
 Every in-process session shares the host's event loop, so a session that blocks it freezes every other session and the
@@ -4012,7 +4046,7 @@ names a valid preset.
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_hands` | `sessionId?` | `{ hands: [{ device, label, platform, reachable }], selected? }` | Headless engine with a hand directory only (capability `hand_selection`; otherwise `hand_selection_unsupported`). See "Hand selection (headless engine)". |
 | `select_hand` | `sessionId`, `device: string \| null` | `{ sessionId, selected }` | Records which hand runs the session's tools (`null` = this process). Refusals: `hand_not_listed`, `hand_unreachable` (`errorData.device`), `session_busy`, `hand_selection_unsupported`, `unknown_session`, `session_closing`. Method class `device_admin`. |
-| `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context? }] }` | Includes `opening`/`closing` entries. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
+| `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context?, archived, activity, model? }] }` | Includes `opening`/`closing` entries. `archived` is the session file's archived flag (see `set_session_archived`); a thread list hides archived rows by default, and the host lists them like any other row. `activity` is `running` while a turn is in flight (the same streaming state `session_status` reports as `running`) and `idle` otherwise, including an opening row. `model` is the session's current `{ provider, id }`, the same value `session_status.model` carries, and is absent while it is unknown. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
 | `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
 | `move_session` | `op` and its fields (see "Moving a session to another device (`move_session`)") | per `op` | Drives one step of a session move between hosts. Capability `move_session`. |
@@ -4023,7 +4057,7 @@ names a valid preset.
 
 ### The folder an open_session works in
 
-`open_session.cwd` is the folder the session works in: its tools run there and its project files are read from there. An open that names one works in it. An open that names none and a `sessionPath` at which a session file exists works in the folder that file's header names, as `--session` does; the host maps a folder the desktop moved to where it lives now. A header folder that is not on this host refuses the open with `open_failed` (`Stored session working directory does not exist: <folder>`): the session is never opened in the host's own folder instead. Name a `cwd` to open it somewhere else. Any other open without `cwd` (no `sessionPath`, a `sessionPath` no file is at yet, or a file whose header names no folder) works in the folder the host was started in. An open that attaches to a session this host already holds leaves its folder as it is.
+`open_session.cwd` is the folder the session works in: its tools run there and its project files are read from there. An open that names one works in it. An open that names none and a `sessionPath` at which a session file exists works in the folder that file's header names, as `--session` does; the host maps a folder the desktop moved to where it lives now. A header folder that is not on this host refuses the open with `open_failed` (`Stored session working directory does not exist: <folder>`): the session is never opened in the host's own folder instead. A folder that exists but is not a directory (a file, a socket), named or taken from a header, refuses the open with `session_cwd_not_directory` (`errorData { cwd }`) before any session is opened or created. Name a `cwd` to open it somewhere else. Any other open without `cwd` (no `sessionPath`, a `sessionPath` no file is at yet, or a file whose header names no folder) works in the folder the host was started in. An open that attaches to a session this host already holds leaves its folder as it is.
 
 An open that names no folder never falls back to the host's own for a session file it could not read: a file that exists but cannot be read, and a moved-path probe whose step timed out, refuse the open (`open_failed`) instead. A `cwd` of `null` means no folder was named, as the host's launch profile already reads it.
 
@@ -4231,6 +4265,7 @@ codes or code prefixes in `error`:
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
 - `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
 - `invalid_path` (relative `sessionPath`/`cwd`)
+- `session_cwd_not_directory` (`open_session` whose `cwd`, named or taken from a session file's header, exists but is not a directory; `errorData { cwd }`; nothing is opened or created)
 - `open_failed: <detail>`. `open_failed: model_unavailable: <reason>` means the open named a model (`provider`/`modelId`) that could not be resolved, for example an unknown provider; the session is not opened, rather than running on the default model. The in-process runtime adds `errorData { reason: "model_unavailable", requestedModel }`; a worker runtime relays the same error text, so match on the prefix
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_subscription: <reason>` (`subscribe_sessions` with a malformed `sessions`, `mirror` or flag; `errorData { reason, action }`)
@@ -4674,6 +4709,20 @@ answers after the turn settled.
 
 ```json
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
+```
+
+With `"background": "stop"` the command also stops the background jobs the interrupted turn started: each bash
+session that turn ran with `run_in_background`, or that auto-detached from the foreground, while that turn was running.
+Sessions an earlier turn started keep running. The stop happens after the turn settled, and the answer then carries
+`background: { stopped, failed }`: `stopped` names each job as `{ kind: "bash", id, description? }`, and `failed`
+names a job it could not stop with its `reason` (a session on the tool child under `--tool-runtime child`, or one
+still running after TERM then KILL). An idle session, or a `turnId` naming another turn, answers both lists empty.
+A stopped session's exit notice does not start a turn: the model reads `Background terminal session <id> was stopped
+when turn <turnId> was interrupted` at its next turn. Without the field nothing but the turn stops, as before.
+
+```json
+{"type": "interrupt", "turnId": "3", "background": "stop"}
+{"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3", "background": {"stopped": [{"kind": "bash", "id": "bash_1", "description": "sleep 60"}], "failed": []}}}
 ```
 
 With `"intent": "stop"` (on `abort` or `interrupt`) the command is a user Stop: the session is paused before the
@@ -6027,6 +6076,27 @@ Response:
 
 The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `senpi --mode rpc` process.
 
+#### set_session_archived
+
+Archive or unarchive the session (method class `drive`). The flag is written into the session file as a `custom` entry (`customType: "session_archived"`, `data: { archived, sessionId }`), so every surface that reads the file (the desktop app, the CLI, the terminal, a relay listing on another device) sees the same value; the newest such entry wins and a session without one is not archived. Archiving changes nothing else: the session stays open, listed and drivable.
+
+An entry counts only for the session id it names. A fork or clone (`fork`, `clone`, `move_session` `op: "copy"`, `senpi --fork`) is a new thread under a new id: it copies the source's entries but starts unarchived, while the source keeps its flag. Reopening or moving a session keeps its id, so it keeps its flag. Reading the flag never loads the session's history: the host keeps it current as entries are appended, so listing an idle compacted session leaves its trimmed history on disk.
+
+```json
+{"type": "set_session_archived", "sessionId": "rpc-1", "archived": true}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "set_session_archived",
+  "success": true
+}
+```
+
+Every attached connection then receives `session_archived_changed { archived }`, and every matching `subscribe_sessions` subscriber, attached or not, receives a `session_status` with `archived` set and `lastChange.cause: "archive"`. `list_sessions` reports the flag on each row as `archived`. Like every custom entry, the flag reaches the file with the session's next persisted write: a session that has never had a message stays unsaved, so its flag lasts only as long as the session is open.
+
 #### record_user_activity
 
 Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`. It requires the connection to be attached to the session, as every session command does (see Attachment admission).
@@ -6378,10 +6448,10 @@ Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowe
 other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
 
-
 #### The folder a project write is for
 
-`set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`: the folder the
+`set_project_trust`, `set_project_setting`, `write_project_file`, `set_project_mcp_servers` and
+`write_project_skill_file` take an optional `expectedCwd`: the folder the
 caller means. A client that reaches a session by a key that can since name another session (a remote desktop, through
 a relay) states it, so the write lands only in that folder's project. When it is given and the session's working
 directory is another folder, the write is refused with `project_cwd_mismatch` and nothing is written or applied. Both
@@ -6411,6 +6481,88 @@ version cannot be checked without reading it), `project_file_conflict` when
 and retry), and `project_file_write_failed` when the write fails (permissions, disk).
 
 Both are `device_admin`: they read and write a file in the session's folder.
+
+#### get_project_mcp_servers
+
+Reads the session folder's project MCP file (`.omo/mcp.json`) as stored.
+Reading runs nothing, so it works while the project is untrusted.
+
+```json
+{"type": "get_project_mcp_servers"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "get_project_mcp_servers",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "path": ".omo/mcp.json",
+    "exists": true,
+    "mcpServers": { "docs": { "command": "docs-mcp" } },
+    "parseError": null,
+    "etag": "sha256-…",
+    "projectTrusted": true
+  }
+}
+```
+
+`mcpServers` holds the entries as stored (placeholders unexpanded); it is `null` when the file is missing or does
+not parse. `parseError` says why a stored file does not parse (not JSON, not a JSON object, or `mcpServers` not an
+object). Errors: `project_file_not_allowed` when the config folder or the file is a symlink or not a regular
+file and folder, and `project_file_too_large` for a stored file over 512 KiB.
+
+#### set_project_mcp_servers
+
+Edits the servers of the project MCP file in one write, naming the version it replaces.
+
+```json
+{"type": "set_project_mcp_servers", "patch": {"old": null, "new": {"command": "docs-mcp"}}, "ifEtag": "sha256-…"}
+```
+
+The merge is one level deep: each `patch` entry replaces the server of that name, `null` removes it, and every other
+server and top-level key stays as stored, so a rename is one atomic write. The merged file is checked with the
+engine's own MCP config loader before anything is written. The write needs the folder to be trusted at the moment it
+commits and gets the same permission decision a `write` of that file gets in the session (rules, preset, saved
+answers, or a prompt). In an RPC session that prompt goes to the session's client, as it does for the session's own
+`write` tool, so the client that sent the write answers it. The response carries the same `data` as
+`get_project_mcp_servers`, read after the write.
+Errors: `invalid_argument` when `patch` is not an object, `ifEtag` is neither a string nor `null`, or `expectedCwd`
+is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
+`project_not_trusted`, `project_file_conflict` (`errorData: { currentEtag, exists }`),
+`project_mcp_config_unparseable` (`errorData: { parseError }`; a file that does not parse is never written over),
+`project_mcp_config_invalid` when the loader rejects the merged file, `project_file_permission_denied`,
+`project_file_not_allowed`, `project_file_too_large`, and `project_file_write_failed`.
+
+#### read_project_skill_file
+
+Read the file of a skill the engine lists for the session, by skill name.
+
+```json
+{"type": "read_project_skill_file", "skill": "deploy"}
+```
+
+#### write_project_skill_file
+
+Replace the file of a skill the engine lists for the session, by skill name. `ifEtag` is the `etag` the last read
+answered.
+
+```json
+{"type": "write_project_skill_file", "skill": "deploy", "content": "---\nname: deploy\n…", "ifEtag": "sha256-…"}
+```
+
+For both, `data` is `{ cwd, skill, path, exists, content, etag, projectTrusted }`, with `path` relative to the session's folder.
+Only a listed skill whose file lies inside the session's folder is reachable; a skill that lives elsewhere (a global
+skill, also when the agent's directory lies inside the session's folder) or is reached through a folder link or a
+file link is refused. A write passes the same trust and permission
+gates as `set_project_mcp_servers` and answers the read after it. Errors: `project_skill_not_listed`
+(`errorData: { skill }`), `project_file_not_allowed`, `invalid_argument`, `project_cwd_mismatch` (a write whose
+`expectedCwd` names another folder), `project_not_trusted`,
+`project_file_conflict`, `project_file_permission_denied`, `project_file_too_large`, and
+`project_file_write_failed`.
+
+All four are `device_admin`: they read and write files in the session's folder.
 
 ### extension_request
 

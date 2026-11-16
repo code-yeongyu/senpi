@@ -94,7 +94,11 @@ const PROMPTING_SCHEMAS = {
 		graceMs: OptNum,
 		intent: Opt(literals("stop", "abort")),
 	}),
-	interrupt: session("interrupt", { turnId: OptId, intent: Opt(literals("stop", "abort")) }),
+	interrupt: session("interrupt", {
+		turnId: OptId,
+		intent: Opt(literals("stop", "abort")),
+		background: Opt(literals("stop")),
+	}),
 	hold_input: session("hold_input", {
 		inputId: Id,
 		revision: Num,
@@ -216,6 +220,7 @@ const BASH_AND_TREE_SCHEMAS = {
 	get_tree: session("get_tree", {}),
 	get_last_assistant_text: session("get_last_assistant_text", {}),
 	set_session_name: session("set_session_name", { name: Str }),
+	set_session_archived: session("set_session_archived", { archived: Bool }),
 	record_user_activity: session("record_user_activity", { kind: Type.Literal("draft") }),
 	import_jsonl: session("import_jsonl", { inputPath: PathStr, cwdOverride: OptPath }),
 	get_messages: session("get_messages", {}),
@@ -235,6 +240,19 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	read_project_file: session("read_project_file", { path: PathStr }),
 	write_project_file: session("write_project_file", {
 		path: PathStr,
+		content: Str,
+		ifEtag: Type.Union([Id, Type.Null()]),
+		expectedCwd: OptStr,
+	}),
+	get_project_mcp_servers: session("get_project_mcp_servers", {}),
+	set_project_mcp_servers: session("set_project_mcp_servers", {
+		patch: Type.Unknown(),
+		ifEtag: Type.Union([Id, Type.Null()]),
+		expectedCwd: OptStr,
+	}),
+	read_project_skill_file: session("read_project_skill_file", { skill: Id }),
+	write_project_skill_file: session("write_project_skill_file", {
+		skill: Id,
 		content: Str,
 		ifEtag: Type.Union([Id, Type.Null()]),
 		expectedCwd: OptStr,

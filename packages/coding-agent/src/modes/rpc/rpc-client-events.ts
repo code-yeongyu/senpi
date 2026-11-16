@@ -8,6 +8,7 @@ import type {
 	RpcExtensionUIRequest,
 	RpcOpenQueuedEvent,
 	RpcSecretInputSettledEvent,
+	RpcSessionArchivedChangedEvent,
 	RpcSessionParkedEvent,
 	RpcSessionReleasedEvent,
 	RpcSessionReplacedEvent,
@@ -34,6 +35,8 @@ export type RpcClientEvent =
 	| RpcSessionParkedEvent
 	// A quiet takeover let this connection go (senpi#5732); the session runs on for its new holder.
 	| RpcSessionReleasedEvent
+	// `set_session_archived` (from any client) changed the session's archived flag.
+	| RpcSessionArchivedChangedEvent
 	// The host accepted an open_session and says where it is queued; the client also uses it to
 	// switch that open to its post-acknowledgement deadline (senpi#2209).
 	| RpcOpenQueuedEvent

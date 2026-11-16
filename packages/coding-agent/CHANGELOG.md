@@ -12,6 +12,89 @@
 
 ### Removed
 
+## [2026.11.15-4] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+- RPC: `get_project_mcp_servers` / `set_project_mcp_servers` and `read_project_skill_file` / `write_project_skill_file` let a client read and edit the session folder's project MCP servers and the files of the skills the engine lists there, with an etag precondition, trust checked on every write, the machine's own edit permission decision, and loader validation of the MCP file before it is written, so a remote client edits them the same way a local one does (fixes #6485)
+- The multi-session RPC host runs the local relay host's device operations: `machine_op` (files, shell, terminals, process info, mesh messages) with `machine_op_result`, `machine_op_owner`, `machine_op_health` and `machine_op_cancel`, on launch-proven non-delegated connections, advertised as `machine_op_v1` ([#6755](https://github.com/code-yeongyu/senpi/pull/6755))
+
+### Changed
+
+### Fixed
+
+- A compaction whose summary request failed on a transient provider error (for example `api_error: Network error or service unavailable`) no longer leaves an automated session refusing every later send with "Context remains above the compaction threshold"; the next send retries compaction (senpi#6760, PR #6764).
+- A manual compaction rejected by a transient provider error now says "Retry compaction." instead of promising that the next prompt retries (senpi#6772).
+- An engine that `senpi host ensure` starts keeps the private descriptors its launch table names. The bundled CLI no longer closes them as startup fillers, so an extension that claims such a channel at boot (a desktop memory-sync socket, for example) receives it ([#6776](https://github.com/code-yeongyu/senpi/pull/6776))
+
+### Removed
+
+## [2026.11.15-3] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+- RPC `interrupt` takes `background: "stop"`: the background bash sessions the interrupted turn started are stopped after it, named in the answer as `background: { stopped, failed }`, and their exit no longer wakes the session.
+- `@code-yeongyu/senpi/tools-core`: worker-safe cores of the built-in bash, read, write and edit tools with the local tools' exact names, schemas, descriptions and output shaping, running every effect through an injected `ToolMachine` ([#6740](https://github.com/code-yeongyu/senpi/pull/6740))
+
+### Changed
+
+### Fixed
+
+- `registerDeviceMachine`: a device machine registered by another extension while a load's own registration is staged now fails that load with `DeviceMachineConflictError` instead of being overwritten at commit (senpi#6728).
+- When every signed-in Claude account was blocked, the session retried the local refusal five times within about a minute and then gave up, even when one account would be free again a minute later. It now waits for the soonest account when that is near, and stops at once, naming the wait, when it is far off ([#6729](https://github.com/code-yeongyu/senpi/pull/6729)).
+- When normal account selection would refuse the pool, a person-started turn re-checks each Claude account with a stale rate-limit block at most once if no newer usage is available. Healthy accounts serve without probing stale-blocked siblings. Claude Code still owns token refresh; automated turns trust the stored reset, and spent accounts receive a fresh block (senpi#6727, PR #6730).
+
+### Removed
+
+## [2026.11.15-2] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+- `OMO_TOOLS_VIA_DAEMON=bash` (off by default): an executor seam that runs the bash tool on the session's device, with a typed `DeviceUnavailableError` instead of a local run when no device is available. Covers the bash tool only; user `!` commands still run locally until slice 1b. Slice 1a only: not yet via the device daemon; the relay transport is slice 1b (senpi#6713).
+- `registerDeviceMachine(machine)` extension API: supplies the device the bash tool runs on under `OMO_TOOLS_VIA_DAEMON=bash`; one per session, a second registration is a typed `DeviceMachineConflictError` (senpi#6720).
+
+### Changed
+
+- An Opus 5.5 turn that falls back now steps to Fable 5.2 at medium effort, then Kimi K3.1 Pro at max effort (Kimi Code or Moonshot), and no further; Opus 5 is no longer an Opus 5.5 rung. A fallback keeps walking the chain it started on instead of switching to the rung's own chain ([#6701](https://github.com/code-yeongyu/senpi/pull/6701)).
+
+### Fixed
+
+- A session released with `release_session` (for a move to another device, or a takeover) kept its entry in the host's record of retained sessions, so the next host on the same endpoint reopened it unattended and wrote a hold into a file another runtime was writing. The release now drops the entry, as `close_session` does ([#6449](https://github.com/code-yeongyu/senpi/pull/6449)).
+- A renamed session now publishes a `session_status` with `lastChange.cause: "rename"` and its new name, so other devices list it under that name instead of an empty one ([#6672](https://github.com/code-yeongyu/senpi/pull/6672))
+- Cancelling a tool call that another tool started now also ends that call's unanswered permission prompt, instead of only a whole-turn abort ending it ([#6679](https://github.com/code-yeongyu/senpi/pull/6679))
+- Aborting the turn now also ends a nested call's permission prompt when that call passed its own, unlinked abort signal ([#6679](https://github.com/code-yeongyu/senpi/pull/6679))
+- `open_session` with a `cwd` that is a file (or anything else that is not a directory) is refused `session_cwd_not_directory` instead of opening a session there ([#6686](https://github.com/code-yeongyu/senpi/pull/6686))
+
+### Removed
+
+## [2026.11.15] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+- RPC project writes (`set_project_trust`, `set_project_setting`, `write_project_file`) accept an optional `expectedCwd`; when the session's working directory is another folder the write is refused with `project_cwd_mismatch` and nothing is written ([#6659](https://github.com/code-yeongyu/senpi/pull/6659))
+
+### Changed
+
+### Fixed
+
+- A Claude subscription account that is out for billing or organization access no longer lets its usage reading release the session's usage-limit hold ([#6536](https://github.com/code-yeongyu/senpi/issues/6536))
+- Standalone binary installs no longer announce an update that is published on npm but not yet available as a GitHub Release; they read the latest GitHub Release instead, and `update --self` on a binary points at the download page when that lookup fails ([#6634](https://github.com/code-yeongyu/senpi/pull/6634))
+- ChatGPT subscription (Sign in with ChatGPT): an account without Responses API access is no longer parked as `auth_error`; the turn fails with a message that says signing in again will not help and what to check instead ([#6643](https://github.com/code-yeongyu/senpi/issues/6643))
+- Models that take mid-session effort updates (GPT-6.1 Sol, GPT-6 Astra) now run a retry-fallback rung at the rung's own thinking level instead of the level of an earlier update ([#6655](https://github.com/code-yeongyu/senpi/issues/6655))
+- ChatGPT subscription (Sign in with ChatGPT): a missing-scope refusal that lists other scopes before `api.responses.write` now gets the same guidance and leaves the account healthy ([#6643](https://github.com/code-yeongyu/senpi/issues/6643))
+- Claude subscription (anthropic-subscription): tool output is always sent to Claude Code marked as tool output, so it can never be read as a Claude Code slash command ([#6667](https://github.com/code-yeongyu/senpi/issues/6667))
+- A permission prompt that nobody answers no longer keeps a turn or a sub-agent waiting forever: aborting the turn now ends the prompt and refuses the call ([#6670](https://github.com/code-yeongyu/senpi/issues/6670))
+
+### Removed
+
 ## [2026.11.13] - 2026-11-13
 
 ### Breaking Changes

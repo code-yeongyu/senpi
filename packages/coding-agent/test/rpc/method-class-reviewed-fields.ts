@@ -92,7 +92,7 @@ export const REVIEWED_FIELDS = {
 	abort: {
 		fields: ["admissionId", "awaitIdle", "clearQueue", "effectId", "graceMs", "id", "intent", "sessionId", "type"],
 	},
-	interrupt: { fields: ["admissionId", "id", "intent", "sessionId", "turnId", "type"] },
+	interrupt: { fields: ["admissionId", "background", "id", "intent", "sessionId", "turnId", "type"] },
 	abort_retry: { fields: ["admissionId", "id", "sessionId", "type"] },
 	abort_compaction: { fields: ["admissionId", "id", "sessionId", "type"] },
 	abort_branch_summary: { fields: ["admissionId", "id", "sessionId", "type"] },
@@ -139,6 +139,7 @@ export const REVIEWED_FIELDS = {
 	},
 	set_label: { fields: ["admissionId", "entryId", "id", "label", "sessionId", "type"] },
 	set_session_name: { fields: ["admissionId", "id", "name", "sessionId", "type"] },
+	set_session_archived: { fields: ["admissionId", "archived", "id", "sessionId", "type"] },
 	set_thinking_level: { version: 1, fields: ["admissionId", "effectId", "id", "level", "scope", "sessionId", "type"] },
 	set_model: {
 		version: 1,

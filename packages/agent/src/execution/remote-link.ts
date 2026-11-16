@@ -19,7 +19,8 @@ export type HandReply =
 	| { readonly kind: "refused"; readonly reason: string }
 	| { readonly kind: "aborted"; readonly sent: boolean }
 	| { readonly kind: "unreachable"; readonly reason: string }
-	| { readonly kind: "closed" }
+	/** The link closed before the call settled; `sent`: its invoke had been handed to the transport, so it may have run. */
+	| { readonly kind: "closed"; readonly sent: boolean }
 	/** The session's epoch never opened the lane (S35): a newer owner holds it, or the hand refused this sender. */
 	| { readonly kind: "epoch_refused"; readonly reason: string };
 
@@ -175,7 +176,8 @@ export function createHandLink(
 			});
 		},
 		close() {
-			for (const executionId of [...pending.keys()]) settle(executionId, { kind: "closed" });
+			for (const executionId of [...pending.keys()])
+				settle(executionId, { kind: "closed", sent: sent.has(executionId) });
 			transport.close();
 		},
 	};
