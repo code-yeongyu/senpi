@@ -6367,7 +6367,8 @@ does), `do_not_trust`, or `no_inherit`. The response carries the same `data` as 
 `no_inherit` is for clients, not people, and `get_project_trust` never lists it: it saves an explicit `null` for the
 folder in `trust.json`, an entry that holds no decision. The folder then inherits no decision from a folder above it or,
 for a linked git worktree, from its main checkout, so it is decided as if nothing were saved: a Full access session
-trusts it, and a session that may ask asks. `saved` reads `null` afterwards. It never adds trust to the session it is
+trusts it, and a session that may ask asks; an answer the host process kept for the folder without saving it
+does not apply either. `saved` reads `null` afterwards. It never adds trust to the session it is
 sent in: a trust that came only from Full access stays, any other trust goes, unless a `project_trust` handler decides
 the folder is trusted (that handler is not overruled, so it never refuses `no_inherit`). An engine older than this
 answers `invalid_argument`, and reads such an entry as no entry at all, so the folder inherits there as before.

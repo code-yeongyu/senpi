@@ -249,14 +249,29 @@ export class ProjectTrustStore {
 }
 
 /**
- * The saved trust decision for `cwd`: the store's own (the folder or the nearest folder above it),
- * and only when it has no entry and `cwd` is inside a linked git worktree, the main checkout's decision
- * for the matching folder. An entry saved for the worktree or above it always wins, including the
- * explicit no-decision entry `no_inherit` saves, which leaves the folder undecided.
+ * What is saved for a folder: a decision, `"no_inherit"` for the explicit no-decision entry
+ * (`set_project_trust`'s `no_inherit`), or `null` when nothing is saved. The two undecided values stay
+ * apart because only `null` may be filled in by an answer the process kept without saving it.
  */
-export async function getSavedProjectTrust(store: ProjectTrustStore, cwd: string): Promise<ProjectTrustDecision> {
+export type SavedProjectTrust = boolean | "no_inherit" | null;
+
+/**
+ * What is saved for `cwd`: the store's own entry (the folder or the nearest folder above it), and only
+ * when it has none and `cwd` is inside a linked git worktree, the main checkout's entry for the
+ * matching folder. An entry saved for the worktree or above it always wins, including the explicit
+ * no-decision entry, which leaves the folder undecided.
+ */
+export async function getSavedProjectTrustState(store: ProjectTrustStore, cwd: string): Promise<SavedProjectTrust> {
 	const own = store.getNearestEntry(cwd);
-	if (own !== null) return own.decision;
+	if (own !== null) return own.decision ?? "no_inherit";
 	const mainCheckoutDir = await linkedWorktreeMainCheckoutDir(cwd);
-	return mainCheckoutDir === undefined ? null : store.get(mainCheckoutDir);
+	if (mainCheckoutDir === undefined) return null;
+	const main = store.getNearestEntry(mainCheckoutDir);
+	return main === null ? null : (main.decision ?? "no_inherit");
+}
+
+/** The saved decision for `cwd` (`getSavedProjectTrustState`), with both undecided values as `null`. */
+export async function getSavedProjectTrust(store: ProjectTrustStore, cwd: string): Promise<ProjectTrustDecision> {
+	const saved = await getSavedProjectTrustState(store, cwd);
+	return saved === "no_inherit" ? null : saved;
 }

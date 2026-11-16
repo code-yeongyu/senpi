@@ -113,7 +113,11 @@ import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { startOpenTimer } from "./core/open-timing.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
-import { getSavedProjectTrust, hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
+import {
+	getSavedProjectTrustState,
+	hasTrustRequiringProjectResources,
+	ProjectTrustStore,
+} from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { getFromSourceRealConfigWarning } from "./from-source-config-guard.ts";
 import { legacyPiEditStartupNotice } from "./legacy-pi-edits.ts";
@@ -931,10 +935,12 @@ export function createCliRuntimeFactory(
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
 		// The saved decision, including the one a linked git worktree inherits from its main checkout (senpi#4388).
-		const savedProjectTrust = await getSavedProjectTrust(trustStore, cwd);
+		const savedState = await getSavedProjectTrustState(trustStore, cwd);
+		const savedProjectTrust = savedState === "no_inherit" ? null : savedState;
 		// The memo stands in for an unsaved answer only: a decision saved since (an RPC `set_project_trust`, senpi#6176)
-		// is what a fresh process would read, so it outranks what an earlier session of this process resolved.
-		const cachedProjectTrust = savedProjectTrust === null ? projectTrustByCwd.get(cwd) : undefined;
+		// is what a fresh process would read, so it outranks what an earlier session of this process resolved. An
+		// explicit no-decision entry (`no_inherit`) is saved too, so the memo never stands in for it (#6823 review H1).
+		const cachedProjectTrust = savedState === null ? projectTrustByCwd.get(cwd) : undefined;
 		timer.mark("project_trust");
 		// A full-access session trusts its project without asking, for that session only: nothing is
 		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).

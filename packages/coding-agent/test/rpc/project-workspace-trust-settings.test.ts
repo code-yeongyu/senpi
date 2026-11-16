@@ -212,6 +212,29 @@ describe("senpi#6176: project trust over RPC", () => {
 		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
 	});
 
+	// #6823 review H1: the host process remembers an unsaved answer per folder; an explicit no_inherit entry is a saved
+	// choice, so that memory must never stand in for it.
+	it("opens a no_inherit folder undecided although this process earlier resolved it trusted without saving", async () => {
+		let grant = true;
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: grant ? "yes" : "undecided" }));
+				},
+			],
+		);
+		const first = await host.open();
+		expect(await host.commandNames(first)).toContain(SKILL_COMMAND);
+		grant = false;
+		expect(await host.send({ type: "set_project_trust", sessionId: first, choice: "no_inherit" })).toMatchObject({
+			success: true,
+			data: { saved: null },
+		});
+		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
+		expect(await host.commandNames(await host.open())).not.toContain(SKILL_COMMAND);
+	});
+
 	it("refuses an unknown choice and saves nothing", async () => {
 		const host = await startHost();
 		const sessionId = await host.open();
