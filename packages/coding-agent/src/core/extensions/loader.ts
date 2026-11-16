@@ -884,6 +884,11 @@ function createExtensionAPI(
 			runtime.setActiveTools(toolNames);
 		},
 
+		setStagedTools(names: readonly string[]): void {
+			assertActive();
+			runtime.setStagedTools?.(names);
+		},
+
 		getCommands() {
 			assertActive();
 			return runtime.getCommands();
