@@ -29,7 +29,7 @@ const ciCheckRuns = (ci) =>
 		},
 	]);
 
-for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, forceTests = false, platformRed = false } of [
+for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, forceTests = false, platformRed = false, ciBasisReceipt = false } of [
 	{ mergeStatus: 0, ci: "success" },
 	{ mergeStatus: 1, ci: "success" },
 	{ mergeStatus: 0, ci: "failure" },
@@ -40,9 +40,13 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 	{ mergeStatus: 0, ci: "success", catalogDirty: true, forceTests: true },
 	// senpi#6834: a red macOS/Windows leg on main stops even a release that runs its own suite.
 	{ mergeStatus: 0, ci: "success", forceTests: true, platformRed: true },
+	// senpi#6859: an accepted CI-basis receipt for the pinned commit waives the hosted CI wait, so even a red run is not read.
+	{ mergeStatus: 0, ci: "failure", ciBasisReceipt: true },
 ]) {
-	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""}${platformRed ? " and a red main platform run" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
+	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""}${platformRed ? " and a red main platform run" : ""}${ciBasisReceipt ? " and a CI-basis receipt" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
+		// A pinned --sha must be 40 hex; every other case keeps the readable fixture name.
+		const head = ciBasisReceipt ? "f".repeat(40) : "fixture-sha";
 		try {
 			// The forced suite resolves the root "workspaces" and shards coding-agent's own `test` script (senpi#6139).
 			writeFileSync(join(root, "package.json"), JSON.stringify({ workspaces: ["packages/*"] }));
@@ -79,9 +83,11 @@ if (${JSON.stringify(name)} === "git") {
 	if (args[0] === "show" && args[1] === "HEAD:${MANIFEST}") process.stdout.write(${JSON.stringify(manifestText("2026-10-01T00:00:00.000Z"))});
 	if (args[0] === "checkout" && args[2] === "${MANIFEST}") writeFileSync("RESTORED", "");
 	if (args[0] === "rev-parse" && args[1] === "origin/main") { process.stdout.write("fixture-main\\n"); process.exit(0); }
-	if (args[0] === "rev-parse") process.stdout.write("fixture-sha\\n");
+	if (args[0] === "rev-parse") process.stdout.write("${head}\\n");
+	// A pinned release's commit is one of main's own first-parent commits (release-pin.mjs).
+	if (args[0] === "rev-list") process.stdout.write("${head}\\n");
 	// The fixture's HEAD is a main commit: preflight's reachability check from origin/main passes (senpi#6645).
-	if (args[0] === "merge-base" && args[2] === "fixture-sha" && args[3] === "origin/main") process.exit(0);
+	if (args[0] === "merge-base" && args[2] === "${head}" && args[3] === "origin/main") process.exit(0);
 	if (args[0] === "merge-base") process.exit(1);
 	if (args[0] === "merge") process.exit(${mergeStatus});
 }
@@ -115,7 +121,7 @@ if (${JSON.stringify(name)} === "gh") {
 					chmodSync(join(bin, name), 0o755);
 				}
 			}
-			const result = spawnSync(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3", ...(forceTests ? ["--force-tests"] : [])], {
+			const result = spawnSync(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3", ...(forceTests ? ["--force-tests"] : []), ...(ciBasisReceipt ? ["--sha", head, "--ci-basis-receipt", "rcpt-1"] : [])], {
 				cwd: root,
 				// Without npm_* (set when this runs under `npm run`), run-workspaces resolves the stubbed npm from PATH.
 				env: {
@@ -176,6 +182,13 @@ if (${JSON.stringify(name)} === "gh") {
 				assert.ok(shards.every((shard) => shard > test && shard < releaseCommit), JSON.stringify(commands));
 				assert.equal(readFileSync(join(root, "TEST_SAW_CHANGELOG"), "utf8"), "unstamped");
 				assert.equal(commands.some((args) => args[0] === "gh" && String(args[2]).includes("check-runs")), false, "a forced release does not wait for CI");
+				return;
+			}
+			if (ciBasisReceipt) {
+				assert.equal(result.status, 0, result.stderr);
+				assert.match(result.stdout, new RegExp(`hosted CI wait waived by ci_basis_receipt rcpt-1 for the pinned commit ${head}`));
+				assert.equal(commands.some((args) => args[0] === "gh" && String(args[2]).includes("check-runs")), false, "the waived release never reads CI");
+				assert.equal(commands.some(isForcedSuiteStep), false);
 				return;
 			}
 			if (ci === "superseded") {
