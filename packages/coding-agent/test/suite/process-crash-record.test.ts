@@ -15,6 +15,7 @@ import {
 	crashingRuntimeVersions,
 	installProcessLifetimeMarker,
 	processCrashPaths,
+	processHasSupervisor,
 	readProcessCrashRecords,
 	recordProcessLifetime,
 	sweepDeadProcessMarkers,
@@ -131,5 +132,28 @@ describe("process crash records", () => {
 
 		expect(readProcessCrashRecords(dir)).toHaveLength(1);
 		expect(readdirSync(processCrashPaths(dir).liveDir)).toEqual([]);
+	});
+
+	// oh-my-openagent#10334: a print child its parent deadline-kills must not read as a crash.
+	it("treats rpc and an explicitly supervised process as supervised, every other mode as not", () => {
+		expect(processHasSupervisor("rpc", false)).toBe(true);
+		expect(processHasSupervisor("print", true)).toBe(true);
+		expect(processHasSupervisor("json", true)).toBe(true);
+		expect(processHasSupervisor("print", false)).toBe(false);
+		expect(processHasSupervisor("interactive", false)).toBe(false);
+	});
+
+	it("leaves no marker behind when an explicitly supervised print child is killed", () => {
+		const dir = agentDir();
+
+		// The parent's SIGKILL runs no exit handler, so the disposer is never called.
+		recordProcessLifetime(dir, "print", {
+			supervised: processHasSupervisor("print", true),
+			pid: DEAD_PID,
+			isAlive: onlyLive,
+		});
+
+		expect(sweepDeadProcessMarkers(dir, { pid: SWEEPER_PID, isAlive: onlyLive })).toBe(0);
+		expect(readProcessCrashRecords(dir)).toEqual([]);
 	});
 });
