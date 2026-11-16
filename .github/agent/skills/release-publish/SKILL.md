@@ -47,6 +47,17 @@ The `publish-npm` job dispatches `publish-npm.yml` in publish-only mode, prints 
 
 Never consider the release done before `publish-npm` and `publish-github-release` complete and the GitHub Release is non-draft. If the publish job fails, recover with `gh workflow run publish-npm.yml -f version=<v> -f publish-only=true`, never by rerunning `release.mjs`.
 
+## Boat runners (senpi#6850)
+
+Off by default. Every job runs on GitHub-hosted runners unless the repository variable `RELEASE_BOAT_ENABLED` is `true` AND a `workflow_dispatch` of `publish-npm.yml` or `build-binaries.yml` passes a non-empty `boat_run_label`. A tag push, a pull request, a push to main and an empty label always keep today's runners.
+
+- What moves: `publish-npm.yml`'s forced-suite jobs (`prepare`, `forced-rest`, the `forced-shard` matrix), `build-binaries.yml`'s `build`, and `native-prebuilds.yml`'s two Linux build rows (only when a target misses the prebuild cache; `publish-npm.yml` forwards its label). They run on `[self-hosted, boat-large, <boat_run_label>]`.
+- What never moves: the `release` job (it holds the push token, and npm trusted publishing with provenance supports only cloud-hosted runners), `require-version`, every GitHub Release job, the npm dispatch, the binary smoke, and every macOS/Windows leg.
+- Runners: the dispatcher, a tool outside this repository, starts one ephemeral just-in-time self-hosted runner per Boat job in a Boat sandbox, each labelled `self-hosted`, `boat-large` and a label unique to the run, and only then dispatches the workflow with that label. A forced cut needs 2 + the shard count (8) runners. A build-binaries dispatch needs 1. A publish-only run needs 1 per Linux target that misses the cache (0 to 2). No runner registration credential lives in this repository.
+- Fallback: each Boat dispatch also starts `boat-watchdog`, a GitHub-hosted job with only `actions: write`. When a Boat job sits queued for 10 minutes because no runner picked it up, the watchdog does three things through `scripts/boat-watchdog.mjs`. It dispatches the same workflow again with the same inputs and an empty `boat_run_label`; an empty `sha` is pinned to the run's commit on main. It then cancels the run, and the hosted run starts once the cancelled one leaves the `concurrency` group. If the watchdog itself cannot run, do the same by hand: cancel the run, then dispatch it again with `boat_run_label=` (empty), or set `RELEASE_BOAT_ENABLED` to `false`.
+- A test failure on Boat is not a reason to fall back. Rerun the failing shard on hosted runners to tell an environment failure from a real one first.
+- Keep the repository setting that requires approval before workflows from outside contributors run: a self-hosted runner waiting for its job must not be reachable from a fork's workflow.
+
 ## Gate disambiguation
 
 These are separate controls and must not be conflated:

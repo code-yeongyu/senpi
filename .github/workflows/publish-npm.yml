@@ -28,6 +28,14 @@ name: Release
         required: false
         type: boolean
         default: false
+      # senpi#6850: a label of the ephemeral self-hosted runners an external dispatcher started in Boat sandboxes for this run.
+      # Empty (the default) or the repository variable RELEASE_BOAT_ENABLED not 'true' keeps every job on GitHub-hosted
+      # runners. See .github/agent/skills/release-publish/SKILL.md ("Boat runners").
+      boat_run_label:
+        description: 'Boat runs only: the per-run label of the self-hosted Boat runners started for this run (requires RELEASE_BOAT_ENABLED). Empty = GitHub-hosted runners.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   actions: read
@@ -64,6 +72,7 @@ jobs:
     with:
       # The native addons ship in the same npm tarball, so they are built from the same tagged commit as the JS.
       ref: refs/tags/v${{ inputs.version }}
+      boat_run_label: ${{ inputs.boat_run_label }}
 
   release:
     needs: [native-prebuilds, prepare, forced-rest, forced-shard]
@@ -343,15 +352,49 @@ jobs:
             echo "| Commit | $commit |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # senpi#6850 hosted fallback: while this run's Boat jobs wait for their self-hosted runners, this GitHub-hosted job checks
+  # them every 30 s. When one has sat queued for 10 minutes (no runner picked it), it dispatches publish-npm.yml again with the
+  # same inputs and an empty boat_run_label (so every job runs on GitHub-hosted runners), then cancels this run. It stops
+  # once `release` has started. It has no secrets and only actions: write.
+  boat-watchdog:
+    if: ${{ (vars.RELEASE_BOAT_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.boat_run_label != '') && (inputs.force_tests == true || inputs.publish-only == true) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+
+      - name: Fall back to GitHub-hosted runners when no Boat runner picks a job
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          BOAT_RUN_LABEL: ${{ inputs.boat_run_label }}
+          DONE_JOB: release
+          WORKFLOW_FILE: publish-npm.yml
+          DISPATCH_REF: ${{ github.ref_name }}
+          DISPATCH_INPUTS: ${{ toJSON(inputs) }}
+          PIN_SHA: ${{ inputs.sha || (github.ref == 'refs/heads/main' && github.sha || '') }}
+        run: node scripts/boat-watchdog.mjs
+
   # force_tests (senpi#6642): the suite runs as matrix jobs of this run, each on its own runner, instead of inside the
   # release job (a forced cut spent 74.6 of 89.6 min there in one job). prepare regenerates the catalog once and fixes the
   # version; forced-shard runs coding-agent shards 1..N (FORCED_SHARD_JOBS in scripts/release-forced-test-suite.mjs)
   # and forced-rest every other workspace, all on prepare's tested_sha. A release-only catalog commit never reaches the
-  # remote before the tag, so it travels as a git bundle artifact. None of these jobs can write or publish.
+  # remote before the tag, so it travels as a git bundle artifact. None of these jobs can write or publish, so they (and only
+  # they, plus native-prebuilds' Linux build rows) may run on Boat self-hosted runners (senpi#6850, boat_run_label).
   prepare:
     name: Forced suite (prepare)
     if: ${{ inputs.force_tests == true && inputs.publish-only != true }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.RELEASE_BOAT_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.boat_run_label != '') && fromJSON(format('["self-hosted","boat-large",{0}]', toJSON(inputs.boat_run_label))) || 'ubuntu-latest' }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -428,7 +471,7 @@ jobs:
   forced-rest:
     name: Forced suite (rest)
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.RELEASE_BOAT_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.boat_run_label != '') && fromJSON(format('["self-hosted","boat-large",{0}]', toJSON(inputs.boat_run_label))) || 'ubuntu-latest' }}
     timeout-minutes: 40
     permissions:
       contents: read
@@ -530,7 +573,7 @@ jobs:
   forced-shard:
     name: Forced suite (coding-agent ${{ matrix.shard }}/6)
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.RELEASE_BOAT_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.boat_run_label != '') && fromJSON(format('["self-hosted","boat-large",{0}]', toJSON(inputs.boat_run_label))) || 'ubuntu-latest' }}
     timeout-minutes: 40
     permissions:
       contents: read
