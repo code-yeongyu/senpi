@@ -368,6 +368,33 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		}
 	}
 
+	/**
+	 * `writeAuthFile` for an async writer: on Windows a rename over a file another process holds open
+	 * fails with EPERM, EACCES or EBUSY until that handle closes, so wait it out between attempts,
+	 * within the async lock budget (#6849 review L4). Other errors, and every error elsewhere, throw.
+	 */
+	private async writeAuthFileWhenFree(content: string, signal?: AbortSignal): Promise<void> {
+		const startedAt = Date.now();
+		for (let attempt = 0; ; attempt++) {
+			try {
+				this.writeAuthFile(content);
+				return;
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code;
+				const held = process.platform === "win32" && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+				const waitedMs = Date.now() - startedAt;
+				if (!held || waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) throw error;
+				signal?.throwIfAborted();
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
+				);
+				await new Promise((resolve) => setTimeout(resolve, delayMs));
+			}
+		}
+	}
+
 	async withLockAsync<T>(
 		fn: (current: string | undefined) => Promise<LockResult<T>>,
 		options?: AuthOperationOptions,
@@ -398,7 +425,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			throwIfCompromised();
 			options?.signal?.throwIfAborted();
 			if (next !== undefined) {
-				this.writeAuthFile(next);
+				await this.writeAuthFileWhenFree(next, options?.signal);
 			}
 			throwIfCompromised();
 			return result;
