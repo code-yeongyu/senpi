@@ -75,22 +75,19 @@ export async function openWorkerSession(
 			throw new RpcSessionRegistryError("session_id_in_use");
 		}
 	}
-	// A quarantined entry is a dead end: its worker stopped answering. Retire it and answer a typed,
-	// retryable refusal that names the quarantine, so the retry reopens the session from its file
-	// instead of colliding with a corpse (senpi#6452).
-	for (const [handle, entry] of host.entries) {
+	// A quarantined entry's worker stopped answering, but it keeps its entry, claim and grants until its
+	// real exit: a worker stuck in a syscall can still be writing the file. Answer a typed, retryable
+	// refusal that names the quarantine; the worker's exit callback releases everything, and only a retry
+	// after that reopens the session from its file (senpi#6452).
+	for (const entry of host.entries.values()) {
 		if (entry.state !== "quarantined") continue;
 		const samePath = profile.sessionPath !== undefined && entry.sessionPath === profile.sessionPath;
 		const sameId = requestedDurableId !== undefined && entry.durableSessionId === requestedDurableId;
 		if (!samePath && !sameId) continue;
-		entry.state = "closed";
-		host.entries.delete(handle);
-		host.claims.delete(handle);
-		host.reservations.releaseAll(handle);
-		entry.closeResolve?.();
 		throw new RpcSessionRegistryError("session_closing", undefined, {
 			reason: "session_quarantined",
 			action: "retry",
+			retry_after_ms: SESSION_PATH_RETRY_AFTER_MS,
 		});
 	}
 	if (profile.sessionPath) {

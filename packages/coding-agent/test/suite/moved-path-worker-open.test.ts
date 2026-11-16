@@ -71,13 +71,7 @@ it("an old-path open never starts a second writer on a session open under its ne
 
 		await expect(second).rejects.toMatchObject({ code: "session_path_in_use" });
 	} finally {
-		for (const handle of handles) {
-			try {
-				await registry.close(handle);
-			} catch {
-				// A retired (quarantined) handle has no entry left to close.
-			}
-		}
+		for (const handle of handles) await registry.close(handle).catch(() => undefined);
 		await host.dispose();
 	}
 }, 60_000);
@@ -136,24 +130,34 @@ it("worker host answers a missing moved session file with the registry's open_fa
 	}
 }, 60_000);
 
-it("an open naming a quarantined session answers a typed retryable refusal and the retry reopens it (senpi#6452)", async () => {
+// senpi#6452 review H1: a quarantined worker keeps every grant until its real exit, because a worker
+// stuck in a syscall can still be writing the file; the retry is refused until that exit, never served
+// by a second worker on the same session file.
+it("an open naming a quarantined session is refused until its worker really exits, then reopens it (senpi#6452)", async () => {
 	const { layout, newSession, host, registry } = await movedWorkerHost();
 	const handles: string[] = [];
+	const reopen = () => registry.openSession({ cwd: layout.newWorktree, sessionPath: newSession });
+	const refusal = { code: "session_closing", detail: { reason: "session_quarantined", action: "retry" } };
 	try {
-		const opened = await registry.openSession({ cwd: layout.newWorktree, sessionPath: newSession });
+		const opened = await reopen();
 		handles.push(opened.sessionId);
 		const entry = registry.peek(opened.sessionId);
-		if (!entry) throw new Error("the open left no entry");
-		// A worker that stopped answering is quarantined; the entry is a dead end until retired.
+		const worker = entry?.worker;
+		if (!entry || !worker) throw new Error("the open left no worker");
+		// Quarantined but still running: nothing has proven the worker stopped writing.
 		entry.state = "quarantined";
 
-		await expect(registry.openSession({ cwd: layout.newWorktree, sessionPath: newSession })).rejects.toMatchObject({
-			code: "session_closing",
-			detail: { reason: "session_quarantined", action: "retry" },
-		});
-		// The refusal retired the corpse, so the retry reopens the session from its file.
+		await expect(reopen()).rejects.toMatchObject(refusal);
+		// The refusal retired nothing: the entry and its grant stay, so a retry is refused again.
+		expect(registry.peek(opened.sessionId)).toBe(entry);
+		expect(registry.reservationCount(opened.sessionId)).toBeGreaterThan(0);
+		await expect(reopen()).rejects.toMatchObject(refusal);
+
+		// The real exit releases the entry and its grants; only then does the retry reopen the file.
+		worker.quarantine();
+		await worker.exited;
 		expect(registry.peek(opened.sessionId)).toBeUndefined();
-		const reopened = await registry.openSession({ cwd: layout.newWorktree, sessionPath: newSession });
+		const reopened = await reopen();
 		handles.push(reopened.sessionId);
 		expect(reopened.durableSessionId).toBe(SESSION_ID);
 	} finally {
@@ -161,7 +165,7 @@ it("an open naming a quarantined session answers a typed retryable refusal and t
 			try {
 				await registry.close(handle);
 			} catch {
-				// A retired (quarantined) handle has no entry left to close.
+				// The quarantined handle exited, so it has no entry left to close.
 			}
 		}
 		await host.dispose();
