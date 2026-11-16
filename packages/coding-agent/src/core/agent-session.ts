@@ -1066,7 +1066,7 @@ function describeCompactionRejection(cause: CompactionRejectionCause): string {
 		case "stale-revision":
 			return "Compaction rejected: the session changed while the summary was being prepared. Retry compaction against the latest context.";
 		case "transient-failure":
-			return "Compaction rejected: the summary request failed on a transient provider error. The next prompt retries compaction.";
+			return "Compaction rejected: the summary request failed on a transient provider error. Retry compaction.";
 	}
 }
 
@@ -11667,10 +11667,13 @@ export class AgentSession {
 
 	/**
 	 * Whether the automatic compaction that just failed proves the unchanged context cannot be
-	 * compacted, so the automatic loop must stop re-sending it (#7921 case 6). An external owner,
-	 * a transient provider failure and the breaker cooldown those failures trip (senpi#6760) say
-	 * nothing about the context: latching on them refused every automated send for good, while a
-	 * later attempt can succeed. A latch an earlier deterministic failure armed stays armed.
+	 * compacted, so the automatic loop must stop re-sending it (#7921 case 6). An external owner
+	 * and a transient provider failure (senpi#6760) say nothing about the context: latching on
+	 * them refused every automated send for good, while a later attempt can succeed. Neither does
+	 * a breaker cooldown rejection, which made no attempt at all. Three consecutive owned failures trip
+	 * the breaker, deterministic ones included, so this can leave a deterministic failure
+	 * unlatched for one cooldown (60 s, with #531 cooldown admission). The next real attempt
+	 * that fails deterministically latches again, and a latch already armed stays armed.
 	 */
 	private _failedCompactionLatchesAdmission(): boolean {
 		const state = this._compactionLifecycle.state;
