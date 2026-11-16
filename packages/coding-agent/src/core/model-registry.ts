@@ -130,11 +130,10 @@ export class ModelRegistry {
 	 * loaded is re-read the same way, so a repaired auth.json is seen without a restart (#4413).
 	 */
 	private retryBusyCredentialRead(): void {
-		const busy = this.authStorage.isCredentialStoreBusy();
-		if (!busy && !this.authStorage.getLoadError()) return;
+		if (!this.authStorage.isCredentialStoreBusy() && !this.authStorage.getLoadError()) return;
 		// A re-read of a store another process holds blocks for the sync lock budget, and a provider list
 		// re-reads once per row in one synchronous pass: wait once per pass, not once per row (#6841).
-		if (busy && this.busyRetriedThisTurn) return;
+		if (this.busyRetriedThisTurn) return;
 		if (this.authStorage.reload() !== "busy") return;
 		this.busyRetriedThisTurn = true;
 		queueMicrotask(() => {

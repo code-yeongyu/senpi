@@ -733,8 +733,9 @@ export class AuthStorage implements CredentialStore {
 
 	/**
 	 * True while the store has never loaded because every read found it locked, so the
-	 * in-memory credentials are an empty placeholder; `reload()` retries. A readable empty
-	 * store, or a busy read after a successful load, is not busy.
+	 * in-memory credentials are not the store's: empty, or auth.json as `readWhileBusy()` read it
+	 * without the lock; `reload()` retries. A readable empty store, or a busy read after a
+	 * successful load, is not busy.
 	 */
 	isCredentialStoreBusy(): boolean {
 		return this.dataFromBusyRead;
@@ -767,8 +768,8 @@ export class AuthStorage implements CredentialStore {
 
 	/**
 	 * Monotonic count of reads (sync or async) that found the store locked before it ever
-	 * loaded and answered with the empty placeholder. A change across an operation means
-	 * its credentials do not reflect the store.
+	 * loaded and answered from credentials that are not the store's (empty, or read without the
+	 * lock). A change across an operation means its credentials may not reflect the store.
 	 */
 	getBusyReadCount(): number {
 		return this.busyReads;
