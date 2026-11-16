@@ -5,6 +5,7 @@
  * and file before the registry's own metadata sync runs.
  */
 import { isSessionArchived } from "../../core/session-archived.ts";
+import { readSessionSettled, type SettledFields, settledFields } from "../../core/session-settled.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
 import type { RpcSessionEntry, RpcSessionRow } from "./session-registry-types.ts";
@@ -48,6 +49,16 @@ function runtimeView(entry: RpcSessionEntry): SessionStatusRuntimeView | undefin
 	};
 }
 
+/** The Done flag, read from the live session or the worker's last snapshot; undefined before either exists. */
+function settledOf(entry: RpcSessionEntry): SettledFields | undefined {
+	const session = entry.runtime?.session;
+	if (session !== undefined) return settledFields(readSessionSettled(session.sessionManager));
+	const snapshot = entry.worker?.snapshot;
+	if (snapshot === undefined) return undefined;
+	const { settled, settledBy } = snapshot;
+	return settledBy !== undefined ? { settled, settledBy } : { settled };
+}
+
 function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 	const session = entry.runtime?.session;
 	const state = entry.worker?.snapshot?.state;
@@ -56,6 +67,7 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 	const name = session?.sessionManager.getSessionName() ?? state?.sessionName;
 	const archived =
 		session !== undefined ? isSessionArchived(session.sessionManager) : entry.worker?.snapshot?.archived;
+	const settled = settledOf(entry);
 	return {
 		state: entry.state,
 		kind: entry.kind,
@@ -65,6 +77,7 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 		...(sessionPath !== undefined ? { sessionPath } : {}),
 		...(name !== undefined ? { name } : {}),
 		...(archived !== undefined ? { archived } : {}),
+		...(settled !== undefined ? { settled } : {}),
 		context: publishedSessionContext(entry.context, entry.contextOverlay),
 		openContext: entry.context,
 	};
@@ -74,13 +87,16 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
  * The `list_sessions` row fields, read from the same sources a `session_status` row is derived from. A row shows
  * only whether a turn runs and the model, so it reads those two and never the queue or question counts.
  */
-export function sessionRowStatusFields(entry: RpcSessionEntry): Pick<RpcSessionRow, "archived" | "activity" | "model"> {
+export function sessionRowStatusFields(
+	entry: RpcSessionEntry,
+): Pick<RpcSessionRow, "archived" | "settled" | "settledBy" | "activity" | "model"> {
 	const session = entry.runtime?.session;
 	const state = entry.worker?.snapshot?.state;
 	const streaming = session !== undefined ? session.isStreaming === true : state?.isStreaming === true;
 	const model = modelOf(session !== undefined ? session.model : (state?.model ?? undefined));
 	return {
 		archived: entryView(entry).archived === true,
+		...(settledOf(entry) ?? { settled: false }),
 		activity: streaming ? "running" : "idle",
 		...(model !== undefined ? { model } : {}),
 	};

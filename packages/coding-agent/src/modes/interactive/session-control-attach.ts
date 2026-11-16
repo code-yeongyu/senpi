@@ -14,6 +14,7 @@
  */
 import type { AgentSession } from "../../core/agent-session.ts";
 import { isSessionArchived } from "../../core/session-archived.ts";
+import { readSessionSettled, settledFields } from "../../core/session-settled.ts";
 import { ConnectionRoles } from "../rpc/connection-roles.ts";
 import { SessionEventWriter } from "../rpc/session-event-writer.ts";
 import { subscribeSessionRecords } from "../rpc/session-record-stream.ts";
@@ -118,6 +119,7 @@ export class ControlAttachments {
 			...(path !== undefined ? { sessionPath: path } : {}),
 			...(name !== undefined ? { name } : {}),
 			archived: isSessionArchived(manager),
+			settled: settledFields(readSessionSettled(manager)),
 			context: {},
 		};
 	}

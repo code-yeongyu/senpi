@@ -122,6 +122,7 @@ export type {
 	RpcPendingInputUpdateEvent,
 	RpcServiceTierChangedEvent,
 	RpcSessionArchivedChangedEvent,
+	RpcSessionSettledChangedEvent,
 	RpcSessionClosedEvent,
 	RpcSessionClosedReason,
 	RpcSessionOpenedEvent,

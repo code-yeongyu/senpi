@@ -7,6 +7,7 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { ClientMessageIdentity } from "../../core/client-message-identity.ts";
 
 import type { SessionEntry } from "../../core/session-manager.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
 import type { RpcAdmitExternalMessageCommand } from "./admit-external-message-wire.ts";
@@ -314,6 +315,7 @@ export type RpcSessionCommand =
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
 	| { id?: string; type: "set_session_archived"; archived: boolean }
+	| { id?: string; type: "set_session_settled"; settled: boolean; by?: ThreadSettledBy }
 	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */
 	| { id?: string; type: "record_user_activity"; kind: "draft" }
 	| { id?: string; type: "import_jsonl"; inputPath: string; cwdOverride?: string }

@@ -6995,6 +6995,10 @@
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
 		},
+		"packages/coding-agent/src/core/session-settled.ts#NOT_SETTLED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/session-sidecar-store.ts#mutationTails": {
 			"class": "per-copy-safe",
 			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
@@ -9095,6 +9099,10 @@
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#ThinkingLevel": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#ThreadSettledBy": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
