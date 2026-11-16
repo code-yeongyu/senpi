@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
@@ -215,10 +215,11 @@ export class ProjectTrustStore {
 	}
 
 	/**
-	 * Changes on every write made through `setMany`, in any process or engine copy, because each one bumps the
-	 * generation file under the store lock: a value read before such a write never equals one read after it. A
-	 * write that bypasses `setMany` (another program editing `trust.json`) changes it only when it changes the
-	 * file's modification time or size.
+	 * Changes on every write made through `setMany` by an engine that has this generation file, in any process or
+	 * engine copy: each such write bumps it under the store lock before it writes `trust.json`, so a value read
+	 * before the write never equals one read after it. Any other writer (an older engine sharing the agent
+	 * directory, another program editing `trust.json`) changes it only when it changes the file's modification
+	 * time or size.
 	 */
 	revision(): string {
 		const stat = statSync(this.trustPath, { bigint: true, throwIfNoEntry: false });
@@ -263,8 +264,11 @@ export class ProjectTrustStore {
 					data[key] = decision === "no_inherit" ? null : decision;
 				}
 			}
+			// Bumped first and replaced whole: a failed bump saves nothing, and a reader never sees a half-written count.
+			const nextGeneration = `${this.generationPath}.next`;
+			writeFileSync(nextGeneration, `${this.readGeneration() + 1}\n`, "utf-8");
+			renameSync(nextGeneration, this.generationPath);
 			writeTrustFile(this.trustPath, data);
-			writeFileSync(this.generationPath, `${this.readGeneration() + 1}\n`, "utf-8");
 		});
 	}
 }

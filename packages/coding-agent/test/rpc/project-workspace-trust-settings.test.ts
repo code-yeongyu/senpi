@@ -21,6 +21,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { CONFIG_DIR_NAME } from "../../src/config.ts";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
+import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { classifyRpcMethod } from "../../src/modes/rpc/method-classes.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
@@ -273,6 +274,27 @@ describe("senpi#6176: project trust over RPC", () => {
 		await host.send({ type: "set_project_trust", sessionId: first, choice: "no_inherit" });
 		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
 		expect(await host.commandNames(await host.open())).not.toContain(SKILL_COMMAND);
+	});
+
+	// #6823 review round 4 L1: an answer given with nothing saved keeps holding while nothing is saved for the folder,
+	// whatever is saved for other folders (the behaviour before #6823, which a TUI /new or /fork relies on).
+	it("keeps an unsaved answer given with nothing saved across a save for another folder", async () => {
+		let grant = true;
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: grant ? "yes" : "undecided" }));
+				},
+			],
+		);
+		expect(await host.commandNames(await host.open())).toContain(SKILL_COMMAND);
+		grant = false;
+		const elsewhere = join(dirname(host.cwd), "elsewhere");
+		mkdirSync(elsewhere);
+		new ProjectTrustStore(dirname(host.trustFile)).set(elsewhere, true);
+		expect(host.savedTrust()).toEqual({ [elsewhere]: true });
+		expect(await host.commandNames(await host.open())).toContain(SKILL_COMMAND);
 	});
 
 	it("refuses an unknown choice and saves nothing", async () => {
