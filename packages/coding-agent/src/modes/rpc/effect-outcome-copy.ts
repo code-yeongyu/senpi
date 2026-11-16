@@ -132,6 +132,16 @@ export function unsupportedThinkingLevelOutcome(detail: string): EffectOutcome {
 	};
 }
 
+/** A queued input a provider hold refused after an error run (senpi#6868): it never ran. */
+export function queuedInputRefusedOutcome(error: { readonly code: string; readonly message: string }): EffectOutcome {
+	return {
+		kind: "refused",
+		reason: error.code,
+		detail: error.message,
+		action: "send the input again with a new clientMessageId once the provider's limit resets",
+	};
+}
+
 export function turnErrorOutcome(detail: string | undefined): EffectOutcome {
 	return {
 		kind: "error",

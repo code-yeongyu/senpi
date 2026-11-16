@@ -120,33 +120,34 @@ describe("#6868 a follow-up queued behind a turn that ended in a provider error"
 		expect(harness.faux.getCallLog()).toHaveLength(1);
 	});
 
-	it("#given a follow-up queued during a turn #when the person aborts that turn #then the follow-up still waits for the next prompt", async () => {
-		// given
+	it("#given a follow-up queued during a turn that ends in a provider error #when the person aborts as that error lands #then the follow-up still waits for the next prompt", async () => {
+		// given: the person's abort joins the run's open boundary after its last response ended in a provider error, so
+		// the run ends `error` (not `aborted`) and only the user-abort suppression keeps the follow-up queued.
 		const harness = await createHarness();
 		harnesses.push(harness);
-		const turnRunning = Promise.withResolvers<void>();
-		const release = Promise.withResolvers<void>();
 		let queued: Promise<void> | undefined;
+		let aborted: Promise<void> | undefined;
 		harness.setResponses([
-			async () => {
+			() => {
 				queued = harness.session.prompt(FOLLOW_UP, { streamingBehavior: "followUp", source: "rpc" });
-				turnRunning.resolve();
-				await release.promise;
-				return fauxAssistantMessage("aborted response");
+				return fauxAssistantMessage("", { stopReason: "error", errorMessage: HARD_ERROR });
 			},
 			fauxAssistantMessage("unexpected turn after the abort"),
 		]);
+		harness.session.subscribe((event) => {
+			if (aborted !== undefined || event.type !== "message_end" || event.message.role !== "assistant") return;
+			if (event.message.stopReason === "error") aborted = harness.session.abort();
+		});
 
 		// when
-		const turn = harness.session.prompt("a turn the person aborts").catch(() => undefined);
-		await turnRunning.promise;
+		await harness.session.prompt("a turn the person aborts as it fails").catch(() => undefined);
 		await queued;
-		await harness.session.abort();
-		release.resolve();
-		await turn;
+		await aborted;
 		await settle(harness);
 
 		// then
+		const last = harness.session.state.messages.findLast((message) => message.role === "assistant");
+		expect(last?.role === "assistant" && last.stopReason).toBe("error");
 		expect(harness.session.pendingMessageCount).toBe(1);
 		expect(harness.faux.getCallLog()).toHaveLength(1);
 	});

@@ -4485,7 +4485,10 @@ With images:
 ```
 
 - `"steer"`: Queue the message while the agent is running. It is delivered after the current assistant turn finishes executing its tool calls, before the next LLM call.
-- `"followUp"`: Wait until the agent finishes. Message is delivered only when agent stops.
+- `"followUp"`: Wait until the agent finishes. Message is delivered only when agent stops. If the run ends in a
+  provider error, a queued follow-up starts its own turn once the session is idle. Under a provider hold (a spent
+  account or a held model family) it is refused with [`queued_input_failed`](#queued_input_failed) instead. A person's
+  abort, a cancelled or blocked retry, a local failure and a required compaction keep it queued for the next prompt.
 
 If the agent is streaming and no `streamingBehavior` is specified, the command returns an error.
 Queued prompts cannot include `thinkingLevel`; wait for the current turn to complete before changing it.
@@ -6649,6 +6652,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `tool_barrier_waiting` | A workspace-changing tool call started waiting on the turn's tool barrier (`id`, `toolCallId`, `toolName`) |
 | `tool_barrier_expired` | The tool barrier's `deadlineMs` passed before a release; it opened by itself (`id`, `deadlineMs`) |
 | `queue_update` | Pending steering/follow-up queue changed |
+| `queued_input_failed` | A queued follow-up was refused under a provider hold after an error run; it will not run (`queuedId`, `text`, `mode`, `clientMessageId`, `error`) |
 | `compaction_start` | Compaction begins |
 | `compaction_end` | Compaction completes |
 | `auto_retry_start` | Auto-retry begins (after transient error) |
@@ -7178,6 +7182,33 @@ Emitted whenever the pending steering or follow-up queue changes.
   "followUp": ["After that, summarize the result"]
 }
 ```
+
+### queued_input_failed
+
+Emitted when a run ends in a provider error while a follow-up is queued, and the provider is held: a spent account, or
+a held model family. The follow-up is taken out of the queue without being sent to the held provider. One record is
+emitted per follow-up, before its dequeue's `queue_update`. Queued steering is not affected.
+
+```json
+{
+  "type": "queued_input_failed",
+  "queuedId": "q_3",
+  "text": "After that, summarize the result",
+  "mode": "followUp",
+  "clientMessageId": "c-42",
+  "error": {
+    "code": "account_usage_limit",
+    "provider": "anthropic",
+    "message": "<the same user-facing refusal a held prompt gets, naming the reset when the provider stated one>",
+    "resetAt": 1794880000000
+  }
+}
+```
+
+`clientMessageId` appears when the client sent one (a host-minted id is never shown). `resetAt` appears when the
+provider stated a reset. That input's receipt (`get_effect_status`, `effect_status`) reads `state: "failed"` with
+`outcome: { kind: "refused", reason: "account_usage_limit", detail, action }`. The terminal UI puts the text back in
+the editor and shows a notice naming the hold.
 
 ### compaction_start / compaction_end
 

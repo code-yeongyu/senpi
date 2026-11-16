@@ -118,10 +118,10 @@ import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
 import {
+	failQueuedFollowUps,
 	type QueuedInputFailedEvent,
-	type QueuedInputHold,
 	queuedInputAfterError,
-	queuedInputFailures,
+	queuedInputHold,
 } from "./queued-input-after-error.ts";
 import { isTurnRetryableFailure, TURN_RETRY_SUPPRESSION_PREFIX } from "./turn-retry-eligibility.ts";
 import { BridgedCallKeys } from "./session-call-keys.ts";
@@ -4107,30 +4107,6 @@ export class AgentSession {
 		);
 	}
 
-	/** Takes every queued follow-up out of the queue (as a dequeue does) and reports each one failed by `hold`. */
-	private async _failQueuedFollowUps(hold: QueuedInputHold): Promise<void> {
-		const removed: QueuedInput[] = [];
-		for (const input of this._queuedInputOrder.filter((queued) => queued.mode === "followUp")) {
-			if ((await this.changeQueuedInput(input.queuedId, undefined)) === "removed") removed.push(input);
-		}
-		for (const failed of queuedInputFailures(removed, hold)) this._emit(failed);
-	}
-
-	/** The hold that refuses queued input on the current provider: a spent account, else a held family (senpi#3131). */
-	private _queuedInputHold(): QueuedInputHold | undefined {
-		const model = this.model;
-		if (model === undefined) return undefined;
-		if (this._retryFallback.isProviderSpent(model.provider)) {
-			const resetAt = this._retryFallback.accountResetAt(model.provider);
-			const refusal = new AccountUsageLimitError(model.provider, this._retryFallback.accountError(model.provider), resetAt);
-			return { provider: model.provider, message: refusal.message, ...(resetAt === undefined ? {} : { resetAt }) };
-		}
-		const family = this._retryFallback.heldFamily(model);
-		if (family === undefined) return undefined;
-		const refusal = new AccountUsageLimitError(model.provider, family.errorMessage, undefined, [family.family]);
-		return { provider: model.provider, message: refusal.message };
-	}
-
 	private _willRetryAfterAgentEnd(messages: AgentMessage[]): boolean {
 		// A user abort suppresses the retry and compaction continuation (#9340).
 		if (this._suppressQueuedContinuationAfterUserAbort) {
@@ -4645,13 +4621,16 @@ export class AgentSession {
 				this._queuedInputOrder.some((input) => input.mode === "followUp") &&
 				this.agent.hasQueuedMessages()
 			) {
-				const after = queuedInputAfterError(this._queuedInputHold());
+				const after = queuedInputAfterError(queuedInputHold(this._retryFallback, this.model));
 				if (after.kind === "start") {
 					this._requiredCompactionAdmissionError = undefined;
 					this._scheduleContinuationAfterCurrentEvent();
 					launchedContinuation = true;
 				} else {
-					await this._failQueuedFollowUps(after.hold);
+					await failQueuedFollowUps([...this._queuedInputOrder], after.hold, {
+						emit: (failed) => this._emit(failed),
+						dequeue: (queuedId) => this.changeQueuedInput(queuedId, undefined),
+					});
 				}
 			}
 			// agent_before_settle (D-15): handlers may append entries or ask for one more request before

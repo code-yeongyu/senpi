@@ -13,9 +13,12 @@ export function projectAdmission(record: ClientAdmissionRecord, sessionId?: stri
 	return {
 		effectId: record.clientMessageId,
 		kind: "input",
-		// A dropped or cleared input is stored as `completed` so older hosts never restore it; it never ran.
+		// A dropped, cleared or refused input is stored as `completed` so older hosts never restore it; it never ran.
 		state:
-			outcome?.kind === "dropped_by_replace" || outcome?.kind === "cleared" || outcome?.kind === "cleared_by_abort"
+			outcome?.kind === "dropped_by_replace" ||
+			outcome?.kind === "cleared" ||
+			outcome?.kind === "cleared_by_abort" ||
+			outcome?.kind === "refused"
 				? "failed"
 				: ADMISSION_STATES[record.state],
 		disposition: record.disposition,

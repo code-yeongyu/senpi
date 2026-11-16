@@ -5440,6 +5440,17 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
+			case "queued_input_failed": {
+				// A provider hold refused this queued follow-up after an error turn (senpi#6868): it goes back to the
+				// editor ahead of any draft, as restored queue text does, never lost.
+				const draft = this.editor.getText();
+				this.editor.setText([event.text, draft].filter((text) => text.trim()).join("\n\n"));
+				this.updatePendingMessagesDisplay();
+				this.showWarning(`Queued message not sent; it is back in the editor. ${event.error.message}`);
+				this.ui.requestRender();
+				break;
+			}
+
 			case "system_prompt_change":
 				this.showStatus(
 					event.systemPromptName ? `System prompt: ${event.systemPromptName}` : "System prompt changed",
