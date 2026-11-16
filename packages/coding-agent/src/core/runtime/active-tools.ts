@@ -26,7 +26,7 @@ export function toolExposureOf(definitions: ToolDefinitions, name: string): Tool
  * Whether registering the tool activates it: `direct`, `eval` and `model-only` tools, unless the
  * definition sets `defaultActive: false`. `search` tools activate lazily; `hidden` tools never do.
  */
-export function isActivatedOnRegistration(definitions: ToolDefinitions, name: string): boolean {
+function isActivatedOnRegistration(definitions: ToolDefinitions, name: string): boolean {
 	const entry = definitions.get(name);
 	if (!entry) return false;
 	const exposure = normalizeToolExposure(entry.definition).exposure;

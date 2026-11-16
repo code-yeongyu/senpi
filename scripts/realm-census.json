@@ -3326,6 +3326,30 @@
 			"class": "constant",
 			"reason": "regex without g/y flags; carries no lastIndex state"
 		},
+		"packages/coding-agent/src/core/credential-proxy/declarations.ts#LOOPBACK_HOSTS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/credential-proxy/declarations.ts#RESERVED_HEADERS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/credential-proxy/proxy.ts#DROPPED_REQUEST_HEADERS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/credential-proxy/proxy.ts#DROPPED_RESPONSE_HEADERS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/credential-proxy/runtime.ts#holds": {
+			"class": "realm-registry",
+			"reason": "realm registry instance shared by every copy, so withholding set by one copy's session applies to the shell environment every copy builds (senpi#6820)"
+		},
+		"packages/coding-agent/src/core/credential-proxy/runtime.ts#proxies": {
+			"class": "per-copy-safe",
+			"reason": "the proxy server each of this copy's holders started; a holder is activated and released through the same copy, and other copies read only the shared holds (senpi#6820)"
+		},
 		"packages/coding-agent/src/core/defaults.ts#THINKING_LEVEL_OPTIONS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
