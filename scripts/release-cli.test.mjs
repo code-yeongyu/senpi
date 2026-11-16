@@ -13,7 +13,7 @@ const MANIFEST = "packages/ai/src/providers/data/.manifest.json";
 const manifestText = (generatedAt) => `${JSON.stringify({ schemaVersion: 6, generatedAt, files: { "nvidia.json": "h1" } })}\n`;
 // "superseded" is what CI reports when a newer push cancels the run: the always() fan-in fails, and its workflow run
 // concludes cancelled.
-const ciCheckRuns = (ci) =>
+const ciCheckRuns = (ci, head) =>
 	JSON.stringify([
 		{
 			check_runs: [
@@ -22,7 +22,7 @@ const ciCheckRuns = (ci) =>
 					name: "Check and test",
 					status: "completed",
 					conclusion: ci === "superseded" ? "failure" : ci,
-					head_sha: "fixture-sha",
+					head_sha: head,
 					check_suite: { id: 7 },
 				},
 			],
@@ -41,7 +41,9 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 	// senpi#6834: a red macOS/Windows leg on main stops the release on the CI-evidence path and on one that runs its own suite.
 	{ mergeStatus: 0, ci: "success", platformRed: true },
 	{ mergeStatus: 0, ci: "success", forceTests: true, platformRed: true },
-	// senpi#6859: an accepted CI-basis receipt for the pinned commit waives the hosted CI wait, so even a red run is not read.
+	// senpi#6859: an accepted CI-basis receipt for the pinned commit waives the hosted CI wait: an unfinished (here superseded)
+	// run is read once and not waited for, but a known-red run still stops the release (review LOW L2 on senpi#6861).
+	{ mergeStatus: 0, ci: "superseded", ciBasisReceipt: true },
 	{ mergeStatus: 0, ci: "failure", ciBasisReceipt: true },
 ]) {
 	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""}${platformRed ? " and a red main platform run" : ""}${ciBasisReceipt ? " and a CI-basis receipt" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
@@ -110,7 +112,7 @@ if (${JSON.stringify(name)} === "gh" && String(args[1]).includes("/actions/runs/
 if (${JSON.stringify(name)} === "gh") {
 	process.stdout.write(String(args[1]).includes("actions/runs?check_suite_id=7")
 		? ${JSON.stringify(JSON.stringify({ workflow_runs: [{ status: "completed", conclusion: ci === "superseded" ? "cancelled" : "failure" }] }))}
-		: ${JSON.stringify(ciCheckRuns(ci))});
+		: ${JSON.stringify(ciCheckRuns(ci, head))});
 }
 `;
 				const runner = join(bin, `${name}.mjs`);
@@ -188,10 +190,17 @@ if (${JSON.stringify(name)} === "gh") {
 				return;
 			}
 			if (ciBasisReceipt) {
+				const checkRunReads = commands.filter((args) => args[0] === "gh" && String(args[2]).includes("check-runs"));
+				assert.equal(checkRunReads.length, 1, "the waived release reads CI once and never polls it");
+				assert.equal(commands.some(isForcedSuiteStep), false);
+				if (ci === "failure") {
+					assert.equal(result.status, 1, result.stderr);
+					assert.match(result.stderr, /CI failed on f{12}.*a ci_basis_receipt waives only the wait/);
+					assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag" || args[1] === "commit"), []);
+					return;
+				}
 				assert.equal(result.status, 0, result.stderr);
 				assert.match(result.stdout, new RegExp(`hosted CI wait waived by ci_basis_receipt rcpt-1 for the pinned commit ${head}`));
-				assert.equal(commands.some((args) => args[0] === "gh" && String(args[2]).includes("check-runs")), false, "the waived release never reads CI");
-				assert.equal(commands.some(isForcedSuiteStep), false);
 				return;
 			}
 			if (ci === "superseded") {
