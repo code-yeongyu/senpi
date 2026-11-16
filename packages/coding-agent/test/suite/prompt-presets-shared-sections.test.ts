@@ -26,6 +26,8 @@ import { BASELINE_OPTIONS, BASELINE_SURFACES, WORKSTATION_FACTS } from "./prompt
 // tool.generate_image in the eval-only paragraph and the no-eval variants list it as a direct tool; senpi#6358
 // replaced the smallest-change rule with the ownership rule in every core and in the shared Style, Intent Gate
 // and claim-audit sentences, so every hash is re-pinned to that rendering (the full/diet split is unchanged).
+// senpi#6681 named the `<device>/<session>` monitor target in the terminal prompt's rpc line, so the 836fe1c75 rows
+// are re-pinned to that rendering.
 
 vi.mock("../../src/core/dynamic-prompt/workstation.ts", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../../src/core/dynamic-prompt/workstation.ts")>();
@@ -234,63 +236,63 @@ const REQUEST_ROWS: ReadonlyArray<{
 		modelId: "claude-opus-5.5",
 		source: "037918157",
 		hashes: {
-			"eval-false": "a5eba7e841c76fea0adbc1cad33c922cf25d0d04f671c42694cdf80a32333064",
-			"eval-true": "5e60efdc433a4b85200b94adbb3df2baa377618dfe4d97956c04b47915da6823",
-			"app-eval-true": "5e3341e225de8e3590d2615fba8ddf2f0ab9efa0f5924c76fa8550cc816c0530",
-			"search-eval-true": "453edac31767591c6a9dba11aa51101bc028293637eb6bdfea0e166bb636a205",
+			"eval-false": "caf722d70683bb674f796aeadc87cad941f3dbe3a409262f0ea0e899e9f562e2",
+			"eval-true": "9446f6525c006c9c01bb5ee12f60875fd0c6a50c6caca92e526da8a4d43684bc",
+			"app-eval-true": "9d562c2ed9f4859cf77521b9e8673a9325f301f3a1df3c5d7e1931a8d27e4a7a",
+			"search-eval-true": "2924e59db39b7b2ef9f148ffa63cd682ddc9b22f62d274aaa00aeed8740e93e4",
 		},
 	},
 	{
 		modelId: "claude-fable-5.1",
 		source: "037918157",
 		hashes: {
-			"eval-false": "f36f23a19debfaee7227b7cfcd10ce356f531ed1078938e938f715ab7ecf1efc",
-			"eval-true": "0e82877d9825ca57c20724c3614a40e4580cc9b29389332960b1ec6dcbd47fcf",
-			"app-eval-true": "71ab9ed325c0e890c56f5f5c5738ba2d518e63b7f83e7712fe33b11491e2a712",
-			"search-eval-true": "02bca1402fb43e804cc7b00a13966129bf1eef681cda89f29c0ee6f1ac1953dc",
+			"eval-false": "10d9a2c744ce4e3a0c800775f1f480ae050b78d9d53f28ca6728c97d34539e11",
+			"eval-true": "eeafd7b0295730ea42acbae4244554097c12e48b883786c727db668ad60051c4",
+			"app-eval-true": "e900e0a20ad5d7717d7b2a69856c38103f09ce4da389616ec68a2c1f1bad91a3",
+			"search-eval-true": "593ac47d60426a82b402e62d2621c5cf13d02a13fa4ead79f968ab9b6ce92379",
 		},
 	},
 	{
 		modelId: "claude-opus-4-7",
 		source: "037918157",
 		hashes: {
-			"eval-false": "e5925ed29858efede1fb627f567a18594116e9b9137ace2ac5eaa30745775f9f",
-			"eval-true": "3d264326ec9c2e1a56ab4d0542b70e31da6bc103e68d14b27b89e302ffdc56e5",
-			"app-eval-true": "b7c5445ec7c89b0f1d0a21078d9cd6ec747fef1e115cceb2edfc8e1462e1319e",
-			"search-eval-true": "59d8095be1ef906aaa7965cbaf9810f4250b4e0bacc4d0ccc1c9616b279e207b",
+			"eval-false": "2628117c32a176d9d1a883cbc253c0f2031054f4b8a25392ad4756f014c9d131",
+			"eval-true": "7ed8ebdb5bd82aa499dfad5dfe0888fd08947857483245baa465cd08a0ff6f35",
+			"app-eval-true": "cabc37ee8e6268fcc48796b6027b1a24856ab6856c5480595c00ecb5d6e0a8ca",
+			"search-eval-true": "429b25a2b1e7e05c81540151b8bf9801eb8641625523d8127f229d328eff73fa",
 		},
 	},
 	{
 		modelId: "glm-5.3",
 		source: "836fe1c75",
 		hashes: {
-			"eval-false": "f16d61667a75c9a3d38518a4e1a2be9a8ae3d10ded916a5e44256c251dd6a2ba",
-			"eval-true": "3fa092c1adbb969cace26a0ee8b406a61884d42b4c8785a69c7a5d16f6679466",
-			"app-eval-true": "489e8fe9d149eeddd45cd4a7bc9a2aa008b04b54fb4aac8877477daa647ad027",
-			"search-eval-true": "6644dcca19f00d2afcd89286328592fb455e5abbc118f084179301f5e88a3c6a",
+			"eval-false": "432b8496bcd913d4716f01ce68d5c567f7cc68ccf2aa3e96bc1388e56633b23d",
+			"eval-true": "cc0e57d813b232f35c43811913f434564dca88cbf8f6fb78c533b14468d3e3ea",
+			"app-eval-true": "1b5c4455d6091ec2851ed4d64e04ce85e1e9317b4e2e8fed1aafbb8180fe09e3",
+			"search-eval-true": "1c65c4134f5d2dc03667c03d042a720396ecdb21539cd3dc692a411ddd3fe4f5",
 		},
 	},
 	{
 		modelId: "gpt-6-astra",
 		source: "836fe1c75",
 		hashes: {
-			"eval-false": "3f526b2049643f0bdb894ffeae6bbb7e476a6bee251603cad0c80e9893e434e4",
-			"eval-true": "9c9caad4e47ae60f24a6a078704898ffce9fcb40e0bd5c7c6fa7bd1e34b2de14",
-			"app-eval-true": "d095e4f48ed03cb317105a98161d50991edbbeaa003669f407c0af67261a2af4",
-			"app-eval-false": "22a1d9aa37afb4b6d2762491fb6b9ad0747a25bdca2a5aac6329aaa61c2a537f",
-			"search-eval-true": "000696e1244fbd570f480a023e000dc3f50ee4c6d50e982a306c8eac2042e96b",
-			"nativebash-eval-false": "3f526b2049643f0bdb894ffeae6bbb7e476a6bee251603cad0c80e9893e434e4",
-			"nativebash-eval-true": "9c9caad4e47ae60f24a6a078704898ffce9fcb40e0bd5c7c6fa7bd1e34b2de14",
+			"eval-false": "cd0bf8ee355421933235ff9b63bb68259f72b6e0313ae148efdf296fc54d11ee",
+			"eval-true": "bfa832a2fd20275bafa0b3ea0894904ec31a28944e65c866292cc71b4ca39c3e",
+			"app-eval-true": "cfc0f4b5008b09f21d63fc4d991b929be773ed154af96b8cf1d11d8c024c700d",
+			"app-eval-false": "65590f489f8f2a931ae3a00a299c3626c17d20756e1bb4ccf5e1157380c5684a",
+			"search-eval-true": "17c35f8f0782de693851c0d3af18010e2ecd801ccaeaa6c334e26c794fa818df",
+			"nativebash-eval-false": "cd0bf8ee355421933235ff9b63bb68259f72b6e0313ae148efdf296fc54d11ee",
+			"nativebash-eval-true": "bfa832a2fd20275bafa0b3ea0894904ec31a28944e65c866292cc71b4ca39c3e",
 		},
 	},
 	{
 		modelId: "test-default-model",
 		source: "836fe1c75",
 		hashes: {
-			"eval-false": "a5ffbb2ac532a69c22037d15ddad0889b8381ba5958f89599d6790987b002cfb",
-			"eval-true": "24182221b1dca8f25c81cba678c0a221c045c108733c1b7d0180a9c7639e8d57",
-			"app-eval-true": "20c02aaa574880e5ee69b812ad8d99dc7873fc63f94e476f348bb3c56150c205",
-			"search-eval-true": "2b01a9e76a7ece5fba20533ed57956a46a30164a2fa93bc28fd1571cad0ea5bb",
+			"eval-false": "feb48678ca2d44bcf9ea5e7f140b3f5830e437974d2ca880364ccfdcf4040904",
+			"eval-true": "61eb53ff93fad4f4d4f8e0240e6dd41cb005c79e76ab201e2b7442a962148259",
+			"app-eval-true": "2343c7c6c8b52b2ad180638d78e2af4c1cd19ac5fad10c616d95b85f86a8a731",
+			"search-eval-true": "f3e84ac3c52dfa8057dcb525a0d28e89a1a00449c446fd211784a44b847edb07",
 		},
 	},
 ];
