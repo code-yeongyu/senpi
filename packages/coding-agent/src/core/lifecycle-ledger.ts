@@ -1,4 +1,11 @@
 import { LifecycleAttention } from "./lifecycle-attention.ts";
+import {
+	type BackgroundSource,
+	backgroundBySource,
+	backgroundChanges,
+	replayBackground,
+} from "./lifecycle-background-changes.ts";
+import { boundBackground } from "./lifecycle-background-waits.ts";
 import { type DurableTurnEnd, type LifecycleRecord, readLifecycleRecord } from "./lifecycle-record.ts";
 import { lifecycleTerminal } from "./session-lifecycle-reducer.ts";
 import type {
@@ -33,6 +40,9 @@ export class LifecycleLedger {
 	private unwritten = false;
 	private writeFailed = false;
 	private readonly activityInstanceId: string = crypto.randomUUID();
+	/** The background sources the last written record leaves on disk, and the full set the snapshot now waits on. */
+	private durableBackground: ReadonlyMap<string, BackgroundSource>;
+	private liveBackground: readonly BackgroundSource[];
 	runId: string | undefined;
 	runActive = false;
 	interrupted = false;
@@ -41,11 +51,16 @@ export class LifecycleLedger {
 	constructor(persistence: LifecyclePersistence) {
 		this.persistence = persistence;
 		let restored: LifecycleRecord | undefined;
+		const written: { readonly seq: number; readonly data: unknown }[] = [];
 		for (const entry of persistence.entries) {
 			if (entry.type !== "custom" || entry.customType !== "session-lifecycle") continue;
 			const parsed = readLifecycleRecord(entry.data);
-			if (parsed?.sessionId === persistence.sessionId && (!restored || parsed.seq > restored.seq)) restored = parsed;
+			if (parsed?.sessionId !== persistence.sessionId) continue;
+			written.push({ seq: parsed.seq, data: entry.data });
+			if (!restored || parsed.seq > restored.seq) restored = parsed;
 		}
+		this.durableBackground = replayBackground(written.sort((a, b) => a.seq - b.seq).map((record) => record.data));
+		this.liveBackground = [...this.durableBackground.values()];
 		const spawnedBy = persistence.spawnedBy;
 		this.current = restored
 			? wireSnapshot(restored)
@@ -64,6 +79,11 @@ export class LifecycleLedger {
 					rootSessionId: spawnedBy?.rootSessionId ?? persistence.sessionId,
 					...(spawnedBy ? { parentSessionId: spawnedBy.parentSessionId, taskId: spawnedBy.taskId } : {}),
 				};
+		if (this.current.waitingOn)
+			this.current = {
+				...this.current,
+				waitingOn: { ...this.current.waitingOn, ...boundBackground(this.liveBackground) },
+			};
 		this.current = { ...this.current, activityRevision: { instanceId: this.activityInstanceId, revision: 0 } };
 		this.attention = new LifecycleAttention(persistence.sessionId, restored);
 		this.sealed = restored?.epochSealed ?? false;
@@ -173,6 +193,8 @@ export class LifecycleLedger {
 	update(input: {
 		readonly state: SessionLifecycleState;
 		readonly waits: LifecycleWaits;
+		/** Every background source, before `waits.background` is bounded to 32; defaults to `waits.background`. */
+		readonly backgroundSources?: readonly BackgroundSource[];
 		readonly holds: readonly LifecycleHold[];
 		readonly failure?: SessionLifecycle["failure"];
 		readonly lastStop?: SessionLifecycle["lastStop"];
@@ -236,12 +258,15 @@ export class LifecycleLedger {
 			// Input changes during session_start are collected, but cannot publish.
 			return;
 		}
+		const sources = input.backgroundSources ?? input.waits.background;
+		const sameBackground = JSON.stringify(this.liveBackground) === JSON.stringify(sources);
+		this.liveBackground = sources;
 		const sameActivity = JSON.stringify(this.current.activity) === JSON.stringify(next.activity);
 		// An unchanged lifecycle writes nothing; an unwritten revision waits for the record that carries it (senpi#3980).
-		if (this.current.persisted && sameActivity && equivalent(this.current, next)) return;
+		if (this.current.persisted && sameActivity && sameBackground && equivalent(this.current, next)) return;
 		// Activity alone only emits, also while custody writes fail. Pending run/epoch state and a failed
 		// lifecycle write retain the ordinary durable path: activity cannot consume or clear that work.
-		if (!sameActivity && !this.unwritten && !this.writeFailed && equivalent(this.current, next)) {
+		if (!sameActivity && sameBackground && !this.unwritten && !this.writeFailed && equivalent(this.current, next)) {
 			this.current = {
 				...next,
 				activityRevision: {
@@ -283,6 +308,8 @@ export class LifecycleLedger {
 		const { activity: _activity, activityRevision: _activityRevision, ...durable } = next;
 		const record: LifecycleRecord = {
 			...durable,
+			...(durable.waitingOn ? { waitingOn: changesOnly(durable.waitingOn, this.liveBackground.length) } : {}),
+			backgroundChanges: backgroundChanges(this.durableBackground, this.liveBackground),
 			sessionId: this.persistence.sessionId,
 			attentionSeq: this.attention.attentionSeq,
 			synthetic: this.attention.synthetic,
@@ -298,6 +325,7 @@ export class LifecycleLedger {
 		this.unwritten = false;
 		try {
 			this.persistence.append(record);
+			this.durableBackground = backgroundBySource(this.liveBackground);
 			this.current = next;
 			this.writeFailed = false;
 		} catch (error) {
@@ -327,6 +355,12 @@ function equivalent(previous: SessionLifecycle, next: SessionLifecycle): boolean
 		JSON.stringify(previous.failure) === JSON.stringify(next.failure) &&
 		JSON.stringify(previous.lastStop) === JSON.stringify(next.lastStop)
 	);
+}
+
+/** A record names no background source; `backgroundChanges` carries what changed and `backgroundOmitted` the count. */
+function changesOnly(waits: LifecycleWaits, total: number): LifecycleWaits {
+	const { backgroundOmitted: _omitted, ...rest } = waits;
+	return { ...rest, background: [], ...(total > 0 ? { backgroundOmitted: total } : {}) };
 }
 
 function wireSnapshot(record: LifecycleRecord): SessionLifecycle {

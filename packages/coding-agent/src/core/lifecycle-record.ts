@@ -1,6 +1,7 @@
 import type { TurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness.ts";
 import { readHumanWait, type SyntheticAttention } from "./lifecycle-attention.ts";
 import { readLifecycleState, readWaits } from "./lifecycle-children.ts";
+import type { BackgroundChanges } from "./lifecycle-background-changes.ts";
 import { readLastStop } from "./lifecycle-stop.ts";
 import type { LifecycleHold, SessionLifecycle } from "./session-lifecycle-types.ts";
 import { isRecord } from "./work-custody-record.ts";
@@ -17,6 +18,8 @@ export interface LifecycleRecord extends Omit<SessionLifecycle, "activity" | "ac
 	readonly completedGoalId?: string;
 	readonly completedRunId?: string;
 	readonly lastTurnEnd?: DurableTurnEnd;
+	/** Present on every record since senpi#5612; such a record lists no source in `waitingOn.background`. */
+	readonly backgroundChanges?: BackgroundChanges;
 }
 
 export type DurableTurnEnd = Pick<

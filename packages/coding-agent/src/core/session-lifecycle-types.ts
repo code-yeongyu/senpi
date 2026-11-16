@@ -45,6 +45,8 @@ export interface LifecycleWaits {
 	readonly background: readonly (LifecycleWaitSource & {
 		readonly retryAtMs?: number;
 	})[];
+	/** Background sources cut from `background` by its cap of 32 (senpi#5612). */
+	readonly backgroundOmitted?: number;
 	readonly human: readonly HumanWait[];
 }
 
