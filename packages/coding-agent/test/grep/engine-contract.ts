@@ -299,6 +299,51 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 		});
 
 		if (name === "rg") {
+			it.each([
+				["stdout", false],
+				["stdout", true],
+				["stderr", false],
+				["stderr", true],
+			] as const)(
+				"contains %s pipe errors (JSON: %s), awaits the child and permits the next search",
+				async (stream, json) => {
+					const root = await tree({ "a.ts": "needle\n" });
+					let child: ChildProcessWithoutNullStreams | undefined;
+					let escaped: unknown;
+					const error = Object.assign(new Error("read ENOTCONN"), { code: "ENOTCONN" });
+					const engine = createRgEngine({
+						spawn: (command, args, options) => {
+							const spawned = spawn(command, args, options);
+							if (!child && args.includes("--json") === json) {
+								child = spawned;
+								// Catch only the missing-handler throw; never let the regression kill Vitest.
+								spawned.once("spawn", () => {
+									try {
+										spawned[stream].emit("error", error);
+									} catch (thrown) {
+										escaped = thrown;
+									}
+								});
+							}
+							return spawned;
+						},
+					});
+					const outcome = await engine.search({ pattern: "needle", paths: [root], cwd: root }).then(
+						(result) => result,
+						(failure: unknown) => failure,
+					);
+					expect(child).toBeDefined();
+					expect(escaped).toBeUndefined();
+					expect(outcome).toMatchObject({
+						code: "ENGINE_UNAVAILABLE",
+						message: expect.stringContaining("ENOTCONN"),
+					});
+					expect(child?.exitCode === null && child?.signalCode === null).toBe(false);
+					const recovered = await engine.search({ pattern: "needle", paths: [root], cwd: root });
+					expect(recovered.matches).toHaveLength(1);
+					expect(recovered.matches[0]).toMatchObject({ line: 1, text: "needle" });
+				},
+			);
 			it("oversized_lexical_first_wins_rg", async () => {
 				const root = await tree({ "a-large": large(), "z-small": "needle\n" });
 				const result = await search(root, { maxCount: 1 });
@@ -407,7 +452,8 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 					expect(result.timedOut).toBe(true);
 					expect(result.matches).toEqual([]);
 					expect(result.filesSearched).toBe(0);
-					expect(child?.exitCode).toBe(0);
+					if (process.platform === "win32") expect(child?.signalCode).toBe("SIGTERM");
+					else expect(child?.exitCode).toBe(0);
 				} finally {
 					if (child && child.exitCode === null && child.signalCode === null) {
 						const closed = once(child, "close");
@@ -465,7 +511,7 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 				try {
 					await expect(engine.search(request, controller.signal)).rejects.toMatchObject({ code: "ABORTED" });
 					expect(child).toBeDefined();
-					expect(child?.exitCode).not.toBeNull();
+					expect(child?.exitCode === null && child?.signalCode === null).toBe(false);
 				} finally {
 					if (child && child.exitCode === null && child.signalCode === null) {
 						const closed = once(child, "close");

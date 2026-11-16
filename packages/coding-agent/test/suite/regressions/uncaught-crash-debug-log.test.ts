@@ -108,10 +108,18 @@ function crashAndExpectEmergencyExit(context: UncaughtCrashThis, error: Error): 
 		throw new ProcessExitError(code);
 	});
 	const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+	// The error must arrive on an owned terminal stream. An errno on an
+	// unrelated uncaught exception no longer proves terminal loss.
+	const registered = context as UncaughtCrashThis & { signalCleanupHandlers: (() => void)[] };
+	registered.signalCleanupHandlers = [];
+	const signalPrototype = InteractiveMode.prototype as unknown as {
+		registerSignalHandlers(this: typeof registered): void;
+	};
+	signalPrototype.registerSignalHandlers.call(registered);
+	const cleanup = [...registered.signalCleanupHandlers];
+	vi.mocked(context.unregisterSignalHandlers).mockClear();
 	try {
-		expect(() => interactiveModePrototype.uncaughtCrash.call(context, error, "uncaughtException")).toThrow(
-			ProcessExitError,
-		);
+		expect(() => process.stdout.emit("error", error)).toThrow(ProcessExitError);
 		expect(exit).toHaveBeenCalledWith(129);
 		expect(exit).not.toHaveBeenCalledWith(1);
 		return {
@@ -120,6 +128,7 @@ function crashAndExpectEmergencyExit(context: UncaughtCrashThis, error: Error): 
 			).length,
 		};
 	} finally {
+		for (const dispose of cleanup) dispose();
 		consoleError.mockRestore();
 		exit.mockRestore();
 	}
@@ -201,7 +210,7 @@ describe("uncaught crash debug log", () => {
 		expect(log).toContain("Authorization: Bearer [REDACTED]");
 		expect(log).not.toContain("crash-secret-value");
 		expect(log).not.toContain("hidden stdout while TUI active");
-		expect((statSync(debugLogPath).mode & 0o777).toString(8)).toBe("600");
+		if (process.platform !== "win32") expect((statSync(debugLogPath).mode & 0o777).toString(8)).toBe("600");
 		expect(restoreObservations).toEqual([{ debugLogExisted: true }]);
 	});
 
@@ -238,7 +247,7 @@ describe("uncaught crash debug log", () => {
 		expect(log).not.toContain("hidden stdout while TUI active");
 		expect(log).toContain("extension exploded after boot");
 		expect(log).toContain("at qaExtension (/tmp/qa-extension.ts:3:9)");
-		expect((statSync(debugLogPath).mode & 0o777).toString(8)).toBe("600");
+		if (process.platform !== "win32") expect((statSync(debugLogPath).mode & 0o777).toString(8)).toBe("600");
 		// The write must land before the terminal handoff, otherwise a crash that is
 		// itself an stderr failure loses its own record.
 		expect(restoreObservations).toEqual([{ debugLogExisted: true }]);
@@ -297,9 +306,9 @@ describe("dead-terminal crash debug log", () => {
 
 		const debugLogPath = getDebugLogPath();
 		const log = readFileSync(debugLogPath, "utf8");
-		expect(log).toContain("uncaught crash (dead-terminal uncaughtException)");
+		expect(log).toContain("uncaught crash (dead-terminal stdio error)");
 		expect(log).toContain("EIO: i/o error, read");
-		expect((statSync(debugLogPath).mode & 0o777).toString(8)).toBe("600");
+		if (process.platform !== "win32") expect((statSync(debugLogPath).mode & 0o777).toString(8)).toBe("600");
 		// The silent contract from the dead-terminal routing must survive: the record
 		// goes to the log, never to a terminal that is already gone.
 		expect(bannerCalls).toBe(0);
@@ -315,7 +324,7 @@ describe("dead-terminal crash debug log", () => {
 		crashAndExpectEmergencyExit(createRealPrototypeCrashContext(), createDeadTerminalError("errno-number"));
 
 		const log = readFileSync(getDebugLogPath(), "utf8");
-		expect(log).toContain("uncaught crash (dead-terminal uncaughtException)");
+		expect(log).toContain("uncaught crash (dead-terminal stdio error)");
 		expect(log).toContain("read failed with errno: 5");
 	});
 
