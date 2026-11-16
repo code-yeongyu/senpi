@@ -2,10 +2,11 @@
 // after the machine wakes, while another process holds auth.json's lock for a write. The lock is real:
 // a second process holds the store's own proper-lockfile lock, never an injected busy backend.
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { createRpcConnectionHandler } from "../../../src/modes/rpc/connection-handler.ts";
 import { makeHarness, makeSink } from "../rpc-connection-harness.ts";
 
@@ -100,4 +101,33 @@ describe("senpi#6841 get_auth_providers while another process holds auth.json's 
 			await handler.dispose();
 		},
 	);
+	// #6849 review L3: what the read without the lock may and may not do.
+	it("keeps the credentials as they were when auth.json does not parse while the lock is held", async () => {
+		const authJson = join(tempDir, "auth.json");
+		writeFileSync(authJson, "{ not json");
+		const release = await holdLockFromAnotherProcess(authJson);
+		try {
+			const storage = AuthStorage.create(authJson);
+			await storage.readWhileBusy();
+			expect(storage.isCredentialStoreBusy()).toBe(true);
+			expect(storage.get("openai")).toBeUndefined();
+		} finally {
+			await release();
+		}
+	}, 120_000);
+
+	it("never writes auth.json back when it reads it without the lock", async () => {
+		const authJson = join(tempDir, "auth.json");
+		writeFileSync(authJson, JSON.stringify({ openai: { type: "api_key", key: "sk-test-6849" } }));
+		const before = readFileSync(authJson);
+		const release = await holdLockFromAnotherProcess(authJson);
+		try {
+			const storage = AuthStorage.create(authJson);
+			await storage.readWhileBusy();
+			expect(storage.get("openai")).toEqual({ type: "api_key", key: "sk-test-6849" });
+			expect(readFileSync(authJson).equals(before)).toBe(true);
+		} finally {
+			await release();
+		}
+	}, 120_000);
 });
