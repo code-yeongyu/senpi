@@ -2376,6 +2376,7 @@ export function createRpcConnectionHandler(
 
 			case "get_auth_providers": {
 				const modelRegistry = session.modelRegistry;
+				await modelRegistry.authStorage.readWhileBusy();
 				const oauthInfos = buildLoginProviderInfos(modelRegistry, "oauth");
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
 				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => {

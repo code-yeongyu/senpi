@@ -30,6 +30,7 @@ import {
 	upsertSlot,
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { readFile } from "fs/promises";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "path";
@@ -725,7 +726,6 @@ export class AuthStorage implements CredentialStore {
 			if (!this.dataLoaded) {
 				this.busyReads++;
 				this.dataFromBusyRead = true;
-				this.data = this.readWithoutLock() ?? this.data;
 			}
 			return "busy";
 		}
@@ -775,16 +775,22 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	/**
-	 * auth.json as it stands, read without its lock while another process holds it (#6841). Writes
-	 * replace the file by rename, so this sees a whole old or new store; it is never written back, and
-	 * the store stays busy, so the next read still takes the lock. Undefined when it cannot be read.
+	 * While another process holds auth.json's lock and this store has never loaded, fills its credentials
+	 * from the file read without the lock, asynchronously and within the sync lock budget (#6841). Writes
+	 * replace the file by rename, so this sees a whole old or new store; it is never written back, and the
+	 * store stays busy, so the next read still takes the lock. A file that cannot be read in time, or does
+	 * not parse, leaves the credentials as they were.
 	 */
-	private readWithoutLock(): AuthStorageData | undefined {
-		if (!this.authPath) return undefined;
+	async readWhileBusy(): Promise<void> {
+		if (!this.dataFromBusyRead || this.dataLoaded || !this.authPath) return;
 		try {
-			return this.parseStorageContent(readFileSync(this.authPath, "utf8")).data;
+			const content = await readFile(this.authPath, {
+				encoding: "utf8",
+				signal: AbortSignal.timeout(FILE_STORAGE_SYNC_LOCK_BUDGET_MS),
+			});
+			if (this.dataFromBusyRead && !this.dataLoaded) this.data = this.parseStorageContent(content).data;
 		} catch {
-			return undefined;
+			// Unreadable, too slow or unparsable: keep what the store had.
 		}
 	}
 
