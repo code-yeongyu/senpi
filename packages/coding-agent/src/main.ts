@@ -912,7 +912,8 @@ export function createCliRuntimeFactory(
 			label: `Loading ${APP_NAME}`,
 		});
 	const trustStore = new ProjectTrustStore(agentDir);
-	const projectTrustByCwd = new Map<string, boolean>();
+	// An answer this process gave a folder without saving it, with what was saved for the folder when it was given.
+	const projectTrustByCwd = new Map<string, { readonly savedState: null | "no_inherit"; readonly trusted: boolean }>();
 	const trustPromptMode: AppMode =
 		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : appMode;
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
@@ -937,10 +938,15 @@ export function createCliRuntimeFactory(
 		// The saved decision, including the one a linked git worktree inherits from its main checkout (senpi#4388).
 		const savedState = await getSavedProjectTrustState(trustStore, cwd);
 		const savedProjectTrust = savedState === "no_inherit" ? null : savedState;
-		// The memo stands in for an unsaved answer only: a decision saved since (an RPC `set_project_trust`, senpi#6176)
-		// is what a fresh process would read, so it outranks what an earlier session of this process resolved. An
-		// explicit no-decision entry (`no_inherit`) is saved too, so the memo never stands in for it (#6823 review H1).
-		const cachedProjectTrust = savedState === null ? projectTrustByCwd.get(cwd) : undefined;
+		// The memo stands in for an unsaved answer only while what is saved for the folder is what it was when the
+		// answer was given: a decision saved since (an RPC `set_project_trust`, senpi#6176) is what a fresh process
+		// would read, and an answer given before a `no_inherit` entry was saved never stands in for it (#6823 review
+		// H1), while one given under that entry still holds for this process's later sessions (#6823 review L1).
+		const remembered = projectTrustByCwd.get(cwd);
+		const cachedProjectTrust =
+			remembered !== undefined && savedState !== true && savedState !== false && remembered.savedState === savedState
+				? remembered.trusted
+				: undefined;
 		timer.mark("project_trust");
 		// A full-access session trusts its project without asking, for that session only: nothing is
 		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
@@ -1004,7 +1010,8 @@ export function createCliRuntimeFactory(
 									),
 								onExtensionError: (message) => projectTrustDiagnostics.push({ type: "warning", message }),
 							});
-							projectTrustByCwd.set(cwd, trusted);
+							if (savedState === null || savedState === "no_inherit")
+								projectTrustByCwd.set(cwd, { savedState, trusted });
 							return trusted;
 						},
 					}

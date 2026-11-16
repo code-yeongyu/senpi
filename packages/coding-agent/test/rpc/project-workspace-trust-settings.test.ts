@@ -235,6 +235,25 @@ describe("senpi#6176: project trust over RPC", () => {
 		expect(await host.commandNames(await host.open())).not.toContain(SKILL_COMMAND);
 	});
 
+	// #6823 review L1: an answer given under the explicit no-decision entry (what "Trust (this session only)" leaves)
+	// holds for this process's later sessions of that folder, as /new and /fork open them.
+	it("keeps an unsaved answer given under a no_inherit entry for later sessions of that folder", async () => {
+		let grant = true;
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: grant ? "yes" : "undecided" }));
+				},
+			],
+		);
+		writeFileSync(host.trustFile, JSON.stringify({ [host.cwd]: null }));
+		expect(await host.commandNames(await host.open())).toContain(SKILL_COMMAND);
+		grant = false;
+		expect(await host.commandNames(await host.open())).toContain(SKILL_COMMAND);
+		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
+	});
+
 	it("refuses an unknown choice and saves nothing", async () => {
 		const host = await startHost();
 		const sessionId = await host.open();
