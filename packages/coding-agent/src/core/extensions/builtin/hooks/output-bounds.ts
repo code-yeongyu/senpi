@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+	ensurePrivateDirectory,
 	makeUserPrivateDirectory,
 	UserDirUnsafeError,
 	userPrivateDirectoryPath,
@@ -74,22 +75,36 @@ const fallbackSpillDirectories = new Map<string, string>();
 /**
  * This user's own spill directory, never a fixed name every user of the machine shares (senpi#6871). Another user can
  * squat that predictable name, and a sticky `/tmp` keeps this user from removing it; a spill only needs somewhere
- * private, so it then goes to one fresh `mkdtemp` directory (0700, unpredictable name) per process instead of failing
- * every oversized hook (review #2 L1).
+ * private, so it then goes to a fresh `mkdtemp` directory (0700, unpredictable name) instead of failing every oversized
+ * hook (review #2 L1).
  */
 function defaultSpillDirectory(): string {
 	try {
 		return makeUserPrivateDirectory(SPILL_DIRECTORY_NAME);
 	} catch (cause) {
 		if (!(cause instanceof UserDirUnsafeError)) throw cause;
-		const prefix = `${userPrivateDirectoryPath(SPILL_DIRECTORY_NAME)}-`;
-		let fallback = fallbackSpillDirectories.get(prefix);
-		if (fallback === undefined) {
-			fallback = mkdtempSync(prefix);
-			fallbackSpillDirectories.set(prefix, fallback);
-		}
-		return fallback;
+		return fallbackSpillDirectory(`${userPrivateDirectoryPath(SPILL_DIRECTORY_NAME)}-`);
 	}
+}
+
+/**
+ * The process keeps its fallback directory, but proves it on every spill the way the primary path does: a temp cleaner
+ * may have removed it under a long-lived host (re-created 0700 in place), and if its name was taken meanwhile it is
+ * replaced by a fresh `mkdtemp` directory (senpi#6874 review LOW).
+ */
+function fallbackSpillDirectory(prefix: string): string {
+	const kept = fallbackSpillDirectories.get(prefix);
+	if (kept !== undefined) {
+		try {
+			ensurePrivateDirectory(kept);
+			return kept;
+		} catch (cause) {
+			if (!(cause instanceof UserDirUnsafeError)) throw cause;
+		}
+	}
+	const fresh = mkdtempSync(prefix);
+	fallbackSpillDirectories.set(prefix, fresh);
+	return fresh;
 }
 
 export function redactHookTokenValues(text: string, replacement = "[REDACTED]"): string {
