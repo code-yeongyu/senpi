@@ -313,6 +313,7 @@ export type RpcSessionCommand =
 	| RpcRecoveryCommand
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
+	| { id?: string; type: "set_session_archived"; archived: boolean }
 	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */
 	| { id?: string; type: "record_user_activity"; kind: "draft" }
 	| { id?: string; type: "import_jsonl"; inputPath: string; cwdOverride?: string }

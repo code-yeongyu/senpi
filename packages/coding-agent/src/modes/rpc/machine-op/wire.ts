@@ -17,7 +17,7 @@
  */
 import { type DelegationResponse, refused } from "../delegation-wire.ts";
 
-export const MACHINE_OP_COMMANDS = [
+const MACHINE_OP_COMMANDS = [
 	"machine_op",
 	"machine_op_result",
 	"machine_op_owner",

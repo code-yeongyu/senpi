@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "c10f2307caa5b826444f8e3016245777d40171d1c8065205ac02736e4786e539",
+	"methodClassesDigest": "affd43e6120fddc8d9267522fcbdc3688fde0ac4c2f61a827d9dc928445c6ad6",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 132,
+	"methodCount": 133,
 	"methods": [
 		{
 			"method": "abort",
@@ -1202,6 +1202,16 @@
 			"sample": {
 				"type": "set_scoped_models",
 				"models": []
+			}
+		},
+		{
+			"method": "set_session_archived",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_session_archived",
+				"archived": true
 			}
 		},
 		{

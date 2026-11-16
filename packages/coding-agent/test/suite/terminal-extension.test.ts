@@ -369,6 +369,7 @@ describe("terminal extension auto-detach wiring", () => {
 			setActiveTools: (next: string[]) => {
 				activeTools = next;
 			},
+			isLoopRemote: () => false,
 		} as unknown as ExtensionAPI;
 		autoDetachSpawn.enabled = true;
 		autoDetachSpawn.spawn = (toolContext: unknown) => {
