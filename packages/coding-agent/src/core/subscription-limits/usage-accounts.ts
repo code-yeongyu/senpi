@@ -49,7 +49,8 @@ export async function listPollAccounts(sources: AccountSources): Promise<PollAcc
 	return [...claudeAccounts(claude, sources), ...chatgptAccounts(chatgpt, sources.now)];
 }
 
-function claudeAccounts(stored: Credential | undefined, sources: AccountSources): PollAccount[] {
+/** The lane's Claude accounts with a way to read each one's current token; `stored` is the lane's credential. */
+export function claudeAccounts(stored: Credential | undefined, sources: Omit<AccountSources, "store">): PollAccount[] {
 	const credential = stored?.type === "oauth" ? (stored as AnthropicSubscriptionCredential) : emptyCredential();
 	return listAccounts(credential, sources.env).flatMap((slot): PollAccount[] => {
 		if (isEnvSlot(slot)) {
