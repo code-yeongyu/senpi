@@ -4,6 +4,8 @@
 // platform regression first fails on the push to main after its merge. `report` (run by platform-red.yml) files ONE
 // tracking issue naming the merged PR when such a run fails, or comments on it while it is open; the release refuses
 // while the latest settled main run of any of these workflows has a failed macOS/Windows job (release-ci-evidence.mjs).
+// Reports run unserialised, so none is ever dropped: the issue is found by its label (a plain listing, not the lagging
+// search index), and a report that loses a race to open it moves its details onto the oldest open one and closes its own.
 
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -17,6 +19,7 @@ export const PLATFORM_WORKFLOWS = {
 };
 
 export const PLATFORM_RED_TITLE = "Default-branch macOS/Windows CI is red";
+export const PLATFORM_RED_LABEL = "platform-red";
 
 const PLATFORM_RUNNER = /macos|windows/i;
 // A cancelled or skipped run says nothing about main; the newest run that finished does.
@@ -98,13 +101,28 @@ function report(env, gh) {
 		"",
 		"The next release refuses while the latest main run of this workflow has a failed macOS/Windows job (`scripts/release-ci-evidence.mjs`). Fix it on main, then close this issue.",
 	].join("\n");
-	const open = JSON.parse(
-		gh(["issue", "list", "--repo", repo, "--state", "open", "--search", `"${PLATFORM_RED_TITLE}" in:title`, "--json", "number,title", "--limit", "100"]),
-	);
-	const existing = open.find((issue) => issue.title === PLATFORM_RED_TITLE);
-	if (existing) gh(["issue", "comment", String(existing.number), "--repo", repo, "--body", body]);
-	else gh(["issue", "create", "--repo", repo, "--title", PLATFORM_RED_TITLE, "--body", body]);
-	console.log(existing ? `commented on #${existing.number}` : "opened the tracking issue");
+	// Oldest first, so every concurrent report settles on the same issue.
+	const openIssues = () =>
+		JSON.parse(gh(["issue", "list", "--repo", repo, "--state", "open", "--label", PLATFORM_RED_LABEL, "--json", "number,title", "--limit", "100"]))
+			.filter((issue) => issue.title === PLATFORM_RED_TITLE)
+			.sort((a, b) => a.number - b.number);
+	const comment = (number) => gh(["issue", "comment", String(number), "--repo", repo, "--body", body]);
+	const [existing] = openIssues();
+	if (existing) {
+		comment(existing.number);
+		console.log(`commented on #${existing.number}`);
+		return;
+	}
+	gh(["label", "create", PLATFORM_RED_LABEL, "--repo", repo, "--force", "--color", "B60205", "--description", "A macOS/Windows job is red on the default branch (senpi#6834)"]);
+	const created = Number(gh(["issue", "create", "--repo", repo, "--title", PLATFORM_RED_TITLE, "--label", PLATFORM_RED_LABEL, "--body", body]).trim().split("/").pop());
+	const [oldest] = openIssues();
+	if (oldest && oldest.number !== created) {
+		comment(oldest.number);
+		gh(["issue", "close", String(created), "--repo", repo, "--reason", "not planned", "--comment", `Duplicate of #${oldest.number}, opened by a report that ran at the same time.`]);
+		console.log(`a concurrent report opened #${oldest.number} first; commented there and closed #${created}`);
+		return;
+	}
+	console.log(`opened #${created}`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
