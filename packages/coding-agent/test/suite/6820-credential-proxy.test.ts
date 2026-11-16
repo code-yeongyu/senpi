@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
+import { runCommandHook } from "../../src/core/extensions/builtin/hooks/command-runner.ts";
 import { emitSessionShutdownEvent } from "../../src/core/extensions/runner.ts";
 import { createBashTool } from "../../src/core/tools/bash.ts";
 import { getShellEnv } from "../../src/utils/shell.ts";
@@ -112,6 +113,7 @@ describe.runIf(posix)("credential injection proxy (senpi#6820)", () => {
 			`${route}/admin/keys`,
 			`${route}/v1/%2e%2e/admin`,
 			`${route}/v1/../admin`,
+			`${route}/v1/..;x/admin`,
 		];
 		for (const url of attempts) {
 			const response = await fetch(url);
@@ -142,6 +144,31 @@ describe.runIf(posix)("credential injection proxy (senpi#6820)", () => {
 		expect(response.status).toBe(502);
 		expect(body).not.toContain(SECRET);
 		expect(notices.join("\n")).not.toContain(SECRET);
+	});
+
+	it("withholds a declared credential from a hook command even when the hook passes the variable through", async () => {
+		const { harness } = await start([declaration("https://api.example.invalid")]);
+		const result = await runCommandHook(
+			{
+				config: {
+					type: "command",
+					command: `printf '%s|%s' "\${TEST_CRED_6820-unset}" "\${TEST_CRED_6820_BASE_URL-unset}"`,
+				},
+				event: "PreToolUse",
+				groupIndex: 0,
+				handlerIndex: 0,
+				source: {
+					discoveredAt: "pre-session",
+					displayOrder: 1,
+					scope: "project",
+					sourcePath: "/repo/.senpi/hooks.json",
+				},
+			},
+			{ cwd: harness.tempDir, event: "PreToolUse", toolInput: { command: "pwd" }, toolName: "Bash" },
+			{ cwd: harness.tempDir, envPassthrough: ["TEST_CRED_6820", "TEST_CRED_6820_BASE_URL"] },
+		);
+		expect(result.stdout).not.toContain(SECRET);
+		expect(result.stdout.startsWith("senpi-credential-proxy-placeholder|http://127.0.0.1:")).toBe(true);
 	});
 
 	it("withholds a credential whose declaration is invalid, without proxying it", async () => {

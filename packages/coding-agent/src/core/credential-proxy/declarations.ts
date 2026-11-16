@@ -74,7 +74,8 @@ function parsePathPrefixes(value: unknown): { prefixes: readonly string[] | unde
 /** A path the proxy refuses: dot segments, encoded separators or dots, backslashes. */
 export function hasUnsafePathSegment(path: string): boolean {
 	if (/%2e|%2f|%5c|\\/i.test(path)) return true;
-	return path.split("/").some((segment) => segment === "." || segment === "..");
+	// `..;x` and `.;x` normalise to `..`/`.` on servers that strip path parameters (Tomcat-style).
+	return path.split("/").some((segment) => segment === "." || segment.startsWith("..") || segment.startsWith(".;"));
 }
 
 export function parseCredentialDeclarations(raw: unknown): ParsedCredentialDeclarations {

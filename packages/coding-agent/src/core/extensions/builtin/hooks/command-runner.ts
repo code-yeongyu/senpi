@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { waitForChildProcess } from "../../../../utils/child-process.ts";
+import { withCredentialProxy } from "../../../credential-proxy/runtime.ts";
 import { killProcessTree, trackDetachedChildPid, untrackDetachedChildPid } from "../../../../utils/shell.ts";
 import {
 	applyHookOutputSafety,
@@ -66,7 +67,8 @@ export async function runCommandHook(
 			envPassthrough: options.envPassthrough,
 			handler,
 			input,
-			sourceEnv: options.sourceEnv ?? process.env,
+			// Hooks run agent-triggered commands: declared credentials are withheld as for the bash tool (senpi#6820).
+			sourceEnv: options.sourceEnv ?? withCredentialProxy(process.env),
 		}),
 		shell: true,
 		stdio: ["pipe", "pipe", "pipe"],
