@@ -20,7 +20,13 @@ function wireLanded(landed: LandedFile | undefined): RpcMoveLanded | undefined {
 	const { ownership } = landed;
 	const where = { session_path: landed.sessionPath, session_id: landed.sessionId, cwd: landed.cwd };
 	if (ownership.writable) return { ...where, writable: true };
-	const sealed_by = { move_id: ownership.moveId, state: ownership.state, target: ownership.target };
+	// A release that named no device is the empty string in the file. The wire leaves the field out instead, so a
+	// client cannot show a name that is not there.
+	const sealed_by = {
+		move_id: ownership.moveId,
+		state: ownership.state,
+		...(ownership.target === "" ? {} : { target: ownership.target }),
+	};
 	return { ...where, writable: false, sealed_by };
 }
 
