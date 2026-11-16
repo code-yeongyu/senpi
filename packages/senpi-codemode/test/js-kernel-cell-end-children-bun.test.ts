@@ -26,8 +26,9 @@ type DriverReport = {
 // one that ended by itself (a `sleep 30`) would read as gone once a loaded host spent that long in the exit poll.
 const ABANDONED_CHILD_CELL =
 	'const child = Bun.spawn(["tail", "-f", "/dev/null"]); print("MARK=" + child.pid); return "done"';
+// A detached child is an echo client of the driver (ECHO_CHILD_SOURCE); the cell returns once it has connected.
 const DETACHED_CHILD_CELL =
-	'const child = Bun.spawn(["tail", "-f", "/dev/null"], { detached: true }); print("MARK=" + child.pid); return "done"';
+	'const child = Bun.spawn([process.execPath, process.cwd() + "/echo-child.ts"], { detached: true, stdout: "pipe" }); await child.stdout.getReader().read(); print("MARK=" + child.pid); return "done"';
 const AWAITED_CHILD_CELL =
 	'const child = Bun.spawn(["true"]); print("MARK=" + child.pid); await child.exited; return "done"';
 // SIGTERM is ignored (the disposition survives `exec`), so only the SIGKILL
@@ -55,11 +56,22 @@ const GRANDCHILD_CELL = [
 const NODE_CHILD_PROCESS_CELL =
 	'import { spawn } from "node:child_process"; const child = spawn("tail", ["-f", "/dev/null"]); print("MARK=" + child.pid); return "done"';
 const NODE_CHILD_PROCESS_DETACHED_CELL =
-	'import { spawn } from "node:child_process"; const child = spawn("tail", ["-f", "/dev/null"], { detached: true, stdio: "ignore" }); child.unref(); print("MARK=" + child.pid); return "done"';
+	'import { spawn } from "node:child_process"; const child = spawn(process.execPath, [process.cwd() + "/echo-child.ts"], { detached: true, stdio: ["ignore", "pipe", "ignore"] }); await new Promise((resolve) => child.stdout.once("data", resolve)); child.unref(); print("MARK=" + child.pid); return "done"';
 
-// A survivor is read after two settle events: the target cell's run() resolves only once its retirement is done,
-// and the barrier cell's settle awaits any retirement still in flight. No wall clock decides its liveness.
-const SETTLE_BARRIER_CELL = "return 0";
+// The detached child connects to the driver's socket and echoes what it reads until it is killed. A process with a
+// SIGKILL pending never runs again, so an echo of a ping sent after a kill was issued cannot arrive: an echo proves
+// the child alive, and the connection closing is the event of its death.
+const ECHO_CHILD_SOURCE =
+	'await Bun.connect({ unix: `${import.meta.dir}/child.sock`, socket: { data: (socket, data) => { socket.write(data); } } }); console.log("ready");';
+// The barrier settles only after the kernel's whole kill schedule has run: its child ignores SIGTERM, so retirement
+// waits out the worker's SIGTERM grace and escalates to SIGKILL before run() resolves. A kill the kernel sends within
+// that grace of the target's settle lands first; the kernel is then closed, which cancels anything still pending, and
+// only after that is the child pinged. A kill scheduled later than the grace is out of reach of any bounded test.
+const SETTLE_BARRIER_CELL = [
+	'const child = Bun.spawn(["sh", "-c", "trap \'\' TERM; echo ready; exec tail -f /dev/null"], { stdout: "pipe" });',
+	"await child.stdout.getReader().read();",
+	"return 0",
+].join(" ");
 // The exit poll waits on process state and ends as soon as the tree is gone; its bound is only a circuit breaker.
 const CHILD_EXIT_POLL_MS = 25;
 const CHILD_EXIT_POLL_ROUNDS = 400;
@@ -75,6 +87,7 @@ function driverSource(cell: string, probe: string | null, expectation: Expectati
 		"const [reportPath] = process.argv.slice(2);",
 		'const kernel = new JavaScriptKernel({ sessionId: "cell-end-children", cwd: process.cwd(), parallelPoolWidth: 1 });',
 		"let pid = 0;",
+		...(expectation === "survives" ? survivorWatchSource() : []),
 		"let grandchildPid = 0;",
 		"const result = await kernel.run({",
 		'  cellId: "cell-end-target",',
@@ -91,15 +104,33 @@ function driverSource(cell: string, probe: string | null, expectation: Expectati
 		// A zombie (defunct) child is terminated, awaiting reap by its owner; treat it as not running.
 		'const isAlive = (target) => { if (target === 0) return false; try { process.kill(target, 0); } catch { return false; } const stat = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(target)]).stdout.toString().trim(); return stat.length > 0 && !stat.startsWith("Z"); };',
 		expectation === "survives"
-			? `await kernel.run({ cellId: "settle-barrier", code: ${JSON.stringify(SETTLE_BARRIER_CELL)}, timeoutMs: 60_000 });`
-			: `for (let round = 0; round < ${CHILD_EXIT_POLL_ROUNDS} && (isAlive(pid) || isAlive(grandchildPid)); round += 1) await Bun.sleep(${CHILD_EXIT_POLL_MS});`,
-		"const aliveAfterSettle = isAlive(pid);",
+			? [
+					`await kernel.run({ cellId: "settle-barrier", code: ${JSON.stringify(SETTLE_BARRIER_CELL)}, timeoutMs: 60_000 });`,
+					"await kernel.close();",
+					'const aliveAfterSettle = await Promise.race([echoed, connection.then((socket) => { socket.write("ping"); return echoed; })]);',
+					"listener.stop(true);",
+				].join("\n")
+			: [
+					`for (let round = 0; round < ${CHILD_EXIT_POLL_ROUNDS} && (isAlive(pid) || isAlive(grandchildPid)); round += 1) await Bun.sleep(${CHILD_EXIT_POLL_MS});`,
+					"const aliveAfterSettle = isAlive(pid);",
+				].join("\n"),
 		"const grandchildAliveAfterSettle = isAlive(grandchildPid);",
 		'for (const target of [pid, grandchildPid]) { if (isAlive(target)) { try { process.kill(target, "SIGKILL"); } catch {} } }',
 		`const probe = ${probe === null ? "null" : `await kernel.run({ cellId: "after-settle", code: ${JSON.stringify(probe)}, timeoutMs: 60_000 })`};`,
 		"await kernel.close();",
 		'await writeFile(reportPath, JSON.stringify({ result, pid, aliveAfterSettle, grandchildPid, grandchildAliveAfterSettle, probe }), "utf8");',
 	].join("\n");
+}
+
+// Listens before the target cell runs, so the child's connection, its echo, and its death are all events.
+function survivorWatchSource(): readonly string[] {
+	return [
+		"let connected;",
+		"const connection = new Promise((resolve) => { connected = resolve; });",
+		"let answered;",
+		"const echoed = new Promise((resolve) => { answered = resolve; });",
+		"const listener = Bun.listen({ unix: `${process.cwd()}/child.sock`, socket: { open: (socket) => connected(socket), data: () => answered(true), close: () => answered(false) } });",
+	];
 }
 
 async function runCellEndDriver(
@@ -112,6 +143,7 @@ async function runCellEndDriver(
 		const driverPath = join(root, "driver.ts");
 		const reportPath = join(root, "report.json");
 		await writeFile(driverPath, driverSource(cell, probe, expectation), "utf8");
+		await writeFile(join(root, "echo-child.ts"), ECHO_CHILD_SOURCE, "utf8");
 		const run = spawnSync("bun", [driverPath, reportPath], {
 			encoding: "utf8",
 			cwd: root,
