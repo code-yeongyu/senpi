@@ -35,6 +35,12 @@ export const MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY = `move_session_inline_max
 export const MOVE_SESSION_IDENTITY_CAPABILITY = "move_session_identity";
 /** Capability: op `prepare` checks `cwd` against `repository`, and the import lands only there (senpi#6435). */
 export const MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY = "move_session_prepare_repository";
+/**
+ * Capability: op `prepare` takes `session` (and `sessionDir`) and refuses `move_target_occupied` when the landing file
+ * is already taken, before the sender releases anything (senpi#6471). A host without it readies the move and ignores
+ * both fields; its import still refuses.
+ */
+export const MOVE_SESSION_PREPARE_OCCUPIED_CAPABILITY = "move_session_prepare_occupied";
 
 /**
  * Capability: `status` for an accepted move, and an `import` refused because the move already landed, answer where it
@@ -63,7 +69,14 @@ export const RPC_ERROR_MOVE_FAILED = "move_failed";
  * side: `copy`, a new writable session from one that is read-only here.
  */
 export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
-	| { op: "prepare"; moveId: string; cwd?: string; repository?: RpcRepositoryIdentity }
+	| {
+			op: "prepare";
+			moveId: string;
+			cwd?: string;
+			repository?: RpcRepositoryIdentity;
+			session?: { id: string; fileName: string };
+			sessionDir?: string;
+	  }
 	| { op: "identity"; sessionPath: string }
 	| { op: "identity"; cwd: string }
 	| { op: "cancel"; moveId: string }
