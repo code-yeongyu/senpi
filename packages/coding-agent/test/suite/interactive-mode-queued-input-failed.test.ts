@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 
 const HOLD = "Your account usage limit is reached; it resets 11pm.";
 

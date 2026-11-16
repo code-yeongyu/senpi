@@ -4630,6 +4630,7 @@ export class AgentSession {
 					await failQueuedFollowUps([...this._queuedInputOrder], after.hold, {
 						emit: (failed) => this._emit(failed),
 						dequeue: (queuedId) => this.changeQueuedInput(queuedId, undefined),
+						current: (queuedId) => this._queuedInputOrder.find((input) => input.queuedId === queuedId),
 					});
 				}
 			}
