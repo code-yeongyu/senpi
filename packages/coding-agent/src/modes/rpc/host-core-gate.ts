@@ -17,8 +17,14 @@ import {
 import { HostIdleHandover, type HostIdleHandoverOptions } from "./host-idle-handover.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RpcSessionRegistry } from "./session-registry.ts";
+import type { ConditionalDrainDecision } from "./host-conditional-drain.ts";
+import { hostInstanceId } from "./protocol-identity.ts";
 
 export interface HostCoreHooks {
+	/** Synchronous child transaction; installed by createHostCore, never a client-side census. */
+	readonly conditionalDrain?: (instanceId: string) => ConditionalDrainDecision;
+	/** Socket host closes its accept guard and starts its ordinary announcement in this same step. */
+	readonly onConditionalDrain?: () => void;
 	/** The runtime this host loaded at startup, reported by `get_protocol_info`. */
 	readonly runtimeBuildId?: string;
 	/** Present on a host that can hand over at its next idle point (a POSIX socket host). */
@@ -53,6 +59,7 @@ export class HostCoreGate {
 	private readonly inFlight = new Map<string | undefined, number>();
 	private readonly answering = new Set<Promise<void>>();
 	private readonly route: (command: RpcCommand) => Promise<RpcResponse | undefined>;
+	private readonly hooks: HostCoreHooks;
 
 	constructor(
 		registry: Pick<RpcSessionRegistry, "list" | "peek">,
@@ -60,6 +67,7 @@ export class HostCoreGate {
 		hooks: HostCoreHooks,
 	) {
 		this.route = route;
+		this.hooks = hooks;
 		this.runtimeBuildId = hooks.runtimeBuildId;
 		this.endpoint = hooks.endpoint;
 		this.handover =
@@ -75,6 +83,30 @@ export class HostCoreGate {
 
 	/** Answers a `begin_handover` record through `deliver` and returns true, or returns false for anything else. */
 	async intercept(parsed: unknown, deliver: (answer: object) => Promise<void>): Promise<boolean> {
+		if (isRecord(parsed) && parsed.type === "drain_if_idle") {
+			// Register the answer before the transaction can start an empty-host shutdown.
+			const answering = Promise.resolve().then(() => {
+				const id = typeof parsed.id === "string" ? parsed.id : undefined;
+				let data: ConditionalDrainDecision;
+				if (typeof parsed.instanceId !== "string" || parsed.instanceId !== hostInstanceId())
+					data = { action: "refuse", reason: "unknown_owner" };
+				else if (this.inFlight.size > 0 || this.hooks.machineWork?.busy() || this.handover?.view() !== undefined)
+					data = { action: "refuse", reason: "host_busy" };
+				else
+					data = this.hooks.conditionalDrain?.(parsed.instanceId) ?? {
+						action: "refuse",
+						reason: "drain_unsupported",
+					};
+				return deliver({ id, type: "response", command: "drain_if_idle", success: true, data });
+			});
+			this.answering.add(answering);
+			try {
+				await answering;
+			} finally {
+				this.answering.delete(answering);
+			}
+			return true;
+		}
 		if (!isRecord(parsed) || parsed.type !== BEGIN_HANDOVER_COMMAND) return false;
 		const answering = this.answerBegin(parsed).then(deliver);
 		this.answering.add(answering);

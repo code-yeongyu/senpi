@@ -37,6 +37,8 @@ export interface StopHostOptions {
 	readonly agentDir?: string;
 	/** Ask the host to finish its work and exit instead of terminating it (host-stop-drain.ts). */
 	readonly drain?: boolean;
+	/** With a named drain: the child refuses busy or attached generations without closing admission. */
+	readonly ifIdle?: boolean;
 	/** With `drain`: the generation to ask, by instance id, instead of the one the pointer names. */
 	readonly instanceId?: string;
 	/** With `drain`: wait up to this long for the generation to exit, and report `exited`. */
@@ -59,7 +61,7 @@ export type StopHostResult =
 	  };
 
 /**
- * Ends a running generation. `drain` is always permitted - it ends no work, it only stops the
+ * Ends a running generation. An unconditional `drain` is always permitted - it ends no work, it only stops the
  * host from taking new work - while a hard stop requires either an empty host or `force`, so an
  * operator never silently kills another client's sessions.
  */
@@ -83,6 +85,11 @@ async function stopHostLocked(options: StopHostOptions): Promise<StopHostResult>
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
 	});
+	if (options.ifIdle === true) {
+		if (options.drain !== true || options.instanceId === undefined)
+			throw new TypeError("stopHost: ifIdle requires drain and instanceId");
+		return drainHost(paths, { ...options, ifIdle: true });
+	}
 	// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
 	await electPointer(paths);
 	const expected = options.expectedGeneration;

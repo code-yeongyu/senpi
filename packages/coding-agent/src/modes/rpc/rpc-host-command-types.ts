@@ -13,6 +13,7 @@ import type { RpcExtensionUIProgress, RpcExtensionUIResponse } from "./rpc-quest
 import type { RpcHostResponse } from "./rpc-relocation-types.ts";
 import type { RpcSessionCommand } from "./rpc-session-command-types.ts";
 import type { RpcMoveSessionCommand } from "./session-move-wire.ts";
+import type { ConditionalDrainCommand } from "./host-conditional-drain.ts";
 
 /** Every established command accepts an additive routing envelope. */
 type RpcCommandBody =
@@ -285,4 +286,9 @@ export type RpcCommand = (
 ) & { readonly admissionId?: string };
 
 /** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
-export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;
+export type RpcInboundRecord =
+	| RpcCommand
+	| ConditionalDrainCommand
+	| RpcExtensionUIResponse
+	| RpcExtensionUIProgress
+	| RpcHostResponse;

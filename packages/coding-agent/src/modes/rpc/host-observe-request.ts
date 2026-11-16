@@ -65,6 +65,8 @@ export function isObservingRequest(line: string): boolean {
 	const record = request as Readonly<Record<string, unknown>>;
 	if (
 		record.type === "warm" ||
+		// An operator's drain request opens no session and takes no occupancy hold.
+		record.type === "drain_if_idle" ||
 		record.type === "park_session" ||
 		record.type === "authenticate" ||
 		record.type === RPC_LAUNCH_PROOF_RECORD

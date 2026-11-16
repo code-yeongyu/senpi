@@ -39,7 +39,7 @@ export function beginDrain(host: RouterContext): void {
 /** One drain pass: park what has settled, and exit once the host holds nothing. */
 export function sweepDrain(host: RouterContext): void {
 	// An accepted open can still be constructing a runtime or binding.
-	if (host.activeRequests.has(undefined)) return;
+	if (host.activeRequests.has(undefined) || host.opensInFlight > 0) return;
 	// A pass that failed as a whole is retried by the drain timer armed before it (senpi#2285).
 	const verdicts = readDrainVerdicts(host.registry, (sessionId) => host.activeRequests.has(sessionId));
 	if (!verdicts) return;

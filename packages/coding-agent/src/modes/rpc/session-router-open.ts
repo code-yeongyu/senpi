@@ -96,6 +96,8 @@ export async function open(
 ): Promise<RpcResponse | undefined> {
 	const validated = validatedOpenProfile(host, command, options);
 	if ("type" in validated) return validated;
+	if (host.draining) return error(command.id, "open_session", "host_draining");
+	host.opensInFlight++;
 	let opened: OpenRpcSession | undefined;
 	const timer = startOpenTimer(`host-open:${command.id ?? "-"}`);
 	const assertSessionNotHeld = sessionHeldCheck(
@@ -261,5 +263,8 @@ export async function open(
 		}
 		if (cause instanceof CompactAdmissionError) throw cause;
 		return error(command.id, "open_session", code(cause), detail(cause));
+	} finally {
+		host.opensInFlight--;
+		if (host.draining) sweepDrain(host);
 	}
 }
