@@ -45,3 +45,34 @@ describe("a receiving move is received again only for its own folder (senpi#6435
 		expect(stored).toMatchObject({ state: "receiving", target: landing, cwd: RECEIVED_FOR });
 	});
 });
+
+// The import resolves its folder before it asks the ledger, so these two calls never see another spelling through
+// the RPC. The ledger normalises anyway: it is the one place a move's folder is compared.
+describe("the ledger compares a move's folder in one spelling (senpi#6435)", () => {
+	it.each([
+		["a trailing slash", "/work/one/"],
+		["a . segment", "/work/./one"],
+		["a .. segment", "/work/two/../one"],
+		["a doubled slash", "/work//one"],
+	])(
+		"#given a move readied for a folder #when the import's fence and its receive name that folder with %s #then both let it in",
+		async (_spelling, other) => {
+			const book = new MoveLedger(temp());
+			await book.prepare(MOVE, "/work/one");
+
+			await expect(book.requireReadiedFor(MOVE, other)).resolves.toBeUndefined();
+			await expect(book.beginReceive(MOVE, "/sessions/landing.jsonl", { cwd: other })).resolves.toBeUndefined();
+		},
+	);
+
+	it("#given a move readied for a folder #when the import's fence, a second prepare and the receive name that folder in another letter case #then all three refuse it: letter case is not folded", async () => {
+		const book = new MoveLedger(temp());
+		await book.prepare(MOVE, "/work/one");
+
+		await expect(book.requireReadiedFor(MOVE, "/work/One")).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.prepare(MOVE, "/work/One")).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.beginReceive(MOVE, "/sessions/landing.jsonl", { cwd: "/work/One" })).rejects.toBeInstanceOf(
+			MoveFencedError,
+		);
+	});
+});
