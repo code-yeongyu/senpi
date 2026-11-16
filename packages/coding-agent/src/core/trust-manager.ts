@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
@@ -204,11 +204,23 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 	}
 }
 
+/** Writes of any trust store by this process; part of `ProjectTrustStore.revision`. */
+let trustStoreWrites = 0;
+
 export class ProjectTrustStore {
 	private trustPath: string;
 
 	constructor(agentDir: string) {
 		this.trustPath = join(resolvePath(agentDir), "trust.json");
+	}
+
+	/**
+	 * Changes whenever the store is written: by this process (counted) or by another one (the file's modification
+	 * time and size), so a value read before a write never equals one read after it.
+	 */
+	revision(): string {
+		const stat = statSync(this.trustPath, { bigint: true, throwIfNoEntry: false });
+		return `${trustStoreWrites}:${stat === undefined ? "absent" : `${stat.mtimeNs}:${stat.size}`}`;
 	}
 
 	get(cwd: string): ProjectTrustDecision {
@@ -244,6 +256,7 @@ export class ProjectTrustStore {
 				}
 			}
 			writeTrustFile(this.trustPath, data);
+			trustStoreWrites += 1;
 		});
 	}
 }

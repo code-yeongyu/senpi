@@ -219,7 +219,7 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 	});
 });
 
-// sisyphuslabs/omo-desktop-app#7485: a pull request worktree of another repository must not take the base checkout's
+// The desktop app: a pull request worktree of another repository must not take the base checkout's
 // trust, without saving "do not trust" (Full access still trusts it). Storage contract: the explicit `null` entry.
 describe("an explicit no-decision entry (set_project_trust no_inherit) inherits nothing", () => {
 	it("leaves a worktree undecided although its main checkout and a folder above it are trusted", async () => {

@@ -175,7 +175,7 @@ describe("senpi#6176: project trust over RPC", () => {
 		expect(await host.steeringMode(sessionId)).toBe("all");
 	});
 
-	// sisyphuslabs/omo-desktop-app#7485: a client marks a folder that must inherit no decision, without saving "do not trust".
+	// The desktop app's pull request worktrees: a client marks a folder that must inherit no decision, without saving "do not trust".
 	it("saves no_inherit as an explicit no-decision entry: never listed, adds no trust, and a trusted folder above stops deciding", async () => {
 		const host = await startHost();
 		const sessionId = await host.open();
@@ -252,6 +252,27 @@ describe("senpi#6176: project trust over RPC", () => {
 		grant = false;
 		expect(await host.commandNames(await host.open())).toContain(SKILL_COMMAND);
 		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
+	});
+
+	// #6823 review M1: a save ends a remembered answer, even when a later save restores the entry it was given under.
+	it("drops an answer given under a no_inherit entry once the folder's trust is saved again, even back to no_inherit", async () => {
+		let grant = true;
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: grant ? "yes" : "undecided" }));
+				},
+			],
+		);
+		writeFileSync(host.trustFile, JSON.stringify({ [host.cwd]: null }));
+		const first = await host.open();
+		expect(await host.commandNames(first)).toContain(SKILL_COMMAND);
+		grant = false;
+		await host.send({ type: "set_project_trust", sessionId: first, choice: "do_not_trust" });
+		await host.send({ type: "set_project_trust", sessionId: first, choice: "no_inherit" });
+		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
+		expect(await host.commandNames(await host.open())).not.toContain(SKILL_COMMAND);
 	});
 
 	it("refuses an unknown choice and saves nothing", async () => {
