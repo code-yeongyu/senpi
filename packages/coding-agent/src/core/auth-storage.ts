@@ -373,9 +373,11 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	 * fails with EPERM, EACCES or EBUSY until that handle closes, so wait it out between attempts,
 	 * within the async lock budget (#6849 review L4). Other errors, and every error elsewhere, throw.
 	 */
-	private async writeAuthFileWhenFree(content: string, signal?: AbortSignal): Promise<void> {
+	private async writeAuthFileWhenFree(content: string, checkLock: () => void, signal?: AbortSignal): Promise<void> {
 		const startedAt = Date.now();
 		for (let attempt = 0; ; attempt++) {
+			// Every attempt is made under the lock: one lost during a wait writes nothing (#6849 review L5).
+			checkLock();
 			try {
 				this.writeAuthFile(content);
 				return;
@@ -425,7 +427,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			throwIfCompromised();
 			options?.signal?.throwIfAborted();
 			if (next !== undefined) {
-				await this.writeAuthFileWhenFree(next, options?.signal);
+				await this.writeAuthFileWhenFree(next, throwIfCompromised, options?.signal);
 			}
 			throwIfCompromised();
 			return result;
@@ -807,7 +809,8 @@ export class AuthStorage implements CredentialStore {
 	 * from the file read without the lock, asynchronously and within the sync lock budget (#6841). Writes
 	 * replace the file by rename, so this sees a whole old or new store; it is never written back, and the
 	 * store stays busy, so the next read still takes the lock. A file that cannot be read in time, or does
-	 * not parse, leaves the credentials as they were.
+	 * not parse, leaves the credentials as they were. Like a locked read, the parse also refreshes the
+	 * store's notices and records a migration it had to skip.
 	 */
 	async readWhileBusy(): Promise<void> {
 		if (!this.dataFromBusyRead || this.dataLoaded || !this.authPath) return;

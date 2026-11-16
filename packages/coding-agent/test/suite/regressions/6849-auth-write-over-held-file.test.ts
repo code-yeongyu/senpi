@@ -47,4 +47,38 @@ describe("senpi#6849 a credential write while another process holds auth.json op
 		expect(JSON.parse(readFileSync(authJson, "utf8")).openai).toEqual({ type: "api_key", key: "sk-after" });
 		expect(vi.mocked(fs.renameSync).mock.calls.length).toBeGreaterThanOrEqual(2);
 	});
+	// #6849 review L5: the lock can be lost while the write waits; nothing may be written after that.
+	it("writes nothing once the lock is lost during the wait", async () => {
+		const authJson = join(dir, "auth.json");
+		const before = JSON.stringify({ openai: { type: "api_key", key: "sk-before" } });
+		writeFileSync(authJson, before);
+		const backendPrototype = Object.getPrototypeOf(
+			(AuthStorage.create(authJson) as unknown as { storage: object }).storage,
+		) as { acquireLockAsync: (signal: AbortSignal | undefined, onCompromised: (error: Error) => void) => Promise<unknown> };
+		const acquire = backendPrototype.acquireLockAsync;
+		let loseLock = () => {};
+		const spy = vi.spyOn(backendPrototype, "acquireLockAsync").mockImplementation(function (
+			this: unknown,
+			signal: AbortSignal | undefined,
+			onCompromised: (error: Error) => void,
+		) {
+			loseLock = () => onCompromised(new Error("lock compromised"));
+			return acquire.call(this, signal, onCompromised);
+		});
+		const actual = await vi.importActual<typeof import("fs")>("fs");
+		vi.mocked(fs.renameSync)
+			.mockImplementationOnce(() => {
+				loseLock();
+				throw heldOpen();
+			})
+			.mockImplementation(actual.renameSync);
+		const storage = AuthStorage.create(authJson);
+
+		await expect(storage.modify("openai", async () => ({ type: "api_key", key: "sk-after" }))).rejects.toThrow(
+			"lock compromised",
+		);
+
+		expect(readFileSync(authJson, "utf8")).toBe(before);
+		spy.mockRestore();
+	});
 });
