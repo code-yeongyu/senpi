@@ -2391,7 +2391,12 @@ export function createRpcConnectionHandler(
 				});
 				// Read after the rows: building them re-reads a store that failed to load (#4413).
 				const storeError = modelRegistry.authStorage.getLoadError();
-				return success(id, "get_auth_providers", { providers, ...(storeError ? { storeError } : {}) });
+				const storeBusy = modelRegistry.authStorage.isCredentialStoreBusy();
+				return success(id, "get_auth_providers", {
+					providers,
+					...(storeError ? { storeError } : {}),
+					...(storeBusy ? { storeBusy: true as const } : {}),
+				});
 			}
 
 			case "login_start": {

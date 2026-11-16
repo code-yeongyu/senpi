@@ -725,6 +725,7 @@ export class AuthStorage implements CredentialStore {
 			if (!this.dataLoaded) {
 				this.busyReads++;
 				this.dataFromBusyRead = true;
+				this.data = this.readWithoutLock() ?? this.data;
 			}
 			return "busy";
 		}
@@ -771,6 +772,20 @@ export class AuthStorage implements CredentialStore {
 	 */
 	getBusyReadCount(): number {
 		return this.busyReads;
+	}
+
+	/**
+	 * auth.json as it stands, read without its lock while another process holds it (#6841). Writes
+	 * replace the file by rename, so this sees a whole old or new store; it is never written back, and
+	 * the store stays busy, so the next read still takes the lock. Undefined when it cannot be read.
+	 */
+	private readWithoutLock(): AuthStorageData | undefined {
+		if (!this.authPath) return undefined;
+		try {
+			return this.parseStorageContent(readFileSync(this.authPath, "utf8")).data;
+		} catch {
+			return undefined;
+		}
 	}
 
 	private noteBusyFallback(error: unknown): void {
