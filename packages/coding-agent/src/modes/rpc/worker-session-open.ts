@@ -76,25 +76,28 @@ export async function openWorkerSession(
 		}
 	}
 	// A quarantined entry's worker stopped answering, but it keeps its entry, claim and grants until its
-	// real exit: a worker stuck in a syscall can still be writing the file. Answer a typed, retryable
-	// refusal that names the quarantine; the worker's exit callback releases everything, and only a retry
-	// after that reopens the session from its file (senpi#6452).
+	// real exit: a worker stuck in a syscall can still be writing the file. The path is still in use, so
+	// the refusal keeps the documented `session_path_in_use` code and names the quarantine in its detail;
+	// the worker's exit callback releases everything, and only a retry after that reopens the session
+	// from its file (senpi#6452).
+	// Matched by the requested spelling or by the key the host already resolved it to, so a platform whose temp
+	// paths are symlinks (macOS /var -> /private/var) answers exactly what one without them does.
+	const knownKey = profile.sessionPath ? host.knownReservationKey(profile.sessionPath) : undefined;
 	for (const entry of host.entries.values()) {
 		if (entry.state !== "quarantined") continue;
-		const samePath = profile.sessionPath !== undefined && entry.sessionPath === profile.sessionPath;
+		const samePath =
+			profile.sessionPath !== undefined &&
+			(entry.sessionPath === profile.sessionPath || (knownKey !== undefined && entry.reservationKey === knownKey));
 		const sameId = requestedDurableId !== undefined && entry.durableSessionId === requestedDurableId;
 		if (!samePath && !sameId) continue;
-		throw new RpcSessionRegistryError("session_closing", undefined, {
+		throw new RpcSessionRegistryError("session_path_in_use", undefined, {
 			reason: "session_quarantined",
 			action: "retry",
 			retry_after_ms: SESSION_PATH_RETRY_AFTER_MS,
 		});
 	}
-	if (profile.sessionPath) {
-		const key = host.knownReservationKey(profile.sessionPath);
-		const owner = key ? host.reservations.owner(key) : undefined;
-		if (key && owner) return host.attach(owner, key, options, profile);
-	}
+	const owner = knownKey ? host.reservations.owner(knownKey) : undefined;
+	if (knownKey && owner) return host.attach(owner, knownKey, options, profile);
 	if (options?.attachOnly)
 		throw new RpcSessionRegistryError("session_not_held", undefined, {
 			reason: "session_not_held",

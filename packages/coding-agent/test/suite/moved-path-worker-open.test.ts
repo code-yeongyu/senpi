@@ -2,6 +2,7 @@ import { basename, dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
+import { SESSION_PATH_RETRY_AFTER_MS } from "../../src/modes/rpc/host-reservations.ts";
 import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-registry.ts";
@@ -137,7 +138,11 @@ it("an open naming a quarantined session is refused until its worker really exit
 	const { layout, newSession, host, registry } = await movedWorkerHost();
 	const handles: string[] = [];
 	const reopen = () => registry.openSession({ cwd: layout.newWorktree, sessionPath: newSession });
-	const refusal = { code: "session_closing", detail: { reason: "session_quarantined", action: "retry" } };
+	// The path is still in use until that exit: the documented code, with the quarantine named in its detail.
+	const refusal = {
+		code: "session_path_in_use",
+		detail: { reason: "session_quarantined", action: "retry", retry_after_ms: SESSION_PATH_RETRY_AFTER_MS },
+	};
 	try {
 		const opened = await reopen();
 		handles.push(opened.sessionId);
