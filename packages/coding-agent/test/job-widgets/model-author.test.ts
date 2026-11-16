@@ -119,17 +119,12 @@ describe("forced respond choice", () => {
 });
 
 describe("job widget model resolution", () => {
-	it("prefers the setting, then the host resolver, then the session's model", () => {
+	it("prefers the setting, then the host resolver, and resolves nothing past them", () => {
 		const setting = modelFor("openai-responses", "setting");
 		const host = modelFor("openai-responses", "host");
-		const session = modelFor("openai-responses", "session");
-		expect(jobWidgetModelResolver({ setting: () => setting, host: () => host, session: () => session })()).toBe(
-			setting,
-		);
-		expect(jobWidgetModelResolver({ setting: () => undefined, host: () => host, session: () => session })()).toBe(
-			host,
-		);
-		expect(jobWidgetModelResolver({ host: () => undefined, session: () => session })()).toBe(session);
+		expect(jobWidgetModelResolver({ setting: () => setting, host: () => host })()).toBe(setting);
+		expect(jobWidgetModelResolver({ setting: () => undefined, host: () => host })()).toBe(host);
+		expect(jobWidgetModelResolver({ setting: () => undefined, host: () => undefined })()).toBeUndefined();
 		expect(jobWidgetModelResolver({})()).toBeUndefined();
 	});
 });
