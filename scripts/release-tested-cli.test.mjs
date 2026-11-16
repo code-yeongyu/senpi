@@ -52,10 +52,12 @@ function withReleaseRepo(run) {
 		for (const part of FORCED_SUITE_PARTS) writeForcedSuiteResult(results, { testedSha: tested, part, exitCode: 0, files: 1, tests: 1 });
 
 		mkdirSync(bin);
+		// gh answers only the platform gate (senpi#6834) with an empty main history; any CI lookup fails.
+		const ghBody = 'if (String(process.argv[3]).includes("/actions/workflows/")) { process.stdout.write("{\\"workflow_runs\\":[]}"); process.exit(0); }\nprocess.exit(1);\n';
 		for (const name of ["npm", "node", "bun", "gh"]) {
 			// The registry preflight (senpi#6636) asks npm view for every publish-set name; the fake knows them all.
 			const npmView = name === "npm" ? 'if (process.argv[2] === "view") process.stdout.write(JSON.stringify(process.argv[3]) + "\\n");\n' : "";
-			const body = `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...process.argv.slice(2)]) + "\\n");\n${npmView}${name === "gh" ? "process.exit(1);\n" : ""}`;
+			const body = `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...process.argv.slice(2)]) + "\\n");\n${npmView}${name === "gh" ? ghBody : ""}`;
 			writeFileSync(join(bin, name), `#!${process.execPath}\n${body}`);
 			chmodSync(join(bin, name), 0o755);
 		}
@@ -94,7 +96,7 @@ describe("release.mjs --tested-sha (senpi#6642)", () => {
 			assert.equal(run.status, 0, run.stderr + run.stdout);
 			assert.equal(ranRegeneration(run.commands), false, JSON.stringify(run.commands));
 			assert.equal(ranSuite(run.commands), false, JSON.stringify(run.commands));
-			assert.equal(run.commands.some((args) => args[0] === "gh"), false, "a tested release does not wait for CI");
+			assert.equal(run.commands.some((args) => args[0] === "gh" && String(args[2]).includes("check-runs")), false, "a tested release does not wait for CI");
 			const tagged = git(origin, "rev-parse", `v${VERSION}^{commit}`);
 			assert.equal(git(origin, "rev-parse", `${tagged}^`), tested, "the release commit sits directly on the tested commit");
 			execFileSync("git", ["merge-base", "--is-ancestor", tagged, "main"], { cwd: origin });
