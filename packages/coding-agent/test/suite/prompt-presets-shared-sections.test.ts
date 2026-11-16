@@ -27,7 +27,7 @@ import { BASELINE_OPTIONS, BASELINE_SURFACES, WORKSTATION_FACTS } from "./prompt
 // replaced the smallest-change rule with the ownership rule in every core and in the shared Style, Intent Gate
 // and claim-audit sentences, so every hash is re-pinned to that rendering (the full/diet split is unchanged).
 // senpi#6681 named the `<device>/<session>` monitor target in the terminal prompt's rpc line;
-// Every REQUEST_ROWS hash (both sources) is re-pinned; PRESET_ROWS are unchanged.
+// every REQUEST_ROWS hash (both sources) is re-pinned; PRESET_ROWS are unchanged.
 
 vi.mock("../../src/core/dynamic-prompt/workstation.ts", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../../src/core/dynamic-prompt/workstation.ts")>();
