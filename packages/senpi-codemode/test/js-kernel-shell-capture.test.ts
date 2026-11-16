@@ -251,6 +251,33 @@ describe("JS kernel shell output capture", () => {
 		}
 	});
 
+	// senpi#6820 security contract: a spawn after its cell settled (timer, callback) must not inherit the OS environ,
+	// which still holds credentials the session environment withholds.
+	it("Given a session environment and no active cell when Bun.spawn runs without env then the worker view is still pinned", () => {
+		const fake = installFakeBun();
+		process.env.TEST_CRED_6820 = "senpi-credential-proxy-placeholder";
+		globalThis.__senpi_session_env_applied__ = true;
+		try {
+			restore = installShellCapture({ isActive: () => false, emitText: emitter().emitText });
+
+			fake.bun.spawn(["sh", "-c", "true"]);
+			fake.bun.spawn({ cmd: ["true"] });
+			fake.bun.spawn(["keep"], { env: { CUSTOM: "1" } });
+
+			expect(fake.spawnCalls[0]?.options?.env).toHaveProperty(
+				"TEST_CRED_6820",
+				"senpi-credential-proxy-placeholder",
+			);
+			expect(fake.spawnCalls[1]?.options?.env).toHaveProperty(
+				"TEST_CRED_6820",
+				"senpi-credential-proxy-placeholder",
+			);
+			expect(fake.spawnCalls[2]?.options?.env).toEqual({ CUSTOM: "1" });
+		} finally {
+			delete process.env.TEST_CRED_6820;
+		}
+	});
+
 	it("Given a session environment when Bun.spawnSync runs without env then the worker view is pinned and explicit env is kept", () => {
 		const fake = installFakeBun();
 		process.env.PI_SESSION_ID = "capture-sync-session";
