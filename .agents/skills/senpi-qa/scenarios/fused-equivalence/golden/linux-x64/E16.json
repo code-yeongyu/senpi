@@ -6286,7 +6286,7 @@
        "type": "custom",
        "customType": "session-lifecycle",
        "data": {
-        "state": "waiting_background",
+        "state": "running",
         "seq": 5,
         "epoch": 1,
         "epochOrigin": "human",
@@ -6301,10 +6301,6 @@
         "waitingOn": {
          "children": 0,
          "background": [
-          {
-           "source": "delivery:senpi-terminal:notification:<uuid:25>",
-           "activeCount": 1
-          },
           {
            "source": "terminal-background-sessions",
            "activeCount": 1
@@ -6334,7 +6330,7 @@
      {
       "type": "session_lifecycle",
       "lifecycle": {
-       "state": "waiting_background",
+       "state": "running",
        "seq": 5,
        "epoch": 1,
        "epochOrigin": "human",
@@ -6353,10 +6349,6 @@
        "waitingOn": {
         "children": 0,
         "background": [
-         {
-          "source": "delivery:senpi-terminal:notification:<uuid:25>",
-          "activeCount": 1
-         },
          {
           "source": "terminal-background-sessions",
           "activeCount": 1
@@ -6446,12 +6438,7 @@
         "rootSessionId": "<uuid:16>",
         "waitingOn": {
          "children": 0,
-         "background": [
-          {
-           "source": "delivery:senpi-terminal:notification:<uuid:25>",
-           "activeCount": 1
-          }
-         ],
+         "background": [],
          "human": []
         },
         "holds": [],
@@ -6489,12 +6476,7 @@
        },
        "waitingOn": {
         "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-terminal:notification:<uuid:25>",
-          "activeCount": 1
-         }
-        ],
+        "background": [],
         "human": []
        },
        "holds": [],
@@ -6605,12 +6587,7 @@
        },
        "waitingOn": {
         "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-terminal:notification:<uuid:25>",
-          "activeCount": 1
-         }
-        ],
+        "background": [],
         "human": []
        },
        "holds": [],
@@ -6736,12 +6713,7 @@
        },
        "waitingOn": {
         "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-terminal:notification:<uuid:25>",
-          "activeCount": 1
-         }
-        ],
+        "background": [],
         "human": []
        },
        "holds": [],
@@ -7609,7 +7581,7 @@
      "type": "custom",
      "customType": "session-lifecycle",
      "data": {
-      "state": "waiting_background",
+      "state": "running",
       "seq": 5,
       "epoch": 1,
       "epochOrigin": "human",
@@ -7624,10 +7596,6 @@
       "waitingOn": {
        "children": 0,
        "background": [
-        {
-         "source": "delivery:senpi-terminal:notification:<uuid:7>",
-         "activeCount": 1
-        },
         {
          "source": "terminal-background-sessions",
          "activeCount": 1
@@ -7719,12 +7687,7 @@
       "rootSessionId": "<uuid:1>",
       "waitingOn": {
        "children": 0,
-       "background": [
-        {
-         "source": "delivery:senpi-terminal:notification:<uuid:7>",
-         "activeCount": 1
-        }
-       ],
+       "background": [],
        "human": []
       },
       "holds": [],

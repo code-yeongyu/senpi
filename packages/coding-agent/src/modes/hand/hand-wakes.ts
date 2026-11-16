@@ -14,7 +14,7 @@ import type { HandWakes } from "../rpc/remote-executor-scope.ts";
  * evicted (reported `refused`), or else the new wake is refused before it is sent (reported `overflow`); a wake already
  * sent is never evicted.
  */
-export const HAND_WAKE_LIMITS: WakeLimits = { perScope: 256, total: 1024 };
+const HAND_WAKE_LIMITS: WakeLimits = { perScope: 256, total: 1024 };
 
 export interface HandWakeOutboxOptions {
 	readonly clock?: () => number;
