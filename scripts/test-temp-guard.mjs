@@ -7,6 +7,7 @@ import {
 	mkdtempSync,
 	opendirSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -32,10 +33,31 @@ export function repoTempName(name) {
 		name === "tui" || /^[A-Za-z0-9_-]{21}$/.test(name);
 }
 
-export function reportTempLeaks(directory, before, matching = () => true) {
+// Every exclusive job scope records which guarded job created it: the registry exported by the enclosing
+// job's snapshot, or none for a top-level job. A scope nested in this job's own tests carries this job's
+// registry and stays this job's leftover; a scope recording any other owner belongs to a concurrent job.
+const scopeOwnerFile = ".senpi-test-temp-scope.json";
+
+export function concurrentJobScope(path, registry) {
+	if (!basename(path).startsWith("sj-")) return false;
+	let owner;
+	try {
+		owner = JSON.parse(readFileSync(join(path, scopeOwnerFile), "utf8"));
+	} catch (error) {
+		if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") throw error;
+		// A scope that vanished since the listing was retired by its job's own check; an unmarked one is reported.
+		return !existsSync(path);
+	}
+	return owner.parentRegistry !== registry;
+}
+
+export function reportTempLeaks(directory, before, matching = () => true, concurrent = () => false) {
 	const known = new Set(before);
 	const fresh = tempEntries(directory).filter((name) => !known.has(name));
-	const leaked = fresh.filter(matching);
+	const foreign = new Set(fresh.filter((name) => matching(name) && concurrent(join(directory, name))));
+	const leaked = fresh.filter((name) => matching(name) && !foreign.has(name));
+	for (const name of foreign)
+		console.log(`[test-temp] concurrent job scope, not this job's: ${JSON.stringify(join(directory, name))}`);
 	for (const name of fresh.filter((entry) => !matching(entry)))
 		console.log(`[test-temp] unrecognized new system entry: ${JSON.stringify(join(directory, name))}`);
 	console.log(
@@ -107,6 +129,12 @@ if (
 			]),
 		);
 		try {
+			if (scope) {
+				// Rename keeps a concurrent check from reading a partial owner record.
+				const owner = join(scope, `${scopeOwnerFile}.partial`);
+				writeFileSync(owner, JSON.stringify({ parentRegistry: process.env.SENPI_TEST_TEMP_REGISTRY || null }));
+				renameSync(owner, join(scope, scopeOwnerFile));
+			}
 			// npm enables Node's default compile cache before launching the wrapped test, and jiti
 			// (the Node extension loader) writes its default cache to <TMPDIR>/jiti (#4916).
 			// Both are allocated by job setup and retired with the owned parent, not exempted.
@@ -169,7 +197,8 @@ if (
 			let leaked = reportTempLeaks(snapshot.directory, snapshot.entries);
 			for (const system of snapshot.system ?? []) {
 				console.log(`[test-temp] checking system temp: ${JSON.stringify(system.directory)}`);
-				leaked += reportTempLeaks(system.directory, system.entries, repoTempName);
+				leaked += reportTempLeaks(system.directory, system.entries, repoTempName,
+					(path) => concurrentJobScope(path, snapshot.registry));
 			}
 			let retired = 0;
 			for (const root of roots) {
