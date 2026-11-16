@@ -84,11 +84,13 @@ const SCRUBBED_SESSION_ENV = [
 	"PI_PROMPT_CACHE_SAFE_WAIT_SECONDS",
 	"PI_SESSION_FILE",
 	"PI_SESSION_ID",
-	// An inherited package dir points the child's getPackageDir() at another install; without its piConfig the
-	// product name falls back to "pi" and changes the system prompt (senpi#6839).
-	"SENPI_PACKAGE_DIR",
-	"PI_PACKAGE_DIR",
 ];
+
+/**
+ * Any name ending in `_PACKAGE_DIR` (SENPI_, PI_, a launcher's own prefix) points the child's getPackageDir() at another
+ * install; without its piConfig the product name falls back to "pi" and changes the system prompt (senpi#6839).
+ */
+const isPackageDirOverride = (name) => name.endsWith("_PACKAGE_DIR");
 
 /** envPrefix of the inherited brand profile, if any (mirrors parseBrandProfile's fallback). */
 function brandEnvPrefix(raw) {
@@ -106,7 +108,11 @@ export function scrubSandboxEnv(env) {
 	const scrubbed = [];
 	const prefix = brandEnvPrefix(env.SENPI_BRAND);
 	for (const name of Object.keys(env)) {
-		if (SCRUBBED_SESSION_ENV.includes(name) || (prefix !== undefined && name.startsWith(`${prefix}_`))) {
+		if (
+			SCRUBBED_SESSION_ENV.includes(name) ||
+			isPackageDirOverride(name) ||
+			(prefix !== undefined && name.startsWith(`${prefix}_`))
+		) {
 			delete env[name];
 			scrubbed.push(name);
 		}
@@ -494,6 +500,8 @@ async function selfCheck() {
 		PI_PROMPT_CACHE_SAFE_WAIT_SECONDS: "270",
 		PI_SESSION_FILE: "/tmp/qa-real-session.jsonl",
 		PI_SESSION_ID: "qa-real-session",
+		SENPI_PACKAGE_DIR: "/tmp/qa-real-package",
+		PI_PACKAGE_DIR: "/tmp/qa-real-package",
 	};
 	const savedFixture = new Map();
 	for (const [key, value] of Object.entries(leakedFixture)) {
