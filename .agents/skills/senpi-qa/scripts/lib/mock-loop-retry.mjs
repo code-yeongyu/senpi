@@ -32,6 +32,9 @@ const STANDARD_RETRY_SCENARIOS = {
 		marker: "SENPI-QA-RETRY-BILLING-SWAP-3f0a",
 		primaryAttempts: 1,
 		fallbackAttempts: 1,
+		// A billing error spends the whole account, so the chain skips every entry on that provider (senpi#3312);
+		// the swap the scenario proves is to another provider.
+		fallbackProviderSuffix: "-backup",
 	},
 	"transient-recover": {
 		error: { status: 500, message: "overloaded_error" },
@@ -132,6 +135,8 @@ async function checkStandardRetryScenario(checks, scenarioName, apiName, driveTu
 	if (!scenario) throw new Error(`unknown retry scenario ${scenarioName}`);
 	const preset = API_PRESETS[apiName];
 	const fallbackModelId = `${preset.modelId}-fallback`;
+	const fallbackProvider = `${preset.provider}${scenario.fallbackProviderSuffix ?? ""}`;
+	const providerOf = (modelId) => (modelId === fallbackModelId ? fallbackProvider : preset.provider);
 	const expectedModels = [
 		...Array(scenario.primaryAttempts).fill(preset.modelId),
 		...Array(scenario.fallbackAttempts).fill(fallbackModelId),
@@ -140,13 +145,13 @@ async function checkStandardRetryScenario(checks, scenarioName, apiName, driveTu
 		apiName,
 		turns: [...Array(scenario.errorCount).fill({ error: scenario.error }), { text: scenario.marker }],
 		prompt: `Return ${scenario.marker} after recovering from the scripted provider error.`,
-		mockModels: [{ id: fallbackModelId }],
+		mockModels: [{ id: fallbackModelId, provider: fallbackProvider }],
 		retry: {
 			enabled: true,
 			maxRetries: 3,
 			baseDelayMs: 0,
 			provider: { maxRetries: 0, maxRetryDelayMs: 60000 },
-			fallbackChains: { [`${preset.provider}/${preset.modelId}`]: [`${preset.provider}/${fallbackModelId}`] },
+			fallbackChains: { [`${preset.provider}/${preset.modelId}`]: [`${fallbackProvider}/${fallbackModelId}`] },
 		},
 		timeoutMs: 60000,
 	});
@@ -158,8 +163,8 @@ async function checkStandardRetryScenario(checks, scenarioName, apiName, driveTu
 		const transcript = [
 			`scenario=${scenarioName}`,
 			`attempts=${modelSequence.length}`,
-			`sequence=${modelSequence.map((modelId, index) => `${index + 1}:${preset.provider}/${modelId}`).join(",") || "none"}`,
-			`modelAttempts=${[preset.modelId, fallbackModelId].map((modelId) => `${preset.provider}/${modelId}:${counts.get(modelId) ?? 0}`).join(",")}`,
+			`sequence=${modelSequence.map((modelId, index) => `${index + 1}:${providerOf(modelId)}/${modelId}`).join(",") || "none"}`,
+			`modelAttempts=${[preset.modelId, fallbackModelId].map((modelId) => `${providerOf(modelId)}/${modelId}:${counts.get(modelId) ?? 0}`).join(",")}`,
 			`switched=${modelSequence.includes(fallbackModelId) ? "yes" : "no"}`,
 		];
 		process.stdout.write(`SENPI_QA_RETRY_TRANSCRIPT ${transcript.join(" ")}\n`);
