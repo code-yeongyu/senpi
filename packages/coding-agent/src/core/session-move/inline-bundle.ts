@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { leavesBundle, listedFiles, MANIFEST_FILE, MoveBundleInvalidError, parseManifest, shown } from "./bundle.ts";
+import { type NameFolding, refuseNamesThatFold } from "./name-folding.ts";
 import { filesUnder } from "./export.ts";
 
 export interface InlineBundleFile {
@@ -121,13 +122,21 @@ async function removeStaleStaging(incoming: string): Promise<void> {
  * on it with the sha256 each file was sent with, and removes the folder whatever happens. A refused list makes no
  * folder and writes nothing. Before it writes, it removes the `inline-` folders under `incoming` that were not
  * modified for an hour (`STALE_STAGING_MS`); a younger one, or a folder of another name, is kept.
+ *
+ * A list with two paths that are one name where names fold (letter case, Unicode form) is refused too, but only
+ * where `incoming`'s file system really folds them (senpi#6472): `probeFolding` asks it, and only for such a list.
+ * Like every other refusal of a sent list, it happens before the first folder is made.
  */
 export async function withStagedInlineBundle<T>(
 	files: readonly InlineBundleFile[],
 	incoming: string,
 	use: (bundleDir: string, sent: ReadonlyMap<string, string>) => Promise<T>,
+	probeFolding?: (folder: string) => Promise<NameFolding>,
 ): Promise<T> {
 	const sent = sentChecksums(files);
+	// Above the mkdir: every refusal of a sent list is before the first folder is made. The probe does not need
+	// `incoming` to be there, since it asks the nearest folder above it that is.
+	await refuseNamesThatFold([...sent.keys()], incoming, probeFolding);
 	await mkdir(incoming, { recursive: true });
 	await removeStaleStaging(incoming);
 	const dir = await mkdtemp(join(incoming, STAGING_PREFIX));
