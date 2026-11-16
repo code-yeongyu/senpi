@@ -1,6 +1,13 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6809": {
+			"additions": [
+				"legacyContracts/test/eval-notifier.test.ts/EvalNotifier on a hand, sends without a session context: the loop that receives the notice applies the session guards"
+			],
+			"reason": "senpi#6809: main's codemode-gate is red on this one unreviewed addition, the contract title senpi#6763 (407200e7f2, eval notifiers notify on a hand; the receiving loop applies the session guards) added to test/eval-notifier.test.ts without an allowlist entry. Read from main's own hosted gate log at 31686a24bd (the only unreviewed key it names); no prompt cell, schema or import moves and the baseline is unchanged.",
+			"changes": []
+		},
 		"senpi#6406": {
 			"additions": [
 				"legacyContracts/test/eval-render-nested-height.test.ts/eval nested calls keep a stable height while the cell runs (senpi#6390) Given nested calls of different heights sliding through the collapsed window, the running block never shrinks",
