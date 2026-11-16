@@ -109,7 +109,7 @@ export type RpcSessionCommand =
 			/** `stop` is a user Stop: the session is paused until human input or resume_session (senpi#3811). */
 			intent?: "stop" | "abort";
 	  }
-	| { id?: string; type: "interrupt"; turnId?: string; intent?: "stop" | "abort" }
+	| { id?: string; type: "interrupt"; turnId?: string; intent?: "stop" | "abort"; background?: "stop" }
 	/** Human input held for a paused session, delivered when it resumes; idempotent by inputId (senpi#3811). */
 	| {
 			id?: string;
@@ -313,6 +313,7 @@ export type RpcSessionCommand =
 	| RpcRecoveryCommand
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
+	| { id?: string; type: "set_session_archived"; archived: boolean }
 	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */
 	| { id?: string; type: "record_user_activity"; kind: "draft" }
 	| { id?: string; type: "import_jsonl"; inputPath: string; cwdOverride?: string }
@@ -346,6 +347,23 @@ export type RpcSessionCommand =
 			id?: string;
 			type: "write_project_file";
 			path: string;
+			content: string;
+			ifEtag: string | null;
+			expectedCwd?: string;
+	  }
+	| { id?: string; type: "get_project_mcp_servers" }
+	| {
+			id?: string;
+			type: "set_project_mcp_servers";
+			patch: Record<string, unknown>;
+			ifEtag: string | null;
+			expectedCwd?: string;
+	  }
+	| { id?: string; type: "read_project_skill_file"; skill: string }
+	| {
+			id?: string;
+			type: "write_project_skill_file";
+			skill: string;
 			content: string;
 			ifEtag: string | null;
 			expectedCwd?: string;

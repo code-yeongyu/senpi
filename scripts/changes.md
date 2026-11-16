@@ -1,3 +1,101 @@
+## 2026-11-15 - Entry-graph budget for the pi-agent-core read-folders subpath (senpi#6740)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: `./read-folders` of `packages/agent` is budgeted at 10 files and may not reach `packages/ai/`, the agent loop, the harness runtime or env.
+
+### Why
+
+- The subpath exists so a Worker bundle of the tools does not pull the AI package; the budget keeps it that way.
+
+### Why an extension could not handle it
+
+- Repository checks are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `packages/agent` block of `BUDGETS`.
+
+## 2026-11-15 - runRelease spawns its live run from main without a dead option (senpi#6691 review)
+
+### What changed
+
+- `scripts/registry-preflight.test.mjs`: `runRelease` loses the `{ ref }` option no caller passes since #6691's L1 fix removed the refusal case; it pins the live run to `refs/heads/main` inline, where the two preflight cases need it.
+
+### Why
+
+- senpi#6691's review left one LOW: the option was dead code, kept only for a future caller.
+
+### Why an extension could not handle it
+
+- Release tooling tests; extensions do not run in them.
+
+### Expected merge conflict zones
+
+- LOW: the `runRelease` helper in `scripts/registry-preflight.test.mjs`.
+
+## 2026-11-14 - The registry preflight tests set their own ref (senpi#6690)
+
+### What changed
+
+- `scripts/registry-preflight.test.mjs`: the stub environment strips `GITHUB_ACTIONS` and `GITHUB_REF`, so no spawned `release.mjs`/`publish.mjs` inherits the runner's pair, and `runRelease` sets the pair per case (a live run from `refs/heads/main`, the state the registry preflight needs behind the live-run ref guard; the guard's own refusal cases stay in `release-ref-guard.test.mjs`). The `publish.mjs` case keeps the explicit pair it already set.
+
+### Why
+
+- The two `release.mjs registry preflight` cases inherited the CI job's `GITHUB_REF`, so on every pull-request run the senpi#6645 ref guard stopped `release.mjs` before the registry preflight the cases test (senpi#6690); main's own run was green only because its ref is `refs/heads/main`.
+
+### Why an extension could not handle it
+
+- Release tooling tests; extensions do not run in them.
+
+### Expected merge conflict zones
+
+- LOW: the `runRelease` helper and the `withStubs` env in `scripts/registry-preflight.test.mjs` (senpi#6662 touches neighboring release scripts, not this file).
+
+## 2026-11-13 - The forced release suite runs as matrix jobs on the tested commit (senpi#6642)
+
+### What changed
+
+- `scripts/release.mjs`: a new `--tested-sha <sha>` option (with `--sha` and `--shard-results <dir>`) releases the commit the forced-suite matrix jobs of `publish-npm.yml` tested. It skips the catalog regeneration and the in-job suite. Before stamping it refuses unless HEAD is that commit, `--sha` is on main's first-parent history, the tested commit is `--sha` itself or one commit whose only parent is `--sha` and whose diff touches only `REGENERATED_CATALOG_PATHS`, and every matrix job's result file reports a pass with tests on it. `--tested-sha` refuses `--force-tests`. Usage and argument parsing moved to `release-cli-args.mjs`, logging and git calls to `release-commands.mjs`, and the CI and tested-commit evidence to `release-ci-evidence.mjs`. Every other path behaves as before.
+- `scripts/release-pin.mjs`: `assertReleasableCommit`, the read-only checks of `pinReleaseCommit`, is exported for the tested-commit path.
+- `scripts/release-test-gate.mjs`: `catalogCommitMessage` names the release-only catalog commit in both paths. `REGENERATED_CATALOG_PATHS` now selects only what `packages/ai/scripts/generate-models.ts` writes: `models.generated.ts`, `providers/data/` and `providers/*.models.ts`, instead of all of `providers/`, which also holds hand-written provider code. `isRegeneratedCatalogPath` counts a `*.models.ts` shard only when it carries the generator's header; fork-owned shards such as `kimi-coding.models.ts` are hand-written. `changedCatalogPaths` lists the changed generator files, and both catalog commits stage exactly those. `scripts/model-catalog-refresh.mjs` reads the same narrower pathspec.
+- `scripts/release-forced-test-suite.mjs`: `FORCED_SHARD_JOBS` (6) is the matrix's coding-agent shard count, and `runForcedTestSuite` takes an `observe` line hook. The in-job `--force-tests` path keeps its 2 shards.
+- `scripts/release-forced-prepare.mjs` (new): the prepare job. It pins `--sha`, regenerates and checks the catalog, commits a changed catalog on the release only, bundles that commit, and writes `base_sha`, `tested_sha`, `tested_tree`, `version` and `bundle`. When nothing changed, it outputs the dispatched commit and writes no bundle. The base commit is resolved once there and printed in full as a log line and the `base_sha` output. With `force_tests`, every later job and `release.mjs --sha` use that output, including when the dispatch named a sha.
+- `scripts/release-forced-test-part.mjs` (new): one matrix job. It runs `rest` (scripts and every workspace but coding-agent) or coding-agent `--shard=i/6` on the tested commit only, and writes its result file.
+- `scripts/release-forced-suite-results.mjs` (new): writes the per-part result files and checks all of them. `scripts/release-tested-lineage.mjs` (new): the lineage rule. It also provides `assertHeadOnOriginMain`, which `release.mjs` `preflight` now calls (senpi#6645): a release refuses unless HEAD is reachable from the freshly fetched origin/main, or is the single catalog-only child of a commit that is. A local branch named `main` no longer satisfies preflight on its own, because `git checkout -B main` can name any commit. `scripts/release-ref-guard.mjs` (new) adds `assertLiveRunOnMain`. Inside GitHub Actions (`GITHUB_ACTIONS=true`), `release.mjs` and `publish.mjs` refuse a run that is not a dry run unless `GITHUB_REF` is `refs/heads/main`; a missing `GITHUB_REF` also refuses. Local runs are unaffected. This lock is independent of the workflow's step conditions, which also give the release step an empty push token and an uncredentialed origin on any other ref. `changedCatalogPaths` parses `git status --porcelain -z`, so paths that git would quote, and staged renames, come back as stageable paths.
+
+### Why
+
+- A forced cut spent 74.6 of its 89.6 min running the suite in the one release job, with coding-agent in two shards on four vCPUs. Six shard jobs and one rest job each get their own runner, so the suite's wall time falls to about one shard. The release still tags only the tree those jobs tested.
+
+### Why an extension could not handle it
+
+- This is release tooling. Extensions do not run in the release workflow.
+
+### Expected merge conflict zones
+
+- MEDIUM: the imports and `main()` of `scripts/release.mjs`. Code that sat in the moved helpers now lives in `release-cli-args.mjs`, `release-commands.mjs` and `release-ci-evidence.mjs`.
+
+## 2026-11-13 - A release refuses a publish-set package the npm registry does not know (senpi#6636)
+
+### What changed
+
+- `scripts/npm-registry.mjs`: `assertRegistryPackagesKnown(names, lookup)` asks the registry about every value of `registryPackageNames` (`npm view <name> name` by default) and throws one error that lists every unknown name and the two manual first-publish steps. A registry failure other than a 404 propagates unchanged, so it is never read as known or unknown. `queryWithRetry` retries a failure that is not a 404 a fixed number of times (3 attempts, a short fixed pause; a 404 is never retried) for the caller that passes it. Run directly (`node scripts/npm-registry.mjs`), the module performs that check and exits 1 on an unknown name.
+- `scripts/release.mjs`: calls it first, before the pinned build, the catalog regeneration, the forced suite and any commit, tag or push; `--dry-run` runs it too.
+- `scripts/publish.mjs`: calls it right after the publish arguments are resolved, before any package is staged, packed or published, with the retrying lookup: it runs after the tag is pushed, where one registry timeout would fail the publish and cost the version.
+
+### Why
+
+- npm trusted publishing cannot do a package's first publish. A release that reached `npm publish` with an unknown name published part of the set and stopped there, after the tag was pushed (senpi#6636, senpi#5784).
+
+### Why an extension could not handle it
+
+- Release and publish tooling is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the first lines of `main()` in `release.mjs`, the line after `publishArgs` in `publish.mjs`, and the end of `npm-registry.mjs`.
+
 ## 2026-11-12 - The bundle resolves the MCP SDK's zod imports to one pinned zod, whatever the install layout (senpi#6497)
 
 ### What changed

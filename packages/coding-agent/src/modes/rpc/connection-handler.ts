@@ -74,6 +74,7 @@ import type {
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { setSessionArchived } from "../../core/session-archived.ts";
 import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
@@ -141,6 +142,8 @@ import {
 	writeProjectTrust,
 } from "./project-workspace-commands.ts";
 import { readProjectFile, writeProjectFile } from "./project-file-commands.ts";
+import { getProjectMcpServers, setProjectMcpServers } from "./project-mcp-commands.ts";
+import { readProjectSkillFile, writeProjectSkillFile } from "./project-skill-commands.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
 import {
@@ -1534,20 +1537,30 @@ export function createRpcConnectionHandler(
 					);
 				if (command.intent === "stop") {
 					// A Stop names the user's intent, not one turn: an automatic turn that started after the named one stops too.
-					const stopped = await interruptRunningTurn(session, undefined, () => {
-						ClientAdmissions.forSession(session).noteAbort(effectContext().by);
-						return session.stop();
-					});
+					const stopped = await interruptRunningTurn(
+						session,
+						undefined,
+						() => {
+							ClientAdmissions.forSession(session).noteAbort(effectContext().by);
+							return session.stop();
+						},
+						command.background,
+					);
 					if (!stopped.interrupted) await session.stop();
 					return success(id, "interrupt", stopped);
 				}
 				return success(
 					id,
 					"interrupt",
-					await interruptRunningTurn(session, command.turnId, () => {
-						ClientAdmissions.forSession(session).noteAbort(effectContext().by);
-						return session.abort();
-					}),
+					await interruptRunningTurn(
+						session,
+						command.turnId,
+						() => {
+							ClientAdmissions.forSession(session).noteAbort(effectContext().by);
+							return session.abort();
+						},
+						command.background,
+					),
 				);
 
 			case "hold_input": {
@@ -2182,6 +2195,12 @@ export function createRpcConnectionHandler(
 				return success(id, "set_session_name");
 			}
 
+			case "set_session_archived": {
+				setSessionArchived(session.sessionManager, command.archived);
+				outputEvent({ type: "session_archived_changed", archived: command.archived });
+				return success(id, "set_session_archived");
+			}
+
 			case "record_user_activity": {
 				// `prompt` activity is emitted by prompt admission itself; a client may only report a draft.
 				// Read as unknown: the wire value is unchecked, whatever the declared command type says.
@@ -2275,6 +2294,34 @@ export function createRpcConnectionHandler(
 				return result.ok
 					? success(id, "write_project_file", result.data)
 					: error(id, "write_project_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "get_project_mcp_servers": {
+				const result = await getProjectMcpServers(session);
+				return result.ok
+					? success(id, "get_project_mcp_servers", result.data)
+					: error(id, "get_project_mcp_servers", result.message, result.errorCode, result.errorData);
+			}
+
+			case "set_project_mcp_servers": {
+				const result = await setProjectMcpServers(session, command.patch, command.ifEtag);
+				return result.ok
+					? success(id, "set_project_mcp_servers", result.data)
+					: error(id, "set_project_mcp_servers", result.message, result.errorCode, result.errorData);
+			}
+
+			case "read_project_skill_file": {
+				const result = await readProjectSkillFile(session, command.skill);
+				return result.ok
+					? success(id, "read_project_skill_file", result.data)
+					: error(id, "read_project_skill_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "write_project_skill_file": {
+				const result = await writeProjectSkillFile(session, command.skill, command.content, command.ifEtag);
+				return result.ok
+					? success(id, "write_project_skill_file", result.data)
+					: error(id, "write_project_skill_file", result.message, result.errorCode, result.errorData);
 			}
 
 			case "extension_request":

@@ -13,6 +13,10 @@ import {
 } from "../models.ts";
 import { supportsAllowedToolChoice } from "../openai-responses-compat.ts";
 import { readProviderDiagnostic } from "../provider-diagnostic.ts";
+import {
+	isSharedSubscriptionItemLimitMessage,
+	sharedSubscriptionItemLimitMessage,
+} from "./subscription-sharing-items.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -255,6 +259,9 @@ function formatOpenAIResponsesError(error: unknown, provider: string, siwc = fal
 		normalizeProviderError(error),
 		`${provider === "openai" ? "OpenAI" : provider} API error`,
 	);
+	if (isSharedSubscriptionItemLimitMessage(errorMessage)) {
+		errorMessage = sharedSubscriptionItemLimitMessage(provider, errorMessage);
+	}
 	if (siwc && error instanceof Error && Reflect.get(error, "code") === "subscription_sharing_unsupported_capability") {
 		const param = Reflect.get(error, "param");
 		if (typeof param === "string") errorMessage += `\nUnsupported parameter: ${param}`;

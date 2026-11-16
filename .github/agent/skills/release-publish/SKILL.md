@@ -65,6 +65,7 @@ These are separate controls and must not be conflated:
 - `E404` noise for `@code-yeongyu/senpi-orchestrator` is not a release failure.
 - **An npm PUT 404 during `npm publish` can be a false negative**: the publish may have landed anyway (observed live on 2026-07-28 with `@code-yeongyu/senpi@2026.7.28-2` — the job failed but the version exists). ALWAYS verify with `npm view <pkg> versions --json` before treating a publish error as real, before rerunning anything, and before declaring a release failed.
 - A failed `publish-npm` job skips `publish-github-release` and triggers the draft-cleanup path; check `gh release view v<version>` before recovering — the release may already be live. Recover only through the existing tag workflow, never by rerunning `release.mjs`.
+- Since senpi#6627 the npm publish no longer waits for the binary smoke. A failed smoke therefore leaves npm published with neither a draft nor a GitHub Release. A failed or cancelled `stage-github-release` can leave an incomplete draft next to a published npm version. In both states, never publish an existing draft. Re-run the failed jobs of the Build Binaries run, or re-stage from its `release-assets-v<tag>` artifact as `release-draft-cleanup.sh` prints, then publish.
 - If the main checkout has foreign state, use a clean dedicated clone/worktree. Never clean or stash someone else's work.
 
 ## Release notes provenance
@@ -78,8 +79,8 @@ These are separate controls and must not be conflated:
 ## Post-release verification checklist
 
 - [ ] `build-binaries` is complete.
-- [ ] `stage-github-release` is complete.
-- [ ] `publish-npm` is complete.
+- [ ] `publish-npm` is complete (it starts right after `build`, in parallel with the binary smoke).
+- [ ] `stage-github-release` is complete (it waits for the full binary smoke matrix).
 - [ ] `publish-github-release` is complete.
 - [ ] The npm registry resolves the published version.
 - [ ] The GitHub Release is published and non-draft.

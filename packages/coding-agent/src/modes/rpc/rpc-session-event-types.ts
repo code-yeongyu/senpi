@@ -201,6 +201,12 @@ export interface RpcLoadedSurfacesChangedEvent {
 	type: "loaded_surfaces_changed";
 }
 
+/** Emitted after `set_session_archived` writes the session's archived flag; `archived` is the flag now in force. */
+export interface RpcSessionArchivedChangedEvent {
+	type: "session_archived_changed";
+	archived: boolean;
+}
+
 /** Emitted after an account is added, removed, pinned, or blocked by refresh failure. */
 export interface RpcAuthAccountsChangedEvent {
 	type: "auth_accounts_changed";

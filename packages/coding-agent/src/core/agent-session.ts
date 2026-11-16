@@ -281,6 +281,7 @@ import {
 	type TurnStartEvent,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { combinedToolCallSignal } from "./extensions/tool-call-signal.ts";
 import type {
 	ApplyCompactionOptions,
 	ApplyCompactionResult,
@@ -418,6 +419,11 @@ import {
 import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { limitResetAt } from "./retry-fallback/limit-reset.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
+import {
+	type RunBackgroundJob,
+	RunBackgroundJobs,
+	type RunBackgroundStopOutcome,
+} from "./run-background-jobs.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { SecurityNoticeSnapshot } from "./security-notices.ts";
@@ -1059,6 +1065,8 @@ function describeCompactionRejection(cause: CompactionRejectionCause): string {
 			return "Compaction rejected: absolute compaction cap reached for this session.";
 		case "stale-revision":
 			return "Compaction rejected: the session changed while the summary was being prepared. Retry compaction against the latest context.";
+		case "transient-failure":
+			return "Compaction rejected: the summary request failed on a transient provider error. Retry compaction.";
 	}
 }
 
@@ -1555,6 +1563,7 @@ export class AgentSession {
 	private readonly _humanInputListeners = new Set<(event: HumanInputAdmittedEvent) => void>();
 	private readonly _heldInputs: HeldInputs;
 	private readonly _runHolds: RunHolds;
+	private readonly _runBackgroundJobs = new RunBackgroundJobs();
 	private readonly _resumeEffects = new Map<string, ResumeSessionAnswer>();
 	private _stopInterrupt: StopInterrupt | undefined;
 	private _deliveredHeldInputIds: string[] = [];
@@ -1925,7 +1934,14 @@ export class AgentSession {
 			...queuedInputPort,
 			// A follow-up the core drains starts a new turn, inside the same run: the armed turn's barrier ends here.
 			commitConsumption: (queue, messages) => {
-				if (queue === "followUp") this._toolBarrier.clear();
+				if (queue === "followUp") {
+					this._toolBarrier.clear();
+					// Only drained custom follow-ups open an engine turn. Custom context in the person's initial
+					// prompt batch never crosses this boundary and must keep that person's allowance (senpi#6727).
+					for (const message of messages) {
+						if (message.role === "custom" && !hasInputTurnMark(message)) markInputTurnOrigin(message, "engine");
+					}
+				}
 				return queuedInputPort.commitConsumption(queue, messages);
 			},
 		};
@@ -2519,7 +2535,7 @@ export class AgentSession {
 			warnStalled("tool_call_preflight_stalled", elapsedMs),
 		);
 		try {
-			const signal = options.signal ?? this.agent.signal;
+			const signal = combinedToolCallSignal(options.signal, this.agent.signal);
 			// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
 			// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
 			if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
@@ -2538,7 +2554,7 @@ export class AgentSession {
 					toolCallId: toolCall.id,
 					...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
 					input: args as Record<string, unknown>,
-				});
+				}, signal === undefined ? {} : { signal });
 			} catch (err) {
 				if (err instanceof Error) {
 					throw err;
@@ -5244,6 +5260,17 @@ export class AgentSession {
 		return this._isAgentRunActive ? String(this.externalAdmission.turnEpoch) : undefined;
 	}
 
+	/** Record a background job under the running turn; outside a turn nothing is recorded. */
+	registerRunBackgroundJob(job: RunBackgroundJob): () => void {
+		const turnId = this.currentTurnId;
+		return turnId === undefined ? () => {} : this._runBackgroundJobs.register(turnId, job);
+	}
+
+	/** Stop the background jobs `turnId` started (`interrupt { background: "stop" }`). */
+	stopRunBackgroundJobs(turnId: string): Promise<RunBackgroundStopOutcome> {
+		return this._runBackgroundJobs.stop(turnId);
+	}
+
 	/** True while a provider retry is in flight; the deadline lease treats it as turn progress. */
 	get isRetryInFlight(): boolean {
 		return this._retryPromise !== undefined;
@@ -5486,6 +5513,7 @@ export class AgentSession {
 
 		const beforeResult = await this.preflightToolCall(prepared.toolCall, prepared.args, {
 			waitForEventQueue: this._toolExecutionDepth === 0,
+			...(options?.signal === undefined ? {} : { signal: options.signal }),
 		});
 		if (beforeResult?.block) {
 			throw new ExecuteToolError(
@@ -6224,6 +6252,7 @@ export class AgentSession {
 	}
 
 	private async _prompt(text: string, options: PromptOptions): Promise<void> {
+		let claudeRecheckProvider: string | undefined;
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
 			const error = new Error("Prompt cancelled before acceptance");
@@ -6369,6 +6398,14 @@ export class AgentSession {
 						? await this._pooledAccountHealth(model.provider, model.id)
 						: undefined;
 				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
+				// Defer this hold to the Claude pool only if the person's input is ultimately admitted (senpi#6727).
+				if (
+					model?.provider === "anthropic-subscription" &&
+					!this._pendingModelSwitch &&
+					this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
+					attributionOf(options) === "user"
+				)
+					claudeRecheckProvider = model.provider;
 				// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
 				// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
 				// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
@@ -6382,6 +6419,7 @@ export class AgentSession {
 				if (
 					model &&
 					!this._pendingModelSwitch &&
+					claudeRecheckProvider !== model.provider &&
 					this._retryFallback.isProviderSpent(model.provider) &&
 					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
 				) {
@@ -6731,7 +6769,7 @@ export class AgentSession {
 				...clientMessageIdentity(options),
 			};
 			this._userInputSources.set(userMessage, options?.source ?? "interactive");
-			markInputTurnOrigin(userMessage, inputTurnMark(options ?? {}));
+			markInputTurnOrigin(userMessage, inputTurnMark(options ?? {}), attributionOf(options) === "user");
 			messages.push(userMessage);
 
 			// Consume next-turn messages transactionally: a final admission rejection
@@ -6772,6 +6810,12 @@ export class AgentSession {
 				return;
 			}
 			await emitInputDisposition("started");
+			if (
+				claudeRecheckProvider !== undefined &&
+				!this._pendingModelSwitch &&
+				this.model?.provider === claudeRecheckProvider
+			)
+				this._retryFallback.releaseAccountHold(claudeRecheckProvider);
 		} catch (error) {
 			await emitInputDisposition("rejected");
 			if (consumedReleaseExtras !== undefined)
@@ -7321,7 +7365,8 @@ export class AgentSession {
 		// stays unstamped: unknown origin, never defaulted to a trusted source.
 		if (input.source !== undefined) this._userInputSources.set(message, input.source);
 		// Restored input with no source keeps no mark: an unmarked turn is engine work, never a trusted origin.
-		if (input.source !== undefined) markInputTurnOrigin(message, inputTurnMark(input));
+		if (input.source !== undefined)
+			markInputTurnOrigin(message, inputTurnMark(input), attributionOf(input) === "user");
 		else if (recordIsDelegated()) markInputTurnOrigin(message, "delegated");
 		if (input.inputId !== undefined) this._queuedInputDispositions.track(message, input.inputId);
 		this._queuedMessages.set(queuedId, message);
@@ -11462,12 +11507,7 @@ export class AgentSession {
 			// agent.continue() cannot continue from a completed assistant response.
 			if (!willRetry) {
 				const compacted = await this._runAutoCompaction("overflow", false);
-				if (
-					!compacted &&
-					this._compactionLifecycle.state.status === "failed" &&
-					this._compactionLifecycle.state.rejectionCause !== "external-owner" &&
-					getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
-				) {
+				if (!compacted && this._failedCompactionLatchesAdmission()) {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
 						contentTokens: this._blockedAdmissionContentTokens(),
@@ -11613,12 +11653,7 @@ export class AgentSession {
 				);
 			} else {
 				const compacted = await this._runAutoCompaction("threshold", retryAfterCompaction);
-				if (
-					!compacted &&
-					this._compactionLifecycle.state.status === "failed" &&
-					this._compactionLifecycle.state.rejectionCause !== "external-owner" &&
-					getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
-				) {
+				if (!compacted && this._failedCompactionLatchesAdmission()) {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
 						contentTokens: this._blockedAdmissionContentTokens(),
@@ -11628,6 +11663,27 @@ export class AgentSession {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Whether the automatic compaction that just failed proves the unchanged context cannot be
+	 * compacted, so the automatic loop must stop re-sending it (#7921 case 6). An external owner
+	 * and a transient provider failure (senpi#6760) say nothing about the context: latching on
+	 * them refused every automated send for good, while a later attempt can succeed. Neither does
+	 * a breaker cooldown rejection, which made no attempt at all. Three consecutive owned failures trip
+	 * the breaker, deterministic ones included, so this can leave a deterministic failure
+	 * unlatched for one cooldown (60 s, with #531 cooldown admission). The next real attempt
+	 * that fails deterministically latches again, and a latch already armed stays armed.
+	 */
+	private _failedCompactionLatchesAdmission(): boolean {
+		const state = this._compactionLifecycle.state;
+		return (
+			state.status === "failed" &&
+			state.rejectionCause !== "external-owner" &&
+			state.rejectionCause !== "transient-failure" &&
+			state.rejectionCause !== "circuit-breaker" &&
+			getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
+		);
 	}
 
 	private _isCompactionOnCooldown(): boolean {
@@ -12422,6 +12478,7 @@ export class AgentSession {
 				getPauseState: () => this._pauseState(),
 				fenceRun: (runRef) => this._runHolds.fence(runRef),
 				releaseRunFence: (runRef) => this._runHolds.releaseFences("run_cancelled", [runRef]),
+				registerRunBackgroundJob: (job) => this.registerRunBackgroundJob(job),
 				questionInput: () => {
 					this._humanInputAdmitted("answer");
 					// Under the parent's run pause the answer is held like every person input: nothing is released or run (senpi#3811).

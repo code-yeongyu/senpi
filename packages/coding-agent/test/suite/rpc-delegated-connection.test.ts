@@ -39,7 +39,9 @@ import {
  * Delegated connections add methods outside the table, never a table entry.
  */
 // senpi#6344 adds two cwd-naming device_admin commands: park_session and claim_session.
-const DIGEST_ON_BASE = "bca41dd6cac2eff3dc82c24d763e4143d90f44ee75920da9bca1c2c8a98c5156";
+// senpi#6485 adds get_project_mcp_servers, set_project_mcp_servers, read_project_skill_file and write_project_skill_file (device_admin).
+// set_session_archived (drive) writes a session's archived flag.
+const DIGEST_ON_BASE = "affd43e6120fddc8d9267522fcbdc3688fde0ac4c2f61a827d9dc928445c6ad6";
 const FORWARDABLE = [
 	"observe",
 	"drive",

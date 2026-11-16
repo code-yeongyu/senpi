@@ -1,3 +1,160 @@
+## 2026-11-16 - The engine runs the local relay host's device operations (`machine_op`) (senpi#6752)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/machine-op/` (new): `machine_op`, `machine_op_result`, `machine_op_owner`, `machine_op_health` and `machine_op_cancel`. `handler.ts` owns one machine-ops instance (state dir `<agentDir>/machine`, read cap 16,772,963 bytes as the relay host's), one engine-owned terminal registry over the `TerminalManager` the `bash` tools use (`machine-terminals.ts`, `live-handle.ts`), the op_id answer cache (`answer-cache.ts`: 4,096 answers, 24 hours, each bound to its sender; a repeat answers the first outcome, one in flight joins it, another sender's is refused `machine_op_conflict`) and each running op's abort (its optional `deadline_ms`, `machine_op_cancel`, host shutdown). The decoders, run steps, scope handling and terminal wire (`op-args.ts`, `terminal-args.ts`, `core-ops.ts`, `executor.ts`, `terminal-ops.ts`, `terminal-wait.ts`, `terminal-input.ts`, `real-path.ts`) are the relay host's, ported so every result keeps its shape; `env_overlay` is laid last over a `shell` or `exec_command` child's environment.
+- `packages/coding-agent/src/modes/rpc/delegated-connection.ts`, `delegation-wire.ts`, `delegated-answer.ts`: the five records are answered only on a launch-proven connection that declared no delegation (verdict `machine_op`); any other connection gets `machine_op_not_authorized` and nothing runs. They stay out of `RPC_METHOD_CLASS`, so `RPC_METHOD_CLASSES_DIGEST` is unchanged.
+- Security review round 1: writes carry bytes inline only (no file carrier); the result, cancel and terminal ops check the request's `sender` (`machine_op_conflict`, `not_owner`, lifted only by the relay host's `cross_owner: true`); a shell with no cwd runs in the scope root; an `exec_command` whose first wait is aborted kills its terminal; `kill_terminal` waits at most `MACHINE_TERMINAL_KILL_WAIT_MS` (5 s); a state dir that cannot be made answers `machine_op_unavailable` and is retried.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` builds the handler, answers the `machine_op` verdict through it, and both host shutdown paths dispose it (terminals end with the host). An op in flight or a live machine terminal keeps the host from being idle: the router's empty-exit gate and `HostCoreGate`'s idle handover (`host-core-gate.ts` `busy` hook) both consult `MachineOpHandler.busy()`. The idle decision and the end of the host are one step for machine work: `host-idle-handover.ts` calls `holdNewWork` in the same synchronous step as the idle check that starts the switch (and `releaseNewWork` when the handover is blocked), and the empty-exit hook holds machine ops before the host's exit path runs; a held handler refuses a new `machine_op` `machine_op_unavailable`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: a multi-session host advertises `machine_op_v1`.
+- `scripts/realm-census.json`: the new module's load-time constants are classified `constant`.
+
+### Why
+
+- One execution engine per machine: the relay host keeps envelopes, admission, grants, the run-once ledger, audit, blob relay and deadlines, and hands only the run step of each device op to the engine, whose terminals then outlive a relay host restart.
+
+### Why an extension could not handle it
+
+- The records are host-level and gated by the connection's launch proof and delegation state, which only the RPC host core sees.
+
+### Expected merge conflict zones
+
+- LOW: the `inspect` branch order in `delegated-connection.ts`, the verdict union in `delegation-wire.ts`, `handleParsed` and the two shutdown functions in `multi-session-host.ts`, the capability list in `host-capabilities.ts`.
+
+## 2026-11-12 - RPC clients edit the folder's project MCP servers and skill files (senpi#6485)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-mcp-commands.ts`: new. `get_project_mcp_servers` (the project MCP file as stored, with `parseError` and an etag) and `set_project_mcp_servers` (`patch` merged one level deep, `null` removes, other keys kept; candidate checked with the MCP loader's own steps before the write; a file that does not parse is never written over; `ifEtag` required).
+- `packages/coding-agent/src/modes/rpc/project-skill-commands.ts`: new. `read_project_skill_file` / `write_project_skill_file` for the file of a skill the engine lists, only while that file lies inside the session folder; resolved segment by segment with `lstat`, so a folder link or file link that leaves the folder is refused.
+- `packages/coding-agent/src/modes/rpc/project-write-gate.ts`: new. The gates every such write passes before it commits: trust read per write (the session's live trust, and the saved decision unless a launch flag or Full access decided it), the permission system's dispatch authorizer asked for a `write` of that path (same decision as the write tool, fenced right before the rename), and the expected version re-checked after the decision.
+- `packages/coding-agent/src/modes/rpc/project-file-store.ts`: new. The stored-bytes helpers (`readStored`, `etagOf`, `replaceAtomically`, the per-file write queue) moved out of `project-file-commands.ts`, unchanged, so all project file verbs share them.
+- `packages/coding-agent/src/modes/rpc/project-file-commands.ts`: imports those helpers instead of defining them.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the four cases.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-read-response-types.ts`, `rpc-mutation-response-types.ts`: the wire types.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `project_file_permission_denied`, `project_mcp_config_unparseable`, `project_mcp_config_invalid`, `project_skill_not_listed`.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: all four verbs `device_admin` (the digest moves).
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: their inbound schemas.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `session-command-activity.ts`: the two reads join the read allow-lists.
+- `packages/coding-agent/src/modes/rpc/project-expected-cwd.ts`: both writes take the optional `expectedCwd` the other project writes take (senpi#6659); stated for another folder, the write is refused with `project_cwd_mismatch` and nothing is written.
+- `packages/coding-agent/src/modes/rpc/project-skill-commands.ts`: a listed skill under the agent dir is refused even when that dir lies inside the session folder (a cwd of `$HOME`).
+
+### Why
+
+- A client that reaches a folder only through its engine (a desktop on another machine) could list the folder's MCP servers and skills but not edit them; these verbs give remote and local clients the same edit path, with the same trust and permission decisions the machine's own session applies.
+
+### Why an extension could not handle it
+
+- The RPC method-class table, the inbound schemas and the attachment gate are core; an extension request is not classed per method for a remote caller.
+
+### Expected merge conflict zones
+
+- LOW: the `write_project_file` neighbourhood in `connection-handler.ts`, `method-classes.ts`, the schema table and the error-code union.
+
+## 2026-11-14 - `interrupt { background: "stop" }`
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`, `rpc-session-command-types.ts`, `pause-command-validation.ts`: `interrupt` takes `background?: "stop"`; any other value is refused.
+- `packages/coding-agent/src/modes/rpc/session-control-actions-data.ts`: `interruptRunningTurn` takes the field; once the turn stopped it calls `session.stopRunBackgroundJobs(turnId)` and answers `background: { stopped, failed }`, both lists empty for an idle session or another turn's id. `InterruptOutcome` carries it.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: both `interrupt` branches (plain and `intent: "stop"`) pass the field.
+- `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`: the `interrupt` response data is `InterruptOutcome`.
+
+### Why
+
+- A client that interrupts a remote thread needs the work that turn left running stopped too, and to be told what was stopped.
+
+### Why an extension could not handle it
+
+- `interrupt` is an RPC host command.
+
+### Expected merge conflict zones
+
+- LOW: the `interrupt` case in `connection-handler.ts` and `interruptRunningTurn`.
+
+## 2026-11-14 - open_session refuses a cwd that is not a directory, typed (senpi#6686)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: after the open's folder is resolved (named or from the session file's header), a folder that exists but is not a directory answers `session_cwd_not_directory` with `errorData { cwd }`, before the registry opens or creates anything. A missing folder, or one the host cannot stat, keeps today's answer.
+- `packages/coding-agent/docs/rpc.md`: the code in the open_session cwd section and the error list.
+
+### Why
+
+- A caller on another device cannot stat this host's paths, so only the host can refuse a file cwd; a typed code lets it say which argument to fix (oh-my-openagent#13400).
+
+### Why an extension could not handle it
+
+- The open's routing runs before any session, and so before any extension, exists.
+
+### Expected merge conflict zones
+
+- LOW: the lines after `openSessionFolder` in `open()`.
+
+## 2026-11-14 - A rename publishes a session_status (senpi#6672)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-status.ts`: a new `SessionStatusCause` value, `rename`. `causeOfRecord` maps `session_info_changed` (from `set_session_name` or a generated title) to it, so the status stream publishes the session's new name.
+- `packages/coding-agent/docs/rpc.md`: `rename` added to the `lastChange.cause` list.
+
+### Why
+
+- Subscribers learn a session's name only from `session_status`. A renamed session therefore kept its old (often empty) name in every listing built from the stream, including the relay's account-wide thread list on the user's other devices.
+
+### Why an extension could not handle it
+
+- The status stream and its cause mapping belong to the RPC host; an extension cannot add a status publish.
+
+### Expected merge conflict zones
+
+- LOW: `session-status.ts` is fork-only.
+
+## 2026-11-11 - A released session leaves no handover-parked entry (senpi#6444)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-close.ts`: `tearDownReleased`, the teardown of `release_session`, drops the session's entry in the endpoint's handover-parked record (`clearRetainedRecord`) before it finishes the close, as `close` does. Nothing else in the release changes.
+- `packages/coding-agent/docs/rpc.md`: "Retained sessions across a host restart" names `release_session` beside `close_session` and a reclaim as the ends that remove the entry.
+- `packages/coding-agent/test/suite/regressions/6444-release-for-move-drops-retained-record.test.ts` (new); `test/suite/rpc-release-host-support.ts` gains an opt-in `handoverParked` option that builds the release host with its endpoint's daemon directory.
+
+### Why
+
+- The entry a retained open writes was left behind by a release. Once the releasing host process was gone, the next host on the endpoint reopened the released session at startup through `reopenParked`, which opens unattended, and so wrote an `unattended` hold into a file another runtime had been handed. `SessionEventWriter.releaseSession` already says a released file must not be reopened here.
+
+### Why an extension could not handle it
+
+- The handover-parked record and the release teardown are the RPC host's own; no extension hook runs between the release's claim and its close.
+
+### Expected merge conflict zones
+
+- None upstream: `modes/rpc/session-router-close.ts` and the handover-parked record are fork-only. LOW against other RPC work: the finalizer branch of `tearDownReleased`.
+
+## 2026-11-14 - comparableFolder's docstring says what a bare drive root becomes (senpi#6664)
+
+### What changed
+
+- `project-expected-cwd.ts`: the docstring now says a bare drive root becomes `X:\` (`C:`, `C:/` and `c:\` all become `C:\`), which is what the code does; `docs/rpc.md` loses a stray blank line before "The folder a project write is for". The docstring also names which roots keep a separator: a bare POSIX or drive root, not a UNC share root; it quotes the drive-root value like every other value, and it is rewrapped. Prose only, no behaviour change.
+
+### Why
+
+- senpi#6659's review (LOWs L3 and L4) and senpi#6664's review (LOWs L1 and L2).
+
+## 2026-11-14 - A project write can state the folder it is for (senpi#6659)
+
+### What changed
+
+- `set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`. When it is given and the session's working directory is another folder (only trailing separators of the path's own style dropped on both sides, a Windows drive letter compared without case, a bare root kept; nothing trimmed), the write is refused with `project_cwd_mismatch` and nothing is written (`project-expected-cwd.ts`, checked in `connection-handler.ts` before dispatch). A present `expectedCwd` that is not a string is refused with `invalid_argument`. Without it, the write goes as before. `docs/rpc.md` documents the field and both errors on the three writes.
+- Tests: `test/rpc/project-expected-cwd.test.ts`; the project-file host harness moved to `test/rpc/projectHost.ts`.
+
+### Why
+
+- A remote client reaches a session by a key that can since name another session. Reading the session's state and then writing is two requests, so the session can change between them; stating the folder on the write itself lets the engine refuse a write meant for another project.
+
+### Must not break
+
+- Absent `expectedCwd` is today's behaviour. `set_project_mcp_servers` and `write_project_skill_file` should take the same guard wherever they land.
+
 ## 2026-11-11 - move_session status answers from the file at the landing it is given (senpi#6436)
 
 ### What changed

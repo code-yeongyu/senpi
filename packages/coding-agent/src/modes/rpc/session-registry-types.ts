@@ -166,6 +166,12 @@ export interface RpcSessionRow {
 	idleMs: number;
 	/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */
 	tool_child: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
+	/** The session file's archived flag (`set_session_archived`); a thread list hides archived rows by default. */
+	archived: boolean;
+	/** `running` while a turn is in flight (the `session_status` streaming state), else `idle`. */
+	activity: "running" | "idle";
+	/** The session's current model; absent while unknown (an opening session). */
+	model?: { provider: string; id: string };
 }
 
 export interface OpenRpcSession {
