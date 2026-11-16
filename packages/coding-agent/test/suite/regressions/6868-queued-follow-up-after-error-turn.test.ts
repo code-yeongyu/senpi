@@ -5,6 +5,7 @@ import { createHarness, type Harness } from "../harness.ts";
 
 const FOLLOW_UP = "follow-up a remote sender queued during the failing turn";
 const HARD_ERROR = "invalid_request_error: the request was malformed";
+const OVERLOADED = "overloaded_error";
 const ACCOUNT_LIMIT =
 	'429 {"error":{"type":"rate_limit_error","message":"You have hit your session limit; resets 11pm"}}';
 // Bounds the wait only; a sender whose follow-up is parked never resolves on its own.
@@ -148,5 +149,33 @@ describe("#6868 a follow-up queued behind a turn that ended in a provider error"
 		// then
 		expect(harness.session.pendingMessageCount).toBe(1);
 		expect(harness.faux.getCallLog()).toHaveLength(1);
+	});
+
+	it("#given a follow-up queued while an error turn waits to retry #when the person aborts during that backoff #then the follow-up still waits for the next prompt", async () => {
+		// given
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: OVERLOADED }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: OVERLOADED }),
+			fauxAssistantMessage("unexpected turn after the abort"),
+		]);
+		let queued: Promise<void> | undefined;
+		let aborted: Promise<void> | undefined;
+		harness.session.subscribe((event) => {
+			if (event.type !== "auto_retry_start" || event.attempt !== 2 || queued !== undefined) return;
+			queued = harness.session.prompt(FOLLOW_UP, { streamingBehavior: "followUp", source: "rpc" });
+			aborted = queued.then(() => harness.session.abort());
+		});
+
+		// when
+		await harness.session.prompt("a turn that retries").catch(() => undefined);
+		await queued;
+		await aborted;
+		await settle(harness);
+
+		// then
+		expect(harness.session.pendingMessageCount).toBe(1);
+		expect(harness.faux.getCallLog()).toHaveLength(2);
 	});
 });

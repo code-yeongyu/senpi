@@ -1,6 +1,6 @@
 import { type ClientMessageIdentity, clientMessageIdentity } from "./client-message-identity.ts";
 
-/** The provider hold that refuses queued input after an error run: a spent account or a held model family (senpi#3131). */
+/** The provider hold that refuses a queued follow-up after an error run: a spent account or a held model family (senpi#3131). */
 export interface QueuedInputHold {
 	readonly provider: string;
 	/** The user-facing refusal, naming the hold and its reset when the provider stated one. */
@@ -10,7 +10,7 @@ export interface QueuedInputHold {
 }
 
 /**
- * A queued input that will not run: a run ended in a provider error under an account hold, so the input was taken
+ * A queued follow-up that will not run: a run ended in a provider error under an account hold, so it was taken
  * out of the queue instead of being sent to the held provider (senpi#6868). A sender waiting on it resolves here.
  */
 export type QueuedInputFailedEvent = ClientMessageIdentity & {
@@ -27,9 +27,9 @@ export type QueuedInputFailedEvent = ClientMessageIdentity & {
 };
 
 /**
- * What happens to input still queued when a run ends on a provider error (senpi#6868). A person's abort, a blocked
+ * What happens to a follow-up still queued when a run ends on a provider error (senpi#6868). A person's abort, a blocked
  * retry and a required compaction keep it for the next prompt and never reach this decision. Otherwise the session is
- * idle and nothing else will drain the queue, so the input starts its own turn, unless the provider is held: then it
+ * idle and nothing else will drain the queue, so the follow-up starts its own turn, unless the provider is held: then it
  * fails typed, naming the hold, so a held account is never asked again by a queue (senpi#3131).
  */
 export type QueuedInputAfterError =
@@ -40,7 +40,7 @@ export function queuedInputAfterError(hold: QueuedInputHold | undefined): Queued
 	return hold === undefined ? { kind: "start" } : { kind: "fail", hold };
 }
 
-/** The failure record of each input a hold took out of the queue, in queue order. */
+/** The failure record of each follow-up a hold took out of the queue, in queue order. */
 export function queuedInputFailures(
 	cleared: readonly (ClientMessageIdentity & {
 		readonly queuedId: string;

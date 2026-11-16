@@ -3083,8 +3083,8 @@ export class AgentSession {
 			const finalContext = this._buildBoundaryContext([], "agent_before_settle");
 			if (this._abortDuringBeforeSettle) return false;
 			// Input the session held back before the boundary (a person's abort, a blocked retry, a retained
-			// required compaction) stays held: only a handler's continue or newly queued input continues. An
-			// error turn's queued input never waits here: it started or failed at agent_end (senpi#6868).
+			// required compaction) stays held: only a handler's continue or newly queued input continues. A
+			// follow-up queued behind an error turn never waits here: it started or failed at agent_end (senpi#6868).
 			const shouldContinue = result.continue || (!heldQueue && this.agent.hasQueuedMessages());
 			if (shouldContinue && !finalContext.canContinue) {
 				if (result.continue) this._reportInvalidBoundaryContinuation("agent_before_settle");
@@ -4106,6 +4106,15 @@ export class AgentSession {
 		);
 	}
 
+	/** Takes every queued follow-up out of the queue (as a dequeue does) and reports each one failed by `hold`. */
+	private async _failQueuedFollowUps(hold: QueuedInputHold): Promise<void> {
+		const removed: QueuedInput[] = [];
+		for (const input of this._queuedInputOrder.filter((queued) => queued.mode === "followUp")) {
+			if ((await this.changeQueuedInput(input.queuedId, undefined)) === "removed") removed.push(input);
+		}
+		for (const failed of queuedInputFailures(removed, hold)) this._emit(failed);
+	}
+
 	/** The hold that refuses queued input on the current provider: a spent account, else a held family (senpi#3131). */
 	private _queuedInputHold(): QueuedInputHold | undefined {
 		const model = this.model;
@@ -4391,6 +4400,8 @@ export class AgentSession {
 
 		// Check auto-retry and auto-compaction after agent completes.
 		let launchedContinuation = false;
+		// A person stopped a pending retry: its run is theirs to resume, so queued input waits (senpi#6868).
+		let retryCancelled = false;
 		let retryContinuationBlocked = false;
 		let retryExhaustionAllowsQueuedContinuation = false;
 		let allowsPostCompactionUsageExemptContinuation = false;
@@ -4497,6 +4508,7 @@ export class AgentSession {
 					});
 				}
 			}
+			retryCancelled = retryOutcome === "cancelled";
 			if (retryOutcome === "continued") {
 				this._abortProvenance.closeAgentEndBoundary();
 				return;
@@ -4565,9 +4577,9 @@ export class AgentSession {
 						// compaction owns the continuation now.
 						this._requiredCompactionAdmissionError = undefined;
 					}
-					// A failed first response consumes the exemption but does not continue the run here: input queued
-					// behind it is decided below like input queued behind any error run - it starts its own turn, or fails
-					// typed under an account hold (senpi#6868, replacing #4036's wait for the next prompt).
+					// A failed first response consumes the exemption but does not continue the run here: a follow-up
+					// queued behind it is decided below like one queued behind any error run - it starts its own turn, or
+					// fails typed under an account hold (senpi#6868, replacing #4036's wait for the next prompt for follow-ups).
 					allowsPostCompactionUsageExemptContinuation =
 						this._postCompactionUsageExemptAssistants.has(msg) && msg.stopReason !== "error" && msg.stopReason !== "aborted";
 					if (allowsPostCompactionUsageExemptContinuation) {
@@ -4621,12 +4633,15 @@ export class AgentSession {
 				launchedContinuation = true;
 			}
 			// An error run returns before the loop's follow-up poll, and nothing else drains the queue of the now idle
-			// session: its queued input starts its own turn, or fails typed when the provider is held (senpi#6868).
+			// session: a queued follow-up starts its own turn, or fails typed when the provider is held (senpi#6868).
+			// Steering keeps its own rules: it was aimed at the run that failed, and a started follow-up delivers it first.
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
+				!retryCancelled &&
 				!userAbortSuppressedQueuedContinuation &&
 				this._endedOnProviderError(event.messages) &&
+				this._queuedInputOrder.some((input) => input.mode === "followUp") &&
 				this.agent.hasQueuedMessages()
 			) {
 				const after = queuedInputAfterError(this._queuedInputHold());
@@ -4635,7 +4650,7 @@ export class AgentSession {
 					this._scheduleContinuationAfterCurrentEvent();
 					launchedContinuation = true;
 				} else {
-					for (const failed of queuedInputFailures(this.clearQueue().ordered, after.hold)) this._emit(failed);
+					await this._failQueuedFollowUps(after.hold);
 				}
 			}
 			// agent_before_settle (D-15): handlers may append entries or ask for one more request before
@@ -8906,8 +8921,8 @@ export class AgentSession {
 
 	/** Queued input that a whole turn started after and settled without delivering is overdue: say so (#4036). */
 	private _warnQueuedInputOutlivingRun(agentEnd: AgentEvent | undefined): void {
-		// An aborted turn keeps queued input for the next prompt by design, and a failed one starts or fails it at
-		// agent_end (senpi#6868), so neither proves anything is stuck;
+		// An aborted turn keeps queued input for the next prompt by design, and a failed one starts or fails its queued
+		// follow-ups at agent_end (senpi#6868), so neither proves anything is stuck;
 		// the next turn that ends normally still catches input that really is. A settle without an agent_end comes
 		// only from such a turn (the prompt threw, a continuation failed, a retry was aborted in its backoff), and the
 		// transcript would show an earlier turn's outcome instead, so it is never judged (senpi#4064).
