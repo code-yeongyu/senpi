@@ -3038,10 +3038,6 @@
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
-		"packages/coding-agent/src/core/agent-session.ts#EVAL_ONLY_TOOL_NAMES": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
 		"packages/coding-agent/src/core/agent-session.ts#THINKING_LEVELS_WITH_MAX": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -6854,6 +6850,10 @@
 		"packages/coding-agent/src/core/retry-fallback/settings.ts#DEFAULT_FALLBACK_CHAINS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/runtime/active-tools.ts#EVAL_ONLY_TOOL_NAMES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
 		},
 		"packages/coding-agent/src/core/sensitive-output.ts#ENV_ASSIGNMENT": {
 			"class": "per-copy-safe",
