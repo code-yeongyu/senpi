@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureHost, hostEnsureLockTarget } from "../src/modes/rpc/host-ensure.ts";
-import { acquireOwnershipSafeLock } from "../src/modes/rpc/ownership-safe-lock.ts";
+import { acquireOwnershipSafeLock, isBusy } from "../src/modes/rpc/ownership-safe-lock.ts";
 
 // The ensure lock's scope, observed through ensureHost itself (senpi#6871, senpi#6874 review). Security contract: the
 // endpoint lock is this user's own, it is held before the ensure acts, and the tmpdir reap stays outside it.
@@ -67,6 +67,7 @@ async function observeEnsure(agentDir: string, socket: string, observe: () => Pr
 	).rejects.toBe(STOP);
 }
 
+/** Whether another holder has `lockFile` locked. Only a busy lock counts as held: any other failure is surfaced. */
 async function lockIsHeld(lockFile: string): Promise<boolean> {
 	if (lockFile === "") return false;
 	return acquireOwnershipSafeLock(lockFile, { retries: { retries: 0, minTimeout: 1, maxTimeout: 1 } }).then(
@@ -74,7 +75,10 @@ async function lockIsHeld(lockFile: string): Promise<boolean> {
 			await release();
 			return false;
 		},
-		() => true,
+		(error: unknown) => {
+			if (isBusy(error)) return true;
+			throw error;
+		},
 	);
 }
 
@@ -120,11 +124,18 @@ describe.skipIf(process.platform === "win32")("ensureHost lock scope (#6871)", (
 		await mkdir(foreign, { mode: 0o700 });
 		vi.spyOn(process, "getuid").mockReturnValue(runAs);
 
-		await expect(ensureHost({ agentDir, socket })).rejects.toThrow(
+		// A recording afterLockAcquired: it runs only if the ensure ever holds a lock, and lets the ensure go on if so.
+		const ensure = ensureHost({
+			agentDir,
+			socket,
+			_test: { afterLockAcquired: async () => void events.push("lock held") },
+		});
+		await expect(ensure).rejects.toThrow(
 			new RegExp(`user_dir_unsafe: .*senpi-rpc-host-locks-${runAs}.*owned by uid ${realUid}`),
 		);
 
+		// Refused before anything else: no reap ran and afterLockAcquired was never called, so no lock was ever held.
+		expect(events).toEqual([]);
 		expect(await readdir(foreign)).toEqual([]);
-		expect(events).not.toContain("lock held");
 	});
 });
