@@ -14,12 +14,24 @@ import type { SessionEntry, SessionManager } from "./session-manager.ts";
 
 const SESSION_ARCHIVED_CUSTOM_TYPE = "session_archived";
 
+/**
+ * The data of `entry` when it is a `customType` marker written for session `sessionId`, else undefined. Every
+ * per-thread flag kept in the session file (archived, settled) counts only for the session it names this way.
+ */
+export function sessionMarkerData(
+	entry: SessionEntry,
+	customType: string,
+	sessionId: string,
+): Readonly<Record<string, unknown>> | undefined {
+	if (entry.type !== "custom" || entry.customType !== customType) return undefined;
+	const data = entry.data as Readonly<Record<string, unknown>> | undefined;
+	return data?.sessionId === sessionId ? data : undefined;
+}
+
 /** The flag `entry` sets for session `sessionId`, or undefined when it sets none there. */
 export function archivedFlagOf(entry: SessionEntry, sessionId: string): boolean | undefined {
-	if (entry.type !== "custom" || entry.customType !== SESSION_ARCHIVED_CUSTOM_TYPE) return undefined;
-	const data = entry.data as { archived?: unknown; sessionId?: unknown } | undefined;
-	if (data?.sessionId !== sessionId) return undefined;
-	return data.archived === true;
+	const data = sessionMarkerData(entry, SESSION_ARCHIVED_CUSTOM_TYPE, sessionId);
+	return data === undefined ? undefined : data.archived === true;
 }
 
 export function isSessionArchived(manager: Pick<SessionManager, "isArchived">): boolean {

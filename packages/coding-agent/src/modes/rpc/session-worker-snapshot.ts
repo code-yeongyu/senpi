@@ -1,4 +1,5 @@
 import { isSessionArchived } from "../../core/session-archived.ts";
+import { readSessionSettled, settledFields } from "../../core/session-settled.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
@@ -23,5 +24,6 @@ export function workerSnapshot(entry: RpcSessionEntry | undefined): WorkerSnapsh
 		handoffBusy: isHandoffBusy(session.activitySnapshot),
 		streaming: session.isStreaming,
 		archived: isSessionArchived(session.sessionManager),
+		...settledFields(readSessionSettled(session.sessionManager)),
 	};
 }

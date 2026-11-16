@@ -14,7 +14,7 @@ import type {
 } from "@code-yeongyu/senpi-machine-ops";
 import type { Args } from "./wire.ts";
 
-export const READ_RANGE_MAX_BYTES = 1024 * 1024;
+const READ_RANGE_MAX_BYTES = 1024 * 1024;
 
 export class ArgsError extends Error {}
 export const bad = (detail: string): never => {

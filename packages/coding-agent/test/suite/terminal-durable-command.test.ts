@@ -458,6 +458,7 @@ describe("restartable-command durability class — reload", () => {
 			setActiveTools: (next: string[]) => {
 				activeTools = next;
 			},
+			isLoopRemote: () => false,
 		} as unknown as ExtensionAPI;
 		const ctx = {
 			cwd,

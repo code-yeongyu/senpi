@@ -39,7 +39,7 @@ import {
  * The relay host's read cap (its RELAYD_READ_MAX_BYTES): the session blob cap minus a stored result's own cost around
  * the bytes, so a read the relay host can carry is one the engine answers.
  */
-export const RELAY_HOST_READ_MAX_BYTES = 16_772_963;
+const RELAY_HOST_READ_MAX_BYTES = 16_772_963;
 
 // machine-ops' own PTY spawn is not offered: terminals run on the engine's terminal manager (`machine-terminals.ts`).
 const NO_PTY_HOLDER: HolderLink = {

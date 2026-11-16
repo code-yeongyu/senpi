@@ -133,6 +133,7 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	get_last_assistant_text: "ok{}",
 	set_session_name: '{"name":"X14"} => ok',
 	set_session_archived: '{"archived":true} => ok',
+	set_session_settled: '{"settled":true,"by":{"kind":"user"}} => ok',
 	record_user_activity: '{"kind":"draft"} => ok',
 	import_jsonl: '{"inputPath":"$TMP/missing.jsonl"} => no::File not found: <tmp>/missing.jsonl',
 	get_messages: "ok{messages}",

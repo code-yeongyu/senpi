@@ -3038,10 +3038,6 @@
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
-		"packages/coding-agent/src/core/agent-session.ts#EVAL_ONLY_TOOL_NAMES": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
 		"packages/coding-agent/src/core/agent-session.ts#THINKING_LEVELS_WITH_MAX": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -6879,6 +6875,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/runtime/active-tools.ts#EVAL_ONLY_TOOL_NAMES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/sensitive-output.ts#ENV_ASSIGNMENT": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
@@ -7018,6 +7018,10 @@
 		"packages/coding-agent/src/core/session-resident-json.ts#OMIT_JSON_VALUE": {
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
+		},
+		"packages/coding-agent/src/core/session-settled.ts#NOT_SETTLED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/session-sidecar-store.ts#mutationTails": {
 			"class": "per-copy-safe",
@@ -9122,6 +9126,10 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#ThreadSettledBy": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts#HOST_RECORD_SCHEMAS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -9220,7 +9228,7 @@
 		},
 		"packages/coding-agent/src/modes/rpc/project-file-store.ts#writeChains": {
 			"class": "per-copy-safe",
-			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
+			"reason": "per-path write chain: wraps the read, the ifEtag compare and the temp-file plus rename of one project file inside this copy; a split makes the etag check stop binding across copies (two copies holding the same etag can both pass, and one write silently overwrites the other), as another local writer can already race the same window; not A1-A3 (design 3.3)"
 		},
 		"packages/coding-agent/src/modes/rpc/project-mcp-commands.ts#MCP_FILE": {
 			"class": "constant",
