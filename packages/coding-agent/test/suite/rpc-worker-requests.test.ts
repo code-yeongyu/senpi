@@ -68,7 +68,9 @@ it("does not extend the no-progress deadline for a request sent while another is
 		await vi.advanceTimersByTimeAsync(999);
 		expect(timeouts).toBe(0);
 		await vi.advanceTimersByTimeAsync(1);
-		expect(timeouts).toBeGreaterThan(0);
+		// Both timers fire at the commit's deadline: the bind's own timer, not just the commit's, proves the
+		// bind was given what was left of the shared deadline rather than a fresh budget.
+		expect(timeouts).toBe(2);
 		requests.close(new Error("deadline"));
 		await drained;
 		await settled;
