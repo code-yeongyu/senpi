@@ -94,10 +94,27 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = { ...process.env
 		let cancelled = false;
 		let graceTimer: ReturnType<typeof setTimeout> | undefined;
 		const locks = new JobFileLocks(context);
+		const workerExited = new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+		// senpi#5601: the owned groups are killed while the worker still holds their leaders' handles, and the job fails
+		// only after each leader's own exit reached the gate (which also reaps it). A body that blocks its worker's loop
+		// cannot deliver that exit, so after one more grace its worker is ended regardless.
+		let stopping: Promise<void> | undefined;
+		const stopCancelled = (): Promise<void> =>
+			(stopping ??= (async () => {
+				const signalled = context.gate.signalJobGroups(context.jobId);
+				let bound: ReturnType<typeof setTimeout> | undefined;
+				const blocked = new Promise<void>((resolve) => {
+					bound = setTimeout(resolve, MODULE_CANCEL_GRACE_MS);
+				});
+				await Promise.race([context.gate.launchesDone(signalled), workerExited, blocked]);
+				clearTimeout(bound);
+				await worker.terminate();
+				context.gate.endJobGroups(context.jobId);
+			})());
 		const abort = () => {
 			cancelled = true;
 			worker.postMessage({ kind: "cancel" });
-			graceTimer = setTimeout(() => void worker.terminate(), MODULE_CANCEL_GRACE_MS);
+			graceTimer = setTimeout(() => void stopCancelled(), MODULE_CANCEL_GRACE_MS);
 		};
 		context.signal.addEventListener("abort", abort, { once: true });
 		try {
@@ -137,8 +154,8 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = { ...process.env
 			context.signal.removeEventListener("abort", abort);
 			clearTimeout(graceTimer);
 			// The worker is stopped before its locks are released: no write it started can still be running (drain first).
-			await worker.terminate();
-			if (cancelled) context.gate.endJobGroups(context.jobId);
+			if (cancelled) await stopCancelled();
+			else await worker.terminate();
 			await locks.releaseAll();
 		}
 	};

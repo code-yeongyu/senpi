@@ -19,13 +19,13 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function startChild() {
+async function startChild(extraEnv: NodeJS.ProcessEnv = {}) {
 	const dir = await mkdtemp(join(tmpdir(), "tmc-"));
 	const instance = new ToolChildClient({
 		dir,
 		cwd: dir,
 		command: { command: process.execPath, args: ["--import", resolver, roleEntry] },
-		env: { ...process.env, [TOOL_CHILD_MODULE_ROOTS_ENV]: JSON.stringify([extensionDir]) },
+		env: { ...process.env, [TOOL_CHILD_MODULE_ROOTS_ENV]: JSON.stringify([extensionDir]), ...extraEnv },
 	});
 	cleanups.push(async () => {
 		await instance.close();
@@ -66,7 +66,8 @@ describe.skipIf(process.platform === "win32")("module job cancellation", () => {
 	}, 30_000);
 
 	it("fails a body that ignores the cancel tool_child_cancelled and ends the owned group it still runs", async () => {
-		const { instance, dir } = await startChild();
+		// senpi#5601: the kill lands late (a loaded host); the job must still fail only once the group is gone.
+		const { instance, dir } = await startChild({ SENPI_TOOL_CHILD_TEST_DELAY_GROUP_KILL: "1000" });
 		const marker = join(dir, "sleep.pid");
 		const abort = new AbortController();
 		const job = instance.run("module", { modulePath, export: "ownedSleepThenHang", args: { marker } }, abort.signal);
@@ -74,7 +75,8 @@ describe.skipIf(process.platform === "win32")("module job cancellation", () => {
 		expect(defaultGroupProbes.groupHasMembers(pid)).toBe(true);
 		abort.abort();
 		await expect(job).rejects.toMatchObject({ code: "tool_child_cancelled" });
-		// Killed and not yet reaped: the worker that held its handle is gone, so it may linger as a zombie (Z) of the child.
+		// The rejection follows the group's end, so one sample suffices: gone (reaped by its worker's handle), or a zombie
+		// (Z) of the child when that worker could not report it.
 		expect(ended(pid)).toBe(true);
 	}, 30_000);
 
