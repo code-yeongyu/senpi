@@ -132,7 +132,9 @@ if (${JSON.stringify(name)} === "gh") {
 					PATH: `${bin}${delimiter}${dirname(process.execPath)}`,
 				},
 				encoding: "utf8",
-				timeout: 15000,
+				// A hang guard, not a speed assertion: a full fixture release spawns ~100 stub processes and took 6-15 s on a
+				// loaded host, so 15 s killed a correct run mid-flight.
+				timeout: 60000,
 			});
 			const commands = readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse);
 			// The forced suite's steps: `npm run test:scripts`, then the coding-agent shards through run-workspaces.
