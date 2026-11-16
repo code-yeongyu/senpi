@@ -38,7 +38,8 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 	{ mergeStatus: 0, ci: "success", manifestStampOnly: true },
 	{ mergeStatus: 0, ci: "success", forceTests: true },
 	{ mergeStatus: 0, ci: "success", catalogDirty: true, forceTests: true },
-	// senpi#6834: a red macOS/Windows leg on main stops even a release that runs its own suite.
+	// senpi#6834: a red macOS/Windows leg on main stops the release on the CI-evidence path and on one that runs its own suite.
+	{ mergeStatus: 0, ci: "success", platformRed: true },
 	{ mergeStatus: 0, ci: "success", forceTests: true, platformRed: true },
 	// senpi#6859: an accepted CI-basis receipt for the pinned commit waives the hosted CI wait: an unfinished (here superseded)
 	// run is read once and not waited for, but a known-red run still stops the release (review LOW L2 on senpi#6861).
@@ -134,9 +135,9 @@ if (${JSON.stringify(name)} === "gh") {
 					PATH: `${bin}${delimiter}${dirname(process.execPath)}`,
 				},
 				encoding: "utf8",
-				// A hang guard, not a speed assertion: a full fixture release spawns ~100 stub processes and took 6-15 s on a
-				// loaded host, so 15 s killed a correct run mid-flight.
-				timeout: 60000,
+				// A hang guard, not a speed budget: every case spawns a dozen stub processes, and on a loaded host (load 65 on
+				// 14 cores, senpi#6834 follow-up) 15 s killed releases that were still making progress.
+				timeout: 60_000,
 			});
 			const commands = readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse);
 			// The forced suite's steps: `npm run test:scripts`, then the coding-agent shards through run-workspaces.

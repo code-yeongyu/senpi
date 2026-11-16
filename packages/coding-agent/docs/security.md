@@ -65,7 +65,7 @@ Credentials named in the global `credentialProxy.credentials` setting (`~/.senpi
 
 If the proxy cannot start, the declared variables stay withheld and no route is set. Your own `!` commands keep your full environment.
 
-What it does not cover: the proxy runs inside the senpi process as your OS user. A process running as the same user can still read senpi's startup environment (for example `/proc/<pid>/environ` on Linux or `ps eww` on macOS) or its memory. The proxy keeps the value out of agent command environments and transcripts; it is not isolation from a same-user process.
+What it does not cover: the proxy runs inside the senpi process as your OS user. A process running as the same user can still read senpi's startup environment (for example `/proc/<pid>/environ` on Linux or `ps eww` on macOS) or its memory. Only variables whose whole value equals a declared credential are replaced; a variable that embeds the value in a longer string (`Bearer <value>`, a URL carrying the key) is passed through unchanged, so declare that variable as well or remove it from the environment senpi starts with. The proxy keeps the value out of agent command environments and transcripts; it is not isolation from a same-user process.
 
 ## Running Untrusted or Unmonitored Work
 
