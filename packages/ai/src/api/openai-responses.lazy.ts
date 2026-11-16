@@ -2,7 +2,10 @@ import type { Model, ProviderStreams } from "../types.ts";
 import { lazyApi } from "./lazy.ts";
 import { registerPromptCacheWarmer } from "./prompt-cache-warmers.ts";
 
-export const openAIResponsesApi = (): ProviderStreams => lazyApi(() => import("./openai-responses.ts"));
+export const openAIResponsesApi = (): ProviderStreams =>
+	lazyApi(() => import("./openai-responses.ts"), {
+		supportsNonUserContinuation: () => true,
+	});
 
 registerPromptCacheWarmer("openai-responses", async (model, context, options) => {
 	const { warmOpenAIResponsesPromptCache } = await import("./openai-responses.ts");

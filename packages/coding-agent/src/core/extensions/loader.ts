@@ -938,6 +938,10 @@ function createExtensionAPI(
 		},
 
 		session: {
+			registerExternalWakeSource(options) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).registerExternalWakeSource(options);
+			},
 			registerControlEndpoint(options) {
 				runtime.assertActive();
 				return sessionControlOf(runtime).registerControlEndpoint(options);

@@ -67,6 +67,7 @@ export class ExternalAdmission {
 	private readonly emittedListeners = new Set<(deliveryId: string) => void>();
 	private editorSource: (() => EditorHoldState) | undefined;
 	private closedReason: string | undefined;
+	private generationValue = 0;
 	private readonly port: ExternalAdmissionPort;
 	private readonly inputHolds = new Set<InputHoldState>();
 	private readonly settledListeners = new Set<() => void>();
@@ -77,6 +78,14 @@ export class ExternalAdmission {
 
 	get turnEpoch(): number {
 		return this.turnEpochValue;
+	}
+
+	/** Changes across close/reopen, invalidating idle permits issued before a hand-over. */
+	get generation(): number {
+		return this.generationValue;
+	}
+	get closed(): boolean {
+		return this.closedReason !== undefined;
 	}
 
 	get hasInputWork(): boolean {
@@ -136,11 +145,13 @@ export class ExternalAdmission {
 	 * another writer, so the delivery stays with its sender and is delivered there instead.
 	 */
 	close(reason: string): void {
+		if (this.closedReason === undefined) this.generationValue += 1;
 		this.closedReason ??= reason;
 	}
 
 	/** Undoes `close` when the hand-over it was closed for did not happen. */
 	reopen(): void {
+		if (this.closedReason !== undefined) this.generationValue += 1;
 		this.closedReason = undefined;
 	}
 

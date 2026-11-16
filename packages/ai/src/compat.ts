@@ -109,9 +109,18 @@ export function registerFauxProvider(options: RegisterFauxProviderOptions = {}):
 	const core = createFauxCore(options);
 	const sourceId = `faux-provider-${Math.random().toString(36).slice(2, 10)}`;
 	// A session reload runs resetApiProviders(); the caller's provider must still answer afterwards, in or out of a provider scope.
-	registerApiProvider({ api: core.api, stream: core.stream, streamSimple: core.streamSimple }, sourceId, {
-		survivesClear: true,
-	});
+	registerApiProvider(
+		{
+			api: core.api,
+			stream: core.stream,
+			streamSimple: core.streamSimple,
+			supportsNonUserContinuation: core.supportsNonUserContinuation,
+		},
+		sourceId,
+		{
+			survivesClear: true,
+		},
+	);
 	return {
 		api: core.api,
 		models: core.models,
@@ -151,10 +160,10 @@ const builtinApiProviderInstances = new Map<Api, ReturnType<typeof getApiProvide
  */
 export function registerBuiltInApiProviders(): void {
 	for (const [api, streams] of BUILTIN_APIS) {
-		registerBuiltinApiProvider({ api, stream: streams.stream, streamSimple: streams.streamSimple });
+		registerBuiltinApiProvider({ api, ...streams });
 		// This runs while the module evaluates, so it must not throw for the realm's strict mode (omo#12965).
 		if (!getApiProviderAtEvaluation(api)) {
-			registerApiProvider({ api, stream: streams.stream, streamSimple: streams.streamSimple });
+			registerApiProvider({ api, ...streams });
 		}
 		builtinApiProviderInstances.set(api, getApiProviderAtEvaluation(api));
 	}

@@ -14,6 +14,7 @@ import {
 	type TextContent,
 } from "@earendil-works/pi-ai";
 import { ENVIRONMENT_CONTEXT_MESSAGE_TYPE, foldEnvironmentContextIntoNextUserMessage } from "./environment-context.ts";
+import { SESSION_CONTROL_EXTERNAL_WAKE_TYPE } from "./extensions/session-control-types.ts";
 import { replaceElidedImages } from "./image-elision-placeholder.ts";
 import { omitProviderRejectedImages } from "./provider-rejected-images.ts";
 import { appendToolResultUserWords } from "./tool-result-user-words.ts";
@@ -40,8 +41,8 @@ export const GOAL_CONTINUATION_MESSAGE_TYPE = "goal-continuation";
  * inspect entries independently, where excluding this type would hide the live
  * goal-continuation message.
  */
-export function isContextExcludedCustomMessage(_customType: string): boolean {
-	return false;
+export function isContextExcludedCustomMessage(customType: string): boolean {
+	return customType === SESSION_CONTROL_EXTERNAL_WAKE_TYPE;
 }
 
 /**

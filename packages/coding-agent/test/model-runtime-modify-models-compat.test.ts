@@ -3,13 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	createAssistantMessageEventStream,
+	fauxAssistantMessage,
+	type Api,
 	type DeferredCancelOptions,
 	type DeferredFetchOptions,
 	InMemoryModelsStore,
 	type Model,
 	type Provider,
 } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
@@ -30,6 +32,81 @@ function model(id: string): Model<"openai-completions"> {
 }
 
 describe("extension provider model lifecycle", () => {
+	it.each(["simple", "full"] as const)(
+		"checks the auth-selected transport before a constrained %s request is sent",
+		async (mode) => {
+			const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+				throw new Error("No network belongs in the auth-route fixture");
+			});
+			try {
+				const runtime = await ModelRuntime.create({
+					credentials: AuthStorage.inMemory(),
+					modelsStore: new InMemoryModelsStore(),
+					modelsPath: null,
+					allowModelNetwork: false,
+				});
+				const selectedModel = { ...model("auth-route"), provider: "native-auth-route" };
+				let resolvedApi: Api = "anthropic-subscription";
+				const sentApis: Api[] = [];
+				const stream = (requestModel: Model<Api>) => {
+					sentApis.push(requestModel.api);
+					const message = {
+						...fauxAssistantMessage("auth-route reply"),
+						api: requestModel.api,
+						provider: requestModel.provider,
+						model: requestModel.id,
+					};
+					const output = createAssistantMessageEventStream();
+					output.push({ type: "done", reason: "stop", message });
+					output.end(message);
+					return output;
+				};
+				const provider: Provider = {
+					id: selectedModel.provider,
+					name: "Native auth-route fixture",
+					auth: {
+						apiKey: {
+							name: "Fixture auth",
+							resolve: async () => ({ auth: { apiKey: "fixture-only", api: resolvedApi } }),
+						},
+					},
+					getModels: () => [selectedModel],
+					stream,
+					streamSimple: stream,
+					supportsNonUserContinuation: (current) => current.api === "openai-completions",
+				};
+				runtime.registerNativeProvider(provider);
+				const complete = mode === "simple" ? runtime.completeSimple.bind(runtime) : runtime.complete.bind(runtime);
+				const wakeContext = {
+					systemPrompt: "Inspect external data through the registered read tool.",
+					messages: [],
+				};
+
+				// The early selection is eligible, but credential resolution changes the real transport.
+				expect(provider.supportsNonUserContinuation?.(selectedModel)).toBe(true);
+				const refused = await complete(selectedModel, wakeContext, { requiresNonUserContinuation: true });
+				expect(refused.stopReason).toBe("error");
+				expect(refused.errorMessage).toContain("does not support non-user continuation");
+				expect(sentApis).toEqual([]);
+				expect(fetch).not.toHaveBeenCalled();
+
+				const ordinary = await complete(selectedModel, {
+					messages: [{ role: "user", content: "Ordinary request", timestamp: 1 }],
+				});
+				expect(ordinary.stopReason).toBe("stop");
+				expect(sentApis).toEqual(["anthropic-subscription"]);
+
+				resolvedApi = "openai-completions";
+				const supported = await complete(selectedModel, wakeContext, { requiresNonUserContinuation: true });
+				expect(supported.stopReason).toBe("stop");
+				expect(sentApis).toEqual(["anthropic-subscription", "openai-completions"]);
+				expect(fetch).not.toHaveBeenCalled();
+			} finally {
+				fetch.mockRestore();
+			}
+		},
+	);
+
 	it("registers native pi-ai providers with their auth implementation", async () => {
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory(),

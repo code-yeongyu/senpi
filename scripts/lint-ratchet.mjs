@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import * as NodeBuffer from "node:buffer";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -82,8 +83,40 @@ const sorted = (counts) =>
 const SOURCE = /\.(?:[cm]?[jt]s|tsx)$/;
 const CONFIG = "scripts/lint-ratchet.oxlintrc.json";
 
-const run = (root, command, args) =>
-  NodeChildProcess.spawnSync(command, args, { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+// Windows allows 32,767 UTF-16 code units including the executable and terminating null.
+// UTF-8 bytes bound UTF-16 length too; reserve quotes, separators and escaped slashes/quotes,
+// then leave room for executable suffixes and package-manager launchers.
+const commandArgumentSize = (argument) => {
+  let size = NodeBuffer.Buffer.byteLength(argument) + 3;
+  for (const character of argument) if (character === "\\" || character === '"') size += 1;
+  return size;
+};
+
+function* fileBatches(command, args, files) {
+  const limit = 30_000;
+  const overhead = [command, ...args].reduce((size, argument) => size + commandArgumentSize(argument), 0);
+  let batch = [];
+  let size = overhead;
+  for (const file of files) {
+    const added = commandArgumentSize(file);
+    if (overhead + added > limit) throw new Error(`oxlint command is too long for a single file: ${file}`);
+    if (batch.length === 2000 || size + added > limit) {
+      yield batch;
+      batch = [];
+      size = overhead;
+    }
+    batch.push(file);
+    size += added;
+  }
+  if (batch.length > 0) yield batch;
+}
+
+const run = (root, command, args) => {
+  const result = NodeChildProcess.spawnSync(command, args, { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+  if (result.error !== undefined)
+    throw new Error(`${command} failed to start (${result.error.code ?? "unknown"}): ${result.error.message}`);
+  return result;
+};
 
 // A diagnostic with no rule code is a parse error: that file's findings cannot be counted.
 const lint = (root) => {
@@ -95,16 +128,11 @@ const lint = (root) => {
     // A tracked path missing on disk (an unchecked-out submodule) is not linted either.
     .filter((file) => NodeFS.existsSync(NodePath.join(root, file)));
   const diagnostics = [];
-  // Batches keep each argv under the OS limit.
-  for (let start = 0; start < files.length; start += 2000) {
-    const result = run(root, NodePath.join(root, "node_modules/.bin/oxlint"), [
-      "-c",
-      CONFIG,
-      "--format",
-      "json",
-      ...files.slice(start, start + 2000),
-    ]);
-    if (result.error !== undefined || (result.status !== 0 && result.status !== 1))
+  const command = NodePath.join(root, "node_modules/.bin/oxlint");
+  const args = ["-c", CONFIG, "--format", "json"];
+  for (const batch of fileBatches(command, args, files)) {
+    const result = run(root, command, [...args, ...batch]);
+    if (result.status !== 0 && result.status !== 1)
       throw new Error(`oxlint failed (status ${String(result.status)}): ${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
     diagnostics.push(...parsed.diagnostics);

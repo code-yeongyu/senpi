@@ -1,7 +1,17 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Model, Provider } from "@earendil-works/pi-ai";
+import {
+	createProvider,
+	fauxAssistantMessage,
+	normalizeContext,
+	type Model,
+	type Provider,
+	type ProviderStreams,
+} from "@earendil-works/pi-ai";
+import { registerApiProvider } from "@earendil-works/pi-ai/compat";
+import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModelConfig, type ModelsJsonProvider } from "../src/core/model-config.ts";
 import {
@@ -285,5 +295,93 @@ describe("models.json custom models under extension providers", () => {
 		expect(() => composeModelProvider("kiro-like", undefined, config, undefined)).toThrow(
 			'Provider kiro-like: "baseUrl" is required when defining custom models.',
 		);
+	});
+});
+
+describe("native continuation follows the composed transport", () => {
+	function model(): Model<"openai-completions"> {
+		return { ...catalogModel("wake-chat"), api: "openai-completions", provider: "wake-composer" };
+	}
+
+	function streamReply(text: string): AssistantMessageEventStream {
+		const output = new AssistantMessageEventStream();
+		const message = fauxAssistantMessage(text);
+		output.push({ type: "done", reason: "stop", message });
+		output.end(message);
+		return output;
+	}
+
+	// A same-api custom stream must not borrow support from the transport it replaced.
+	// Streaming a normal request proves which implementation actually owns that capability.
+	it.each([false, true])("uses the custom stream's own declaration (declared=%s)", async (declared) => {
+		const target = model();
+		const inheritedStream = vi.fn(() => streamReply("base response"));
+		const inherited = createProvider({
+			id: target.provider,
+			models: [target],
+			auth: { apiKey: { name: "Fixture", resolve: async () => undefined } },
+			api: { stream: inheritedStream, streamSimple: inheritedStream, supportsNonUserContinuation: () => true },
+		});
+		const customStream = vi.fn(() => streamReply("custom response"));
+		const provider = composeModelProvider(target.provider, inherited, configFor(target.provider), {
+			api: target.api,
+			streamSimple: customStream,
+			...(declared ? { supportsNonUserContinuation: (current) => current.id === target.id } : {}),
+		});
+		const result = await provider
+			.streamSimple(
+				target,
+				normalizeContext({
+					messages: [{ role: "user", content: "Normal request", timestamp: 1 }],
+				}),
+			)
+			.result();
+
+		expect(result.content).toEqual([{ type: "text", text: "custom response" }]);
+		expect(customStream).toHaveBeenCalledOnce();
+		expect(inheritedStream).not.toHaveBeenCalled();
+		expect(provider.supportsNonUserContinuation?.(target)).toBe(declared);
+	});
+
+	it("keeps same-api scoped registrations' capability and actual stream together", async () => {
+		const target = model();
+		const config = configFor(target.provider);
+		const scopes = [new ProviderScope(), new ProviderScope()];
+		try {
+			const results = await Promise.all(
+				scopes.map((scope, index) =>
+					runWithProviderScope(scope, async () => {
+						const label = index === 0 ? "native scope" : "undeclared scope";
+						const streams: ProviderStreams = {
+							stream: () => streamReply(label),
+							streamSimple: () => streamReply(label),
+							...(index === 0 ? { supportsNonUserContinuation: () => true } : {}),
+						};
+						registerApiProvider({ api: target.api, ...streams }, "wake-scope-test");
+						const provider = composeModelProvider(target.provider, undefined, config, {
+							api: target.api,
+							baseUrl: target.baseUrl,
+							apiKey: "fixture-only",
+							models: [target],
+						});
+						const result = await provider
+							.streamSimple(
+								target,
+								normalizeContext({
+									messages: [{ role: "user", content: "Normal scoped request", timestamp: 1 }],
+								}),
+							)
+							.result();
+						return { supported: provider.supportsNonUserContinuation?.(target), content: result.content };
+					}),
+				),
+			);
+			expect(results).toEqual([
+				{ supported: true, content: [{ type: "text", text: "native scope" }] },
+				{ supported: false, content: [{ type: "text", text: "undeclared scope" }] },
+			]);
+		} finally {
+			for (const scope of scopes) scope.close();
+		}
 	});
 });

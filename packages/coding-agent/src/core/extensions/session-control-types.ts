@@ -163,8 +163,59 @@ export type SessionControlRegistration =
 	| { readonly status: "unsupported"; readonly reason: "unsupported_platform" | "unsupported_mode" }
 	| { readonly status: "failed"; readonly reason: string };
 
+/** A local extension's data source. No remotely supplied content belongs in this registration. */
+export interface RegisterExternalWakeSourceOptions {
+	readonly source: string;
+	readonly readTool: string;
+}
+
+declare const externalWakePermit: unique symbol;
+
+/** Opaque, one-intent permission to start from the observed idle session. Copying or serializing it loses permission. */
+export interface ExternalWakePermit {
+	readonly [externalWakePermit]: true;
+}
+
+export type ExternalWakeRefusalReason =
+	| "busy"
+	| "held"
+	| "stale"
+	| "expired"
+	| "aborted"
+	| "invalid_permit"
+	| "tool_unavailable"
+	| "unsupported";
+
+export interface ExternalWakeRefusal {
+	readonly status: "refused";
+	readonly reason: ExternalWakeRefusalReason;
+}
+
+export type ExternalWakeResult =
+	| { readonly status: "started"; readonly turn_epoch: number }
+	| ExternalWakeRefusal
+	| { readonly status: "failed"; readonly error: string };
+
+export interface ExternalWakeSource {
+	/** Captures the current editor, Stop and session revisions. Deadline is absolute Unix milliseconds, at most 60s away. */
+	prepare(options: {
+		readonly deadline: number;
+		readonly signal?: AbortSignal;
+	}): { readonly status: "ready"; readonly permit: ExternalWakePermit } | ExternalWakeRefusal;
+	/**
+	 * Starts only while the captured state still permits it. Concurrent repeats join the same result.
+	 * Resolves after settlement; `started` proves a native run began, not that data was read or consumed.
+	 * A refusal is terminal and is never queued or replayed on reopen.
+	 */
+	wake(input: { readonly wake_id: string; readonly permit: ExternalWakePermit }): Promise<ExternalWakeResult>;
+	/** Invalidates outstanding permits and cancels this source's active run. Idempotent. */
+	dispose(): void;
+}
+
 /** `pi.session`: the session control surface. */
 export interface SessionControlActions {
+	/** Registers a text-free native wake source for this extension generation. */
+	registerExternalWakeSource(options: RegisterExternalWakeSourceOptions): ExternalWakeSource;
 	/** POSIX interactive sessions only; anything else answers `unsupported` and registers nothing. */
 	registerControlEndpoint(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration>;
 	admissionGate(): SessionAdmissionGate;
@@ -182,6 +233,15 @@ export interface SessionControlActions {
 
 /** `customType` of the transcript entry an admitted delivery becomes. */
 export const SESSION_CONTROL_DELIVERY_TYPE = "session_control_delivery";
+
+/** UI-only provenance of a native external wake; never converted into a model message. */
+export const SESSION_CONTROL_EXTERNAL_WAKE_TYPE = "session_control_external_wake";
+
+export interface ExternalWakeDetails {
+	readonly source: string;
+	readonly wake_id: string;
+	readonly turn_epoch: number;
+}
 
 /** `details` of that entry: the `delivery_id` is the on-disk proof the delivery was applied. */
 export interface SessionControlDeliveryDetails {

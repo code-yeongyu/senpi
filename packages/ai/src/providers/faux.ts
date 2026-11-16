@@ -753,6 +753,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		models,
 		stream,
 		streamSimple,
+		supportsNonUserContinuation: () => true,
 		fetchDeferred,
 		cancelDeferred,
 		getModel,
@@ -827,6 +828,7 @@ export function fauxProvider(options: RegisterFauxProviderOptions = {}): FauxPro
 		api: {
 			stream: core.stream,
 			streamSimple: core.streamSimple,
+			supportsNonUserContinuation: core.supportsNonUserContinuation,
 			fetchDeferred: core.fetchDeferred,
 			cancelDeferred: core.cancelDeferred,
 		},

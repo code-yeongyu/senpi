@@ -207,6 +207,8 @@ export interface AgentLoopTurnUpdate {
 	thinkingSelection?: ThinkingSelection | null;
 	/** Whether the next provider request should abort a server-selected fallback. */
 	abortServerSideFallback?: boolean;
+	/** The next request must preserve a continuation without fabricating user input. */
+	requiresNonUserContinuation?: boolean;
 }
 
 /** Runtime state available immediately before a conversational provider request. */
