@@ -121,4 +121,11 @@ describe("platform-red.yml", () => {
 		}
 		assert.equal(report.permissions.issues, "write");
 	});
+
+	it("serialises only the red reports: a green completion can never replace a pending red one in a concurrency group", () => {
+		assert.equal(workflow.concurrency, undefined);
+		const [report] = Object.values(workflow.jobs);
+		assert.deepEqual(report.concurrency, { group: "platform-red-report", "cancel-in-progress": false });
+		assert.ok(report.if.includes("workflow_run.conclusion == 'failure'"));
+	});
 });
