@@ -5,7 +5,7 @@
  * "Trust project folder?" before its first turn. The fixtures write exactly the files
  * `git worktree add` writes (no git is spawned, as the trust store spawns none either).
  */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -216,5 +216,26 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 			resolveProjectTrusted({ cwd: worktree, trustStore: store, projectTrustContext: trusted.context }),
 		).resolves.toBe(true);
 		expect(trusted.prompts).toEqual([]);
+	});
+});
+
+// sisyphuslabs/omo-desktop-app#7485: a pull request worktree of another repository must not take the base checkout's
+// trust, without saving "do not trust" (Full access still trusts it). Storage contract: the explicit `null` entry.
+describe("an explicit no-decision entry (set_project_trust no_inherit) inherits nothing", () => {
+	it("leaves a worktree undecided although its main checkout and a folder above it are trusted", async () => {
+		const { main, worktree } = linkedWorktree();
+		mkdirSync(join(worktree, "packages", "app"), { recursive: true });
+		store.set(main, true);
+		store.set(join(scratch, "workspaces"), true);
+		expect(await getSavedProjectTrust(store, worktree)).toBe(true);
+
+		store.setMany([{ path: worktree, decision: "no_inherit" }]);
+
+		expect(await getSavedProjectTrust(store, worktree)).toBeNull();
+		expect(await getSavedProjectTrust(store, join(worktree, "packages", "app"))).toBeNull();
+		expect(store.getEntry(worktree)).toBeNull();
+		expect(JSON.parse(readFileSync(join(scratch, "agent", "trust.json"), "utf8"))).toMatchObject({
+			[worktree]: null,
+		});
 	});
 });

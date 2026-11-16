@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile, realpath, stat } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { linkedWorktreeMainCheckoutDir } from "./linked-worktree-checkout.ts";
 
 export { hasTrustRequiringProjectResources, projectAgentsSkillDirs } from "./trust-requiring-resources.ts";
 
@@ -14,9 +14,16 @@ export interface ProjectTrustStoreEntry {
 	decision: boolean;
 }
 
-export interface ProjectTrustUpdate {
+/** The nearest entry at or above a folder; `decision: null` is an explicit "no decision, none inherited" entry. */
+export interface ProjectTrustNearestEntry {
 	path: string;
 	decision: ProjectTrustDecision;
+}
+
+export interface ProjectTrustUpdate {
+	path: string;
+	/** `null` removes the folder's entry; `"no_inherit"` saves an explicit `null` for it (see `findNearestTrustEntry`). */
+	decision: ProjectTrustDecision | "no_inherit";
 }
 
 export interface ProjectTrustOption {
@@ -42,11 +49,17 @@ function normalizeCwd(cwd: string): string {
 	}
 }
 
-function findNearestTrustEntry(data: TrustFile, cwd: string): ProjectTrustStoreEntry | null {
+/**
+ * The nearest entry at or above `cwd`. An explicit `null` saved for a folder (`set_project_trust`'s `no_inherit`) is an
+ * entry as well: it holds no decision, and the walk stops there, so neither a folder above it nor, for a linked
+ * worktree, the main checkout decides for it. Readers older than that skip a `null` and keep walking: they inherit as
+ * before, and never fail on it.
+ */
+function findNearestTrustEntry(data: TrustFile, cwd: string): ProjectTrustNearestEntry | null {
 	let currentDir = normalizeCwd(cwd);
 	while (true) {
 		const value = data[currentDir];
-		if (value === true || value === false) {
+		if (value === true || value === false || value === null) {
 			return { path: currentDir, decision: value };
 		}
 
@@ -94,6 +107,21 @@ export function getProjectTrustOptions(cwd: string, options?: { includeSessionOn
 		trustOptions.push({ label: "Do not trust (this session only)", trusted: false, updates: [] });
 	}
 	return trustOptions;
+}
+
+/**
+ * `set_project_trust`'s `no_inherit`: no decision for the folder, and none inherited from a folder above it or, for a
+ * linked worktree, from its main checkout, so the folder is decided as if nothing were saved (Full access trusts it,
+ * a session that may ask asks). `/trust` never offers it.
+ */
+export function getProjectTrustNoInheritOption(cwd: string): ProjectTrustOption {
+	const trustPath = normalizeCwd(cwd);
+	return {
+		label: "No decision, and none inherited",
+		trusted: false,
+		updates: [{ path: trustPath, decision: "no_inherit" }],
+		savedPath: trustPath,
+	};
 }
 
 function readTrustFile(path: string): TrustFile {
@@ -184,10 +212,16 @@ export class ProjectTrustStore {
 	}
 
 	get(cwd: string): ProjectTrustDecision {
-		return this.getEntry(cwd)?.decision ?? null;
+		return this.getNearestEntry(cwd)?.decision ?? null;
 	}
 
+	/** The nearest saved decision at or above `cwd`; `null` also when the nearest entry holds no decision. */
 	getEntry(cwd: string): ProjectTrustStoreEntry | null {
+		const entry = this.getNearestEntry(cwd);
+		return entry === null || entry.decision === null ? null : { path: entry.path, decision: entry.decision };
+	}
+
+	getNearestEntry(cwd: string): ProjectTrustNearestEntry | null {
 		return withTrustFileLock(this.trustPath, () => {
 			const data = readTrustFile(this.trustPath);
 			return findNearestTrustEntry(data, cwd);
@@ -206,7 +240,7 @@ export class ProjectTrustStore {
 				if (decision === null) {
 					delete data[key];
 				} else {
-					data[key] = decision;
+					data[key] = decision === "no_inherit" ? null : decision;
 				}
 			}
 			writeTrustFile(this.trustPath, data);
@@ -214,89 +248,15 @@ export class ProjectTrustStore {
 	}
 }
 
-const GITDIR_POINTER = /^gitdir:\s*(.+)$/;
-
-async function readFirstLine(path: string): Promise<string | undefined> {
-	try {
-		return (await readFile(path, "utf-8")).split(/\r?\n/, 1)[0]?.trim() || undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-async function realPathOf(path: string): Promise<string | undefined> {
-	try {
-		return await realpath(path);
-	} catch {
-		return undefined;
-	}
-}
-
-async function entryKind(path: string): Promise<"directory" | "file" | undefined> {
-	try {
-		const stats = await stat(path);
-		if (stats.isDirectory()) return "directory";
-		return stats.isFile() ? "file" : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-/**
- * The folder of the repository's main checkout that matches `cwd` inside a linked git worktree, or
- * undefined when `cwd` is not inside one. A linked worktree is the same repository as its main
- * checkout, but tools that run one agent per worktree (Orca's `~/orca/workspaces/<repo>/<name>`)
- * put it outside the main checkout, where no saved decision covers it. Reads the files
- * `git worktree add` writes, asynchronously, and never spawns git. Accepted only when the admin dir
- * points back at this `.git` file and the common dir is the main checkout's own `.git` directory;
- * bare repositories, `--separate-git-dir` clones and submodules have no main checkout to inherit from.
- * As in git, a worktree folder deleted without `git worktree prune` keeps its admin record, so a folder
- * recreated at that path with a `.git` file the record points back at is that worktree again.
- */
-async function linkedWorktreeMainCheckoutDir(cwd: string): Promise<string | undefined> {
-	const dir = (await realPathOf(resolvePath(cwd))) ?? resolvePath(cwd);
-	let checkoutRoot = dir;
-	let markerKind = await entryKind(join(checkoutRoot, ".git"));
-	while (markerKind === undefined) {
-		const parentDir = dirname(checkoutRoot);
-		if (parentDir === checkoutRoot) return undefined;
-		checkoutRoot = parentDir;
-		markerKind = await entryKind(join(checkoutRoot, ".git"));
-	}
-	if (markerKind !== "file") return undefined;
-	const marker = join(checkoutRoot, ".git");
-	const adminTarget = GITDIR_POINTER.exec((await readFirstLine(marker)) ?? "")?.[1]?.trim();
-	if (!adminTarget) return undefined;
-	// Every pointer is resolved against the admin dir's real path, so relative pointers (`git worktree add
-	// --relative-paths`) and the location check below all speak about the same directory.
-	const adminDir = await realPathOf(resolve(checkoutRoot, adminTarget));
-	if (adminDir === undefined) return undefined;
-	const commonDirPointer = await readFirstLine(join(adminDir, "commondir"));
-	const backPointer = await readFirstLine(join(adminDir, "gitdir"));
-	if (commonDirPointer === undefined || backPointer === undefined) return undefined;
-	const markerRealPath = await realPathOf(marker);
-	if (markerRealPath === undefined || (await realPathOf(resolve(adminDir, backPointer))) !== markerRealPath) {
-		return undefined;
-	}
-	const commonDir = await realPathOf(resolve(adminDir, commonDirPointer));
-	if (commonDir === undefined || basename(commonDir) !== ".git") return undefined;
-	// The pointers above only agree with each other; a folder that is not this repository's worktree can carry its own
-	// consistent set. Git keeps a linked worktree's admin dir in `<common dir>/worktrees/`, inside the repository.
-	if (dirname(adminDir) !== join(commonDir, "worktrees")) return undefined;
-	const mainCheckout = dirname(commonDir);
-	const mainMarker = join(mainCheckout, ".git");
-	if ((await entryKind(mainMarker)) !== "directory" || (await realPathOf(mainMarker)) !== commonDir) return undefined;
-	return join(mainCheckout, relative(checkoutRoot, dir));
-}
-
 /**
  * The saved trust decision for `cwd`: the store's own (the folder or the nearest folder above it),
- * and only when it has none and `cwd` is inside a linked git worktree, the main checkout's decision
- * for the matching folder. A decision saved for the worktree or above it always wins.
+ * and only when it has no entry and `cwd` is inside a linked git worktree, the main checkout's decision
+ * for the matching folder. An entry saved for the worktree or above it always wins, including the
+ * explicit no-decision entry `no_inherit` saves, which leaves the folder undecided.
  */
 export async function getSavedProjectTrust(store: ProjectTrustStore, cwd: string): Promise<ProjectTrustDecision> {
-	const own = store.get(cwd);
-	if (own !== null) return own;
+	const own = store.getNearestEntry(cwd);
+	if (own !== null) return own.decision;
 	const mainCheckoutDir = await linkedWorktreeMainCheckoutDir(cwd);
 	return mainCheckoutDir === undefined ? null : store.get(mainCheckoutDir);
 }

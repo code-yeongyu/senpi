@@ -15,7 +15,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
@@ -37,7 +37,11 @@ afterEach(async () => {
 	vi.unstubAllEnvs();
 });
 
-async function startHost(extraArgs: string[] = [], extensionFactories: ExtensionFactory[] = []) {
+async function startHost(
+	extraArgs: string[] = [],
+	extensionFactories: ExtensionFactory[] = [],
+	globalSettings: Record<string, unknown> = {},
+) {
 	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "senpi-6176-")));
 	const cwd = join(scratch, "project");
 	const agentDir = join(scratch, "agent");
@@ -50,7 +54,10 @@ async function startHost(extraArgs: string[] = [], extensionFactories: Extension
 	);
 	const projectSettingsPath = join(configDir, "settings.json");
 	writeFileSync(projectSettingsPath, JSON.stringify({ steeringMode: "one-at-a-time" }));
-	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
+	writeFileSync(
+		join(agentDir, "settings.json"),
+		JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1", ...globalSettings }),
+	);
 	for (const name of ["SENPI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) vi.stubEnv(name, agentDir);
 	for (const name of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"])
 		vi.stubEnv(name, undefined);
@@ -105,7 +112,8 @@ async function startHost(extraArgs: string[] = [], extensionFactories: Extension
 		commandNames,
 		steeringMode,
 		projectSettingsPath,
-		savedTrust: () => JSON.parse(readFileSync(join(agentDir, "trust.json"), "utf8")) as Record<string, boolean>,
+		savedTrust: () =>
+			JSON.parse(readFileSync(join(agentDir, "trust.json"), "utf8")) as Record<string, boolean | null>,
 		projectFile: () => JSON.parse(readFileSync(projectSettingsPath, "utf8")) as Record<string, unknown>,
 	};
 }
@@ -165,6 +173,43 @@ describe("senpi#6176: project trust over RPC", () => {
 		expect(host.savedTrust()).toEqual({ [host.cwd]: false });
 		expect(await host.commandNames(sessionId)).not.toContain(SKILL_COMMAND);
 		expect(await host.steeringMode(sessionId)).toBe("all");
+	});
+
+	// sisyphuslabs/omo-desktop-app#7485: a client marks a folder that must inherit no decision, without saving "do not trust".
+	it("saves no_inherit as an explicit no-decision entry: never listed, adds no trust, and a trusted folder above stops deciding", async () => {
+		const host = await startHost();
+		const sessionId = await host.open();
+		await host.send({ type: "set_project_trust", sessionId, choice: "trust_parent" });
+		expect(await host.commandNames(sessionId)).toContain(SKILL_COMMAND);
+		const answer = await host.send({ type: "set_project_trust", sessionId, choice: "no_inherit" });
+		expect(answer).toMatchObject({ success: true, data: { projectTrusted: false, saved: null } });
+		expect(
+			(answer.data as { choices: Array<{ choice: string }> }).choices.map((entry) => entry.choice),
+		).not.toContain("no_inherit");
+		expect(host.savedTrust()).toEqual({ [dirname(host.cwd)]: true, [host.cwd]: null });
+		expect(await host.commandNames(sessionId)).not.toContain(SKILL_COMMAND);
+		expect(await host.commandNames(await host.open())).not.toContain(SKILL_COMMAND);
+	});
+
+	it("under Full access, no_inherit drops a trust that came from a saved decision, keeps one from Full access alone, and the next session is trusted", async () => {
+		const host = await startHost([], [], { permissionPreset: "full-access" });
+		writeFileSync(host.trustFile, JSON.stringify({ [host.cwd]: true }));
+		const savedTrusted = await host.open();
+		expect(
+			await host.send({ type: "set_project_trust", sessionId: savedTrusted, choice: "no_inherit" }),
+		).toMatchObject({
+			success: true,
+			data: { projectTrusted: false, saved: null },
+		});
+		const fullAccess = await host.open();
+		expect(await host.commandNames(fullAccess)).toContain(SKILL_COMMAND);
+		expect(await host.send({ type: "set_project_trust", sessionId: fullAccess, choice: "no_inherit" })).toMatchObject(
+			{
+				success: true,
+				data: { projectTrusted: true },
+			},
+		);
+		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
 	});
 
 	it("refuses an unknown choice and saves nothing", async () => {

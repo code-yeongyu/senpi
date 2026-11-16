@@ -336,7 +336,7 @@ export type RpcSessionCommand =
 	| {
 			id?: string;
 			type: "set_project_trust";
-			choice: "trust" | "trust_parent" | "do_not_trust";
+			choice: "trust" | "trust_parent" | "do_not_trust" | "no_inherit";
 			expectedCwd?: string;
 	  }
 	| { id?: string; type: "get_project_settings" }

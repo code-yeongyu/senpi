@@ -6348,7 +6348,8 @@ the terminal: the device's `trust.json` and the project's own settings file.
 - `saved`: the nearest decision saved at or above the folder, or `null`.
 - `locked`: the engine was launched with `--approve` or `--no-approve`; that flag outranks every saved decision,
   so `set_project_trust` is refused.
-- `choices`: exactly the choices the terminal's `/trust` command offers.
+- `choices`: exactly the choices the terminal's `/trust` command offers. `set_project_trust` also takes
+  `no_inherit`, which is never listed here.
 
 #### set_project_trust
 
@@ -6361,7 +6362,16 @@ implied by `open_session` or by a permission preset; only this explicit request 
 ```
 
 `expectedCwd` is optional, as on every project write: see [The folder a project write is for](#the-folder-a-project-write-is-for). `choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
-does) or `do_not_trust`. The response carries the same `data` as `get_project_trust`, read after the change.
+does), `do_not_trust`, or `no_inherit`. The response carries the same `data` as `get_project_trust`, read after the change.
+
+`no_inherit` is for clients, not people, and `get_project_trust` never lists it: it saves an explicit `null` for the
+folder in `trust.json`, an entry that holds no decision. The folder then inherits no decision from a folder above it or,
+for a linked git worktree, from its main checkout, so it is decided as if nothing were saved: a Full access session
+trusts it, and a session that may ask asks. `saved` reads `null` afterwards. It never adds trust to the session it is
+sent in: a trust that came only from Full access stays, any other trust goes, unless a `project_trust` handler decides
+the folder is trusted (that handler is not overruled, so it never refuses `no_inherit`). An engine older than this
+answers `invalid_argument`, and reads such an entry as no entry at all, so the folder inherits there as before.
+A later `trust`, `trust_parent` or `do_not_trust` replaces the entry.
 Errors: `invalid_argument` for an unknown choice or an `expectedCwd` that is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder than the session's (nothing is saved or applied), `project_trust_locked` when the launch named the trust, and
 `project_trust_extension_decided` when a `project_trust` handler of an extension loaded before trust (never a
 project extension) decides the other way: such a handler decides before any saved choice when a session opens, so
