@@ -254,6 +254,20 @@ describe("an explicit no-decision entry (set_project_trust no_inherit) inherits 
 // #6823 review round 3 L1: the CLI keeps an unsaved trust answer only while the store revision is unchanged, so a
 // write by another process must change it even when the file ends with the same bytes and modification time.
 describe("the trust store revision", () => {
+	// #6823 review round 5 L1: the generation is bumped before `trust.json` is written, so a failed bump saves nothing
+	// and `setMany` throws; a save that reports failure never took effect.
+	it("saves nothing and throws when the generation cannot be bumped", () => {
+		const cwd = join(scratch, "projects", "app");
+		mkdirSync(cwd, { recursive: true });
+		const trustFile = join(scratch, "agent", "trust.json");
+		store.set(cwd, true);
+		const content = readFileSync(trustFile, "utf8");
+		rmSync(`${trustFile}.generation`, { force: true });
+		mkdirSync(`${trustFile}.generation`);
+		expect(() => store.set(cwd, false)).toThrow();
+		expect(readFileSync(trustFile, "utf8")).toBe(content);
+	});
+
 	it("changes when another process writes through the store, even back to the same content and modification time", () => {
 		const cwd = join(scratch, "projects", "app");
 		mkdirSync(cwd, { recursive: true });
