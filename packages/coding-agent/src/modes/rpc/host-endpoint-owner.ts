@@ -11,9 +11,9 @@
  * child-exit wait runs while it is held.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
+import { hostEnsureLockOptions, hostEnsureLockTarget, makeHostLockDirectory } from "./host-ensure-lock.ts";
 import { acquireOwnershipSafeLock, isBusy } from "./ownership-safe-lock.ts";
 import {
 	adoptPublicSocket,
@@ -48,7 +48,7 @@ const ownerFile = (socket: string): string => `${hostEnsureLockTarget(socket)}.o
 
 async function withEndpointFence<T>(socket: string, run: () => Promise<T>, hooks?: FenceHooks): Promise<T> {
 	const fence = `${hostEnsureLockTarget(socket)}.fence.lock`;
-	await mkdir(dirname(fence), { recursive: true });
+	await makeHostLockDirectory(dirname(fence));
 	let release: () => Promise<void>;
 	try {
 		release = await acquireOwnershipSafeLock(fence, { retries: { retries: 0, minTimeout: 1, maxTimeout: 1 } });
@@ -105,7 +105,7 @@ export async function claimEndpoint(
 		await withEndpointFence(socket, claim);
 		return;
 	}
-	await mkdir(dirname(ownerFile(socket)), { recursive: true });
+	await makeHostLockDirectory(dirname(ownerFile(socket)));
 	await claim();
 }
 

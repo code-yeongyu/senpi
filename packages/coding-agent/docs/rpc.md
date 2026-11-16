@@ -2251,9 +2251,12 @@ which prints the bare socket path).
   the current one; `--socket` is ignored), and answers `{ removed: [{ socket, dir, reason }], kept: [{ socket,
   dir, reason }] }` with exit `0` whatever it found (`2` for a bad flag). It never signals a process and never
   runs implicitly - not inside `ensure`, not inside `status`. For each endpoint whose socket is known it takes
-  that socket's ENSURE lock (`<tmp>/senpi-rpc-host-locks/<sha256(transport address)[:32]>.lock`, the one
+  that socket's ENSURE lock (`<lock dir>/<sha256(transport address)[:32]>.lock`, the one
   `ensureHost` serializes on - not `daemon.lock`; on POSIX the address is the socket path with its directory
-  realpath-canonicalized, so every spelling of one socket shares one lock) for at most 2 s, and inside it requires all three: (a) no
+  realpath-canonicalized, so every spelling of one socket shares one lock; the lock dir is private to the user:
+  `$XDG_RUNTIME_DIR/senpi-rpc-host-locks` when that is a 0700 directory of the user, else
+  `<tmp>/senpi-rpc-host-locks-<uid>` (0700; a symlink or another user's directory there is refused), and
+  `<tmp>/senpi-rpc-host-locks` on Windows) for at most 2 s, and inside it requires all three: (a) no
   `generations/*/host.pid` names a live process (pid live and start time matching; a live pid whose identity
   cannot be read counts as live; the generation the pointer names is one of them), (b) no claim in
   `reservations/` has a live owner, and (c) connecting to the socket fails with `ENOENT`, or with `ECONNREFUSED`

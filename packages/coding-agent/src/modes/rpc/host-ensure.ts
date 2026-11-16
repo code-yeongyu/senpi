@@ -1,5 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { getAgentDir } from "../../config.ts";
 import { processIsLive, readProcessStartTime } from "../../utils/process-identity.ts";
 import {
@@ -20,7 +18,7 @@ import { claimHostOwner } from "./host-daemon-state.ts";
 import { HostEnsureRefusedError } from "./host-decision.ts";
 import { decideEnsureAction as decide } from "./host-ensure-client.ts";
 import { refuseIfForeignHeld, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
-import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
+import { hostEnsureLockOptions, prepareHostEnsureLock } from "./host-ensure-lock.ts";
 import { appendStderr, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
 import {
 	delay,
@@ -67,9 +65,7 @@ async function ensureHostInKeyRoot(options: EnsureHostOptions): Promise<EnsuredH
 	await createDaemonDirectories(paths);
 	// The public socket is the shared resource; agent directories are not a
 	// sufficient lock scope when two installations target the same endpoint.
-	const lockTarget = hostEnsureLockTarget(socket);
-	await mkdir(dirname(lockTarget), { recursive: true });
-	await writeFile(lockTarget, "", { flag: "a", mode: 0o600 });
+	const lockTarget = await prepareHostEnsureLock(socket);
 	// Opportunistic GC of other installs' leftovers stays OUTSIDE the endpoint lock.
 	// Its cost scales with the whole tmpdir and, on win32, adds a ~1s process probe per
 	// candidate; inside the critical section that inflated the hold for every concurrent
