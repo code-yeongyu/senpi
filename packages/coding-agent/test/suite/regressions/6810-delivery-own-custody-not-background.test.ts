@@ -33,6 +33,16 @@ function ownDeliveryWaits(h: Harness): string[] {
 		.filter((source) => source.startsWith(ENGINE_DELIVERY_KEY_PREFIX));
 }
 
+function publishedOwnDeliveryWaits(h: Harness): string[] {
+	return h.sessionManager.getEntries().flatMap((entry) => {
+		if (entry.type !== "custom" || entry.customType !== "session-lifecycle") return [];
+		const data = entry.data as { waitingOn?: { background?: readonly { source: string }[] } } | undefined;
+		return (data?.waitingOn?.background ?? [])
+			.map((wait) => wait.source)
+			.filter((source) => source.startsWith(ENGINE_DELIVERY_KEY_PREFIX));
+	});
+}
+
 function writtenDeliveries(h: Harness): string[] {
 	return h.sessionManager
 		.getEntries()
@@ -70,6 +80,24 @@ describe("a delivery never counts its own custody as background work (senpi#6810
 		expect(h.session.lifecycle.state).toBe("done");
 	});
 
+	// senpi#6814 review M1: once the delivery's turn has consumed it, its custody stays open until the run settles; ending
+	// the delivery must not publish a lifecycle record that names that custody as background work again.
+	it("never publishes a lifecycle record naming the delivery's own custody as background, in flight or after its turn", async () => {
+		const h = await createBoundLifecycleHarness({ persistSession: true });
+		harnesses.push(h);
+		h.setResponses([fauxAssistantMessage("ack")]);
+
+		const idle = nextSessionEvent(h, (event) => event.type === "agent_idle");
+		h.session.externalAdmission.admit({ delivery_id: "d1", text: "peer", deliverAs: "followUp" });
+		await idle;
+
+		expect(writtenDeliveries(h)).toEqual(["d1"]);
+		expect(publishedOwnDeliveryWaits(h)).toEqual([]);
+		expect(h.session.lifecycle.state).toBe("done");
+	});
+
+	// A guard, not a #6810 regression proof (it passes on the pre-fix code too): counting the in-flight start as running
+	// must never strand a follow-up queued behind it.
 	it("starts a follow-up queued behind the in-flight delivery start once the session goes idle", async () => {
 		const gate = holdFirstTurnStart();
 		const h = await createBoundLifecycleHarness({ persistSession: true, extensionFactories: [gate.extension] });

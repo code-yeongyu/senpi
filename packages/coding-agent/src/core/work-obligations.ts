@@ -170,9 +170,14 @@ export class SessionWorkObligations implements WorkObligations {
 		return record?.state === "queued" ? record.payload?.itemIds : undefined;
 	}
 
-	/** A delivery whose custody is still open (kept for a later turn) is background work again: recompute. */
+	/**
+	 * A delivery whose custody is still open and unconsumed (kept for a later turn) is background work again: recompute.
+	 * A delivery its turn consumed stays that run's own work until `settleRun`, so ending it publishes nothing (senpi#6814).
+	 */
 	endDelivery(ticketId: DeliveryTicketId): void {
-		if (this.delivering.delete(ticketId)) this.store.changed();
+		if (!this.delivering.delete(ticketId)) return;
+		const record = [...this.records.values()].find((value) => value.ticketId === ticketId);
+		if (record && custodyIsOpen(record) && record.state !== "consumed") this.store.changed();
 	}
 
 	passive(ticketId: DeliveryTicketId): void {

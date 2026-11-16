@@ -6926,87 +6926,6 @@
       "type": "agent_settled"
      },
      {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 7,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:7>",
-        "role": "root",
-        "rootSessionId": "<uuid:16>",
-        "waitingOn": {
-         "children": 0,
-         "background": [
-          {
-           "source": "delivery:senpi-terminal:notification:<uuid:25>",
-           "activeCount": 1
-          }
-         ],
-         "human": []
-        },
-        "holds": [],
-        "runId": "<uuid:27>",
-        "sessionId": "<uuid:16>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        }
-       },
-       "id": "<id:29>",
-       "parentId": "<id:28>",
-       "timestamp": "<ts:entry.timestamp:22>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 7,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:15>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-terminal:notification:<uuid:25>",
-          "activeCount": 1
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:27>",
-       "observedAt": "<ts:lifecycle.observedAt:15>"
-      }
-     },
-     {
       "type": "agent_idle"
      },
      {
@@ -7032,9 +6951,9 @@
         "transcriptEntryId": "<id:26>",
         "sessionId": "<uuid:16>"
        },
-       "id": "<id:30>",
-       "parentId": "<id:29>",
-       "timestamp": "<ts:entry.timestamp:23>"
+       "id": "<id:29>",
+       "parentId": "<id:28>",
+       "timestamp": "<ts:entry.timestamp:22>"
       }
      },
      {
@@ -7044,7 +6963,7 @@
        "customType": "session-lifecycle",
        "data": {
         "state": "done",
-        "seq": 8,
+        "seq": 7,
         "epoch": 1,
         "epochOrigin": "human",
         "humanInputRevision": 1,
@@ -7052,7 +6971,7 @@
         "restoring": false,
         "persisted": true,
         "runPaused": false,
-        "since": "<ts:data.since:8>",
+        "since": "<ts:data.since:7>",
         "role": "root",
         "rootSessionId": "<uuid:16>",
         "waitingOn": {
@@ -7079,16 +6998,16 @@
          "deadlineStop": false
         }
        },
-       "id": "<id:31>",
-       "parentId": "<id:30>",
-       "timestamp": "<ts:entry.timestamp:24>"
+       "id": "<id:30>",
+       "parentId": "<id:29>",
+       "timestamp": "<ts:entry.timestamp:23>"
       }
      },
      {
       "type": "session_lifecycle",
       "lifecycle": {
        "state": "done",
-       "seq": 8,
+       "seq": 7,
        "epoch": 1,
        "epochOrigin": "human",
        "humanInputRevision": 1,
@@ -7096,7 +7015,7 @@
        "restoring": false,
        "persisted": true,
        "runPaused": false,
-       "since": "<ts:lifecycle.since:16>",
+       "since": "<ts:lifecycle.since:15>",
        "role": "root",
        "rootSessionId": "<uuid:16>",
        "activityRevision": {
@@ -7115,7 +7034,7 @@
         "kind": "reply",
         "at": "<ts:completion.at:2>"
        },
-       "observedAt": "<ts:lifecycle.observedAt:16>"
+       "observedAt": "<ts:lifecycle.observedAt:15>"
       }
      },
      {
@@ -7184,7 +7103,7 @@
   ],
   "O7": {
    "nonEmpty": true,
-   "count": 29,
+   "count": 28,
    "durableIdStable": true,
    "entries": [
     {
@@ -7878,50 +7797,6 @@
     },
     {
      "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 7,
-      "epoch": 1,
-      "epochOrigin": "human",
-      "humanInputRevision": 1,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:7>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [
-        {
-         "source": "delivery:senpi-terminal:notification:<uuid:7>",
-         "activeCount": 1
-        }
-       ],
-       "human": []
-      },
-      "holds": [],
-      "runId": "<uuid:9>",
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": false,
-      "runActive": true,
-      "interrupted": false,
-      "lastTurnEnd": {
-       "endedBy": "clean",
-       "budgetSpent": false,
-       "deadlineStop": false
-      }
-     },
-     "id": "<id:29>",
-     "parentId": "<id:28>",
-     "timestamp": "<ts:entries.timestamp:27>"
-    },
-    {
-     "type": "custom",
      "customType": "work-custody",
      "data": {
       "id": "<uuid:6>",
@@ -7941,16 +7816,16 @@
       "transcriptEntryId": "<id:25>",
       "sessionId": "<uuid:1>"
      },
-     "id": "<id:30>",
-     "parentId": "<id:29>",
-     "timestamp": "<ts:entries.timestamp:28>"
+     "id": "<id:29>",
+     "parentId": "<id:28>",
+     "timestamp": "<ts:entries.timestamp:27>"
     },
     {
      "type": "custom",
      "customType": "session-lifecycle",
      "data": {
       "state": "done",
-      "seq": 8,
+      "seq": 7,
       "epoch": 1,
       "epochOrigin": "human",
       "humanInputRevision": 1,
@@ -7958,7 +7833,7 @@
       "restoring": false,
       "persisted": true,
       "runPaused": false,
-      "since": "<ts:data.since:8>",
+      "since": "<ts:data.since:7>",
       "role": "root",
       "rootSessionId": "<uuid:1>",
       "waitingOn": {
@@ -7985,9 +7860,9 @@
        "deadlineStop": false
       }
      },
-     "id": "<id:31>",
-     "parentId": "<id:30>",
-     "timestamp": "<ts:entries.timestamp:29>"
+     "id": "<id:30>",
+     "parentId": "<id:29>",
+     "timestamp": "<ts:entries.timestamp:28>"
     }
    ]
   }
