@@ -1,0 +1,48 @@
+name: Platform red on main
+
+# Pull requests run Linux only unless labelled run-full-ci (scripts/ci-platform-scope.mjs, senpi#6834), so a macOS or
+# Windows regression first fails on the push to main after its merge. When a run of a workflow with macOS/Windows legs
+# fails there, this files ONE tracking issue naming the merged PR, or comments on it while it is open
+# (scripts/ci-platform-red.mjs report). It checks out only the reporter from the default branch, runs nothing from the
+# triggering run, and writes no cache entry.
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Native Prebuilds
+      - Read summary binary parity
+      - Compiled session worker
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: Report a red default-branch platform run
+    if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Checkout the reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/ci-platform-red.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: File or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: node scripts/ci-platform-red.mjs report

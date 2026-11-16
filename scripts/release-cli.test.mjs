@@ -29,7 +29,7 @@ const ciCheckRuns = (ci) =>
 		},
 	]);
 
-for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, forceTests = false } of [
+for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, forceTests = false, platformRed = false } of [
 	{ mergeStatus: 0, ci: "success" },
 	{ mergeStatus: 1, ci: "success" },
 	{ mergeStatus: 0, ci: "failure" },
@@ -38,8 +38,10 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 	{ mergeStatus: 0, ci: "success", manifestStampOnly: true },
 	{ mergeStatus: 0, ci: "success", forceTests: true },
 	{ mergeStatus: 0, ci: "success", catalogDirty: true, forceTests: true },
+	// senpi#6834: a red macOS/Windows leg on main stops even a release that runs its own suite.
+	{ mergeStatus: 0, ci: "success", forceTests: true, platformRed: true },
 ]) {
-	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
+	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""}${platformRed ? " and a red main platform run" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
 		try {
 			// The forced suite resolves the root "workspaces" and shards coding-agent's own `test` script (senpi#6139).
@@ -89,6 +91,15 @@ if (${JSON.stringify(name)} === "npm" && args[0] === "run" && args[1] === "test:
 	const changelog = require("node:fs").readFileSync(${JSON.stringify(join(root, CHANGELOGS[0]))}, "utf8");
 	writeFileSync(${JSON.stringify(join(root, "TEST_SAW_CHANGELOG"))}, changelog.includes("## [Unreleased]\\n\\n### Fixed\\n\\n- Fixture.") ? "unstamped" : "stamped");
 }
+if (${JSON.stringify(name)} === "gh" && String(args[1]).includes("/actions/workflows/")) {
+	const file = String(args[1]).split("/actions/workflows/")[1].split("/")[0];
+	process.stdout.write(JSON.stringify({ workflow_runs: [{ id: 99, conclusion: ${platformRed} && file === "ci.yml" ? "failure" : "success", html_url: "https://example.test/runs/99", head_sha: "fixture-main" }] }));
+	process.exit(0);
+}
+if (${JSON.stringify(name)} === "gh" && String(args[1]).includes("/actions/runs/99/jobs")) {
+	process.stdout.write(JSON.stringify([{ jobs: [{ name: "macOS combined", labels: ["macos-latest"], conclusion: "failure" }, { name: "Static checks", labels: ["ubuntu-latest"], conclusion: "success" }] }]));
+	process.exit(0);
+}
 if (${JSON.stringify(name)} === "gh") {
 	process.stdout.write(String(args[1]).includes("actions/runs?check_suite_id=7")
 		? ${JSON.stringify(JSON.stringify({ workflow_runs: [{ status: "completed", conclusion: ci === "superseded" ? "cancelled" : "failure" }] }))}
@@ -128,6 +139,13 @@ if (${JSON.stringify(name)} === "gh") {
 				assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag"), []);
 				return;
 			}
+			if (platformRed) {
+				assert.equal(result.status, 1, result.stderr);
+				assert.match(result.stderr, /ci\.yml.*macOS combined.*example\.test\/runs\/99/);
+				assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag"), []);
+				assert.equal(commands.some((args) => args[1] === "commit" && /^release: v/.test(args.at(-1))), false);
+				return;
+			}
 			if (catalogDirty && forceTests) {
 				// The catalog commit stays on the release; the forced suite runs after it, and main is pushed once, at the end.
 				assert.equal(result.status, 0, result.stderr);
@@ -157,7 +175,7 @@ if (${JSON.stringify(name)} === "gh") {
 				assert.ok(firstClean >= 0 && firstClean < firstBuild && firstBuild < test && test < releaseCommit, JSON.stringify(commands));
 				assert.ok(shards.every((shard) => shard > test && shard < releaseCommit), JSON.stringify(commands));
 				assert.equal(readFileSync(join(root, "TEST_SAW_CHANGELOG"), "utf8"), "unstamped");
-				assert.equal(commands.some((args) => args[0] === "gh"), false, "a forced release does not wait for CI");
+				assert.equal(commands.some((args) => args[0] === "gh" && String(args[2]).includes("check-runs")), false, "a forced release does not wait for CI");
 				return;
 			}
 			if (ci === "superseded") {

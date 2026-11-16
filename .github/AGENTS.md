@@ -23,6 +23,7 @@ upstream.json  Accepted upstream baseline recorded by merges (read by scripts)
 | npm publish path | `workflows/publish-npm.yml` (the ONLY publisher; triggered after release tag) |
 | Binary/native builds | `workflows/build-binaries.yml`, `workflows/native-prebuilds.yml` |
 | PR changelog gate | `workflows/changelog-gate.yml` (drives `scripts/check-pr-changelog.mjs`) |
+| macOS/Windows coverage | Pull requests run Linux only; the `run-full-ci` label (`workflows/ci-full-label.yml`) is the one opt-in for the macOS/Windows legs. Main pushes, releases and dispatches always run them; `workflows/platform-red.yml` files one tracking issue when one fails on main, and the release refuses meanwhile (`scripts/ci-platform-red.mjs`, senpi#6834) |
 | Merge agent procedure | `agent/README.md`, `agent/merge-driver.md`, `agent/skills/merge-upstream/` |
 | Release audit agent | `agent/release-driver.md`, `agent/skills/release-publish/` |
 | Changelog audit command | `agent/commands/cl.md` |

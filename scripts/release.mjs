@@ -45,7 +45,7 @@ import {
 	runPackageLockRefresh,
 } from "./release-artifacts.mjs";
 import { CHANGELOGS, reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
-import { secureCiEvidence, verifyTestedRelease } from "./release-ci-evidence.mjs";
+import { assertPlatformsGreen, secureCiEvidence, verifyTestedRelease } from "./release-ci-evidence.mjs";
 import { parseArgs, printUsage } from "./release-cli-args.mjs";
 import {
 	captureCommand,
@@ -234,6 +234,8 @@ async function main() {
 		secureCiEvidence(version, args.dryRun, args.forceTests, args.sha);
 		await runForcedTests(args.dryRun, args.forceTests);
 	}
+	// Every evidence path: macOS/Windows are tested only on main (senpi#6834), so a red leg there stops the cut.
+	assertPlatformsGreen(args.dryRun);
 	applyWorkspaceVersions(version, args.dryRun, log, dryRunLog);
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
