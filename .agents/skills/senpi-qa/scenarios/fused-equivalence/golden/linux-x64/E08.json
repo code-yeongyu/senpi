@@ -6627,7 +6627,7 @@
        "type": "custom",
        "customType": "session-lifecycle",
        "data": {
-        "state": "waiting_background",
+        "state": "running",
         "seq": 5,
         "epoch": 1,
         "epochOrigin": "human",
@@ -6642,10 +6642,6 @@
         "waitingOn": {
          "children": 0,
          "background": [
-          {
-           "source": "delivery:senpi-codemode:notification:<uuid:25>",
-           "activeCount": 1
-          },
           {
            "source": "senpi-codemode",
            "activeCount": 1
@@ -6675,7 +6671,7 @@
      {
       "type": "session_lifecycle",
       "lifecycle": {
-       "state": "waiting_background",
+       "state": "running",
        "seq": 5,
        "epoch": 1,
        "epochOrigin": "human",
@@ -6694,10 +6690,6 @@
        "waitingOn": {
         "children": 0,
         "background": [
-         {
-          "source": "delivery:senpi-codemode:notification:<uuid:25>",
-          "activeCount": 1
-         },
          {
           "source": "senpi-codemode",
           "activeCount": 1
@@ -6787,12 +6779,7 @@
         "rootSessionId": "<uuid:16>",
         "waitingOn": {
          "children": 0,
-         "background": [
-          {
-           "source": "delivery:senpi-codemode:notification:<uuid:25>",
-           "activeCount": 1
-          }
-         ],
+         "background": [],
          "human": []
         },
         "holds": [],
@@ -6830,12 +6817,7 @@
        },
        "waitingOn": {
         "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-codemode:notification:<uuid:25>",
-          "activeCount": 1
-         }
-        ],
+        "background": [],
         "human": []
        },
        "holds": [],
@@ -6946,12 +6928,7 @@
        },
        "waitingOn": {
         "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-codemode:notification:<uuid:25>",
-          "activeCount": 1
-         }
-        ],
+        "background": [],
         "human": []
        },
        "holds": [],
@@ -7077,12 +7054,7 @@
        },
        "waitingOn": {
         "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-codemode:notification:<uuid:25>",
-          "activeCount": 1
-         }
-        ],
+        "background": [],
         "human": []
        },
        "holds": [],
@@ -7295,6 +7267,87 @@
       "type": "agent_settled"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 7,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:7>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [
+          {
+           "source": "delivery:senpi-codemode:notification:<uuid:25>",
+           "activeCount": 1
+          }
+         ],
+         "human": []
+        },
+        "holds": [],
+        "runId": "<uuid:27>",
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        }
+       },
+       "id": "<id:29>",
+       "parentId": "<id:28>",
+       "timestamp": "<ts:entry.timestamp:22>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 7,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:15>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "delivery:senpi-codemode:notification:<uuid:25>",
+          "activeCount": 1
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:27>",
+       "observedAt": "<ts:lifecycle.observedAt:15>"
+      }
+     },
+     {
       "type": "agent_idle"
      },
      {
@@ -7320,9 +7373,9 @@
         "transcriptEntryId": "<id:26>",
         "sessionId": "<uuid:16>"
        },
-       "id": "<id:29>",
-       "parentId": "<id:28>",
-       "timestamp": "<ts:entry.timestamp:22>"
+       "id": "<id:30>",
+       "parentId": "<id:29>",
+       "timestamp": "<ts:entry.timestamp:23>"
       }
      },
      {
@@ -7332,7 +7385,7 @@
        "customType": "session-lifecycle",
        "data": {
         "state": "done",
-        "seq": 7,
+        "seq": 8,
         "epoch": 1,
         "epochOrigin": "human",
         "humanInputRevision": 1,
@@ -7340,7 +7393,7 @@
         "restoring": false,
         "persisted": true,
         "runPaused": false,
-        "since": "<ts:data.since:7>",
+        "since": "<ts:data.since:8>",
         "role": "root",
         "rootSessionId": "<uuid:16>",
         "waitingOn": {
@@ -7367,16 +7420,16 @@
          "deadlineStop": false
         }
        },
-       "id": "<id:30>",
-       "parentId": "<id:29>",
-       "timestamp": "<ts:entry.timestamp:23>"
+       "id": "<id:31>",
+       "parentId": "<id:30>",
+       "timestamp": "<ts:entry.timestamp:24>"
       }
      },
      {
       "type": "session_lifecycle",
       "lifecycle": {
        "state": "done",
-       "seq": 7,
+       "seq": 8,
        "epoch": 1,
        "epochOrigin": "human",
        "humanInputRevision": 1,
@@ -7384,7 +7437,7 @@
        "restoring": false,
        "persisted": true,
        "runPaused": false,
-       "since": "<ts:lifecycle.since:15>",
+       "since": "<ts:lifecycle.since:16>",
        "role": "root",
        "rootSessionId": "<uuid:16>",
        "activityRevision": {
@@ -7403,7 +7456,7 @@
         "kind": "reply",
         "at": "<ts:completion.at:2>"
        },
-       "observedAt": "<ts:lifecycle.observedAt:15>"
+       "observedAt": "<ts:lifecycle.observedAt:16>"
       }
      },
      {
@@ -7472,7 +7525,7 @@
   ],
   "O7": {
    "nonEmpty": true,
-   "count": 28,
+   "count": 29,
    "durableIdStable": true,
    "entries": [
     {
@@ -7935,7 +7988,7 @@
      "type": "custom",
      "customType": "session-lifecycle",
      "data": {
-      "state": "waiting_background",
+      "state": "running",
       "seq": 5,
       "epoch": 1,
       "epochOrigin": "human",
@@ -7950,10 +8003,6 @@
       "waitingOn": {
        "children": 0,
        "background": [
-        {
-         "source": "delivery:senpi-codemode:notification:<uuid:6>",
-         "activeCount": 1
-        },
         {
          "source": "senpi-codemode",
          "activeCount": 1
@@ -8045,12 +8094,7 @@
       "rootSessionId": "<uuid:1>",
       "waitingOn": {
        "children": 0,
-       "background": [
-        {
-         "source": "delivery:senpi-codemode:notification:<uuid:6>",
-         "activeCount": 1
-        }
-       ],
+       "background": [],
        "human": []
       },
       "holds": [],
@@ -8160,6 +8204,50 @@
     },
     {
      "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 7,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:7>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [
+        {
+         "source": "delivery:senpi-codemode:notification:<uuid:6>",
+         "activeCount": 1
+        }
+       ],
+       "human": []
+      },
+      "holds": [],
+      "runId": "<uuid:8>",
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "lastTurnEnd": {
+       "endedBy": "clean",
+       "budgetSpent": false,
+       "deadlineStop": false
+      }
+     },
+     "id": "<id:28>",
+     "parentId": "<id:27>",
+     "timestamp": "<ts:entries.timestamp:27>"
+    },
+    {
+     "type": "custom",
      "customType": "work-custody",
      "data": {
       "id": "<uuid:5>",
@@ -8179,16 +8267,16 @@
       "transcriptEntryId": "<id:24>",
       "sessionId": "<uuid:1>"
      },
-     "id": "<id:28>",
-     "parentId": "<id:27>",
-     "timestamp": "<ts:entries.timestamp:27>"
+     "id": "<id:29>",
+     "parentId": "<id:28>",
+     "timestamp": "<ts:entries.timestamp:28>"
     },
     {
      "type": "custom",
      "customType": "session-lifecycle",
      "data": {
       "state": "done",
-      "seq": 7,
+      "seq": 8,
       "epoch": 1,
       "epochOrigin": "human",
       "humanInputRevision": 1,
@@ -8196,7 +8284,7 @@
       "restoring": false,
       "persisted": true,
       "runPaused": false,
-      "since": "<ts:data.since:7>",
+      "since": "<ts:data.since:8>",
       "role": "root",
       "rootSessionId": "<uuid:1>",
       "waitingOn": {
@@ -8223,9 +8311,9 @@
        "deadlineStop": false
       }
      },
-     "id": "<id:29>",
-     "parentId": "<id:28>",
-     "timestamp": "<ts:entries.timestamp:28>"
+     "id": "<id:30>",
+     "parentId": "<id:29>",
+     "timestamp": "<ts:entries.timestamp:29>"
     }
    ]
   }
