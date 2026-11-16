@@ -74,5 +74,27 @@ describe.skipIf(process.platform === "win32")(
 			expect((await lstat(join(tmp, `senpi-hook-output-${uid}`))).isSymbolicLink()).toBe(true);
 			expect(await readdir(elsewhere)).toEqual([]);
 		});
+
+		// senpi#6874 review LOW: the fallback directory is kept for the process. A temp cleaner (systemd-tmpfiles, a
+		// periodic /tmp sweep) can remove it under a long-lived host; the next spill must still land somewhere private.
+		it("re-creates a fallback directory a temp cleaner removed between two spills", async () => {
+			const tmp = await sharedTmp();
+			const elsewhere = await mkdtemp(join(tmp, "planted-"));
+			await symlink(elsewhere, join(tmp, `senpi-hook-output-${uid}`));
+			const first = dirname(spill().safety.spillPath ?? "");
+			await rm(first, { recursive: true, force: true });
+
+			const { safety } = spill();
+
+			const dir = dirname(safety.spillPath ?? "");
+			expect(dir.startsWith(join(tmp, `senpi-hook-output-${uid}-`))).toBe(true);
+			const entry = await lstat(dir);
+			expect({ dir: entry.isDirectory(), mode: entry.mode & 0o777, uid: entry.uid }).toEqual({
+				dir: true,
+				mode: 0o700,
+				uid,
+			});
+			expect(await readdir(elsewhere)).toEqual([]);
+		});
 	},
 );
