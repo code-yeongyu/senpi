@@ -117,6 +117,12 @@ import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
+import {
+	type QueuedInputFailedEvent,
+	type QueuedInputHold,
+	queuedInputAfterError,
+	queuedInputFailures,
+} from "./queued-input-after-error.ts";
 import { isTurnRetryableFailure, TURN_RETRY_SUPPRESSION_PREFIX } from "./turn-retry-eligibility.ts";
 import { BridgedCallKeys } from "./session-call-keys.ts";
 import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
@@ -628,6 +634,8 @@ export type AgentSessionEvent =
 	| AgentSessionAgentEndEvent
 	| SessionMessageUpdateEvent
 	| { type: "agent_settled" }
+	/** A queued input an account hold took out of the queue after an error run (senpi#6868). */
+	| QueuedInputFailedEvent
 	| { type: "agent_idle" }
 	/** The session's tool child changed state (senpi#3566; the minimal record todo 14 extends). */
 	| { type: "session_tool_child"; state: "spawned" | "exited" | "respawned"; generation: number; pid: number }
@@ -3074,8 +3082,9 @@ export class AgentSession {
 			this._flushPendingCustomMessages();
 			const finalContext = this._buildBoundaryContext([], "agent_before_settle");
 			if (this._abortDuringBeforeSettle) return false;
-			// Input the session held back before the boundary (an error turn, a retained required
-			// compaction) stays held: only a handler's continue or newly queued input continues.
+			// Input the session held back before the boundary (a person's abort, a blocked retry, a retained
+			// required compaction) stays held: only a handler's continue or newly queued input continues. An
+			// error turn's queued input never waits here: it started or failed at agent_end (senpi#6868).
 			const shouldContinue = result.continue || (!heldQueue && this.agent.hasQueuedMessages());
 			if (shouldContinue && !finalContext.canContinue) {
 				if (result.continue) this._reportInvalidBoundaryContinuation("agent_before_settle");
@@ -4087,6 +4096,31 @@ export class AgentSession {
 		return true;
 	}
 
+	/** Whether a run ended on a provider error that leaves its queued input to the agent_end decision (senpi#6868). */
+	private _endedOnProviderError(messages: AgentMessage[]): boolean {
+		const lastAssistant = messages.findLast((message) => message.role === "assistant");
+		return (
+			lastAssistant?.role === "assistant" &&
+			lastAssistant.stopReason === "error" &&
+			this._getRequiredAutoCompactionReason(lastAssistant) === undefined
+		);
+	}
+
+	/** The hold that refuses queued input on the current provider: a spent account, else a held family (senpi#3131). */
+	private _queuedInputHold(): QueuedInputHold | undefined {
+		const model = this.model;
+		if (model === undefined) return undefined;
+		if (this._retryFallback.isProviderSpent(model.provider)) {
+			const resetAt = this._retryFallback.accountResetAt(model.provider);
+			const refusal = new AccountUsageLimitError(model.provider, this._retryFallback.accountError(model.provider), resetAt);
+			return { provider: model.provider, message: refusal.message, ...(resetAt === undefined ? {} : { resetAt }) };
+		}
+		const family = this._retryFallback.heldFamily(model);
+		if (family === undefined) return undefined;
+		const refusal = new AccountUsageLimitError(model.provider, family.errorMessage, undefined, [family.family]);
+		return { provider: model.provider, message: refusal.message };
+	}
+
 	private _willRetryAfterAgentEnd(messages: AgentMessage[]): boolean {
 		// A user abort suppresses the retry and compaction continuation (#9340).
 		if (this._suppressQueuedContinuationAfterUserAbort) {
@@ -4531,8 +4565,9 @@ export class AgentSession {
 						// compaction owns the continuation now.
 						this._requiredCompactionAdmissionError = undefined;
 					}
-					// A failed first response consumes the exemption but must not continue the run: input queued behind it
-					// waits for the next prompt, exactly as after a failed response without a compaction (#4036).
+					// A failed first response consumes the exemption but does not continue the run here: input queued
+					// behind it is decided below like input queued behind any error run - it starts its own turn, or fails
+					// typed under an account hold (senpi#6868, replacing #4036's wait for the next prompt).
 					allowsPostCompactionUsageExemptContinuation =
 						this._postCompactionUsageExemptAssistants.has(msg) && msg.stopReason !== "error" && msg.stopReason !== "aborted";
 					if (allowsPostCompactionUsageExemptContinuation) {
@@ -4584,6 +4619,24 @@ export class AgentSession {
 				this._requiredCompactionAdmissionError = undefined;
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
+			}
+			// An error run returns before the loop's follow-up poll, and nothing else drains the queue of the now idle
+			// session: its queued input starts its own turn, or fails typed when the provider is held (senpi#6868).
+			if (
+				!launchedContinuation &&
+				!retryContinuationBlocked &&
+				!userAbortSuppressedQueuedContinuation &&
+				this._endedOnProviderError(event.messages) &&
+				this.agent.hasQueuedMessages()
+			) {
+				const after = queuedInputAfterError(this._queuedInputHold());
+				if (after.kind === "start") {
+					this._requiredCompactionAdmissionError = undefined;
+					this._scheduleContinuationAfterCurrentEvent();
+					launchedContinuation = true;
+				} else {
+					for (const failed of queuedInputFailures(this.clearQueue().ordered, after.hold)) this._emit(failed);
+				}
 			}
 			// agent_before_settle (D-15): handlers may append entries or ask for one more request before
 			// the run settles. A user abort or a blocked retry settles without it.
@@ -8853,7 +8906,8 @@ export class AgentSession {
 
 	/** Queued input that a whole turn started after and settled without delivering is overdue: say so (#4036). */
 	private _warnQueuedInputOutlivingRun(agentEnd: AgentEvent | undefined): void {
-		// A failed or aborted turn keeps queued input for the next prompt by design, so it proves nothing is stuck;
+		// An aborted turn keeps queued input for the next prompt by design, and a failed one starts or fails it at
+		// agent_end (senpi#6868), so neither proves anything is stuck;
 		// the next turn that ends normally still catches input that really is. A settle without an agent_end comes
 		// only from such a turn (the prompt threw, a continuation failed, a retry was aborted in its backoff), and the
 		// transcript would show an earlier turn's outcome instead, so it is never judged (senpi#4064).
