@@ -914,7 +914,10 @@ export function createCliRuntimeFactory(
 	const trustStore = new ProjectTrustStore(agentDir);
 	// An answer this process gave a folder without saving it, with the trust store revision it was given under. It
 	// lives until the store is next written, by anyone, for any folder (#6823 review M1).
-	const projectTrustByCwd = new Map<string, { readonly revision: string; readonly trusted: boolean }>();
+	const projectTrustByCwd = new Map<
+		string,
+		{ readonly savedState: null | "no_inherit"; readonly revision: string; readonly trusted: boolean }
+	>();
 	const trustPromptMode: AppMode =
 		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : appMode;
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
@@ -939,17 +942,17 @@ export function createCliRuntimeFactory(
 		// The saved decision, including the one a linked git worktree inherits from its main checkout (senpi#4388).
 		const savedState = await getSavedProjectTrustState(trustStore, cwd);
 		const savedProjectTrust = savedState === "no_inherit" ? null : savedState;
-		// The memo stands in for an unsaved answer only while the trust store is unchanged since it was given: any save
-		// (an RPC `set_project_trust`, senpi#6176, another process) ends it, so an answer from before a `no_inherit`
-		// entry never stands in for it (#6823 review H1, M1), while one given under the entry still holds for this
-		// process's later sessions of the folder (#6823 review L1).
+		// The memo stands in for an unsaved answer only while it still answers what is saved. Given with nothing saved,
+		// it holds while nothing is saved for the folder (#6823 review L2); given under a `no_inherit` entry, only
+		// while the trust store is unchanged since, so no save in between, even one that restores the entry, can
+		// bring it back (#6823 review H1, M1), while with no save in between it holds for this process's later
+		// sessions of the folder (#6823 review L1). A saved decision always wins.
 		const trustRevision = trustStore.revision();
 		const remembered = projectTrustByCwd.get(cwd);
 		const cachedProjectTrust =
 			remembered !== undefined &&
-			savedState !== true &&
-			savedState !== false &&
-			remembered.revision === trustRevision
+			remembered.savedState === savedState &&
+			(savedState === null || remembered.revision === trustRevision)
 				? remembered.trusted
 				: undefined;
 		timer.mark("project_trust");
@@ -1016,7 +1019,7 @@ export function createCliRuntimeFactory(
 								onExtensionError: (message) => projectTrustDiagnostics.push({ type: "warning", message }),
 							});
 							if (savedState === null || savedState === "no_inherit")
-								projectTrustByCwd.set(cwd, { revision: trustRevision, trusted });
+								projectTrustByCwd.set(cwd, { savedState, revision: trustRevision, trusted });
 							return trusted;
 						},
 					}

@@ -5,7 +5,18 @@
  * "Trust project folder?" before its first turn. The fixtures write exactly the files
  * `git worktree add` writes (no git is spawned, as the trust store spawns none either).
  */
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -237,5 +248,37 @@ describe("an explicit no-decision entry (set_project_trust no_inherit) inherits 
 		expect(JSON.parse(readFileSync(join(scratch, "agent", "trust.json"), "utf8"))).toMatchObject({
 			[worktree]: null,
 		});
+	});
+});
+
+// #6823 review round 3 L1: the CLI keeps an unsaved trust answer only while the store revision is unchanged, so a
+// write by another process must change it even when the file ends with the same bytes and modification time.
+describe("the trust store revision", () => {
+	it("changes when another process writes through the store, even back to the same content and modification time", () => {
+		const cwd = join(scratch, "projects", "app");
+		mkdirSync(cwd, { recursive: true });
+		const agentDir = join(scratch, "agent");
+		const trustFile = join(agentDir, "trust.json");
+		store.set(cwd, true);
+		const content = readFileSync(trustFile, "utf8");
+		utimesSync(trustFile, 1_700_000_000, 1_700_000_000);
+		const revision = store.revision();
+		const trustManager = new URL("../../src/core/trust-manager.ts", import.meta.url).href;
+		execFileSync(
+			process.execPath,
+			[
+				"--input-type=module",
+				"-e",
+				`const { ProjectTrustStore } = await import(${JSON.stringify(trustManager)});
+const other = new ProjectTrustStore(${JSON.stringify(agentDir)});
+other.set(${JSON.stringify(cwd)}, false);
+other.set(${JSON.stringify(cwd)}, true);`,
+			],
+			{ stdio: "pipe" },
+		);
+		utimesSync(trustFile, 1_700_000_000, 1_700_000_000);
+		expect(readFileSync(trustFile, "utf8")).toBe(content);
+		expect(statSync(trustFile).mtimeMs).toBe(1_700_000_000_000);
+		expect(store.revision()).not.toBe(revision);
 	});
 });

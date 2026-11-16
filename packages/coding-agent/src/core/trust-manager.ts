@@ -204,23 +204,31 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 	}
 }
 
-/** Writes of any trust store by this process; part of `ProjectTrustStore.revision`. */
-let trustStoreWrites = 0;
-
 export class ProjectTrustStore {
 	private trustPath: string;
+	/** Counts the writes made through `setMany`, by any process; bumped under the store lock. */
+	private generationPath: string;
 
 	constructor(agentDir: string) {
 		this.trustPath = join(resolvePath(agentDir), "trust.json");
+		this.generationPath = `${this.trustPath}.generation`;
 	}
 
 	/**
-	 * Changes whenever the store is written: by this process (counted) or by another one (the file's modification
-	 * time and size), so a value read before a write never equals one read after it.
+	 * Changes on every write made through `setMany`, in any process or engine copy, because each one bumps the
+	 * generation file under the store lock: a value read before such a write never equals one read after it. A
+	 * write that bypasses `setMany` (another program editing `trust.json`) changes it only when it changes the
+	 * file's modification time or size.
 	 */
 	revision(): string {
 		const stat = statSync(this.trustPath, { bigint: true, throwIfNoEntry: false });
-		return `${trustStoreWrites}:${stat === undefined ? "absent" : `${stat.mtimeNs}:${stat.size}`}`;
+		return `${this.readGeneration()}:${stat === undefined ? "absent" : `${stat.mtimeNs}:${stat.size}`}`;
+	}
+
+	private readGeneration(): number {
+		if (!existsSync(this.generationPath)) return 0;
+		const generation = Number.parseInt(readFileSync(this.generationPath, "utf-8"), 10);
+		return Number.isSafeInteger(generation) && generation >= 0 ? generation : 0;
 	}
 
 	get(cwd: string): ProjectTrustDecision {
@@ -256,7 +264,7 @@ export class ProjectTrustStore {
 				}
 			}
 			writeTrustFile(this.trustPath, data);
-			trustStoreWrites += 1;
+			writeFileSync(this.generationPath, `${this.readGeneration() + 1}\n`, "utf-8");
 		});
 	}
 }

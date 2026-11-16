@@ -7443,10 +7443,6 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/trust-manager.ts#trustStoreWrites": {
-			"class": "per-copy-safe",
-			"reason": "count of this copy's own trust-store writes; another copy's write still changes the store revision through the file's modification time and size"
-		},
 		"packages/coding-agent/src/core/turn-origin.ts#continuingTurns": {
 			"class": "per-copy-safe",
 			"reason": "keyed by message or session-manager objects only the owning session's copy writes and reads (design 3.2)"
