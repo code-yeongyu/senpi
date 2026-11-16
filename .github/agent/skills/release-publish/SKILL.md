@@ -43,9 +43,11 @@ Run `scripts/release.mjs` from a clean `main` checkout.
 
 After tag push, watch the `build-binaries` workflow run (find the run id via `gh run list --workflow=build-binaries.yml --branch main --limit 1 --json databaseId -q '.[0].databaseId'`).
 
-The `publish-npm` job dispatches `publish-npm.yml` in publish-only mode, prints the dispatched run URL, waits up to 60 minutes, and fails if the publish run fails. There is no environment approval gate on the publish path — the old `npm-publish` environment subject is exactly what npm's trusted-publisher registration rejects.
+The `publish-npm` job dispatches `publish-npm.yml` in publish-only mode (passing `build_run_id`), prints the dispatched run URL and ends; no runner waits for the publish (senpi#6851). There is no environment approval gate on the publish path — the old `npm-publish` environment subject is exactly what npm's trusted-publisher registration rejects.
 
-Never consider the release done before `publish-npm` and `publish-github-release` complete and the GitHub Release is non-draft. If the publish job fails, recover with `gh workflow run publish-npm.yml -f version=<v> -f publish-only=true`, never by rerunning `release.mjs`.
+The release finishes in whichever half ends last. Build Binaries' `finalize-release` job runs after the smoke and staging, and the publish run's `finalize-github-release` job runs after its `release` job. Both run `scripts/release-finalize.mjs`. The first to see both halves done does one of three things: publishes the draft, opens the smoke rollback issue, or runs the draft cleanup. The other job only logs `-> wait`. So a Build Binaries run can end green while npm is still publishing: watch the publish run too, and look for a failure in either run's finalize job.
+
+Never consider the release done before the GitHub Release is non-draft and npm shows the version. If the publish run fails, recover with `gh workflow run publish-npm.yml -f version=<v> -f publish-only=true -f build_run_id=<Build Binaries run id>` (the id lets it finish the GitHub Release; without it, publish the draft by hand after `npm view` shows the version), never by rerunning `release.mjs`.
 
 ## Gate disambiguation
 
@@ -64,7 +66,7 @@ These are separate controls and must not be conflated:
 - If a check or test fails before the tag push, stop and fix the issue, then re-release. Do not try to salvage a bad release by continuing past the failure.
 - `E404` noise for `@code-yeongyu/senpi-orchestrator` is not a release failure.
 - **An npm PUT 404 during `npm publish` can be a false negative**: the publish may have landed anyway (observed live on 2026-07-28 with `@code-yeongyu/senpi@2026.7.28-2` — the job failed but the version exists). ALWAYS verify with `npm view <pkg> versions --json` before treating a publish error as real, before rerunning anything, and before declaring a release failed.
-- A failed `publish-npm` job skips `publish-github-release` and triggers the draft-cleanup path; check `gh release view v<version>` before recovering — the release may already be live. Recover only through the existing tag workflow, never by rerunning `release.mjs`.
+- A failed npm publish (or a failed dispatch) makes the finalize step run the draft-cleanup path instead of publishing; check `gh release view v<version>` before recovering — the release may already be live. Recover only through the existing tag workflow, never by rerunning `release.mjs`.
 - Since senpi#6627 the npm publish no longer waits for the binary smoke. A failed smoke therefore leaves npm published with neither a draft nor a GitHub Release. A failed or cancelled `stage-github-release` can leave an incomplete draft next to a published npm version. In both states, never publish an existing draft. Re-run the failed jobs of the Build Binaries run, or re-stage from its `release-assets-v<tag>` artifact as `release-draft-cleanup.sh` prints, then publish.
 - If the main checkout has foreign state, use a clean dedicated clone/worktree. Never clean or stash someone else's work.
 
@@ -78,10 +80,9 @@ These are separate controls and must not be conflated:
 
 ## Post-release verification checklist
 
-- [ ] `build-binaries` is complete.
-- [ ] `publish-npm` is complete (it starts right after `build`, in parallel with the binary smoke).
+- [ ] `build-binaries` is complete, and its `finalize-release` job succeeded.
+- [ ] The dispatched publish-only `publish-npm.yml` run is complete (it starts right after `build`, in parallel with the binary smoke), and its `finalize-github-release` job succeeded.
 - [ ] `stage-github-release` is complete (it waits for the full binary smoke matrix).
-- [ ] `publish-github-release` is complete.
 - [ ] The npm registry resolves the published version.
 - [ ] The GitHub Release is published and non-draft.
 

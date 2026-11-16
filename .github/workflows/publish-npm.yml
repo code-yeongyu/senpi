@@ -28,6 +28,11 @@ name: Release
         required: false
         type: boolean
         default: false
+      build_run_id:
+        description: 'Set by Build Binaries: its run id. The publish-only run then finishes the GitHub Release once npm is done (senpi#6851). Empty for manual runs.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   actions: read
@@ -342,6 +347,39 @@ jobs:
             echo "| Version | ${{ inputs.version || 'auto' }} |"
             echo "| Commit | $commit |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # senpi#6851: the npm half of the Build Binaries join. After the publish-only release job, it runs
+  # scripts/release-finalize.mjs on the Build Binaries run that dispatched this one: if staging and the binary smoke
+  # are done, it publishes the draft GitHub Release (or opens the smoke rollback issue, or runs the draft cleanup);
+  # otherwise Build Binaries' finalize-release job does that when they finish. It never gets id-token or the push token.
+  finalize-github-release:
+    needs: release
+    if: ${{ always() && inputs.publish-only == true && inputs.dry_run != true && inputs.build_run_id != '' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-finalize-v${{ inputs.version }}
+      cancel-in-progress: false
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+
+      - name: Finish the release once npm and the binaries are both done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: v${{ inputs.version }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          PUBLISH_RUN_ID: ${{ github.run_id }}
+        run: node scripts/release-finalize.mjs
 
   # force_tests (senpi#6642): the suite runs as matrix jobs of this run, each on its own runner, instead of inside the
   # release job (a forced cut spent 74.6 of 89.6 min there in one job). prepare regenerates the catalog once and fixes the
