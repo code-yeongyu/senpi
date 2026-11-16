@@ -68,20 +68,6 @@ export class StatusPathMismatchError extends Error {
 	}
 }
 
-/**
- * The sender's question. The ledger answers, its `accepted` final and marked `revoked` once the import is revoked; a
- * given session file is read in the move's queue and is the authority too (a committed import is accepted, a revoked
- * one revoked), so a file that is not this move's import is refused. A path with no file answers from the ledger.
- */
-export async function answerMoveStatus(
-	ledger: MoveLedger,
-	moveId: MoveId,
-	sessionFile: string | undefined,
-): Promise<MoveAnswer> {
-	const asked: StatusFile | undefined = sessionFile === undefined ? undefined : { file: sessionFile, as: "copy" };
-	return (await answerMoveStatusAndLanding(ledger, moveId, asked)).answer;
-}
-
 /** The session file a `status` asks about, and what it is to the move. */
 export interface StatusFile {
 	readonly file: string;
@@ -90,9 +76,13 @@ export interface StatusFile {
 }
 
 /**
- * `answerMoveStatus`, and for an accepted move where it landed (senpi#6436). To settle an interrupted step the ledger
- * reads the file at the target its record names, under the record's lock; that same read says what the file is, so
- * nothing is read twice and nothing is opened or written for it. A record that names no target says nothing.
+ * The sender's question. The ledger answers, its `accepted` final and marked `revoked` once the import is revoked; a
+ * given session file is read in the move's queue and is the authority too (a committed import is accepted, a revoked
+ * one revoked), so a file that is not this move's import is refused. A path with no file answers from the ledger.
+ *
+ * For an accepted move it also says where it landed (senpi#6436). To settle an interrupted step the ledger reads the
+ * file at the target its record names, under the record's lock; that same read says what the file is, so nothing is
+ * read twice and nothing is opened or written for it. A record that names no target says nothing.
  *
  * A `landing` is read before the ledger is asked, so a move that landed answers `accepted` from its file even when its
  * record is lost, and no record is made for it. A file there that does not record this move (the copy an earlier move
