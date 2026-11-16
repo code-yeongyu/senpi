@@ -91,6 +91,7 @@ export {
 	type KillGuardRuntime,
 	releaseKillGuardRuntime,
 } from "./core/kill-guard/runtime.ts";
+export { CREDENTIAL_PLACEHOLDER, withCredentialProxy } from "./core/credential-proxy/runtime.ts";
 // Job widgets: hosts register background jobs and their widget-author model route
 export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {

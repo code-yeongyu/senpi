@@ -192,8 +192,19 @@ function capturedSpawn(originalSpawn, options, pinEnv, guard) {
 	return (...args) => {
 		assertCellLive();
 		judgeSpawn(guard, args[0]);
-		if (!options.isActive()) return originalSpawn(...args);
 		const [first, second] = args;
+		// The pinned environment applies whether or not a cell is running: a spawn from a timer or callback after its cell
+		// settled would otherwise inherit the OS environ, which still holds withheld credentials (senpi#6820).
+		if (!options.isActive()) {
+			if (!pinEnv) return originalSpawn(...args);
+			if (Array.isArray(first)) {
+				const spawnOptions = second === undefined ? {} : second;
+				return spawnOptions.env === undefined ? originalSpawn(first, { ...spawnOptions, env: { ...process.env } }) : originalSpawn(...args);
+			}
+			return first !== null && typeof first === "object" && first.env === undefined
+				? originalSpawn({ ...first, env: { ...process.env } })
+				: originalSpawn(...args);
+		}
 		let child;
 		if (Array.isArray(first)) {
 			const spawnOptions = second === undefined ? {} : second;
