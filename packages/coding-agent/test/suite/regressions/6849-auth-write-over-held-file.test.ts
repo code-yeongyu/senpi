@@ -54,7 +54,9 @@ describe("senpi#6849 a credential write while another process holds auth.json op
 		writeFileSync(authJson, before);
 		const backendPrototype = Object.getPrototypeOf(
 			(AuthStorage.create(authJson) as unknown as { storage: object }).storage,
-		) as { acquireLockAsync: (signal: AbortSignal | undefined, onCompromised: (error: Error) => void) => Promise<unknown> };
+		) as {
+			acquireLockAsync: (signal: AbortSignal | undefined, onCompromised: (error: Error) => void) => Promise<unknown>;
+		};
 		const acquire = backendPrototype.acquireLockAsync;
 		let loseLock = () => {};
 		const spy = vi.spyOn(backendPrototype, "acquireLockAsync").mockImplementation(function (
