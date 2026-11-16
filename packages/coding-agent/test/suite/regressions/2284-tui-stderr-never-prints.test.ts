@@ -68,7 +68,7 @@ afterEach(() => {
 });
 
 describe("#2284 unhandled rejection while the TUI owns the terminal", () => {
-	test("is recorded in the debug log, never printed, and the session keeps running", () => {
+	test.each([undefined, "ENOTCONN", "EPIPE"])("records a rejection (%s) without assuming terminal loss", (code) => {
 		useTempAgentDir("rejection");
 		const context = Object.assign(Object.create(InteractiveMode.prototype) as SignalHandlerContext, {
 			signalCleanupHandlers: [],
@@ -87,7 +87,10 @@ describe("#2284 unhandled rejection while the TUI owns the terminal", () => {
 			});
 			const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 			const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-			const reason = new Error("Timeout waiting for response to prompt. Stderr: Authorization: Bearer leak-me");
+			const reason = Object.assign(
+				new Error("Timeout waiting for response to prompt. Stderr: Authorization: Bearer leak-me"),
+				{ code },
+			);
 			const rejected = Promise.reject(reason);
 			rejected.catch(() => {});
 

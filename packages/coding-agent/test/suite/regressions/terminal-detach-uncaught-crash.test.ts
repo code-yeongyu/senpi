@@ -49,8 +49,8 @@ afterEach(() => {
 });
 
 describe("uncaughtCrash dead-terminal classification", () => {
-	test("routes a stdin read EIO to the silent emergency exit instead of the crash banner", () => {
-		// Given a running session whose controlling terminal vanished under it.
+	test("restores the terminal for an unattributed read EIO", () => {
+		// A child-process pipe can report the same errno as the terminal.
 		const context = createCrashContext();
 		const eio = Object.assign(new Error("EIO: i/o error, read"), { code: "EIO", errno: -5, syscall: "read" });
 		const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
@@ -58,21 +58,19 @@ describe("uncaughtCrash dead-terminal classification", () => {
 		});
 		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		// When the unlistened stdin error reaches the last-resort handler.
+		// An uncaught exception does not identify which stream failed.
 		expect(() => callUncaughtCrash(context, eio, "uncaughtException")).toThrow(ProcessExitError);
 
-		// Then the dead-terminal path wins: silent 129, no banner, no fatal exit(1).
-		expect(context.emergencyTerminalExit).toHaveBeenCalledTimes(1);
-		expect(exit).not.toHaveBeenCalled();
-		expect(context.ui.stop).not.toHaveBeenCalled();
+		expect(context.emergencyTerminalExit).not.toHaveBeenCalled();
+		expect(exit).toHaveBeenCalledWith(1);
+		expect(context.ui.stop).toHaveBeenCalledTimes(1);
 		const bannerCalls = consoleError.mock.calls.filter((args) =>
 			args.some((arg) => typeof arg === "string" && arg.includes("exiting due to uncaughtException")),
 		);
-		expect(bannerCalls).toHaveLength(0);
+		expect(bannerCalls).toHaveLength(1);
 	});
 
-	test("routes Bun's numeric-errno dead-terminal shape to the emergency exit", () => {
-		// Given the same detach reported as a bare numeric errno (Bun macOS shape).
+	test("restores the terminal when an unattributed error has a bare numeric errno", () => {
 		const context = createCrashContext();
 		const eio = Object.assign(new Error("read failed with errno: 5"), { errno: 5 });
 		vi.spyOn(process, "exit").mockImplementation((code) => {
@@ -82,7 +80,21 @@ describe("uncaughtCrash dead-terminal classification", () => {
 
 		// When / Then
 		expect(() => callUncaughtCrash(context, eio, "uncaughtException")).toThrow(ProcessExitError);
-		expect(context.emergencyTerminalExit).toHaveBeenCalledTimes(1);
+		expect(context.emergencyTerminalExit).not.toHaveBeenCalled();
+		expect(context.ui.stop).toHaveBeenCalledTimes(1);
+	});
+
+	test.each(["ENOTCONN", "EPIPE"])("reports an uncaught child-pipe %s without assuming terminal loss", (code) => {
+		const context = createCrashContext();
+		const error = Object.assign(new Error(`read ${code}`), { code });
+		const exit = vi.spyOn(process, "exit").mockImplementation((value) => {
+			throw new ProcessExitError(value);
+		});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		expect(() => callUncaughtCrash(context, error, "uncaughtException")).toThrow(ProcessExitError);
+		expect(exit).toHaveBeenCalledWith(1);
+		expect(context.ui.stop).toHaveBeenCalledTimes(1);
+		expect(context.emergencyTerminalExit).not.toHaveBeenCalled();
 	});
 
 	test("keeps ordinary crashes on the fatal banner path", () => {
