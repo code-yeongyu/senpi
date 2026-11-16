@@ -36,7 +36,11 @@ describe("reference file contract", () => {
 		if (kind === "whitespace") files.file(kind, " \n\t ");
 		if (kind === "oversize") files.file(kind, "x".repeat(65_537));
 		if (kind === "utf8") files.file(kind, new Uint8Array([0xc0, 0xaf]));
-		if (kind === "directory") mkdirSync(path);
+		// Explicit owner-only modes: the runner's umask must not make these group-writable (senpi#6827).
+		if (kind === "directory") {
+			mkdirSync(path, { mode: 0o700 });
+			chmodSync(path, 0o700);
+		}
 		await expect(resolveReference({ $file: path }, { root: files.root })).rejects.toMatchObject({
 			name: "ConfigReferenceError",
 			reason,
@@ -59,7 +63,7 @@ describe("reference file contract", () => {
 
 	it.skipIf(process.platform === "win32")("rejects FIFO without blocking", async () => {
 		const path = join(files.root, "fifo");
-		execFileSync("mkfifo", [path]);
+		execFileSync("mkfifo", ["-m", "600", path]);
 		await expect(resolveReference({ $file: path }, { root: files.root })).rejects.toMatchObject({
 			name: "ConfigReferenceError",
 			reason: "non-regular",
