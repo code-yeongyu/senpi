@@ -136,7 +136,7 @@ export async function withStagedInlineBundle<T>(
 	const sent = sentChecksums(files);
 	// Above the mkdir: every refusal of a sent list is before the first folder is made. The probe does not need
 	// `incoming` to be there, since it asks the nearest folder above it that is.
-	await refuseNamesThatFold([...sent.keys()], incoming, probeFolding);
+	await refuseNamesThatFold([[...sent.keys()]], incoming, probeFolding);
 	await mkdir(incoming, { recursive: true });
 	await removeStaleStaging(incoming);
 	const dir = await mkdtemp(join(incoming, STAGING_PREFIX));

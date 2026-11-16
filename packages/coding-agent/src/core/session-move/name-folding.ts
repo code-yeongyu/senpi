@@ -6,7 +6,7 @@
  * the platform's name: a macOS volume can keep such names apart and a Linux mount can fold them.
  */
 import { randomBytes } from "node:crypto";
-import { access, rm, stat, writeFile } from "node:fs/promises";
+import { access, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { MoveBundleInvalidError, shown } from "./bundle.ts";
 
@@ -36,6 +36,26 @@ async function nearestFolder(path: string): Promise<string> {
 	return isFolder || above === path ? path : nearestFolder(above);
 }
 
+const PROBE_FILE = /^\.name-probe-[0-9a-f]{12}-/;
+const STALE_PROBE_MS = 60 * 60 * 1000;
+
+/**
+ * Removes the probe files an earlier probe left in `folder` when it was stopped between its write and its remove.
+ * Only a file named as a probe names its own, and only one not modified for an hour: a younger one may belong to a
+ * probe that is running now.
+ */
+async function sweepStaleProbes(folder: string): Promise<void> {
+	const names = await readdir(folder).catch(() => []);
+	for (const name of names.filter((entry) => PROBE_FILE.test(entry))) {
+		const file = join(folder, name);
+		const modified = await stat(file).then(
+			(entry) => entry.mtimeMs,
+			() => undefined,
+		);
+		if (modified !== undefined && Date.now() - modified > STALE_PROBE_MS) await rm(file, { force: true });
+	}
+}
+
 /**
  * Asks the file system holding `path` (or the nearest folder above it that exists) how it folds names: writes one
  * empty file whose name has an upper-case letter and a composed character, looks for it under the other letter case
@@ -43,6 +63,7 @@ async function nearestFolder(path: string): Promise<string> {
  */
 export async function probeNameFolding(path: string): Promise<NameFolding> {
 	const folder = await nearestFolder(path);
+	await sweepStaleProbes(folder);
 	const tag = `.name-probe-${randomBytes(6).toString("hex")}-`;
 	const written = join(folder, `${tag}A\u00e9`);
 	try {
@@ -95,16 +116,20 @@ export function oneNameUnder(paths: readonly string[], folding: NameFolding): st
 }
 
 /**
- * Refuses a bundle whose paths cannot all be written on the file system of `folder`. A list with no such pair under
- * any folding is not probed at all, so it costs nothing and touches no folder.
+ * Refuses a bundle whose names cannot all be written on the file system of `folder`. Each list is one layout the
+ * names are written in (the bundle's own paths; the names a staged move writes), and names are compared within a
+ * list only. Lists with no such pair under any folding are not probed at all, so they cost nothing and touch no folder.
  */
 export async function refuseNamesThatFold(
-	paths: readonly string[],
+	layouts: readonly (readonly string[])[],
 	folder: string,
 	probe: (folder: string) => Promise<NameFolding> = probeNameFolding,
 ): Promise<void> {
-	if (oneNameUnder(paths, EVERY_FOLDING) === undefined) return;
-	const clash = oneNameUnder(paths, await probe(folder));
-	if (clash !== undefined)
-		throw new MoveBundleInvalidError(`${clash} on the file system this host would write the bundle to`);
+	if (layouts.every((names) => oneNameUnder(names, EVERY_FOLDING) === undefined)) return;
+	const folding = await probe(folder);
+	for (const names of layouts) {
+		const clash = oneNameUnder(names, folding);
+		if (clash !== undefined)
+			throw new MoveBundleInvalidError(`${clash} on the file system this host would write the bundle to`);
+	}
 }
