@@ -7,13 +7,13 @@ import {
 	mkdtempSync,
 	opendirSync,
 	readFileSync,
-	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { concurrentJobScope, retireScope, writeScopeOwner } from "./test-temp-scope-owner.mjs";
 
 export function tempEntries(directory) {
 	const handle = opendirSync(directory);
@@ -31,24 +31,6 @@ export function tempEntries(directory) {
 export function repoTempName(name) {
 	return /^(?:senpi-|pi-|pip-|tsx-|st-|sj-|rpc1370-|hc-|pc-|ps-|pes-|pew-|per-|pet-|ped-|sa-|dh-tmp-|tui-)/.test(name) ||
 		name === "tui" || /^[A-Za-z0-9_-]{21}$/.test(name);
-}
-
-// Every exclusive job scope records which guarded job created it: the registry exported by the enclosing
-// job's snapshot, or none for a top-level job. A scope nested in this job's own tests carries this job's
-// registry and stays this job's leftover; a scope recording any other owner belongs to a concurrent job.
-const scopeOwnerFile = ".senpi-test-temp-scope.json";
-
-export function concurrentJobScope(path, registry) {
-	if (!basename(path).startsWith("sj-")) return false;
-	let owner;
-	try {
-		owner = JSON.parse(readFileSync(join(path, scopeOwnerFile), "utf8"));
-	} catch (error) {
-		if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") throw error;
-		// A scope that vanished since the listing was retired by its job's own check; an unmarked one is reported.
-		return !existsSync(path);
-	}
-	return owner.parentRegistry !== registry;
 }
 
 export function reportTempLeaks(directory, before, matching = () => true, concurrent = () => false) {
@@ -129,12 +111,7 @@ if (
 			]),
 		);
 		try {
-			if (scope) {
-				// Rename keeps a concurrent check from reading a partial owner record.
-				const owner = join(scope, `${scopeOwnerFile}.partial`);
-				writeFileSync(owner, JSON.stringify({ parentRegistry: process.env.SENPI_TEST_TEMP_REGISTRY || null }));
-				renameSync(owner, join(scope, scopeOwnerFile));
-			}
+			if (scope) writeScopeOwner(scope, registry, process.env.SENPI_TEST_TEMP_REGISTRY);
 			// npm enables Node's default compile cache before launching the wrapped test, and jiti
 			// (the Node extension loader) writes its default cache to <TMPDIR>/jiti (#4916).
 			// Both are allocated by job setup and retired with the owned parent, not exempted.
@@ -161,7 +138,7 @@ if (
 				);
 			}
 		} catch (error) {
-			if (scope) rmSync(scope, { recursive: true, force: true, maxRetries: 3 });
+			if (scope) retireScope(scope);
 			throw error;
 		}
 	} else {
@@ -198,7 +175,7 @@ if (
 			for (const system of snapshot.system ?? []) {
 				console.log(`[test-temp] checking system temp: ${JSON.stringify(system.directory)}`);
 				leaked += reportTempLeaks(system.directory, system.entries, repoTempName,
-					(path) => concurrentJobScope(path, snapshot.registry));
+					(path) => concurrentJobScope(path, snapshot));
 			}
 			let retired = 0;
 			for (const root of roots) {
@@ -219,7 +196,7 @@ if (
 			process.exitCode = leaked === 0 && retired === 0 ? 0 : 1;
 		} finally {
 			if (snapshot.scope) {
-				rmSync(snapshot.scope, { recursive: true, force: true, maxRetries: 3 });
+				retireScope(snapshot.scope);
 				// Post-job actions must not recreate the retired parent through inherited temp vars.
 				appendFileSync(
 					process.env.GITHUB_ENV,
