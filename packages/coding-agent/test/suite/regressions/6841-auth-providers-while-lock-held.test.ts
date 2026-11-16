@@ -130,4 +130,31 @@ describe("senpi#6841 get_auth_providers while another process holds auth.json's 
 			await release();
 		}
 	}, 120_000);
+	// #6849 review L1: a store that loaded but could not save its migrated copy re-reads too; it must
+	// wait once per request.
+	it("answers within the lock budget for a store with a load error while the lock is held", async () => {
+		const authJson = join(tempDir, "auth.json");
+		writeFileSync(authJson, JSON.stringify({ "openai-codex": { type: "api_key", key: "sk-test-6849-legacy" } }));
+		// The migrated copy is staged at this path, so a directory there makes only the save fail.
+		const staging = `${authJson}.${process.pid}.tmp`;
+		mkdirSync(staging);
+		const harness = makeHarness(tempDir);
+		rmSync(staging, { recursive: true });
+		cleanup = harness.cleanup;
+		const storage = harness.runtimeHost.session.modelRegistry.authStorage;
+		expect(storage.getLoadError()?.kind).toBe("write_back_failed");
+		expect(storage.isCredentialStoreBusy()).toBe(false);
+		const release = await holdLockFromAnotherProcess(authJson);
+		const collected = makeSink();
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		try {
+			const started = Date.now();
+			await handler.handleInputLine(JSON.stringify({ id: "errored", type: "get_auth_providers" }));
+			await collected.waitFor((message) => message.id === "errored", 120_000);
+			expect(Date.now() - started).toBeLessThan(3_000);
+		} finally {
+			await release();
+			await handler.dispose();
+		}
+	}, 180_000);
 });
