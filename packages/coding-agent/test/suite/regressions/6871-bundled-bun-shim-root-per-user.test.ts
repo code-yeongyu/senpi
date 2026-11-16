@@ -7,18 +7,16 @@ import { type BundledBunHost, bundledBunDir, bundledBunShimRoots } from "../../.
 
 // senpi#6871: the bundled bun shims fall back to a temp root when the agent directory cannot hold them. That root was
 // `<tmpdir>/senpi-bundled-bun`, one directory for every user of a Linux machine: once another user had created it, this
-// user's shims could not be written there. The temp root is now this user's own (`$XDG_RUNTIME_DIR/senpi-bundled-bun`
-// when private, else `<tmpdir>/senpi-bundled-bun-<uid>`, 0700), and a symlink or foreign directory at its name is never
-// used. Security contract: the directory a PATH entry for agent shells points at is private to its user.
+// user's shims could not be written there. The temp root is now this user's own (`<tmpdir>/senpi-bundled-bun-<uid>`,
+// 0700), and a symlink or foreign directory at its name is never used. Security contract: the directory a PATH entry for agent shells points at is private to its user.
 
 const uid = process.getuid?.();
 const roots: string[] = [];
-let saved: { TMPDIR?: string; XDG_RUNTIME_DIR?: string };
+let saved: string | undefined;
 let agentShimRoot: string;
 
 beforeEach(async () => {
-	saved = { TMPDIR: process.env.TMPDIR, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR };
-	delete process.env.XDG_RUNTIME_DIR;
+	saved = process.env.TMPDIR;
 	// The agent directory cannot hold the shims (a file sits at their directory's name), so the temp root is used.
 	agentShimRoot = join(getAgentDir(), "bundled-bun");
 	await mkdir(dirname(agentShimRoot), { recursive: true });
@@ -27,10 +25,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	for (const [name, value] of Object.entries(saved)) {
-		if (value === undefined) delete process.env[name];
-		else process.env[name] = value;
-	}
+	if (saved === undefined) delete process.env.TMPDIR;
+	else process.env.TMPDIR = saved;
 	await rm(agentShimRoot, { force: true });
 	for (const root of roots.splice(0)) {
 		await chmod(root, 0o700).catch(() => undefined);

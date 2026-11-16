@@ -7,23 +7,19 @@ import { applyHookOutputSafety } from "../../../src/core/extensions/builtin/hook
 // senpi#6871: hook output over the limit is spilled, redacted, to a file. Without a configured spill directory that was
 // `<tmpdir>/senpi-hook-output`, one directory for every user of a Linux machine: once another user had created it this
 // user's spill failed with EACCES, and the spill files sat in a directory other users could list. The default spill
-// directory is now this user's own (`$XDG_RUNTIME_DIR/senpi-hook-output` when private, else
-// `<tmpdir>/senpi-hook-output-<uid>`, 0700) and each spill file is 0600. Security contract: hook output stays private.
+// directory is now this user's own (`<tmpdir>/senpi-hook-output-<uid>`, 0700) and each spill file is 0600. Security contract: hook output stays private.
 
 const uid = process.getuid?.();
 const roots: string[] = [];
-let saved: { TMPDIR?: string; XDG_RUNTIME_DIR?: string };
+let saved: string | undefined;
 
 beforeEach(() => {
-	saved = { TMPDIR: process.env.TMPDIR, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR };
-	delete process.env.XDG_RUNTIME_DIR;
+	saved = process.env.TMPDIR;
 });
 
 afterEach(async () => {
-	for (const [name, value] of Object.entries(saved)) {
-		if (value === undefined) delete process.env[name];
-		else process.env[name] = value;
-	}
+	if (saved === undefined) delete process.env.TMPDIR;
+	else process.env.TMPDIR = saved;
 	for (const root of roots.splice(0)) {
 		await chmod(root, 0o700).catch(() => undefined);
 		await rm(root, { recursive: true, force: true });

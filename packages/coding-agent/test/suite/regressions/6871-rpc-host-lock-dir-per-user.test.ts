@@ -6,9 +6,9 @@ import { acquireHostEnsureLock, hostEnsureLockTarget } from "../../../src/modes/
 
 // senpi#6871: the endpoint lock directory was `<tmpdir>/senpi-rpc-host-locks`, one directory for every user of a
 // Linux machine (tmpdir is `/tmp` for all of them). The first user created it 0755, so a second user's host could
-// not create its lock file (`EACCES`), exited, and crash-looped. Each user now gets a directory only it owns:
-// `$XDG_RUNTIME_DIR/senpi-rpc-host-locks` when that is usable, else `<tmpdir>/senpi-rpc-host-locks-<uid>` (0700),
-// verified without following a symlink. Security contract: the lock directory is private to its user.
+// not create its lock file (`EACCES`), exited, and crash-looped. Each user now gets `<tmpdir>/senpi-rpc-host-locks-<uid>`
+// (0700), verified without following a symlink, whatever XDG_RUNTIME_DIR says. Security contract: the lock directory is
+// private to its user, and every process of that user agrees on it.
 
 const uid = process.getuid?.();
 const roots: string[] = [];
@@ -67,31 +67,42 @@ describe.skipIf(process.platform === "win32")("the endpoint lock directory is pr
 		expect(await readdir(shared)).toEqual([]);
 	});
 
-	it("uses $XDG_RUNTIME_DIR when it is a private directory of this user, and the per-uid temp dir otherwise", async () => {
+	// Review M1: the directory must not depend on per-session environment. A login shell has XDG_RUNTIME_DIR, cron,
+	// `sudo -u`, `docker exec` and nohup'd jobs often do not, and the runtime dir goes away at logout; two processes of
+	// one user that resolved different directories would both hold "the" exclusive ensure lock for one socket.
+	it("two processes of one user with different XDG_RUNTIME_DIR exclude each other on one socket", async () => {
 		const tmp = await sharedTmp();
-		const runtime = await mkdtemp(join(tmp, "run-"));
-		await chmod(runtime, 0o700);
-		process.env.XDG_RUNTIME_DIR = runtime;
-		await lockAndRelease(socketIn(tmp));
-		expect(dirname(hostEnsureLockTarget(socketIn(tmp)))).toBe(join(runtime, "senpi-rpc-host-locks"));
-		expect(await modeAndOwner(join(runtime, "senpi-rpc-host-locks"))).toEqual({ mode: 0o700, uid });
+		const loginRuntime = await mkdtemp(join(tmp, "run-login-"));
+		await chmod(loginRuntime, 0o700);
+		const socket = socketIn(tmp);
 
-		// A runtime dir other users can reach, a relative path and a missing directory are all unusable.
-		await chmod(runtime, 0o755);
-		for (const unusable of [runtime, "relative/run", join(tmp, "missing")]) {
-			process.env.XDG_RUNTIME_DIR = unusable;
-			expect(dirname(hostEnsureLockTarget(socketIn(tmp)))).toBe(join(tmp, `senpi-rpc-host-locks-${uid}`));
+		process.env.XDG_RUNTIME_DIR = loginRuntime;
+		const held = await acquireHostEnsureLock(socket, 1_000);
+		try {
+			delete process.env.XDG_RUNTIME_DIR;
+			await expect(acquireHostEnsureLock(socket, 200)).rejects.toThrow(/busy|locked/i);
+		} finally {
+			await held();
 		}
+		expect(dirname(hostEnsureLockTarget(socket))).toBe(join(tmp, `senpi-rpc-host-locks-${uid}`));
 	});
 
-	it("tightens a per-user directory this user owns but left group/world writable", async () => {
+	// Review L3: a directory other users could WRITE may already hold entries they planted (a symlink named like a
+	// lock file), which later opens follow; tightening its mode would not remove them, so it is refused. One they
+	// could only read or traverse cannot hold anything of theirs and is tightened.
+	it("refuses a per-user directory others could write into, and tightens one they could only read", async () => {
 		const tmp = await sharedTmp();
 		const lockDir = join(tmp, `senpi-rpc-host-locks-${uid}`);
 		await mkdir(lockDir);
-		await chmod(lockDir, 0o777);
+		for (const mode of [0o777, 0o770, 0o703]) {
+			await chmod(lockDir, mode);
+			await expect(lockAndRelease(socketIn(tmp))).rejects.toThrow(/user_dir_unsafe.*writable by group or others/);
+			expect((await modeAndOwner(lockDir)).mode).toBe(mode);
+			expect(await readdir(lockDir)).toEqual([]);
+		}
 
+		await chmod(lockDir, 0o755);
 		await lockAndRelease(socketIn(tmp));
-
 		expect(await modeAndOwner(lockDir)).toEqual({ mode: 0o700, uid });
 	});
 

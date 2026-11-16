@@ -29,13 +29,10 @@ export function startMultiSessionHost(run) {
 			"--no-context-files",
 			...run.args,
 		],
-		// The host's endpoint fence (senpi#4602) keeps durable lock files in the user's lock dir: `<tmpdir>/senpi-rpc-host-locks-<uid>/`,
-		// or `$XDG_RUNTIME_DIR/senpi-rpc-host-locks/` when that is set (senpi#6871). This throwaway host is the only writer
-		// on its socket, so its temp root is the directory this run owns and removes, and the runtime dir is unset.
-		{
-			env: { ...run.env, TMPDIR: socketDir, TEMP: socketDir, TMP: socketDir, XDG_RUNTIME_DIR: undefined },
-			cwd: run.box.cwd,
-		},
+		// The host's endpoint fence (senpi#4602) keeps durable lock files under `<tmpdir>/senpi-rpc-host-locks-<uid>/`
+		// (senpi#6871). This throwaway host is the only writer on its socket, so its temp root is the directory this run
+		// owns and removes.
+		{ env: { ...run.env, TMPDIR: socketDir, TEMP: socketDir, TMP: socketDir }, cwd: run.box.cwd },
 	);
 	const stopHost = async () => {
 		if (host.exitCode === null && host.signalCode === null) {

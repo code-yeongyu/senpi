@@ -2253,10 +2253,13 @@ which prints the bare socket path).
   runs implicitly - not inside `ensure`, not inside `status`. For each endpoint whose socket is known it takes
   that socket's ENSURE lock (`<lock dir>/<sha256(transport address)[:32]>.lock`, the one
   `ensureHost` serializes on - not `daemon.lock`; on POSIX the address is the socket path with its directory
-  realpath-canonicalized, so every spelling of one socket shares one lock; the lock dir is private to the user:
-  `$XDG_RUNTIME_DIR/senpi-rpc-host-locks` when that is a 0700 directory of the user, else
-  `<tmp>/senpi-rpc-host-locks-<uid>` (0700; a symlink or another user's directory there is refused), and
-  `<tmp>/senpi-rpc-host-locks` on Windows) for at most 2 s, and inside it requires all three: (a) no
+  realpath-canonicalized, so every spelling of one socket shares one lock; the lock dir is the user's own
+  `<tmp>/senpi-rpc-host-locks-<uid>`, 0700, whatever the session environment (`XDG_RUNTIME_DIR` is never consulted), and
+  a symlink, another user's directory or one group or others can write into is refused; `<tmp>/senpi-rpc-host-locks`
+  on Windows. While the pre-senpi#6874 directory `<tmp>/senpi-rpc-host-locks` exists as a directory the user owns and
+  alone can write, the ensure lock, the endpoint fence and the owner token are also taken and kept there, so an engine
+  from before that change and a newer one still exclude each other; remove that directory once no older engine runs)
+  for at most 2 s, and inside it requires all three: (a) no
   `generations/*/host.pid` names a live process (pid live and start time matching; a live pid whose identity
   cannot be read counts as live; the generation the pointer names is one of them), (b) no claim in
   `reservations/` has a live owner, and (c) connecting to the socket fails with `ENOENT`, or with `ECONNREFUSED`
