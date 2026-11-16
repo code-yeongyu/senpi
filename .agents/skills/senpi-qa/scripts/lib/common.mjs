@@ -84,6 +84,10 @@ const SCRUBBED_SESSION_ENV = [
 	"PI_PROMPT_CACHE_SAFE_WAIT_SECONDS",
 	"PI_SESSION_FILE",
 	"PI_SESSION_ID",
+	// An inherited package dir points the child's getPackageDir() at another install; without its piConfig the
+	// product name falls back to "pi" and changes the system prompt (senpi#6839).
+	"SENPI_PACKAGE_DIR",
+	"PI_PACKAGE_DIR",
 ];
 
 /** envPrefix of the inherited brand profile, if any (mirrors parseBrandProfile's fallback). */
