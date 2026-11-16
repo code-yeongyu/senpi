@@ -1,6 +1,13 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6854": {
+			"additions": [
+				"legacyContracts/test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given a session environment and no active cell when Bun.spawn runs without env then the worker view is still pinned"
+			],
+			"reason": "senpi#6854: main's codemode-gate is red on this one unreviewed addition, the contract title senpi#6828 (87b48698f6, credential injection proxy: Bun.spawn without env keeps the pinned worker view when no cell is active) added to test/js-kernel-shell-capture.test.ts without a baseline or allowlist entry. The baseline gains exactly this cell as passed, the value a clean Linux re-record of main writes; no prompt cell, schema or import moves.",
+			"changes": []
+		},
 		"senpi#6809": {
 			"additions": [
 				"legacyContracts/test/eval-notifier.test.ts/EvalNotifier on a hand, sends without a session context: the loop that receives the notice applies the session guards"
