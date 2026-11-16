@@ -87,7 +87,7 @@ const SCRUBBED_SESSION_ENV = [
 ];
 
 /**
- * Any `<BRAND>_PACKAGE_DIR` (SENPI_, PI_, a launcher's own prefix) points the child's getPackageDir() at another
+ * Any name ending in `_PACKAGE_DIR` (SENPI_, PI_, a launcher's own prefix) points the child's getPackageDir() at another
  * install; without its piConfig the product name falls back to "pi" and changes the system prompt (senpi#6839).
  */
 const isPackageDirOverride = (name) => name.endsWith("_PACKAGE_DIR");
