@@ -29,7 +29,7 @@ const ciCheckRuns = (ci, head) =>
 		},
 	]);
 
-for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, forceTests = false, platformRed = false, ciBasisReceipt = false } of [
+for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, forceTests = false, platformRed = false, ciBasisReceipt = false, dryRun = false } of [
 	{ mergeStatus: 0, ci: "success" },
 	{ mergeStatus: 1, ci: "success" },
 	{ mergeStatus: 0, ci: "failure" },
@@ -44,8 +44,10 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 	// run is read once and not waited for, but a known-red run still stops the release (review LOW L2 on senpi#6861).
 	{ mergeStatus: 0, ci: "superseded", ciBasisReceipt: true },
 	{ mergeStatus: 0, ci: "failure", ciBasisReceipt: true },
+	// Review LOW L1 on senpi#6867: the dry run previews the refusal the live run makes on a red run, never "no CI wait".
+	{ mergeStatus: 0, ci: "failure", ciBasisReceipt: true, dryRun: true },
 ]) {
-	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""}${platformRed ? " and a red main platform run" : ""}${ciBasisReceipt ? " and a CI-basis receipt" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
+	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""}${platformRed ? " and a red main platform run" : ""}${ciBasisReceipt ? " and a CI-basis receipt" : ""}${dryRun ? " in a dry run" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
 		// A pinned --sha must be 40 hex; every other case keeps the readable fixture name.
 		const head = ciBasisReceipt ? "f".repeat(40) : "fixture-sha";
@@ -123,7 +125,7 @@ if (${JSON.stringify(name)} === "gh") {
 					chmodSync(join(bin, name), 0o755);
 				}
 			}
-			const result = spawnSync(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3", ...(forceTests ? ["--force-tests"] : []), ...(ciBasisReceipt ? ["--sha", head, "--ci-basis-receipt", "rcpt-1"] : [])], {
+			const result = spawnSync(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3", ...(forceTests ? ["--force-tests"] : []), ...(ciBasisReceipt ? ["--sha", head, "--ci-basis-receipt", "rcpt-1"] : []), ...(dryRun ? ["--dry-run"] : [])], {
 				cwd: root,
 				// Without npm_* (set when this runs under `npm run`), run-workspaces resolves the stubbed npm from PATH.
 				env: {
@@ -192,6 +194,13 @@ if (${JSON.stringify(name)} === "gh") {
 				const checkRunReads = commands.filter((args) => args[0] === "gh" && String(args[2]).includes("check-runs"));
 				assert.equal(checkRunReads.length, 1, "the waived release reads CI once and never polls it");
 				assert.equal(commands.some(isForcedSuiteStep), false);
+				if (dryRun) {
+					assert.equal(result.status, 0, result.stderr);
+					assert.match(result.stdout, /\[dry-run\] the live run would refuse: CI failed on f{12}.*a ci_basis_receipt waives only the wait/);
+					assert.doesNotMatch(result.stdout, /no CI wait/);
+					assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag"), []);
+					return;
+				}
 				if (ci === "failure") {
 					assert.equal(result.status, 1, result.stderr);
 					assert.match(result.stderr, /CI failed on f{12}.*a ci_basis_receipt waives only the wait/);
@@ -199,6 +208,8 @@ if (${JSON.stringify(name)} === "gh") {
 					return;
 				}
 				assert.equal(result.status, 0, result.stderr);
+				// Review LOW L2 on senpi#6867: the one read classified the run as superseded, not as a missing run.
+				assert.match(result.stdout, /test gate: the CI run for f{12} was cancelled/);
 				assert.match(result.stdout, new RegExp(`hosted CI wait waived by ci_basis_receipt rcpt-1 for the pinned commit ${head}`));
 				return;
 			}
