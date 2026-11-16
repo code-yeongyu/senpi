@@ -53,6 +53,7 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 }
 
 function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
+	if (host.conditionalDrain) return Promise.resolve(error(command.id, command.type, "host_draining"));
 	if ("sessionId" in command && command.sessionId !== undefined && host.registry.peek(command.sessionId)?.speculative)
 		return Promise.resolve(error(command.id, command.type, "unknown_session"));
 	if (command.type === "park_session") return parkSession(host, command);

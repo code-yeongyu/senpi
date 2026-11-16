@@ -43,9 +43,9 @@ import {
 	refusal,
 } from "./host-outcome.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
-import { readHostStatus, readSessionCounts } from "./host-status.ts";
+import { readHostStatus } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
-import { staleStopGeneration, stopHost } from "./host-stop.ts";
+import { stopOutcome } from "./host-stop-outcome.ts";
 import type { HostStopGeneration } from "./host-stop-generation.ts";
 
 export {
@@ -86,6 +86,7 @@ export type HostRequest =
 			readonly action: "stop";
 			readonly target: HostTarget;
 			readonly drain: boolean;
+			readonly ifIdle?: boolean;
 			readonly force: boolean;
 			readonly expectedGeneration?: HostStopGeneration;
 			/** With `drain`: the generation to drain, by instance id (senpi#3653). */
@@ -239,48 +240,6 @@ async function statusAllOutcome(target: HostTarget, includeWorkers: boolean): Pr
 function shardPathOutcome(kind: ShardKind, owner: string, root: string): HostOutcome {
 	const key = shardKey(kind, owner);
 	return { exitCode: HOST_EXIT_OK, payload: { kind, key, socket: shardSocketPathForKey(root, kind, key) } };
-}
-
-/**
- * A hard stop ends every session the daemon holds, including the ones other clients are attached to,
- * so it is gated on the host's own count and refuses with those counts rather than a bare "busy".
- * A DRAIN ends no work - the host stops accepting and leaves when it is empty - so it is never gated.
- */
-async function stopOutcome(request: Extract<HostRequest, { action: "stop" }>): Promise<HostOutcome> {
-	const { target, drain, force, instanceId, waitMs } = request;
-	if (request.expectedGeneration !== undefined) {
-		const stale = await staleStopGeneration(target.socket, target.agentDir, request.expectedGeneration);
-		if (stale !== undefined) return refusal("refuse", undefined, { reason: stale.reason, socket: target.socket });
-	}
-	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
-	const sessions = await readSessionCounts(target.socket, true);
-	const occupied = sessions.foreign_attached + sessions.foreign_retained > 0;
-	if (!drain && !force && occupied) {
-		return refusal("refuse", host, { reason: "sessions_live", socket: target.socket, sessions });
-	}
-	const result = await stopHost({
-		socket: target.socket,
-		agentDir: target.agentDir,
-		drain,
-		force,
-		...(request.expectedGeneration !== undefined && { expectedGeneration: request.expectedGeneration }),
-		...(instanceId !== undefined && { instanceId }),
-		...(waitMs !== undefined && { waitMs }),
-	});
-	if (result.action === "refuse") {
-		return refusal("refuse", host, { reason: result.reason, socket: target.socket, sessions });
-	}
-	return {
-		exitCode: HOST_EXIT_OK,
-		payload: {
-			action: result.action,
-			socket: target.socket,
-			pid: result.pid,
-			...("instanceId" in result && result.instanceId !== undefined && { instanceId: result.instanceId }),
-			...("exited" in result && result.exited !== undefined && { exited: result.exited }),
-			sessions,
-		},
-	};
 }
 
 async function handoffOutcome(

@@ -38,6 +38,7 @@ const ACCOUNT = "rpc-sample-account";
 type RpcInboundSampleTable = { readonly [K in RpcMethodType]: RpcInboundRecordOf<K> };
 
 export const RPC_INBOUND_SAMPLES = {
+	drain_if_idle: { type: "drain_if_idle", instanceId: SAMPLE_ID },
 	get_protocol_info: { type: "get_protocol_info" },
 	open_session: { type: "open_session" },
 	park_session: { type: "park_session", cwd: `${SAMPLE_PATH_ROOT}/cwd` },

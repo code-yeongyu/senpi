@@ -28,6 +28,7 @@
  * At runtime a record the table does not classify (unknown type, non-string type, not an object) is treated as more
  * dangerous than every class: `rpcMethodPermitted` refuses it whatever is granted.
  */
+// allow: SIZE_OK - This is the exhaustive wire-method classification table; each method must have one visible entry.
 
 import { createHash } from "node:crypto";
 import type { SessionEntry, SessionMessageEntry } from "../../core/session-manager.ts";
@@ -310,6 +311,7 @@ export const RPC_METHOD_CLASS = {
 	export_html: "device_admin",
 	export_jsonl: "device_admin",
 	// connection_local
+	drain_if_idle: "connection_local",
 	set_client_info: "connection_local",
 	// a forwarder serves session streams itself; per-connection subscription state cannot be forwarded
 	subscribe_sessions: "connection_local",

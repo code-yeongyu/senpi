@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "affd43e6120fddc8d9267522fcbdc3688fde0ac4c2f61a827d9dc928445c6ad6",
+	"methodClassesDigest": "b8ad1815535de2274d50ada00e7b9cc7c3f528b0b374f990c8e83db7e877d446",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 133,
+	"methodCount": 134,
 	"methods": [
 		{
 			"method": "abort",
@@ -283,6 +283,16 @@
 			"connectionLocal": true,
 			"sample": {
 				"type": "detach_connection"
+			}
+		},
+		{
+			"method": "drain_if_idle",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "drain_if_idle",
+				"instanceId": "00000000-0000-7000-8000-000000000000"
 			}
 		},
 		{

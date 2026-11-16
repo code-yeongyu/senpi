@@ -1,3 +1,4 @@
+// allow: SIZE_OK - One exhaustive method/grant corpus compares delegated replies against the same local baseline.
 /**
  * senpi#5632: a connection that proved the endpoint's launch key may declare, before its first ordinary record, that
  * it acts for a principal with a set of granted method classes (`declare_delegation`). From then on the ENGINE checks
@@ -41,7 +42,7 @@ import {
 // senpi#6344 adds two cwd-naming device_admin commands: park_session and claim_session.
 // senpi#6485 adds get_project_mcp_servers, set_project_mcp_servers, read_project_skill_file and write_project_skill_file (device_admin).
 // set_session_archived (drive) writes a session's archived flag.
-const DIGEST_ON_BASE = "affd43e6120fddc8d9267522fcbdc3688fde0ac4c2f61a827d9dc928445c6ad6";
+const DIGEST_ON_BASE = "b8ad1815535de2274d50ada00e7b9cc7c3f528b0b374f990c8e83db7e877d446";
 const FORWARDABLE = [
 	"observe",
 	"drive",
@@ -52,6 +53,7 @@ const FORWARDABLE = [
 /** The `connection_local` methods that reach beyond the asking connection: they need `device_admin`. */
 /** DS2b section 2c: the `connection_local` records that need a grant on a delegated connection; the rest act on it alone. */
 const CONNECTION_LOCAL_NEEDS: Partial<Record<RpcMethodType, RpcMethodClass>> = {
+	drain_if_idle: "device_admin",
 	subscribe_sessions: "observe",
 	record_user_activity: "drive",
 	release_session: "device_admin",
@@ -62,10 +64,11 @@ const CONNECTION_LOCAL_NEEDS: Partial<Record<RpcMethodType, RpcMethodClass>> = {
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
 /**
- * The three inbound types that are not `RpcCommand`s answer a request by its `id`; each gets a record here, typed so a
+ * Inbound types outside `RpcCommand` each get a record here, typed so a
  * new non-command inbound type fails tsc until it has one.
  */
 const NON_COMMAND: { readonly [K in Exclude<RpcMethodType, RpcCommand["type"]>]: (sessionId: string) => WireRecord } = {
+	drain_if_idle: () => ({ instanceId: NO_ID }),
 	extension_ui_response: (sessionId) => ({ sessionId, uiRequestId: NO_ID, value: "x" }),
 	extension_ui_progress: (sessionId) => ({ sessionId, answers: {} }),
 	host_response: (sessionId) => ({ sessionId, data: {} }),

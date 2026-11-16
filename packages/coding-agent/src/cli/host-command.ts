@@ -47,7 +47,8 @@ const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc
 
   ensure      [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
   status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
-  stop        [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--expected-generation <json>] [--socket <path>]
+  stop        [--drain [--instance <id>] [--wait-ms <n>] [--if-idle]] [--force] [--expected-generation <json>] [--socket <path>]
+              (--if-idle requires --drain and --instance; busy or attached generations refuse)
   handoff     [--launch-spec <file>] [--socket <path>]
               [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
               (--when idle: the running host hands over to THIS runtime at its next safe idle point)
@@ -105,6 +106,7 @@ async function hostRequest(parsed: ParsedHostArgs): Promise<HostRequest> {
 				action: "stop",
 				target,
 				drain: parsed.drain,
+				...(parsed.ifIdle && { ifIdle: true }),
 				force: parsed.force,
 				...(parsed.expectedGeneration !== undefined && { expectedGeneration: parsed.expectedGeneration }),
 				...(parsed.instanceId !== undefined && { instanceId: parsed.instanceId }),

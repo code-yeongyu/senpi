@@ -6,6 +6,7 @@ import { RouterContext } from "./session-router-context.ts";
 import { beginDrain, sweepIdleSessions } from "./session-router-occupancy.ts";
 import { reopenParked } from "./session-router-open.ts";
 import { handle } from "./session-router-routing.ts";
+import { closeIdleDrainAdmission, type ConditionalDrainDecision } from "./host-conditional-drain.ts";
 
 export type { RpcBindingFactory, RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
 export class SessionCommandRouter {
@@ -26,6 +27,9 @@ export class SessionCommandRouter {
 	}
 	beginDrain(): void {
 		beginDrain(this.context);
+	}
+	closeIdleDrainAdmission(instanceId: string): ConditionalDrainDecision {
+		return closeIdleDrainAdmission(this.context, instanceId);
 	}
 	setMemoryPressure(pressure: boolean): void {
 		this.context.memoryPressure = pressure;
