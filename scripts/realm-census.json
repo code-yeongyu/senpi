@@ -4295,6 +4295,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/hooks/output-bounds.ts#fallbackSpillDirectories": {
+			"class": "per-copy-safe",
+			"reason": "derived-value cache of this copy's own fallback spill directory; a split only creates one more private mkdtemp directory"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/hooks/output-parser.ts#SYSTEM_MESSAGE_EVENTS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"

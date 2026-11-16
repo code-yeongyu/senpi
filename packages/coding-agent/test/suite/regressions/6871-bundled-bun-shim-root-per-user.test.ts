@@ -43,7 +43,7 @@ async function sharedTmp(): Promise<string> {
 
 /** A compiled executable's facts; a fresh execPath per case keeps the per-process memo out of the way. */
 function compiledHost(tmp: string): BundledBunHost {
-	return { main: "/$bunfs/root/omo", execPath: join(tmp, "omo"), platform: "linux", shimRoots: bundledBunShimRoots() };
+	return { main: "/$bunfs/root/omo", execPath: join(tmp, "omo"), platform: "linux", ...bundledBunShimRoots() };
 }
 
 describe.skipIf(process.platform === "win32")(
@@ -62,6 +62,25 @@ describe.skipIf(process.platform === "win32")(
 			const root = await stat(join(tmp, `senpi-bundled-bun-${uid}`));
 			expect({ mode: root.mode & 0o777, uid: root.uid }).toEqual({ mode: 0o700, uid });
 			expect(await readdir(shared)).toEqual([]);
+		});
+
+		// Review #2 M1: only the temp fallback sits under a directory other users share. The agent-dir root is the user's
+		// own, and older engines created it with the umask's mode (0775 under umask 002, 0755 under 022): it must keep
+		// working exactly as before, unmodified, rather than being refused or chmodded and the PATH entry moved to /tmp.
+		it("uses an existing agent-dir root as it is, whatever mode an older engine created it with", async () => {
+			const tmp = await sharedTmp();
+			await rm(agentShimRoot, { force: true });
+			await mkdir(agentShimRoot);
+			for (const [index, mode] of [0o775, 0o755].entries()) {
+				await chmod(agentShimRoot, mode);
+				const host = { ...compiledHost(tmp), execPath: join(tmp, `omo-${index}`) };
+
+				const dir = bundledBunDir(host);
+
+				expect(dirname(dir ?? "")).toBe(agentShimRoot);
+				expect((await stat(agentShimRoot)).mode & 0o777).toBe(mode);
+			}
+			await rm(agentShimRoot, { recursive: true, force: true });
 		});
 
 		it("never materializes shims through a symlink planted at the per-user temp root", async () => {

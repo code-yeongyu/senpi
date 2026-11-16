@@ -1,4 +1,4 @@
-import { chmod, chown, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, chown, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -130,6 +130,23 @@ describe.skipIf(process.platform === "win32")(
 			} finally {
 				await held();
 			}
+		});
+
+		// Review #2 L2: a bridged legacy directory may be writable by the user's primary group, which is not proven private
+		// (a shared `users` group under umask 002). A member could plant a symlink at the staged owner-token name; the write
+		// must not follow it into someone's file.
+		it("never writes the legacy owner token through a symlink planted at its staged name", async () => {
+			const { tmp, legacy, socket } = await upgradedTmp();
+			const victim = join(tmp, "victim.txt");
+			await writeFile(victim, "untouched\n");
+			await symlink(victim, `${legacyPath(legacy, socket, ".owner.json")}.${process.pid}.tmp`);
+
+			await claimEndpoint(socket, endpointOwnerToken(socket, "new-generation", 1));
+
+			expect(await readFile(victim, "utf8")).toBe("untouched\n");
+			expect(JSON.parse(await readFile(legacyPath(legacy, socket, ".owner.json"), "utf8")).instanceId).toBe(
+				"new-generation",
+			);
 		});
 
 		it("does not bridge a legacy directory others could write into", async () => {

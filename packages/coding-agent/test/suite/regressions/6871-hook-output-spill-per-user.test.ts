@@ -54,13 +54,23 @@ describe.skipIf(process.platform === "win32")(
 			expect(await readdir(shared)).toEqual([]);
 		});
 
-		it("refuses a symlink planted at the per-user name and writes nothing through it", async () => {
+		// Review #2 L1: another user can squat the predictable per-uid name (a sticky /tmp keeps the victim from removing it).
+		// A spill is a one-off file, so it falls back to a fresh private directory instead of failing every oversized hook.
+		it("falls back to a fresh private directory when the per-user name is squatted, writing nothing through it", async () => {
 			const tmp = await sharedTmp();
 			const elsewhere = await mkdtemp(join(tmp, "planted-"));
 			await symlink(elsewhere, join(tmp, `senpi-hook-output-${uid}`));
 
-			expect(spill).toThrow(/user_dir_unsafe/);
+			const { safety } = spill();
 
+			const dir = dirname(safety.spillPath ?? "");
+			expect(dir.startsWith(join(tmp, `senpi-hook-output-${uid}-`))).toBe(true);
+			const entry = await lstat(dir);
+			expect({ dir: entry.isDirectory(), mode: entry.mode & 0o777, uid: entry.uid }).toEqual({
+				dir: true,
+				mode: 0o700,
+				uid,
+			});
 			expect((await lstat(join(tmp, `senpi-hook-output-${uid}`))).isSymbolicLink()).toBe(true);
 			expect(await readdir(elsewhere)).toEqual([]);
 		});

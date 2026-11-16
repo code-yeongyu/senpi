@@ -27,6 +27,8 @@ export interface BundledBunHost {
 	readonly execPath: string;
 	readonly platform: NodeJS.Platform;
 	readonly shimRoots: readonly string[];
+	/** The fallback under the shared temp directory, tried after `shimRoots`. */
+	readonly tempShimRoot?: string | undefined;
 	/** The generation this process adopted; absent for a process that runs without one. */
 	readonly trust?: EngineTrustMarker | undefined;
 }
@@ -39,12 +41,15 @@ export function isCompiledBunExecutable(main: string | undefined): boolean {
 }
 
 /**
- * Where the shims may live, in preference order: the agent directory, then this user's own temp root (senpi#6871).
- * The directory goes on agent shells' PATH, so it must be one no other user can write: the temp fallback used to be
+ * Where the shims may live: the agent directory, then this user's own temp root (senpi#6871). The directory goes on
+ * agent shells' PATH, so the temp fallback must be one no other user can write: it used to be
  * `<tmpdir>/senpi-bundled-bun`, one directory for every user of the machine.
  */
-export function bundledBunShimRoots(): readonly string[] {
-	return [join(getAgentDir(), "bundled-bun"), userPrivateDirectoryPath("senpi-bundled-bun")];
+export function bundledBunShimRoots(): Pick<BundledBunHost, "shimRoots" | "tempShimRoot"> {
+	return {
+		shimRoots: [join(getAgentDir(), "bundled-bun")],
+		tempShimRoot: userPrivateDirectoryPath("senpi-bundled-bun"),
+	};
 }
 
 function currentHost(): BundledBunHost {
@@ -53,7 +58,7 @@ function currentHost(): BundledBunHost {
 		main: bun?.main,
 		execPath: process.execPath,
 		platform: process.platform,
-		shimRoots: bundledBunShimRoots(),
+		...bundledBunShimRoots(),
 		trust: adoptedEngineTrust(),
 	};
 }
@@ -88,11 +93,13 @@ function writeIfChanged(path: string, content: string): void {
 	chmodSync(path, 0o755);
 }
 
-function materialize(root: string, host: BundledBunHost): string | undefined {
+function materialize(root: string, host: BundledBunHost, sharedTemp: boolean): string | undefined {
 	const dir = join(root, createHash("sha256").update(shimKey(host)).digest("hex").slice(0, 16));
 	try {
-		// A root that is not a private directory of this user (a symlink, another user's) is skipped, never written.
-		ensurePrivateDirectory(root);
+		// The temp fallback sits where other users can create names: unless it is proven a private directory of this
+		// user it is skipped, never written. The agent-dir root is the user's own and is used as it is, whatever mode an
+		// older engine created it with (0775 under umask 002).
+		if (sharedTemp) ensurePrivateDirectory(root);
 		mkdirSync(dir, { recursive: true });
 		for (const [name, content] of shimFiles(host, dir)) writeIfChanged(join(dir, name), content);
 		return dir;
@@ -109,11 +116,12 @@ const resolved = new Map<string, string | undefined>();
  */
 export function bundledBunDir(host: BundledBunHost = currentHost()): string | undefined {
 	if (!isCompiledBunExecutable(host.main)) return undefined;
-	const key = `${shimKey(host)}\0${host.shimRoots.join("\0")}`;
+	const roots = host.tempShimRoot === undefined ? host.shimRoots : [...host.shimRoots, host.tempShimRoot];
+	const key = `${shimKey(host)}\0${roots.join("\0")}`;
 	if (!resolved.has(key)) {
 		let dir: string | undefined;
-		for (const root of host.shimRoots) {
-			dir = materialize(root, host);
+		for (const root of roots) {
+			dir = materialize(root, host, root === host.tempShimRoot);
 			if (dir !== undefined) break;
 		}
 		resolved.set(key, dir);

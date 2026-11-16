@@ -2256,8 +2256,12 @@ which prints the bare socket path).
   realpath-canonicalized, so every spelling of one socket shares one lock; the lock dir is the user's own
   `<tmp>/senpi-rpc-host-locks-<uid>`, 0700, whatever the session environment (`XDG_RUNTIME_DIR` is never consulted), and
   a symlink, another user's directory or one group or others can write into is refused; `<tmp>/senpi-rpc-host-locks`
-  on Windows. While the pre-senpi#6874 directory `<tmp>/senpi-rpc-host-locks` exists as a directory the user owns that
-  no one else can write (its group only when that is the user's own primary group, the umask 002 case), the ensure lock,
+  on Windows. A refusal is final: another local user who squats that name on purpose (a sticky `/tmp` keeps the victim
+  from removing it) blocks this user's ensures until that user or root removes it. While the pre-senpi#6874 directory
+  `<tmp>/senpi-rpc-host-locks` exists as a directory the user owns that no one else can write (its group only when that
+  is the user's own primary group, the umask 002 case; this ASSUMES that group is private to the user, as on
+  user-private-group systems, and a shared primary group such as `users` exposes the legacy lock files to its members
+  exactly as an older engine already did; the owner token there is staged with an exclusive create), the ensure lock,
   the endpoint fence and the owner token are also taken and kept there, so an engine
   from before that change and a newer one still exclude each other; remove that directory once no older engine runs)
   for at most 2 s, and inside it requires all three: (a) no

@@ -106,8 +106,13 @@ async function readOwnerToken(path: string): Promise<EndpointOwnerToken | undefi
 
 async function writeEndpointOwner(socket: string, token: EndpointOwnerToken): Promise<void> {
 	for (const path of await ownerFiles(socket)) {
+		// The legacy copy may sit in a directory the user's primary group can write (senpi#6871 review #2 L2): a member
+		// could have planted a symlink at the staged name. Remove whatever is there and create the file exclusively, which
+		// never follows a link; a name re-planted in between fails the write instead of redirecting it. `rename` replaces
+		// the final name itself, never what it points at.
 		const staged = `${path}.${process.pid}.tmp`;
-		await writeFile(staged, `${JSON.stringify(token)}\n`, { mode: 0o600 });
+		await rm(staged, { force: true });
+		await writeFile(staged, `${JSON.stringify(token)}\n`, { mode: 0o600, flag: "wx" });
 		await rename(staged, path);
 	}
 }
