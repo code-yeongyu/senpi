@@ -13,7 +13,8 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { hostEnsureLockOptions, hostEnsureLockTarget, makeHostLockDirectory } from "./host-ensure-lock.ts";
+import { ensurePrivateDirectory } from "../../utils/user-private-dir.ts";
+import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { acquireOwnershipSafeLock, isBusy } from "./ownership-safe-lock.ts";
 import {
 	adoptPublicSocket,
@@ -48,7 +49,7 @@ const ownerFile = (socket: string): string => `${hostEnsureLockTarget(socket)}.o
 
 async function withEndpointFence<T>(socket: string, run: () => Promise<T>, hooks?: FenceHooks): Promise<T> {
 	const fence = `${hostEnsureLockTarget(socket)}.fence.lock`;
-	await makeHostLockDirectory(dirname(fence));
+	ensurePrivateDirectory(dirname(fence));
 	let release: () => Promise<void>;
 	try {
 		release = await acquireOwnershipSafeLock(fence, { retries: { retries: 0, minTimeout: 1, maxTimeout: 1 } });
@@ -105,7 +106,7 @@ export async function claimEndpoint(
 		await withEndpointFence(socket, claim);
 		return;
 	}
-	await makeHostLockDirectory(dirname(ownerFile(socket)));
+	ensurePrivateDirectory(dirname(ownerFile(socket)));
 	await claim();
 }
 

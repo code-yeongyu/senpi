@@ -101,7 +101,7 @@ describe.skipIf(process.platform === "win32")("the endpoint lock directory is pr
 		const lockDir = join(tmp, `senpi-rpc-host-locks-${uid}`);
 		await symlink(elsewhere, lockDir);
 
-		await expect(lockAndRelease(socketIn(tmp))).rejects.toThrow(/rpc_host_lock_dir_unsafe/);
+		await expect(lockAndRelease(socketIn(tmp))).rejects.toThrow(/user_dir_unsafe/);
 
 		expect((await lstat(lockDir)).isSymbolicLink()).toBe(true);
 		expect(await readdir(elsewhere)).toEqual([]);

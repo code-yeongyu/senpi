@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { makeUserPrivateDirectory } from "../../../../utils/user-private-dir.ts";
 import { redactSensitiveOutput, redactSensitiveTokenValues } from "../../../sensitive-output.ts";
 
 export const DEFAULT_STDOUT_LIMIT_BYTES = 64 * 1024;
@@ -69,9 +69,10 @@ export function redactHookTokenValues(text: string, replacement = "[REDACTED]"):
 }
 
 function spillRedactedOutput(stream: "stderr" | "stdout", text: string, policy: HookOutputPolicy | undefined): string {
-	const spillDir = policy?.spillDir ?? join(tmpdir(), "senpi-hook-output");
-	mkdirSync(spillDir, { recursive: true });
+	// The default directory is this user's own, never a fixed name every user of the machine shares (senpi#6871).
+	const spillDir = policy?.spillDir ?? makeUserPrivateDirectory("senpi-hook-output");
+	if (policy?.spillDir !== undefined) mkdirSync(spillDir, { recursive: true });
 	const path = join(spillDir, `hook-${stream}-${process.pid}-${randomUUID()}.txt`);
-	writeFileSync(path, text);
+	writeFileSync(path, text, { mode: 0o600, flag: "wx" });
 	return path;
 }

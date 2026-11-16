@@ -122,20 +122,20 @@ describe("TUI diagnostic log permissions", () => {
 		const randomValue = 0.123456789;
 		const originalDateNow = Date.now;
 		const originalMathRandom = Math.random;
-		const temp = fs.mkdtempSync(path.join(os.tmpdir(), "senpi-render-dump-"));
-		const debugDir = path.join(temp, "tui");
+		const logDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "senpi-render-dump-"));
+		const debugDir = path.join(logDirectory, "tui-render");
 		const debugPath = path.join(debugDir, `render-${timestamp}-${randomValue.toString(36).slice(2)}.log`);
 
 		Date.now = () => timestamp;
 		Math.random = () => randomValue;
 		try {
-			await withEnv({ PI_TUI_DEBUG: "1", PI_TUI_TEST_SEAMS: "1", TMPDIR: temp, TEMP: temp, TMP: temp }, async () => {
+			await withEnv({ PI_TUI_DEBUG: "1", PI_TUI_TEST_SEAMS: "1" }, async () => {
 				fs.mkdirSync(debugDir, { recursive: true });
 				fs.writeFileSync(debugPath, "existing debug dump\n", { encoding: "utf8", mode: 0o644 });
 				fs.chmodSync(debugPath, 0o644);
 
 				const terminal = new VirtualTerminal(50, 4);
-				const tui = new tuiModule.TUI(terminal);
+				const tui = new tuiModule.TUI(terminal, undefined, logDirectory);
 				const component = new MutableComponent();
 				component.lines = ["first frame"];
 				tui.addChild(component);
@@ -150,7 +150,47 @@ describe("TUI diagnostic log permissions", () => {
 		} finally {
 			Date.now = originalDateNow;
 			Math.random = originalMathRandom;
-			fs.rmSync(temp, { recursive: true, force: true });
+			fs.rmSync(logDirectory, { recursive: true, force: true });
 		}
 	});
+
+	// senpi#6871: PI_TUI_DEBUG render dumps went to `<tmpdir>/tui`, one directory for every user of a Linux machine.
+	// Once another user had created it, this user's render threw EACCES writing its dump, and the dumps (whole screen
+	// contents) sat in a directory other users could list. They now go to this TUI's own log directory, the user's
+	// agent directory where its other diagnostics already live. Security contract: render dumps stay private.
+	it(
+		"writes a second user's render dumps to its own log directory, not the shared temp dir",
+		{ skip: process.platform === "win32" },
+		async () => {
+			const temp = fs.mkdtempSync(path.join(os.tmpdir(), "senpi-render-dump-shared-"));
+			const logDirectory = path.join(temp, "agent");
+			const shared = path.join(temp, "tui");
+			fs.mkdirSync(shared, { mode: 0o755 });
+			fs.chmodSync(shared, 0o555);
+			try {
+				await withEnv(
+					{ PI_TUI_DEBUG: "1", PI_TUI_TEST_SEAMS: "1", TMPDIR: temp, TEMP: temp, TMP: temp },
+					async () => {
+						const terminal = new VirtualTerminal(50, 4);
+						const tui = new tuiModule.TUI(terminal, undefined, logDirectory);
+						const component = new MutableComponent();
+						component.lines = ["first frame"];
+						tui.addChild(component);
+						await driveRender(tui, terminal);
+						// The dump is written by a differential frame, so render a changed one.
+						component.lines = ["second frame"];
+						await driveRender(tui, terminal);
+						tui.stop();
+					},
+				);
+				const dumps = fs.readdirSync(path.join(logDirectory, "tui-render"));
+				assert.strictEqual(dumps.length, 1);
+				assert.strictEqual(fs.statSync(path.join(logDirectory, "tui-render", dumps[0] ?? "")).mode & 0o777, 0o600);
+				assert.deepStrictEqual(fs.readdirSync(shared), []);
+			} finally {
+				fs.chmodSync(shared, 0o700);
+				fs.rmSync(temp, { recursive: true, force: true });
+			}
+		},
+	);
 });

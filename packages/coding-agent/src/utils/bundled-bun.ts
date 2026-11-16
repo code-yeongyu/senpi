@@ -14,12 +14,12 @@
  */
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { getAgentDir } from "../config.ts";
 import { adoptedEngineTrust } from "../engine-trust/adopted.ts";
 import type { EngineTrustMarker } from "../engine-trust/marker.ts";
 import { cmdShimFiles, posixShimFiles, type ShimFiles } from "./bundled-bun-shim.ts";
+import { ensurePrivateDirectory, userPrivateDirectoryPath } from "./user-private-dir.ts";
 
 /** Facts about the running process; injectable so the decision is testable on any runtime. */
 export interface BundledBunHost {
@@ -38,13 +38,22 @@ export function isCompiledBunExecutable(main: string | undefined): boolean {
 	return main !== undefined && EMBEDDED_ENTRY.test(main);
 }
 
+/**
+ * Where the shims may live, in preference order: the agent directory, then this user's own temp root (senpi#6871).
+ * The directory goes on agent shells' PATH, so it must be one no other user can write: the temp fallback used to be
+ * `<tmpdir>/senpi-bundled-bun`, one directory for every user of the machine.
+ */
+export function bundledBunShimRoots(): readonly string[] {
+	return [join(getAgentDir(), "bundled-bun"), userPrivateDirectoryPath("senpi-bundled-bun")];
+}
+
 function currentHost(): BundledBunHost {
 	const bun = (globalThis as { Bun?: { main?: string } }).Bun;
 	return {
 		main: bun?.main,
 		execPath: process.execPath,
 		platform: process.platform,
-		shimRoots: [join(getAgentDir(), "bundled-bun"), join(tmpdir(), "senpi-bundled-bun")],
+		shimRoots: bundledBunShimRoots(),
 		trust: adoptedEngineTrust(),
 	};
 }
@@ -82,6 +91,8 @@ function writeIfChanged(path: string, content: string): void {
 function materialize(root: string, host: BundledBunHost): string | undefined {
 	const dir = join(root, createHash("sha256").update(shimKey(host)).digest("hex").slice(0, 16));
 	try {
+		// A root that is not a private directory of this user (a symlink, another user's) is skipped, never written.
+		ensurePrivateDirectory(root);
 		mkdirSync(dir, { recursive: true });
 		for (const [name, content] of shimFiles(host, dir)) writeIfChanged(join(dir, name), content);
 		return dir;
