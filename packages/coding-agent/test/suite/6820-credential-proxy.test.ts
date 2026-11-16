@@ -14,7 +14,7 @@ import { createBashTool } from "../../src/core/tools/bash.ts";
 import { getShellEnv } from "../../src/utils/shell.ts";
 import { createHarness, createTestUiContext, getMessageText, type Harness } from "./harness.ts";
 
-const SECRET = "sk-6820-not-a-real-key-7f3a9c";
+const SECRET = "test-fake-credential-6820";
 const posix = process.platform !== "win32";
 
 interface Upstream {

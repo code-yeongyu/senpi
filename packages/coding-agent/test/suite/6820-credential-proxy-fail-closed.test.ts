@@ -21,7 +21,7 @@ vi.mock("node:http", async (importOriginal) => {
 	return { ...actual, createServer: failingServer };
 });
 
-const SECRET = "sk-6820-fail-closed-not-a-key";
+const SECRET = "test-fake-credential-6820-failclosed";
 const holder = {};
 
 afterEach(async () => {
