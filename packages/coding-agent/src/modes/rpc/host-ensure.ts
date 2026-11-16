@@ -41,17 +41,11 @@ import { ensureLockWaitDetail, startupEnvelope } from "./host-startup-policy.ts"
 import { isBusy } from "./ownership-safe-lock.ts";
 import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 
-export {
-	createHostDaemonPaths,
-	daemonDirectoryName,
-	type HostDaemonPaths,
-	HostDaemonStateError,
-	type HostGenerationPaths,
-} from "./host-daemon-paths.ts";
+export { createHostDaemonPaths, type HostDaemonPaths, type HostGenerationPaths } from "./host-daemon-paths.ts";
 export { hostEnsureLockTarget } from "./host-ensure-lock.ts";
 export type { EnsuredHost, EnsureHostOptions, HostUpgradePolicy } from "./host-ensure-types.ts";
 export { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
-export { type ProbeHostOptions, probeHost } from "./host-probe.ts";
+export type { ProbeHostOptions } from "./host-probe.ts";
 export type { HostColdStart, HostLifecyclePolicyInput };
 
 const EXISTING_HOST_PROBE_TIMEOUT_MS = 10_000;
