@@ -10,6 +10,7 @@
 import { VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import { isSessionArchived, setSessionArchived } from "../../core/session-archived.ts";
 import type {
 	AdmissionHoldReason,
 	QuestionRequest,
@@ -64,6 +65,7 @@ const TUI_CONTROL_COMMANDS = [
 	"get_messages",
 	"get_entries",
 	"set_session_name",
+	"set_session_archived",
 	"subscribe",
 	"wake",
 	"extension_ui_response",
@@ -124,6 +126,14 @@ export async function runControlCommand(
 			session.setSessionName(name);
 			return success(id, type);
 		}
+		case "set_session_archived": {
+			if (typeof command.archived !== "boolean") return failure(id, type, "archived must be a boolean");
+			const { attachments } = context;
+			setSessionArchived(session.sessionManager, command.archived);
+			const change = { type: "session_archived_changed", archived: command.archived };
+			attachments.run(connection, () => attachments.writer.enqueue(attachments.handle, change));
+			return success(id, type);
+		}
 		case "subscribe": {
 			const cursor = typeof command.cursor === "number" ? command.cursor : undefined;
 			return success(id, type, { cursor: context.feed.subscribe(connection.id, cursor, connection.send) });
@@ -162,6 +172,9 @@ function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
 		attachments: 1,
 		// A release here never ends the terminal's own session.
 		retain_on_disconnect: true,
+		archived: isSessionArchived(manager),
+		activity: session.isStreaming ? "running" : "idle",
+		...(session.model !== undefined ? { model: { provider: session.model.provider, id: session.model.id } } : {}),
 	};
 }
 

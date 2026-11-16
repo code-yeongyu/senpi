@@ -1158,6 +1158,13 @@ export class RpcClient {
 	}
 
 	/**
+	 * Archive or unarchive the session; the flag is stored in its session file.
+	 */
+	async setSessionArchived(archived: boolean): Promise<void> {
+		await this.send({ type: "set_session_archived", archived });
+	}
+
+	/**
 	 * Report that the user started typing a draft, so a first-activity prompt-cache prewarm can run (senpi#3859).
 	 */
 	async recordDraftActivity(): Promise<void> {
@@ -1313,6 +1320,7 @@ export class RpcClient {
 					event.type === "session_replaced" ||
 					event.type === "session_parked" ||
 					event.type === "session_released" ||
+					event.type === "session_archived_changed" ||
 					event.type === "queued" ||
 					event.type === "socket_closing" ||
 					event.type === "message_tool_arguments_reset"
