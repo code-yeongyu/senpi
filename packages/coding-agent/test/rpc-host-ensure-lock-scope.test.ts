@@ -8,7 +8,8 @@ describe("ensureHost lock scope", () => {
 		const source = await readFile(hostEnsureSource, "utf8");
 		const body = source.slice(source.indexOf("export async function ensureHost("));
 		const reapAt = body.indexOf("reapOrphanedInternalHostDirs()");
-		const acquireAt = body.indexOf("acquireOwnershipSafeLock(");
+		// senpi#6874: the ensure lock is taken through acquireEndpointLock (this user's lock, then the legacy one it bridges).
+		const acquireAt = body.indexOf("acquireEndpointLock(");
 
 		expect(reapAt).toBeGreaterThan(-1);
 		expect(acquireAt).toBeGreaterThan(-1);
