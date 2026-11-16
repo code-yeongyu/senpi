@@ -88,18 +88,19 @@ syncBuiltinESMExports();
 test("a concurrent job's scope is not this job's leftover while that job tears it down (#6862)", () => {
 	const jobs = concurrentJobs();
 	try {
-		const { a, b, parent } = jobs;
-		const named = (scope) => new RegExp(`leftover: "[^"]*${basename(scope).slice(3)}"`);
+		const { b, parent } = jobs;
+		const suffix = basename(b.scope).slice(3);
 		const out = join(parent, "a", "mid-teardown-check.json");
 		const interleave = JSON.stringify({ check: [guard, "check", jobs.receipt("a")], env: jobs.env("a"), out });
 		const tornDown = jobs.run(["--import", `data:text/javascript,${encodeURIComponent(midTeardown)}`, guard, "check",
 			jobs.receipt("b")], jobs.env("b", { SENPI_TEST_INTERLEAVE: interleave }));
 		// Both checks also scan the shared /tmp, where a parallel test file or another job may hold repo-named entries,
-		// so only the outcome for these two jobs' scopes is asserted, never either check's overall status.
+		// so only what A's check saw of B's scope is asserted, never either check's overall status.
 		assert.equal(existsSync(out), true, `B's teardown reached the interleaved check\n${tornDown.stdout}\n${tornDown.stderr}`);
-		for (const scope of [a.scope, b.scope]) assert.doesNotMatch(tornDown.stderr, named(scope), tornDown.stdout);
 		const seen = JSON.parse(readFileSync(out, "utf8"));
-		assert.doesNotMatch(seen.stderr, named(b.scope), seen.stdout);
+		// A's check ran to its system scan and saw B's scope only under its retired, non-repo name.
+		assert.match(seen.stdout, new RegExp(`unrecognized new system entry: "[^"]*sj\\.retired-${suffix}"`), seen.stderr);
+		assert.doesNotMatch(seen.stderr, new RegExp(`leftover: "[^"]*${suffix}"`), seen.stdout);
 		assert.equal(existsSync(b.scope), false);
 	} finally {
 		jobs.cleanup();
