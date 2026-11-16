@@ -96,6 +96,15 @@ export class SessionWorkObligations implements WorkObligations {
 		return this.sending.has(record.id) || (record.ticketId !== undefined && this.delivering.has(record.ticketId));
 	}
 
+	/**
+	 * An engine delivery's own custody that the given run consumed: that run's own work until `settleRun`, so never a
+	 * background wait, even after its delivery ended (senpi#6814 review).
+	 */
+	isConsumedBy(record: WorkCustodyRecord, runId: string | undefined): boolean {
+		if (runId === undefined || !record.key.startsWith(ENGINE_DELIVERY_KEY_PREFIX)) return false;
+		return record.state === "consumed" && record.runId === runId;
+	}
+
 	syncSource(source: string, kind: ObligationKind, activeCount: number, items?: unknown): void {
 		const key = `${WAKE_SOURCE_KEY_PREFIX}${source}`;
 		this.publishedSources.add(key);

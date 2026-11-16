@@ -302,10 +302,17 @@ export class SessionLifecycleController {
 				activeCount: record.activeCount ?? 1,
 				...projectWaitItems(record),
 			}));
-		// A delivery's own custody while its send is in flight is the session starting a turn, not a wait (senpi#6810).
+		// A delivery's own custody while its send is in flight is the session starting a turn, not a wait (senpi#6810);
+		// once the live run consumed it, it is that run's own work until settleRun (senpi#6814 review).
 		const deliveryInFlight = active.some((record) => this.obligations.isDeliveryInFlight(record));
+		const liveRun = this.ledger.runActive ? this.ledger.runId : undefined;
 		const background: LifecycleWaits["background"][number][] = active
-			.filter((record) => record.kind === "background" && !this.obligations.isDeliveryInFlight(record))
+			.filter(
+				(record) =>
+					record.kind === "background" &&
+					!this.obligations.isDeliveryInFlight(record) &&
+					!this.obligations.isConsumedBy(record, liveRun),
+			)
 			.map((record) => ({
 				source: record.source ?? record.key,
 				activeCount: record.activeCount ?? 1,
