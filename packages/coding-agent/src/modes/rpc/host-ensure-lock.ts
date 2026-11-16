@@ -37,9 +37,9 @@ export function hostEnsureLockTarget(socket: string): string {
 /**
  * The same target in the directory engines before senpi#6874 lock in, while an old engine of this user may still use
  * it (review L1): during an upgrade an old and a new engine serve one socket, and without this they would take two
- * different locks and fences. Only a real directory this user owns and alone can write into counts, so nothing
- * planted is ever opened; it is never created (that would hand the shared name back to one user), and win32 never
- * moved. `undefined` when there is nothing to bridge.
+ * different locks and fences. Only a real directory this user owns and that no one outside the user (see
+ * `writableOnlyByThisUser`) can write into counts, so nothing planted is opened; it is never created (that would hand
+ * the shared name back to one user), and win32 never moved. `undefined` when there is nothing to bridge.
  */
 export async function legacyHostEnsureLockTarget(socket: string): Promise<string | undefined> {
 	if (process.platform === "win32") return undefined;
@@ -53,12 +53,23 @@ export async function legacyHostEnsureLockTarget(socket: string): Promise<string
 	}
 	try {
 		const entry = await handle.stat();
-		// An old engine of this user can lock there only if this user can write it; nobody else may.
-		const bridgeable = entry.uid === process.getuid?.() && (entry.mode & 0o222) === 0o200;
-		return bridgeable ? join(directory, createSocketLockName(socket)) : undefined;
+		return entry.uid === process.getuid?.() && writableOnlyByThisUser(entry.mode, entry.gid)
+			? join(directory, createSocketLockName(socket))
+			: undefined;
 	} finally {
 		await handle.close();
 	}
+}
+
+/**
+ * Writable by its owner, never by others, and by its group only when that group is this user's own primary group:
+ * under the umask 002 that user-private-group systems (Debian, Ubuntu) default to, an old engine created the legacy
+ * directory 0775 with the user's own group. Bridging then trusts exactly who the old engine already trusted, and only
+ * for the legacy copies; any other group or world write keeps the bridge off.
+ */
+function writableOnlyByThisUser(mode: number, gid: number): boolean {
+	if ((mode & 0o200) === 0 || (mode & 0o002) !== 0) return false;
+	return (mode & 0o020) === 0 || gid === process.getgid?.();
 }
 
 /** This user's lock directory made or proven, and the endpoint's lock target in it created; returns the target. */

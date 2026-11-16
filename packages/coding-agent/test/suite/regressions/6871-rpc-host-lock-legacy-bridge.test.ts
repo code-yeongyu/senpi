@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, chown, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -105,6 +105,31 @@ describe.skipIf(process.platform === "win32")(
 			const successor = endpointOwnerToken(socket, "old-successor", 2);
 			await writeFile(legacyPath(legacy, socket, ".owner.json"), `${JSON.stringify(successor)}\n`);
 			expect((await readEndpointOwner(socket))?.instanceId).toBe("old-successor");
+		});
+
+		// Under umask 002 (user-private groups, the Debian/Ubuntu default) an old engine created the legacy directory 0775
+		// with the user's own group: it must still be bridged, or the window stays open on exactly those machines.
+		it("bridges a 0775 legacy directory whose group is the user's own primary group, and no other group", async () => {
+			const { legacy, socket } = await upgradedTmp(0o775);
+			const uid = process.getuid?.() ?? 0;
+			await chown(legacy, uid, process.getgid?.() ?? 0);
+			const old = await acquireOwnershipSafeLock(legacyPath(legacy, socket, ".lock"), once);
+			try {
+				await expect(acquireHostEnsureLock(socket, 200)).rejects.toThrow(/busy|locked/i);
+			} finally {
+				await old();
+			}
+
+			const otherGroup = process.getgroups?.().find((gid) => gid !== process.getgid?.());
+			if (otherGroup === undefined) return;
+			await chown(legacy, uid, otherGroup);
+			const held = await acquireOwnershipSafeLock(legacyPath(legacy, socket, ".lock"), once);
+			try {
+				const release = await acquireHostEnsureLock(socket, 1_000);
+				await release();
+			} finally {
+				await held();
+			}
 		});
 
 		it("does not bridge a legacy directory others could write into", async () => {
