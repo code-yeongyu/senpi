@@ -16,7 +16,7 @@ import type { ToolRegistryBuild } from "../../core/runtime/bootstrap.ts";
 import { toolCatalog } from "../hand/tool-catalog.ts";
 import type { LooplessLoopHooks } from "./loopless-loop-hooks.ts";
 
-export const DESCRIBE_TOOLS_EVENT = "describe_tools";
+const DESCRIBE_TOOLS_EVENT = "describe_tools";
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
@@ -35,7 +35,7 @@ export interface HandToolCatalogSource {
  * subset a local session would make active at its start, before its extensions bind; the tools that session routes
  * through `eval`; and the machine's prompt resources (context files and skills) for the scope's cwd.
  */
-export function describeHandTools(source: HandToolCatalogSource): JsonValue {
+function describeHandTools(source: HandToolCatalogSource): JsonValue {
 	const { registry } = source;
 	const requested = requestedActiveToolNames(registry, {
 		requested: source.initialActiveToolNames,
