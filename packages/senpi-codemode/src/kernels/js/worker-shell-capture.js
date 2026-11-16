@@ -173,7 +173,7 @@ function capturedSpawnSync(originalSpawnSync, pinEnv, guard) {
 		const [first, second] = args;
 		if (Array.isArray(first)) {
 			const spawnOptions = second ?? {};
-			if (spawnOptions === null || typeof spawnOptions !== "object" || spawnOptions.env != null)
+			if (typeof spawnOptions !== "object" || spawnOptions.env != null)
 				return originalSpawnSync(...args);
 			return originalSpawnSync(first, { ...spawnOptions, env: { ...process.env } });
 		}
