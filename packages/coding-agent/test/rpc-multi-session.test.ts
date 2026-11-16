@@ -10,6 +10,7 @@ import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 
 function routerFor(state: "open" | "closing" = "open") {
 	const registry = {
+		closeGraceMs: 2_000,
 		list: () => [],
 		peek: (id: string) => (id === "known" ? { state, runtime: {} } : undefined),
 		getForCommand: (id: string) => {
@@ -57,6 +58,7 @@ describe("multi-session RPC routing", () => {
 			},
 		};
 		const registry = {
+			closeGraceMs: 2_000,
 			openSession: async () => ({ sessionId: "rpc-session-beta" }),
 			getForCommand: () => entry,
 			list: () => [],
@@ -106,6 +108,7 @@ describe("multi-session RPC routing", () => {
 		};
 		const sessionIds = ["rpc-session-env", "rpc-session-explicit-empty"];
 		const registry = {
+			closeGraceMs: 2_000,
 			openSession: async () => ({ sessionId: sessionIds.shift() ?? "unexpected" }),
 			getForCommand: () => entry,
 			list: () => [],
@@ -199,6 +202,7 @@ describe("multi-session RPC routing", () => {
 			},
 		});
 		const registry = {
+			closeGraceMs: 2_000,
 			openSession: async () => ({ sessionId: sessionIds.shift() ?? "unexpected" }),
 			getForCommand: (sessionId: string) => entryFor(sessionId),
 			list: () => [],
