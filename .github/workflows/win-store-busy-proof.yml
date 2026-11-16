@@ -1,0 +1,47 @@
+name: Windows sign-in store busy proof (throwaway)
+
+on:
+  push:
+    branches: [test/win-store-busy-proof]
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: (a) login-expired regressions and account dirs on Windows
+        shell: bash
+        working-directory: packages/coding-agent
+        run: |
+          rc=0
+          node ../../scripts/run-tests.mjs vitest run test/suite/regressions/5350-login-expired-lane.test.ts test/suite/regressions/5350-login-expired-recovery.test.ts test/suite/regressions/5350-login-expired-notice.test.ts test/anthropic-subscription-cli-account-dir.test.ts --reporter=verbose > "$RUNNER_TEMP/a.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/a.log"
+          echo "VERDICT a rc=$rc $(grep -E '^ +Tests ' "$RUNNER_TEMP/a.log" | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: (b, c) a held sign-in store
+        if: always()
+        shell: bash
+        working-directory: packages/coding-agent
+        run: |
+          rc=0
+          node ../../scripts/run-tests.mjs vitest run test/windows-store-busy.repro.test.ts --silent=false --reporter=verbose > "$RUNNER_TEMP/bc.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/bc.log"
+          echo "VERDICT bc rc=$rc $(grep -E '^ +Tests ' "$RUNNER_TEMP/bc.log" | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -E '^REPRO ' "$RUNNER_TEMP/bc.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          exit $rc
