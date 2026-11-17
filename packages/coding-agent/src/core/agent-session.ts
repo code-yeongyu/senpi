@@ -5608,7 +5608,7 @@ export class AgentSession {
 	 */
 	private _publishEvalOnlyToolHints(): void {
 		const armed = this._isEvalOnlyPolicyArmed() ? (this._evalOnlyToolNames ?? new Set<string>()) : undefined;
-		const registered = armed ? new Set([...armed].filter((name) => this._toolRegistry.has(name))) : undefined;
+		const registered = armed ? registeredEvalOnlyToolNames(armed, this._toolRegistry) : undefined;
 		for (const name of this._publishedEvalOnlyHintNames) {
 			if (registered?.has(name)) continue;
 			delete this.agent.removedToolHints[name];
@@ -5949,7 +5949,7 @@ export class AgentSession {
 		};
 		const evalOnlyArmed = this._isEvalOnlyPolicyArmed();
 		const armed = evalOnlyArmed ? (this._evalOnlyToolNames ?? new Set<string>()) : new Set<string>();
-		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));
+		const registered = registeredEvalOnlyToolNames(armed, this._toolRegistry);
 		// The eval-only paragraph below states the grep rule for this render, so the grep snippet that
 		// renders the eval-only grep guideline stays out of it (senpi#5335).
 		const { grep: _grepSnippet, ...snippetsWithoutGrep } = toolSnippets;
