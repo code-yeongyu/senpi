@@ -4415,11 +4415,12 @@ export class AgentSession {
 				const abandoned = this._isFailureFromAbandonedModel(msg);
 				const failedModel = abandoned ? this.modelRegistry.find(msg.provider, msg.model) : this.model;
 				// Keep the provider's retry-after: without it this re-note replaced a stated reset with a guess (senpi#5568).
-				if (failedModel)
+				if (failedModel) {
 					this._retryFallback.noteHealthFailure(failedModel, abandoned ? undefined : this.thinkingLevel, {
-					errorMessage: msg.errorMessage,
-					retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
-				});
+						errorMessage: msg.errorMessage,
+						retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
+					});
+				}
 			}
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
 			const retryAfterRequiredCompaction =
@@ -9659,6 +9660,9 @@ export class AgentSession {
 		// loop continues on the picked model rather than ending (senpi#6893).
 		this._probeBackScheduler.cancel("manual-model-change");
 		this._retryFallback.clearForManualModelChange(model);
+		// Re-picking the model already in force changes nothing the retry depends on:
+		// its backoff, retry-after and budget stay.
+		const previousModel = this.model;
 
 		const systemPromptChange = await this._switchActiveModel(model, {
 			persistDefault: updateGlobalDefaults,
@@ -9668,7 +9672,8 @@ export class AgentSession {
 			invalidateCompaction: true,
 			origin,
 		});
-		if (this.model && modelsAreEqual(this.model, model)) this._handOffRetryToManualModel(model);
+		const modelChanged = previousModel === undefined || !modelsAreEqual(previousModel, model);
+		if (modelChanged && this.model && modelsAreEqual(this.model, model)) this._handOffRetryToManualModel(model);
 		return systemPromptChange;
 	}
 
@@ -10059,7 +10064,7 @@ export class AgentSession {
 			// has to supersede a held switch itself - otherwise cycling onto a model that
 			// fits leaves an older hold to reclaim the session on the next message.
 			this._clearPendingModelSwitch();
-			this._handOffRetryToManualModel(next.model);
+			if (modelIdentityChanged) this._handOffRetryToManualModel(next.model);
 			// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
 			this._emit({
 				type: "model_changed",
@@ -13821,16 +13826,17 @@ export class AgentSession {
 		const delayMs = Math.min(plannedDelayMs, agentCeilingMs ?? Number.MAX_SAFE_INTEGER);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
+		const retryErrorText =
+			usageLimitScope(errorMessage) === "account"
+				? new AccountUsageLimitError(message.provider, errorMessage).message
+				: errorMessage;
 
 		this._emit({
 			type: "auto_retry_start",
 			attempt: this._retryAttempt,
 			maxAttempts: retryProfile.turn.maxRetries,
 			delayMs,
-			errorMessage:
-				usageLimitScope(errorMessage) === "account"
-					? new AccountUsageLimitError(message.provider, errorMessage).message
-					: errorMessage,
+			errorMessage: retryErrorText,
 		});
 
 		// Remove error message from agent state (keep in session for history)
@@ -13855,7 +13861,7 @@ export class AgentSession {
 					attempt: this._retryAttempt,
 					maxAttempts: this._resolveRetryProfile().turn.maxRetries,
 					delayMs: 0,
-					errorMessage,
+					errorMessage: retryErrorText,
 				});
 			} else {
 				// Aborted during sleep - emit end event so UI can clean up

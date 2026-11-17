@@ -63,6 +63,8 @@ describe("senpi#6893 manual model switch during a retry loop", () => {
 		expect(afterSwitch.filter((event) => event.type === "auto_retry_start")).toMatchObject([
 			{ attempt: 1, delayMs: 0 },
 		]);
+		const retryTexts = harness.eventsOfType("auto_retry_start").slice(-2);
+		expect(retryTexts[1]?.errorMessage).toBe(retryTexts[0]?.errorMessage);
 		expect(harness.eventsOfType("auto_retry_end")).toMatchObject([{ success: true, attempt: 1 }]);
 		expect(harness.session.model?.id).toBe("faux-3");
 		expect(harness.session.isRetrying).toBe(false);
@@ -98,6 +100,34 @@ describe("senpi#6893 manual model switch during a retry loop", () => {
 			{ attempt: 2, cut: false },
 		]);
 		expect(harness.eventsOfType("auto_retry_end")).toMatchObject([{ success: true, attempt: 2 }]);
+	});
+
+	it("keeps the backoff and the budget when the pick is the model the retry already uses", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }],
+			settings: { retry: { enabled: true, baseDelayMs: 200, maxRetries: 2 } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([overloaded(), overloaded(), overloaded(), fauxAssistantMessage("never requested")]);
+		harness.session.subscribe((event) => {
+			if (event.type === "auto_retry_start" && event.delayMs > 0) {
+				void harness.session.setModel(pickModel(harness, "faux-1"));
+			}
+		});
+
+		await harness.session.prompt("re-pick the same model");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1", "faux-1"]);
+		expect(
+			harness
+				.eventsOfType("auto_retry_start")
+				.map((event) => ({ attempt: event.attempt, waited: event.delayMs > 0 })),
+		).toEqual([
+			{ attempt: 1, waited: true },
+			{ attempt: 2, waited: true },
+		]);
+		expect(harness.eventsOfType("auto_retry_end")).toMatchObject([{ success: false, attempt: 2 }]);
+		expect(harness.getPendingResponseCount()).toBe(1);
 	});
 
 	it("does not charge the in-flight old model's failure to the picked model", async () => {
