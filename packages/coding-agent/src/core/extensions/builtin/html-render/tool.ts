@@ -114,7 +114,7 @@ const clampHeight = (height: number | undefined) =>
 const hostRendersPage = (ctx: ExtensionToolContext): boolean =>
 	(ctx.getSystemPromptOptions?.().surface ?? resolvePromptSurface(process.env)) === "app";
 
-export function createShowHtmlPageTool(pending: PendingHandedPages = new Map()) {
+export function createShowHtmlPageTool(pending: PendingHandedPages) {
 	return defineTool<typeof Params, ShowHtmlPageDetails>({
 		name: showHtmlPageName,
 		label: "Show HTML Page",
