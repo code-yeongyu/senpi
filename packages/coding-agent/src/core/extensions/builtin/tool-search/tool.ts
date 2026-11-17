@@ -23,12 +23,15 @@ type Params = Static<typeof ParamsSchema>;
 export interface ToolSearchDetails {
 	readonly query: string;
 	readonly matched: readonly string[];
+	/** Matching tools the session routes through eval only; listed, never activated (senpi#6886). */
+	readonly evalOnly?: readonly string[];
 }
 
 /** Everything the result text needs beyond the ranked matches. */
 export interface ToolSearchResultInput {
 	readonly query: string;
 	readonly matches: readonly Bm25Result[];
+	readonly evalOnlyMatches?: readonly Bm25Result[];
 	readonly hiddenHints: readonly HiddenToolHint[];
 	readonly source: ToolSearchSource | undefined;
 	readonly group: string | undefined;
@@ -45,7 +48,7 @@ export function createToolSearchTool(service: ToolSearchService): ToolSearchTool
 		workspaceEffect: "read",
 		label: "Tool search",
 		description:
-			"Search the catalog of deferred tools by capability. Returns at most 5 matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
+			"Search the catalog of deferred tools by capability. Returns at most 5 matching catalog tools with their parameter schemas and never changes your active tool set; call a returned catalog tool by name and it activates on that first call. Up to 5 matching eval-only tools are listed separately; call those inside an eval cell as tool.<name>(...).",
 		promptSnippet: "Search deferred tool catalogs by capability; call a returned tool by name to use it.",
 		parameters: ParamsSchema,
 		prepareArguments: prepareToolSearchArguments,
@@ -56,17 +59,29 @@ export function createToolSearchTool(service: ToolSearchService): ToolSearchTool
 				...(params.group === undefined ? {} : { group: params.group }),
 			};
 			const matches = service.search(params.query, MAX_RESULTS, options);
+			const hiddenHints = service.hiddenToolHints(params.query);
+			// A tool the query names keeps its redirect hint, which already carries its exact eval call.
+			const hinted = new Set(hiddenHints.map((hint) => hint.name));
+			const evalOnlyMatches = service
+				.searchEvalOnly(params.query, MAX_RESULTS, options)
+				.filter((match) => !hinted.has(match.name));
+			const evalOnlyNames = new Set(evalOnlyMatches.map((match) => match.name));
 			const text = buildToolSearchResultText({
 				group: params.group,
-				hiddenHints: service.hiddenToolHints(params.query),
+				hiddenHints,
 				matches,
+				evalOnlyMatches,
 				parametersOf: (name) => service.getToolParameters(name),
 				query: params.query,
 				source: params.source,
 			});
 			return {
 				content: [{ type: "text", text }],
-				details: { matched: matches.map((match) => match.name), query: params.query },
+				details: {
+					matched: matches.map((match) => match.name),
+					query: params.query,
+					...(evalOnlyNames.size === 0 ? {} : { evalOnly: [...evalOnlyNames] }),
+				},
 			};
 		},
 		renderCall(args, theme) {
@@ -79,7 +94,7 @@ export function createToolSearchTool(service: ToolSearchService): ToolSearchTool
 			);
 		},
 		renderResult(result, options, theme) {
-			const count = result.details?.matched.length ?? 0;
+			const count = (result.details?.matched.length ?? 0) + (result.details?.evalOnly?.length ?? 0);
 			const title = options.isPartial
 				? `${TOOL_SEARCH_TOOL_NAME}: searching`
 				: `${TOOL_SEARCH_TOOL_NAME}: ${count} tool(s) found`;
@@ -108,28 +123,46 @@ export function buildToolSearchResultText(input: ToolSearchResultInput): string 
 		.join(" in ");
 	const scopeText = scope.length === 0 ? "" : ` in ${scope}`;
 	const hintLines = hiddenHints.map((entry) => `- ${entry.name}: ${entry.hint}`);
+	const evalOnlyLines = evalOnlySection(input);
 	if (matches.length === 0) {
 		const head = `No catalog tools matched "${query}"${scopeText}. Your active tool set is unchanged.`;
-		if (hintLines.length === 0) {
+		if (hintLines.length === 0 && evalOnlyLines.length === 0) {
 			return `${head} Try different keywords or a broader query.`;
 		}
-		return [head, "", "The query names a tool that is hidden in this session:", ...hintLines].join("\n");
+		const lines = [head, ...evalOnlyLines];
+		if (hintLines.length > 0) lines.push("", "The query names a tool that is hidden in this session:", ...hintLines);
+		return lines.join("\n");
 	}
-	const bullets = matches.map((match) => {
-		const description = oneLine(match.doc.description) ?? "(no description)";
-		const parameters = compactParameters(input.parametersOf(match.name));
-		return parameters === undefined
-			? `- ${match.name} - ${description}`
-			: `- ${match.name} - ${description}\n  parameters: ${parameters}`;
-	});
 	const lines = [
 		`Found ${matches.length} tool(s) matching "${query}"${scopeText}. Nothing was activated; call one by name and it activates on that first call:`,
 		"",
-		...bullets,
+		...matches.map((match) => toolBullet(match, input.parametersOf)),
+		...evalOnlyLines,
 	];
 	if (hintLines.length > 0)
 		lines.push("", "The query also names a tool that is hidden in this session:", ...hintLines);
 	return lines.join("\n");
+}
+
+/** Eval-only matches (senpi#6886): reachable only from an eval cell, so they carry their call form and stay inactive. */
+function evalOnlySection(input: ToolSearchResultInput): string[] {
+	const matches = input.evalOnlyMatches ?? [];
+	if (matches.length === 0) return [];
+	return [
+		"",
+		`Eval-only tools matching "${input.query}" (registered, but not in your direct tool list; nothing was activated). Call them inside an eval cell:`,
+		...matches.map(
+			(match) => `${toolBullet(match, input.parametersOf)}\n  call: tool.${match.name}({ ... }) inside eval`,
+		),
+	];
+}
+
+function toolBullet(match: Bm25Result, parametersOf: (name: string) => unknown): string {
+	const description = oneLine(match.doc.description) ?? "(no description)";
+	const parameters = compactParameters(parametersOf(match.name));
+	return parameters === undefined
+		? `- ${match.name} - ${description}`
+		: `- ${match.name} - ${description}\n  parameters: ${parameters}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -20,14 +20,14 @@ const CLASSIFY = "ci-platform-scope.mjs classify";
 const LINUX_MATRIX = (job) => Array.isArray(job.strategy?.matrix?.os) && job.strategy.matrix.os.every((label) => /^ubuntu-/.test(label));
 
 // Runs a workflow's own classify step (its run text and env expressions) the way the runner would, for one event.
-function decide(file, jobName, { event, labels }) {
+function decide(file, jobName, { event, labels, prLabels }) {
 	const step = workflow(file).jobs[jobName].steps.find((candidate) => candidate.run?.includes(CLASSIFY));
 	assert.ok(step, `${file}: ${jobName} has no classify step`);
 	const dir = mkdtempSync(join(tmpdir(), "ci-platform-scope-"));
 	try {
 		const output = join(dir, "output");
 		writeFileSync(output, "");
-		const env = { ...process.env, GITHUB_OUTPUT: output, EVENT_NAME: event, PR_LABELS: JSON.stringify(event === "pull_request" ? labels : null) };
+		const env = { ...process.env, GITHUB_OUTPUT: output, EVENT_NAME: event, PR_LABELS: prLabels ?? JSON.stringify(event === "pull_request" ? labels : null) };
 		for (const [name, value] of Object.entries(step.env ?? {})) {
 			if (!["EVENT_NAME", "PR_LABELS"].includes(name)) env[name] = String(value);
 		}
@@ -130,6 +130,21 @@ describe("pull request runners across every workflow (senpi#6834)", () => {
 			assert.ok(!workflow(file).jobs[job].steps.some((step) => /pulls\/.*\/files/.test(step.run ?? "")), `${file} reads no diff`);
 		}
 		for (const [file, job] of scoped.slice(0, 3)) assert.equal(decide(file, job, { event: "push", labels: [] }), "full=true\n", file);
+	});
+
+	it("builds darwin/win32 native targets on a labelled PR only in the label call, never in the PR's own run (review L4)", () => {
+		const scope = workflow("native-prebuilds.yml").jobs.plan.steps.find((step) => step.run?.includes(CLASSIFY));
+		// Evaluates the PR_LABELS expression the way the runner does, for one value of inputs.full_ci.
+		const labelsFor = (fullCi) => String(scope.env.PR_LABELS).replace(/^\$\{\{(.*)\}\}$/, (_, expr) => {
+			const js = expr.replace(/inputs\.full_ci/g, JSON.stringify(fullCi ?? null))
+				.replace("toJSON(github.event.pull_request.labels.*.name)", JSON.stringify(JSON.stringify(["bug", FULL_CI_LABEL])));
+			assert.doesNotMatch(js, /github\.|inputs\./, `unsupported expression: ${expr}`);
+			return String(Function(`return (${js});`)());
+		});
+		const event = "pull_request";
+		assert.equal(decide("native-prebuilds.yml", "plan", { event, prLabels: labelsFor(undefined) }), "full=false\n");
+		assert.equal(decide("native-prebuilds.yml", "plan", { event, prLabels: labelsFor(true) }), "full=true\n");
+		assert.deepEqual(workflow("ci-full-label.yml").jobs["native-prebuilds"].with, { full_ci: true });
 	});
 });
 

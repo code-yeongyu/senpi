@@ -231,7 +231,7 @@ async function main() {
 	}
 
 	if (args.testedSha === null) {
-		secureCiEvidence(version, args.dryRun, args.forceTests, args.sha);
+		secureCiEvidence(version, args.dryRun, args.forceTests, args.sha, args.ciBasisReceipt);
 		await runForcedTests(args.dryRun, args.forceTests);
 	}
 	// Every evidence path: macOS/Windows are tested only on main (senpi#6834), so a red leg there stops the cut.
