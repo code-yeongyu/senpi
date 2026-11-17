@@ -9,6 +9,7 @@ import type { ResourceLoader } from "../../core/resource-loader.ts";
 import {
 	armedEvalOnlyToolNames,
 	directActiveToolNames,
+	registeredEvalOnlyToolNames,
 	requestedActiveToolNames,
 	resolveEvalOnlyToolNames,
 } from "../../core/runtime/active-tools.ts";
@@ -49,7 +50,7 @@ function describeHandTools(source: HandToolCatalogSource): JsonValue {
 		registry.toolRegistry,
 	);
 	const { active } = directActiveToolNames(requested, registry, armed);
-	const evalOnly = [...(armed ?? [])].filter((name) => registry.toolRegistry.has(name));
+	const evalOnly = [...registeredEvalOnlyToolNames(armed, registry.toolRegistry)];
 	return JSON.parse(
 		JSON.stringify({
 			tools: toolCatalog(Array.from(registry.definitions.values(), ({ definition }) => definition)),
