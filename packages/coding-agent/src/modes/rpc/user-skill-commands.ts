@@ -30,6 +30,7 @@ import {
 	askThisDevice,
 	refusedByDevice,
 	sha256,
+	type UserSkillDecision,
 	userSkillPromptTitle,
 } from "./user-skill-approval.ts";
 
@@ -39,6 +40,8 @@ export interface RpcUserSkillFile {
 	exists: boolean;
 	content: string | null;
 	etag: string | null;
+	/** Set when the write's audit line could not be written; the write's own outcome is unchanged. */
+	auditError?: string;
 }
 
 export type UserSkillFileResult = { ok: true; data: RpcUserSkillFile } | ProjectWriteRefusal;
@@ -167,6 +170,23 @@ async function commit(
 	return "ok" in after ? after : { ok: true, data: after.data };
 }
 
+/** One write attempt as the audit records it: the outcome, and the file's hashes when it was located in a root. */
+interface Attempt {
+	readonly result: UserSkillFileResult;
+	readonly decision: UserSkillDecision;
+	readonly path: string | null;
+	readonly before: string | null;
+	readonly after: string | null;
+}
+
+const refusedBefore = (result: ProjectWriteRefusal, state?: SkillState): Attempt => ({
+	result,
+	decision: "refused",
+	path: state?.data.path ?? null,
+	before: sha256(state?.bytes),
+	after: sha256(state?.bytes),
+});
+
 async function writeChecked(
 	session: AgentSession,
 	skill: string,
@@ -174,26 +194,52 @@ async function writeChecked(
 	content: string,
 	ifEtag: string | null,
 	origin: RpcRemoteOrigin | undefined,
-): Promise<UserSkillFileResult> {
+): Promise<Attempt> {
 	const state = await readSkillState(skill, located);
-	if ("ok" in state) return state;
-	if (state.data.etag !== ifEtag) return conflict(state.data.path, state.data.etag);
-	if (origin === undefined) return commit(skill, located, content, ifEtag);
+	if ("ok" in state) return refusedBefore(state);
+	if (Buffer.byteLength(content, "utf8") > PROJECT_FILE_MAX_BYTES) return refusedBefore(tooLarge(), state);
+	if (state.data.etag !== ifEtag) return refusedBefore(conflict(state.data.path, state.data.etag), state);
+	const shown = { path: state.data.path, before: sha256(state.bytes) };
+	if (origin === undefined)
+		return { result: await commit(skill, located, content, ifEtag), decision: "approved", ...shown, after: null };
 	const decision = await askThisDevice(
 		session,
 		userSkillPromptTitle(origin, state.data.path, state.data.content ?? "", content),
 	);
 	// The file is read again after the answer: an approval covers the version the prompt showed, nothing newer.
-	const result = decision === "approved" ? await commit(skill, located, content, ifEtag) : undefined;
+	const result =
+		decision === "approved" ? await commit(skill, located, content, ifEtag) : refusedByDevice(decision, origin);
 	const now = await readSkillState(skill, located);
-	await appendUserSkillAudit(session.agentDir, {
-		origin,
-		path: state.data.path,
-		before: sha256(state.bytes),
-		after: "ok" in now ? null : sha256(now.bytes),
-		decision,
-	});
-	return result ?? refusedByDevice(decision, origin);
+	return { result, decision, ...shown, after: "ok" in now ? null : sha256(now.bytes) };
+}
+
+async function attemptWrite(
+	session: AgentSession,
+	skill: unknown,
+	content: unknown,
+	ifEtag: unknown,
+	origin: RpcRemoteOrigin | undefined,
+): Promise<Attempt> {
+	if (typeof skill !== "string" || typeof content !== "string" || (ifEtag !== null && typeof ifEtag !== "string")) {
+		return refusedBefore({
+			ok: false,
+			message:
+				"write_user_skill_file requires a string 'skill', a string 'content' and 'ifEtag' (the etag read, or null to create).",
+			errorCode: RPC_ERROR_INVALID_ARGUMENT,
+		});
+	}
+	const located = await locateUserSkill(session, skill);
+	if ("ok" in located) return refusedBefore(located);
+	return serializeWrite(join(located.root, located.file.relative), () =>
+		writeChecked(session, skill, located, content, ifEtag, origin),
+	);
+}
+
+/** The outcome as it happened; an audit line that could not be written is reported beside it, never instead of it. */
+function withAuditError(result: UserSkillFileResult, auditError: string): UserSkillFileResult {
+	return result.ok
+		? { ok: true, data: { ...result.data, auditError } }
+		: { ...result, errorData: { ...result.errorData, auditError } };
 }
 
 export async function writeUserSkillFile(
@@ -203,18 +249,18 @@ export async function writeUserSkillFile(
 	ifEtag: unknown,
 	origin: RpcRemoteOrigin | undefined,
 ): Promise<UserSkillFileResult> {
-	if (typeof skill !== "string" || typeof content !== "string" || (ifEtag !== null && typeof ifEtag !== "string")) {
-		return {
-			ok: false,
-			message:
-				"write_user_skill_file requires a string 'skill', a string 'content' and 'ifEtag' (the etag read, or null to create).",
-			errorCode: RPC_ERROR_INVALID_ARGUMENT,
-		};
-	}
-	if (Buffer.byteLength(content, "utf8") > PROJECT_FILE_MAX_BYTES) return tooLarge();
-	const located = await locateUserSkill(session, skill);
-	if ("ok" in located) return located;
-	return serializeWrite(join(located.root, located.file.relative), () =>
-		writeChecked(session, skill, located, content, ifEtag, origin),
+	const attempt = await attemptWrite(session, skill, content, ifEtag, origin);
+	if (origin === undefined) return attempt.result;
+	const auditError = await appendUserSkillAudit(session.agentDir, {
+		origin,
+		path: attempt.path,
+		before: attempt.before,
+		after: attempt.after,
+		decision: attempt.decision,
+		...(attempt.result.ok ? {} : { reason: attempt.result.errorCode }),
+	}).then(
+		() => undefined,
+		(error: unknown) => (error instanceof Error ? error.message : String(error)),
 	);
+	return auditError === undefined ? attempt.result : withAuditError(attempt.result, auditError);
 }

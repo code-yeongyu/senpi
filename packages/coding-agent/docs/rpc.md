@@ -6609,9 +6609,14 @@ device (a delegated connection, or one that declared `remoteOrigin`) commits onl
 approves it: the engine asks the session's local grant presentation (an attached local client with `grant_select`,
 never a remote or delegated connection), and the question names the origin device, the file's path and the diff
 of the change (the whole content for a new file). The choices are "Allow this change" and "Deny"; there is no
-"always". Each such write appends one line to `<agentDir>/audit/user-skill-writes.jsonl`:
-`{ at, originDeviceId, originDeviceName?, path, sha256Before, sha256After, decision }` with `decision` one of
-`approved`, `denied`, `unconfirmed`.
+"always". Every write attempt from another device appends exactly one line to
+`<agentDir>/audit/user-skill-writes.jsonl`: `{ at, originDeviceId, originDeviceName?, path, sha256Before,
+sha256After, decision, reason? }` with `decision` one of `approved`, `denied`, `unconfirmed`, or `refused` for an
+attempt refused before the question (`reason` is its error code; `path` and the hashes are `null` unless the file
+was located inside a user skills folder). An audit line that cannot be written never changes the write's outcome:
+the answer carries `auditError` beside it (in `data` on success, in `errorData` on a refusal). A connection that
+speaks for another device never presents or answers this question (nor any grant select), on the in-process and the
+worker session runtime alike, even when it advertises `grant_select`.
 
 Errors: `user_skill_not_listed` (`errorData: { skill }`), `user_skill_file_not_allowed`, `user_skill_write_declined`
 (denied on this machine), `user_skill_write_unconfirmed` (no local presenter, or no answer within 120 s),

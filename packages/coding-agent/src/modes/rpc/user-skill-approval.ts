@@ -21,7 +21,8 @@ export const USER_SKILL_AUDIT_FILE = join("audit", "user-skill-writes.jsonl");
 // A skill file may be 512 KiB; a longer diff is cut and the prompt says so.
 const PROMPT_DIFF_MAX_CHARACTERS = 20_000;
 
-export type UserSkillDecision = "approved" | "denied" | "unconfirmed";
+/** `refused`: the write never reached the prompt (not listed, outside a root, stale, too large); `reason` names why. */
+export type UserSkillDecision = "approved" | "denied" | "unconfirmed" | "refused";
 
 export const sha256 = (bytes: Buffer | undefined): string | null =>
 	bytes === undefined ? null : createHash("sha256").update(bytes).digest("hex");
@@ -50,10 +51,11 @@ export async function appendUserSkillAudit(
 	agentDir: string,
 	entry: {
 		readonly origin: RpcRemoteOrigin;
-		readonly path: string;
+		readonly path: string | null;
 		readonly before: string | null;
 		readonly after: string | null;
 		readonly decision: UserSkillDecision;
+		readonly reason?: string;
 	},
 ): Promise<void> {
 	await mkdir(join(agentDir, "audit"), { recursive: true, mode: 0o700 });
@@ -65,6 +67,7 @@ export async function appendUserSkillAudit(
 		sha256Before: entry.before,
 		sha256After: entry.after,
 		decision: entry.decision,
+		...(entry.reason === undefined ? {} : { reason: entry.reason }),
 	};
 	await appendFile(join(agentDir, USER_SKILL_AUDIT_FILE), `${JSON.stringify(line)}\n`, { mode: 0o600 });
 }

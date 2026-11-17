@@ -3,100 +3,30 @@
  * one trust gate: this device's own write is pre-trusted, another device's write commits only once this device
  * approves it, the requester can never answer that question, and each remote write leaves one audit line.
  */
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionUIDialogOptions } from "../../src/core/extensions/types.ts";
-import { attachMcpGrantPresentation } from "../../src/core/mcp-grant-presentations.ts";
+import { afterEach, describe, expect, it } from "vitest";
 import { classifyRpcMethod } from "../../src/modes/rpc/method-classes.ts";
+import { USER_SKILL_ALLOW, USER_SKILL_DENY, userSkillPromptTitle } from "../../src/modes/rpc/user-skill-approval.ts";
+import { SKILL_NAME, skillSource, startFolderHost } from "./project-folder-verbs-host.ts";
 import {
-	USER_SKILL_ALLOW,
-	USER_SKILL_AUDIT_FILE,
-	USER_SKILL_DENY,
-	userSkillPromptTitle,
-} from "../../src/modes/rpc/user-skill-approval.ts";
-import {
-	disposeFolderHosts,
-	type FolderHost,
-	type FolderLayout,
-	SKILL_NAME,
-	skillSource,
-	startFolderHost,
-} from "./project-folder-verbs-host.ts";
+	auditLines,
+	becomeRemote,
+	disposeUserSkillHosts,
+	EDITED,
+	layUserSkill,
+	ORIGIN,
+	ORIGINAL,
+	presentLocally,
+	read,
+	readData,
+	USER_SKILL,
+	type UserSkillData,
+	userSkillFile,
+	write,
+} from "./user-skill-file-host.ts";
 
-const USER_SKILL = "usv-user-skill";
-const ORIGINAL = skillSource(USER_SKILL);
-const EDITED = skillSource(USER_SKILL, "Edited from a laptop.");
-const ORIGIN = { deviceId: "device-laptop", deviceName: "Laptop" };
-
-interface UserSkillData {
-	skill: string;
-	path: string;
-	exists: boolean;
-	content: string | null;
-	etag: string | null;
-}
-
-interface Prompt {
-	title: string;
-	choices: string[];
-}
-
-const userSkillFile = ({ agentDir }: FolderLayout, name = USER_SKILL) => join(agentDir, "skills", name, "SKILL.md");
-
-function layUserSkill(layout: FolderLayout): void {
-	vi.stubEnv("HOME", join(layout.outside, "home"));
-	mkdirSync(join(layout.agentDir, "skills", USER_SKILL), { recursive: true });
-	writeFileSync(userSkillFile(layout), ORIGINAL);
-}
-
-const read = (host: FolderHost, skill: string) => host.call("read_user_skill_file", { skill });
-const write = (host: FolderHost, skill: string, content: string, ifEtag: string | null) =>
-	host.call("write_user_skill_file", { skill, content, ifEtag });
-
-async function readData(host: FolderHost, skill = USER_SKILL): Promise<UserSkillData> {
-	const answer = await read(host, skill);
-	expect(answer).toMatchObject({ success: true });
-	return answer.data as UserSkillData;
-}
-
-/** The connection now speaks for another device, as a relay forwarder declares it; it may also offer grant_select. */
-async function becomeRemote(host: FolderHost, capabilities: readonly string[] = []): Promise<void> {
-	const answer = await host.send({ type: "set_client_info", width: 80, capabilities, remoteOrigin: ORIGIN });
-	expect(answer).toMatchObject({ success: true });
-}
-
-/** A local client attached on THIS device presents the question (what `security-presentations.ts` registers). */
-async function presentLocally(host: FolderHost, answer: string | undefined): Promise<Prompt[]> {
-	const state = await host.call("get_state");
-	const durableId = (state.data as { sessionId: string }).sessionId;
-	const prompts: Prompt[] = [];
-	const detach = attachMcpGrantPresentation(
-		durableId,
-		async (title: string, choices: string[], _opts?: ExtensionUIDialogOptions) => {
-			prompts.push({ title, choices });
-			return answer;
-		},
-	);
-	detachers.push(detach);
-	return prompts;
-}
-
-function auditLines({ agentDir }: FolderLayout): Record<string, unknown>[] {
-	const file = join(agentDir, USER_SKILL_AUDIT_FILE);
-	if (!existsSync(file)) return [];
-	return readFileSync(file, "utf8")
-		.trim()
-		.split("\n")
-		.map((line) => JSON.parse(line) as Record<string, unknown>);
-}
-
-const detachers: Array<() => void> = [];
-
-afterEach(async () => {
-	for (const detach of detachers.splice(0)) detach();
-	await disposeFolderHosts();
-});
+afterEach(disposeUserSkillHosts);
 
 describe("user skill file verbs: classes", () => {
 	it("classes both verbs as device_admin", () => {

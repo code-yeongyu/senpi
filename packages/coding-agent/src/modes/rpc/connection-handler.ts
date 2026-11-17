@@ -1004,6 +1004,8 @@ export function createRpcConnectionHandler(
 		grantPresentationAbort = new AbortController();
 		if (securityBoundByHost) return;
 		if (!clientCapabilities?.includes("grant_select")) return;
+		// A connection that speaks for another device never presents a grant (D11 R-1, senpi#6901 review H1).
+		if (connectionRoles.originOf(currentConnectionId()) !== undefined) return;
 		const signal = grantPresentationAbort.signal;
 		detachGrantPresentation = attachMcpGrantPresentation(session.sessionId, (title, choices, opts) =>
 			selectGrantDialog(title, choices, {
@@ -1708,7 +1710,7 @@ export function createRpcConnectionHandler(
 					secretRoute.handshake?.(command.capabilities);
 					secretInputs.recheck();
 				}
-				if (next.grantChanged) refreshGrantPresentation();
+				if (next.grantChanged || origin.origin !== undefined) refreshGrantPresentation();
 				return success(id, "set_client_info");
 			}
 
