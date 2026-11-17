@@ -59,12 +59,22 @@ interface ImageReference {
 	readonly start: number;
 	readonly end: number;
 	readonly path: string;
+	/** Whether the page loads it as an image (an unquoted url(), or a quoted value of src=, url(...) and the like) rather than only naming it in text. */
+	readonly loaded: boolean;
 }
+
+// What may precede the opening quote of a path the page loads: an attribute or property
+// (`src=`, `srcset=`, `poster=`, `href=`, `img.src = `) or a CSS `url(`.
+const LOADING_CONTEXT = /(?:\b(?:src|srcset|poster|href)\s*=\s*|url\(\s*)$/i;
 
 const findLocalImages = (html: string): ImageReference[] =>
 	Array.from(html.matchAll(LOCAL_IMAGE_PATTERN)).flatMap((match) => {
-		const span = match.indices?.[2] ?? match.indices?.[3];
-		return span ? [{ start: span[0], end: span[1], path: html.slice(span[0], span[1]) }] : [];
+		const quoted = match.indices?.[2];
+		const span = quoted ?? match.indices?.[3];
+		if (!span) return [];
+		const loaded =
+			quoted === undefined || LOADING_CONTEXT.test(html.slice(Math.max(0, match.index - 40), match.index));
+		return [{ start: span[0], end: span[1], path: html.slice(span[0], span[1]), loaded }];
 	});
 
 const filePathFor = (reference: string) =>
@@ -127,7 +137,11 @@ const isImageBytes = (bytes: Uint8Array) => {
 	return hasSvgRoot(new TextDecoder().decode(bytes.subarray(0, 4096)));
 };
 
-/** Replaces every local image reference with a data URI; unreadable paths throw. */
+/**
+ * Replaces every readable local image reference with a data URI. A path that cannot be read as an
+ * image stays as written; it is listed in `missing` only when the page loads it as an image, so a
+ * path merely named in text or a code sample is no error. The caller decides what `missing` means.
+ */
 export async function inlineLocalImages(html: string): Promise<{ html: string; missing: string[] }> {
 	const references = findLocalImages(html);
 	const uniquePaths = [...new Set(references.map((reference) => reference.path))];
@@ -173,6 +187,9 @@ export async function inlineLocalImages(html: string): Promise<{ html: string; m
 	if (Buffer.byteLength(inlined) > MAX_PAGE_BYTES) {
 		throw new HtmlRenderPageTooLargeError(Buffer.byteLength(inlined));
 	}
-	const missing = files.filter((file) => !images.has(file.path)).map((file) => file.path);
+	const loadedPaths = new Set(references.filter((reference) => reference.loaded).map((reference) => reference.path));
+	const missing = files
+		.filter((file) => !images.has(file.path) && loadedPaths.has(file.path))
+		.map((file) => file.path);
 	return { html: inlined, missing };
 }

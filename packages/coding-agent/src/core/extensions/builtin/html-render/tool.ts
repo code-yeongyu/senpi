@@ -4,12 +4,19 @@ import { Type } from "typebox";
 import { resolvePromptSurface } from "../../../dynamic-prompt/build.ts";
 import { defineTool, type ExtensionToolContext } from "../../types.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
-import { inlineLocalImages } from "./images.ts";
+import { HtmlRenderImagesNotFoundError, inlineLocalImages } from "./images.ts";
 
 // The same input limit as the desktop's html_render. Images belong as absolute
-// file paths, which are inlined after the check, so the document itself stays
-// small: it travels in the tool call and again in the result details.
+// file paths, which are inlined after the check, so the document the agent
+// writes stays small in the tool call; the result details carry it inlined.
 const MAX_HTML_CHARACTERS = 512_000;
+
+// The page handed to the host travels in `details` on every RPC record that carries this result
+// (tool_execution_end, message_end, entry_appended, get_messages). An RPC record is at most
+// MAX_RPC_LINE_CHARACTERS (16 Mi); a longer one drops an attach connection. This cap leaves room for
+// JSON escaping (at most doubling) and the other fields, and keeps a transcript of several pages from
+// ballooning. A larger page is handed as written, and its images reach only a host that has this disk.
+export const MAX_HANDED_PAGE_CHARACTERS = 2 * 1024 * 1024;
 
 const Params = Type.Object({
 	html: Type.String({
@@ -51,12 +58,14 @@ export interface ShowHtmlPageDetails {
 	title: string;
 	height: number | undefined;
 	prepared: boolean;
-	missingImages?: string[];
 	/**
-	 * The page as the agent wrote it, for a host that publishes it itself (the
-	 * desktop renders it in the thread). Never part of the model-visible content.
+	 * The page for a host that publishes it itself (the desktop renders it in the thread), never part
+	 * of the model-visible content. When it fits MAX_HANDED_PAGE_CHARACTERS its local images are inlined
+	 * as data URIs, so it needs no file on this machine and a viewer on another machine renders the same
+	 * page; otherwise it is the page as the agent wrote it, and `imagesInlined` is false.
 	 */
 	html: string;
+	imagesInlined: boolean;
 }
 
 const clampHeight = (height: number | undefined) =>
@@ -91,6 +100,9 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
 		assertWithinInputLimit(params.html);
 		const inlined = await inlineLocalImages(params.html);
+		// A page with a broken image is refused, as the desktop refuses to publish one, so the
+		// agent learns which path to fix instead of being told the page was shown.
+		if (inlined.missing.length > 0) throw new HtmlRenderImagesNotFoundError(inlined.missing);
 		const prepared = injectHtmlRenderBootstrap(inlined.html);
 		const height = clampHeight(params.height);
 		const dir = join(ctx.cwd, OUTPUT_DIR);
@@ -103,7 +115,7 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				.slice(0, 60) || "page";
 		const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
 		await writeFile(path, prepared, "utf8");
-		const missing = inlined.missing.length === 0 ? undefined : inlined.missing;
+		const imagesInlined = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
 		return {
 			content: [
 				{
@@ -112,9 +124,9 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 						(hostRendersPage(ctx)
 							? `The page was shown to the reader inline above your reply. A copy is saved at ${path}. `
 							: `Wrote the page to ${path}. It was not displayed in this interface. `) +
-						(missing === undefined
+						(imagesInlined
 							? "Local images were inlined."
-							: `Some local images could not be read and were left as written: ${missing.join(", ")}.`),
+							: `Local images were inlined into the saved copy, but with them the page is ${inlined.html.length} characters, over the ${MAX_HANDED_PAGE_CHARACTERS} a page can carry to a viewer, so a viewer on another machine will not see the images. Use smaller images to show them everywhere.`),
 				},
 			],
 			details: {
@@ -122,8 +134,8 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				title: params.title,
 				height,
 				prepared: true,
-				...(missing ? { missingImages: missing } : {}),
-				html: params.html,
+				html: imagesInlined ? inlined.html : params.html,
+				imagesInlined,
 			},
 		};
 	},
