@@ -38,6 +38,8 @@ export type RpcSessionCommand =
 			 * that names a turn which is not running is refused `turn_conflict` (senpi#5776).
 			 */
 			expectedTurnId?: string;
+			/** The session leaf the caller decided this prompt at; a moved leaf is refused `stale_leaf` and nothing is sent (senpi#6922). */
+			expectedLeafId?: string;
 			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
 			toolBarrier?: ToolBarrierSpec;
 			/** A thread call from another session: the hop count of its chain (decision K8); refused `chain_count_limit` past the user's `threads.chainCountLimit`. */
