@@ -6590,11 +6590,19 @@ gates as `set_project_mcp_servers` and answers the read after it. Errors: `proje
 
 All four are `device_admin`: they read and write files in the session's folder.
 
-#### read_user_skill_file / write_user_skill_file
+#### read_user_skill_file
 
-Read or replace the file of a user-global skill the engine lists for the session (one in the agent directory's
-`skills` folder or in `~/.agents/skills`), by skill name. The same verbs serve this machine and another device of
-the account.
+Read the file of a user-global skill the engine lists for the session (one in the agent directory's `skills` folder
+or in `~/.agents/skills`), by skill name. The same verb serves this machine and another device of the account.
+
+```json
+{"type": "read_user_skill_file", "skill": "deploy"}
+```
+
+#### write_user_skill_file
+
+Replace the file of a user-global skill the engine lists for the session, by skill name. `ifEtag` is the `etag` the
+last read answered.
 
 ```json
 {"type": "write_user_skill_file", "skill": "deploy", "content": "---\nname: deploy\n…", "ifEtag": "sha256-…"}
