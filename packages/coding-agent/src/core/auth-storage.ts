@@ -16,7 +16,7 @@ import type {
 	OAuthCredential,
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
-import { findEnvKeys, getEnvApiKey, readByProviderId } from "@earendil-works/pi-ai";
+import { findEnvKeys, getEnvApiKey, readByProviderId, refreshOAuthCredential } from "@earendil-works/pi-ai";
 import { type CredentialKind, slotKind, unusedSlotKinds } from "@earendil-works/pi-ai/auth/pool/kinds";
 import { stampLogin } from "@earendil-works/pi-ai/auth/pool/login-id";
 import {
@@ -1138,13 +1138,27 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	/**
-	 * Refreshes the stored OAuth credential when it has expired, under the store's lock: the expiry is checked again
-	 * after the lock is held, so concurrent callers in any process share one token exchange.
+	 * Refreshes the stored OAuth credential when it has expired. It delegates to pi-ai's `refreshOAuthCredential`,
+	 * the path request-time resolution uses: the exchange runs under this store's per-account refresh lock and the
+	 * expiry is checked again once that lock is held, so callers in any process share one token exchange.
 	 */
-	async refreshOAuthCredential(providerId: string, oauth: OAuthAuth): Promise<OAuthCredential | undefined> {
-		const refreshed = await this.modify(providerId, async (stored) => {
-			if (stored?.type !== "oauth") return stored;
-			return Date.now() < stored.expires ? stored : oauth.refresh(stored, new AbortController().signal);
+	async refreshOAuthCredential(
+		providerId: string,
+		oauth: OAuthAuth,
+		signal: AbortSignal = new AbortController().signal,
+	): Promise<OAuthCredential | undefined> {
+		const stored = await this.read(providerId, { signal });
+		if (stored?.type !== "oauth") return undefined;
+		const isStale = (credential: OAuthCredential) => Date.now() >= credential.expires;
+		if (!isStale(stored)) return stored;
+		const refreshed = await refreshOAuthCredential({
+			credentials: this,
+			providerId,
+			oauth,
+			stale: stored,
+			isStale,
+			signal,
+			owning: true,
 		});
 		return refreshed?.type === "oauth" ? refreshed : undefined;
 	}
