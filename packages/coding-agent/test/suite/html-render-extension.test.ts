@@ -9,7 +9,7 @@ import {
 } from "../../src/core/extensions/builtin/html-render/bootstrap.ts";
 import { inlineLocalImages } from "../../src/core/extensions/builtin/html-render/images.ts";
 import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
-import { showHtmlPageTool } from "../../src/core/extensions/builtin/html-render/tool.ts";
+import { createShowHtmlPageTool } from "../../src/core/extensions/builtin/html-render/tool.ts";
 import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { createHarness } from "./harness.ts";
 
@@ -45,7 +45,7 @@ describe("html-render builtin", () => {
 	});
 
 	it("writes a prepared page with the theme bootstrap injected ahead of the head content", async () => {
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-1",
 			{
 				html: "<!doctype html><html><head><title>t</title></head><body>hi</body></html>",
@@ -65,7 +65,7 @@ describe("html-render builtin", () => {
 	});
 
 	it("opens the written page with the offline snapshot policy ahead of anything the page wrote", async () => {
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-3",
 			{
 				html: '<!doctype html><script src="https://cdn.example/lib.js"></script><img src="http://127.0.0.1:1/x.png">',
@@ -106,7 +106,7 @@ describe("html-render builtin", () => {
 
 	it("hands the page to the host in details and never puts it in the content the model reads", async () => {
 		const html = '<!doctype html><div id="marker-7f3a">chart</div>';
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-4",
 			{ html, title: "Hidden", height: 300 },
 			undefined,
@@ -126,7 +126,7 @@ describe("html-render builtin", () => {
 		writeFileSync(backgroundPath, PNG_BYTES);
 		const html = `<!doctype html><style>body{background:url(${backgroundPath})}</style><img src="${imagePath}">`;
 
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-self-contained",
 			{ html, title: "Chart" },
 			undefined,
@@ -148,7 +148,7 @@ describe("html-render builtin", () => {
 		const secret = join(tempDir, "secret.png");
 		writeFileSync(secret, "API_KEY=hunter2 not an image");
 
-		const refused = showHtmlPageTool.execute(
+		const refused = createShowHtmlPageTool().execute(
 			"call-missing",
 			{ html: `<img src="${present}"><img src="${missing}"><img src="${secret}">`, title: "Broken" },
 			undefined,
@@ -164,7 +164,7 @@ describe("html-render builtin", () => {
 
 	it("refuses a page over the input limit before preparing anything", async () => {
 		await expect(
-			showHtmlPageTool.execute(
+			createShowHtmlPageTool().execute(
 				"call-max",
 				{ html: "x".repeat(512_001), title: "Big" },
 				undefined,
@@ -179,7 +179,7 @@ describe("html-render builtin", () => {
 		const screenshot = `<img src="data:image/png;base64,${"A".repeat(200_000)}">`;
 		const html = `<html><body><h1>Report</h1>${screenshot.repeat(3)}</body></html>`;
 
-		const refused = showHtmlPageTool.execute(
+		const refused = createShowHtmlPageTool().execute(
 			"call-b64",
 			{ html, title: "Report" },
 			undefined,
@@ -200,7 +200,7 @@ describe("html-render builtin", () => {
 		});
 		const html = `<html><body>${paths.map((path) => `<img src="${path}">`).join("")}</body></html>`;
 
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-paths",
 			{ html, title: "Report" },
 			undefined,
@@ -222,13 +222,13 @@ describe("html-render builtin", () => {
 		});
 		const html = paths.map((path) => `<img src="${path}">`).join("");
 		await expect(
-			showHtmlPageTool.execute("call-5", { html, title: "Huge" }, undefined, undefined, ctxFor(tempDir)),
+			createShowHtmlPageTool().execute("call-5", { html, title: "Huge" }, undefined, undefined, ctxFor(tempDir)),
 		).rejects.toThrow(/limit is 25 MiB/);
 		expect(existsSync(join(tempDir, ".senpi/html-pages"))).toBe(false);
 	});
 
 	it("clamps the frame height to the 80-2000 range", async () => {
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-2",
 			{ html: "<p>x</p>", title: "Tall", height: 99999 },
 			undefined,

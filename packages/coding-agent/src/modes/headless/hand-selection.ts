@@ -44,7 +44,7 @@ export interface HandSession {
 	readonly agent: Pick<Agent, "toolHost">;
 	/** A run copies its ToolHost when it starts, so the choice changes only between runs. */
 	readonly isStreaming: boolean;
-	readonly sessionManager: Pick<SessionManager, "appendCustomEntry" | "getEntries" | "getSessionId">;
+	readonly sessionManager: Pick<SessionManager, "appendCustomEntry" | "getEntries">;
 	/** Sent with each call to the hand, so a tool there reports what this session's host does (senpi#6921). */
 	readonly promptSurface: PromptSurface;
 }

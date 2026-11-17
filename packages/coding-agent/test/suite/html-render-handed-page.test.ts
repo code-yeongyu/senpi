@@ -7,8 +7,9 @@ import {
 	MAX_HANDED_PAGE_CHARACTERS,
 	MAX_HANDED_PAGES_CHARACTERS,
 } from "../../src/core/extensions/builtin/html-render/handed-pages.ts";
-import { showHtmlPageTool } from "../../src/core/extensions/builtin/html-render/tool.ts";
-import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
+import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
+import { createShowHtmlPageTool } from "../../src/core/extensions/builtin/html-render/tool.ts";
+import type { ExtensionAPI, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
 
 // senpi#6899, senpi#6907: the page handed to the host in `details` rides every RPC record that carries
@@ -19,15 +20,15 @@ import { MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
 const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const DATA_PREFIX = "data:image/png;base64,";
 
-type Result = Awaited<ReturnType<typeof showHtmlPageTool.execute>>;
+type ShowHtmlPageTool = ReturnType<typeof createShowHtmlPageTool>;
+type Result = Awaited<ReturnType<ShowHtmlPageTool["execute"]>>;
 
 /**
  * A session that records each returned result the way the agent session appends it. A model call's context says
  * `issuedByModel`, as the session sets it; a call a tool or an extension makes (`origin: "tool"`) does not.
  */
-function session(cwd: string) {
+function session(cwd: string, tool: ShowHtmlPageTool = createShowHtmlPageTool(), sessionId = randomUUID()) {
 	const entries: unknown[] = [];
-	const sessionId = randomUUID();
 	const ctx = {
 		cwd,
 		hasUI: false,
@@ -44,11 +45,25 @@ function session(cwd: string) {
 		});
 	const show = async (toolCallId: string, html: string, origin: "model" | "tool" = "model") => {
 		const callCtx = { ...ctx, issuedByModel: origin === "model" };
-		const result = await showHtmlPageTool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, callCtx);
+		const result = await tool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, callCtx);
 		const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
 		return { result, text };
 	};
 	return { ctx, entries, record, show };
+}
+
+/** Loads the extension the way a session runtime does: one instance, its tool and its lifecycle handlers. */
+function loadExtension() {
+	let tool: ShowHtmlPageTool | undefined;
+	const handlers = new Map<string, () => void>();
+	htmlRenderExtension({
+		registerTool: (registered: ShowHtmlPageTool) => {
+			tool = registered;
+		},
+		on: (event: string, handler: () => void) => handlers.set(event, handler),
+	} as unknown as ExtensionAPI);
+	if (tool === undefined) throw new Error("show_html_page was not registered");
+	return { tool, emit: (event: string) => handlers.get(event)?.() };
 }
 
 /** A page with one image whose inlined length is `target`, give or take under 4 characters. */
@@ -290,5 +305,51 @@ describe("senpi#6910: nested calls, pages handed as written, and images a script
 		const { result } = await session(tempDir).show("call-mentions", html);
 
 		expect(result.details.html).toBe(html);
+	});
+});
+
+// senpi#6928 (aligned with senpi#6926): the ledger of pages handed but not yet recorded belongs to one extension
+// instance, never to the host, and is emptied when a run ends.
+describe("senpi#6928: the ledger of not-yet-recorded pages belongs to its extension instance", () => {
+	let tempDir: string;
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-6928-"));
+	});
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+	const pagesPerBudget = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize);
+
+	/** Hands pages without recording their results, until the budget refuses one. */
+	async function fillWithUnrecordedPages(show: ReturnType<typeof session>["show"]) {
+		for (let index = 0; index < pagesPerBudget; index++) {
+			const { result } = await show(`fill-${index}`, pageInlinedTo(tempDir, `fill-${index}`, pageSize).html);
+			expect(result.details.imagesInlined).toBe(true);
+		}
+		const { result } = await show("refused", pageInlinedTo(tempDir, "refused", pageSize).html);
+		expect(result.details.imagesInlined).toBe(false);
+	}
+
+	it("a new extension instance for the same session starts with an empty ledger", async () => {
+		const sessionId = randomUUID();
+		await fillWithUnrecordedPages(session(tempDir, loadExtension().tool, sessionId).show);
+
+		const { show } = session(tempDir, loadExtension().tool, sessionId);
+		const { result } = await show("next", pageInlinedTo(tempDir, "next", pageSize).html);
+
+		expect(result.details.imagesInlined).toBe(true);
+	});
+
+	it.each(["agent_end", "session_shutdown"])("empties the ledger when %s fires", async (event) => {
+		const extension = loadExtension();
+		const { show } = session(tempDir, extension.tool);
+		await fillWithUnrecordedPages(show);
+
+		extension.emit(event);
+
+		const { result } = await show("after", pageInlinedTo(tempDir, "after", pageSize).html);
+		expect(result.details.imagesInlined).toBe(true);
 	});
 });

@@ -4,7 +4,13 @@ import { Type } from "typebox";
 import { resolvePromptSurface } from "../../../dynamic-prompt/build.ts";
 import { defineTool, type ExtensionToolContext } from "../../types.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
-import { handedPageText, MAX_HANDED_PAGE_CHARACTERS, reserveHandedPage, SHOW_HTML_PAGE_NAME } from "./handed-pages.ts";
+import {
+	handedPageText,
+	MAX_HANDED_PAGE_CHARACTERS,
+	type PendingHandedPages,
+	reserveHandedPage,
+	SHOW_HTML_PAGE_NAME,
+} from "./handed-pages.ts";
 import { HtmlRenderImagesNotFoundError, inlineLocalImages } from "./images.ts";
 
 // The same input limit as the desktop's html_render. Images belong as absolute
@@ -75,71 +81,74 @@ const clampHeight = (height: number | undefined) =>
 const hostRendersPage = (ctx: ExtensionToolContext): boolean =>
 	(ctx.promptSurface ?? resolvePromptSurface(process.env)) === "app";
 
-export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
-	name: SHOW_HTML_PAGE_NAME,
-	label: "Show HTML Page",
-	description:
-		"Show a finished self-contained HTML page (chart, table, diagram, mockup) to the reader. " +
-		"Load the visualize skill before building the page. " +
-		"No network: inline every script, style and image (data: URIs). A <script src>, stylesheet link, font, image " +
-		"or fetch that points at a URL (a CDN included) is refused, and the page comes out blank or broken. " +
-		"Local images written as absolute file paths " +
-		"are inlined automatically after a magic-byte check (a renamed non-image is refused); pass screenshots " +
-		"that way, never as base64 data: URIs, since the page is limited to 512000 characters before images are " +
-		"inlined. In the OmO desktop thread the page renders inline above your reply; elsewhere it is only " +
-		"saved to a file and not displayed. The result says which happened.",
-	exposure: "search",
-	allowLazyActivation: true,
-	searchKeywords: ["html", "chart", "table", "diagram", "visualize", "render page", "mockup"],
-	parameters: Params,
-	async execute(toolCallId, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
-		assertWithinInputLimit(params.html);
-		const inlined = await inlineLocalImages(params.html);
-		// A page with a broken image is refused, as the desktop refuses to publish one, so the
-		// agent learns which path to fix instead of being told the page was shown.
-		if (inlined.missing.length > 0) throw new HtmlRenderImagesNotFoundError(inlined.missing);
-		const prepared = injectHtmlRenderBootstrap(inlined.html);
-		const height = clampHeight(params.height);
-		const dir = join(ctx.cwd, OUTPUT_DIR);
-		await mkdir(dir, { recursive: true });
-		const safeName =
-			params.title
-				.replace(/[\\/:*?"<>|\p{Cc}]+/gu, " ")
-				.replace(/\s+/g, " ")
-				.trim()
-				.slice(0, 60) || "page";
-		const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
-		await writeFile(path, prepared, "utf8");
-		// A hand (brain/hand split) has no session: the transcript its page joins is the brain's, which counts the page
-		// when the result arrives (`withHandPageBudget`, senpi#6921); here it is held to the per-page cap alone.
-		const inTranscript = ctx.issuedByModel && ctx.sessionManager !== undefined;
-		const fitsPage = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
-		const { inlined: imagesInlined, alreadyHanded } =
-			fitsPage && inTranscript
-				? reserveHandedPage(ctx.sessionManager, toolCallId, inlined.html.length)
-				: { inlined: fitsPage, alreadyHanded: 0 };
-		return {
-			content: [
-				{
-					type: "text",
-					text: handedPageText({
-						path,
-						shown: hostRendersPage(ctx),
-						imagesInlined,
-						fitsPage,
-						alreadyHanded,
-						inlinedLength: inlined.html.length,
-					}),
+/** The show_html_page tool of one extension instance, holding its pages not yet recorded in `pending`. */
+export function createShowHtmlPageTool(pending: PendingHandedPages = new Map()) {
+	return defineTool<typeof Params, ShowHtmlPageDetails>({
+		name: SHOW_HTML_PAGE_NAME,
+		label: "Show HTML Page",
+		description:
+			"Show a finished self-contained HTML page (chart, table, diagram, mockup) to the reader. " +
+			"Load the visualize skill before building the page. " +
+			"No network: inline every script, style and image (data: URIs). A <script src>, stylesheet link, font, image " +
+			"or fetch that points at a URL (a CDN included) is refused, and the page comes out blank or broken. " +
+			"Local images written as absolute file paths " +
+			"are inlined automatically after a magic-byte check (a renamed non-image is refused); pass screenshots " +
+			"that way, never as base64 data: URIs, since the page is limited to 512000 characters before images are " +
+			"inlined. In the OmO desktop thread the page renders inline above your reply; elsewhere it is only " +
+			"saved to a file and not displayed. The result says which happened.",
+		exposure: "search",
+		allowLazyActivation: true,
+		searchKeywords: ["html", "chart", "table", "diagram", "visualize", "render page", "mockup"],
+		parameters: Params,
+		async execute(toolCallId, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
+			assertWithinInputLimit(params.html);
+			const inlined = await inlineLocalImages(params.html);
+			// A page with a broken image is refused, as the desktop refuses to publish one, so the
+			// agent learns which path to fix instead of being told the page was shown.
+			if (inlined.missing.length > 0) throw new HtmlRenderImagesNotFoundError(inlined.missing);
+			const prepared = injectHtmlRenderBootstrap(inlined.html);
+			const height = clampHeight(params.height);
+			const dir = join(ctx.cwd, OUTPUT_DIR);
+			await mkdir(dir, { recursive: true });
+			const safeName =
+				params.title
+					.replace(/[\\/:*?"<>|\p{Cc}]+/gu, " ")
+					.replace(/\s+/g, " ")
+					.trim()
+					.slice(0, 60) || "page";
+			const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
+			await writeFile(path, prepared, "utf8");
+			// A hand (brain/hand split) has no session: the transcript its page joins is the brain's, which counts the page
+			// when the result arrives (`withHandPageBudget`, senpi#6921); here it is held to the per-page cap alone.
+			const inTranscript = ctx.issuedByModel && ctx.sessionManager !== undefined;
+			const fitsPage = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
+			const { inlined: imagesInlined, alreadyHanded } =
+				fitsPage && inTranscript
+					? reserveHandedPage(ctx.sessionManager, pending, toolCallId, inlined.html.length)
+					: { inlined: fitsPage, alreadyHanded: 0 };
+			return {
+				content: [
+					{
+						type: "text",
+						text: handedPageText({
+							path,
+							shown: hostRendersPage(ctx),
+							imagesInlined,
+							fitsPage,
+							alreadyHanded,
+							inlinedLength: inlined.html.length,
+						}),
+					},
+				],
+				details: {
+					path,
+					title: params.title,
+					height,
+					prepared: true,
+					html: imagesInlined ? inlined.html : params.html,
+					imagesInlined,
 				},
-			],
-			details: {
-				path,
-				title: params.title,
-				height,
-				prepared: true,
-				html: imagesInlined ? inlined.html : params.html,
-				imagesInlined,
-			},
-		};
-	},
-});
+			};
+		},
+	});
+}
