@@ -1,3 +1,58 @@
+## 2026-11-16 - Export `withCredentialProxy` (senpi#6828)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `withCredentialProxy` and `CREDENTIAL_PLACEHOLDER` for the codemode kernels.
+
+### Why
+
+- Eval kernels and their children must see the same withheld view as the bash tool.
+
+### Why an extension could not handle it
+
+- The codemode package reaches engine state only through the public entry.
+
+### Expected merge conflict zones
+
+- LOW: one export line beside the kill-guard runtime exports.
+
+## 2026-11-15 - The hand's durable, bounded wake outbox (senpi#5778, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/hand-wakes.ts` (new): `openHandWakeOutbox` on the hand's state file (it claims the file's next owner epoch, so an older hand is refused from then on), with `HAND_WAKE_LIMITS` (256 per scope, 1024 in total) and `onFault`; `handWakesOver`, a hand's scopes' wakes over its wake link.
+- `packages/coding-agent/src/modes/hand/hand-entry.ts`: opens the outbox at `<agentDir>/rpc/hand-wakes.json` after the live-hand check (faults reported on stderr), splits the `hand.wake` lane off the transport (`splitLanes`), starts the hand wake link and gives the loopless hand its wakes.
+
+### Why
+
+- A wake committed before a hand process dies must be re-offered by the next one, and the file must stay bounded by what is pending (#6767 review H1, M1).
+
+### Why an extension could not handle it
+
+- The hand entry owns the transport and the process lifetime.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runHand` in `hand-entry.ts`.
+
+## 2026-11-15 - Correction: what `--hand` as its extensions' home changes (senpi#5898, corrects #6747)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/hand-entry.ts`: `runHand` builds its hand with `twoSidedHome: "hand"` (#6747). Its forwarded loop hooks that run there are `input`, `before_agent_start`, `before_provider_request` and `session_start` (#6747's entry left out `before_provider_request`), and `agent_end` from this PR. The same option also moves two-sided extensions' tool hooks: on `--hand`, `extensionToolHandlers` (`packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts`) no longer forwards their `tool_call`/`tool_result` to the loop; they run on the hand, beside the same extensions' loop hooks.
+
+### Why
+
+- #6747's review (L1): its fragment named neither `hand-entry.ts` nor the tool-hook placement change. Fragments are immutable once written, so the correction rides this PR.
+
+### Why an extension could not handle it
+
+- Where a two-sided extension's hooks run is the loopless runtime's choice, made by the hand's entry point.
+
+### Expected merge conflict zones
+
+- LOW: the `createLooplessHand` call in `runHand`.
+
 ## 2026-11-16 - The private-fd capture releases startup fillers first (senpi#6769)
 
 ### What changed

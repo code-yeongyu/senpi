@@ -1,3 +1,80 @@
+## 2026-11-16 - A blank or space-padded CI-basis receipt is refused (senpi#6859 follow-up)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: the "Accept or refuse the CI-basis receipt" step also refuses a `ci_basis_receipt` that is blank or has leading or trailing whitespace, with its own `::error::`. Before, a whitespace-only id passed the empty and printable checks and logged a waiver with no receipt in it.
+
+### Why
+
+- Review of senpi#6861 (LOW L1): the ruling's "receipt id non-empty" must hold for the id a reader sees, not only for its byte length.
+
+### Why an extension could not handle it
+
+- Release workflow steps are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the receipt checks inside the "Accept or refuse the CI-basis receipt" step.
+
+## 2026-11-16 - A pinned release can waive the hosted CI wait with an accepted CI-basis receipt (senpi#6859)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: two new `workflow_dispatch` inputs, `ci_basis_receipt` and `ci_basis_head` (both default empty). A new release-job step, "Accept or refuse the CI-basis receipt", runs before Checkout only when `ci_basis_receipt` is non-empty. It accepts the receipt only when the `sha` input is set, `ci_basis_head` equals it as 40 lowercase hex, the triggering actor's repository role (`GET /repos/{repo}/collaborators/{actor}/permission`, `role_name`, with `GITHUB_TOKEN`) is `admin` or `maintain`, and the receipt id is printable ASCII of at most 200 characters; a `force_tests` or `publish-only` dispatch is refused because neither waits for hosted CI. Each refusal prints its own `::error::` and fails the job. An accepted receipt writes its id, head, actor and `hosted CI wait waived by ci_basis_receipt` to the log and the run summary, and `Run release` passes `--ci-basis-receipt` to `release.mjs`. An empty receipt skips the step and leaves the release arguments unchanged.
+
+### Why
+
+- senpi#6859: when hosted CI for a pinned release commit is backlogged, a maintainer holding an equivalent CI-basis receipt for that exact commit had no auditable way to skip the 40-minute wait other than re-running the whole suite with `force_tests`.
+
+### Why an extension could not handle it
+
+- Release workflow inputs and job steps are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the `workflow_dispatch` inputs right after `sha`, the step after "Refuse a live release from any ref but main", and the env and argument lines of "Run release".
+
+## 2026-11-16 - platform-red never drops or duplicates a report; only the label call builds macOS/Windows native targets (senpi#6847)
+
+### What changed
+
+- `.github/workflows/platform-red.yml`: no concurrency group at any level. The reporter (`scripts/ci-platform-red.mjs`) lists the open tracking issue by its `platform-red` label instead of the search index. A report that loses a race to open the issue comments on the oldest open one and closes its own as a duplicate.
+- `.github/workflows/native-prebuilds.yml`: a new `full_ci` `workflow_call` input (default false). On a pull request the plan step passes the PR's labels to the classifier only when `full_ci` is set, so a labelled PR's own path-filtered run stays on Linux.
+- `.github/workflows/ci-full-label.yml`: the `native-prebuilds` call passes `full_ci: true`.
+
+### Why
+
+- Review LOWs of senpi#6836. A job-level group cancels a pending report when a newer one queues (L1). The search index lags behind a just-created issue (L2). A labelled native PR built darwin/win32 twice per push (L4).
+
+### Why an extension could not handle it
+
+- Workflow configuration and its CI scripts; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the `report` job of `platform-red.yml`, the `workflow_call` inputs and plan scope step of `native-prebuilds.yml`, and the `native-prebuilds` job of `ci-full-label.yml`.
+
+## 2026-11-16 - Pull requests run Linux only; macOS/Windows run on main, in releases and with run-full-ci (senpi#6834)
+
+### What changed
+
+- `.github/workflows/ci.yml`, `.github/workflows/read-summary-binary-parity.yml`, `.github/workflows/session-worker-compile.yml`: the `platform-scope` job no longer lists the PR's changed files; it classifies from the event and the `run-full-ci` label only (`scripts/ci-platform-scope.mjs`), so an unlabelled pull request never schedules a macOS/Windows job or matrix leg. The job drops `pull-requests: read`.
+- `.github/workflows/native-prebuilds.yml`: on a pull request the plan job runs the same classifier and `select` (`scripts/native-prebuild-reuse.mjs`, `FULL`) leaves the darwin/win32 targets out of the build matrix unless the PR is labelled; every other event builds all targets. Concurrency is per PR (cancelled by a newer head) and per commit elsewhere (never cancelled), so the next native push to main no longer cancels the previous main build. The record step declares and exports `RUSTC_VV` separately (SC2155).
+- `.github/workflows/ci-full-label.yml`: the `run-full-ci` label also calls `native-prebuilds.yml`, so the label stays the one opt-in for every macOS/Windows leg.
+- `.github/workflows/platform-red.yml` (new): on a failed main push run of CI, Native Prebuilds, Read summary binary parity or Compiled session worker, `scripts/ci-platform-red.mjs report` opens one tracking issue ("Default-branch macOS/Windows CI is red") naming the merged PR and each failed macOS/Windows job, or comments on it while it is open. Only the report job has a concurrency group (`platform-red-report`, never cancelled), so a later green completion can never replace a pending red report.
+
+### Why
+
+- senpi#6834: in one 2h10m window 49 of 55 PR runs started a macOS job while 10-16 macOS jobs sat queued and a release's macOS jobs waited 91-97 minutes. The path rule (senpi#3957) put most coding-agent PRs on macOS/Windows. Platform regressions now surface on main, so a red there files an issue and blocks the next release.
+
+### Why an extension could not handle it
+
+- Workflow triggers, job conditions and concurrency are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `platform-scope` jobs of the three workflows, the `concurrency` block and plan job of `native-prebuilds.yml`, and the job list of `ci-full-label.yml`.
+
 ## 2026-11-13 - The workspace matrix comment names the job that owns the senpi-codemode suite (senpi#6631)
 
 ### What changed

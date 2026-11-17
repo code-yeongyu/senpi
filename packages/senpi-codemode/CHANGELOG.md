@@ -1,14 +1,19 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.17] - 2026-11-17
 
 ### Breaking Changes
 
 ### Added
 
+- Eval kernels and their children get the same withheld view of declared credentials as the bash tool ([#6828](https://github.com/code-yeongyu/senpi/pull/6828))
+
 ### Changed
 
 ### Fixed
+
+- `Bun.spawn` with `null` options or `env: null` inside an eval kernel keeps the pinned worker environment ([#6830](https://github.com/code-yeongyu/senpi/pull/6830))
+- The eval description names every eval-only tool, and the `tool_schema()` prelude entry documents its `{ tools: [...] }` result ([#6887](https://github.com/code-yeongyu/senpi/pull/6887))
 
 ### Removed
 
