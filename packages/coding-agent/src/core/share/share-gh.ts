@@ -17,6 +17,8 @@ export function uploadSecretGist(html: string, fileName: string, signal: AbortSi
 		}
 		const child = spawn("gh", ["gist", "create", "--filename", fileName, "-"], {
 			stdio: ["pipe", "pipe", "pipe"],
+			// senpi#3965: gh is a console-subsystem exe on Windows.
+			windowsHide: true,
 		});
 		let stdout = "";
 		let stderr = "";

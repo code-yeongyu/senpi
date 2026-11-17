@@ -19,6 +19,7 @@ export const LOOP_CORE_MODULES = [
 	"types.ts",
 	"durable/store.ts",
 	"execution/tool-host.ts",
+	"execution/device-files.ts",
 	"execution/tool-outcome-events.ts",
 	"execution/canonical-digest.ts",
 	"execution/coordinator.ts",

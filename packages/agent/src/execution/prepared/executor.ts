@@ -5,7 +5,7 @@ import type { ExecutionEntry, ExecutionEvent, ExecutionKey, LedgerReply } from "
 import { errorResult, finalizeBody, messageOf, type PreparedBody, runBody } from "./executor-body.ts";
 import {
 	freezeCall,
-	resultValue,
+	recordedResult,
 	type StoppedReply,
 	stoppedReply,
 	stoppedValue,
@@ -181,8 +181,10 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 			signal,
 			request.onUpdateFor?.(body.toolCall) ?? request.onUpdate ?? (() => {}),
 		);
-		const { result, isError } = await finalizeBody(body, executed, pipeline, signal);
-		const value = resultValue(result, isError, body.requestedName);
+		const { result, isError, value } = recordedResult(
+			await finalizeBody(body, executed, pipeline, signal),
+			body.requestedName,
+		);
 		const recorded = await step(key, generation, { kind: "result", value });
 		for (const memo of [bodies, preparations, releases]) memo.delete(keyId(key));
 		// A cancel or lease expiry that settled first stays terminal; the late body result is audit only.

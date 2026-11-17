@@ -9,10 +9,10 @@ import {
 	awaitCiEvidence,
 	CATALOG_MANIFEST,
 	catalogChangedSinceHead,
+	changedCatalogPaths,
 	discardTimestampOnlyCatalogChange,
 	isTimestampOnlyManifestChange,
 	planCiEvidence,
-	runForcedTestSuite,
 } from "./release-test-gate.mjs";
 
 const CHECK_NAME = "Check and test";
@@ -297,45 +297,32 @@ describe("catalogChangedSinceHead (senpi#2645)", () => {
 	});
 });
 
-describe("runForcedTestSuite (senpi#2291)", () => {
-	it("fails loudly, naming the budget, when the in-job suite outlives it", () => {
-		const started = Date.now();
-		assert.throws(
-			() => runForcedTestSuite({ bin: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"], timeoutMs: 300 }),
-			/did not finish within 0\.005 min/,
-		);
-		assert.ok(Date.now() - started < 10_000, "the hung child is killed at the budget, not left running");
-	});
-
-	it("kills the whole suite process tree on timeout, including a hung grandchild worker", () => {
-		const dir = mkdtempSync(join(tmpdir(), "forced-suite-tree-"));
-		const pidFile = join(dir, "grandchild.pid");
-		const grandchild = "setInterval(() => {}, 1000)";
-		const suite = `const { spawn } = require("node:child_process"); const g = spawn(process.execPath, ["-e", ${JSON.stringify(grandchild)}], { stdio: "ignore" }); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(g.pid)); setInterval(() => {}, 1000);`;
+// senpi#6645 review (32e83a5610, finding 4): changedCatalogPaths reads `git status --porcelain -z`, so a path git
+// would quote (spaces, special characters) and both sides of a rename come back as real paths for `git add -A --`.
+describe("changedCatalogPaths (senpi#6645)", () => {
+	it("returns paths with spaces unquoted, and a staged rename by its destination, all stageable", () => {
+		const dir = mkdtempSync(join(tmpdir(), "catalog-paths-"));
+		const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
 		try {
-			assert.throws(() => runForcedTestSuite({ bin: process.execPath, args: ["-e", suite], timeoutMs: 1_500 }), /did not finish within/);
-			const pid = Number(readFileSync(pidFile, "utf8"));
-			const alive = () => {
-				try {
-					process.kill(pid, 0);
-					return true;
-				} catch {
-					return false;
-				}
-			};
-			const deadline = Date.now() + 5_000;
-			while (alive() && Date.now() < deadline) execFileSync(process.execPath, ["-e", "setTimeout(() => {}, 100)"]);
-			const survived = alive();
-			if (survived) process.kill(pid, "SIGKILL");
-			assert.equal(survived, false, "the hung grandchild worker was left running after the timeout");
+			git("init", "-q", "-b", "main");
+			const data = join(dir, "packages/ai/src/providers/data");
+			mkdirSync(data, { recursive: true });
+			writeFileSync(join(data, "old name.json"), "{\"provider\":\"renamed\",\"models\":[1,2,3]}\n");
+			writeFileSync(join(data, "kept.json"), "{\"provider\":\"kept\"}\n");
+			git("add", "-A");
+			git("-c", "user.name=t", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base");
+			git("mv", "packages/ai/src/providers/data/old name.json", "packages/ai/src/providers/data/new name.json");
+			writeFileSync(join(data, "kept.json"), "{\"changed\":true}\n");
+			writeFileSync(join(data, "brand new.json"), "[]\n");
+			assert.deepEqual([...changedCatalogPaths(dir)].sort(), [
+				"packages/ai/src/providers/data/brand new.json",
+				"packages/ai/src/providers/data/kept.json",
+				"packages/ai/src/providers/data/new name.json",
+			]);
+			git("add", "-A", "--", ...changedCatalogPaths(dir));
+			assert.match(git("diff", "--cached", "--name-status"), /^R\d*\tpackages\/ai\/src\/providers\/data\/old name\.json\tpackages\/ai\/src\/providers\/data\/new name\.json$/m);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
-	});
-
-	it("passes CI=1 to a suite that finishes inside the budget", () => {
-		assert.doesNotThrow(() =>
-			runForcedTestSuite({ bin: process.execPath, args: ["-e", "process.exit(process.env.CI === '1' ? 0 : 3)"], timeoutMs: 10_000 }),
-		);
 	});
 });

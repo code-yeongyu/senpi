@@ -50,9 +50,9 @@ export function buildContinuationPrompt(goal: Goal, options: ContinuationPromptO
 		"- A permission denial, a refusal by the user, or a call a permission rule blocked is not a blocker to route around: it is final for what that call was meant to do. Never reach that result with another tool, command, path or host; only the user can change it, so ask them with the question tool or leave that part out and say so.",
 		"",
 		"Blocked audit - run this before deciding the goal is blocked:",
-		"- No live resumption channel exists: no monitor, subscription, background command, child task, or pending question can still deliver what the objective waits on. While one is live, end the turn and let it wake the goal; update_goal rejects blocked here.",
+		"- No live resumption channel exists: no monitor, subscription, background command, child task, or pending question can still deliver what the objective waits on. While one is live, end the turn and let it wake the goal; update_goal does not check this, so do not call it with blocked here.",
 		"- Only the user can supply the missing decision, approval, or fact, you asked them with the question tool, and they did not answer within the wait.",
-		"- The same blocking condition survived at least three goal turns since this goal became active or the user last spoke; update_goal rejects blocked below that floor, and automatic wake-ups spent waiting are not attempts.",
+		"- The same blocking condition survived at least three goal turns since this goal became active or the user last spoke; update_goal does not count turns, so do not call it with blocked below that floor, and automatic wake-ups spent waiting are not attempts.",
 		"- Never block because the work is hard, slow, uncertain, or would benefit from clarification.",
 		'- Once all three hold, call update_goal with status "blocked" and a specific reason.',
 	].join("\n");

@@ -1,5 +1,6 @@
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import { createPlaneServer, decodePlaneMessage, type PlaneHandler } from "./plane.ts";
+import { createEpochGate } from "./remote-epoch-gate.ts";
 import {
 	decodeRemoteMessage,
 	encodeRemoteMessage,
@@ -18,7 +19,10 @@ export type HandReply =
 	| { readonly kind: "refused"; readonly reason: string }
 	| { readonly kind: "aborted"; readonly sent: boolean }
 	| { readonly kind: "unreachable"; readonly reason: string }
-	| { readonly kind: "closed" };
+	/** The link closed before the call settled; `sent`: its invoke had been handed to the transport, so it may have run. */
+	| { readonly kind: "closed"; readonly sent: boolean }
+	/** The session's epoch never opened the lane (S35): a newer owner holds it, or the hand refused this sender. */
+	| { readonly kind: "epoch_refused"; readonly reason: string };
 
 export interface HandLink {
 	dispatch(message: RemoteInvoke | RemoteFile, signal?: AbortSignal): Promise<HandReply>;
@@ -42,8 +46,15 @@ export function createHandLink(
 	transport: Transport,
 	planeHandlers: Readonly<Record<string, PlaneHandler>> = {},
 	filePlanes: readonly string[] = [],
+	epoch?: number,
 ): HandLink {
 	const pending = new Map<string, Pending>();
+	// A closed link sends nothing more: its transport is closed, and the one designed re-send (a durable hand's hello)
+	// happens on a link that is still open. A call made after close() is settled at once as never sent.
+	let closed = false;
+	const stamp = epoch === undefined ? {} : { epoch };
+	/** Messages handed to the transport: a hand's `hello` re-sends only these, never one still waiting on its floor. */
+	const sent = new Set<string>();
 	// Nested requests (S31) are admitted only while their parent CALL is live on its lane. A pending file operation
 	// (S40) hosts only the planes in `filePlanes` (a two-sided extension's forwarded tool events, S29); every other
 	// plane under it is refused as if it had no live parent. An abort names no plane and reaches what was admitted.
@@ -66,13 +77,27 @@ export function createHandLink(
 		const waiter = pending.get(executionId);
 		if (waiter === undefined) return;
 		pending.delete(executionId);
+		sent.delete(executionId);
 		planes.parentEnded(executionId);
 		waiter.resolve(reply);
 	};
 	const send = (lane: string, message: RemoteHandMessage): Promise<void> =>
 		transport.send(lane, encodeRemoteMessage(message));
+	const gate = epoch === undefined ? undefined : createEpochGate(epoch, (lane, floor) => send(lane, floor));
+	/** Runs `go` once the lane's floor is acked at this epoch (at once without an epoch); a refusal ends the message. */
+	const whenOpen = (lane: string, executionId: string, go: () => void): void => {
+		if (gate === undefined) return go();
+		void gate.open(lane).then((refusal) => {
+			if (!pending.has(executionId)) return;
+			if (refusal === undefined) return go();
+			settle(executionId, { kind: "epoch_refused", reason: refusal });
+		});
+	};
 
 	transport.onFrame((frame: TransportFrame) => {
+		// A closed link ignores every inbound frame, so it writes nothing: no ack for a late settled or terminal reply, no
+		// floor re-send on a hello, and no plane.refused (or any other plane answer) for a nested plane.request.
+		if (closed) return;
 		const nested = decodePlaneMessage(frame.payload);
 		if (nested !== undefined) return planes.receive(frame.lane, nested);
 		let message: RemoteHandMessage;
@@ -82,15 +107,23 @@ export function createHandLink(
 			return;
 		}
 		const ack = (executionId: string): void =>
-			void send(frame.lane, { kind: "ack", executionId }).catch(() => undefined);
+			void send(frame.lane, { kind: "ack", executionId, ...stamp }).catch(() => undefined);
 		if (message.kind === "hello") {
 			announced = message;
 			for (const waiter of [...helloWaiters]) waiter(message);
+			gate?.resend();
 			if (message.durable)
-				for (const { message: waiting } of pending.values())
-					void send(waiting.scope.id, waiting).catch(() => undefined);
+				for (const { message: waiting } of pending.values()) {
+					if (!sent.has(waiting.executionId)) continue;
+					whenOpen(
+						waiting.scope.id,
+						waiting.executionId,
+						() => void send(waiting.scope.id, waiting).catch(() => undefined),
+					);
+				}
 			return;
 		}
+		if (message.kind === "floor_ack" || message.kind === "floor_refused") return gate?.answer(frame.lane, message);
 		if (message.kind === "settled") {
 			settle(message.executionId, { kind: "settled", result: message.result });
 			ack(message.executionId);
@@ -101,26 +134,35 @@ export function createHandLink(
 	});
 
 	return {
-		dispatch(message, signal) {
+		dispatch(unstamped, signal) {
+			const message: RemoteInvoke | RemoteFile = { ...unstamped, ...stamp };
 			const { executionId } = message;
 			const replied = new Promise<HandReply>((resolve) => {
 				pending.set(executionId, { message, resolve });
 			});
+			if (closed) {
+				settle(executionId, { kind: "closed", sent: false });
+				return replied;
+			}
 			if (signal?.aborted) {
 				settle(executionId, { kind: "aborted", sent: false });
 				return replied;
 			}
 			const onAbort = (): void => {
 				if (!pending.has(executionId)) return;
-				void send(message.scope.id, { kind: "abort", executionId }).catch(() => undefined);
-				settle(executionId, { kind: "aborted", sent: true });
+				const reached = sent.has(executionId);
+				if (reached) void send(message.scope.id, { kind: "abort", executionId, ...stamp }).catch(() => undefined);
+				settle(executionId, { kind: "aborted", sent: reached });
 			};
 			signal?.addEventListener("abort", onAbort, { once: true });
 			void replied.then(() => signal?.removeEventListener("abort", onAbort));
-			send(message.scope.id, message).catch((error: unknown) => {
-				settle(executionId, {
-					kind: "unreachable",
-					reason: error instanceof Error ? error.message : String(error),
+			whenOpen(message.scope.id, executionId, () => {
+				sent.add(executionId);
+				send(message.scope.id, message).catch((error: unknown) => {
+					settle(executionId, {
+						kind: "unreachable",
+						reason: error instanceof Error ? error.message : String(error),
+					});
 				});
 			});
 			return replied;
@@ -144,7 +186,9 @@ export function createHandLink(
 			});
 		},
 		close() {
-			for (const executionId of [...pending.keys()]) settle(executionId, { kind: "closed" });
+			closed = true;
+			for (const executionId of [...pending.keys()])
+				settle(executionId, { kind: "closed", sent: sent.has(executionId) });
 			transport.close();
 		},
 	};

@@ -21,7 +21,7 @@ import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
-import { handlePackageCommand } from "../src/package-manager-cli.ts";
+import { handlePackageCommand, selfUpdatePlanAfterLookupFailure } from "../src/package-manager-cli.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
 describe("package manifest", () => {
@@ -631,6 +631,23 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			} else {
 				process.env.PI_SKIP_VERSION_CHECK = previousSkipVersionCheck;
 			}
+		}
+	});
+
+	it("points a binary install at the download page when its release lookup fails, and still fails other installs (senpi#6633)", () => {
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		try {
+			const plan = selfUpdatePlanAfterLookupFailure("bun-binary", "HTTP 403");
+			expect(plan.shouldRun).toBe(false);
+			const printed = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(printed).toContain("HTTP 403");
+			expect(printed).toContain("https://github.com/code-yeongyu/senpi/releases/latest");
+			expect(() => selfUpdatePlanAfterLookupFailure("npm", "HTTP 503")).toThrow(
+				/Could not determine latest .* version: HTTP 503/,
+			);
+			expect(() => selfUpdatePlanAfterLookupFailure("npm", "")).toThrow(/Could not determine latest .* version\./);
+		} finally {
+			logSpy.mockRestore();
 		}
 	});
 

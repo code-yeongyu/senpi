@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { readHandoverParkedSessions, recordHandoverParkedSession } from "../src/modes/rpc/host-handover-parked.ts";
 import { reopenHandoverParkedSessions } from "../src/modes/rpc/host-handover-reopen.ts";
+import { currentResidentWriter } from "../src/modes/rpc/host-handover-resident-writer.ts";
+import { BOOT_INSTANT_TOLERANCE_MS } from "../src/core/extensions/builtin/terminal/process-identity.ts";
 import { parkWithTaskStatus } from "./suite/regressions/3853-park-context-support.ts";
 
 const dirs: string[] = [];
@@ -87,5 +89,28 @@ describe("handover-parked reopen watch on a draining host (senpi#3282)", () => {
 		});
 
 		expect(await readHandoverParkedSessions(daemonDir)).toHaveLength(1);
+	});
+});
+
+describe("an entry its live writer still holds resident (senpi#6190)", () => {
+	it("is left to that writer, and restored once the stamped process is gone", async () => {
+		const { agentDir, socket, daemonDir } = await parkedRig();
+		const [park] = await readHandoverParkedSessions(daemonDir);
+		if (!park) throw new Error("missing park");
+		const live = currentResidentWriter();
+		await recordHandoverParkedSession(daemonDir, { ...park, residentWriter: live });
+		const open = vi.fn(async () => {});
+		let passes = 0;
+		const onePass = { hostInstance: "successor", shouldReopen: () => passes++ === 0 };
+		await reopenHandoverParkedSessions(open, agentDir, socket, onePass);
+		expect(open).not.toHaveBeenCalled();
+		expect(await readHandoverParkedSessions(daemonDir)).toHaveLength(1);
+
+		// The same pid now belongs to a process started at another time: the writer that stamped it is gone.
+		const reused = { ...live, processStartedAtMs: live.processStartedAtMs - 10 * BOOT_INSTANT_TOLERANCE_MS };
+		await recordHandoverParkedSession(daemonDir, { ...park, residentWriter: reused });
+		passes = 0;
+		await reopenHandoverParkedSessions(open, agentDir, socket, onePass);
+		expect(open).toHaveBeenCalledTimes(1);
 	});
 });

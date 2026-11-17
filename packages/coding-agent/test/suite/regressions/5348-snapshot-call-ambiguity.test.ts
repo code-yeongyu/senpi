@@ -2,12 +2,12 @@ import { dirname } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, expect, it, vi } from "vitest";
-import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { compareAdmissionGoldens } from "./4272-admission-golden-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 import { FLAG, reconnect, recoveredRows } from "./5331-live-identity-support.ts";
 import { toolUse } from "./5346-stamp-host-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 // senpi#5348 (RULING-123 C3.4, RULING-122's fail-safe rule): two calls reusing one toolCallId inside ONE assistant
 // message are reduced oldest-open-first, so which execution state, hook, result and carrier belongs to which of them is
@@ -25,7 +25,7 @@ afterEach(async () => {
 	vi.unstubAllEnvs();
 	vi.restoreAllMocks();
 	vi.useRealTimers();
-});
+}, EVENT_SAFETY_MS);
 
 const rows = (cut: ReadonlyMap<string, Record<string, unknown>>, kind: string) =>
 	[...cut].filter(([key]) => key.startsWith(`${kind}/`)).map(([, row]) => row);
@@ -37,9 +37,10 @@ const terminalOf = (row: Record<string, unknown>) =>
  * member after the run, sorted by member id. Both families' ids are sequence-derived, so that order, and the uuid
  * aliases the normalizer assigns in it, are stable; the catalog pages settled rows in another order (by message id).
  * Keys are pinned as their rank and `hookRunId` (a host-wide hook counter) is masked, like golden j. A started call's
- * `startSequence` is masked too: docs/rpc.md (#5348) lists it among the per-id fields of a marked row and says
- * sequence-derived values are not stable across engine versions, and where the first session flush lands against the
- * first start is not ordered (senpi#5800). `null`, a call that never started, stays pinned.
+ * `startSequence` is masked too: docs/rpc.md (#5348) lists it among the per-id fields of a marked row that must not
+ * be presented as that call's state, and its value is a record sequence that no contract orders against the session's
+ * first flush, which the prepared pipeline can sequence before the first start (senpi#5800). `null`, a call that never
+ * started, stays pinned.
  */
 function golden(...cuts: ReadonlyMap<string, Record<string, unknown>>[]): unknown {
 	const keys: unknown[] = [];
@@ -65,13 +66,11 @@ async function openSession() {
 	// A fixed chunk size: the faux provider otherwise draws one per delta, which moves every lane sequence.
 	host = await statusHost({ tokenSize: { min: 64, max: 64 } });
 	const run = host;
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(run);
 	const legacy = run.client("legacy");
 	const routing = String(dataOf(await legacy.request({ type: "open_session", cwd: run.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
-	admissions.mockRestore();
+	const entry = admissions.entryFor(routing);
+	admissions.restore();
 	const session = entry?.runtime?.session ?? expect.unreachable("no in-process session");
 	run.client("compact");
 	run.writer.setConnectionCapabilities("compact", ["compact_events"]);

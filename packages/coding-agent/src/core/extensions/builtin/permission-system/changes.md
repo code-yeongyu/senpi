@@ -1,5 +1,66 @@
 # Permission System Builtin Extension
 
+## 2026-11-14 - The permission check reads ctx.signal unguarded again (senpi#6679)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `authorizeToolCall` reads `ctx.signal` directly; the `sessionManager` guard from #6676 is gone.
+
+### Why
+
+- A context without a session now serves `signal` (as `undefined`, or a signal its host bound), so the read no longer throws there, and the guard would have ignored a host-bound signal (#6676 review LOW).
+
+### Why an extension could not handle it
+
+- The read is inside the permission system's own `tool_call` handler.
+
+### Expected merge conflict zones
+
+- LOW: the head of `authorizeToolCall`.
+
+## 2026-11-14 - An unanswered permission prompt ends when its turn is aborted (senpi#6670)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `authorizeToolCall` falls back to `ctx.signal`, the turn's abort signal, when no dispatch signal is passed. The `tool_call` hook path now hands the permission prompt that signal, so `ctx.ui.select` receives it.
+
+### Why
+
+- The runner calls a `tool_call` handler with `(event, ctx)` only, so the prompt got no signal. A prompt nobody answers could then never end. Examples are a child's dialog forwarded to a host that does not render it, and a viewer on another device. The turn waited at its first gated call, and an abort could not release it (senpi#6670, oh-my-openagent#13441).
+
+### Why an extension could not handle it
+
+- The prompt is raised inside the permission system's own `tool_call` handler; no other extension can attach a signal to it.
+
+### Expected merge conflict zones
+
+- LOW: the head of `authorizeToolCall` in `permission-system/index.ts`.
+
+## 2026-11-10 - A tool-owned permission request keeps autoApproveAsk (senpi#6305)
+
+### What changed
+
+- `parsers.ts`: `toolOwnedPermissionRequests` passes a tool's `autoApproveAsk` through instead of dropping it, so a tool can ask the system to approve an `ask` decision for a call while `allow` and `deny` rules still match its request (an omo reply to the peer that messaged the run, oh-my-openagent#12954). `ToolPermissionRequest` (`core/extensions/types.ts`) declares the field.
+
+## 2026-11-08 - The preset is read per decision through the core override (senpi#6206)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/preset-registry.ts`: `registerDecisionPresetOverride` / `readDecisionPresetOverride`.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: the preset the rules load from is the override when the core sets one; an invalid `--permission-preset` keeps refusing every call (#2617).
+
+### Why
+
+- The delegated default and child inheritance decide per gated call, from state only the core has (remote approval-mode work, tracked privately).
+
+### Why an extension could not handle it
+
+- This is the builtin permission extension itself; the override is how the core feeds it.
+
+### Expected merge conflict zones
+
+- LOW: `loadPermissionRules` and `followPresetFlag`.
+
 ## 2026-10-29 - Confirm paths on every measured local filesystem type (senpi#4790)
 
 ### What changed

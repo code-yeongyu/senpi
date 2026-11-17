@@ -122,6 +122,8 @@ type RealHostOptions = {
 	env?: Readonly<Record<string, string>>;
 	extension?: string;
 	afterLockAcquired?: () => Promise<void>;
+	/** Runs after the host was spawned and before the ensure registers and probes it. */
+	beforePidFileWrite?: () => Promise<void>;
 	/** Return while the gc pass the ensure scheduled may still run; by default it has finished first. */
 	gcPassInFlight?: boolean;
 };
@@ -149,6 +151,7 @@ export async function heldRealHost(
 			readinessTimeoutMs: 60_000,
 			launch: supervisorLaunch,
 			...(options.afterLockAcquired && { afterLockAcquired: options.afterLockAcquired }),
+			...(options.beforePidFileWrite && { beforePidFileWrite: options.beforePidFileWrite }),
 		},
 	});
 	ensured.push({ socket, agentDir: qa.agentDir });

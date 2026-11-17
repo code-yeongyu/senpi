@@ -12,12 +12,14 @@ import { answerWarm } from "./host-warm.ts";
 import { answerRecoveryPage, answerReleaseRecovery } from "./recovery-page-command.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
+import { compactTransportDisabled } from "./compact-transport-refusal.ts";
 import { RPC_ERROR_MISSING_SESSION_ID } from "./rpc-types.ts";
+import { answerListHands, answerSelectHand } from "./hand-selection-commands.ts";
 import { attachSession, reclaimSession, releaseAttachment } from "./session-attachment-commands.ts";
 import { attachmentGate } from "./session-attachment-gate.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { dispatchSessionBinding } from "./session-held.ts";
-import { moveSession } from "./session-move-commands.ts";
+import { routeMoveSession } from "./session-move-router.ts";
 import { releaseSession } from "./session-release.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
 import { close, tearDownUnloaded } from "./session-router-close.ts";
@@ -27,6 +29,8 @@ import { answerListSessions, answerProtocolInfo, answerSubscriptionLimits } from
 import { acknowledgePrompt, otherRequestsSettled } from "./session-router-observation.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { openWithBarrier } from "./session-router-open.ts";
+import { claimSession, parkSession } from "./session-router-park.ts";
+import { syncRetainedRecord } from "./session-router-residency.ts";
 import {
 	answerSetSessionContext,
 	answerSubscribeSessions,
@@ -49,6 +53,9 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 }
 
 function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
+	if ("sessionId" in command && command.sessionId !== undefined && host.registry.peek(command.sessionId)?.speculative)
+		return Promise.resolve(error(command.id, command.type, "unknown_session"));
+	if (command.type === "park_session") return parkSession(host, command);
 	const refusal = attachmentGate(host, command) ?? compactAdmissionGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
 	// RULING-111 (LEAK-B/C): the host-side pre-declaration belongs to the compact negotiation; with the flag off a
@@ -95,7 +102,7 @@ function otherAttachments(host: RouterContext, caller: string | undefined, sessi
 
 export async function dispatch(
 	host: RouterContext,
-	command: Exclude<RpcCommand, { type: "warm" }>,
+	command: Exclude<RpcCommand, { type: "warm" | "park_session" }>,
 ): Promise<RpcResponse | undefined> {
 	if (command.type === "reset_stream" && host.admissions) return resetStream(host, command);
 	if (command.type === "cancel_attempt" && host.admissions !== undefined) {
@@ -105,12 +112,17 @@ export async function dispatch(
 		const outcome = await host.admissions.cancel(epoch, command.admissionId);
 		return { id: command.id, type: "response", command: "cancel_attempt", success: true, data: { outcome } };
 	}
+	if ((command.type === "reset_stream" || command.type === "cancel_attempt") && host.admissions === undefined)
+		return compactTransportDisabled(command);
 	if (command.type === "get_protocol_info") return answerProtocolInfo(host, command);
 	if (command.type === "get_subscription_limits") return answerSubscriptionLimits(command);
 	if (command.type === "list_sessions") return answerListSessions(host, command);
+	if (command.type === "list_hands") return answerListHands(host, command);
+	if (command.type === "select_hand") return answerSelectHand(host, command);
 	if (command.type === "detach_connection")
 		return detachConnection(command, host.writer.currentConnection(), (id) => releaseConnection(host, id));
 	if (command.type === "open_session") return openWithBarrier(host, command);
+	if (command.type === "claim_session") return claimSession(host, command);
 	if (command.type === "attach_session") return attachSession(host, command);
 	if (command.type === "release_attachment") return releaseAttachment(host, command);
 	if (command.type === "reclaim_session") return reclaimSession(host, command);
@@ -131,23 +143,7 @@ export async function dispatch(
 			},
 			command,
 		);
-	if (command.type === "move_session") {
-		const agentDir = host.registry.agentDir;
-		if (agentDir === undefined)
-			return error(
-				command.id,
-				command.type,
-				"move_unsupported: this host keeps no agent directory to move sessions in",
-			);
-		return moveSession(
-			{
-				agentDir,
-				hostedPaths: () =>
-					host.registry.list().flatMap((row) => (row.sessionPath === undefined ? [] : [row.sessionPath])),
-			},
-			command,
-		);
-	}
+	if (command.type === "move_session") return routeMoveSession(host, command);
 	if (command.type === "unload_session") {
 		const caller = host.writer.currentConnection();
 		return unloadSession(
@@ -221,6 +217,8 @@ export async function dispatch(
 		return answerRecoveryPage(host.writer.recoveryPages, host.writer, command);
 	if (command.type === "release_recovery" && host.writer.recoveryEvents !== undefined)
 		return answerReleaseRecovery(host.writer.recoveryEvents, host.writer, command);
+	if (command.type === "get_recovery_page" || command.type === "release_recovery")
+		return compactTransportDisabled(command);
 	if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 	const sessionId = command.sessionId;
 	if (host.writer.isSessionSealed(sessionId) && host.registry.peek(sessionId)?.state === "open")
@@ -254,7 +252,11 @@ export function setSessionContext(
 		return notAttachedRefusal(command);
 	try {
 		const entry = host.registry.getForCommand(command.sessionId, command.type);
-		return answerSetSessionContext(command, entry, host.writer.status);
+		const answered = answerSetSessionContext(command, entry, host.writer.status);
+		// The record carries the overlay a restart reopens the session with (a terminal task_status
+		// is not reopened at all), so it follows each accepted patch.
+		if (answered.success) void syncRetainedRecord(host, command.sessionId, undefined);
+		return answered;
 	} catch (cause) {
 		return error(command.id, command.type, code(cause), detail(cause));
 	}

@@ -6,17 +6,10 @@
  * so a method added to the engine is covered here the moment it is classified.
  *
  * Records travel over a real Unix socket through the bare host's public-key filter (`PublicRpcConnection`) into the
- * per-connection dispatch `runSocketHost` builds, on the in-process registry, with a faux provider.
+ * per-connection dispatch `createHostCore` builds, on the in-process registry, with a faux provider
+ * (`rpc-delegated-host-support.ts`).
  */
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { connect, createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseArgs } from "../../src/cli/args.ts";
-import { createCliRuntimeFactory } from "../../src/main.ts";
-import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import {
 	classifyRpcMethod,
 	describeRpcMethodClasses,
@@ -26,22 +19,29 @@ import {
 	type RpcMethodType,
 } from "../../src/modes/rpc/method-classes.ts";
 import { validateRpcInboundRecord } from "../../src/modes/rpc/method-classes-schema.ts";
-import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
-import { connectAuthenticatedRpcSocket } from "../../src/modes/rpc/rpc-auth-client.ts";
-import { PublicRpcConnection } from "../../src/modes/rpc/rpc-public-auth.ts";
-import { RpcPublicEndpoint } from "../../src/modes/rpc/rpc-public-key.ts";
 import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
-import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
-import { socketSink } from "../../src/modes/rpc/socket-sink.ts";
 import { corpusRequest, NO_ID, type Opened, TODAY } from "../characterization/rpc-method-surface-corpus.ts";
-
-type WireRecord = Record<string, unknown>;
+import {
+	type DelegatedHost,
+	declare,
+	type Peer,
+	PRINCIPAL,
+	SECRET_COMMAND,
+	startHost,
+	type WireRecord,
+} from "./rpc-delegated-host-support.ts";
 
 /**
- * `RPC_METHOD_CLASSES_DIGEST` on main as of the last merge (fecca3f8ca, which added `account_reset`): this change adds
- * methods outside the table, never a table entry, so the branch digest equals main's.
+ * `RPC_METHOD_CLASSES_DIGEST` at the base this test runs on: main (with `list_hands` (observe) and `select_hand`
+ * (device_admin) in the table, senpi#5938) plus senpi#5379, which moves `set_model` from `device_admin` to `dynamic`,
+ * and senpi#6177, which adds `get_project_trust` (observe) and `set_project_trust`, `get_project_settings`, `set_project_setting`
+ * (device_admin), and senpi#6307, which adds `read_project_file` and `write_project_file` (device_admin).
+ * Delegated connections add methods outside the table, never a table entry.
  */
-const DIGEST_ON_BASE = "4df5316e9c2712173b8338fdeb1bb1a78ae1f2c3da8b8ac694e1f3cc7c8382ed";
+// senpi#6344 adds two cwd-naming device_admin commands: park_session and claim_session.
+// senpi#6485 adds get_project_mcp_servers, set_project_mcp_servers, read_project_skill_file and write_project_skill_file (device_admin).
+// set_session_archived (drive) writes a session's archived flag; set_session_settled (drive) its Done flag.
+const DIGEST_ON_BASE = "e7513835c111bcbd7bfa9d342744d0bb0b5112cb9c84a2321e9741a76013d15e";
 const FORWARDABLE = [
 	"observe",
 	"drive",
@@ -59,11 +59,7 @@ const CONNECTION_LOCAL_NEEDS: Partial<Record<RpcMethodType, RpcMethodClass>> = {
 	reclaim_session: "device_admin",
 	move_session: "device_admin",
 };
-const PRINCIPAL = { deviceId: "x5632-device" };
-const LEAN_ARGS = ["--mode", "rpc", "--multi-session", "--no-extensions", "--no-skills", "--no-context-files"];
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
-const SECRET_COMMAND = "x5632-secret";
-const ANSWER_DEADLINE_MS = 20_000;
 
 /**
  * The three inbound types that are not `RpcCommand`s answer a request by its `id`; each gets a record here, typed so a
@@ -74,167 +70,6 @@ const NON_COMMAND: { readonly [K in Exclude<RpcMethodType, RpcCommand["type"]>]:
 	extension_ui_progress: (sessionId) => ({ sessionId, answers: {} }),
 	host_response: (sessionId) => ({ sessionId, data: {} }),
 };
-
-class Peer {
-	private readonly answers = new Map<string, (record: WireRecord) => void>();
-	private readonly frames: WireRecord[] = [];
-	private readonly watchers = new Set<(record: WireRecord) => void>();
-	private serial = 0;
-	readonly socket: Socket;
-	readonly name: string;
-
-	constructor(socket: Socket, name: string) {
-		this.socket = socket;
-		this.name = name;
-		attachJsonlLineReader(socket, (line) => {
-			const record = JSON.parse(line) as WireRecord;
-			if (record.type === "response" && typeof record.id === "string") this.answers.get(record.id)?.(record);
-			this.frames.push(record);
-			for (const watch of this.watchers) watch(record);
-		});
-	}
-
-	nextId(): string {
-		return `${this.name}-${++this.serial}`;
-	}
-
-	send(record: WireRecord): Promise<WireRecord> {
-		const id = typeof record.id === "string" ? record.id : this.nextId();
-		const answered = this.answer(id, String(record.type));
-		this.socket.write(`${JSON.stringify({ ...record, id })}\n`);
-		return answered;
-	}
-
-	/**
-	 * For a record the host may answer with nothing (an answer to a dialog nobody raised): resolves with its response if
-	 * one precedes the answer to a `get_protocol_info` sent right behind it on this connection, else `undefined`.
-	 */
-	async sendSettled(record: WireRecord): Promise<WireRecord | undefined> {
-		const id = this.nextId();
-		let answer: WireRecord | undefined;
-		this.answers.set(id, (response) => {
-			answer = response;
-		});
-		this.socket.write(`${JSON.stringify({ ...record, id })}\n`);
-		const sentinel = this.send({ type: "get_protocol_info", observe: true });
-		await sentinel;
-		this.answers.delete(id);
-		return answer;
-	}
-
-	answer(id: string, type = "record"): Promise<WireRecord> {
-		return new Promise<WireRecord>((resolve, reject) => {
-			const timer = setTimeout(
-				() => reject(new Error(`${this.name}: no answer to ${type} ${id}`)),
-				ANSWER_DEADLINE_MS,
-			);
-			this.answers.set(id, (record) => {
-				clearTimeout(timer);
-				this.answers.delete(id);
-				resolve(record);
-			});
-		});
-	}
-
-	frame(predicate: (record: WireRecord) => boolean): Promise<WireRecord> {
-		const seen = this.frames.find(predicate);
-		if (seen) return Promise.resolve(seen);
-		return new Promise<WireRecord>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.watchers.delete(watch);
-				reject(new Error(`${this.name}: no matching frame`));
-			}, ANSWER_DEADLINE_MS);
-			const watch = (record: WireRecord) => {
-				if (!predicate(record)) return;
-				clearTimeout(timer);
-				this.watchers.delete(watch);
-				resolve(record);
-			};
-			this.watchers.add(watch);
-		});
-	}
-}
-
-async function startHost() {
-	const scratch = await mkdtemp(join(tmpdir(), "x5632-"));
-	const cwd = join(scratch, "cwd");
-	const agentDir = join(scratch, "agent");
-	await mkdir(cwd);
-	await mkdir(agentDir, { mode: 0o700 });
-	for (const name of ["SENPI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) vi.stubEnv(name, agentDir);
-	vi.stubEnv("SENPI_RPC_KEY_ROOT", agentDir);
-	const faux = fauxProvider({ models: [{ id: "faux-1", reasoning: false, contextWindow: 128_000 }] });
-	const writer = new SessionEventWriter(() => {});
-	const core = createHostCore(
-		{
-			agentDir,
-			cwd,
-			permissionPreset: "full-access",
-			createRuntime: createCliRuntimeFactory(
-				{ parsed: parseArgs(LEAN_ARGS), cwd, agentDir, appMode: "rpc" },
-				{
-					extensionFactories: [
-						(pi) => {
-							pi.registerProvider(faux.provider);
-							pi.registerCommand(SECRET_COMMAND, {
-								description: "asks for a secret",
-								handler: async (_args, ctx) => {
-									await ctx.ui.input("Key", undefined, { secret: true });
-								},
-							});
-						},
-					],
-				},
-			),
-			creationModel: { provider: faux.getModel().provider, modelId: "faux-1" },
-		},
-		writer,
-		[],
-	);
-	const socketPath = join(scratch, "s");
-	const endpoint = new RpcPublicEndpoint(agentDir, socketPath);
-	await endpoint.publish();
-	const sockets = new Set<Socket>();
-	let connections = 0;
-	// The bare host's wiring: the public-key filter in front of the per-connection dispatch, the connection
-	// registered with the proof the filter delivers in band.
-	const server: Server = createServer((raw) => {
-		sockets.add(raw);
-		const id = `socket-${++connections}`;
-		const stream = new PublicRpcConnection(raw, endpoint, false).stream;
-		stream.on("error", () => {});
-		writer.registerConnection(id, socketSink(stream), { launchProof: "in_band" });
-		raw.once("close", () => {
-			sockets.delete(raw);
-			writer.unregisterConnection(id);
-		});
-		attachJsonlLineReader(stream, (line) => void writer.withConnection(id, () => core.handle(line)));
-	});
-	await new Promise<void>((resolve) => server.listen(socketPath, resolve));
-	let peers = 0;
-	return {
-		scratch,
-		async proven(): Promise<Peer> {
-			const { socket } = await connectAuthenticatedRpcSocket(socketPath, undefined, { keyRoot: agentDir });
-			return new Peer(socket, `p${++peers}`);
-		},
-		async keyless(): Promise<Peer> {
-			const socket = connect(socketPath);
-			await new Promise<void>((resolve) => socket.once("connect", resolve));
-			const peer = new Peer(socket, `k${++peers}`);
-			expect(await peer.send({ type: "get_protocol_info" })).toMatchObject({ success: true });
-			return peer;
-		},
-		async dispose(): Promise<void> {
-			await core.router.dispose();
-			for (const socket of sockets) socket.destroy();
-			await new Promise<void>((resolve) => server.close(() => resolve()));
-			await endpoint.dispose();
-			await rm(scratch, { recursive: true, force: true });
-			vi.unstubAllEnvs();
-		},
-	};
-}
 
 /** Acceptance and reply shape, as X14 compares them: `ok{sorted data keys}` or `no:<errorCode>:<error>`. */
 function signature(record: WireRecord | undefined, method: string, scratch: string): string {
@@ -278,7 +113,10 @@ const VALIDATOR_REFUSED: ReadonlySet<RpcMethodType> = new Set<RpcMethodType>([
 	"set_retry_fallback",
 ]);
 
-let host: Awaited<ReturnType<typeof startHost>>;
+/** For a test that opens several sessions or starts a host of its own: such a test took up to 21 s on a busy machine. */
+const SEVERAL_OPENS_MS = 120_000;
+
+let host: DelegatedHost;
 
 function sendFor(peer: Peer, type: RpcMethodType, record: WireRecord): Promise<WireRecord | undefined> {
 	return Object.hasOwn(NON_COMMAND, type) ? peer.sendSettled(record) : peer.send(record);
@@ -290,10 +128,6 @@ async function recordFor(type: RpcMethodType): Promise<WireRecord> {
 	return Object.hasOwn(TODAY, type)
 		? corpusRequest(type, TODAY[type as RpcCommand["type"]], opened, host.scratch).record
 		: { type, ...NON_COMMAND[type as keyof typeof NON_COMMAND](opened.sessionId) };
-}
-
-async function declare(peer: Peer, granted: readonly string[], principal: object = PRINCIPAL) {
-	return peer.send({ type: "declare_delegation", principal, granted });
 }
 
 // vitest restores stubbed env before every test (`unstubEnvs`), so the host behaviour this suite compares against X14
@@ -319,50 +153,81 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		expect(RPC_METHOD_CLASSES_DIGEST).toBe(DIGEST_ON_BASE);
 	});
 
-	it("runs every permitted type of the table as on a local connection and refuses the rest, for each grant set", async () => {
-		const local = await host.proven();
-		const grantSets: ReadonlyArray<readonly RpcMethodClass[]> = [...FORWARDABLE.map((c) => [c]), FORWARDABLE];
-		const delegated = await Promise.all(
-			grantSets.map(async (granted) => {
-				const peer = await host.proven();
-				expect(await declare(peer, granted)).toMatchObject({ success: true, data: { granted } });
-				return { granted: new Set<RpcMethodClass>(granted), peer };
-			}),
-		);
-		const mismatches: string[] = [];
-		const types = Object.keys(RPC_METHOD_CLASS) as RpcMethodType[];
-		expect(types.length).toBeGreaterThan(100);
-		for (const type of VALIDATOR_REFUSED)
-			expect(validateRpcInboundRecord({ ...(await recordFor(type)), id: "x" }).ok, type).toBe(false);
-		for (const type of types) {
-			// A refused record never reaches a session, so it reuses the record the local connection ran; only a dispatched
-			// one gets a fresh session. Grant sets run one after another: device-wide writers (credentials, settings) share
-			// state across sessions, so running them concurrently would compare contention, not delegation.
-			const shared = await recordFor(type);
-			const required = requirement(type, shared);
-			const expected = signature(await sendFor(local, type, shared), type, host.scratch);
-			for (const { granted, peer } of delegated) {
-				const refusal = required === "self" || granted.has(required.needs) ? undefined : required;
-				const answer = await sendFor(peer, type, refusal === undefined ? await recordFor(type) : shared);
-				const label = `${type} on [${[...granted].join(",")}]`;
-				if (refusal === undefined) {
-					const actual = signature(answer, type, host.scratch);
-					if (actual !== expected) mismatches.push(`${label}: ran as ${actual}, local ${expected}`);
-				} else if (
-					answer === undefined ||
-					answer.success !== false ||
-					answer.command !== type ||
-					answer.errorCode !== refusal.refusal ||
-					(answer.errorData as WireRecord | undefined)?.class !== refusal.needs
-				) {
-					mismatches.push(
-						`${label}: expected ${refusal.refusal}(${refusal.needs}), got ${JSON.stringify(answer)}`,
-					);
+	// senpi#6534: the sweep runs the whole method table once on a local connection and once per grant set. As one test
+	// it took most of a 400 s bound, and on a busy machine it timed out. It is cut into ranges of the table, in the
+	// table's own order, so no single test carries it. Every range makes the same comparison, and one more test holds
+	// that the ranges cover the table.
+	const TYPES = Object.keys(RPC_METHOD_CLASS) as RpcMethodType[];
+	const RANGES = 4;
+	const RANGE_SIZE = Math.ceil(TYPES.length / RANGES);
+	const ranges = Array.from({ length: RANGES }, (_, index) => {
+		const types = TYPES.slice(index * RANGE_SIZE, (index + 1) * RANGE_SIZE);
+		return [`${index + 1} of ${RANGES}, ${types[0]} to ${types[types.length - 1]}`, types] as const;
+	});
+	/**
+	 * Measured alone on a busy machine, the slowest range took 178 s and the four together 476 s. The single test they
+	 * replace took 368 s of a 400 s bound on the same machine.
+	 */
+	const RANGE_BOUND_MS = 300_000;
+
+	it("cuts the table into ranges that cover every type once, in the table's order", () => {
+		expect(TYPES.length).toBeGreaterThan(100);
+		expect(ranges.flatMap(([, types]) => types)).toEqual(TYPES);
+	});
+
+	it(
+		"builds, for each record the validator must refuse, a record it refuses",
+		async () => {
+			for (const type of VALIDATOR_REFUSED)
+				expect(validateRpcInboundRecord({ ...(await recordFor(type)), id: "x" }).ok, type).toBe(false);
+		},
+		SEVERAL_OPENS_MS,
+	);
+
+	it.each(ranges)(
+		"runs every permitted type of the table as on a local connection and refuses the rest, for each grant set (range %s)",
+		async (_range, types) => {
+			const local = await host.proven();
+			const grantSets: ReadonlyArray<readonly RpcMethodClass[]> = [...FORWARDABLE.map((c) => [c]), FORWARDABLE];
+			const delegated = await Promise.all(
+				grantSets.map(async (granted) => {
+					const peer = await host.proven();
+					expect(await declare(peer, granted)).toMatchObject({ success: true, data: { granted } });
+					return { granted: new Set<RpcMethodClass>(granted), peer };
+				}),
+			);
+			const mismatches: string[] = [];
+			for (const type of types) {
+				// A refused record never reaches a session, so it reuses the record the local connection ran; only a dispatched
+				// one gets a fresh session. Grant sets run one after another: device-wide writers (credentials, settings) share
+				// state across sessions, so running them concurrently would compare contention, not delegation.
+				const shared = await recordFor(type);
+				const required = requirement(type, shared);
+				const expected = signature(await sendFor(local, type, shared), type, host.scratch);
+				for (const { granted, peer } of delegated) {
+					const refusal = required === "self" || granted.has(required.needs) ? undefined : required;
+					const answer = await sendFor(peer, type, refusal === undefined ? await recordFor(type) : shared);
+					const label = `${type} on [${[...granted].join(",")}]`;
+					if (refusal === undefined) {
+						const actual = signature(answer, type, host.scratch);
+						if (actual !== expected) mismatches.push(`${label}: ran as ${actual}, local ${expected}`);
+					} else if (
+						answer === undefined ||
+						answer.success !== false ||
+						answer.command !== type ||
+						answer.errorCode !== refusal.refusal ||
+						(answer.errorData as WireRecord | undefined)?.class !== refusal.needs
+					) {
+						mismatches.push(
+							`${label}: expected ${refusal.refusal}(${refusal.needs}), got ${JSON.stringify(answer)}`,
+						);
+					}
 				}
 			}
-		}
-		expect(mismatches).toEqual([]);
-	}, 400_000);
+			expect(mismatches).toEqual([]);
+		},
+		RANGE_BOUND_MS,
+	);
 
 	it("refuses an unclassified type and a record that is not an object with a string type", async () => {
 		const peer = await host.proven();
@@ -515,5 +380,139 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		const info = await opener.send({ type: "get_protocol_info" });
 		expect((info.data as WireRecord).method_classes).toEqual(describeRpcMethodClasses());
 		expect((info.data as { capabilities: string[] }).capabilities).toContain("delegated_connection_v1");
+	});
+});
+
+/**
+ * senpi#5808: a delegated connection is a forwarder's channel for one viewer, so it ends whenever that viewer leaves.
+ * The session it opened belongs to the forwarder, which keeps serving it to the next viewer: every open on a delegated
+ * connection is retained, whatever `retain_on_disconnect` says, so its end detaches and never closes. A connection that
+ * never declared keeps today's rule: closed with its last client unless it asked to be retained.
+ */
+describe("senpi#5808: a session opened over a delegated connection outlives that connection", () => {
+	type Row = { sessionId: string; durableSessionId: string; retain_on_disconnect: boolean; attachments: number };
+
+	async function rows(): Promise<Row[]> {
+		return ((await opener.send({ type: "list_sessions" })).data as { sessions: Row[] }).sessions;
+	}
+
+	async function delegatedPeer(granted: readonly string[] = FORWARDABLE): Promise<Peer> {
+		const peer = await host.proven();
+		expect(await declare(peer, granted)).toMatchObject({ success: true });
+		return peer;
+	}
+
+	async function openedThenDropped(peer: Peer, record: WireRecord = {}): Promise<string> {
+		const { sessionId } = (await peer.send({ type: "open_session", ...record })).data as Opened;
+		await host.drop(peer);
+		return sessionId;
+	}
+
+	it("stays open, listed and attachable from a new connection after the delegated opener ends", async () => {
+		const sessionId = await openedThenDropped(await delegatedPeer());
+		const next = await delegatedPeer();
+		const row = (await rows()).find((candidate) => candidate.sessionId === sessionId);
+		expect(row).toMatchObject({ status: "open", attachments: 0, retain_on_disconnect: true });
+		expect(
+			await next.send({ type: "attach_session", sessionId, durableSessionId: row?.durableSessionId }),
+		).toMatchObject({ success: true, data: { attached: true } });
+		expect(await next.send({ type: "get_state", sessionId })).toMatchObject({
+			success: true,
+			data: { sessionId: row?.durableSessionId },
+		});
+	});
+
+	it("retains a delegated open whatever retain_on_disconnect it sends", async () => {
+		const asksFalse = await openedThenDropped(await delegatedPeer(), { retain_on_disconnect: false });
+		const asksTrue = await openedThenDropped(await delegatedPeer(), { retain_on_disconnect: true });
+		const listed = await rows();
+		for (const sessionId of [asksFalse, asksTrue])
+			expect(listed.find((row) => row.sessionId === sessionId)).toMatchObject({
+				attachments: 0,
+				retain_on_disconnect: true,
+			});
+	});
+
+	it(
+		"decides at line receipt: an open whose delegated connection ends before it is dispatched is retained",
+		async () => {
+			// Its own host (senpi#6534): the test counts the sessions that appear, so nothing else may open one beside it. On
+			// the shared host a sweep cut off at its bound left an open in flight, and this test counted that one too.
+			const own = await startHost();
+			try {
+				const lister = await own.proven();
+				const listed = async () =>
+					((await lister.send({ type: "list_sessions" })).data as { sessions: Row[] }).sessions;
+				const id = "x5808-ends-before-dispatch";
+				own.writer.registerConnection(
+					id,
+					{ writeRaw: () => {}, waitForBackpressure: async () => {} },
+					{ launchProof: "proven" },
+				);
+				const line = (record: WireRecord) =>
+					own.writer.withConnection(id, () => own.core.handle(JSON.stringify(record)));
+				await line({ type: "declare_delegation", principal: PRINCIPAL, granted: FORWARDABLE });
+				const before = new Set((await listed()).map((row) => row.sessionId));
+				// handle() reads the line synchronously up to its first await; the connection ends right behind that.
+				const opening = line({ type: "open_session" });
+				own.writer.unregisterConnection(id);
+				await opening;
+				await own.core.router.releaseConnection(id);
+				const opened = (await listed()).filter((row) => !before.has(row.sessionId));
+				expect(opened).toHaveLength(1);
+				expect(opened[0]).toMatchObject({ attachments: 0, retain_on_disconnect: true });
+			} finally {
+				await own.dispose();
+			}
+		},
+		SEVERAL_OPENS_MS,
+	);
+
+	it("keeps a connection that never declared on today's rule: closed with it unless it asked to be retained", async () => {
+		const local = await host.proven();
+		const sessionIdOf = async (record: WireRecord) =>
+			((await local.send({ type: "open_session", ...record })).data as Opened).sessionId;
+		const omitted = await sessionIdOf({});
+		const asksFalse = await sessionIdOf({ retain_on_disconnect: false });
+		const asksTrue = await sessionIdOf({ retain_on_disconnect: true });
+		await host.drop(local);
+		const next = await host.proven();
+		for (const sessionId of [omitted, asksFalse])
+			expect(await next.send({ type: "get_state", sessionId })).toMatchObject({
+				success: false,
+				error: "unknown_session",
+			});
+		expect(await next.send({ type: "get_state", sessionId: asksTrue })).toMatchObject({ success: true });
+	});
+
+	it("never turns retention on through attach_session on a delegated connection", async () => {
+		const owner = await host.proven();
+		const { sessionId } = (await owner.send({ type: "open_session" })).data as Opened;
+		const row = (await rows()).find((candidate) => candidate.sessionId === sessionId);
+		const viewer = await delegatedPeer(["observe", "thread"]);
+		expect(
+			await viewer.send({ type: "attach_session", sessionId, durableSessionId: row?.durableSessionId }),
+		).toMatchObject({ success: true });
+		expect((await rows()).find((candidate) => candidate.sessionId === sessionId)).toMatchObject({
+			attachments: 2,
+			retain_on_disconnect: false,
+		});
+		await host.drop(viewer);
+		expect((await rows()).find((candidate) => candidate.sessionId === sessionId)).toMatchObject({
+			attachments: 1,
+			retain_on_disconnect: false,
+		});
+		await host.drop(owner);
+		expect((await rows()).some((candidate) => candidate.sessionId === sessionId)).toBe(false);
+	});
+
+	it("still refuses an open the delegation did not grant", async () => {
+		const delegated = await delegatedPeer(["observe"]);
+		const before = (await rows()).length;
+		expect(await delegated.send({ type: "open_session" })).toMatchObject({
+			success: false,
+			errorCode: "delegation_not_granted",
+		});
+		expect(await rows()).toHaveLength(before);
 	});
 });

@@ -91,7 +91,12 @@ async function releaseConnectionHolds(host: RouterContext, connectionId: string)
 		connectionLeft(host, sessionId, connectionId);
 	}
 	// The socket is gone (dropped, not `detach_connection`): nothing will ever open with its capabilities again.
-	if (!host.writer.hasConnection(connectionId)) host.pendingCapabilities.delete(connectionId);
+	// The delegation record and its claims end here too (omo-relay-daemon#307): a `detach_connection` never reaches this.
+	if (!host.writer.hasConnection(connectionId)) {
+		host.pendingCapabilities.delete(connectionId);
+		host.writer.delegations.forget(connectionId);
+		host.connectionRoles.forget(connectionId);
+	}
 	const opens = host.opensByConnection.get(connectionId);
 	const owned = host.sessionsByConnection.get(connectionId);
 	host.sessionsByConnection.delete(connectionId);

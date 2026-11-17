@@ -1,13 +1,17 @@
-import type { ProviderEnv, ProviderHeaders } from "../types.ts";
+import type { Api, Model, ProviderEnv, ProviderHeaders } from "../types.ts";
 
 /**
  * Request auth for a single model request. If a value cannot be expressed as
- * `apiKey`, `headers`, or `baseUrl`, it is provider config, not auth.
+ * `apiKey`, `headers`, `baseUrl`, or the credential's chat route, it is provider config, not auth.
  */
 export interface ModelAuth {
 	apiKey?: string;
 	headers?: ProviderHeaders;
 	baseUrl?: string;
+	/** Credential-selected chat transport; absent preserves the selected model's API. */
+	api?: Api;
+	/** Request restrictions belonging to the selected credential's chat route. */
+	compat?: Model<Api>["compat"];
 }
 
 /**
@@ -27,6 +31,8 @@ export interface OAuthCredentials {
 	refresh: string;
 	access: string;
 	expires: number;
+	/** ChatGPT slots without a route retain the legacy Codex protocol. */
+	route?: "siwc" | "codex";
 	[key: string]: unknown;
 }
 
@@ -282,6 +288,11 @@ export interface LoginOptions {
 	 * an account; callers must not infer this from the provider's active credential.
 	 */
 	reauthorize?: OAuthCredential;
+	/**
+	 * The saved account name of `reauthorize`. The login then restores that account in place, signed-out ones
+	 * included, instead of matching by token or appending another `login-N` copy of it.
+	 */
+	reauthorizeSlot?: string;
 	/**
 	 * Returns the stable ID of this app installation, e.g. sent to OpenAI as its
 	 * agent host ID. Called only by login flows that need it, so apps can create

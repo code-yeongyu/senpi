@@ -166,6 +166,22 @@ describe("Ultrafast service-tier selection", () => {
 		}
 	});
 
+	it("does not warn for a pinned Ultrafast variant selected with :ultrafast", () => {
+		// senpi#2978: the documented-model check must use the upstream id, as the pricing code does.
+		const solUltrafast = getModel(PROVIDER, "gpt-6.1-sol-ultrafast");
+		const resolved = parseModelPattern(`${PROVIDER}/gpt-6.1-sol-ultrafast:ultrafast`, [solUltrafast]);
+		expect(resolved).toMatchObject({ model: solUltrafast, serviceTier: "ultrafast" });
+		expect(resolved.warning).toBeUndefined();
+
+		const sol = getModel(PROVIDER, "gpt-6.1-sol");
+		const fast = { ...sol, id: "gpt-6.1-sol-fast", upstreamModelId: sol.id };
+		const resolvedFast = parseModelPattern(`${PROVIDER}/gpt-6.1-sol-fast:ultrafast`, [fast]);
+		expect(resolvedFast.warning).toBeUndefined();
+
+		const scope = resolveModelScopeFromModels([`${PROVIDER}/gpt-6.1-sol*:ultrafast`], [solUltrafast, fast]);
+		expect(scope.diagnostics).toEqual([]);
+	});
+
 	it("does not warn for the Sol Ultrafast alias with the service-tier extension loaded", async () => {
 		// #2975: the extension resolves the alias to its upstream id before warning.
 		const sol = getModel(PROVIDER, "gpt-6.1-sol-ultrafast");

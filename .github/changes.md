@@ -1,3 +1,225 @@
+## 2026-11-13 - The workspace matrix comment names the job that owns the senpi-codemode suite (senpi#6631)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the comment above `test-workspaces` says `codemode-tests` (not `codemode-gate`) runs the senpi-codemode `test` script, and that `scripts/ci-workspace-coverage.test.mjs` also fails when a workspace suite runs in two CI steps. Comment only; no job changes.
+
+### Why
+
+- senpi#6623 moved the codemode package suite from `codemode-gate` into `codemode-tests`, and the comment still named the old job. The coverage test now scans every step for every suite, so the comment states both of its failure modes.
+
+### Why an extension could not handle it
+
+- This is the repository's own CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the comment block above the `test-workspaces` job.
+
+## 2026-11-13 - CI runs the workspace suites in parallel and the senpi-codemode suite once (senpi#6620)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-workspaces` is a matrix of two groups, `ai` and `agent, tui and the rest`, each running `node scripts/run-workspaces.mjs --if-present <its --workspace flags> test`. Each leg needs `build-coding-agent` and restores its `workspace-dist` artifact first, because the workspace suites import packages through their built `dist` (the old job got it from its release-graph step). `scripts/ci-workspace-coverage.test.mjs` fails when a workspace test script runs in no CI job or in two, or when a suite-owning job is missing from `Check and test`'s `needs`. The script tests, release entry graphs and bundle smoke moved unchanged into the new `test-scripts` job ("Test (scripts)"). The codemode package tests moved out of `codemode-gate` into the new parallel `codemode-tests` job, and `packages/senpi-codemode` left the workspace list, so its suite runs once per run. `Check and test` needs both new jobs and lists them in its summary; its name is unchanged.
+
+### Why
+
+- In main run 43347262747 the workspace step ran ten suites one after another for 13.0 min, making `Test (workspaces + scripts)` the longest job (17.7 min), and 8 min of it repeated the senpi-codemode suite that `codemode-gate` also ran in full (339 files and 3079 tests in both steps). `codemode-gate` itself took 17.1 min with its eval gate and the package tests in series, although the tests read nothing the gate writes.
+
+### Why an extension could not handle it
+
+- This is the repository's own CI workflow.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `test-workspaces` job, the `codemode-gate` job and the `needs` list and summary of `check-and-test`.
+
+## 2026-11-13 - CI checks the publish set against the npm registry (senpi#6636)
+
+### What changed
+
+- `.github/workflows/registry-packages-published.yml` (new): on a PR that changes `scripts/registry-packages.mjs`, `scripts/npm-registry.mjs` or the workflow, and on main, runs `node scripts/npm-registry.mjs` and fails while a publish-set name is unknown to the npm registry.
+
+### Why
+
+- A PR that adds a package to the publish set should see the missing first publish at review time, not at the next release's publish step (senpi#6636).
+
+### Why an extension could not handle it
+
+- CI configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- None: the workflow is new.
+
+## 2026-11-13 - The npm publish dispatch no longer waits for the binary smoke (senpi#6627)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `publish-npm` job, which dispatches `publish-npm.yml` publish-only and awaits it, now needs `build` instead of `stage-github-release`. `stage-github-release` still needs the full `smoke-test-binaries` matrix, and `publish-github-release` still needs both `stage-github-release` and `publish-npm`.
+- `.github/workflows/build-binaries.yml`: the "Delete draft GitHub Release after failure" step of `cleanup-draft-github-release` passes `STAGE_JOB_RESULT: ${{ needs.stage-github-release.result }}` to `scripts/release-draft-cleanup.sh`, which now advises publishing a kept draft only when staging succeeded and otherwise prints re-stage steps.
+- `.github/workflows/build-binaries.yml`: a new job, `report-smoke-failure-after-npm`, needs `smoke-test-binaries` and `publish-npm` and runs only when the smoke failed after npm published and the run is not a dry run. It has only `actions: read` and `issues: write`, and nothing waits for it. It runs `scripts/release-smoke-failure-issue.mjs`, which opens an issue naming the version, each failing smoke OS, the run, and the rollback command `npm dist-tag add @code-yeongyu/senpi@<previous> latest`, and then exits non-zero so the run fails loudly. The previous version is read by npm publish time. No job moves a dist-tag.
+
+### Why
+
+- The smoke matrix checks the standalone binaries, which ship only as GitHub Release assets and never in the npm packages. Its macos-latest row queued 30.0 min in run 43048337284, and the npm publish waited behind it.
+- That smoke was the only pre-npm check that starts the CLI on macOS and Windows. A startup bug that shows only there no longer holds npm, so its failure after npm is reported with the rollback command instead.
+
+### Why an extension could not handle it
+
+- Release workflow job ordering is repository CI configuration, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `needs:` line and comment of the `publish-npm` job, and the env block of the cleanup step, in `build-binaries.yml`; the new `report-smoke-failure-after-npm` job sits between `publish-npm` and `publish-github-release`.
+
+## 2026-11-11 - CI tests the realm-registry package (omo#12965)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the workspace test step lists `packages/realm-registry`.
+
+### Why
+
+- The new helper package carries the adoption contract every registry relies on, so its tests run in CI.
+
+### Why an extension could not handle it
+
+- CI configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `--workspace` list of that step.
+
+## 2026-11-11 - The npm audit workflow fails on any advisory that is not on a reviewed, expiring exception list (senpi#6402)
+
+### What changed
+
+- `.github/workflows/npm-audit.yml`: the audit step runs `node scripts/npm-audit-gate.mjs .github/npm-audit-exceptions.json` instead of `npm audit --omit=dev --audit-level=moderate`. The threshold stays at moderate.
+- `scripts/npm-audit-gate.mjs` (new) follows each finding's `via` chain to its advisories, and passes a finding only when every advisory (id + package) is excepted. An exception that has expired, expires more than 30 days out, is missing a field, or matches no finding fails the gate.
+- `.github/npm-audit-exceptions.json` (new): one entry, GHSA-mrhx-c7xc-m3w5 for the zod 3.x copy that `@anthropic-ai/sandbox-runtime` requires (#6399), expiring 2026-12-10. An expiry that is not a real calendar date fails the gate.
+
+### Why
+
+- The zod 3.x copy required by `@anthropic-ai/sandbox-runtime` cannot take the fix (only 4.6.6+ has it), so `npm audit --audit-level=moderate` could never pass, and a red that cannot clear hides new advisories. The one exception is scoped to that advisory and package, is reviewed and expires, so any new advisory still turns the job red. node-forge and the engine's own zod pin are fixed in this PR instead (below).
+
+### Why an extension could not handle it
+
+- This is the repository's own CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the audit step in `.github/workflows/npm-audit.yml`.
+
+## 2026-11-06 - The forced release suite's budget comment describes the sharded run (senpi#6139)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: the `release` job's comment says `force_tests` runs coding-agent as parallel vitest shards (~60 min, bounded at 110 min by `scripts/release-forced-test-suite.mjs`). `timeout-minutes` is unchanged.
+
+### Why
+
+- `.github/workflows/publish-npm.yml`: the old comment described a ~55-minute serial run, which had grown to over 110 min.
+
+### Why an extension could not handle it
+
+- `.github/workflows/publish-npm.yml`: workflow configuration is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the comment above `timeout-minutes` in the `release` job.
+
+## 2026-11-06 - The Windows tool-child job also runs the EcoQoS opt-out tests (senpi#6125)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `tool-child-windows` job runs `src/core/windows-power-throttling.test.ts` and `src/core/windows-power-throttling.win32.test.ts` under Bun, and its executed-tests step requires the win32 file to have passed tests.
+
+### Why
+
+- The opt-out is only observable against the real kernel32, so the assertion that this process and spawned children read `ControlMask=EXECUTION_SPEED, StateMask=0` needs a Windows runner, and a skipped file must fail the job.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behaviour.
+
+### Expected merge conflict zones
+
+- LOW: the `tool-child-windows` test command line and its file loop.
+
+## 2026-11-05 - No canvas rebuild or prebuild fetch before compiles (senpi#6045)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the "Fresh release entry graphs (codemode and exclusions)" step no longer runs `npm rebuild canvas --foreground-scripts`, and that job's system dependencies drop the cairo/pango/jpeg/gif/rsvg headers that only served the canvas build.
+- `.github/workflows/read-summary-binary-parity.yml`: removed the "Fetch the existing locked canvas prebuild" step.
+
+### Why
+
+- Every compile now keeps canvas external (senpi#6045), so the native binding is never needed. The prebuild download was the step that failed `Read binary parity (windows-latest)`.
+
+### Why an extension could not handle it
+
+- CI workflow steps, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one removed line and one shortened apt line in `ci.yml`, and one removed three-line step in the parity workflow.
+
+## 2026-11-05 - CI runs the coding-agent tests on ten shards with a 15-minute per-shard budget (senpi#5910, senpi#5855)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-coding-agent` runs ten shards (`N/10`) instead of four. Each shard records the time right before its tests (`Start the shard budget clock`, the step before `Test shard`, so a slow apt mirror or download cannot spend the budget). After `Test shard`, a new `Shard time budget` step runs `scripts/ci-shard-budget.mjs`, which fails the job once its tests ran past 900 s, naming the measured time. The `Test shard` step keeps its 25-minute timeout and the job keeps 30 minutes.
+
+### Why
+
+- Four shards ran 15-25 min on hosted main and reached the 25-minute step timeout with no failing test (senpi#5855). Main run 41947601029 spent 4905 s in its four test steps, the slowest 1.22x the mean, so ten shards project the slowest test step near 600 s (an estimate from the four-shard ratio; the budget step measures every run). The budget step turns future suite growth into a named red with a number, instead of a silent kill at the timeout.
+
+### Why an extension could not handle it
+
+- This is GitHub Actions workflow wiring; it has no runtime surface an extension could reach.
+
+### Expected merge conflict zones
+
+- LOW: `.github/workflows/ci.yml` around the `test-coding-agent` job's matrix, its first step and the step after `Test shard`.
+
+## 2026-11-04 - The Fused EQ job runs the mutation library's tests (senpi#5772)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job's "senpi-qa harness unit tests" step also runs `equivalence-mutations.test.mjs`.
+
+### Why
+
+- Its "every shipped patch applies to this tree" test went red on main unnoticed when #5648 and #5665 moved the code three mutation patches target: no CI job ran it.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's "senpi-qa harness unit tests" command line.
+
+## 2026-11-04 - The Fused EQ job compares the one pipeline (senpi#5728)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job's EQ compare no longer passes `--pipeline legacy`.
+
+### Why
+
+- S36 removes the agent loop's own scheduler and EQ's `--pipeline` option, so the harness refuses the flag and every run's witness must show the prepared pipeline.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's `EQ compare against the B0 goldens` command line.
+
 ## 2026-11-03 - CI runs the machine-ops workspace tests (senpi#5592)
 
 ### What changed

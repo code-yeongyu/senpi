@@ -24,6 +24,7 @@ function relocationOn(channel: RelocationChannel): RpcSessionRelocation {
 			isStreaming: false,
 			currentAbortSource: undefined,
 			sendCustomMessage: async () => {},
+			agent: { state: { messages: [], pendingToolCalls: new Set<string>() } },
 		} as never,
 		pendingPrompts: () => [],
 		channel,

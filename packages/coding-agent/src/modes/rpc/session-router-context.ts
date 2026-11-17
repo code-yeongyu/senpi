@@ -18,9 +18,13 @@ import { SessionAttachOrder } from "./session-attach-order.ts";
 import { tearDownReleased } from "./session-router-close.ts";
 import { routingIdOf } from "./session-router-errors.ts";
 import { sweepIdleSessions } from "./session-router-occupancy.ts";
+import { followRetainedRecord } from "./session-router-residency.ts";
 import type { RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
 import { registryStatusSource } from "./session-status-source.ts";
+import { HostParkLedger } from "./host-park-ledger.ts";
+import { closePark } from "./session-router-park.ts";
 export class RouterContext {
+	readonly parks = new HostParkLedger((opened) => closePark(this, opened));
 	readonly admissions = compactUpdatesEnabled()
 		? new CompactAdmissions(ADMISSION_LIMITS, (socketEpoch, admissionId) =>
 				this.writer.routesAdmission(socketEpoch, admissionId),
@@ -44,9 +48,23 @@ export class RouterContext {
 
 	readonly registry: Pick<
 		RpcSessionRegistry,
-		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
+		| "openSession"
+		| "peek"
+		| "getForCommand"
+		| "beginClose"
+		| "close"
+		| "closeMarked"
+		| "list"
+		| "size"
+		| "warm"
+		| "closeGraceMs"
 	> &
-		Partial<Pick<RpcSessionRegistry, "supportsCompact" | "holderPids" | "attachSession" | "agentDir">>;
+		Partial<
+			Pick<
+				RpcSessionRegistry,
+				"supportsCompact" | "supportsParkClaim" | "claimPark" | "holderPids" | "attachSession" | "agentDir"
+			>
+		>;
 
 	readonly writer: SessionEventWriter;
 
@@ -115,9 +133,23 @@ export class RouterContext {
 	constructor(
 		registry: Pick<
 			RpcSessionRegistry,
-			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
+			| "openSession"
+			| "peek"
+			| "getForCommand"
+			| "beginClose"
+			| "close"
+			| "closeMarked"
+			| "list"
+			| "size"
+			| "warm"
+			| "closeGraceMs"
 		> &
-			Partial<Pick<RpcSessionRegistry, "supportsCompact" | "holderPids" | "attachSession" | "agentDir">>,
+			Partial<
+				Pick<
+					RpcSessionRegistry,
+					"supportsCompact" | "supportsParkClaim" | "claimPark" | "holderPids" | "attachSession" | "agentDir"
+				>
+			>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
@@ -130,6 +162,10 @@ export class RouterContext {
 		);
 		this.registry = registry;
 		this.writer = writer;
+		// The writer's background routes stay local (D11 S3-5): it reads each connection's declared origin from here.
+		writer.originOf = (connection) => this.connectionRoles.originOf(connection);
+		// omo-relay-daemon#307: roles read each delegated socket's live record, the same object the writer keeps.
+		this.connectionRoles.useDelegations((connection) => writer.delegations.viewOf(connection));
 		this.defaults = defaults;
 		this.createBinding = createBinding;
 		this.connectionOptions = {
@@ -154,6 +190,7 @@ export class RouterContext {
 				: { effectId: latest.effectId, kind: latest.kind, state: latest.state };
 		});
 		writer.afterRecord = (sessionId) => {
+			followRetainedRecord(this, sessionId);
 			const session = this.registry.peek(sessionId)?.runtime?.session;
 			if (session === undefined) return;
 			for (const status of drainSessionEffects(session)) this.writer.status.publishEffect(sessionId, status);

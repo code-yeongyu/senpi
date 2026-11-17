@@ -3,6 +3,7 @@ import { validMcpFormContent } from "../../core/extensions/builtin/mcp/modern/fo
 import type { MrtrInputResponse } from "../../core/extensions/builtin/mcp/modern/elicitation.ts";
 import type { McpFormRequest, McpFormResolved, McpFormSettled } from "../../core/mcp-form-types.ts";
 import type { McpFormGroup } from "./mcp-presenter-form-group.ts";
+import type { McpPresenterSecretFrame } from "./secret-sealed.ts";
 
 export interface McpFormClock {
 	now(): number;
@@ -18,7 +19,7 @@ export const mcpFormClock: McpFormClock = {
 	},
 };
 
-export type McpPresenterFrame = McpFormRequest | McpFormResolved | McpFormSettled;
+export type McpPresenterFrame = McpFormRequest | McpFormResolved | McpFormSettled | McpPresenterSecretFrame;
 export type McpPresenterReply =
 	| { readonly ok: true; readonly form?: McpFormRequest }
 	| { readonly error: "presenter_not_authorized" | "invalid_form_response" | "form_stale" | "form_expired" };

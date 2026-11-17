@@ -58,7 +58,7 @@ export async function openRegistrySession(
 	const requestedDurableId = profile.durableSessionId;
 	if (requestedDurableId !== undefined) {
 		for (const entry of host.entries.values()) {
-			if (entry.state === "closed") continue;
+			if (entry.state === "closed" || entry.speculative) continue;
 			if (entry.durableSessionId !== requestedDurableId) continue;
 			if (sessionPath !== undefined && entry.reservationKey === sessionPath) continue;
 			throw new RpcSessionRegistryError("session_id_in_use");
@@ -140,7 +140,8 @@ export async function openRegistrySession(
 	const { entry, storedProfile, runtimeProfile, sessionStartEvent, settleOpen } = opening;
 	host.entries.set(handle, entry);
 	claimSettled?.();
-	host.options.onSizeChange?.(host.entries.size);
+	if (!entry.speculative)
+		host.options.onSizeChange?.([...host.entries.values()].filter((item) => !item.speculative).length);
 	const timer = startOpenTimer(`registry-open:${handle}`);
 	try {
 		const newSessionOptions = {
@@ -157,7 +158,9 @@ export async function openRegistrySession(
 						newSessionOptions,
 						host.options.createSlicer?.(),
 					)
-			: SessionManager.create(storedProfile.cwd, undefined, newSessionOptions);
+			: options?.speculative
+				? SessionManager.inMemory(storedProfile.cwd, newSessionOptions)
+				: SessionManager.create(storedProfile.cwd, undefined, newSessionOptions);
 		timer.mark("session_manager");
 		entry.runtime = await runWithProviderScope(entry.scope, () =>
 			createAgentSessionRuntime(host.options.createRuntime, {
@@ -172,19 +175,20 @@ export async function openRegistrySession(
 		assertRequestedModelResolved(runtimeProfile, entry.runtime.diagnostics);
 		ClientAdmissions.sealQueuedOnReplace(entry.runtime);
 		EffectLedger.sealOnReplace(entry.runtime);
-		entry.durableSessionId = manager.getSessionId();
+		const durableSessionId = manager.getSessionId();
+		if (!entry.speculative) entry.durableSessionId = durableSessionId;
 		entry.sessionPath ??= manager.getSessionFile();
 		// The accepted baseline precedes the open, so router admission and its reply come after it (R3.C1.1).
 		// Gated like a worker incarnation's lane: with the flag off no session owns one (RULING-112).
 		if (host.options.workerIsolate !== true && structuredLaneEnabled()) {
 			entry.acceptance = new SessionAcceptanceLane(undefined, undefined, host.options.agentDir);
-			await entry.acceptance.generations.bind(entry.durableSessionId);
+			await entry.acceptance.generations.bind(durableSessionId);
 			entry.acceptance.bootstrap({ transcript: manager.beginTranscriptJournal() });
 			setSessionRecoveryEpoch(entry.runtime.session, entry.acceptance.recoveryEpoch);
 		}
 		entry.state = "open";
 		settleOpen.resolve();
-		return { sessionId: handle, durableSessionId: entry.durableSessionId, sessionPath: entry.sessionPath };
+		return { sessionId: handle, durableSessionId, sessionPath: entry.sessionPath };
 	} catch (error) {
 		// Runtime construction may have started extensions, watchers, and provider
 		// registrations before it rejects. Keep the reservation and entry private
@@ -199,7 +203,8 @@ export async function openRegistrySession(
 				await entry.scope.close?.();
 			} finally {
 				host.entries.delete(handle);
-				host.options.onSizeChange?.(host.entries.size);
+				if (!entry.speculative)
+					host.options.onSizeChange?.([...host.entries.values()].filter((item) => !item.speculative).length);
 				if (sessionPath) await releaseWithinGrace(host.teardownHost, handle, sessionPath);
 			}
 		}

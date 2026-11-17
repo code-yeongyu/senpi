@@ -1,3 +1,84 @@
+## 2026-11-10 - Every core owns the code; the smallest-change rule is gone (senpi#6358)
+
+### What changed
+
+- The ownership rule from `dynamic-prompt/changes.md` (same date) is stated in every core that carried the smallest-change rule, in that core's own register, opening with the guide's sentence verbatim as senpi#6360 shipped it for Fable 5.2 (`claude-fable-5-2.ts` keeps that opening and gains the owner-behavior and defect sentences; its senpi#6356 regression stays as is): Scope paragraph of `claude-fable-5-1.ts`, `claude-fable-5-2.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-sonnet-5-5.ts`, `claude-haiku-5-5.ts`, `kimi-k3.ts`, `kimi-k3-1.ts` and `deepseek-v4-1-flash.ts`; Style paragraph of `claude-fable-5.ts`, `grok-4.6.ts`, `grok-4.7.ts` and `gpt-5.5.ts`; "Pragmatism & Scope" of `gpt-5.6.ts` ("The best change is usually the smallest correct change ... A bug fix is not surrounding cleanup" is replaced); "Scope and Recovery" of `gpt-6-astra.ts` ("in the smallest correct change" is replaced). Kept in each: the request sets the scope, no helpers or abstractions for hypothetical needs, no defensive checks inside trusted code (the Claude 5.x and Kimi cores use senpi#6360's "Add no helpers ..." form), validate only at system boundaries, the test-sizing and surgical-edit sentences.
+- The same rule in other words is gone: `gpt-5.5.ts` "no drive-by refactors"; the change-ask route's "diagnose and fix minimally" in the Claude, Kimi and DeepSeek cores and `claude-fable-5.ts` (now "fix at the cause"); `grok-4.6.ts` / `grok-4.7.ts` "fix minimally from the error" (now "fix the error at its cause"), `grok-4.6.ts` "open-ended ones take the smallest path" (now "get what fully satisfies the goal and nothing beyond it"), `grok-4.7.ts` refactor route "make the smallest change" (now "make the change").
+- Pre-existing problems: the Kimi K3 / K3.1 Scope lead and the DeepSeek Scope paragraph say a defect in the code being changed is fixed now and a problem elsewhere is a follow-up (was "a pre-existing bug ... is a follow-up ... unless the requested behavior cannot work without it"). Every core's claim-audit sentence reads "Fix failures your change caused and any that sit in the code you changed; note other pre-existing failures separately" (`grok-4.5.ts` in the orchestrator's voice, `gpt-6-astra.ts` with "report").
+- `test/suite/prompt-presets-native-baseline.json`: all 204 hashes recaptured (every preset renders a changed sentence); `sourceCommit` unchanged as the generation suite asserts it.
+
+### Why
+
+- See `dynamic-prompt/changes.md` (senpi#6358): the owner's ruling reverses the senpi#6314 decision to leave the Fable 5.2 guide's ownership sentence out; senpi#6360 applied it to Fable 5.2 alone, this entry extends it to every core.
+
+### Why an extension could not handle it
+
+- These lines are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- Fork-only files. The Scope / Style / Pragmatism paragraphs, the change-ask route bullet and the claim-audit sentence in each listed preset.
+
+---
+
+## 2026-11-10 - Fable 5.2 uses the guide's codebase-ownership sentence (senpi#6360, fixes #6356)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-2.ts`: the Scope structure paragraph opens with the exact ownership sentence from "Say who owns the code" in Anthropic's Fable 5.2 prompting guide, replacing the whole smallest-change sentence at the owner's request. The standalone discipline against hypothetical helpers and internal defensive checks remains, and the paragraph's other sentences are unchanged. The header rationale and preset documentation now describe that choice.
+- The rendered-prompt regression checks the exact guide sentence and absence of the old opening. Only Fable 5.2's six Native baseline hashes and six corresponding shared-sections hashes are recaptured; every other preset and shared section is unchanged.
+
+### Why
+
+- Without ownership framing, the guide reports that Fable 5.2 acts as a guest: it adds parallel code, leaves duplicates in place, and only mentions nearby bugs. The owner's order replaces the smallest-change instruction with the guide's ownership framing.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension's own Fable 5.2 core text.
+
+### Expected merge conflict zones
+
+- LOW: the Fable 5.2 Scope structure paragraph, header comment, documentation line, and its baseline hash rows.
+
+## 2026-11-10 - Claude Fable 5.2 preset from the Fable 5.2 prompting guide (senpi#6314)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-2.ts`: new standalone preset, a copy of the tuned Fable 5.1 core changed at six sentences per Anthropic's "Prompting Claude Fable 5.2" guide: ordinary obstacles against deliberate blockers in Scope, two more text-only turn endings in the last-paragraph check, the retry hard limit scoped to repeating an undiagnosed failure, building on existing code instead of a parallel copy, cost-first delegation, and a plain-writing rule in place of the mannered-prose sentence.
+- `matchers.ts`, `contract.ts`, `presets.ts`, `settings.ts`: Fable 5.2 / Mythos 5.2 ids resolve to `claude-fable-5-2` before Fable 5.1 and the generic `fable-5` matcher; a dated Fable 5 id stays on Fable 5. The provisional `claude-fable-5-5` preset is removed.
+
+### Why
+
+- `claude-fable-5-2` fell through to the Fable 5 core, the oldest Fable prompt, with none of the 5.1 repairs or the 5.2 guide's findings.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the Fable matcher order in `contract.ts` and `matchers.ts`, and the `claude-fable-5-2` rows in `prompt-presets-native-baseline.json`.
+
+## 2026-11-09 - Haiku 5.5 search-grounding sentence renders for Anthropic-native search (senpi#6264)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-haiku-5-5.ts`: `buildSearchGroundingLine` renders the training-data-cutoff sentence when the builtin `web_search` tool is active OR `nativeSearchAvailable` is set (senpi#2935).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/index.ts`: the preset extension computes `nativeSearchAvailable` from the model (`supportsNativeAnthropicWebSearch(model) && isAnthropicWebSearchEnabled()`, the same two checks the `anthropic-web-search` extension uses) on `before_agent_start` and `model_select`.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts`: `withDefaults` preserves the flag.
+
+### Why
+
+- A Haiku 5.5 session that can search only through Anthropic-native web search never got the grounding reminder, even though the model can search; the guide's nudge applies whenever the model can search, not only when the builtin tool is mounted.
+
+### Why an extension could not handle it
+
+- The preset is itself the extension that owns this prompt text; the fix is a gate change inside it, plus a builder seam for the native-search signal.
+
+### Expected merge conflict zones
+
+- LOW: the grounding gate in `claude-haiku-5-5.ts` and `eventOptionsToBuilderInput` in `index.ts` (the in-flight language fix #5516 touches the same preset file in nearby but non-overlapping lines).
+
 ## 2026-11-03 - Opus and Fable presets declare full shared sections (senpi#5665)
 
 ### What changed

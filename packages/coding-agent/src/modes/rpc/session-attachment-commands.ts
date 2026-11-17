@@ -1,6 +1,7 @@
+import { takeOver } from "./attach-takeover.ts";
 import { compactOpen } from "./compact-open-admission.ts";
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
-import { clearHandoverParkedSession } from "./host-handover-parked.ts";
+import { clearRetainedRecord } from "./session-router-residency.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
@@ -63,6 +64,7 @@ export function attachSession(
 		return error(command.id, command.type, "session_identity_mismatch", {});
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
+	if (command.takeover === true) return takeOver(host, command, owner, () => attach(host, owner, command.sessionId));
 	if (command.admissionId !== undefined && host.admissions)
 		return compactOpen(host, command, async (accept, signal) => {
 			signal.throwIfAborted();
@@ -135,8 +137,7 @@ export async function reclaimSession(
 	host.sessionsByConnection.get(owner)?.delete(row.sessionId);
 	if (host.sessionsByConnection.get(owner)?.size === 0) host.sessionsByConnection.delete(owner);
 	connectionLeft(host, row.sessionId, owner);
-	if (host.handoverParkedDir !== undefined && entry.sessionPath !== undefined)
-		await clearHandoverParkedSession(host.handoverParkedDir, entry.sessionPath).catch(() => {});
+	if (host.handoverParkedDir !== undefined) await clearRetainedRecord(host, entry);
 	if (claim.finalizer) {
 		const binding = host.bindings.get(row.sessionId);
 		binding?.cancelPendingExtensionUiRequests?.();

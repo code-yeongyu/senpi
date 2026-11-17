@@ -17,6 +17,7 @@ export function fileCall(message: RemoteFile): RemoteInvoke {
 		toolCallId: message.executionId,
 		name: `file.${message.op}`,
 		arguments: message.args,
+		...(message.epoch === undefined ? {} : { epoch: message.epoch }),
 	};
 }
 

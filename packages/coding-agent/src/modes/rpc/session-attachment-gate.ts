@@ -6,10 +6,13 @@ import { error } from "./session-router-errors.ts";
 export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCommand["type"]>([
 	"get_protocol_info",
 	"list_sessions",
+	"list_hands",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"get_subscription_limits",
 	"warm",
+	"park_session",
+	"claim_session",
 	"detach_connection",
 	"open_session",
 	"attach_session",
@@ -25,6 +28,11 @@ export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCo
 	"get_media",
 	"get_commands",
 	"get_loaded_surfaces",
+	"get_project_trust",
+	"get_project_settings",
+	"read_project_file",
+	"get_project_mcp_servers",
+	"read_project_skill_file",
 	"get_available_models",
 	"get_available_thinking_levels",
 	"get_fast_mode",
@@ -70,6 +78,9 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	)
 		return undefined;
 	if (host.sessionsByConnection.get(owner)?.has(command.sessionId)) return undefined;
+	// senpi#6305: the forwarder's peer lane delivers an agent's message without ever attaching; only its admit passes.
+	if (command.type === "admit_external_message" && host.connectionRoles.grantedByForwarder(owner, "peer_agent"))
+		return undefined;
 	if (process.env.SENPI_RPC_REQUIRE_ATTACH === "1")
 		return error(command.id, command.type, "session_not_attached", {
 			reason: "this connection is not attached to that session",

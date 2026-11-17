@@ -14,6 +14,7 @@ import type { PackagesInstallEnvironments } from "../environments/packages-insta
 import { KERNEL_TOOLS_CAPABILITIES, type KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import { sandboxCellExecutor, sandboxRuntimeInfo } from "../kernels/sandbox/sandbox-cell.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
+import { bindBridgeCell } from "./bridge-cell-binding.ts";
 import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
 import { CellHandler, type CellState } from "./cell-handler.ts";
 import type { EvalDetachedCellManager } from "./detached-cell-manager.ts";
@@ -214,15 +215,12 @@ async function executeCell(
 		// Computed before the handler so its construction-time snapshot captures this cell's capability.
 		// Worker messages later restore that snapshot before calling host tools (#1754, #2512).
 		const kernelTools = kernelToolsFor(kernel);
-		// Subprocess kernels call the host over the bridge, outside this async context. Their calls carry a fresh secret
-		// minted for this run and sent only to this cell's kernel, never the model-visible cell id, so code in another
-		// kernel cannot name this cell into its tools. JS calls already run inside this cell's scope (#1754).
-		const bridgeCellToken =
-			kernelTools === undefined || invocation.input.language === "js" ? undefined : randomUUID();
-		releaseCellKernelTools =
-			kernelTools === undefined || bridgeCellToken === undefined
-				? undefined
-				: options.kernelManager.bindCellKernelTools?.(bridgeCellToken, kernelTools);
+		const bridgeCell = bindBridgeCell(options.kernelManager, invocation.input.language, kernelTools, {
+			nestedToolUpdate: (callId, partial) => handler?.toolUpdates.nestedToolUpdate(callId, partial),
+			nestedToolSettled: (callId) => handler?.toolUpdates.nestedToolSettled(callId),
+		});
+		const bridgeCellToken = bridgeCell.token;
+		releaseCellKernelTools = bridgeCell.release;
 		const runBound = async (): Promise<AgentToolResult<EvalToolDetails>> => {
 			const queue = kernel.queueSnapshot();
 			state.queuedBehind = [...(queue.activeCellId === null ? [] : [queue.activeCellId]), ...queue.queuedCellIds];

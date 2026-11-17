@@ -35,13 +35,22 @@ export interface RemoteToolHostOptions {
 	 * every nested request under a file operation is refused `parent_terminal`.
 	 */
 	readonly filePlanes?: readonly string[];
+	/**
+	 * The session's owner epoch (brain/hand S35). With it, each scope lane first raises the hand's floor to this epoch
+	 * and dispatches only after the hand acked exactly it; every invoke, file operation, abort and ack carries it.
+	 * Without it, nothing about epochs is sent (a session that never moves).
+	 */
+	readonly epoch?: number;
 }
 
 function errorResult(text: string): RemoteToolResult {
 	return { content: [{ type: "text", text }], details: {}, isError: true };
 }
 
-function terminalResult(placement: HandPlacement, terminal: RemoteTerminal): RemoteToolResult {
+function terminalResult(
+	placement: HandPlacement,
+	terminal: Pick<RemoteTerminal, "reason" | "uncertain" | "hooksRan">,
+): RemoteToolResult {
 	if (placement === "split-local")
 		return { content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }], details: {}, isError: false };
 	const { reason, uncertain, hooksRan } = terminal;
@@ -66,7 +75,7 @@ export function createRemoteToolHost(
 	options: RemoteToolHostOptions,
 ): ToolHost & { deviceFiles(scope: ExecutionScope): DeviceFiles; close(): void } {
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
-	const link = createHandLink(options.transport, options.planes ?? {}, options.filePlanes ?? []);
+	const link = createHandLink(options.transport, options.planes ?? {}, options.filePlanes ?? [], options.epoch);
 
 	const resultOf = (reply: HandReply): RemoteToolResult => {
 		switch (reply.kind) {
@@ -81,7 +90,16 @@ export function createRemoteToolHost(
 			case "unreachable":
 				return errorResult(`The hand is unreachable: ${reply.reason}`);
 			case "closed":
-				return errorResult("The hand link was closed before the call settled");
+				// The hand died or was replaced while the call was in flight (omo-service#997). A call it may have received
+				// ends as a hand restart with its outcome unknown; one it never received had no effect. Neither runs again.
+				return terminalResult(
+					options.placement,
+					reply.sent
+						? { reason: "hand_restarted", uncertain: true, hooksRan: true }
+						: { reason: "cancelled", uncertain: false, hooksRan: false },
+				);
+			case "epoch_refused":
+				return errorResult(`The hand refused this session's epoch: ${reply.reason}`);
 		}
 	};
 	const dispatch = (

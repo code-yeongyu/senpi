@@ -68,12 +68,14 @@ export function createMermaidMarkdownTransformer(options: MermaidTransformerOpti
 			return markdown;
 		}
 
-		return markdownParser
+		let changed = false;
+		const transformed = markdownParser
 			.lexer(markdown)
 			.map((token) => {
 				if (!isMermaid(token)) return token.raw;
 				const art = render(token.text);
 				if (!art || art.width > context.availableWidth) return token.raw;
+				changed = true;
 				if (!context.isStreaming && art.warnings.length > 0) {
 					const suffix = art.warnings.length > 1 ? ` (+${art.warnings.length - 1} more)` : "";
 					const warning = `Mermaid diagram not rendered: ${art.warnings[0]}${suffix}`;
@@ -85,5 +87,7 @@ export function createMermaidMarkdownTransformer(options: MermaidTransformerOpti
 				return `${lines.map(codeSpan).join("  \n")}\n`;
 			})
 			.join("");
+		// Lexing normalizes line endings; a no-op must preserve authored source bytes.
+		return changed ? transformed : markdown;
 	};
 }

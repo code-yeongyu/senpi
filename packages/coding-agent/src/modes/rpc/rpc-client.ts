@@ -32,6 +32,7 @@ export { RpcCommandError } from "./rpc-command-error.ts";
 export type { RpcClientEvent, RpcEventListener, RpcProviderAccountEvent } from "./rpc-client-events.ts";
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
@@ -1158,6 +1159,20 @@ export class RpcClient {
 	}
 
 	/**
+	 * Archive or unarchive the session; the flag is stored in its session file.
+	 */
+	async setSessionArchived(archived: boolean): Promise<void> {
+		await this.send({ type: "set_session_archived", archived });
+	}
+
+	/**
+	 * Mark the session Done or reopen it; the flag and how it was reached (`by`) are stored in its session file.
+	 */
+	async setSessionSettled(settled: boolean, by?: ThreadSettledBy): Promise<void> {
+		await this.send({ type: "set_session_settled", settled, ...(by !== undefined ? { by } : {}) });
+	}
+
+	/**
 	 * Report that the user started typing a draft, so a first-activity prompt-cache prewarm can run (senpi#3859).
 	 */
 	async recordDraftActivity(): Promise<void> {
@@ -1312,6 +1327,9 @@ export class RpcClient {
 					// Connection-level, not part of the agent's event stream.
 					event.type === "session_replaced" ||
 					event.type === "session_parked" ||
+					event.type === "session_released" ||
+					event.type === "session_archived_changed" ||
+					event.type === "session_settled_changed" ||
 					event.type === "queued" ||
 					event.type === "socket_closing" ||
 					event.type === "message_tool_arguments_reset"

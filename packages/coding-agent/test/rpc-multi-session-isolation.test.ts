@@ -191,7 +191,7 @@ function hostFixture() {
 				autoCompactionEnabled: false,
 				messages: [],
 				pendingMessageCount: 0,
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 				abort: async () => {},
 				abortBash: () => {},
 				waitForIdle: async () => {},

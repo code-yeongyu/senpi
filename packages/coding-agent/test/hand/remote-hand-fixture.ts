@@ -11,6 +11,7 @@ import {
 	createReliableTransport,
 	createRemoteExecutor,
 	createRemoteToolHost,
+	type HandEpochFence,
 	localEndpoint,
 	type OpenHandScope,
 	type RemoteExecutor,
@@ -101,12 +102,17 @@ export function startHand(
 	return startHandOn(link, createLooplessHandScopes(handConfiguration(dirs, extraArgs), { extensionFactories }));
 }
 
-export function startHandOn(link: { readonly hand: Transport }, openScope: OpenHandScope): RemoteExecutor {
+export function startHandOn(
+	link: { readonly hand: Transport },
+	openScope: OpenHandScope,
+	fence?: HandEpochFence,
+): RemoteExecutor {
 	const executor = createRemoteExecutor({
 		authority: { kind: "self" },
 		fileChannel: true,
 		transport: link.hand,
 		openScope,
+		...(fence === undefined ? {} : { fence }),
 		onFault: (error) => faults.push(error),
 	});
 	cleanups.push(() => executor.close());
@@ -161,6 +167,8 @@ export async function runTurn(options: {
 	readonly root: string;
 	readonly tools?: AgentTool[];
 	readonly toolExecution?: "sequential" | "parallel";
+	/** The session's execution scope ID; a fresh one per turn by default. */
+	readonly scopeId?: string;
 }): Promise<{ readonly events: AgentEvent[]; readonly agent: Agent }> {
 	let turns = 0;
 	const agent = new Agent({
@@ -168,7 +176,7 @@ export async function runTurn(options: {
 		streamFn: () => response(turns++ === 0 ? [...options.calls] : [{ type: "text", text: "done" }]),
 		...(options.toolHost ? { toolHost: options.toolHost } : {}),
 		...(options.toolExecution ? { toolExecution: options.toolExecution } : {}),
-		executionScope: { id: `scope-${crypto.randomUUID()}`, root: options.root },
+		executionScope: { id: options.scopeId ?? `scope-${crypto.randomUUID()}`, root: options.root },
 	});
 	const events: AgentEvent[] = [];
 	agent.subscribe((event) => {

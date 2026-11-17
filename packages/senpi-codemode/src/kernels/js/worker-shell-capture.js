@@ -172,12 +172,12 @@ function capturedSpawnSync(originalSpawnSync, pinEnv, guard) {
 		if (!pinEnv) return originalSpawnSync(...args);
 		const [first, second] = args;
 		if (Array.isArray(first)) {
-			const spawnOptions = second === undefined ? {} : second;
-			if (spawnOptions === null || typeof spawnOptions !== "object" || spawnOptions.env !== undefined)
+			const spawnOptions = second ?? {};
+			if (typeof spawnOptions !== "object" || spawnOptions.env != null)
 				return originalSpawnSync(...args);
 			return originalSpawnSync(first, { ...spawnOptions, env: { ...process.env } });
 		}
-		if (first !== null && typeof first === "object" && first.env === undefined)
+		if (first !== null && typeof first === "object" && first.env == null)
 			return originalSpawnSync({ ...first, env: { ...process.env } });
 		return originalSpawnSync(...args);
 	};
@@ -192,19 +192,30 @@ function capturedSpawn(originalSpawn, options, pinEnv, guard) {
 	return (...args) => {
 		assertCellLive();
 		judgeSpawn(guard, args[0]);
-		if (!options.isActive()) return originalSpawn(...args);
 		const [first, second] = args;
+		// The pinned environment applies whether or not a cell is running: a spawn from a timer or callback after its cell
+		// settled would otherwise inherit the OS environ, which still holds withheld credentials (senpi#6820).
+		if (!options.isActive()) {
+			if (!pinEnv) return originalSpawn(...args);
+			if (Array.isArray(first)) {
+				const spawnOptions = second ?? {};
+				return spawnOptions.env == null ? originalSpawn(first, { ...spawnOptions, env: { ...process.env } }) : originalSpawn(...args);
+			}
+			return first !== null && typeof first === "object" && first.env == null
+				? originalSpawn({ ...first, env: { ...process.env } })
+				: originalSpawn(...args);
+		}
 		let child;
 		if (Array.isArray(first)) {
-			const spawnOptions = second === undefined ? {} : second;
-			const effective = pinEnv && spawnOptions.env === undefined ? { ...spawnOptions, env: { ...process.env } } : spawnOptions;
+			const spawnOptions = second ?? {};
+			const effective = pinEnv && spawnOptions.env == null ? { ...spawnOptions, env: { ...process.env } } : spawnOptions;
 			child = needsStderrCapture(effective)
 				? drainStderr(originalSpawn(first, { ...effective, stderr: "pipe" }), options.emitText)
 				: effective === spawnOptions
 					? originalSpawn(...args)
 					: originalSpawn(first, effective);
 		} else {
-			const effective = pinEnv && first !== null && typeof first === "object" && first.env === undefined ? { ...first, env: { ...process.env } } : first;
+			const effective = pinEnv && first !== null && typeof first === "object" && first.env == null ? { ...first, env: { ...process.env } } : first;
 			child = needsStderrCapture(effective)
 				? drainStderr(originalSpawn({ ...effective, stderr: "pipe" }), options.emitText)
 				: effective === first

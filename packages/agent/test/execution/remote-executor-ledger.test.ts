@@ -7,44 +7,10 @@ import { createMemoryStoreMedium, type MemoryStoreMedium, openMemoryStore } from
 import { createExecutionLedger } from "../../src/execution/ledger.ts";
 import { createRemoteExecutor, type HandScope, type OpenHandScope } from "../../src/execution/remote-executor.ts";
 import { createHandLedger, type HandLedger } from "../../src/execution/remote-hand-ledger.ts";
-import {
-	decodeRemoteMessage,
-	encodeRemoteMessage,
-	type RemoteHandMessage,
-	type RemoteInvoke,
-} from "../../src/execution/remote-protocol.ts";
-import type { FrameHandler, Transport } from "../../src/transport/transport.ts";
+import type { RemoteInvoke } from "../../src/execution/remote-protocol.ts";
+import { fakeHandLink } from "./fake-hand-link.ts";
 
 const DISPATCH_COMMIT = 5;
-
-function fakeTransport() {
-	const sent: RemoteHandMessage[] = [];
-	const waiters: Array<{ readonly count: number; readonly resolve: () => void }> = [];
-	let handler: FrameHandler | undefined;
-	const transport: Transport = {
-		send: async (_lane, payload) => {
-			sent.push(decodeRemoteMessage(payload));
-			for (const waiter of waiters) if (sent.length >= waiter.count) waiter.resolve();
-		},
-		onFrame: (next) => {
-			handler = next;
-		},
-		inFlight: () => 0,
-		close: () => {},
-	};
-	const deliver = async (message: RemoteHandMessage): Promise<void> => {
-		if (handler === undefined) throw new Error("no frame handler");
-		const lane = message.kind === "invoke" ? message.scope.id : "hand.control";
-		await handler({ lane, payload: encodeRemoteMessage(message) });
-	};
-	const sentCount = (count: number): Promise<void> => {
-		const { promise, resolve } = Promise.withResolvers<void>();
-		waiters.push({ count, resolve });
-		if (sent.length >= count) resolve();
-		return promise;
-	};
-	return { transport, sent, deliver, sentCount };
-}
 
 const invoke = (args: unknown): RemoteInvoke => ({
 	kind: "invoke",
@@ -77,7 +43,7 @@ const rows = (medium: MemoryStoreMedium) =>
 	createExecutionLedger({ store: openMemoryStore(medium), epoch: 1, admission: createAdmissionLine() }).scan();
 
 function startHand(store: DurableStore, openScope: OpenHandScope, ledger = handLedger(store)) {
-	const link = fakeTransport();
+	const link = fakeHandLink();
 	const faults: unknown[] = [];
 	const executor = createRemoteExecutor({
 		authority: { kind: "self" },
@@ -163,6 +129,36 @@ describe("remote executor with a durable record", () => {
 		expect([ran, hand.sent]).toEqual([
 			[],
 			[refusal, { kind: "hello", instance: expect.any(String), durable: true, ops: [] }, refusal],
+		]);
+	});
+
+	// senpi#5729: a moved session reaches the live hand over a second link; that link's executor must not run the
+	// restart recovery that ends the first link's running calls as hand_restarted.
+	it("lets a second link's executor join a live hand without ending the calls the first link runs", async () => {
+		const store = await claimed(createMemoryStoreMedium());
+		const ledger = handLedger(store);
+		const gate = Promise.withResolvers<void>();
+		const ran: unknown[] = [];
+		const gated: OpenHandScope = async () => ({
+			run: async (call) => {
+				ran.push(call.arguments);
+				await gate.promise;
+				return { content: [{ type: "text", text: "ran" }], details: {} };
+			},
+			isSequential: () => false,
+			dispose: async () => {},
+		});
+		const first = startHand(store, gated, ledger);
+		await first.executor.ready;
+		await first.deliver(invoke({ id: 1 }));
+		const second = startHand(store, gated, ledger);
+		await second.executor.ready;
+		gate.resolve();
+		await first.sentCount(2);
+		expect([first.sent.map(({ kind }) => kind), second.sent.map(({ kind }) => kind), ran]).toEqual([
+			["hello", "settled"],
+			["hello"],
+			[{ id: 1 }],
 		]);
 	});
 

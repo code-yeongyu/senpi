@@ -1,3 +1,114 @@
+## 2026-11-10 - show_html_page says what the host did with the page (senpi#6273)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the result text depends on the session's prompt surface (`ctx.getSystemPromptOptions().surface`, else `SENPI_PROMPT_SURFACE`). On `app`, the surface the OmO desktop opens every session it renders with, it says the page was shown to the reader inline above the reply and where the copy is saved. On every other surface (terminal, chat, none named) it says the page was written to the path and not displayed in this interface. The "Open it in the desktop to see it rendered with your theme" sentence is gone. The description says the same: inline in the OmO desktop thread, elsewhere only saved to a file, and the result says which.
+
+### Why
+
+- In a desktop thread the page renders inline, but the result told the model to open the file in the desktop, so the model reported that the page was not shown. The result stays in the thread, so later turns sometimes refused to call the tool at all (senpi#6273).
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its result text is defined here. The host signal is the existing `promptSurface`, no new capability.
+
+### Expected merge conflict zones
+
+- LOW: the result `text` and the end of the description in `html-render/tool.ts`.
+
+## 2026-11-10 - Recommended Fable slot is Fable 5.2 (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable slot of `RECOMMENDED_DEFAULT_MODELS` is `claude-fable-5-2` at `xhigh` on the same Claude lanes. The launch-flag lookup is removed.
+
+### Why
+
+- Fable 5.2 is the released Fable model.
+
+### Why an extension could not handle it
+
+- This is the builtin's own shipped list.
+
+### Expected merge conflict zones
+
+- LOW: the Fable row of `RECOMMENDED_DEFAULT_MODELS`.
+
+## 2026-11-09 - vertex-garden per-model thinking toggles (senpi#6270)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/models.ts`: each garden model declares `thinkingFormat: "chat-template"` with its own flag (GLM 5.2 `enable_thinking`, DeepSeek V4.1 Flash `thinking`), a two-level `thinkingLevelMap` (off, medium), and its live-verified Vertex default (GLM `medium`, DeepSeek `off`).
+
+### Why
+
+- Live probes against the global OpenAPI endpoint (2026-11-09) showed the endpoint toggles thinking per model through `chat_template_kwargs` and silently ignores a wrong flag name, so the previous "accepts no thinking parameters" registration hid a control both models support and risked sending one model's flag to the other.
+
+### Why an extension could not handle it
+
+- It is the extension's own model registration; only the default-level declaration needed the `types.ts` companion entry above.
+
+### Expected merge conflict zones
+
+- LOW: the `garden()` helper and the two model entries; the `NO_THINKING_CONTROLS` block is replaced outright.
+
+## 2026-11-08 - terminal_background_age event (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `TERMINAL_BACKGROUND_AGE_EVENT` (`terminal_background_age`) and its payload `TerminalBackgroundAgeEvent` (`kind` running|reaped|reap_failed, `id`, `description`, `command?`, `startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes`, `reason?`, `stop`).
+
+### Why
+
+- RPC drivers need a typed event they can act on when a background session runs long (senpi#6201).
+
+### Why an extension could not handle it
+
+- The event name and payload are the shared cross-extension seam, like the other terminal events in this file.
+
+### Expected merge conflict zones
+
+- LOW: the constant block at the top of `monitor-state-event.ts`.
+
+## 2026-11-08 - ask-user refuses escape residue in question text once (oh-my-openagent#12797)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/escape-residue.ts` (new): `findEscapeResidue` finds `\uXXXX` escapes left in question, header and option text, both literal ones and ones whose backslash was dropped (`ub0b4`), with guards against hex-like ids and quoted code (fenced blocks, double-backtick and single-backtick spans are blanked before the check); `AskUserEscapeResidueError` is the typed tool error. `EscapeResidueRetry` with `refuseEscapeResidue` and `endEscapeResidueTurn` scopes the one refusal to assistant turns.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: before a card opens, a call whose text holds escape residue is refused with `AskUserEscapeResidueError`, which asks the model to re-call with raw UTF-8 text. Every residue call in one turn is refused, since parallel calls of one assistant message run in that turn; residue calls in a later turn open as written and the user gets a warning notice. Any call made while the retry is open uses it up, so after a clean re-call the next residue set is refused once again. `AskUserState.escapeResidue` carries the bound.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts`, `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: the new state starts fresh and resets on `session_start` and `agent_end`; `turn_end` closes a refusal turn and opens the retry.
+
+### Why
+
+- Models sometimes write non-ASCII tool-call text as `\uXXXX` escapes and drop the backslash, so a Korean card showed `ub0b4 Tailscale 쓰기` for `내 Tailscale 쓰기` (oh-my-openagent#12797). The JSON is valid, so parsing cannot catch it; only the text can.
+- A per-call flag let one of two parallel residue calls open unrefused and then refused its re-call; a turn-scoped bound refuses each set once and never refuses a re-call.
+
+### Why an extension could not handle it
+
+- The check belongs to the ask-user builtin's own argument handling; it is a fork-only builtin, not an upstream path.
+
+### Expected merge conflict zones
+
+- LOW: `AskUserState` and the `execute` path just before `startQuestion` in `tool.ts`; the `turn_end` and `agent_end` handlers in `extension.ts`.
+
+## 2026-10-30 - ChatGPT account route and plan states (part of senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: renders registration route, disabled plan permission and signed-out states, with a ChatGPT Settings > Usage link.
+
+### Why
+
+- The account command must explain when ChatGPT plan usage is unavailable.
+
+### Why an extension could not handle it
+
+- This is the existing account extension.
+
+### Expected merge conflict zones
+
+- The account-list renderer.
+
 ## 2026-11-03 - Dangling ask-user questions restore on startup opens (senpi#5700, fixes #4764)
 
 ### What changed

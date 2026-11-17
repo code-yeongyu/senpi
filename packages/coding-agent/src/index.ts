@@ -1,6 +1,12 @@
 // Core session management
 export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./core/extensions/secret-input.ts";
 export type { RpcSecretInputSettledEvent } from "./modes/rpc/rpc-types.ts";
+export type {
+	PresenterAccountAuthority,
+	PresenterAttestation,
+	PresenterAttestationRefusal,
+	PresenterAttestationResult,
+} from "./modes/rpc/mcp-presenter-account.ts";
 
 export { sanitizeTerminalLabel, visibleWidth } from "@earendil-works/pi-tui";
 export { type Args, parseArgs } from "./cli/args.ts";
@@ -90,6 +96,7 @@ export {
 	type KillGuardRuntime,
 	releaseKillGuardRuntime,
 } from "./core/kill-guard/runtime.ts";
+export { CREDENTIAL_PLACEHOLDER, withCredentialProxy } from "./core/credential-proxy/runtime.ts";
 // Job widgets: hosts register background jobs and their widget-author model route
 export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {
@@ -448,6 +455,16 @@ export {
 } from "./core/skills.ts";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
+// The device a session's tools run on (registerDeviceMachine; OMO_TOOLS_VIA_DAEMON).
+export type {
+	ExecRequest as MachineExecRequest,
+	ExecResult as MachineExecResult,
+	MachineOps,
+	OpContext,
+} from "@code-yeongyu/senpi-machine-ops";
+export { DeviceMachineConflictError } from "./core/extensions/types.ts";
+export { DeviceUnavailableError } from "./core/tools/bash.ts";
+export { createToolMachine, type ToolMachine, type ToolPathPolicy } from "./core/tools/machine.ts";
 // Tools
 export {
 	type BashOperations,
@@ -504,6 +521,16 @@ export {
 	type ReadClassifier,
 	registerReadClassifier,
 } from "./core/tools/read-classifiers.ts";
+export {
+	registerRpcRemoteSource,
+	type RpcRemoteHandlers,
+	type RpcRemoteOpenOptions,
+	type RpcRemoteSettledTurn,
+	type RpcRemoteSource,
+	type RpcRemoteState,
+	type RpcRemoteSubscription,
+	type RpcRemoteTarget,
+} from "./core/extensions/builtin/terminal/rpc-remote-source.ts";
 export {
 	hasTrustRequiringProjectResources,
 	type ProjectTrustDecision,

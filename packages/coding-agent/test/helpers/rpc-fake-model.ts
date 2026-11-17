@@ -135,7 +135,21 @@ function writeAnthropicToolUseSse(res: ServerResponse, model: string): void {
 	res.end();
 }
 
-export async function startFakeModelServer(options: { multiDelta?: boolean } = {}): Promise<FakeModelServer> {
+/** The newest text block: consecutive user messages may arrive merged into one message with several blocks. */
+function latestText(body: unknown): string {
+	const last = isRecord(body) && Array.isArray(body.messages) ? body.messages.at(-1) : undefined;
+	const content = isRecord(last) ? last.content : undefined;
+	if (!Array.isArray(content)) return textFromContent(content);
+	return content.findLast(isTextContentBlock)?.text ?? "";
+}
+
+export async function startFakeModelServer(
+	options: {
+		multiDelta?: boolean;
+		/** Never answer a request whose newest text block contains this text (the turn stays open until close). */
+		holdOnLastMessage?: string;
+	} = {},
+): Promise<FakeModelServer> {
 	const requests: FakeModelRequest[] = [];
 	const server = createServer((req, res) => {
 		const chunks: Buffer[] = [];
@@ -154,6 +168,7 @@ export async function startFakeModelServer(options: { multiDelta?: boolean } = {
 				text,
 			});
 			if (req.url?.includes("/messages")) {
+				if (options.holdOnLastMessage !== undefined && latestText(body).includes(options.holdOnLastMessage)) return;
 				// Deterministic slow lane: prompts containing "hold-open-<ms>" keep the
 				// response (and therefore the session's streaming state) open for <ms>.
 				const holdOpenMs = /hold-open-(\d+)/.exec(requestText(body))?.[1];

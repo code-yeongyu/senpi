@@ -16,10 +16,12 @@ import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import type { KernelToolsCapability, KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
 import type { SessionEnvironment } from "../kernels/session-env.ts";
 import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
+import type { CellToolUpdateSink } from "../tool/nested-tool-output.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
 import { type BridgeDispatchContext, dispatchBridgeCompletion } from "./bridge-dispatch.ts";
 import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-call.ts";
 import { CellKernelTools } from "./cell-kernel-tools.ts";
+import { CellToolUpdates } from "./cell-tool-updates.ts";
 import { parkWhenIdle } from "./idle-parking-kernel.ts";
 import { KernelGlobalsLedger } from "./kernel-globals-ledger.ts";
 import {
@@ -78,6 +80,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	/** One per language for the manager's life, so an idle-park restart never re-announces an earlier generation. */
 	readonly #ledgers = new Map<EvalLanguage, Promise<KernelGlobalsLedger>>();
 	readonly #cellKernelTools = new CellKernelTools();
+	readonly #cellToolUpdates = new CellToolUpdates();
 	#context: ExtensionContext | undefined;
 	#generation = 0;
 	#disposePromise: Promise<void> | undefined;
@@ -111,12 +114,21 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 
 	async #call(request: BridgeToolCallRequest): Promise<unknown> {
 		return await this.#cellKernelTools.run(request.cellToken, () =>
-			routeBridgeToolCall(this.#options, request, this.#context?.evalHandleHost),
+			routeBridgeToolCall(
+				this.#options,
+				request,
+				this.#context?.evalHandleHost,
+				this.#cellToolUpdates.sinkFor(request.cellToken),
+			),
 		);
 	}
 
 	bindCellKernelTools(token: string, capability: KernelToolsCapability): () => void {
 		return this.#cellKernelTools.bind(token, capability);
+	}
+
+	bindCellToolUpdates(token: string, sink: CellToolUpdateSink): () => void {
+		return this.#cellToolUpdates.bind(token, sink);
 	}
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
