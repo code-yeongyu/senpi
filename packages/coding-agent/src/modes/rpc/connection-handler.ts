@@ -145,6 +145,7 @@ import {
 import { readProjectFile, writeProjectFile } from "./project-file-commands.ts";
 import { getProjectMcpServers, setProjectMcpServers } from "./project-mcp-commands.ts";
 import { readProjectSkillFile, writeProjectSkillFile } from "./project-skill-commands.ts";
+import { readUserSkillFile, writeUserSkillFile } from "./user-skill-commands.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
 import {
@@ -1003,6 +1004,8 @@ export function createRpcConnectionHandler(
 		grantPresentationAbort = new AbortController();
 		if (securityBoundByHost) return;
 		if (!clientCapabilities?.includes("grant_select")) return;
+		// A connection that speaks for another device never presents a grant (D11 R-1, senpi#6901 review H1).
+		if (connectionRoles.originOf(currentConnectionId()) !== undefined) return;
 		const signal = grantPresentationAbort.signal;
 		detachGrantPresentation = attachMcpGrantPresentation(session.sessionId, (title, choices, opts) =>
 			selectGrantDialog(title, choices, {
@@ -1707,7 +1710,7 @@ export function createRpcConnectionHandler(
 					secretRoute.handshake?.(command.capabilities);
 					secretInputs.recheck();
 				}
-				if (next.grantChanged) refreshGrantPresentation();
+				if (next.grantChanged || origin.origin !== undefined) refreshGrantPresentation();
 				return success(id, "set_client_info");
 			}
 
@@ -2332,6 +2335,21 @@ export function createRpcConnectionHandler(
 				return result.ok
 					? success(id, "write_project_skill_file", result.data)
 					: error(id, "write_project_skill_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "read_user_skill_file": {
+				const result = await readUserSkillFile(session, command.skill);
+				return result.ok
+					? success(id, "read_user_skill_file", result.data)
+					: error(id, "read_user_skill_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "write_user_skill_file": {
+				const origin = connectionRoles.originOf(currentConnectionId());
+				const result = await writeUserSkillFile(session, command.skill, command.content, command.ifEtag, origin);
+				return result.ok
+					? success(id, "write_user_skill_file", result.data)
+					: error(id, "write_user_skill_file", result.message, result.errorCode, result.errorData);
 			}
 
 			case "extension_request":
