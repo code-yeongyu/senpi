@@ -3,7 +3,6 @@ import test from "node:test";
 import {
 	checkBudget,
 	checkDeclarationsAcrossPlacements,
-	checkHooksOncePerCall,
 	checkNoDanglingCall,
 	checkNoEngineError,
 	checkNoMarkers,
@@ -13,35 +12,11 @@ import {
 	checkTaskShape,
 	evaluateLiveRun,
 	MAX_BUDGET,
-	nestedCalls,
 } from "./live-invariants.mjs";
+import { assistant, hooks, result, started } from "./live-test-fixtures.mjs";
+import { nestedCalls } from "./live-transcript.mjs";
 
-const assistant = (id, calls, extra = {}) => ({
-	type: "message",
-	id,
-	message: {
-		role: "assistant",
-		content: calls.map(([callId, name]) => ({ type: "toolCall", id: callId, name, arguments: {} })),
-		stopReason: "toolUse",
-		...extra,
-	},
-});
-const result = (id, toolCallId, isError = false) => ({
-	type: "message",
-	id,
-	message: { role: "toolResult", toolCallId, isError },
-});
 const custom = (id) => ({ type: "custom", id, customType: "pi-rules.scan" });
-const hooks = (...ids) =>
-	ids.flatMap((toolCallId) => [
-		{ event: "PreToolUse", toolCallId },
-		{ event: "PostToolUse", toolCallId },
-	]);
-const started = (...ids) =>
-	ids.flatMap((toolCallId) => [
-		{ type: "tool_execution_start", toolCallId },
-		{ type: "tool_execution_end", toolCallId },
-	]);
 
 /** A transcript that meets the task shape: 32 calls over 8 turns, every component used. */
 function goodRun() {
@@ -57,7 +32,7 @@ function goodRun() {
 		["t1", "task"],
 		...Array.from({ length: 23 }, (_, index) => [`x${index}`, "read"]),
 	];
-	const entries = [custom("c0")];
+	const entries = [{ type: "session", id: "s1" }, custom("c0")];
 	const groups = [calls.slice(0, 2), ...calls.slice(2).map((call) => [call])];
 	groups.forEach((group, index) => {
 		entries.push(assistant(`a${index}`, group));
@@ -143,33 +118,6 @@ test("an end without a matching start is a violation and does not close another 
 	];
 	assert.deepEqual(checkNoDanglingCall(events).detail, ["call ghost ended without a start"]);
 	assert.deepEqual(nestedCalls(events), [{ id: "cm-1", name: "bash", parentId: "ev1" }]);
-});
-
-test("G1: a hook missing, firing twice, or firing for an unknown call fails; nested calls count", () => {
-	const entries = [assistant("a", [["c1", "read"]]), result("r1", "c1")];
-	assert.equal(checkHooksOncePerCall(hooks("c1"), entries, []).pass, true);
-	assert.equal(checkHooksOncePerCall([{ event: "PreToolUse", toolCallId: "c1" }], entries, []).pass, false);
-	assert.equal(
-		checkHooksOncePerCall([...hooks("c1"), { event: "PostToolUse", toolCallId: "c1" }], entries, []).pass,
-		false,
-	);
-	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...hooks("ghost")], entries, []).pass, false);
-	const nested = [{ type: "tool_execution_start", toolCallId: "n1", parentToolCallId: "c1" }];
-	assert.equal(checkHooksOncePerCall(hooks("c1"), entries, nested).pass, false);
-	assert.equal(checkHooksOncePerCall(hooks("c1", "n1"), entries, nested).pass, true);
-});
-
-test("calls run inside an eval cell are attributed to the running call and need their own hooks", () => {
-	const events = [
-		{ type: "tool_execution_start", toolCallId: "ev1" },
-		{ type: "tool_hook_status", toolCallId: "ev1", toolName: "eval" },
-		{ type: "tool_hook_status", toolCallId: "cm-1", toolName: "bash" },
-		{ type: "tool_execution_end", toolCallId: "ev1" },
-	];
-	assert.deepEqual(nestedCalls(events), [{ id: "cm-1", name: "bash", parentId: "ev1" }]);
-	const entries = [assistant("a", [["ev1", "eval"]]), result("r1", "ev1")];
-	assert.equal(checkHooksOncePerCall(hooks("ev1"), entries, events).pass, false);
-	assert.equal(checkHooksOncePerCall(hooks("ev1", "cm-1"), entries, events).pass, true);
 });
 
 test("bash inside eval cells of two different calls counts as sequential bash; one cell does not", () => {

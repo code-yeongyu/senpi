@@ -1,6 +1,7 @@
 export * from "./cbor/index.ts";
 export * from "./codec.ts";
 export * from "./framing.ts";
+export { RecoveryRepairAdviceSchema, isRecoveryRepairAdvice, type RecoveryRepairAdvice } from "./recovery-repair.ts";
 export {
 	type AttachmentEnvelope,
 	type CancelEnvelope,

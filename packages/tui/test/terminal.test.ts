@@ -180,6 +180,10 @@ describe("normalizeNativeShiftEnterInput", () => {
 		assert.equal(normalizeNativeShiftEnterInput("\x1b[13;2u", true, true), "\x1b[13;2u");
 		assert.equal(normalizeNativeShiftEnterInput("a", true, true), "a");
 	});
+
+	it("leaves ESC CR unchanged outside the Apple Terminal path", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\x1b\r", true, true), "\x1b\r");
+	});
 });
 
 describe("normalizeAppleTerminalInput", () => {
@@ -193,6 +197,18 @@ describe("normalizeAppleTerminalInput", () => {
 
 	it("leaves non-Apple Terminal Return unchanged when Shift is pressed", () => {
 		assert.equal(normalizeAppleTerminalInput("\r", false, true), "\r");
+	});
+
+	it("rewrites the ESC CR that Terminal.app sends for Shift+Return when Shift is pressed", () => {
+		assert.equal(normalizeAppleTerminalInput("\x1b\r", true, true), "\x1b[13;2u");
+	});
+
+	it("keeps ESC CR as Alt+Enter when Shift is not pressed (Option-as-Meta Return)", () => {
+		assert.equal(normalizeAppleTerminalInput("\x1b\r", true, false), "\x1b\r");
+	});
+
+	it("leaves ESC CR unchanged outside Apple Terminal when Shift is pressed", () => {
+		assert.equal(normalizeAppleTerminalInput("\x1b\r", false, true), "\x1b\r");
 	});
 
 	it("leaves non-Return input unchanged", () => {

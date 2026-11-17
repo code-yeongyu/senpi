@@ -1,5 +1,41 @@
 # changes
 
+## 2026-11-11 - Test alias for the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/server/vitest.config.ts`: aliases `@earendil-works/pi-realm-registry` to its source.
+
+### Why
+
+- pi-ai imports the helper, and this package's tests load pi-ai from source.
+
+### Why an extension could not handle it
+
+- Test configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the alias list.
+
+## 2026-10-29 - Run certified Vitest suites on Bun (senpi#4763)
+
+### What changed
+
+- `packages/server/package.json`: launch the existing temp-owning Vitest runner with `bun --bun` instead of Node.
+
+### Why
+
+- The full Node and Vitest-on-Bun controls match at 6 files and 44 passing tests. Bun avoids Node test workers.
+
+### Why an extension could not handle it
+
+- Package test scripts select the runtime before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/server/package.json`: preserve the Bun launcher and forwarded Vitest arguments.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed

@@ -249,6 +249,7 @@ describe("terminal extension footer status wiring", () => {
 			setActiveTools: (next: string[]) => {
 				activeTools = next;
 			},
+			isLoopRemote: () => false,
 		} as unknown as ExtensionAPI;
 
 		registerTerminalExtension(fakePi);

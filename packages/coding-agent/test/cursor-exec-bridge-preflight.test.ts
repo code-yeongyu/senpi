@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
+import { type AgentEvent, type AgentTool, openMemoryBatchStore } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
@@ -49,6 +49,8 @@ describe("cursor exec bridge tool_call preflight", () => {
 		const runSignal = new AbortController().signal;
 		const agent = {
 			signal: runSignal,
+			batchStoreFactory: openMemoryBatchStore,
+			executionScope: { id: "test-scope", root: "" },
 			async emitExternalEvent(event: AgentEvent) {
 				events.push(event);
 				eventQueue = eventQueue.then(async () => {

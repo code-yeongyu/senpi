@@ -90,6 +90,7 @@ function createRuntimeFactory(): {
 				// Records flags like ExtensionRunner: an attach and a runtime replacement set the permission preset here.
 				extensionRunner: {
 					hasHandlers: () => false,
+					emitBusEvent: () => {},
 					emit: async () => {},
 					setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),
 					getFlagValues: () => new Map(flagValues),

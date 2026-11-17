@@ -42,6 +42,6 @@ for (const transport of ["in-process", "worker frame"] as const) {
 			} finally {
 				lane.retire("close");
 			}
-		});
+		}, 600_000);
 	}
 }

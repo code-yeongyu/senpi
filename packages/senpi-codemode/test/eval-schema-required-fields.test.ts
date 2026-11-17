@@ -106,6 +106,16 @@ describe("eval action schemas", () => {
 		}
 	});
 
+	// senpi#5138: object-only OpenAI-compatible routes merge the union and lose the run branch's required list.
+	it("tells OpenAI-compatible routes which fields a run requires", () => {
+		for (const wire of [
+			normalizeToolParametersForOpenAICompat({ ...schema }),
+			normalizeToolParametersForMoonshot({ ...schema }),
+		]) {
+			expect(wire.description).toEqual(expect.stringContaining("REQUIRED for action=run: language, code, summary."));
+		}
+	});
+
 	it("keeps list, peek and stop usable without run fields", () => {
 		expect(Check(schema, { action: "list" })).toBe(true);
 		for (const action of ["peek", "stop"]) {

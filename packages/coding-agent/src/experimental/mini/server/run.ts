@@ -73,7 +73,7 @@ export async function runServer(options: { transport: Transport; sessionsRoot: s
 
 	const spawnWorker = async (sessionId: string | undefined, cwd: string): Promise<Route> => {
 		const args = [...runtimeExecArgv(), WORKER_ENTRY, options.sessionsRoot, cwd, ...(sessionId ? [sessionId] : [])];
-		const child = spawn(process.execPath, args, { stdio: ["pipe", "pipe", "inherit"] });
+		const child = spawn(process.execPath, args, { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
 		const connection = childConnection(child);
 		const peer = createPeer(connection);
 		// Workers consume `Sessions` through this same peer.

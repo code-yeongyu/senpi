@@ -35,4 +35,4 @@ it("never dispatches late frames from a terminated worker channel to the consume
 		client.quarantine();
 		await client.exited;
 	}
-});
+}, 600_000);

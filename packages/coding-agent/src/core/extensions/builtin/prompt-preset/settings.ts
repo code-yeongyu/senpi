@@ -4,7 +4,7 @@ export type PromptPresetName =
 	| "auto"
 	| "claude-fable-5"
 	| "claude-fable-5-1"
-	| "claude-fable-5-5"
+	| "claude-fable-5-2"
 	| "claude-opus-5-5"
 	| "claude-opus-5"
 	| "claude-sonnet-5-5"
@@ -46,7 +46,7 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"auto",
 	"claude-fable-5",
 	"claude-fable-5-1",
-	"claude-fable-5-5",
+	"claude-fable-5-2",
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5-5",

@@ -33,6 +33,8 @@ export interface SessionHolderProbes extends LockProbes {
 	 * is alive but whose start time cannot be compared, so a reused pid is not mistaken for it forever.
 	 */
 	readonly holderEnded?: (generation: HolderGeneration) => Promise<boolean>;
+	/** Report a held record whose owner start time cannot be read with `unproven: true` (an interactive take-over refuses those). */
+	readonly markUnproven?: boolean;
 }
 
 async function fenced(fenceSession: (() => Promise<void>) | undefined): Promise<boolean> {
@@ -98,7 +100,12 @@ export async function liveHolders(
 							: {}),
 					}
 				: {};
-		holders.push({ pid: state.holder.pid, cwd: stable ? parseCwd(raw) : undefined, ...endpoint });
+		holders.push({
+			pid: state.holder.pid,
+			cwd: stable ? parseCwd(raw) : undefined,
+			...endpoint,
+			...(probes.markUnproven === true && state.unproven === true ? { unproven: true as const } : {}),
+		});
 	}
 	return holders;
 }

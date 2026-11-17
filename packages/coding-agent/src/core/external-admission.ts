@@ -23,8 +23,11 @@ import {
 	SESSION_CONTROL_DELIVERY_TYPE,
 	type SessionAdmissionGate,
 	type SessionControlDeliveryDetails,
+	type SessionControlRemoteOrigin,
 } from "./extensions/session-control-types.ts";
 import type { CustomMessage } from "./messages.ts";
+import type { HistoryReducer } from "./session-history-reduce.ts";
+import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
 
 export type SessionControlDeliveryMessage = CustomMessage<SessionControlDeliveryDetails>;
 
@@ -40,6 +43,17 @@ export interface ExternalAdmissionPort {
 export interface EditorHoldState {
 	readonly hold_reason?: AdmissionHoldReason;
 	readonly revision: number;
+}
+
+/**
+ * What the engine itself adds to a delivery an RPC connection admits (senpi#6233): the remote device that connection
+ * speaks for, the thread-chain hop it was admitted at, and the origin mark its turn takes. `pi.session` never passes
+ * one, so neither an extension nor a caller's record can write these.
+ */
+export interface DeliveryStamp {
+	readonly remoteOrigin?: SessionControlRemoteOrigin;
+	readonly chainCount?: number;
+	readonly turnMark?: InputTurnMark;
 }
 
 type PendingLane = ExternalDeliverAs | "start" | (() => boolean);
@@ -139,7 +153,7 @@ export class ExternalAdmission {
 			: { can_admit: false, hold_reason: editor.hold_reason, ...base };
 	}
 
-	admit(input: AdmitExternalMessageInput): ExternalAdmissionResult {
+	admit(input: AdmitExternalMessageInput, stamp: DeliveryStamp = {}): ExternalAdmissionResult {
 		if (this.closedReason !== undefined) throw new Error(this.closedReason);
 		const turn_epoch = this.turnEpochValue;
 		const id = input.delivery_id;
@@ -151,7 +165,7 @@ export class ExternalAdmission {
 		if (input.expected_turn_id !== undefined && input.expected_turn_id !== turn_epoch) {
 			return { kind: "turn_conflict", turn_epoch };
 		}
-		const message = deliveryMessage(input);
+		const message = deliveryMessage(input, stamp);
 		if (!this.isBusy() && input.whenIdle !== "queue") {
 			this.pending.set(id, "start");
 			// A start that settles without writing the entry left it queued for later (the runtime's
@@ -249,8 +263,8 @@ export interface InputHold {
 	end(): void;
 }
 
-function deliveryMessage(input: AdmitExternalMessageInput): SessionControlDeliveryMessage {
-	return {
+function deliveryMessage(input: AdmitExternalMessageInput, stamp: DeliveryStamp): SessionControlDeliveryMessage {
+	const message: SessionControlDeliveryMessage = {
 		role: "custom",
 		customType: SESSION_CONTROL_DELIVERY_TYPE,
 		content: input.text,
@@ -261,10 +275,29 @@ function deliveryMessage(input: AdmitExternalMessageInput): SessionControlDelive
 			deliverAs: input.deliverAs,
 			...(input.sender === undefined ? {} : { sender: input.sender }),
 			...(input.display_text === undefined ? {} : { display_text: input.display_text }),
+			...(stamp.remoteOrigin === undefined ? {} : { remote_origin: stamp.remoteOrigin }),
+			...(stamp.chainCount === undefined ? {} : { chain_count: stamp.chainCount }),
 		},
 		timestamp: Date.now(),
 	};
+	// The mark rides the message into the run, where the turn that consumes it takes its origin (turn-origin.ts).
+	if (stamp.turnMark !== undefined) markInputTurnOrigin(message, stamp.turnMark);
+	return message;
 }
+
+/** Every delivery id the transcript holds an entry for: what answers for the process-lifetime ledger after a restart. */
+export const writtenDeliveryIds: HistoryReducer<Set<string>> = {
+	initial: () => new Set(),
+	add: (ids, entry) => {
+		if (
+			entry.type === "custom_message" &&
+			entry.customType === SESSION_CONTROL_DELIVERY_TYPE &&
+			isSessionControlDeliveryDetails(entry.details)
+		)
+			ids.add(entry.details.delivery_id);
+		return ids;
+	},
+};
 
 export function deliveryIdOf(message: AgentMessage): string | undefined {
 	if (message.role !== "custom" || message.customType !== SESSION_CONTROL_DELIVERY_TYPE) return undefined;

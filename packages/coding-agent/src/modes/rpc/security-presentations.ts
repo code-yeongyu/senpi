@@ -2,11 +2,14 @@ import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { type ConnectionLocality, RaiserNotices } from "./raiser-notices.ts";
 import type { SessionEventFanout } from "./session-event-fanout.ts";
 
 interface WorkerGrant {
 	readonly connection: string | undefined;
 	readonly cancel: () => void;
+	/** Not the raiser's own connection: a local fallback that must stay local (D11 S3-5). */
+	readonly background: boolean;
 }
 interface PresentationState {
 	readonly durableId?: string;
@@ -24,10 +27,19 @@ export class RpcSecurityPresentations {
 	private readonly fanout: SessionEventFanout;
 	private readonly inConnection: <T>(id: string, task: () => T) => T;
 	private readonly flush: () => void;
-	constructor(fanout: SessionEventFanout, inConnection: <T>(id: string, task: () => T) => T, flush: () => void) {
+	private readonly locality: ConnectionLocality;
+	private readonly notices: RaiserNotices;
+	constructor(
+		fanout: SessionEventFanout,
+		inConnection: <T>(id: string, task: () => T) => T,
+		flush: () => void,
+		locality: ConnectionLocality,
+	) {
 		this.fanout = fanout;
 		this.inConnection = inConnection;
 		this.flush = flush;
+		this.locality = locality;
+		this.notices = new RaiserNotices(fanout, flush);
 	}
 	bind(
 		sessionId: string,
@@ -92,6 +104,7 @@ export class RpcSecurityPresentations {
 			if (state === undefined) continue;
 			this.#register(id, state);
 			if (!this.fanout.connectionHas(id, "grant_select")) this.#cancelFor(state, id);
+			else if (this.locality.isRemote(id)) this.#cancelFor(state, id, true);
 		}
 	}
 	routeWorkerGrant(
@@ -100,12 +113,11 @@ export class RpcSecurityPresentations {
 		preferred: string | undefined,
 		fallbackCapabilities: readonly string[],
 		cancel: () => void,
+		title?: string,
 	): { readonly accepted: boolean; readonly connection?: string } {
 		const attached = this.fanout.attachedConnections(sessionId);
-		const connection =
-			attached.includes(preferred ?? "") && this.fanout.connectionHas(preferred, "grant_select")
-				? preferred
-				: attached.find((id) => this.fanout.connectionHas(id, "grant_select"));
+		const raiser = attached.includes(preferred ?? "") && this.fanout.connectionHas(preferred, "grant_select");
+		const connection = raiser ? preferred : attached.find((id) => this.#localPresenter(id));
 		const accepted =
 			connection !== undefined || (this.fanout.isEmpty() && fallbackCapabilities.includes("grant_select"));
 		if (!accepted) {
@@ -122,8 +134,13 @@ export class RpcSecurityPresentations {
 			};
 			this.#sessions.set(sessionId, state);
 		}
-		state.grants.set(requestId, { connection, cancel });
+		state.grants.set(requestId, { connection, cancel, background: !raiser });
+		if (title !== undefined) this.noticeGrant(sessionId, requestId, title, connection);
 		return { accepted: true, connection };
+	}
+	/** Attached connections other than the presenter see that a grant select is pending; only the presenter answers. */
+	noticeGrant(sessionId: string, requestId: string, title: string, presenter: string | undefined): void {
+		this.notices.raised(sessionId, requestId, [presenter], { type: "grant_select_notice", title });
 	}
 	acceptWorkerResponse(sessionId: string, requestId: string, connection: string | undefined): boolean | undefined {
 		const state = this.#sessions.get(sessionId);
@@ -140,18 +157,23 @@ export class RpcSecurityPresentations {
 	}
 	settleGrant(sessionId: string, requestId: string): void {
 		this.#sessions.get(sessionId)?.grants.delete(requestId);
+		this.notices.settled(sessionId, requestId, { type: "grant_select_notice_settled" });
 	}
 	dropSession(sessionId: string): void {
 		this.#stop(this.#sessions.get(sessionId));
 		this.#sessions.delete(sessionId);
+		this.notices.dropSession(sessionId);
 		for (const [id, sessions] of this.#attachments) {
 			sessions.delete(sessionId);
 			if (sessions.size === 0) this.#attachments.delete(id);
 		}
 	}
+	/** The in-process path has no raiser, so a grant presentation is always a background route: local only. */
+	#localPresenter(id: string): boolean {
+		return this.fanout.connectionHas(id, "grant_select") && !this.locality.isRemote(id);
+	}
 	#register(id: string, state: PresentationState): void {
-		const capable = this.fanout.connectionHas(id, "grant_select");
-		if (!capable) {
+		if (!this.#localPresenter(id)) {
 			state.registrations.get(id)?.();
 			state.registrations.delete(id);
 			return;
@@ -185,9 +207,9 @@ export class RpcSecurityPresentations {
 			);
 		this.flush();
 	}
-	#cancelFor(state: PresentationState, id: string): void {
+	#cancelFor(state: PresentationState, id: string, backgroundOnly = false): void {
 		for (const [requestId, pending] of state.grants)
-			if (pending.connection === id) {
+			if (pending.connection === id && (!backgroundOnly || pending.background)) {
 				state.grants.delete(requestId);
 				pending.cancel();
 			}

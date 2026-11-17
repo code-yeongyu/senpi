@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
-import type { Provider } from "@earendil-works/pi-ai";
+import type { Provider, ProviderId } from "@earendil-works/pi-ai";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import * as _bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
@@ -42,6 +42,7 @@ import { validateChildModuleRegistration } from "../tool-dispatch/offload.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import { type RpcRemoteSource, registerRpcRemoteSource } from "./builtin/terminal/rpc-remote-source.ts";
 import { McpServerRegistry } from "./mcp-server-registry.ts";
 import { readPermissionPreset } from "./builtin/permission-system/preset-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
@@ -57,6 +58,7 @@ import {
 import { kernelToolInvokerStorage } from "./kernel-tools-context.ts";
 import { createLifecycleApi } from "./lifecycle-api.ts";
 import { withProviderLoginStart } from "./provider-login-start.ts";
+import { createSessionDialogApi } from "./session-dialog-api.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
@@ -71,10 +73,12 @@ import type {
 	ExtensionFactory,
 	ExtensionRuntime,
 	ExtensionSessionProfile,
+	ExtensionSide,
 	ExtensionVirtualModel,
 	FilesystemPolicy,
 	LazyToolActivator,
 	LoadExtensionsResult,
+	ProviderHookOptions,
 	MarkdownTransformer,
 	MemoryReporter,
 	MessageRenderer,
@@ -93,19 +97,49 @@ import type {
 	SessionKind,
 	ToolDefinition,
 } from "./types.ts";
-import { DEFAULT_EXTENSION_SESSION_PROFILE, EMPTY_SESSION_CONTEXT } from "./types.ts";
+import type { ToolMachine } from "../tools/machine.ts";
+import { DEFAULT_EXTENSION_SESSION_PROFILE, DeviceMachineConflictError, EMPTY_SESSION_CONTEXT } from "./types.ts";
 
 /** Per-session extension inputs a caller may name; every absent one takes its classic default. */
 export interface ExtensionSessionOptions {
 	sessionKind?: SessionKind;
 	sessionContext?: SessionContext;
+	/** The side of a split session to load for; a handler declared `runs` for the other side is not registered. Absent: fused. */
+	side?: ExtensionSide;
 }
 
 function sessionProfile(options: ExtensionSessionOptions | undefined): ExtensionSessionProfile {
 	return {
 		sessionKind: options?.sessionKind ?? "interactive",
 		sessionContext: options?.sessionContext ?? EMPTY_SESSION_CONTEXT,
+		...(options?.side === undefined ? {} : { side: options.side }),
 	};
+}
+
+function assertExtensionSide(extension: Extension, runs: unknown, registration: string): void {
+	if (runs === "brain" || runs === "hand") return;
+	throw new Error(
+		`Extension "${extension.path}" declared runs: ${JSON.stringify(runs)} for ${registration}; runs must be "brain" or "hand".`,
+	);
+}
+
+/** The events whose handlers may declare `{ providers }` (CK21). */
+const PROVIDER_HOOK_EVENTS: readonly string[] = [
+	"before_provider_request",
+	"provider_stream_event",
+	"after_provider_response",
+];
+
+function declaredProviders(extension: Extension, providers: unknown, registration: string): readonly ProviderId[] {
+	if (
+		Array.isArray(providers) &&
+		providers.length > 0 &&
+		providers.every((provider) => typeof provider === "string" && provider !== "")
+	)
+		return Object.freeze([...(providers as ProviderId[])]);
+	throw new Error(
+		`Extension "${extension.path}" declared providers: ${JSON.stringify(providers)} for ${registration}; providers must be a non-empty array of provider ids.`,
+	);
 }
 
 /** Modules available to extensions via virtualModules (for compiled binaries) */
@@ -288,6 +322,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	};
 
 	const runtime: ExtensionRuntime = {
+		deviceMachine: undefined,
+		isLoopRemote: () => false,
 		sendMessage: notInitialized,
 		sendUserMessage: notInitialized,
 		appendEntry: notInitialized,
@@ -438,11 +474,13 @@ function createExtensionAPI(
 		}
 		runtime.assertActive();
 	};
+	let deviceMachineStaged = false;
 	const applyRuntimeChange = (change: () => void) => {
 		if (state === "loading") pendingRuntimeChanges.push(change);
 		else change();
 	};
 	const clearPending = () => {
+		deviceMachineStaged = false;
 		pendingFlagValues.clear();
 		pendingRuntimeChanges.length = 0;
 		loadingUnsubscribers.length = 0;
@@ -452,14 +490,25 @@ function createExtensionAPI(
 		cwd,
 		sessionKind: session.sessionKind,
 		sessionContext: session.sessionContext,
+		get engine() {
+			return _bundledPiCodingAgent;
+		},
 
 		// Registration methods - write to extension
 		on(
 			event: string,
 			handler: HandlerFn,
-			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions,
+			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions & ProviderHookOptions,
 		): () => void {
 			assertActive();
+			const runs = options?.runs;
+			if (runs !== undefined) assertExtensionSide(extension, runs, `"${event}"`);
+			// Checked on every side, also for a handler this side does not register: a malformed declaration always throws.
+			const providers =
+				PROVIDER_HOOK_EVENTS.includes(event) && options?.providers !== undefined
+					? declaredProviders(extension, options.providers, `"${event}"`)
+					: undefined;
+			if (runs !== undefined && session.side !== undefined && runs !== session.side) return () => {};
 			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => {
 				// A child event can run inside its parent's task-tool async scope.
 				// Bind the host context here, preserving registered-handler metadata.
@@ -472,9 +521,21 @@ function createExtensionAPI(
 			const list = extension.handlers.get(event) ?? [];
 			list.push(registeredHandler);
 			extension.handlers.set(event, list);
+			if (runs !== undefined) {
+				extension.handlerSides ??= new WeakMap();
+				extension.handlerSides.set(registeredHandler, runs);
+			}
+			if (providers !== undefined) {
+				extension.handlerProviders ??= new WeakMap();
+				extension.handlerProviders.set(registeredHandler, providers);
+			}
 			if (event === "before_agent_start" && options?.previewSafe === true) {
 				extension.previewSafeHandlers ??= new WeakSet();
 				extension.previewSafeHandlers.add(registeredHandler);
+			}
+			if (event === "before_agent_start" && options?.runLast === true) {
+				extension.runLastHandlers ??= new WeakSet();
+				extension.runLastHandlers.add(registeredHandler);
 			}
 			if ((event === "context" || event === "context_with_system") && options?.mutatesMessages === false) {
 				extension.nonMutatingContextHandlers ??= new WeakSet();
@@ -491,6 +552,19 @@ function createExtensionAPI(
 			};
 		},
 
+		registerDeviceMachine(machine: ToolMachine): void {
+			assertActive();
+			if (runtime.deviceMachine !== undefined) {
+				throw new DeviceMachineConflictError(runtime.deviceMachine.extensionPath, extension.path);
+			}
+			if (deviceMachineStaged) throw new DeviceMachineConflictError(extension.path, extension.path);
+			deviceMachineStaged = true;
+			// Staged like provider registrations: a factory that throws after registering leaves no device behind.
+			applyRuntimeChange(() => {
+				runtime.deviceMachine = { machine, extensionPath: extension.path };
+			});
+		},
+
 		registerTool(tool: ToolDefinition): void {
 			runtime.assertActive();
 			if (tool.name === "tool_search" && extension.sourceInfo.source !== "builtin") {
@@ -501,6 +575,7 @@ function createExtensionAPI(
 					`Tool "${tool.name}" registered by extension "${extension.path}" must define an object parameter schema.`,
 				);
 			}
+			if (tool.runs !== undefined) assertExtensionSide(extension, tool.runs, `tool "${tool.name}"`);
 			extension.tools.set(tool.name, {
 				definition: Object.assign(Object.create(Object.getPrototypeOf(tool)), tool, {
 					execute: ownedBy(extension, tool.execute),
@@ -642,6 +717,13 @@ function createExtensionAPI(
 			return unregister;
 		},
 
+		registerRpcRemoteSource(source: RpcRemoteSource): () => void {
+			assertActive();
+			const unregister = runtime.trackEventBusSubscription(registerRpcRemoteSource(source));
+			if (state === "loading") loadingUnsubscribers.push(unregister);
+			return unregister;
+		},
+
 		registerMcpServer(name: string, config: RegisteredMcpServerDeclaration["config"]): void {
 			assertActive();
 			const error = validateMcpServerDeclaration(name, config);
@@ -686,6 +768,11 @@ function createExtensionAPI(
 			return readPermissionPreset(sessionManager);
 		},
 
+		sessionDialog: createSessionDialogApi(() => {
+			assertActive();
+			return runtime.createContext().ui;
+		}),
+
 		getSubscriptionLimits() {
 			assertActive();
 			return subscriptionLimits.snapshot();
@@ -726,6 +813,8 @@ function createExtensionAPI(
 			assertActive();
 			runtime.sendUserMessage(content, options);
 		},
+
+		isLoopRemote: () => runtime.isLoopRemote(),
 
 		appendEntry(customType: string, data?: unknown, options?: AppendEntryOptions): void {
 			assertActive();
@@ -942,6 +1031,11 @@ function createExtensionAPI(
 		commit: () => {
 			if (state !== "loading") return;
 			runtime.assertActive();
+			// Checked before anything is applied: another extension may have registered a device machine while this load's
+			// registration was staged (from an event fired during this factory). The load then fails whole, nothing half-applied.
+			if (deviceMachineStaged && runtime.deviceMachine !== undefined) {
+				throw new DeviceMachineConflictError(runtime.deviceMachine.extensionPath, extension.path);
+			}
 			for (const [name, value] of pendingFlagValues) {
 				if (!runtime.flagValues.has(name)) runtime.flagValues.set(name, value);
 			}

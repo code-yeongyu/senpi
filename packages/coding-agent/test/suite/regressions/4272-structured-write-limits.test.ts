@@ -3,22 +3,18 @@ import { CompactContentStore } from "../../../src/modes/rpc/compact-content-stor
 import { CompactValues } from "../../../src/modes/rpc/compact-values.ts";
 import { spoolRoot } from "../compact-storage-support.ts";
 
-// senpi#4272: write failures are typed and cannot strand partially constructed owners.
-it.each(["depth_limit", "cycle", "count_limit", "size_limit"])("refuses %s without leaking", async (reason) => {
+// senpi#4272: write failures are typed and cannot strand partially constructed owners. Size, depth and node count
+// are not refused since S03b-4 (4272-compact-legal-large-values); a cycle is not a JSON value and still is.
+it("refuses a cycle without leaking", async () => {
 	const root = await spoolRoot();
 	const store = new CompactContentStore({ dir: root.dir });
 	const codec = new CompactValues(store);
-	let input: unknown = null;
-	if (reason === "depth_limit") for (let n = 0; n < 20_000; n++) input = [input];
-	if (reason === "cycle") {
-		const cycle: unknown[] = [];
-		cycle.push(cycle);
-		input = cycle;
-	}
-	if (reason === "count_limit") input = Array(100_001).fill(0);
-	if (reason === "size_limit") input = "x".repeat(16 * 1024 * 1024 + 1);
+	const cycle: unknown[] = [];
+	cycle.push({ inner: cycle });
 	try {
-		expect(() => codec.own(input)).toThrowError(expect.objectContaining({ name: "CompactWriteError", reason }));
+		expect(() => codec.own(cycle)).toThrowError(
+			expect.objectContaining({ name: "CompactWriteError", reason: "cycle" }),
+		);
 		await store.idle();
 		expect(store.status().structuredBytes).toEqual({ resident: 0, spilled: 0, pinned: 0 });
 		expect(store.text.residentNodes).toBe(0);

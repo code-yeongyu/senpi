@@ -17,7 +17,7 @@ import {
 	type FragmentSource,
 	fragmentRecords,
 	materializeSource,
-	sha256Hex,
+	fixtureDigest,
 } from "./fragment-record-source.ts";
 import { buildFragmentFixtureIndex } from "./fragment-record-index.ts";
 
@@ -89,14 +89,14 @@ function validCase(caseId: string, contractIds: string[], description: string, s
 		limits: FRAGMENT_LIMITS,
 		source,
 		sourceLength: value.length,
-		sourceDigest: sha256Hex(value),
+		sourceDigest: fixtureDigest(value),
 		expectedRecords: fragmentRecords(value, "base64" in source),
 	};
 }
 
 function sourceFacts(source: FragmentSource): { source: FragmentSource; sourceLength: number; sourceDigest: string } {
 	const value = materializeSource(source);
-	return { source, sourceLength: value.length, sourceDigest: sha256Hex(value) };
+	return { source, sourceLength: value.length, sourceDigest: fixtureDigest(value) };
 }
 
 const D = FRAGMENT_LIMITS.D;
@@ -108,7 +108,7 @@ function buildCases(): FragmentCase[] {
 	const actualDigest = digestMismatchInput[1].digest;
 	const corrupted = Uint8Array.from(digestMismatchValue.subarray(D));
 	corrupted[0] ^= 0x01;
-	digestMismatchInput[1] = { ...digestMismatchInput[1], digest: sha256Hex(corrupted) };
+	digestMismatchInput[1] = { ...digestMismatchInput[1], digest: fixtureDigest(corrupted, "fragment") };
 
 	const staleMinted = { base64: ascii("stale ref value v1") };
 	const staleChanged = { base64: ascii("stale ref value v2") };

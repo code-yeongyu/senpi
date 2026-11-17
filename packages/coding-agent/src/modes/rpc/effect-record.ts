@@ -115,7 +115,7 @@ export type EffectCommandKind = "abort" | "set_model" | "set_thinking_level" | "
  */
 const SEMANTIC_FIELDS: Readonly<Record<EffectCommandKind, readonly string[]>> = {
 	abort: ["awaitIdle", "clearQueue", "graceMs"],
-	set_model: ["provider", "modelId", "thinkingLevel"],
+	set_model: ["provider", "modelId", "thinkingLevel", "scope"],
 	set_thinking_level: ["level", "scope"],
 	unload: ["interrupt", "clearQueue", "children", "force"],
 	dequeue: ["queuedId", "expectedRevision"],

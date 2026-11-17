@@ -43,6 +43,13 @@ export const HOST_PROTOCOL_VERSION = 1;
  */
 export const GENERATION_HANDOFF_CAPABILITY = "generation_handoff";
 
+/**
+ * HOST capability (senpi#4602): every rename or remove this host makes on its public socket entry runs under the
+ * endpoint's mutation fence and re-reads the endpoint owner token. Only a predecessor that advertises it is handed
+ * off with the owner-token guard; an older one gets today's handoff and its late-rename race.
+ */
+export const ENDPOINT_OWNER_FENCE_CAPABILITY = "endpoint_owner_fence";
+
 /** What a daemon session needs from a host before any client may attach to it. */
 export const REQUIRED_HOST_CAPABILITIES = [
 	"multi_session",

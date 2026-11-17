@@ -39,8 +39,10 @@ export class JsWorkerRuntime {
 	#onChildEvent;
 	#onShellWaitChange;
 	#tools;
+	#killGuard;
 
 	constructor(options) {
+		this.#killGuard = options.killGuard;
 		this.#parallelPoolWidth = options.parallelPoolWidth;
 		this.#onChildEvent = typeof options.onChildEvent === "function" ? options.onChildEvent : null;
 		this.#onShellWaitChange = options.onShellWaitChange;
@@ -219,6 +221,7 @@ export class JsWorkerRuntime {
 			isActive: () => this.#hooks !== null,
 			emitText: (stream, data) => this.#emitText(stream, data),
 			onChild: (child, spawnOptions) => this.#trackChild(child, spawnOptions),
+			...(this.#killGuard === undefined ? {} : { killGuard: this.#killGuard }),
 			onShellWait: (promise, waiting) => {
 				if (waiting) this.#shellWaits.add(promise);
 				else this.#shellWaits.delete(promise);

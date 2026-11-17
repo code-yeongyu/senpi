@@ -95,6 +95,8 @@ export class SessionLifecycleController {
 			if (report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId)
 				this.ownTask = report;
 		}
+		// Before crash recovery reads consumed custody as an interrupted run (senpi#4848).
+		this.obligations.settleEndedRuns(this.ledger.runId);
 	}
 
 	get snapshot(): SessionLifecycle {
@@ -150,11 +152,13 @@ export class SessionLifecycleController {
 		this.liveness = undefined;
 		this.stopFacts = undefined;
 		this.deadlineStop = undefined;
-		const interruptedRun = this.ledger.interrupted ? this.ledger.runId : undefined;
+		// Settle whatever the previous run consumed, however it ended: idle() settles only a run that reaches it, and a
+		// run cut short by crash recovery or by a provider error that auto-retry replaces never does.
+		const previousRun = this.ledger.runId;
 		this.ledger.interrupted = false;
 		this.ledger.startRun(origin ?? (this.pendingHuman ? "human" : "automatic"));
 		this.pendingHuman = false;
-		if (interruptedRun) this.obligations.settleRun(interruptedRun);
+		if (previousRun) this.obligations.settleRun(previousRun);
 		this.recompute();
 		this.ledger.publishUnwritten();
 	}
@@ -298,8 +302,17 @@ export class SessionLifecycleController {
 				activeCount: record.activeCount ?? 1,
 				...projectWaitItems(record),
 			}));
+		// A delivery's own custody while its send is in flight is the session starting a turn, not a wait (senpi#6810);
+		// once the live run consumed it, it is that run's own work until settleRun (senpi#6814 review).
+		const deliveryInFlight = active.some((record) => this.obligations.isDeliveryInFlight(record));
+		const liveRun = this.ledger.runActive ? this.ledger.runId : undefined;
 		const background: LifecycleWaits["background"][number][] = active
-			.filter((record) => record.kind === "background")
+			.filter(
+				(record) =>
+					record.kind === "background" &&
+					!this.obligations.isDeliveryInFlight(record) &&
+					!this.obligations.isConsumedBy(record, liveRun),
+			)
 			.map((record) => ({
 				source: record.source ?? record.key,
 				activeCount: record.activeCount ?? 1,
@@ -360,7 +373,11 @@ export class SessionLifecycleController {
 			if (this.ledger.interrupted)
 				synthetic.push({ key: `interrupted:${this.ledger.snapshot.epoch}`, kind: "interrupted_run" });
 			const noWake =
-				children === 0 && background.length === 0 && !continuationQueued && runtime.pendingMessages === 0;
+				children === 0 &&
+				background.length === 0 &&
+				!deliveryInFlight &&
+				!continuationQueued &&
+				runtime.pendingMessages === 0;
 			if (
 				input &&
 				noWake &&
@@ -397,6 +414,7 @@ export class SessionLifecycleController {
 			runtime.activity.isBashRunning ||
 			runtime.activity.hasSessionWork ||
 			runtime.pendingMessages > 0 ||
+			deliveryInFlight ||
 			continuationQueued;
 		const failure: SessionLifecycle["failure"] =
 			input &&

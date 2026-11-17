@@ -8,6 +8,7 @@ import type { TuiControlSurface } from "../../src/modes/interactive/session-cont
 import {
 	type ActiveControlEndpoint,
 	registerSessionControlEndpoint,
+	type TuiControlContext,
 } from "../../src/modes/interactive/session-control-endpoint.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 
@@ -30,6 +31,7 @@ export async function startEndpoint(
 		readonly harness?: Harness;
 		readonly agentDir?: string;
 		readonly questions?: Pick<TuiControlSurface, "pendingQuestionIds" | "pendingQuestion" | "answerQuestion">;
+		readonly mcpPresenter?: TuiControlContext["mcpPresenter"];
 	} = {},
 ): Promise<EndpointFixture> {
 	const harness = options.harness ?? (await createHarness({ persistSession: true }));
@@ -64,7 +66,13 @@ export async function startEndpoint(
 		return options.drain?.(event);
 	};
 	const outcome = await registerSessionControlEndpoint(
-		{ session: harness.session, agentDir, surface, editorRevision: () => 0 },
+		{
+			session: harness.session,
+			agentDir,
+			surface,
+			editorRevision: () => 0,
+			...(options.mcpPresenter && { mcpPresenter: options.mcpPresenter }),
+		},
 		{ inboxDir, drain, ...(options.isSessionReferenced ? { isSessionReferenced: options.isSessionReferenced } : {}) },
 	);
 	if (!("endpoint" in outcome))

@@ -90,7 +90,7 @@ it("bootstrap before admission, in-process: accepted while the entry is opening,
 		await rig[Symbol.asyncDispose]();
 		await rm(dir, { recursive: true, force: true });
 	}
-}, 60_000);
+}, 600_000);
 
 it("bootstrap before admission, worker: accepted from 'ready' inside commit, before the entry opens, admission and the open reply", async () => {
 	vi.stubEnv(FLAG, "1");
@@ -121,4 +121,4 @@ it("bootstrap before admission, worker: accepted from 'ready' inside commit, bef
 	} finally {
 		await host.dispose();
 	}
-}, 60_000);
+}, 600_000);

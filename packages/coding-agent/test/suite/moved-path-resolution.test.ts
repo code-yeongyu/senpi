@@ -33,7 +33,7 @@ function recordingFactory(cwds: string[]): CreateAgentSessionRuntimeFactory {
 		return {
 			session: {
 				...fakeSessionBase(options),
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 				abort: async () => {},
 				abortBash: () => {},
 				waitForIdle: async () => {},

@@ -82,7 +82,8 @@ export function anthropicProvider(): Provider<"anthropic-messages"> {
 		baseUrl: "https://api.anthropic.com",
 		// No Claude subscription OAuth here (senpi#3259): Anthropic bills a subscription token sent
 		// straight to the Messages API as a third-party app (extra usage). Subscriptions log in through
-		// the Agent SDK lane (`anthropic-subscription`), which reuses the same OAuth flow.
+		// the Agent SDK lane (`anthropic-subscription`), which signs in through the bundled Claude Code CLI;
+		// senpi ships no Anthropic OAuth flow of its own (senpi#4436).
 		auth: {
 			apiKey: anthropicApiKeyAuth(),
 		},

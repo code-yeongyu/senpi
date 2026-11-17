@@ -237,4 +237,10 @@ describe("modern schema validation", () => {
 		const second = compileModernSchema({ $id: "urn:test:schema", const: 2 });
 		expect([first(1), first(2), second(1), second(2)]).toEqual([true, false, false, true]);
 	});
+
+	// Every catalog cache read parses fresh objects; recompiling them on each read stalled interactive startup.
+	it("reuses the compiled validator for an equal schema from a fresh parse", () => {
+		const raw = JSON.stringify({ type: "object", properties: { count: { type: "integer" } } });
+		expect(compileModernSchema(JSON.parse(raw))).toBe(compileModernSchema(JSON.parse(raw)));
+	});
 });

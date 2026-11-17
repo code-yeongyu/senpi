@@ -29,26 +29,26 @@
 		}
 	},
 	"sourceLength": 131073,
-	"sourceDigest": "f39f4e34db37882a3bd1562f83057d341200458e87515c1f78bad35f8d09f913",
+	"sourceDigest": "d6294e39390a006971d4b6ed61f7b6d60feddc01ae33e919a77ae4b46f81afee",
 	"fault": {
 		"recordIndex": 1,
 		"field": "digest",
-		"declaredDigest": "de2e331d891ae267a7009cb45b4e8830f170e0c937288ea2731a1941c7a53b0d",
-		"actualDigest": "e6f207509afa3908da116ce61a7576954248d9fe64a3c652b493cca57ce36e2e",
+		"declaredDigest": "b0c87354ae70d1f7edb6f8abe0e1f8fc403b76c38fb8e372abf65791baa97532",
+		"actualDigest": "b7163a5c3310afc541e062b87fb45716b4869d351ff4230a68d7b191d899d301",
 		"corruption": "declaredDigest is sha256 of the record bytes with the first byte XOR 0x01"
 	},
 	"input": [
 		{
 			"offset": 0,
 			"length": 131072,
-			"digest": "b2e9614bb083430ac75dc294e846555c1f53adc3b4a8dd63ff18364545754c0b",
+			"digest": "4c440b7910c975e28870446515eb8953c80164935efce55922ef3902e83cb784",
 			"next": 131072,
 			"complete": false
 		},
 		{
 			"offset": 131072,
 			"length": 1,
-			"digest": "de2e331d891ae267a7009cb45b4e8830f170e0c937288ea2731a1941c7a53b0d",
+			"digest": "b0c87354ae70d1f7edb6f8abe0e1f8fc403b76c38fb8e372abf65791baa97532",
 			"next": null,
 			"complete": true
 		}

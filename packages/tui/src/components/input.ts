@@ -14,6 +14,9 @@ interface InputState {
 }
 
 export interface InputOptions {
+	/** Render only masks; editing state belongs to this instance and must be disposed at settlement. */
+	secret?: boolean;
+	onInvalidInput?: () => void;
 	prompt?: string;
 	placeholder?: string;
 	placeholderStyle?: (text: string) => string;
@@ -26,6 +29,8 @@ export class Input implements Component, Focusable {
 	private value: string = "";
 	private cursor: number = 0; // Cursor position in the value
 	private readonly prompt: string;
+	private readonly secret: boolean;
+	private readonly onInvalidInput: (() => void) | undefined;
 	private readonly placeholder: string;
 	private readonly placeholderStyle: (text: string) => string;
 	private renderedStartColumn = 0;
@@ -47,6 +52,8 @@ export class Input implements Component, Focusable {
 	private undoStack = new UndoStack<InputState>();
 
 	constructor(options: InputOptions = {}) {
+		this.secret = options.secret === true;
+		this.onInvalidInput = options.onInvalidInput;
 		this.prompt = options.prompt ?? "> ";
 		this.placeholder = options.placeholder ?? "";
 		this.placeholderStyle = options.placeholderStyle ?? ((text) => text);
@@ -57,6 +64,10 @@ export class Input implements Component, Focusable {
 	}
 
 	setValue(value: string): void {
+		if (this.secret && /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)) {
+			this.onInvalidInput?.();
+			return;
+		}
 		this.value = value;
 		this.cursor = Math.min(this.cursor, value.length);
 	}
@@ -223,6 +234,8 @@ export class Input implements Component, Focusable {
 		});
 		if (!hasControlChars) {
 			this.insertCharacter(data);
+		} else if (this.secret && !data.startsWith("\x1b")) {
+			this.onInvalidInput?.();
 		}
 	}
 
@@ -233,7 +246,7 @@ export class Input implements Component, Focusable {
 		let currentColumn = 0;
 		this.cursor = this.value.length;
 		for (const grapheme of segmenter.segment(this.value)) {
-			const nextColumn = currentColumn + visibleWidth(grapheme.segment);
+			const nextColumn = currentColumn + (this.secret ? 1 : visibleWidth(grapheme.segment));
 			if (targetColumn < nextColumn) {
 				this.cursor = grapheme.index;
 				break;
@@ -245,6 +258,10 @@ export class Input implements Component, Focusable {
 	}
 
 	private insertCharacter(char: string): void {
+		if (this.secret && /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(char)) {
+			this.onInvalidInput?.();
+			return;
+		}
 		// Undo coalescing: consecutive word chars coalesce into one undo unit
 		if (isWhitespaceChar(char) || this.lastAction !== "type-word") {
 			this.pushUndo();
@@ -394,6 +411,10 @@ export class Input implements Component, Focusable {
 	}
 
 	private handlePaste(pastedText: string): void {
+		if (this.secret) {
+			this.insertCharacter(pastedText);
+			return;
+		}
 		this.lastAction = null;
 		this.pushUndo();
 
@@ -409,12 +430,38 @@ export class Input implements Component, Focusable {
 		// No cached state to invalidate currently
 	}
 
+	/** Drop every private editing reference; this cannot promise erasure of immutable JS strings. */
+	dispose(): void {
+		if (!this.secret) return;
+		this.value = "";
+		this.cursor = 0;
+		this.pasteBuffer = "";
+		this.isInPaste = false;
+		this.killRing = new KillRing();
+		this.undoStack.clear();
+		this.lastAction = null;
+		this.onSubmit = undefined;
+		this.onEscape = undefined;
+	}
+
 	render(width: number): string[] {
 		// Calculate visible window
 		const availableWidth = width - visibleWidth(this.prompt);
 
 		if (availableWidth <= 0) {
 			return [truncateToWidth(this.prompt, width, "")];
+		}
+		if (this.secret) {
+			const length = [...segmenter.segment(this.value)].length;
+			const cursor = [...segmenter.segment(this.value.slice(0, this.cursor))].length;
+			const start = Math.max(0, cursor - availableWidth + 1);
+			this.renderedStartColumn = start;
+			const shown = "*".repeat(Math.min(length - start, availableWidth));
+			const offset = cursor - start;
+			const marker = this.focused ? CURSOR_MARKER : "";
+			const rendered =
+				shown.slice(0, offset) + marker + "\x1b[7m" + (shown[offset] ?? " ") + "\x1b[27m" + shown.slice(offset + 1);
+			return [this.prompt + rendered + " ".repeat(Math.max(0, availableWidth - visibleWidth(rendered)))];
 		}
 
 		if (this.value.length === 0 && this.placeholder) {

@@ -103,9 +103,9 @@ function aliasedTempRoot(label: string): string {
 	return alias;
 }
 
-export function supervisorLaunch(args: readonly string[]): { command: string; args: string[] } {
+export function supervisorLaunch(args: readonly string[]): { command: string; args: string[]; reportsStartup: true } {
 	const entry = join(import.meta.dirname, "..", "..", "src", "modes", "rpc", "host-lifecycle.ts");
-	return { command: process.execPath, args: [entry, ...args] };
+	return { command: process.execPath, args: [entry, ...args], reportsStartup: true };
 }
 
 export function hostEnv(qa: EndpointScratch): Record<string, string> {
@@ -122,6 +122,8 @@ type RealHostOptions = {
 	env?: Readonly<Record<string, string>>;
 	extension?: string;
 	afterLockAcquired?: () => Promise<void>;
+	/** Runs after the host was spawned and before the ensure registers and probes it. */
+	beforePidFileWrite?: () => Promise<void>;
 	/** Return while the gc pass the ensure scheduled may still run; by default it has finished first. */
 	gcPassInFlight?: boolean;
 };
@@ -149,6 +151,7 @@ export async function heldRealHost(
 			readinessTimeoutMs: 60_000,
 			launch: supervisorLaunch,
 			...(options.afterLockAcquired && { afterLockAcquired: options.afterLockAcquired }),
+			...(options.beforePidFileWrite && { beforePidFileWrite: options.beforePidFileWrite }),
 		},
 	});
 	ensured.push({ socket, agentDir: qa.agentDir });

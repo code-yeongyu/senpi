@@ -133,9 +133,11 @@ export function selfTestTurns() {
 			toolCalls: [
 				call("p8_task", "task", {
 					prompt: "Count the exported functions in src/ of this repo and answer with just the number.",
+					run_in_background: true,
 				}),
 			],
 		},
+		text("LIVE-8: waiting for the child result."),
 		{ toolCalls: [edit("p8_edit_notes", "NOTES.md", "license: MIT\n", `license: MIT\n${SUBAGENT_NOTE}\n`)] },
 		{ toolCalls: [bash("p8_bash", "node --test")] },
 		text("LIVE-8: done."),

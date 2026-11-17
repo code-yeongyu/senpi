@@ -34,6 +34,8 @@ export interface BridgeServerOptions {
 	onCall: (request: BridgeHttpCallRequest) => Promise<unknown>;
 	onEmit: (event: BridgeHttpEmitEvent, signal: AbortSignal) => Promise<void>;
 	onCompletion: (request: BridgeHttpCompletionRequest) => Promise<unknown>;
+	/** Decides a kernel's kill-guard check (senpi#5349); needs no permission token, so it works in full-access mode. */
+	onKillGuardCheck?: (request: unknown) => unknown;
 }
 
 export interface BridgeServerHandle {
@@ -43,7 +45,7 @@ export interface BridgeServerHandle {
 }
 
 type JsonReply = { ok: true; value: unknown } | { ok: false; error: BridgeError };
-type Route = "/call" | "/emit" | "/completion" | "/permission_check";
+type Route = "/call" | "/emit" | "/completion" | "/permission_check" | "/kill_guard_check";
 
 export async function startBridgeServer(options: BridgeServerOptions): Promise<BridgeServerHandle> {
 	const token = options.token ?? generateBridgeToken();
@@ -95,7 +97,11 @@ async function handleRequest(
 		return;
 	}
 	const auth = parseBearerToken(request.headers.authorization);
-	if (route !== "/permission_check" && (!auth || !verifyBridgeToken(token, auth).ok)) {
+	if (
+		route !== "/permission_check" &&
+		route !== "/kill_guard_check" &&
+		(!auth || !verifyBridgeToken(token, auth).ok)
+	) {
 		sendJson(response, 401, { ok: false, error: transportError("unauthorized", "Bridge authorization failed") });
 		return;
 	}
@@ -108,6 +114,22 @@ async function handleRequest(
 	if (route === "/permission_check") {
 		try {
 			sendJson(response, 200, { ok: true, value: await permissionCheck(parsed.value) });
+		} catch (error) {
+			sendJson(response, 200, { ok: false, error: bridgeError(error) });
+		}
+		return;
+	}
+
+	if (route === "/kill_guard_check") {
+		if (options.onKillGuardCheck === undefined) {
+			sendJson(response, 404, {
+				ok: false,
+				error: transportError("not_found", "The kill guard is off for this bridge"),
+			});
+			return;
+		}
+		try {
+			sendJson(response, 200, { ok: true, value: await options.onKillGuardCheck(parsed.value) });
 		} catch (error) {
 			sendJson(response, 200, { ok: false, error: bridgeError(error) });
 		}
@@ -218,7 +240,14 @@ function parseEmitEvent(value: unknown): { ok: true; event: BridgeHttpEmitEvent 
 
 function routeFromUrl(rawUrl: string): Route | undefined {
 	const path = new URL(rawUrl, "http://127.0.0.1").pathname;
-	if (path === "/call" || path === "/emit" || path === "/completion" || path === "/permission_check") return path;
+	if (
+		path === "/call" ||
+		path === "/emit" ||
+		path === "/completion" ||
+		path === "/permission_check" ||
+		path === "/kill_guard_check"
+	)
+		return path;
 	return undefined;
 }
 

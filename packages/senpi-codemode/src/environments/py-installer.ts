@@ -217,6 +217,8 @@ export async function runPipInstall(input: {
 			const child = spawn(input.interpreter, argv, {
 				cwd: input.cwd,
 				stdio: ["ignore", "pipe", "pipe"],
+				// senpi#3965: python/pip is a console-subsystem exe on Windows.
+				windowsHide: true,
 				env: { ...isolatedPipEnv(), TMPDIR: scratch, TEMP: scratch, TMP: scratch },
 			});
 			let termination: Promise<void> | undefined;

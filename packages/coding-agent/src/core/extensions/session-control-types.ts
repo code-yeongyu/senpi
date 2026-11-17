@@ -17,6 +17,7 @@ export type {
 	RelocationTarget,
 	RelocationTargetsResult,
 } from "../session-relocation.ts";
+export { RELOCATION_TOOL_NAMES } from "../session-relocation.ts";
 
 /** Why a `session_control_wake` fired. */
 export type SessionControlWakeReason =
@@ -54,6 +55,16 @@ export type SessionControlSender =
 	| { readonly kind: "agent"; readonly session_id: string; readonly name?: string }
 	| { readonly kind: "command_line"; readonly user?: string }
 	| { readonly kind: "external"; readonly platform: string; readonly author?: string };
+
+/**
+ * The remote device a delivery's RPC connection speaks for, stamped by the engine from the connection it arrived on
+ * (senpi#6233). It is never taken from a caller's record or an extension's input, so it is the one provenance on a
+ * delivery that a remote caller cannot write.
+ */
+export interface SessionControlRemoteOrigin {
+	readonly deviceId: string;
+	readonly deviceName?: string;
+}
 
 export interface AdmitExternalMessageInput {
 	readonly delivery_id: string;
@@ -179,6 +190,20 @@ export interface SessionControlDeliveryDetails {
 	readonly deliverAs: ExternalDeliverAs;
 	readonly sender?: SessionControlSender;
 	readonly display_text?: string;
+	/** Engine-stamped: the remote device the admitting connection speaks for. */
+	readonly remote_origin?: SessionControlRemoteOrigin;
+	/** Engine-stamped: the thread-chain hop count the delivery was admitted at. */
+	readonly chain_count?: number;
+}
+
+/** The engine-stamped remote device a delivery's `details` names, when it names a well-formed one. */
+export function sessionControlRemoteOriginOf(details: unknown): SessionControlRemoteOrigin | undefined {
+	if (!isSessionControlDeliveryDetails(details) || typeof details.remote_origin !== "object") return undefined;
+	const origin: Record<string, unknown> = { ...details.remote_origin };
+	if (typeof origin.deviceId !== "string" || origin.deviceId === "") return undefined;
+	return typeof origin.deviceName === "string" && origin.deviceName !== ""
+		? { deviceId: origin.deviceId, deviceName: origin.deviceName }
+		: { deviceId: origin.deviceId };
 }
 
 /** The sender a delivery's `details` names, when it names a well-formed one. */

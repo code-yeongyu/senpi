@@ -20,7 +20,7 @@ describe("SessionWorkerRequests open deadline", () => {
 			// parent that built its plumbing early. Nothing has been sent yet.
 			vi.advanceTimersByTime(SESSION_WORKER_LIMITS.openMs + 5_000);
 
-			void queue.request({ type: "open", session: "s1" } as never);
+			void queue.request({ type: "commit" });
 
 			// The open has just been sent, so it is entitled to a full budget. Before the fix the
 			// timer was created with 0ms and fired on the very next tick.
@@ -36,7 +36,7 @@ describe("SessionWorkerRequests open deadline", () => {
 		try {
 			const timeout = vi.fn();
 			const queue = new SessionWorkerRequests(() => {}, timeout);
-			void queue.request({ type: "open", session: "s1" } as never);
+			void queue.request({ type: "commit" });
 
 			vi.advanceTimersByTime(SESSION_WORKER_LIMITS.openMs + 1);
 			expect(timeout).toHaveBeenCalled();

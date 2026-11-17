@@ -1,6 +1,7 @@
 import { isBrowserEngine } from "../../core/browser-engine.ts";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
 import { MAX_TOOL_BARRIER_ID_LENGTH, toolBarrierSpecError } from "../../core/tool-barrier.ts";
+import { admitExternalMessageFieldError } from "./admit-external-message-wire.ts";
 import { validatePauseCommand } from "./pause-command-validation.ts";
 
 export const MAX_RPC_MESSAGE_CHARACTERS = 1_000_000;
@@ -96,6 +97,21 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "clientMessageId and clientTurnId must be non-empty strings of at most 256 characters.";
 	}
+	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		value.expectedTurnId !== undefined
+	) {
+		if (
+			!(
+				typeof value.expectedTurnId === "string" &&
+				value.expectedTurnId.length > 0 &&
+				value.expectedTurnId.length <= 256
+			)
+		)
+			return "expectedTurnId must be a non-empty string of at most 256 characters; read it from get_state.currentTurnId.";
+		if (value.type === "prompt" && value.streamingBehavior === undefined)
+			return 'expectedTurnId on a prompt needs streamingBehavior "steer" or "followUp".';
+	}
 	if (value.type === "prompt" && value.toolBarrier !== undefined) {
 		const barrierError = toolBarrierSpecError(value.toolBarrier);
 		if (barrierError !== undefined) return barrierError;
@@ -166,8 +182,8 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "effectId must be a non-empty string of at most 256 characters.";
 	}
-	const pauseFieldError = validatePauseCommand(value);
-	if (pauseFieldError !== undefined) return pauseFieldError;
+	const fieldError = validatePauseCommand(value) ?? admitExternalMessageFieldError(value, MAX_RPC_MESSAGE_CHARACTERS);
+	if (fieldError !== undefined) return fieldError;
 	if (value.type === "get_pending_inputs" && value.knownClientMessageIds !== undefined) {
 		const ids: unknown = value.knownClientMessageIds;
 		if (
@@ -186,6 +202,12 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	}
 	if (value.type === "append_session_entry" && !validSessionEntry(value.entry)) {
 		return "append_session_entry entry is malformed.";
+	}
+	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		typeof value.message !== "string"
+	) {
+		return "message must be a string.";
 	}
 	return undefined;
 }

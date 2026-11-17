@@ -21,6 +21,12 @@ export const HOST_GENERATION_ENV = "SENPI_RPC_HOST_GENERATION";
 export const HOST_INSTANCE_ID_ENV = "SENPI_RPC_HOST_INSTANCE_ID";
 
 /**
+ * The startup-event hand-off (senpi#4602): which attempt, role and budget a producer reports for on its
+ * startup pipe. Set only on a coordinated launch; the producer consumes it at load, so it is never inherited.
+ */
+export const HOST_STARTUP_EVENTS_ENV = "SENPI_RPC_HOST_STARTUP_EVENTS";
+
+/**
  * Namespace of the internal-key hand-off a supervisor gives the host child it spawns. It belongs in
  * this module for the same reason the two names above do: the supervisor's launch writes it, and a
  * module of its own would be one more module in the supervisor's graph, which is a budget

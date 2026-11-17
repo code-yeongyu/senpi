@@ -1,15 +1,38 @@
 import type { CompactDialog } from "./compact-current-components.ts";
+import type { RetainedRoot } from "./compact-recovery-state.ts";
+import { type RecoveryOutcome, type RefusalReason, refusalReason } from "./compact-recovery-types.ts";
 import type { ActiveBlockView, ActiveMessageView } from "./compact-state-view.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import type { ResyncResume } from "./legacy-resync-view.ts";
 import { GeneratedFramesCursor, type LegacyViewCursor } from "./legacy-view-cursor.ts";
 import { omitNormalInlineMedia } from "./media-placeholders.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 
-/** A lane and the root it froze for one legacy view (R3.C1.5); absent when the lane had no readable root. */
+/**
+ * A lane and the root it froze for one legacy view (R3.C1.5); absent when the lane had no readable root. Every read
+ * of `root` runs inside `hold`, as an operation in flight on the root's checkpoint, so a reclaim (a supersession, a
+ * retired route, the peer's end) waits for it instead of releasing the root under it.
+ */
 export interface LegacyViewSource {
 	readonly lane: SessionAcceptanceLane;
 	readonly root: FrozenAcceptedRoot;
+	hold<T>(read: () => Promise<T>): Promise<T>;
 }
+
+/**
+ * Which refused cuts the resync reports on stderr: only a store that could not serve the cut. Every repair reason is
+ * the consumer's to repair, and a new reason must be classified here before it compiles.
+ */
+const REPORTED = {
+	storage_unavailable: true,
+	unknown_token: false,
+	released: false,
+	lane_retired: false,
+	stale_epoch: false,
+	peer_gone: false,
+	session_closed: false,
+	superseded_token: false,
+} as const satisfies Record<RefusalReason, boolean>;
 
 export interface LegacyAttachView {
 	readonly placeholders: boolean;
@@ -90,6 +113,24 @@ function* blockFrames(
 	}
 }
 
+/**
+ * RULING-115: the cut carries a tool call's parsed arguments only, so each call still open at it is reset and resumes
+ * from offset 0 with its whole raw prefix; a call that had ended needs neither.
+ */
+function* toolResetFrames(message: ActiveMessageView): Generator<Frame> {
+	const usage = message.fields?.usage;
+	for (const { contentIndex, text, phase, block } of message.blocks) {
+		if (phase !== "open" || block?.type !== "toolCall") continue;
+		yield { type: "message_tool_arguments_reset", contentIndex, rawArgumentPrefix: "", parsedThrough: 0 };
+		if (text.length > 0)
+			yield {
+				type: "message_update",
+				...(usage === undefined ? {} : { usage }),
+				assistantMessageEvent: { type: "toolcall_delta", contentIndex, delta: text },
+			};
+	}
+}
+
 function* messageFrames(message: ActiveMessageView, resolved: ResolvedNames): Generator<Frame> {
 	const start = legacyMessage(message, "start");
 	if (!start) return;
@@ -130,17 +171,23 @@ async function* attachFrames(
 	view: LegacyAttachView,
 	cancelled: () => boolean,
 ) {
-	let components: Awaited<ReturnType<SessionAcceptanceLane["readCurrentComponents"]>>;
-	let message: ActiveMessageView | undefined;
-	let resolved: ResolvedNames = new Map();
+	let read: {
+		readonly components: Awaited<ReturnType<SessionAcceptanceLane["readCurrentComponents"]>>;
+		readonly message: ActiveMessageView | undefined;
+		readonly resolved: ResolvedNames;
+	};
 	try {
-		components = await source.lane.readCurrentComponents(source.root);
-		message = await activeMessage(source);
-		if (message) resolved = await resolvedNames(source, message.messageId);
+		read = await source.hold(async () => {
+			const components = await source.lane.readCurrentComponents(source.root);
+			const message = await activeMessage(source);
+			const resolved = message ? await resolvedNames(source, message.messageId) : new Map<number, string>();
+			return { components, message, resolved };
+		});
 	} catch (cause) {
 		if (!cancelled()) unavailable(sessionId, cause);
 		return;
 	}
+	const { components, message, resolved } = read;
 	const encode = (frame: Frame) => serializeJsonLine(view.placeholders ? omitNormalInlineMedia(frame) : frame);
 	const tag = (frame: Frame): Frame => ({ ...frame, sessionId });
 	if (isFrame(components.lifecycle)) yield encode(tag(components.lifecycle));
@@ -178,14 +225,30 @@ export function legacyAttachView(
 	);
 }
 
-/** The message slot of a session's `resync_required` frame: C's active message, or null when it has none. */
-export async function legacyResyncMessage(sessionId: string, source: LegacyViewSource | undefined): Promise<unknown> {
-	if (!source) return null;
-	try {
-		const message = await activeMessage(source);
-		return (message && legacyMessage(message, "current")) ?? null;
-	} catch (cause) {
-		unavailable(sessionId, cause);
-		return null;
+/**
+ * The message slot of a session's `resync_required` frame: C's active message, or null when it has none. A cut the
+ * host could not serve (`storage_unavailable`) is reported once; a retired lane has nothing to report. The cut reads
+ * only a root it retained at the freeze, so no reclaim before its delivery can take the message from it.
+ */
+export async function legacyResyncMessage(
+	sessionId: string,
+	source: RecoveryOutcome<RetainedRoot> | undefined,
+): Promise<ResyncResume> {
+	if (!source) return { message: null };
+	if (!source.ok) {
+		if (REPORTED[refusalReason(source.failure)]) unavailable(sessionId, source.failure.reason);
+		return { message: null };
 	}
+	const { value } = source;
+	return value.hold(async () => {
+		try {
+			const message = await activeMessage(value);
+			const current = message && legacyMessage(message, "current");
+			return current ? { message: current, frames: [...toolResetFrames(message)] } : { message: null };
+		} catch (cause) {
+			// Under the hold only the lane itself can release the root (a retirement): nothing to report then.
+			if (value.lane.holds(value.root)) unavailable(sessionId, cause);
+			return { message: null };
+		}
+	});
 }

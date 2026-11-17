@@ -55,12 +55,12 @@ function withoutLineComments(source: string): string {
 }
 
 /**
- * The `env` object literal `spawnHostChild` builds, brace-matched from its `env: {`. Reading the
- * whole function instead would collect the `stdio` block and the launch's own locals.
+ * The environment object literal `hostChildEnvironment` returns, brace-matched from its `return {`.
+ * Reading the whole function instead would collect its parameters and locals.
  */
 function launchEnvLiteral(launchFunction: string): string {
-	const start = launchFunction.indexOf("env: {");
-	if (start < 0) throw new Error("spawnHostChild no longer builds its child environment as an `env` object literal");
+	const start = launchFunction.indexOf("return {");
+	if (start < 0) throw new Error("hostChildEnvironment no longer returns the child environment as an object literal");
 	let depth = 0;
 	for (let index = start; index < launchFunction.length; index += 1) {
 		const character = launchFunction[index];
@@ -70,7 +70,7 @@ function launchEnvLiteral(launchFunction: string): string {
 			if (depth === 0) return launchFunction.slice(start, index + 1);
 		}
 	}
-	throw new Error("spawnHostChild's `env` object literal is unterminated");
+	throw new Error("hostChildEnvironment's object literal is unterminated");
 }
 
 /**
@@ -151,8 +151,8 @@ describe("a test that spawns a host builds its environment with hostSpawnEnv", (
 
 	it("carries every variable the supervisor's own host-child launch writes", () => {
 		const source = readFileSync(launchSource, "utf8");
-		const spawnChild = source.slice(source.indexOf("export function spawnHostChild"));
-		const keys = launchEnvKeys(launchEnvLiteral(spawnChild));
+		const environment = source.slice(source.indexOf("export function hostChildEnvironment"));
+		const keys = launchEnvKeys(launchEnvLiteral(environment));
 		const written = keys.computed;
 		expect(written.length).toBeGreaterThan(5);
 
