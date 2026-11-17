@@ -100,8 +100,10 @@ holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCount
 keys each record by `key` (defaulting to its kind) and preserves opaque `data`
 through a restart. Persisted additions carry `key`/`data`, and release entries list `keys`. It
 implements only `unattended`. Consumers must distinguish kinds rather than infer
-them from the notification text. The first hold that pauses the session emits `session_paused` with `kind`,
-`pauseSeq`, `at`, `noticeCount`, and `persisted`. The release that ends the pause emits
+them from the notification text. Every hold that pauses the session emits `session_paused` with `kind`,
+`pauseSeq`, `at`, `noticeCount`, and `persisted`, including a hold added while the session is already paused
+(a second Stop, a re-armed hold), so the last `pauseSeq` a client saw is always the one `resume_session`
+accepts as `expectedSeq`. The release that ends the pause emits
 `session_resumed { cause: "input" | "resume_session", pauseSeq, at }` once; a run fence alone pauses nothing and
 emits neither.
 The ordinary extension UI `notify` event shows the paused count and Resume

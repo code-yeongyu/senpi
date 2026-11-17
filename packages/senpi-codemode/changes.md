@@ -1,3 +1,81 @@
+## 2026-11-17 - The eval description names the eval-only tools (senpi#6886)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/reachable-tools.ts`: `evalOnlyToolNames(pi)` reads `ToolInfo.evalOnly`.
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`, `src/prompt/eval-prompt-template.ts`, `src/tool/eval-tool.ts`, `src/tool/eval-tool-options.ts`: `evalOnlyTools` adds `Eval-only tools (absent from your direct tool list, reachable only here): ...` under the `tool.<name>(args)` prelude entry; the `tool_schema(name?)` entry states the no-name result `{ tools: [every tool name] }`.
+- `packages/senpi-codemode/src/index.ts`, `src/extension/kernel-preludes.ts`: `evalDescriptionKey` covers the prelude docs and the eval-only names, so eval re-registers at turn start when either changes.
+- `packages/senpi-codemode/src/bridges/schema-bridge.ts`: `EvalSchemaToolInfo.evalOnly`.
+
+### Why
+
+- A host may replace the whole system prompt and drop the session's eval-only paragraph; the eval description is always read. The tool_schema() doc said "list tool names" while the call returns `{ tools: [...] }`, and a caller that took the keys saw only `tools`.
+
+### Why an extension could not handle it
+
+- This is the codemode extension's own description.
+
+### Expected merge conflict zones
+
+- LOW: the `tool.<name>` and `tool_schema` prelude lines of the template; `registerEvalForRuntime` and the `turn_start` handler in `index.ts`.
+
+## 2026-11-16 - Null spawn options keep the pinned worker environment (senpi#6830)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js`: `Bun.spawn(cmd, null)` and an explicit `env: null` (array and object forms, and `Bun.spawnSync`) get the worker's pinned environment view like an omitted `env`; before, `null` options threw outside an active cell and `env: null` passed through to the OS environment (review LOW L1 on #6821/#6828).
+- `packages/coding-agent/docs/security.md`: names that only variables whose whole value equals a declared credential are replaced (review LOW L2).
+
+### Why
+
+- senpi#6820: a kernel child must never inherit the OS environment that still holds withheld credentials.
+
+### Why an extension could not handle it
+
+- The spawn capture is this extension's own kernel code.
+
+### Expected merge conflict zones
+
+- LOW: the `env` checks in `capturedSpawn` and `capturedSpawnSync`.
+
+## 2026-11-16 - Kernels never receive a declared credential (senpi#6828)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/runtime-factory.ts`: the kernel session environment includes the placeholder and proxy route for every declared credential (`withCredentialProxy(process.env)` entries that differ from `process.env`). The session environment overrides each kernel's inherited environment (py, rb, jl subprocesses, js worker and process kernels, `%npm`-style installs), so the value never reaches a kernel or its children.
+- `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js`: `Bun.spawn` pins the worker's environment view also when no cell is active, so a spawn from a timer or callback after its cell settled no longer inherits the OS environ that still holds the value (review M1).
+
+### Why
+
+- senpi#6820.
+
+### Why an extension could not handle it
+
+- The kernel environment is built in this extension.
+
+### Expected merge conflict zones
+
+- LOW: the `sessionEnv` line and one new function.
+
+## 2026-11-15 - Detached-cell notices on a hand (senpi#6763, PR #6767)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/eval-notifier.ts`: `EvalNotifierDeps.loopRemote`; on a hand, the session guards (context, mode, model) belong to the receiving loop, so they are skipped here.
+- `packages/senpi-codemode/src/index.ts`: `CodemodeExtensionAPI.isLoopRemote?`, passed to the notifier.
+
+### Why
+
+- A detached eval cell's completion on a hand was dropped: a hand has no session context.
+
+### Why an extension could not handle it
+
+- The notifier guard is inside this extension; the fact that the loop is remote comes from the host's `pi`.
+
+### Expected merge conflict zones
+
+- LOW: the `EvalNotifier` construction in `index.ts`.
+
 ## 2026-11-11 - A running eval row never shrinks while nested calls slide through the collapsed window (senpi#6406)
 
 ### What changed

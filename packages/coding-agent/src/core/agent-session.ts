@@ -556,6 +556,8 @@ const OVERFLOW_RECOVERY_RUNGS = 2;
 const OVERFLOW_RECOVERY_EXHAUSTED_MESSAGE =
 	"Context overflow recovery failed after two compact-and-retry attempts. Try reducing context or switching to a larger-context model.";
 const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
+/** Abort reason for a retry backoff a manual model change cuts short (senpi#6893). */
+const MANUAL_MODEL_SWITCH_HANDOFF = "manual-model-switch-handoff";
 
 // ============================================================================
 // Skill Invocation Formatting and Parsing (see ./skill-invocation.ts)
@@ -1741,6 +1743,12 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	/**
+	 * The model a manual switch picked while a run was live (senpi#6893). A failure
+	 * reported by any other model came from the request already in flight at the
+	 * switch, so it is not charged to the picked model.
+	 */
+	private _manualSwitchSelector: string | undefined = undefined;
 	private readonly _requestShapeRecovery = new RequestShapeRecovery();
 	/**
 	 * Failed response that the next request repeats, set by auto-retry and overflow recovery. The
@@ -4114,6 +4122,12 @@ export class AgentSession {
 		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 
 		const retryableError = this._isRetryableError(lastAssistant);
+		if (
+			(retryableError || this._isHardErrorFallbackEligible(lastAssistant)) &&
+			this._isFailureFromAbandonedModel(lastAssistant)
+		) {
+			return true;
+		}
 		// The retry handler answers an account limit only with the fallback walk, and that walk skips
 		// every rung on the spent provider. Announcing a retry it will not start leaves an RPC client
 		// waiting for a terminal agent_end until the account resets (omo#9711).
@@ -4174,6 +4188,7 @@ export class AgentSession {
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
 			this._overflowRecoveryRungs = 0;
+			this._manualSwitchSelector = undefined;
 			this._retryFallback.resetTurn();
 			this._fallbackTurnFailures = [];
 			const messageText = userMessageText(event.message.content);
@@ -4329,6 +4344,9 @@ export class AgentSession {
 					assistantMsg.stopReason !== "aborted" &&
 					!isClassifierRefusal(assistantMsg);
 				if (succeeded) this._retryFallback.noteServed(`${assistantMsg.provider}/${assistantMsg.model}`);
+				if (this._manualSwitchSelector === `${assistantMsg.provider}/${assistantMsg.model}`) {
+					this._manualSwitchSelector = undefined;
+				}
 				if (succeeded && assistantMsg.stopReason !== "length") {
 					this._overflowRecoveryRungs = 0;
 				}
@@ -4393,11 +4411,16 @@ export class AgentSession {
 				(isHealthExhaustionFailure(msg.errorMessage) || usageLimitScope(msg.errorMessage) === "account") &&
 				this.model
 			) {
+				// The failure is the model's that produced it, not a model the user picked after it was sent (senpi#6893).
+				const abandoned = this._isFailureFromAbandonedModel(msg);
+				const failedModel = abandoned ? this.modelRegistry.find(msg.provider, msg.model) : this.model;
 				// Keep the provider's retry-after: without it this re-note replaced a stated reset with a guess (senpi#5568).
-				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, {
-					errorMessage: msg.errorMessage,
-					retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
-				});
+				if (failedModel) {
+					this._retryFallback.noteHealthFailure(failedModel, abandoned ? undefined : this.thinkingLevel, {
+						errorMessage: msg.errorMessage,
+						retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
+					});
+				}
 			}
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
 			const retryAfterRequiredCompaction =
@@ -8049,7 +8072,7 @@ export class AgentSession {
 				parentSessionId: inherited.parentSessionId,
 				...idle,
 			});
-		if (request.expectedSeq !== undefined && request.expectedSeq !== pauseSeq)
+		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
@@ -9633,16 +9656,15 @@ export class AgentSession {
 			return undefined;
 		}
 
-		// A manual model change abandons any active fallback window; if a fallback
-		// retry sleep is still pending, cancel it so no surprise continuation fires.
-		const hadActiveFallback = this._retryFallback.activeState !== undefined;
+		// A manual model change abandons any active fallback window, and a live retry
+		// loop continues on the picked model rather than ending (senpi#6893).
 		this._probeBackScheduler.cancel("manual-model-change");
 		this._retryFallback.clearForManualModelChange(model);
-		if (hadActiveFallback && this._retryAbortController) {
-			this.abortRetry();
-		}
+		// Re-picking the model already in force changes nothing the retry depends on:
+		// its backoff, retry-after and budget stay.
+		const previousModel = this.model;
 
-		return await this._switchActiveModel(model, {
+		const systemPromptChange = await this._switchActiveModel(model, {
 			persistDefault: updateGlobalDefaults,
 			appendSessionEntry: true,
 			emitModelSelect: true,
@@ -9650,6 +9672,26 @@ export class AgentSession {
 			invalidateCompaction: true,
 			origin,
 		});
+		const modelChanged = previousModel === undefined || !modelsAreEqual(previousModel, model);
+		if (modelChanged && this.model && modelsAreEqual(this.model, model)) this._handOffRetryToManualModel(model);
+		return systemPromptChange;
+	}
+
+	/**
+	 * A manual model change takes over a live retry loop (senpi#6893): a pending
+	 * backoff is cut so the turn continues at once on the picked model with a fresh
+	 * budget, and a failure still to come from a request already in flight is not
+	 * charged to the picked model. An explicit abort still cancels the retry.
+	 */
+	private _handOffRetryToManualModel(model: Model<Api>): void {
+		const live = this.isStreaming || this._retryPromise !== undefined;
+		this._manualSwitchSelector = live ? formatSelector(model) : undefined;
+		if (live) this._retryAbortController?.abort(MANUAL_MODEL_SWITCH_HANDOFF);
+	}
+
+	private _isFailureFromAbandonedModel(message: AssistantMessage): boolean {
+		const picked = this._manualSwitchSelector;
+		return picked !== undefined && `${message.provider}/${message.model}` !== picked;
 	}
 
 	private async _maybeRestoreFallbackPrimary(boundary: "turn" | "continuation" = "turn"): Promise<void> {
@@ -10022,6 +10064,7 @@ export class AgentSession {
 			// has to supersede a held switch itself - otherwise cycling onto a model that
 			// fits leaves an older hold to reclaim the session on the next message.
 			this._clearPendingModelSwitch();
+			if (modelIdentityChanged) this._handOffRetryToManualModel(next.model);
 			// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
 			this._emit({
 				type: "model_changed",
@@ -13366,6 +13409,9 @@ export class AgentSession {
 		const isRefusal = isClassifierRefusal(message);
 		const hardErrorFallback = options.hardErrorFallback === true;
 		const sameModelRemint = options.sameModelRemint === true;
+		// The user switched models while this request was in flight: its failure is the
+		// old model's, so the picked model starts fresh without a fallback walk (senpi#6893).
+		const abandonedModelFailure = this._isFailureFromAbandonedModel(message);
 		let switchedFallback = false;
 		let sameModelNativeRecovery = false;
 		let is429TierRouted = false;
@@ -13389,7 +13435,11 @@ export class AgentSession {
 				throw error;
 			}
 		};
-		if (usageLimitScope(errorMessage) === "account") {
+		if (abandonedModelFailure) {
+			this._manualSwitchSelector = undefined;
+			this._retryAttempt = 1;
+			this._resetHintTierState();
+		} else if (usageLimitScope(errorMessage) === "account") {
 			switchedFallback = await tryFallback(isBillingErrorMessage(errorMessage) ? "billing" : "transient", {
 				errorMessage,
 				retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
@@ -13692,7 +13742,8 @@ export class AgentSession {
 			}
 		}
 
-		const providerDelayMs = isRefusal || hardErrorFallback ? undefined : this._getProviderRetryDelayMs(errorMessage);
+		const providerDelayMs =
+			isRefusal || hardErrorFallback || abandonedModelFailure ? undefined : this._getProviderRetryDelayMs(errorMessage);
 		const maxRetryDelayMs = this.settingsManager.getProviderRetrySettings().maxRetryDelayMs;
 		// Profile ceiling null (Kimi) bypasses the over-ceiling error path entirely.
 		const profileCeiling =
@@ -13747,7 +13798,7 @@ export class AgentSession {
 			this._retryRandom(),
 		);
 		const plannedDelayMs =
-			switchedFallback || sameModelNativeRecovery
+			switchedFallback || sameModelNativeRecovery || abandonedModelFailure
 				? 0
 				: is429TierRouted
 					? (hintTierDelayMs ?? providerDelayMs ?? localExponentialMs)
@@ -13775,16 +13826,17 @@ export class AgentSession {
 		const delayMs = Math.min(plannedDelayMs, agentCeilingMs ?? Number.MAX_SAFE_INTEGER);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
+		const retryErrorText =
+			usageLimitScope(errorMessage) === "account"
+				? new AccountUsageLimitError(message.provider, errorMessage).message
+				: errorMessage;
 
 		this._emit({
 			type: "auto_retry_start",
 			attempt: this._retryAttempt,
 			maxAttempts: retryProfile.turn.maxRetries,
 			delayMs,
-			errorMessage:
-				usageLimitScope(errorMessage) === "account"
-					? new AccountUsageLimitError(message.provider, errorMessage).message
-					: errorMessage,
+			errorMessage: retryErrorText,
 		});
 
 		// Remove error message from agent state (keep in session for history)
@@ -13795,23 +13847,38 @@ export class AgentSession {
 		}
 
 		// Wait with exponential backoff (abortable)
+		const retrySignal = this._retryAbortController.signal;
 		try {
-			await sleep(delayMs, this._retryAbortController.signal);
+			await sleep(delayMs, retrySignal);
 		} catch {
-			// Aborted during sleep - emit end event so UI can clean up
-			const attempt = this._retryAttempt;
-			this._retryAttempt = 0;
-			this._resetHintTierState();
-			this._retryAbortController = undefined;
-			await this._emitAgentSettled();
-			this._emit({
-				type: "auto_retry_end",
-				success: false,
-				attempt,
-				finalError: "Retry cancelled",
-			});
-			this._resolveRetry();
-			return "cancelled";
+			if (retrySignal.reason === MANUAL_MODEL_SWITCH_HANDOFF) {
+				// A manual model change cut the backoff: continue now on the picked model with a fresh budget.
+				this._manualSwitchSelector = undefined;
+				this._retryAttempt = 1;
+				this._resetHintTierState();
+				this._emit({
+					type: "auto_retry_start",
+					attempt: this._retryAttempt,
+					maxAttempts: this._resolveRetryProfile().turn.maxRetries,
+					delayMs: 0,
+					errorMessage: retryErrorText,
+				});
+			} else {
+				// Aborted during sleep - emit end event so UI can clean up
+				const attempt = this._retryAttempt;
+				this._retryAttempt = 0;
+				this._resetHintTierState();
+				this._retryAbortController = undefined;
+				await this._emitAgentSettled();
+				this._emit({
+					type: "auto_retry_end",
+					success: false,
+					attempt,
+					finalError: "Retry cancelled",
+				});
+				this._resolveRetry();
+				return "cancelled";
+			}
 		}
 		this._retryAbortController = undefined;
 
