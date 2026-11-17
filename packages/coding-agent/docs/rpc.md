@@ -4500,7 +4500,7 @@ Queued prompts cannot include `thinkingLevel`; wait for the current turn to comp
 {"type": "prompt", "message": "Use the other file", "streamingBehavior": "steer", "expectedTurnId": "3"}
 ```
 
-**Prompting from a specific leaf**: `prompt` may name the session leaf it was decided at with `expectedLeafId` (the id `get_tree` or the edit commands report as the current leaf). If the session's current leaf differs when the command is admitted, it is refused with `errorCode: "stale_leaf"` (the same code the edit commands use), and nothing is appended or sent to the model. Omitting the field keeps the old behaviour.
+**Prompting from a specific leaf**: `prompt` may name the session leaf it was decided at with `expectedLeafId` (the id `get_tree` or the edit commands report as the current leaf). If the session's current leaf differs when the command is admitted, it is refused with `errorCode: "stale_leaf"` (the same code and message the edit commands use), and nothing is appended or sent to the model. As with the edit commands, session-lifecycle bookkeeping entries written after the leaf (for example the `done` marker a finished turn appends) do not count as a move. The check runs at admission, so `expectedLeafId` cannot be combined with `streamingBehavior` (`steer` or `followUp`): such a prompt would run later, at a leaf the check never saw, and is refused with `errorCode: "invalid_argument"`. A session whose leaf is the root (no entries yet) has no leaf id to name, so it cannot be guarded this way; the edit commands have the same limit. Omitting the field keeps the old behaviour.
 
 ```json
 {"type": "prompt", "message": "Run this again", "expectedLeafId": "a1b2c3d4"}

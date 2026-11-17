@@ -43,6 +43,7 @@ import { listCredentialAccounts, orderCredentialAccounts } from "../../core/cred
 import { CredentialAccountNotFoundError, resetCredentialAccount } from "../../core/credential-account-reset.ts";
 import { pinCredentialAccount, removeCredentialAccount, selectedOAuthAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
+import { refusePromptAtMovedLeaf } from "./prompt-expected-leaf.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
 import {
 	emitProviderAccountsChanged,
@@ -1415,14 +1416,8 @@ export function createRpcConnectionHandler(
 
 			case "prompt": {
 				// senpi#6922: a prompt decided at one leaf never runs from another; nothing is appended or sent.
-				const currentLeafId = session.sessionManager.getLeafId();
-				if (command.expectedLeafId !== undefined && command.expectedLeafId !== currentLeafId)
-					return error(
-						id,
-						"prompt",
-						`Session leaf moved (expected ${command.expectedLeafId}, now ${currentLeafId ?? "root"})`,
-						"stale_leaf",
-					);
+				const leafRefusal = refusePromptAtMovedLeaf(session, command);
+				if (leafRefusal !== undefined) return error(id, "prompt", leafRefusal.message, leafRefusal.errorCode);
 				const chain = admitInputChain(command.chainCount, session.settingsManager);
 				if (chain.kind === "refused")
 					return error(id, "prompt", chain.refusal.message, chain.refusal.errorCode, chain.refusal.errorData);

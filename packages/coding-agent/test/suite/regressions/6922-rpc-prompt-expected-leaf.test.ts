@@ -28,7 +28,7 @@ describe("RPC prompt that names its leaf", () => {
 		const promptSettled = async (command: object) => {
 			const response = await rpc.send({ type: "prompt", ...command });
 			await fixture.session.waitForIdle();
-			return response as { success?: boolean; errorCode?: string };
+			return response as { success?: boolean; errorCode?: string; error?: string };
 		};
 		await promptSettled({ message: "first" });
 		const leaf = fixture.session.sessionManager.getLeafId();
@@ -45,6 +45,7 @@ describe("RPC prompt that names its leaf", () => {
 
 		expect(response.success).toBe(false);
 		expect(response.errorCode).toBe("stale_leaf");
+		expect(response.error).toBe(`Session leaf moved (expected entry-that-moved-on, now ${leaf})`);
 		expect(providerCalls()).toBe(callsBefore);
 		expect(fixture.session.sessionManager.getEntries().length).toBe(entriesBefore);
 		expect(fixture.session.sessionManager.getLeafId()).toBe(leaf);
@@ -59,6 +60,32 @@ describe("RPC prompt that names its leaf", () => {
 		expect(response.success).toBe(true);
 		expect(providerCalls()).toBe(callsBefore + 1);
 		expect(fixture.session.sessionManager.getLeafId()).not.toBe(leaf);
+	});
+
+	it("does not treat a lifecycle entry written after the turn end as a moved leaf", async () => {
+		const { fixture, promptSettled, leaf, providerCalls } = await setup();
+		fixture.session.sessionManager.appendCustomEntry("session-lifecycle", { state: "done" });
+		expect(fixture.session.sessionManager.getLeafId()).not.toBe(leaf);
+		const callsBefore = providerCalls();
+
+		const response = await promptSettled({ message: "after done", expectedLeafId: leaf });
+
+		expect(response.success).toBe(true);
+		expect(providerCalls()).toBe(callsBefore + 1);
+	});
+
+	it("refuses an expected leaf combined with a queued delivery, sending nothing", async () => {
+		const { fixture, promptSettled, leaf, providerCalls } = await setup();
+		const callsBefore = providerCalls();
+		const entriesBefore = fixture.session.sessionManager.getEntries().length;
+
+		for (const streamingBehavior of ["steer", "followUp"]) {
+			const response = await promptSettled({ message: "queued", expectedLeafId: leaf, streamingBehavior });
+			expect(response.success).toBe(false);
+			expect(response.errorCode).toBe("invalid_argument");
+		}
+		expect(providerCalls()).toBe(callsBefore);
+		expect(fixture.session.sessionManager.getEntries().length).toBe(entriesBefore);
 	});
 
 	it("runs a prompt that omits the expected leaf, as before", async () => {
