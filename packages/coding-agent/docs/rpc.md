@@ -6444,8 +6444,9 @@ commands read and write a file in the session's folder).
 
 #### read_project_file
 
-Reads one of the workspace's instruction files: `AGENTS.md` or `CLAUDE.md` at the session's folder or in any folder
-below it, or a file under `.omo/rules/`. Reading runs nothing, so it works while the project is untrusted.
+Reads one of the workspace's project files: `AGENTS.md` or `CLAUDE.md` at the session's folder or in any folder
+below it, a file under `.omo/rules/`, or the folder's OmO config `.omo/omo.jsonc` (per-agent and per-category model
+routing; at the folder itself only). Reading runs nothing, so it works while the project is untrusted.
 
 ```json
 {"type": "read_project_file", "path": "AGENTS.md"}
@@ -6470,8 +6471,9 @@ below it, or a file under `.omo/rules/`. Reading runs nothing, so it works while
 `path` is relative to the session's folder, `/`-separated and canonical: no empty, `.` or `..` segment, no `\\`, `:`
 or NUL, and never through `.git` or `node_modules`. A file that does not exist yet is a success with `exists: false`
 and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: compare it, never parse it.
-Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path }`) for any
-other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
+Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path, reason }`):
+`reason` is `not_listed` for any other path and `unsafe` when a folder on the way or the file itself is a symlink or
+not a regular file and folder (an engine before `.omo/omo.jsonc` was listed sends no `reason`), and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
 
 #### The folder a project write is for
@@ -6500,7 +6502,9 @@ writes to one file are applied one at a time. The response carries the same `dat
 after the write. The session reads its instruction files when they are next loaded (a new session or `reload`).
 Errors: `invalid_argument` when `content` is not a string, `ifEtag` is neither a string nor `null`, or `expectedCwd` is
 not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
-`project_not_trusted` while the project is untrusted, `project_file_not_allowed` as for `read_project_file`,
+`project_not_trusted` while the project is untrusted (read again when the write commits),
+`project_file_permission_denied` when this machine's own permission rules for an edit of that path refuse it (the same
+decision the write tool gets), `project_file_not_allowed` as for `read_project_file`,
 `project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB or a stored file over 512 KiB (its
 version cannot be checked without reading it), `project_file_conflict` when
 `ifEtag` is not the file's current version (`errorData: { currentEtag, exists }`; nothing is written; read again
