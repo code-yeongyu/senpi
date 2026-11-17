@@ -14,9 +14,15 @@ export function activeKernelPreludes(pi: ToolRegistry): readonly KernelPreludeCo
 	return pi.getAllTools().flatMap((tool) => (tool.kernelPrelude && active.has(tool.name) ? [tool.kernelPrelude] : []));
 }
 
-/** Identity of the prompt's contribution doc lines; the eval tool re-registers only when it changes. */
-export function kernelPreludeDocsKey(preludes: readonly KernelPreludeContribution[]): string {
-	return preludes.map((prelude) => prelude.documentation).join("\n");
+/**
+ * Identity of the registry-derived parts of the eval description (contribution doc lines and the eval-only tool
+ * names); the eval tool re-registers only when it changes.
+ */
+export function evalDescriptionKey(
+	preludes: readonly KernelPreludeContribution[],
+	evalOnlyTools: readonly string[],
+): string {
+	return JSON.stringify([preludes.map((prelude) => prelude.documentation), evalOnlyTools]);
 }
 
 /**

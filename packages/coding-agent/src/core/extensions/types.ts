@@ -3712,6 +3712,11 @@ export type ToolInfo = Pick<
 	searchKeywords: readonly string[];
 	searchGroup?: string;
 	allowLazyActivation: boolean;
+	/**
+	 * True while the session routes the tool through `eval` only (senpi#6886): it is withheld from the model's direct
+	 * tool list and reached as `tool.<name>(...)` inside a cell. Absent when nothing withholds it.
+	 */
+	evalOnly?: true;
 };
 
 export type GetAllToolsHandler = () => ToolInfo[];

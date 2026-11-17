@@ -15,7 +15,8 @@ import { type EvalNotificationContent, EvalNotifier } from "./extension/eval-not
 import { EVAL_CELLS_STATUS_KEY } from "./extension/eval-status.ts";
 import { EvalStatusTicker } from "./extension/eval-status-ticker.ts";
 import { hostLine, modelIdFrom } from "./extension/host-facts.ts";
-import { activeKernelPreludes, kernelPreludeDocsKey, promptKernelPreludes } from "./extension/kernel-preludes.ts";
+import { activeKernelPreludes, evalDescriptionKey, promptKernelPreludes } from "./extension/kernel-preludes.ts";
+import { evalOnlyToolNames } from "./extension/reachable-tools.ts";
 import { registerRemovedToolHints } from "./extension/removed-tool-hints.ts";
 import {
 	createExecuteTool,
@@ -101,7 +102,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 	let activeCells: EvalDetachedCellManager | undefined;
 	let activeHandles: HandleRegistry | undefined;
 	registerEvalCellsRpc(pi.rpc, () => activeCells);
-	let promptPreludeDocs = "";
+	let promptDocsKey = "";
 	const notifier = new EvalNotifier({
 		sendMessage: (message, notifyOptions) => pi.sendMessage(message, notifyOptions),
 		getContext: () => activeContext,
@@ -149,7 +150,8 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		// a tool we cannot confirm"; session_start / model_select re-register once it is live.
 		const monitor = monitorIsRegistered(pi);
 		const preludes = promptKernelPreludes(pi);
-		promptPreludeDocs = kernelPreludeDocsKey(preludes);
+		const evalOnlyTools = evalOnlyToolNames(pi);
+		promptDocsKey = evalDescriptionKey(preludes, evalOnlyTools);
 		pi.registerTool(
 			withStartRecovery(
 				recovery,
@@ -179,6 +181,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 					runtimes: runtime.runtimes,
 					kernelPreludes: () => activeKernelPreludes(pi),
 					promptKernelPreludes: preludes,
+					evalOnlyTools,
 					...(bunSkillPath === undefined ? {} : { bunSkillPath }),
 					...(modelId === undefined ? {} : { modelId }),
 				}),
@@ -290,13 +293,13 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		if (cellManager === undefined || handles === undefined) return;
 		registerEvalForRuntime(runtime, modelId, cellManager, handles);
 	});
-	// Tool activation has no event of its own; the next turn re-documents a changed contribution set.
+	// Tool activation has no event of its own; the next turn re-documents a changed contribution or eval-only set.
 	pi.on("turn_start", async () => {
 		const runtime = activeRuntime;
 		const cellManager = activeCells;
 		const handles = activeHandles;
 		if (runtime === undefined || cellManager === undefined || handles === undefined) return;
-		if (kernelPreludeDocsKey(promptKernelPreludes(pi)) === promptPreludeDocs) return;
+		if (evalDescriptionKey(promptKernelPreludes(pi), evalOnlyToolNames(pi)) === promptDocsKey) return;
 		registerEvalForRuntime(runtime, activeModelId, cellManager, handles);
 	});
 }
