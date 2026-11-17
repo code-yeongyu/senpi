@@ -2,7 +2,6 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { resolvePromptSurface } from "../../../dynamic-prompt/build.ts";
-import { rootToolCallId } from "../../../nested-tool-calls.ts";
 import { defineTool, type ExtensionToolContext } from "../../types.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
 import { HtmlRenderImagesNotFoundError, inlineLocalImages } from "./images.ts";
@@ -20,9 +19,10 @@ const MAX_HTML_CHARACTERS = 512_000;
 // up to MAX_HANDED_PAGES_CHARACTERS, which leaves room for JSON escaping and the rest of the transcript.
 // Past either, the page is handed as written, and its images reach only a host that has this disk.
 // A page handed as written (`imagesInlined: false`) is not counted: it carries at most MAX_HTML_CHARACTERS,
-// in `details.html` and again in the call's arguments, so those pages are bounded per page, not per session. A call another tool makes through
-// ctx.executeTool() (id `<parent>/<n>`) is never recorded in the transcript, so its page only rides its own
-// tool_execution_end and is held to the per-page cap alone.
+// in `details.html` and again in the call's arguments, so those pages are bounded per page, not per session. Only a
+// call the model issued is recorded in the transcript. A call another tool makes through ctx.executeTool() (id
+// `<parent>/<n>`) or an extension makes through pi.executeTool() (id `codemode-<uuid>`) is not, so its page only
+// rides its own tool_execution_end and is held to the per-page cap alone.
 export const MAX_HANDED_PAGE_CHARACTERS = 2 * 1024 * 1024;
 export const MAX_HANDED_PAGES_CHARACTERS = 6 * 1024 * 1024;
 
@@ -82,13 +82,28 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
 // Pages handed but not yet in the session's entries: calls in one turn run concurrently, and each
-// result is recorded only after it returns. Keyed by session id, then tool call id. Only model-issued
-// calls are held here, and each is dropped once its result is in the entries or the session shuts down.
+// result is recorded only after it returns. Keyed by session id, then tool call id. Only calls the model
+// issued (see issuedByModel) are held here, and each is dropped once its result is in the entries or the
+// session shuts down.
 const handedNotYetRecorded = new Map<string, Map<string, number>>();
 
 /** Drop what a session's calls still hold, when its runtime shuts down. */
 export function forgetHandedPages(sessionId: string): void {
 	handedNotYetRecorded.delete(sessionId);
+}
+
+/**
+ * Whether the model issued this call, so its result joins the transcript: the session records the issuing
+ * assistant message before the call runs. A call a tool or an extension makes is in no message.
+ */
+function issuedByModel(ctx: ExtensionToolContext, toolCallId: string): boolean {
+	const entries = ctx.sessionManager.getEntries();
+	for (let index = entries.length - 1; index >= 0; index--) {
+		const entry = entries[index];
+		if (entry?.type !== "message" || entry.message.role !== "assistant") continue;
+		if (entry.message.content.some((block) => block.type === "toolCall" && block.id === toolCallId)) return true;
+	}
+	return false;
 }
 
 /** Characters of inlined pages this session already hands to the host, across every branch. */
@@ -167,7 +182,7 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				.slice(0, 60) || "page";
 		const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
 		await writeFile(path, prepared, "utf8");
-		const inTranscript = rootToolCallId(toolCallId) === toolCallId;
+		const inTranscript = issuedByModel(ctx, toolCallId);
 		const alreadyHanded = inTranscript ? inlinedPageCharacters(ctx) : 0;
 		const fitsPage = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
 		const imagesInlined = fitsPage && alreadyHanded + inlined.html.length <= MAX_HANDED_PAGES_CHARACTERS;
