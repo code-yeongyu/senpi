@@ -215,7 +215,8 @@ export class EngineTurnHold {
 			at,
 		} satisfies HoldEntry);
 		for (const key of present) this.records.delete(key);
-		// Each `session_paused` gets one `session_resumed`; a fence that outlives the pause resumes nothing (senpi#3811).
+		// A pause emits one `session_resumed` when it ends, however many `session_paused` it announced (senpi#6900); a
+		// fence that outlives the pause resumes nothing (senpi#3811).
 		if (this.pauseOpen && !this.isHeld()) {
 			this.pauseOpen = false;
 			this.emit({ type: "session_resumed", pauseSeq: this.pauseSeq, cause, at });
