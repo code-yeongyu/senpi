@@ -1,6 +1,6 @@
 import { initTheme, Theme, type ThemeColor } from "@code-yeongyu/senpi";
 import { beforeAll, describe, expect, it } from "vitest";
-import { renderToolCallWidget, type WidgetOptions } from "../src/tool/tool-widgets.ts";
+import { type NestedToolRenderers, renderToolCallWidget, type WidgetOptions } from "../src/tool/tool-widgets.ts";
 import type { EvalToolCallSummary } from "../src/tool/types.ts";
 import { stripAnsi } from "./eval-render-fixtures.ts";
 
@@ -294,5 +294,72 @@ describe("nested tool-call widgets", () => {
 
 		expect(statusIndex).toBeGreaterThanOrEqual(0);
 		expect(errorIndex).toBeGreaterThan(statusIndex);
+	});
+});
+
+// A registered tool that brings its own row (omo's thread tools, oh-my-openagent#12994): inside an eval cell its
+// tool.<name>() call must read like its direct row, not like the generic fallback.
+const component = (lines: readonly string[]) => ({ render: () => [...lines], invalidate: () => {} });
+const THREAD_LIST: NestedToolRenderers = {
+	renderCall: (args) =>
+		component([`thread_list${(args as { all_scope?: boolean }).all_scope === true ? " all workspaces" : ""}`]),
+	renderResult: (result) => {
+		const threads = (result.details as { result: { threads: readonly { name: string }[] } }).result.threads;
+		return component([`${threads.length} threads in this workspace`, ...threads.map((thread) => `  ${thread.name}`)]);
+	},
+};
+const registered = (name: string) => (name === "thread_list" ? THREAD_LIST : undefined);
+const LISTED = { kind: "ok", scope: "workspace", threads: [{ name: "planner" }, { name: "builder" }] };
+
+describe("nested calls of registered tools that bring their own renderers", () => {
+	beforeAll(() => {
+		initTheme();
+	});
+
+	it("draws the call with the tool's renderCall and the result with its renderResult", () => {
+		const output = plain(
+			render(
+				{
+					name: "thread_list",
+					ok: true,
+					callId: "t-1",
+					args: { all_scope: true },
+					durationMs: 300,
+					resultPreview: JSON.stringify(LISTED),
+					details: { result: LISTED },
+				},
+				{ renderers: registered },
+			),
+		);
+
+		expect(output).toBe(
+			[
+				"  thread_list all workspaces",
+				"  ✓ <1s",
+				"  2 threads in this workspace",
+				"    planner",
+				"    builder",
+			].join("\n"),
+		);
+	});
+
+	it("keeps the raw preview under the tool's call line when no details were captured", () => {
+		const output = plain(
+			render({ name: "thread_list", ok: true, args: {}, resultPreview: '{"kind":"ok"}' }, { renderers: registered }),
+		);
+
+		expect(output).toBe(["  thread_list", "  ✓", '  {"kind":"ok"}'].join("\n"));
+	});
+
+	it("falls back to the generic row when the tool's renderer throws", () => {
+		const throwing: NestedToolRenderers = {
+			...THREAD_LIST,
+			renderCall: () => {
+				throw new Error("broken renderer");
+			},
+		};
+		const output = plain(render({ name: "thread_list", ok: true, args: {} }, { renderers: () => throwing }));
+
+		expect(output).toContain("tool.thread_list({})");
 	});
 });

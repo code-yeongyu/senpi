@@ -191,7 +191,14 @@ export class CellHandler {
 		}
 		await this.#deliverToolReply(
 			message,
-			() => runNestedTool(this.#runtime.executeTool, message, this.#state.signal, this.#resultBuilder),
+			() =>
+				runNestedTool(
+					this.#runtime.executeTool,
+					message,
+					this.#state.signal,
+					this.#resultBuilder,
+					this.#drawsOwnRow(message.toolName),
+				),
 			capture,
 		);
 	}
@@ -204,7 +211,14 @@ export class CellHandler {
 		try {
 			const reply = await resolve();
 			if (!this.#state.active) return;
-			recordToolCall(this.#state.toolCalls, reply.toolCallOk, capture, reply.resultPreview, reply.errorText);
+			recordToolCall(
+				this.#state.toolCalls,
+				reply.toolCallOk,
+				capture,
+				reply.resultPreview,
+				reply.errorText,
+				reply.details,
+			);
 			this.#kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: true, value: reply.value });
 		} catch (error) {
 			if (!this.#state.active) return;
@@ -229,6 +243,11 @@ export class CellHandler {
 
 	#toolParameters(toolName: string): unknown {
 		return this.#runtime.listTools?.().find((tool) => tool.name === toolName)?.parameters;
+	}
+
+	/** True when the tool draws its own result row, so its nested call keeps the details that row is drawn from. */
+	#drawsOwnRow(toolName: string): boolean {
+		return this.#runtime.listTools?.().find((tool) => tool.name === toolName)?.renderResult !== undefined;
 	}
 
 	#recordStatus(event: EvalStatusEvent): void {

@@ -40,6 +40,7 @@ import {
 } from "./tool/eval-execution-event.ts";
 import { createEvalTool } from "./tool/eval-tool.ts";
 import { renderEvalCall, renderEvalResult } from "./tool/render.ts";
+import type { NestedToolRenderers } from "./tool/tool-widgets.ts";
 
 // session_before_switch / session_before_fork are veto points another extension can cancel, so they never
 // tear the runtime down; a switch or fork that goes ahead emits session_shutdown before the old session ends.
@@ -82,6 +83,18 @@ export interface SenpiCodemodeOptions {
 	readonly now?: () => number;
 }
 
+/**
+ * The row renderers a registered tool brings, so its nested `tool.<name>()` call in a cell is drawn like its direct row
+ * (oh-my-openagent#12994); none while the runtime cannot be read yet.
+ */
+function registeredRenderers(pi: CodemodeExtensionAPI, toolName: string): NestedToolRenderers | undefined {
+	try {
+		return pi.getAllTools().find((tool) => tool.name === toolName);
+	} catch {
+		return undefined;
+	}
+}
+
 /** Whether the session registry holds `monitor`; false when the runtime cannot be read yet. */
 function monitorIsRegistered(pi: CodemodeExtensionAPI): boolean {
 	try {
@@ -94,7 +107,11 @@ function monitorIsRegistered(pi: CodemodeExtensionAPI): boolean {
 export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCodemodeOptions = {}): void {
 	const manager = new SessionManagerProxy();
 	const complete = options.complete ?? ((request, ctx) => createCompletionHandler()(ctx)(request));
-	const renderers = { renderCall: renderEvalCall, renderResult: renderEvalResult };
+	const renderers = {
+		renderCall: renderEvalCall,
+		renderResult: (...[result, options, theme, context]: Parameters<typeof renderEvalResult>) =>
+			renderEvalResult(result, options, theme, context, (toolName) => registeredRenderers(pi, toolName)),
+	};
 	const bunSkillPath = activeBunSkillPath();
 	let activeRuntime: SessionRuntime | undefined;
 	let activeModelId: string | undefined;

@@ -27,7 +27,7 @@ import {
 	TOOL_CALL_PREVIEW_COUNT,
 } from "./render-blocks.ts";
 import { renderCell } from "./render-cell.ts";
-import { renderToolCallWidget } from "./tool-widgets.ts";
+import { type NestedToolRenderers, renderToolCallWidget } from "./tool-widgets.ts";
 import type { EvalResultDetails, EvalToolDetails, EvalToolRequest } from "./types.ts";
 
 type ToolCallRow = {
@@ -182,6 +182,7 @@ export function nestedToolCallBlock(
 	theme: Theme | undefined,
 	cwd: string,
 	expanded: boolean,
+	renderers?: (toolName: string) => NestedToolRenderers | undefined,
 ): RenderBlock | undefined {
 	const toolCalls = details?.toolCalls;
 	if (theme === undefined || toolCalls === undefined || !toolCalls.some((call) => call.args !== undefined)) {
@@ -207,7 +208,10 @@ export function nestedToolCallBlock(
 			};
 			for (const [index, call] of retainedCalls.entries()) {
 				if (call.args !== undefined) {
-					appendLines(lines, renderToolCallWidget(call, { cwd, theme, expanded, width }));
+					appendLines(
+						lines,
+						renderToolCallWidget(call, { cwd, theme, expanded, width, ...(renderers ? { renderers } : {}) }),
+					);
 				} else {
 					appendLines(lines, renderToolCall(retainedRows[index], legacyBlock, width));
 				}
