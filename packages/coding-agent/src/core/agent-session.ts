@@ -5575,10 +5575,13 @@ export class AgentSession {
 			return result as AgentToolResult<TDetails>;
 		}
 
+		// The rewrite keeps the error flag (the hook's, else the tool's), so a caller sees a failure as one (senpi#6904).
+		const isError = hook.isError ?? result.isError;
 		return {
 			content: hook.content ?? result.content,
 			details: (hook.details ?? result.details) as TDetails,
 			terminate: result.terminate,
+			...(isError === undefined ? {} : { isError }),
 		};
 	}
 
