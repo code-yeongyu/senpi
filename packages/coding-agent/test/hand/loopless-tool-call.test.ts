@@ -8,7 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { grantLooplessExecuteToTestHarness } from "../../src/modes/rpc/loopless-execute-grant.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
-import { createLooplessRuntimeFactory, type LooplessRuntime } from "../../src/modes/rpc/runtime-factory-loopless.ts";
+import type { LooplessRuntime } from "../../src/modes/rpc/loopless-runtime.ts";
+import { createLooplessRuntimeFactory } from "../../src/modes/rpc/runtime-factory-loopless.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {

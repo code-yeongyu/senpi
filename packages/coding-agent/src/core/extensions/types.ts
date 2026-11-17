@@ -81,7 +81,7 @@ import type { BashResult } from "../bash-executor.ts";
 import type { BrowserEngine } from "../browser-engine.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
-import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
+import type { DynamicSystemPromptPart, PromptSurface } from "../dynamic-prompt/build.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
@@ -860,6 +860,12 @@ export interface ExtensionToolContext extends ExtensionContext {
 	 * call made through {@link executeTool} or `pi.executeTool()`.
 	 */
 	readonly issuedByModel: boolean;
+	/**
+	 * The prompt surface of the session the call belongs to (`"terminal"`, `"app"`, `"chat"`), which says what that
+	 * session's host does with a result. On a hand (brain/hand split) it is the brain session's, sent with the call.
+	 * Absent when the runtime knows none.
+	 */
+	readonly promptSurface?: PromptSurface;
 }
 
 /**

@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	MAX_HANDED_PAGE_CHARACTERS,
 	MAX_HANDED_PAGES_CHARACTERS,
-	showHtmlPageTool,
-} from "../../src/core/extensions/builtin/html-render/tool.ts";
+} from "../../src/core/extensions/builtin/html-render/handed-pages.ts";
+import { showHtmlPageTool } from "../../src/core/extensions/builtin/html-render/tool.ts";
 import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
 

@@ -4,27 +4,13 @@ import { Type } from "typebox";
 import { resolvePromptSurface } from "../../../dynamic-prompt/build.ts";
 import { defineTool, type ExtensionToolContext } from "../../types.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
+import { handedPageText, MAX_HANDED_PAGE_CHARACTERS, reserveHandedPage, SHOW_HTML_PAGE_NAME } from "./handed-pages.ts";
 import { HtmlRenderImagesNotFoundError, inlineLocalImages } from "./images.ts";
 
 // The same input limit as the desktop's html_render. Images belong as absolute
 // file paths, which are inlined after the check, so the document the agent
 // writes stays small in the tool call; the result details carry it inlined.
 const MAX_HTML_CHARACTERS = 512_000;
-
-// The page handed to the host travels in `details` on every RPC record that carries this result
-// (tool_execution_end, message_end, entry_appended), and every handed page travels together in the
-// records that carry the transcript (get_messages, get_tree, agent_end). An RPC record is at most
-// MAX_RPC_LINE_CHARACTERS (16 Mi); a longer one drops an attach connection. So one page carries its
-// images inlined only up to MAX_HANDED_PAGE_CHARACTERS, and a session's image-inlined pages together only
-// up to MAX_HANDED_PAGES_CHARACTERS, which leaves room for JSON escaping and the rest of the transcript.
-// Past either, the page is handed as written, and its images reach only a host that has this disk.
-// A page handed as written (`imagesInlined: false`) is not counted: it carries at most MAX_HTML_CHARACTERS,
-// in `details.html` and again in the call's arguments, so those pages are bounded per page, not per session. Only a
-// call the model issued is recorded in the transcript. A call another tool makes through ctx.executeTool() (id
-// `<parent>/<n>`) or an extension makes through pi.executeTool() (id `codemode-<uuid>`) is not, so its page only
-// rides its own tool_execution_end and is held to the per-page cap alone.
-export const MAX_HANDED_PAGE_CHARACTERS = 2 * 1024 * 1024;
-export const MAX_HANDED_PAGES_CHARACTERS = 6 * 1024 * 1024;
 
 const Params = Type.Object({
 	html: Type.String({
@@ -40,8 +26,6 @@ const Params = Type.Object({
 });
 
 const OUTPUT_DIR = ".senpi/html-pages";
-
-const showHtmlPageName = "show_html_page";
 
 const BASE64_IMAGE = /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi;
 
@@ -78,49 +62,6 @@ export interface ShowHtmlPageDetails {
 	imagesInlined: boolean;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-// Pages handed but not yet in the session's entries: calls in one turn run concurrently, and each
-// result is recorded only after it returns. Keyed by session id, then tool call id. Only calls the model
-// issued (`ctx.issuedByModel`, which the session sets for agent-loop and Cursor exec-frame calls) are held
-// here, and each is dropped once its result is in the entries or the session shuts down.
-const handedNotYetRecorded = new Map<string, Map<string, number>>();
-
-/** Drop what a session's calls still hold, when its runtime shuts down. */
-export function forgetHandedPages(sessionId: string): void {
-	handedNotYetRecorded.delete(sessionId);
-}
-
-/** Characters of inlined pages this session already hands to the host, across every branch. */
-function inlinedPageCharacters(ctx: ExtensionToolContext): number {
-	let total = 0;
-	const recorded = new Set<string>();
-	for (const entry of ctx.sessionManager.getEntries()) {
-		if (entry.type !== "message" || entry.message.role !== "toolResult") continue;
-		if (entry.message.toolName !== showHtmlPageName) continue;
-		recorded.add(entry.message.toolCallId);
-		const details: unknown = entry.message.details;
-		if (isRecord(details) && details.imagesInlined === true && typeof details.html === "string")
-			total += details.html.length;
-	}
-	const sessionId = ctx.sessionManager.getSessionId();
-	const pending = handedNotYetRecorded.get(sessionId);
-	for (const [toolCallId, characters] of pending ?? []) {
-		if (recorded.has(toolCallId)) pending?.delete(toolCallId);
-		else total += characters;
-	}
-	if (pending?.size === 0) handedNotYetRecorded.delete(sessionId);
-	return total;
-}
-
-function recordHandedPage(ctx: ExtensionToolContext, toolCallId: string, characters: number): void {
-	const sessionId = ctx.sessionManager.getSessionId();
-	const pending = handedNotYetRecorded.get(sessionId) ?? new Map<string, number>();
-	pending.set(toolCallId, characters);
-	handedNotYetRecorded.set(sessionId, pending);
-}
-
 const clampHeight = (height: number | undefined) =>
 	height === undefined ? undefined : Math.min(2000, Math.max(80, Math.round(height)));
 
@@ -128,15 +69,14 @@ const clampHeight = (height: number | undefined) =>
  * Whether this session's host shows the page. The OmO desktop opens every session it renders with
  * `open_session.promptSurface: "app"` and publishes a completed call from its details; every other
  * surface (terminal, chat bridge, or none named) only gets the file. The result states which happened,
- * because the model trusts it in later turns too (senpi#6273). A hand (brain/hand split) has no session, so its
- * loop-side prompt options are not bound and the surface comes from the environment (senpi#6919).
+ * because the model trusts it in later turns too (senpi#6273). On a hand (brain/hand split) `ctx.promptSurface` is the
+ * brain session's, sent with the call (senpi#6921); a runtime that knows none falls back to the environment.
  */
 const hostRendersPage = (ctx: ExtensionToolContext): boolean =>
-	((ctx.sessionManager === undefined ? undefined : ctx.getSystemPromptOptions?.().surface) ??
-		resolvePromptSurface(process.env)) === "app";
+	(ctx.promptSurface ?? resolvePromptSurface(process.env)) === "app";
 
 export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
-	name: showHtmlPageName,
+	name: SHOW_HTML_PAGE_NAME,
 	label: "Show HTML Page",
 	description:
 		"Show a finished self-contained HTML page (chart, table, diagram, mockup) to the reader. " +
@@ -170,26 +110,26 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				.slice(0, 60) || "page";
 		const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
 		await writeFile(path, prepared, "utf8");
-		// A hand (brain/hand split) has no session: the transcript its page joins is the brain's, which it cannot read, so
-		// there the page is held to the per-page cap alone (senpi#6919).
+		// A hand (brain/hand split) has no session: the transcript its page joins is the brain's, which counts the page
+		// when the result arrives (`withHandPageBudget`, senpi#6921); here it is held to the per-page cap alone.
 		const inTranscript = ctx.issuedByModel && ctx.sessionManager !== undefined;
-		const alreadyHanded = inTranscript ? inlinedPageCharacters(ctx) : 0;
 		const fitsPage = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
-		const imagesInlined = fitsPage && alreadyHanded + inlined.html.length <= MAX_HANDED_PAGES_CHARACTERS;
-		if (imagesInlined && inTranscript) recordHandedPage(ctx, toolCallId, inlined.html.length);
+		const { inlined: imagesInlined, alreadyHanded } =
+			fitsPage && inTranscript
+				? reserveHandedPage(ctx.sessionManager, toolCallId, inlined.html.length)
+				: { inlined: fitsPage, alreadyHanded: 0 };
 		return {
 			content: [
 				{
 					type: "text",
-					text:
-						(hostRendersPage(ctx)
-							? `The page was shown to the reader inline above your reply. A copy is saved at ${path}. `
-							: `Wrote the page to ${path}. It was not displayed in this interface. `) +
-						(imagesInlined
-							? "Local images were inlined."
-							: fitsPage
-								? `Local images were inlined into the saved copy, but this session's pages already carry ${alreadyHanded} of the ${MAX_HANDED_PAGES_CHARACTERS} characters of images a session can carry to a viewer, so a viewer on another machine will not see this page's images.`
-								: `Local images were inlined into the saved copy, but with them the page is ${inlined.html.length} characters, over the ${MAX_HANDED_PAGE_CHARACTERS} a page can carry to a viewer, so a viewer on another machine will not see the images. Use smaller images to show them everywhere.`),
+					text: handedPageText({
+						path,
+						shown: hostRendersPage(ctx),
+						imagesInlined,
+						fitsPage,
+						alreadyHanded,
+						inlinedLength: inlined.html.length,
+					}),
 				},
 			],
 			details: {

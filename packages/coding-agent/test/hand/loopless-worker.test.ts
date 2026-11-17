@@ -12,11 +12,8 @@ import { grantLooplessExecuteToTestHarness } from "../../src/modes/rpc/loopless-
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
 import type { LooplessWorker } from "../../src/modes/rpc/loopless-worker-client.ts";
 import { LooplessWorkerPool } from "../../src/modes/rpc/loopless-worker-pool.ts";
-import {
-	createLooplessRuntimeFactory,
-	type LooplessRuntime,
-	LooplessToolNotFoundError,
-} from "../../src/modes/rpc/runtime-factory-loopless.ts";
+import { type LooplessRuntime, LooplessToolNotFoundError } from "../../src/modes/rpc/loopless-runtime.ts";
+import { createLooplessRuntimeFactory } from "../../src/modes/rpc/runtime-factory-loopless.ts";
 import type { SessionWorkerClient } from "../../src/modes/rpc/session-worker-client.ts";
 import { SESSION_WORKER_LIMITS, type WorkerSnapshot } from "../../src/modes/rpc/session-worker-protocol.ts";
 import { WorkerCapacity } from "../../src/modes/rpc/worker-capacity.ts";

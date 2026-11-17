@@ -12,7 +12,7 @@ import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/i
 import {
 	MAX_HANDED_PAGE_CHARACTERS,
 	MAX_HANDED_PAGES_CHARACTERS,
-} from "../../src/core/extensions/builtin/html-render/tool.ts";
+} from "../../src/core/extensions/builtin/html-render/handed-pages.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 // senpi#6915: a show_html_page call the model issued joins the transcript, so the session marks it `issuedByModel`
