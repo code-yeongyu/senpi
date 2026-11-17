@@ -11062,6 +11062,10 @@
 			"class": "per-copy-safe",
 			"reason": "derived-value cache; a split only recomputes or misses"
 		},
+		"packages/senpi-codemode/src/tool/tool-widgets.ts#ownRowMemory": {
+			"class": "per-copy-safe",
+			"reason": "per-nested-call renderer memory keyed weakly by the call's summary; a split copy only misses and redoes one call's prefetch"
+		},
 		"packages/senpi-codemode/src/tool/types.ts#defaultEvalDeadlineSeconds": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"

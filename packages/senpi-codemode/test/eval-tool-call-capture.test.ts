@@ -191,3 +191,33 @@ describe("eval tool-call capture", () => {
 		);
 	});
 });
+
+// Only a tool whose own row draws the nested call keeps its result details; the six core tools are drawn by codemode's
+// own widgets and never read them, so their nested calls keep none (senpi#6903 review).
+describe("nested call details are kept only for rows drawn by the tool", () => {
+	const listTools = () => [
+		{ name: "read", renderResult: () => ({ render: () => [], invalidate: () => {} }) },
+		{ name: "thread_list", renderResult: () => ({ render: () => [], invalidate: () => {} }) },
+	];
+
+	it.each([
+		["read", false],
+		["thread_list", true],
+	] as const)("%s keeps details: %s", async (toolName, kept) => {
+		const kernel = new FakeKernel([
+			{ type: "tool-call", callId: "d1", toolName, args: {} },
+			result(`details-${toolName}`, "done"),
+		]);
+		const executeTool: ExecuteTool = vi.fn(async () => textResult("ok", { rows: [1, 2] }));
+
+		const toolResult = await createTool(kernel, executeTool, listTools).execute(
+			`details-${toolName}`,
+			{ language: "js", code: `await tool.${toolName}({})`, summary: "details" },
+			undefined,
+			undefined,
+			fakeExtensionContext(),
+		);
+
+		expect(toolResult.details.toolCalls[0]?.details).toEqual(kept ? { rows: [1, 2] } : undefined);
+	});
+});
