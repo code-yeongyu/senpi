@@ -5,7 +5,7 @@
 // ends with the session's link to the hand, whether or not the brain loads html-render (these brains never do).
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentEvent, ToolHost } from "@earendil-works/pi-agent-core";
+import type { Agent, AgentEvent, ToolHost } from "@earendil-works/pi-agent-core";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MAX_HANDED_PAGE_CHARACTERS } from "../../src/core/extensions/builtin/html-render/handed-pages.ts";
@@ -13,6 +13,8 @@ import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHandSelection, type HandRow } from "../../src/modes/headless/hand-selection.ts";
 import { cleanupHands, type HandDirs, handDirs, openLink, startHand, toolCall } from "../hand/remote-hand-fixture.ts";
+
+type AgentListener = Parameters<Agent["subscribe"]>[0];
 
 const ROW: HandRow = { device: "dev-b", label: "Studio", platform: "linux", reachable: true };
 const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -33,23 +35,54 @@ function handNote(pi: ExtensionAPI): void {
 	);
 }
 
-/** A brain session (surface "app", no html-render loaded) and the hand selection that links it to an in-process hand. */
-function brainOnHand(dirs: HandDirs) {
+/** A hand-side extension whose tool_result handler rewrites the page's own text so it no longer names the saved copy. */
+function handRewrite(pi: ExtensionAPI): void {
+	pi.on("tool_result", (event) =>
+		event.toolName === "show_html_page"
+			? {
+					content: event.content.map((part, index) =>
+						index === 0 && part.type === "text"
+							? { type: "text", text: "REWRITTEN: Local images were inlined." }
+							: part,
+					),
+				}
+			: undefined,
+	);
+}
+
+/**
+ * A brain session (surface "app", no html-render loaded) and the hand selection that links it to an in-process hand.
+ * `endRun` delivers the `agent_end` a run of the session would; `listeners` counts who listens for it.
+ */
+function brainOnHand(dirs: HandDirs, handExtensions: ((pi: ExtensionAPI) => void)[] = [handNote]) {
 	const selection = createHandSelection({
 		list: () => [ROW],
 		link: () => {
 			const link = openLink();
-			startHand(link, dirs, [handNote]);
+			startHand(link, dirs, handExtensions);
 			return { transport: link.brain, placement: "split-local" };
 		},
 	});
+	const listeners = new Set<AgentListener>();
 	const session = {
-		agent: { toolHost: undefined as ToolHost | undefined },
+		agent: {
+			toolHost: undefined as ToolHost | undefined,
+			subscribe: (listener: AgentListener) => {
+				listeners.add(listener);
+				return () => {
+					listeners.delete(listener);
+				};
+			},
+		},
 		isStreaming: false,
 		sessionManager: SessionManager.inMemory(dirs.cwd),
 		promptSurface: "app" as const,
 	};
-	return { selection, session };
+	const endRun = () => {
+		for (const listener of listeners)
+			void listener({ type: "agent_end", messages: [] }, new AbortController().signal);
+	};
+	return { selection, session, endRun, listeners };
 }
 
 function pages(dirs: HandDirs, prefix: string, count: number): ToolCall[] {
@@ -108,14 +141,43 @@ describe("senpi#6921: show_html_page on a hand, seen from the brain session", ()
 		expect(ended[3]?.content).toEqual(messages[3]?.content);
 	});
 
+	// senpi#6932: the hand link's ledger is emptied when a run of the session ends, as the extension's is.
+	it("forgets the pages an aborted run let through once that run ends", async () => {
+		const dirs = await handDirs("page-run-end");
+		const { selection, session, endRun } = brainOnHand(dirs);
+		expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
+		await run(session.agent.toolHost, dirs.cwd, pages(dirs, "aborted", 3));
+
+		endRun();
+		const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "next-run", 1));
+
+		expect(messages.map((message) => pageDetails(message.details).imagesInlined)).toEqual([true]);
+	});
+
+	// senpi#6932: the page's own text is the result's first text part, wherever it now points.
+	it("replaces the page's own text even when a hand-side handler rewrote it", async () => {
+		const dirs = await handDirs("page-rewrite");
+		const { selection, session } = brainOnHand(dirs, [handRewrite, handNote]);
+		expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
+
+		const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "rewritten", 4));
+
+		const parts = messages.map((message) => message.content.map((part) => (part.type === "text" ? part.text : "")));
+		expect(parts[2]).toEqual(["REWRITTEN: Local images were inlined.", "HAND-NOTE rewritten-2"]);
+		expect(parts[3]).toHaveLength(2);
+		expect(parts[3]?.[0]).toContain("this session's pages already carry");
+		expect(parts[3]?.[1]).toBe("HAND-NOTE rewritten-3");
+	});
+
 	it("forgets the pages a session's link let through once the session is released", async () => {
 		const dirs = await handDirs("page-ledger");
-		const { selection, session } = brainOnHand(dirs);
+		const { selection, session, listeners } = brainOnHand(dirs);
 		expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
 		// Three pages fill the budget; none is recorded, as when the run is aborted before its results are written.
 		await run(session.agent.toolHost, dirs.cwd, pages(dirs, "aborted", 3));
 
 		selection.release(SESSION_ID);
+		expect(listeners.size).toBe(0);
 		selection.restore(SESSION_ID, session);
 		const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "after", 1));
 

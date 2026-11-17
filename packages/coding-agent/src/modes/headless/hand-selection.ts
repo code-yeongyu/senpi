@@ -41,7 +41,7 @@ export const HAND_SELECTION_ENTRY = "hand_selection";
 export type HandRefusal = "hand_not_listed" | "hand_unreachable" | "session_busy";
 
 export interface HandSession {
-	readonly agent: Pick<Agent, "toolHost">;
+	readonly agent: Pick<Agent, "toolHost" | "subscribe">;
 	/** A run copies its ToolHost when it starts, so the choice changes only between runs. */
 	readonly isStreaming: boolean;
 	readonly sessionManager: Pick<SessionManager, "appendCustomEntry" | "getEntries">;
@@ -131,19 +131,16 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 		const state = stateOf(durableSessionId, session);
 		state.remote?.close();
 		sessions.set(durableSessionId, { own: state.own, device, remote: remote?.host, linked: remote?.linked ?? false });
-		// The hand cannot see this session's transcript, so the session's page budget is applied here (senpi#6921).
-		session.agent.toolHost =
-			remote === undefined ? state.own : gate(durableSessionId, withHandPageBudget(remote.host, session));
+		session.agent.toolHost = remote === undefined ? state.own : gate(durableSessionId, remote.host);
 		options.onChange?.(durableSessionId, device);
 	};
 
 	const unreachable = (): Remote => ({ host: unreachableHost(), linked: false });
 	const linkTo = (device: string, session: HandSession): Remote => {
 		try {
-			return {
-				host: createRemoteToolHost({ ...directory.link(device), promptSurface: () => session.promptSurface }),
-				linked: true,
-			};
+			// The hand cannot see this session's transcript, so the session's page budget is applied here (senpi#6921).
+			const host = createRemoteToolHost({ ...directory.link(device), promptSurface: () => session.promptSurface });
+			return { host: withHandPageBudget(host, session), linked: true };
 		} catch {
 			return unreachable();
 		}
