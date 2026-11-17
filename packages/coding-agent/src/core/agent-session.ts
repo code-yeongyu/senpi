@@ -557,7 +557,7 @@ const OVERFLOW_RECOVERY_EXHAUSTED_MESSAGE =
 	"Context overflow recovery failed after two compact-and-retry attempts. Try reducing context or switching to a larger-context model.";
 const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
 /** Abort reason for a retry backoff a manual model change cuts short (senpi#6893). */
-const MANUAL_MODEL_SWITCH_HANDOFF = Symbol("manual-model-switch-handoff");
+const MANUAL_MODEL_SWITCH_HANDOFF = "manual-model-switch-handoff";
 
 // ============================================================================
 // Skill Invocation Formatting and Parsing (see ./skill-invocation.ts)
