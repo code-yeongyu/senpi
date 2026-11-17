@@ -259,6 +259,12 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 		ifEtag: Type.Union([Id, Type.Null()]),
 		expectedCwd: OptStr,
 	}),
+	read_user_skill_file: session("read_user_skill_file", { skill: Id }),
+	write_user_skill_file: session("write_user_skill_file", {
+		skill: Id,
+		content: Str,
+		ifEtag: Type.Union([Id, Type.Null()]),
+	}),
 	extension_request: session("extension_request", { name: Id, data: Opt(Type.Unknown()) }),
 	"eval_cells.list": session("eval_cells.list", {}),
 	"eval_cells.peek": session("eval_cells.peek", { cellId: Id, tailBytes: OptNum }),

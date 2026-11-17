@@ -145,6 +145,7 @@ import {
 import { readProjectFile, writeProjectFile } from "./project-file-commands.ts";
 import { getProjectMcpServers, setProjectMcpServers } from "./project-mcp-commands.ts";
 import { readProjectSkillFile, writeProjectSkillFile } from "./project-skill-commands.ts";
+import { readUserSkillFile, writeUserSkillFile } from "./user-skill-commands.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
 import {
@@ -2332,6 +2333,21 @@ export function createRpcConnectionHandler(
 				return result.ok
 					? success(id, "write_project_skill_file", result.data)
 					: error(id, "write_project_skill_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "read_user_skill_file": {
+				const result = await readUserSkillFile(session, command.skill);
+				return result.ok
+					? success(id, "read_user_skill_file", result.data)
+					: error(id, "read_user_skill_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "write_user_skill_file": {
+				const origin = connectionRoles.originOf(currentConnectionId());
+				const result = await writeUserSkillFile(session, command.skill, command.content, command.ifEtag, origin);
+				return result.ok
+					? success(id, "write_user_skill_file", result.data)
+					: error(id, "write_user_skill_file", result.message, result.errorCode, result.errorData);
 			}
 
 			case "extension_request":

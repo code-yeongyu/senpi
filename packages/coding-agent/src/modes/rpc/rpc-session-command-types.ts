@@ -370,6 +370,8 @@ export type RpcSessionCommand =
 			ifEtag: string | null;
 			expectedCwd?: string;
 	  }
+	| { id?: string; type: "read_user_skill_file"; skill: string }
+	| { id?: string; type: "write_user_skill_file"; skill: string; content: string; ifEtag: string | null }
 	| { id?: string; type: "extension_request"; name: string; data?: unknown }
 	| { id?: string; type: "eval_cells.list" }
 	| { id?: string; type: "eval_cells.peek"; cellId: string; tailBytes?: number }
