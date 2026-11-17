@@ -4,6 +4,7 @@ import { KeybindingsManager } from "../../core/keybindings.ts";
 import type { RpcSessionState } from "../rpc/rpc-types.ts";
 import { AttachClient, AttachRefusedError, type AttachRecord } from "./attach-client.ts";
 import { AttachDialogs } from "./attach-dialogs.ts";
+import { type AttachStartup, applyAttachStartup } from "./attach-startup.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { RecordRenderer } from "./record-renderer.ts";
@@ -123,7 +124,7 @@ export class AttachedTui extends Container implements Focusable {
 		this.editor.focused = value;
 	}
 
-	async connect(address: string, ref: string): Promise<void> {
+	async connect(address: string, ref: string, startup?: AttachStartup): Promise<void> {
 		const path = address.startsWith("unix://") ? address.slice(7) : address;
 		if (!path || path.includes("://") || /^\\\\\.\\pipe\\/i.test(path))
 			throw new Error("--attach needs a local socket path or a named pipe's logical filesystem path");
@@ -180,6 +181,7 @@ export class AttachedTui extends Container implements Focusable {
 			const buffered = this.buffering ?? [];
 			this.buffering = undefined;
 			for (const record of buffered) this.record(record);
+			if (startup) await applyAttachStartup((command) => this.client.request(command), row.sessionId, startup);
 		} catch (error) {
 			// What failed is the cause: a release that also fails must not replace it (senpi#4271 review).
 			try {

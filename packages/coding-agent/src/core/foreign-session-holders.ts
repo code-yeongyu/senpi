@@ -86,6 +86,8 @@ export function takeOverRefusal(holders: readonly SessionHolder[], retry = "then
  * second writer or stopping the host (#6059: the OmO desktop's sessions run on such a host).
  */
 export function hostAttachSocket(holders: readonly SessionHolder[]): string | undefined {
+	// An unverified holder may be a reused pid: refuse it clearly, as take-over does, rather than dial a dead host.
+	if (holders.some((holder) => holder.unproven === true)) return undefined;
 	const sockets = new Set(
 		holders.map((holder) => (holder.host_instance === undefined ? undefined : holder.host_socket)),
 	);
