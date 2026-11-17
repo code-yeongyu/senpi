@@ -479,12 +479,13 @@ import {
 import {
 	armedEvalOnlyToolNames,
 	directActiveToolNames,
+	registeredEvalOnlyToolNames,
 	requestedActiveToolNames,
 	resolveEvalOnlyToolNames,
 	toolExposureOf,
 } from "./runtime/active-tools.ts";
 import type { SourceInfo } from "./source-info.ts";
-import { toolInfoOf } from "./tool-info.ts";
+import { toolInfosOf } from "./tool-info.ts";
 import {
 	PendingQueueLedger,
 	type PendingQueueSnapshot,
@@ -5434,7 +5435,13 @@ export class AgentSession {
 	 * Get all configured tools with normalized exposure metadata and source metadata.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolDefinitions.values(), toolInfoOf);
+		return toolInfosOf(
+			this._toolDefinitions,
+			registeredEvalOnlyToolNames(
+				armedEvalOnlyToolNames(this._evalOnlyToolNames, this._toolRegistry),
+				this._toolRegistry,
+			),
+		);
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {

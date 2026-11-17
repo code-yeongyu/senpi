@@ -55,6 +55,14 @@ export function armedEvalOnlyToolNames(
 	return evalOnly !== undefined && toolRegistry.has(EVAL_TOOL_NAME) ? evalOnly : undefined;
 }
 
+/** The registered tools the armed eval-only routing withholds from the model; empty while it is not armed. */
+export function registeredEvalOnlyToolNames(
+	armedEvalOnly: ReadonlySet<string> | undefined,
+	toolRegistry: ReadonlyMap<string, unknown>,
+): ReadonlySet<string> {
+	return new Set([...(armedEvalOnly ?? [])].filter((name) => toolRegistry.has(name)));
+}
+
 /** The tool flags a session is created with (`--tools`, `--no-tools`, `--no-builtin-tools`, `--exclude-tools`). */
 export interface ToolSelection {
 	readonly tools?: readonly string[] | undefined;
