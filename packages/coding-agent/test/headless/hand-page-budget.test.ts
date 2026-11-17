@@ -59,6 +59,19 @@ function handPrepend(pi: ExtensionAPI): void {
 	);
 }
 
+/** A hand-side extension that makes the result look like an older hand's: no `details.resultText` (before senpi#6934). */
+function olderHand(pi: ExtensionAPI): void {
+	pi.on("tool_result", (event) =>
+		event.toolName === "show_html_page"
+			? {
+					details: Object.fromEntries(
+						Object.entries(Object(event.details)).filter(([key]) => key !== "resultText"),
+					),
+				}
+			: undefined,
+	);
+}
+
 /**
  * A brain session (surface "app", no html-render loaded) and the hand selection that links it to an in-process hand.
  * `endRun` delivers the `agent_end` a run of the session would; `listeners` counts who listens for it.
@@ -197,6 +210,29 @@ describe("senpi#6921: show_html_page on a hand, seen from the brain session", ()
 		expect(parts[3]?.[2]).toContain("this session's pages already carry");
 		expect(pageDetails(messages[3]?.details)).toMatchObject({ imagesInlined: false, html: calls[3]?.arguments.html });
 	});
+
+	// senpi#6937: an older hand sends no resultText; its page text is the part naming the saved copy, else the first text.
+	it.each([
+		["alone", [olderHand], (sentence: string) => [sentence]],
+		["with a note put in front", [olderHand, handPrepend], (sentence: string) => ["HAND-FIRST older-3", sentence]],
+	] as const)(
+		"replaces an older hand's page text (%s) instead of appending next to it",
+		async (_case, extensions, expected) => {
+			const dirs = await handDirs("page-older");
+			const { selection, session } = brainOnHand(dirs, [...extensions]);
+			expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
+
+			const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "older", 4));
+
+			expect(Reflect.get(Object(messages[2]?.details), "resultText")).toBeUndefined();
+			const parts = messages.map((message) =>
+				message.content.map((part) => (part.type === "text" ? part.text : "")),
+			);
+			const sentence = parts[3]?.find((text) => text.includes("this session's pages already carry")) ?? "";
+			expect(parts[3]).toEqual(expected(sentence));
+			expect(pageDetails(messages[3]?.details).imagesInlined).toBe(false);
+		},
+	);
 
 	it("forgets the pages a session's link let through once the session is released", async () => {
 		const dirs = await handDirs("page-ledger");

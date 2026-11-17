@@ -113,13 +113,24 @@ function budgetedEvent(
 function applied(downgrade: PageDowngrade, content: ResultContent): PageOverride {
 	const own =
 		downgrade.ownText === undefined
-			? -1
+			? olderHandOwnText(downgrade, content)
 			: content.findIndex((part) => part.type === "text" && part.text === downgrade.ownText);
 	const text = { type: "text" as const, text: downgrade.text };
 	return {
 		content: own === -1 ? [...content, text] : content.map((part, index) => (index === own ? text : part)),
 		details: downgrade.details,
 	};
+}
+
+/**
+ * A hand on a release from before senpi#6934 sends no `details.resultText`. Its page text is then the first text part
+ * that names the page's saved copy, else the first text part, as the brain read it before the marker (senpi#6937).
+ */
+function olderHandOwnText(downgrade: PageDowngrade, content: ResultContent): number {
+	const path = downgrade.details.path;
+	const named =
+		typeof path === "string" ? content.findIndex((part) => part.type === "text" && part.text.includes(path)) : -1;
+	return named === -1 ? content.findIndex((part) => part.type === "text") : named;
 }
 
 /** The page handed as written when the session's budget has no room for it; undefined when it keeps its images. */
