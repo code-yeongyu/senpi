@@ -59,22 +59,24 @@ interface ImageReference {
 	readonly start: number;
 	readonly end: number;
 	readonly path: string;
-	/** Whether the page loads it as an image (an unquoted url(), or a quoted value of src=, url(...) and the like) rather than only naming it in text. */
-	readonly loaded: boolean;
 }
 
 // What may precede the opening quote of a path the page loads: an attribute or property
 // (`src=`, `srcset=`, `poster=`, `href=`, `img.src = `) or a CSS `url(`.
 const LOADING_CONTEXT = /(?:\b(?:src|srcset|poster|href)\s*=\s*|url\(\s*)$/i;
 
+/**
+ * The absolute image paths the page loads: an unquoted url(), or a quoted value after src=, url( and the
+ * like. A path only named in text or a code sample is no reference: it is never read and stays as written.
+ */
 const findLocalImages = (html: string): ImageReference[] =>
 	Array.from(html.matchAll(LOCAL_IMAGE_PATTERN)).flatMap((match) => {
 		const quoted = match.indices?.[2];
 		const span = quoted ?? match.indices?.[3];
 		if (!span) return [];
-		const loaded =
-			quoted === undefined || LOADING_CONTEXT.test(html.slice(Math.max(0, match.index - 40), match.index));
-		return [{ start: span[0], end: span[1], path: html.slice(span[0], span[1]), loaded }];
+		if (quoted !== undefined && !LOADING_CONTEXT.test(html.slice(Math.max(0, match.index - 40), match.index)))
+			return [];
+		return [{ start: span[0], end: span[1], path: html.slice(span[0], span[1]) }];
 	});
 
 const filePathFor = (reference: string) =>
@@ -138,9 +140,8 @@ const isImageBytes = (bytes: Uint8Array) => {
 };
 
 /**
- * Replaces every readable local image reference with a data URI. A path that cannot be read as an
- * image stays as written; it is listed in `missing` only when the page loads it as an image, so a
- * path merely named in text or a code sample is no error. The caller decides what `missing` means.
+ * Replaces every local image the page loads with a data URI. A loaded path that cannot be read as an
+ * image stays as written and is returned in `missing`; the caller decides what that means.
  */
 export async function inlineLocalImages(html: string): Promise<{ html: string; missing: string[] }> {
 	const references = findLocalImages(html);
@@ -187,9 +188,6 @@ export async function inlineLocalImages(html: string): Promise<{ html: string; m
 	if (Buffer.byteLength(inlined) > MAX_PAGE_BYTES) {
 		throw new HtmlRenderPageTooLargeError(Buffer.byteLength(inlined));
 	}
-	const loadedPaths = new Set(references.filter((reference) => reference.loaded).map((reference) => reference.path));
-	const missing = files
-		.filter((file) => !images.has(file.path) && loadedPaths.has(file.path))
-		.map((file) => file.path);
+	const missing = files.filter((file) => !images.has(file.path)).map((file) => file.path);
 	return { html: inlined, missing };
 }
