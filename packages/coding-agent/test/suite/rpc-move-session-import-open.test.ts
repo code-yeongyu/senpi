@@ -3,12 +3,12 @@
  * `copy` already lets it, and the import opens the landed session on the importing connection, so a move to another
  * host needs no separate `open_session`. A failed open never undoes an import that landed.
  */
-import { existsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { devices, exportedForB, move, moveAs } from "./rpc-move-session-support.ts";
+import { devices, exportedForB, landedOnB, move, moveAs } from "./rpc-move-session-support.ts";
 import { SESSION_ID } from "./session-move-fixture.ts";
 
 async function readyToImport(moveId: string) {
@@ -55,6 +55,14 @@ describe("move_session import: sessionDir and open (senpi#6267)", () => {
 				return join(base, "a-file", "landing");
 			},
 		],
+		[
+			"cannot be looked at (a symlink loop)",
+			(base) => {
+				symlinkSync(join(base, "loop-b"), join(base, "loop-a"));
+				symlinkSync(join(base, "loop-a"), join(base, "loop-b"));
+				return join(base, "loop-a", "landing");
+			},
+		],
 	])("#given a sessionDir that %s #then import refuses it and the move stays importable", async (_case, dirIn) => {
 		const { fixture, a, b, importFields } = await readyToImport("move-d2");
 		await using _a = a;
@@ -68,6 +76,26 @@ describe("move_session import: sessionDir and open (senpi#6267)", () => {
 		expect((await move(b, { op: "status", moveId: "move-d2" })).data).toEqual({ state: "receiving" });
 		expect(await move(b, importFields)).toMatchObject({ success: true, data: { session_id: SESSION_ID } });
 	});
+
+	// Permission bits say nothing to root, and Windows keeps none for a folder: there the import itself still fails.
+	it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+		"#given a sessionDir that is a folder this host may read but not write into #then import refuses it and the move stays importable",
+		async () => {
+			const { fixture, a, b, importFields } = await readyToImport("move-d3");
+			await using _a = a;
+			await using _b = b;
+			const readOnly = join(fixture.base, "read-only");
+			mkdirSync(readOnly);
+			chmodSync(readOnly, 0o555);
+
+			const refused = await move(b, { ...importFields, sessionDir: readOnly });
+			chmodSync(readOnly, 0o755);
+
+			expect(refused).toMatchObject({ success: false, errorCode: "invalid_move_request" });
+			expect((await move(b, { op: "status", moveId: "move-d3" })).data).toEqual({ state: "receiving" });
+			expect(await move(b, importFields)).toMatchObject({ success: true, data: { session_id: SESSION_ID } });
+		},
+	);
 
 	it("#given open asked #when the import lands #then the same answer carries the opened session and B hosts it for the caller", async () => {
 		const { a, b, importFields } = await readyToImport("move-o1");
@@ -137,5 +165,46 @@ describe("move_session import: sessionDir and open (senpi#6267)", () => {
 		const landing = join(getDefaultSessionDir(fixture.repoB, fixture.agentB), basename(fixture.sessionPath));
 		expect(existsSync(landing)).toBe(false);
 		expect(await b.list()).toEqual([]);
+	});
+
+	it("#given a session landed in a sessionDir for one folder #when the same bundle is imported there again for another folder, with open #then it is refused move_fenced and nothing is opened, and the first folder is still answered the landed session", async () => {
+		const { fixture, a, b, importFields } = await readyToImport("move-d3");
+		await using _a = a;
+		await using _b = b;
+		const sessionDir = join(fixture.base, "landing");
+		const elsewhere = join(fixture.base, "not-a-repository");
+		mkdirSync(elsewhere);
+		const first = await move(b, { ...importFields, sessionDir });
+		const landed = (first.data as { session_path: string }).session_path;
+		const before = readFileSync(landed, "utf8");
+
+		const again = await moveAs(b, "conn-b", { ...importFields, sessionDir, cwd: elsewhere, open: true });
+
+		expect(again).toMatchObject({ success: false, errorCode: "move_fenced" });
+		// The move is accepted here, so this refusal says where it landed, as every fence of an accepted move does.
+		expect(again.errorData).toEqual({ detail: expect.any(String), ...landedOnB(fixture, landed) });
+		expect(await b.list()).toEqual([]);
+		expect(readFileSync(landed, "utf8")).toBe(before);
+		expect(await move(b, { ...importFields, sessionDir })).toMatchObject({
+			success: true,
+			data: { session_id: SESSION_ID, session_path: landed },
+		});
+	});
+
+	it("#given a host that began draining #when an import asks to open what it lands #then the import lands, answers open_error host_draining, and nothing is hosted", async () => {
+		const { a, b, importFields } = await readyToImport("move-o5");
+		await using _a = a;
+		await using _b = b;
+		b.router.beginDrain();
+
+		const reply = await moveAs(b, "conn-b", { ...importFields, open: true });
+
+		expect(reply).toMatchObject({
+			success: true,
+			data: { session_id: SESSION_ID, open_error: { error: expect.stringContaining("host_draining") } },
+		});
+		expect(reply.data).not.toHaveProperty("state");
+		expect(await b.list()).toEqual([]);
+		expect(await move(b, { op: "status", moveId: "move-o5" })).toMatchObject({ data: { state: "accepted" } });
 	});
 });

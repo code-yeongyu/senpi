@@ -52,8 +52,9 @@ env(key?=None, value?=None) → str | None | dict
     Task/agent output by id. Reads immediately: running tasks return their status; \`format\` \`"raw"\` = full, \`"tail"\` = trailing.
 {{/if}}tool.<name>(args) → { text, images?, details?, hasError? }
     Invoke any session tool; image results (e.g. \`tool.read\` on a png) arrive in \`images[i]\` as { mimeType, dataBase64 }.
-tool_schema(name?) → dict
-    Parameter schema of a tool (omit \`name\` to list tool names); a failed \`tool.<name>()\` call also returns the expected parameters.
+{{#if evalOnlyTools}}    Eval-only tools (absent from your direct tool list, reachable only here): {{evalOnlyTools}}.
+{{/if}}tool_schema(name?) → dict
+    { name, description, parameters } of a tool; omit \`name\` → { tools: [every tool name] }; a failed \`tool.<name>()\` call also returns the expected parameters.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
     Oneshot, stateless. \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → parsed structured output.
 {{#if spawns}}agent(prompt, agent?="{{spawnDefaultAgent}}", model?=None, label?=None, schema?=None, isolated?=None, apply?=None, merge?=None, handle?=False) → str | dict

@@ -8,7 +8,12 @@ import type { InlineExtension } from "../../core/extensions/types.ts";
 import { PresentationBroker } from "../../core/extensions/ui-presentation.ts";
 import { bootstrapRuntime, buildToolRegistry, type ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
-import { toolInfoOf } from "../../core/tool-info.ts";
+import {
+	armedEvalOnlyToolNames,
+	registeredEvalOnlyToolNames,
+	resolveEvalOnlyToolNames,
+} from "../../core/runtime/active-tools.ts";
+import { toolInfosOf } from "../../core/tool-info.ts";
 import { childModuleRoots } from "../../core/tool-dispatch/offload.ts";
 import { createToolChildRuntime } from "../../core/tool-dispatch/tool-child-runtime.ts";
 import { builtInExtensions } from "../../extensions/index.ts";
@@ -204,7 +209,17 @@ export function createLooplessRuntimeFactory(
 			),
 		);
 		runtime.extensionRunner.bindSessionlessFacts({
-			getAllTools: () => Array.from(registry.definitions.values(), toolInfoOf),
+			getAllTools: () =>
+				toolInfosOf(
+					registry.definitions,
+					registeredEvalOnlyToolNames(
+						armedEvalOnlyToolNames(
+							resolveEvalOnlyToolNames(registry.definitions, undefined),
+							registry.toolRegistry,
+						),
+						registry.toolRegistry,
+					),
+				),
 			loopHookCall: () => loopHookCall.current(),
 			loopHookSend: () => loopHookCall.sender(),
 			loopHookWrite: () => loopHookCall.writer(),
