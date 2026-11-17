@@ -127,6 +127,9 @@ jobs:
           [ "$FORCE_TESTS" != true ] || refuse "ci_basis_receipt waives the hosted CI wait, which a force_tests release does not have"
           [ "$PUBLISH_ONLY" != true ] || refuse "ci_basis_receipt waives the hosted CI wait, which a publish-only run does not have"
           [ -n "$CI_BASIS_RECEIPT" ] || refuse "ci_basis_receipt is empty"
+          case "$CI_BASIS_RECEIPT" in
+            [[:space:]]* | *[[:space:]]) refuse "ci_basis_receipt is blank or has leading or trailing whitespace" ;;
+          esac
           [ "${#CI_BASIS_RECEIPT}" -le 200 ] || refuse "ci_basis_receipt is ${#CI_BASIS_RECEIPT} characters; at most 200 are allowed"
           case "$CI_BASIS_RECEIPT" in
             *[![:print:]]*) refuse "ci_basis_receipt must be printable ASCII with no newline or control character" ;;

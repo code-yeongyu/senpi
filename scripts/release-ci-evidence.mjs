@@ -143,6 +143,14 @@ export function secureCiEvidence(version, dryRun, forceTests, pinnedSha, ciBasis
 		return;
 	}
 	if (ciBasisReceipt) {
+		// The receipt waives the wait, not a known result: hosted CI is read once, and a red run still stops the release.
+		const plan = planCiEvidence({ sha: pinnedSha, checkRuns: lookupCiCheckRuns(pinnedSha) });
+		log(`test gate: ${plan.reason}`);
+		if (plan.action === "stop") {
+			throw new Error(
+				`CI failed on ${pinnedSha.slice(0, 12)}: ${plan.reason}; a ci_basis_receipt waives only the wait for hosted CI, not a red result`,
+			);
+		}
 		log(`test gate: hosted CI wait waived by ci_basis_receipt ${ciBasisReceipt} for the pinned commit ${pinnedSha}`);
 		return;
 	}

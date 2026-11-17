@@ -91,6 +91,10 @@ describe("the waiver step refuses each defeat condition with its own error (senp
 		["a receipt with a control character", { CI_BASIS_RECEIPT: "ok\u0007" }, /printable ASCII with no newline/],
 		["a receipt with a non-ASCII character", { CI_BASIS_RECEIPT: "réceipt" }, /printable ASCII/],
 		["an empty receipt reaching the script", { CI_BASIS_RECEIPT: "" }, /ci_basis_receipt is empty/],
+		// Review LOW L1 on senpi#6861: a blank id passed -n and [:print:] and logged a waiver with no receipt in it.
+		["a whitespace-only receipt", { CI_BASIS_RECEIPT: "   " }, /blank or has leading or trailing whitespace/],
+		["a receipt with leading whitespace", { CI_BASIS_RECEIPT: " run-42" }, /blank or has leading or trailing whitespace/],
+		["a receipt with trailing whitespace", { CI_BASIS_RECEIPT: "run-42 " }, /blank or has leading or trailing whitespace/],
 		["a force_tests release", { FORCE_TESTS: "true" }, /a force_tests release does not have/],
 		["a publish-only run", { PUBLISH_ONLY: "true" }, /a publish-only run does not have/],
 	];
@@ -158,6 +162,8 @@ describe("release.mjs --ci-basis-receipt (senpi#6859)", () => {
 	it("needs --sha and refuses --force-tests and --tested-sha", () => {
 		for (const [args, message] of [
 			[["--ci-basis-receipt", "r"], /--ci-basis-receipt needs --sha/],
+			[["--ci-basis-receipt", "  ", "--sha", SHA], /--ci-basis-receipt is blank or has leading or trailing whitespace/],
+			[["--ci-basis-receipt", "", "--sha", SHA], /--ci-basis-receipt is blank or has leading or trailing whitespace/],
 			[["--ci-basis-receipt", "r", "--sha", SHA, "--force-tests"], /--force-tests and --tested-sha releases do not have/],
 			[["--ci-basis-receipt", "r", "--sha", SHA, "--tested-sha", SHA, "--shard-results", root], /--force-tests and --tested-sha/],
 		]) {
