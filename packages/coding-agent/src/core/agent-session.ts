@@ -8049,7 +8049,7 @@ export class AgentSession {
 				parentSessionId: inherited.parentSessionId,
 				...idle,
 			});
-		if (request.expectedSeq !== undefined && request.expectedSeq !== pauseSeq)
+		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
