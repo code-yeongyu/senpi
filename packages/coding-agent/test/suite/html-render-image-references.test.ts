@@ -47,6 +47,14 @@ describe("senpi#6915: only a loading context loads a local image path", () => {
 		expect(inlined).toBe(html.replace(chart, DATA_URI));
 	});
 
+	it("reads only the first of a tag's duplicated attributes, as a browser does", async () => {
+		const ignoredMissing = await inlineLocalImages(`<img src="${chart}" SRC="${missing}">`);
+		const firstMissing = await inlineLocalImages(`<img src="${missing}" src="${chart}">`);
+
+		expect(ignoredMissing).toEqual({ html: `<img src="${DATA_URI}" SRC="${missing}">`, missing: [] });
+		expect(firstMissing).toEqual({ html: `<img src="${missing}" src="${chart}">`, missing: [missing] });
+	});
+
 	it.each([
 		["alt", (path: string) => `<img alt="${path}">`],
 		["title", (path: string) => `<a title="${path}">chart</a>`],

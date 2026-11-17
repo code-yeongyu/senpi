@@ -82,10 +82,17 @@ const commentEnd = (html: string, from: number) => {
 
 /**
  * The attributes of the tag whose attribute list starts at `from`, and where the tag ends; undefined when the page
- * ends inside it, as a browser then drops the tag. A quote starts a value only right after `=`.
+ * ends inside it, as a browser then drops the tag. A quote starts a value only right after `=`, and only the first
+ * of a repeated attribute name counts.
  */
 const readTag = (html: string, from: number): { attributes: Attribute[]; end: number } | undefined => {
 	const attributes: Attribute[] = [];
+	const names = new Set<string>();
+	const add = (attribute: Attribute) => {
+		if (names.has(attribute.name)) return;
+		names.add(attribute.name);
+		attributes.push(attribute);
+	};
 	let at = from;
 	while (at < html.length) {
 		const char = html.charAt(at);
@@ -101,7 +108,7 @@ const readTag = (html: string, from: number): { attributes: Attribute[]; end: nu
 		const name = html.slice(nameStart, at).toLowerCase();
 		const equals = skipSpace(html, at);
 		if (html.charAt(equals) !== "=") {
-			attributes.push({ name, start: at, end: at });
+			add({ name, start: at, end: at });
 			at = equals;
 			continue;
 		}
@@ -110,13 +117,13 @@ const readTag = (html: string, from: number): { attributes: Attribute[]; end: nu
 		if (quote === '"' || quote === "'") {
 			const close = html.indexOf(quote, value + 1);
 			if (close === -1) return undefined;
-			attributes.push({ name, start: value + 1, end: close });
+			add({ name, start: value + 1, end: close });
 			at = close + 1;
 			continue;
 		}
 		at = value;
 		while (at < html.length && !UNQUOTED_VALUE_END.test(html.charAt(at))) at += 1;
-		attributes.push({ name, start: value, end: at });
+		add({ name, start: value, end: at });
 	}
 	return undefined;
 };

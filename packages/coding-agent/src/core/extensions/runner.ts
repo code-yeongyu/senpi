@@ -749,6 +749,7 @@ export class ExtensionRunner {
 	private executeToolFn: ExtensionContextActions["executeTool"];
 	private offloadFn: ExtensionContextActions["offload"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
+	private isModelIssuedToolCallFn: (toolCallId: string) => boolean = () => false;
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
@@ -967,6 +968,7 @@ export class ExtensionRunner {
 		this.onUserActivityFn = contextActions.onUserActivity;
 		this.executeToolFn = contextActions.executeTool;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
+		this.isModelIssuedToolCallFn = contextActions.isModelIssuedToolCall ?? (() => false);
 		// Servers registered from now on reach the extension that connects them right away. Servers
 		// registered during loading are read on session_start.
 		this.runtime.mcpServers.setChangeListener(() => {
@@ -2081,6 +2083,7 @@ export class ExtensionRunner {
 		const runner = this;
 		// createContext() returns a fresh object, so adding properties does not affect other contexts.
 		return Object.defineProperties(baseContext as ExtensionToolContext, {
+			issuedByModel: { value: runner.isModelIssuedToolCallFn(toolCallId) },
 			tools: {
 				get() {
 					runner.assertActive();

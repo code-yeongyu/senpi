@@ -22,9 +22,8 @@ const DATA_PREFIX = "data:image/png;base64,";
 type Result = Awaited<ReturnType<typeof showHtmlPageTool.execute>>;
 
 /**
- * A session that records each call and returned result the way the agent session appends them: the assistant
- * message issuing a model call is in the entries before the call runs, and a call a tool or an extension makes
- * (`origin: "tool"`) is in no message.
+ * A session that records each returned result the way the agent session appends it. A model call's context says
+ * `issuedByModel`, as the session sets it; a call a tool or an extension makes (`origin: "tool"`) does not.
  */
 function session(cwd: string) {
 	const entries: unknown[] = [];
@@ -44,17 +43,8 @@ function session(cwd: string) {
 			message: { role: "toolResult", toolCallId, toolName: "show_html_page", ...result, isError: false },
 		});
 	const show = async (toolCallId: string, html: string, origin: "model" | "tool" = "model") => {
-		if (origin === "model") {
-			entries.push({
-				type: "message",
-				id: `issuer-${toolCallId}`,
-				message: {
-					role: "assistant",
-					content: [{ type: "toolCall", id: toolCallId, name: "show_html_page", arguments: {} }],
-				},
-			});
-		}
-		const result = await showHtmlPageTool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, ctx);
+		const callCtx = { ...ctx, issuedByModel: origin === "model" };
+		const result = await showHtmlPageTool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, callCtx);
 		const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
 		return { result, text };
 	};

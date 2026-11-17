@@ -83,27 +83,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 // Pages handed but not yet in the session's entries: calls in one turn run concurrently, and each
 // result is recorded only after it returns. Keyed by session id, then tool call id. Only calls the model
-// issued (see issuedByModel) are held here, and each is dropped once its result is in the entries or the
-// session shuts down.
+// issued (`ctx.issuedByModel`, which the session sets for agent-loop and Cursor exec-frame calls) are held
+// here, and each is dropped once its result is in the entries or the session shuts down.
 const handedNotYetRecorded = new Map<string, Map<string, number>>();
 
 /** Drop what a session's calls still hold, when its runtime shuts down. */
 export function forgetHandedPages(sessionId: string): void {
 	handedNotYetRecorded.delete(sessionId);
-}
-
-/**
- * Whether the model issued this call, so its result joins the transcript: the session records the issuing
- * assistant message before the call runs. A call a tool or an extension makes is in no message.
- */
-function issuedByModel(ctx: ExtensionToolContext, toolCallId: string): boolean {
-	const entries = ctx.sessionManager.getEntries();
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (entry?.type !== "message" || entry.message.role !== "assistant") continue;
-		if (entry.message.content.some((block) => block.type === "toolCall" && block.id === toolCallId)) return true;
-	}
-	return false;
 }
 
 /** Characters of inlined pages this session already hands to the host, across every branch. */
@@ -182,7 +168,7 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				.slice(0, 60) || "page";
 		const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
 		await writeFile(path, prepared, "utf8");
-		const inTranscript = issuedByModel(ctx, toolCallId);
+		const inTranscript = ctx.issuedByModel;
 		const alreadyHanded = inTranscript ? inlinedPageCharacters(ctx) : 0;
 		const fitsPage = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
 		const imagesInlined = fitsPage && alreadyHanded + inlined.html.length <= MAX_HANDED_PAGES_CHARACTERS;
