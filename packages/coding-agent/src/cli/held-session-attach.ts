@@ -5,6 +5,42 @@ import { processFileArguments } from "./file-processor.ts";
 
 export type HeldSessionAttachPlan = { readonly startup: AttachStartup } | { readonly refusal: string };
 
+/**
+ * Start flags that configure the process that runs a session (its prompt, credentials, tools, resources and
+ * runtime). The host already runs the session with its own, so an attaching start cannot apply them.
+ */
+const UNAPPLIED_FLAGS: ReadonlyArray<readonly [flag: string, given: (parsed: Args) => boolean]> = [
+	["--system-prompt", (parsed) => parsed.systemPrompt !== undefined],
+	["--append-system-prompt", (parsed) => (parsed.appendSystemPrompt?.length ?? 0) > 0],
+	["--api-key", (parsed) => parsed.apiKey !== undefined],
+	["--models", (parsed) => parsed.models !== undefined],
+	["--tools", (parsed) => parsed.tools !== undefined],
+	["--exclude-tools", (parsed) => parsed.excludeTools !== undefined],
+	["--no-tools", (parsed) => parsed.noTools === true],
+	["--no-builtin-tools", (parsed) => parsed.noBuiltinTools === true],
+	["--tool-runtime", (parsed) => parsed.toolRuntime !== undefined],
+	["--extension", (parsed) => (parsed.extensions?.length ?? 0) > 0],
+	["--no-extensions", (parsed) => parsed.noExtensions === true],
+	["--skill", (parsed) => (parsed.skills?.length ?? 0) > 0],
+	["--no-skills", (parsed) => parsed.noSkills === true],
+	["--prompt-template", (parsed) => (parsed.promptTemplates?.length ?? 0) > 0],
+	["--no-prompt-templates", (parsed) => parsed.noPromptTemplates === true],
+	["--theme", (parsed) => (parsed.themes?.length ?? 0) > 0],
+	["--no-themes", (parsed) => parsed.noThemes === true],
+	["--no-context-files", (parsed) => parsed.noContextFiles === true],
+	["--name", (parsed) => parsed.name !== undefined],
+	["--offline", (parsed) => parsed.offline === true],
+	["--approve/--no-approve", (parsed) => parsed.projectTrustOverride !== undefined],
+	["--verbose", (parsed) => parsed.verbose === true],
+	["--grok-neo", (parsed) => parsed.grokNeo === true],
+	["- (stdin)", (parsed) => parsed.readStdin === true],
+];
+
+function unappliedFlags(parsed: Args): string[] {
+	const given = UNAPPLIED_FLAGS.filter(([, isGiven]) => isGiven(parsed)).map(([flag]) => flag);
+	return [...given, ...[...parsed.unknownFlags.keys()].map((flag) => `--${flag}`)];
+}
+
 const refusal = (reason: string): HeldSessionAttachPlan => ({
 	refusal: `${reason} This session runs in a multi-session host, so this terminal attaches to it and applies the command line through the session's own commands.`,
 });
@@ -18,6 +54,12 @@ export async function heldSessionAttachPlan(
 	parsed: Args,
 	options: { readonly autoResizeImages: boolean },
 ): Promise<HeldSessionAttachPlan> {
+	const unapplied = unappliedFlags(parsed);
+	if (unapplied.length > 0) {
+		return refusal(
+			`${unapplied.join(", ")} cannot be applied to a session another process already runs; start without ${unapplied.length === 1 ? "it" : "them"}.`,
+		);
+	}
 	let thinking: ThinkingLevel | undefined = parsed.thinking;
 	let model: AttachStartup["model"];
 	if (parsed.model !== undefined) {

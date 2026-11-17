@@ -13,6 +13,7 @@ import { TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../../../tui/test/virtual-terminal.ts";
 import { parseArgs } from "../../../src/cli/args.ts";
+import { heldSessionAttachPlan } from "../../../src/cli/held-session-attach.ts";
 import { admitStartupSession, SESSION_HELD_EXIT_CODE } from "../../../src/cli/session-opening.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
@@ -194,6 +195,22 @@ describe("a terminal start of a host-held session (senpi#6911)", () => {
 		}
 	}, 120_000);
 
+	it("L1: a start flag the attached session cannot take refuses the start instead of being dropped", async () => {
+		const host = await hostHeldSession();
+		try {
+			terminalAt(true, true);
+			const { outcome, errors, opened } = await startCli(["--system-prompt", "be terse", "hello"], host.file);
+			expect(outcome).toEqual(new Exited(1));
+			expect(errors.join("\n")).toContain(
+				"--system-prompt cannot be applied to a session another process already runs",
+			);
+			expect(runAttachedTui).not.toHaveBeenCalled();
+			expect(opened).not.toHaveBeenCalled();
+		} finally {
+			await host.close();
+		}
+	}, 120_000);
+
 	it("L4: with stdout redirected the start keeps the exit-76 refusal", async () => {
 		const host = await hostHeldSession();
 		try {
@@ -221,6 +238,8 @@ describe("a terminal start of a host-held session (senpi#6911)", () => {
 				(value) => value.type === "thinking_level_changed" && value.level === "high",
 				30_000,
 			);
+			const settingsFile = join(host.qa.agentDir, "settings.json");
+			const settingsBefore = await readFile(settingsFile, "utf8").catch(() => undefined);
 			const first = host.desktop.peer.waitFor(isEnd("user", "first line"), 30_000);
 			const second = host.desktop.peer.waitFor(isEnd("user", "second line"), 30_000);
 			await view.connect(host.qa.socketPath, host.sessionId, {
@@ -234,6 +253,9 @@ describe("a terminal start of a host-held session (senpi#6911)", () => {
 					(value) => isEnd("user", "first line")(value) || isEnd("user", "second line")(value),
 				);
 				expect(order.map((value) => messageText(value.message))).toEqual(["first line", "second line"]);
+				// A local `--model` sets only the session's model: the device's saved default stays as it was (#6914 M1).
+				await host.desktop.peer.request({ id: "settled", type: "get_state", sessionId: host.sessionId });
+				expect(await readFile(settingsFile, "utf8").catch(() => undefined)).toBe(settingsBefore);
 			} finally {
 				await view.close();
 			}
@@ -241,6 +263,40 @@ describe("a terminal start of a host-held session (senpi#6911)", () => {
 			await host.close();
 		}
 	}, 120_000);
+});
+
+// senpi#6914 review L1: every flag that configures the process running a session, one case per class.
+describe("start flags an attaching start cannot apply", () => {
+	it.each([
+		{ kind: "session prompt", args: ["--append-system-prompt", "x"], flag: "--append-system-prompt" },
+		{ kind: "credentials", args: ["--api-key", "k"], flag: "--api-key" },
+		{ kind: "model scope", args: ["--models", "a/b,c/d"], flag: "--models" },
+		{ kind: "tools", args: ["--tools", "read", "--no-builtin-tools"], flag: "--tools, --no-builtin-tools" },
+		{ kind: "tool runtime", args: ["--tool-runtime", "child"], flag: "--tool-runtime" },
+		{ kind: "resources", args: ["--extension", "e.ts", "--no-skills"], flag: "--extension, --no-skills" },
+		{
+			kind: "context and trust",
+			args: ["--no-context-files", "--approve"],
+			flag: "--no-context-files, --approve/--no-approve",
+		},
+		{ kind: "session runtime", args: ["--name", "n", "--offline"], flag: "--name, --offline" },
+		{ kind: "extension flags", args: ["--my-flag", "v"], flag: "--my-flag" },
+		{ kind: "stdin", args: ["-"], flag: "- (stdin)" },
+	])("$kind: refused, naming $flag", async ({ args, flag }) => {
+		const plan = await heldSessionAttachPlan(parseArgs([...args, "hello"]), { autoResizeImages: false });
+		if (!("refusal" in plan)) throw new Error("expected a refusal");
+		expect(plan.refusal).toContain(`${flag} cannot be applied to a session another process already runs`);
+	});
+
+	it("the flags it applies build a startup and refuse nothing", async () => {
+		const plan = await heldSessionAttachPlan(
+			parseArgs(["--model", "p/m:low", "--use-theme", "light", "--tui-mode", "fullscreen", "hi"]),
+			{ autoResizeImages: false },
+		);
+		expect(plan).toEqual({
+			startup: { model: { provider: "p", modelId: "m" }, thinking: "low", prompts: [{ text: "hi" }] },
+		});
+	});
 });
 
 describe("an unproven host record (senpi#6911 L3)", () => {

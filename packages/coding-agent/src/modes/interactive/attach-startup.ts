@@ -25,7 +25,8 @@ export async function applyAttachStartup(
 	startup: AttachStartup,
 ): Promise<void> {
 	if (startup.model) {
-		await request({ type: "set_model", sessionId, ...startup.model });
+		// Only this session's model, as a local `--model` does; the device's saved default stays (senpi#6914 M1).
+		await request({ type: "set_model", sessionId, ...startup.model, scope: "session" });
 	}
 	if (startup.thinking) {
 		await request({ type: "set_thinking_level", sessionId, level: startup.thinking });
