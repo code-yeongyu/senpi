@@ -61,6 +61,7 @@ import {
 	loadedFileIdentities,
 } from "./session-file-identity.ts";
 import { archivedFlagOf } from "./session-archived.ts";
+import { NOT_SETTLED, type SessionSettled, settledStateOf } from "./session-settled.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
 import type { SpawnedBy } from "./session-lifecycle-types.ts";
@@ -1287,6 +1288,8 @@ export class SessionManager {
 	// The newest `session_archived` entry naming this session (senpi#6677), kept like the usage totals: a trimmed
 	// mirror cannot recompute it, so `_buildIndex` leaves it alone while the mirror is trimmed.
 	private archivedCache = false;
+	// The newest `session_settled` entry naming this session (the Done flag), kept exactly like `archivedCache`.
+	private settledCache: SessionSettled = NOT_SETTLED;
 	// Running usage totals over ALL entries (not branch-scoped), maintained
 	// incrementally on assistant-message append and rebuilt from scratch in
 	// _buildIndex()/newSession. Usage fields are numeric and unaffected by
@@ -1558,6 +1561,7 @@ export class SessionManager {
 		this.leafId = null;
 		this.sessionNameCache = undefined;
 		this.archivedCache = false;
+		this.settledCache = NOT_SETTLED;
 		this.usageTotals = {
 			input: 0,
 			output: 0,
@@ -1611,9 +1615,10 @@ export class SessionManager {
 		this.usageTotals = emptyUsageTotals();
 		this.fullEntryCount = history.length;
 		this.archivedCache = false;
+		this.settledCache = NOT_SETTLED;
 		for (const entry of history) {
 			this._accumulateUsage(entry);
-			this._noteArchived(entry);
+			this._noteSessionFlags(entry);
 		}
 		for (const id of tail.trimmedIds) this.trimmedIds.add(id);
 		this.mirrorTrimmed = true;
@@ -1635,6 +1640,7 @@ export class SessionManager {
 		if (!this.mirrorTrimmed) {
 			this.usageTotals = emptyUsageTotals();
 			this.archivedCache = false;
+			this.settledCache = NOT_SETTLED;
 		}
 		let fullEntryCount = 0;
 		for (const [order, entry] of this.fileEntries.entries()) {
@@ -1645,7 +1651,7 @@ export class SessionManager {
 			this.leafId = entry.id;
 			if (!this.mirrorTrimmed) {
 				this._accumulateUsage(entry);
-				this._noteArchived(entry);
+				this._noteSessionFlags(entry);
 			}
 			if (entry.type === "session_info") {
 				// Empty names explicitly clear the session title.
@@ -2208,13 +2214,15 @@ export class SessionManager {
 		this.leafId = residentEntry.id;
 		this.fullEntryCount++;
 		this._accumulateUsage(residentEntry);
-		this._noteArchived(residentEntry);
+		this._noteSessionFlags(residentEntry);
 		this.mutationCount++;
 	}
 
-	private _noteArchived(entry: SessionEntry): void {
+	private _noteSessionFlags(entry: SessionEntry): void {
 		const archived = archivedFlagOf(entry, this.sessionId);
 		if (archived !== undefined) this.archivedCache = archived;
+		const settled = settledStateOf(entry, this.sessionId);
+		if (settled !== undefined) this.settledCache = settled;
 	}
 
 	/**
@@ -2599,6 +2607,11 @@ export class SessionManager {
 	 */
 	isArchived(): boolean {
 		return this.archivedCache;
+	}
+
+	/** The newest `session_settled` entry naming this session (the Done flag); O(1) like `isArchived()`. */
+	getSettled(): SessionSettled {
+		return this.settledCache;
 	}
 
 	/**

@@ -5,6 +5,7 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import type { SessionKind } from "../../core/extensions/types.ts";
 
 import type { PendingInputUpdate } from "../../core/pending-input-session.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 
 export type RpcExtensionEvent = {
 	type: "extension_event";
@@ -199,6 +200,13 @@ export interface RpcSessionOpenedEvent {
  */
 export interface RpcLoadedSurfacesChangedEvent {
 	type: "loaded_surfaces_changed";
+}
+
+/** Emitted after `set_session_settled` writes the session's Done flag; `settledBy` is present only while settled. */
+export interface RpcSessionSettledChangedEvent {
+	type: "session_settled_changed";
+	settled: boolean;
+	settledBy?: ThreadSettledBy;
 }
 
 /** Emitted after `set_session_archived` writes the session's archived flag; `archived` is the flag now in force. */

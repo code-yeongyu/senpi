@@ -14,6 +14,7 @@ export interface EvalSchemaToolInfo {
 	readonly name: string;
 	readonly description?: string | undefined;
 	readonly exposure?: string | undefined;
+	readonly evalOnly?: boolean | undefined;
 	readonly parameters?: unknown;
 	readonly kernelPrelude?: KernelPreludeContribution | undefined;
 }

@@ -49,6 +49,9 @@ export function createHandLink(
 	epoch?: number,
 ): HandLink {
 	const pending = new Map<string, Pending>();
+	// A closed link sends nothing more: its transport is closed, and the one designed re-send (a durable hand's hello)
+	// happens on a link that is still open. A call made after close() is settled at once as never sent.
+	let closed = false;
 	const stamp = epoch === undefined ? {} : { epoch };
 	/** Messages handed to the transport: a hand's `hello` re-sends only these, never one still waiting on its floor. */
 	const sent = new Set<string>();
@@ -92,6 +95,9 @@ export function createHandLink(
 	};
 
 	transport.onFrame((frame: TransportFrame) => {
+		// A closed link ignores every inbound frame, so it writes nothing: no ack for a late settled or terminal reply, no
+		// floor re-send on a hello, and no plane.refused (or any other plane answer) for a nested plane.request.
+		if (closed) return;
 		const nested = decodePlaneMessage(frame.payload);
 		if (nested !== undefined) return planes.receive(frame.lane, nested);
 		let message: RemoteHandMessage;
@@ -134,6 +140,10 @@ export function createHandLink(
 			const replied = new Promise<HandReply>((resolve) => {
 				pending.set(executionId, { message, resolve });
 			});
+			if (closed) {
+				settle(executionId, { kind: "closed", sent: false });
+				return replied;
+			}
 			if (signal?.aborted) {
 				settle(executionId, { kind: "aborted", sent: false });
 				return replied;
@@ -176,6 +186,7 @@ export function createHandLink(
 			});
 		},
 		close() {
+			closed = true;
 			for (const executionId of [...pending.keys()])
 				settle(executionId, { kind: "closed", sent: sent.has(executionId) });
 			transport.close();

@@ -25,6 +25,7 @@ type DeclaredTool = Pick<
 	| "searchKeywords"
 	| "searchGroup"
 	| "allowLazyActivation"
+	| "sessionBound"
 >;
 
 export interface ToolDeclaration extends ReturnType<typeof normalizeToolExposure> {
@@ -37,6 +38,8 @@ export interface ToolDeclaration extends ReturnType<typeof normalizeToolExposure
 	readonly kernelPrelude: ReturnType<typeof projectKernelPrelude>;
 	readonly namespace: DeclaredTool["namespace"];
 	readonly annotations: DeclaredTool["annotations"];
+	/** The tool acts on the calling session, so a loop that runs elsewhere calls it with that session's state. */
+	readonly sessionBound: boolean;
 }
 
 export function toolCatalog(tools: Iterable<DeclaredTool>): readonly ToolDeclaration[] {
@@ -50,6 +53,7 @@ export function toolCatalog(tools: Iterable<DeclaredTool>): readonly ToolDeclara
 		kernelPrelude: projectKernelPrelude(tool.name, tool.kernelPrelude),
 		namespace: tool.namespace,
 		annotations: tool.annotations,
+		sessionBound: tool.sessionBound === true,
 		...normalizeToolExposure(tool),
 	}));
 }

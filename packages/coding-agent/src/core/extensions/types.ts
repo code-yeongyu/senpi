@@ -1249,6 +1249,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 */
 	runs?: ExtensionSide;
 	/**
+	 * The tool acts on the session that calls it (its entries, goal, tool search, wakeups or placement). A hand still
+	 * advertises it to a loop that runs elsewhere, marked with this flag in its `describe_tools` declaration
+	 * (senpi#6749), so that loop calls it with its session's state. Recorded only; nothing else reads it.
+	 */
+	sessionBound?: boolean;
+	/**
 	 * The file-backed body a `"child"`-placed tool runs on the session's tool child (senpi#3566). `path` is absolute or
 	 * relative to the registering extension file and must stay inside that extension's directory; `export` names a
 	 * function that receives `{ params, toolCallId }` and returns a structured-cloneable tool result. Without it a
@@ -3706,6 +3712,11 @@ export type ToolInfo = Pick<
 	searchKeywords: readonly string[];
 	searchGroup?: string;
 	allowLazyActivation: boolean;
+	/**
+	 * True while the session routes the tool through `eval` only (senpi#6886): it is withheld from the model's direct
+	 * tool list and reached as `tool.<name>(...)` inside a cell. Absent when nothing withholds it.
+	 */
+	evalOnly?: true;
 };
 
 export type GetAllToolsHandler = () => ToolInfo[];

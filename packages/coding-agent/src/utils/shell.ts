@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-agent-core/node";
 import { spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
+import { withCredentialProxy } from "../core/credential-proxy/runtime.ts";
 import { withKillGuardRuntime } from "../core/kill-guard/runtime.ts";
 import { withBundledBunCommands } from "./bundled-bun.ts";
 
@@ -194,10 +195,13 @@ export function getPowerShellConfig(): ShellConfig {
 	return { shell, args: [...POWERSHELL_ARGS] };
 }
 
-/** The environment agent-spawned shells get: the user's shell environment plus the kill guard's runtime layer. */
+/**
+ * The environment agent-spawned shells get: the user's shell environment with declared credentials withheld
+ * (senpi#6820), plus the kill guard's runtime layer.
+ */
 export function getShellEnv(): NodeJS.ProcessEnv {
 	// The kill guard's runtime shims go first on PATH while the host has them active (senpi#5349).
-	return withKillGuardRuntime(getUserShellEnv());
+	return withKillGuardRuntime(withCredentialProxy(getUserShellEnv()));
 }
 
 /**

@@ -67,6 +67,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		...(options.runtimes?.js === undefined ? {} : { jsRuntime: options.runtimes.js }),
 		...(options.bunSkillPath === undefined ? {} : { bunSkillPath: options.bunSkillPath }),
 		...(options.promptKernelPreludes === undefined ? {} : { kernelPreludes: options.promptKernelPreludes }),
+		...(options.evalOnlyTools === undefined ? {} : { evalOnlyTools: options.evalOnlyTools }),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
 	registerEvalArgumentValidator(parameters, languages);

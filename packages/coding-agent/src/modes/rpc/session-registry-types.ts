@@ -5,6 +5,7 @@ import type { EventLoopSlicer } from "../../core/event-loop-slicer.ts";
 import type { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
 import type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 import type { SessionPathReservations } from "./host-reservations.ts";
 import type { PreparableRuntimeFactory } from "./host-warm.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
@@ -168,6 +169,10 @@ export interface RpcSessionRow {
 	tool_child: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
 	/** The session file's archived flag (`set_session_archived`); a thread list hides archived rows by default. */
 	archived: boolean;
+	/** The session file's Done flag (`set_session_settled`); a Done row stays listed. */
+	settled: boolean;
+	/** How the session reached Done; present only on a settled row whose flag was written with a `by`. */
+	settledBy?: ThreadSettledBy;
 	/** `running` while a turn is in flight (the `session_status` streaming state), else `idle`. */
 	activity: "running" | "idle";
 	/** The session's current model; absent while unknown (an opening session). */

@@ -8,6 +8,7 @@
  * socket or a registry, so the derivation table is pinned by unit tests rather than by timing.
  */
 import type { SessionKind } from "../../core/extensions/types.ts";
+import type { SettledFields, ThreadSettledBy } from "../../core/session-settled.ts";
 import type { RpcSessionState } from "./session-registry-types.ts";
 
 export type SessionStatusValue =
@@ -36,7 +37,8 @@ export type SessionStatusCause =
 	| "close"
 	| "context"
 	| "rename"
-	| "archive";
+	| "archive"
+	| "settle";
 
 export type SessionStatusActor = "client" | "agent" | "host";
 
@@ -60,6 +62,8 @@ export interface SessionStatusEntryView {
 	readonly name?: string;
 	/** The session file's archived flag; absent reads as not archived. */
 	readonly archived?: boolean;
+	/** The session file's Done flag; absent reads as not settled. */
+	readonly settled?: SettledFields;
 	readonly context: PublishedSessionContext;
 	/**
 	 * The context the session was opened with, before any `set_session_context` patch. `childrenOf`
@@ -96,6 +100,8 @@ export interface DerivedSessionStatus {
 	readonly sessionPath?: string;
 	readonly name?: string;
 	readonly archived: boolean;
+	readonly settled: boolean;
+	readonly settledBy?: ThreadSettledBy;
 	readonly model?: { readonly provider: string; readonly id: string };
 	readonly thinkingLevel?: string;
 	readonly pendingQueue: { readonly steering: number; readonly followUp: number };
@@ -121,6 +127,8 @@ export interface SessionStatusRecord {
 	readonly cwd: string;
 	readonly name?: string;
 	readonly archived: boolean;
+	readonly settled: boolean;
+	readonly settledBy?: ThreadSettledBy;
 	readonly status: SessionStatusValue;
 	readonly reason?: string;
 	readonly attachments: number;
@@ -188,6 +196,7 @@ export function deriveSessionStatus(
 		...(entry.sessionPath !== undefined ? { sessionPath: entry.sessionPath } : {}),
 		...(entry.name !== undefined ? { name: entry.name } : {}),
 		archived: entry.archived === true,
+		...(entry.settled ?? { settled: false }),
 		...(runtime?.model !== undefined ? { model: { provider: runtime.model.provider, id: runtime.model.id } } : {}),
 		...(runtime?.thinkingLevel !== undefined ? { thinkingLevel: runtime.thinkingLevel } : {}),
 		pendingQueue: { steering: runtime?.steering ?? 0, followUp: runtime?.followUp ?? 0 },
@@ -243,6 +252,8 @@ export function causeOfRecord(record: {
 			return "close";
 		case "session_archived_changed":
 			return "archive";
+		case "session_settled_changed":
+			return "settle";
 		case "question_resolved":
 			return "question";
 		case "extension_ui_request":

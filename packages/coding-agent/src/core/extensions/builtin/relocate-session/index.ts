@@ -70,6 +70,7 @@ export default function relocateSessionExtension(pi: ExtensionAPI): void {
 	);
 	pi.registerTool({
 		name: "list_relocation_targets",
+		sessionBound: true,
 		label: "Other Computers",
 		description:
 			"List the user's other computers this session could continue on, as offered by the app running it: name, whether it is online, a capacity hint, and whether it is about to sleep. Read-only.",
@@ -84,6 +85,7 @@ export default function relocateSessionExtension(pi: ExtensionAPI): void {
 
 	pi.registerTool({
 		name: "relocate_session",
+		sessionBound: true,
 		label: "Continue on Another Computer",
 		description:
 			"Continue this session on another of the user's computers, for example a stronger one for heavy work or because this one is about to sleep. The current turn is never cut short: the move happens when this turn ends, and the conversation, its id and any queued messages continue there. Name a computer from list_relocation_targets. If the move is not possible, the session stays here and keeps working.",
