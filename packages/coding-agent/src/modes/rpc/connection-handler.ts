@@ -1414,6 +1414,15 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "prompt": {
+				// senpi#6922: a prompt decided at one leaf never runs from another; nothing is appended or sent.
+				const currentLeafId = session.sessionManager.getLeafId();
+				if (command.expectedLeafId !== undefined && command.expectedLeafId !== currentLeafId)
+					return error(
+						id,
+						"prompt",
+						`Session leaf moved (expected ${command.expectedLeafId}, now ${currentLeafId ?? "root"})`,
+						"stale_leaf",
+					);
 				const chain = admitInputChain(command.chainCount, session.settingsManager);
 				if (chain.kind === "refused")
 					return error(id, "prompt", chain.refusal.message, chain.refusal.errorCode, chain.refusal.errorData);

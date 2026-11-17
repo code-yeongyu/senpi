@@ -4500,6 +4500,12 @@ Queued prompts cannot include `thinkingLevel`; wait for the current turn to comp
 {"type": "prompt", "message": "Use the other file", "streamingBehavior": "steer", "expectedTurnId": "3"}
 ```
 
+**Prompting from a specific leaf**: `prompt` may name the session leaf it was decided at with `expectedLeafId` (the id `get_tree` or the edit commands report as the current leaf). If the session's current leaf differs when the command is admitted, it is refused with `errorCode: "stale_leaf"` (the same code the edit commands use), and nothing is appended or sent to the model. Omitting the field keeps the old behaviour.
+
+```json
+{"type": "prompt", "message": "Run this again", "expectedLeafId": "a1b2c3d4"}
+```
+
 **Model not ready**: A prompt that would start a turn is refused before the model is called when the session
 cannot run one. The `error` text is the same guidance the TUI shows; the `errorCode` says why:
 
