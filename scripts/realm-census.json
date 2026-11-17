@@ -4371,6 +4371,10 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#handedNotYetRecorded": {
+			"class": "per-copy-safe",
+			"reason": "state keyed by session and tool call, written and read by the copy that runs the call until its result is recorded in the session's entries; a split only lets two copies' concurrent calls each miss the other's not-yet-recorded page"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#showHtmlPageTool": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
