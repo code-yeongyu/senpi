@@ -486,12 +486,24 @@ function validateSessionIdFlags(parsed: Args): void {
  * Admission of an existing session file before startup loads, migrates, rebinds or runs it: a session another live
  * process runs must not get a second writer (senpi#5756). Forking only reads its source and is not admitted.
  */
-async function admitOrExit(sessionFile: string, appMode: AppMode): Promise<void> {
+async function admitOrExit(sessionFile: string, appMode: AppMode, canAttach = true): Promise<void> {
 	const admission = await admitStartupSession(sessionFile, {
 		canAsk: appMode === "interactive" && process.stdin.isTTY === true,
+		canAttach,
 		confirm: promptConfirm,
 		err: (line) => console.error(line),
 	});
+	if (typeof admission === "object") {
+		// #6059: the session runs on this machine's multi-session host; this terminal follows it there.
+		const { runAttachedTui } = await import("./modes/interactive/run-attached-tui.ts");
+		try {
+			await runAttachedTui({ address: admission.attach.socket, session: admission.attach.sessionId });
+		} catch (error) {
+			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+			process.exit(1);
+		}
+		process.exit(0);
+	}
 	if (admission !== "open") process.exit(admission === "cancelled" ? 0 : SESSION_HELD_EXIT_CODE);
 }
 
@@ -522,7 +534,7 @@ async function rebindSessionOrExit(
 	appMode: AppMode,
 	sessionDir?: string,
 ): Promise<SessionManager> {
-	await admitOrExit(sourcePath, appMode);
+	await admitOrExit(sourcePath, appMode, false);
 	try {
 		const reboundPath = await rebindSessionFile(sourcePath, cwd, sessionDir);
 		console.log(chalk.dim(`Session moved to ${cwd}`));

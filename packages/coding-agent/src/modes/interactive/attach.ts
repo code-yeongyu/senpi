@@ -283,6 +283,11 @@ export class AttachedTui extends Container implements Focusable {
 				this.streaming = false;
 				this.showStatus("Attached");
 				break;
+			case "model_changed":
+				// #6059: a switch another client of the session made (the desktop) shows here live.
+				if (this.state) this.state = { ...this.state, model: record.model, thinkingLevel: record.thinkingLevel };
+				this.showStatus(this.streaming ? "Running" : "Attached");
+				break;
 			default:
 				break;
 		}
@@ -298,8 +303,9 @@ export class AttachedTui extends Container implements Focusable {
 	}
 
 	private showStatus(value: string): void {
+		const model = this.state?.model ? ` - ${this.state.model.provider}/${this.state.model.id}` : "";
 		this.statusText.setText(
-			theme.fg("muted", `${value}${this.state?.sessionName ? ` - ${this.state.sessionName}` : ""}`),
+			theme.fg("muted", `${value}${this.state?.sessionName ? ` - ${this.state.sessionName}` : ""}${model}`),
 		);
 		this.ui.requestRender();
 	}
