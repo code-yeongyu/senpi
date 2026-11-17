@@ -12,11 +12,14 @@ import { HtmlRenderImagesNotFoundError, inlineLocalImages } from "./images.ts";
 const MAX_HTML_CHARACTERS = 512_000;
 
 // The page handed to the host travels in `details` on every RPC record that carries this result
-// (tool_execution_end, message_end, entry_appended, get_messages). An RPC record is at most
-// MAX_RPC_LINE_CHARACTERS (16 Mi); a longer one drops an attach connection. This cap leaves room for
-// JSON escaping (at most doubling) and the other fields, and keeps a transcript of several pages from
-// ballooning. A larger page is handed as written, and its images reach only a host that has this disk.
+// (tool_execution_end, message_end, entry_appended), and every handed page travels together in the
+// records that carry the transcript (get_messages, get_tree, agent_end). An RPC record is at most
+// MAX_RPC_LINE_CHARACTERS (16 Mi); a longer one drops an attach connection. So one page carries its
+// images inlined only up to MAX_HANDED_PAGE_CHARACTERS, and all of a session's handed pages together only
+// up to MAX_HANDED_PAGES_CHARACTERS, which leaves room for JSON escaping and the rest of the transcript.
+// Past either, the page is handed as written, and its images reach only a host that has this disk.
 export const MAX_HANDED_PAGE_CHARACTERS = 2 * 1024 * 1024;
+export const MAX_HANDED_PAGES_CHARACTERS = 6 * 1024 * 1024;
 
 const Params = Type.Object({
 	html: Type.String({
@@ -32,6 +35,8 @@ const Params = Type.Object({
 });
 
 const OUTPUT_DIR = ".senpi/html-pages";
+
+const showHtmlPageName = "show_html_page";
 
 const BASE64_IMAGE = /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi;
 
@@ -68,6 +73,40 @@ export interface ShowHtmlPageDetails {
 	imagesInlined: boolean;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+// Pages handed but not yet in the session's entries: calls in one turn run concurrently, and each
+// result is recorded only after it returns. Keyed by session id, then tool call id.
+const handedNotYetRecorded = new Map<string, Map<string, number>>();
+
+/** Characters of inlined pages this session already hands to the host, across every branch. */
+function inlinedPageCharacters(ctx: ExtensionToolContext): number {
+	let total = 0;
+	const recorded = new Set<string>();
+	for (const entry of ctx.sessionManager.getEntries()) {
+		if (entry.type !== "message" || entry.message.role !== "toolResult") continue;
+		if (entry.message.toolName !== showHtmlPageName) continue;
+		recorded.add(entry.message.toolCallId);
+		const details: unknown = entry.message.details;
+		if (isRecord(details) && details.imagesInlined === true && typeof details.html === "string")
+			total += details.html.length;
+	}
+	const pending = handedNotYetRecorded.get(ctx.sessionManager.getSessionId());
+	for (const [toolCallId, characters] of pending ?? []) {
+		if (recorded.has(toolCallId)) pending?.delete(toolCallId);
+		else total += characters;
+	}
+	return total;
+}
+
+function recordHandedPage(ctx: ExtensionToolContext, toolCallId: string, characters: number): void {
+	const sessionId = ctx.sessionManager.getSessionId();
+	const pending = handedNotYetRecorded.get(sessionId) ?? new Map<string, number>();
+	pending.set(toolCallId, characters);
+	handedNotYetRecorded.set(sessionId, pending);
+}
+
 const clampHeight = (height: number | undefined) =>
 	height === undefined ? undefined : Math.min(2000, Math.max(80, Math.round(height)));
 
@@ -81,7 +120,7 @@ const hostRendersPage = (ctx: ExtensionToolContext): boolean =>
 	(ctx.getSystemPromptOptions?.().surface ?? resolvePromptSurface(process.env)) === "app";
 
 export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
-	name: "show_html_page",
+	name: showHtmlPageName,
 	label: "Show HTML Page",
 	description:
 		"Show a finished self-contained HTML page (chart, table, diagram, mockup) to the reader. " +
@@ -97,7 +136,7 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 	allowLazyActivation: true,
 	searchKeywords: ["html", "chart", "table", "diagram", "visualize", "render page", "mockup"],
 	parameters: Params,
-	async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
+	async execute(toolCallId, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
 		assertWithinInputLimit(params.html);
 		const inlined = await inlineLocalImages(params.html);
 		// A page with a broken image is refused, as the desktop refuses to publish one, so the
@@ -115,7 +154,10 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				.slice(0, 60) || "page";
 		const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
 		await writeFile(path, prepared, "utf8");
-		const imagesInlined = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
+		const alreadyHanded = inlinedPageCharacters(ctx);
+		const fitsPage = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
+		const imagesInlined = fitsPage && alreadyHanded + inlined.html.length <= MAX_HANDED_PAGES_CHARACTERS;
+		if (imagesInlined) recordHandedPage(ctx, toolCallId, inlined.html.length);
 		return {
 			content: [
 				{
@@ -126,7 +168,9 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 							: `Wrote the page to ${path}. It was not displayed in this interface. `) +
 						(imagesInlined
 							? "Local images were inlined."
-							: `Local images were inlined into the saved copy, but with them the page is ${inlined.html.length} characters, over the ${MAX_HANDED_PAGE_CHARACTERS} a page can carry to a viewer, so a viewer on another machine will not see the images. Use smaller images to show them everywhere.`),
+							: fitsPage
+								? `Local images were inlined into the saved copy, but this session's pages already carry ${alreadyHanded} of the ${MAX_HANDED_PAGES_CHARACTERS} characters of images a session can carry to a viewer, so a viewer on another machine will not see this page's images.`
+								: `Local images were inlined into the saved copy, but with them the page is ${inlined.html.length} characters, over the ${MAX_HANDED_PAGE_CHARACTERS} a page can carry to a viewer, so a viewer on another machine will not see the images. Use smaller images to show them everywhere.`),
 				},
 			],
 			details: {

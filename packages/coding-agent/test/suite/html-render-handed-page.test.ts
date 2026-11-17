@@ -1,47 +1,60 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MAX_HANDED_PAGE_CHARACTERS, showHtmlPageTool } from "../../src/core/extensions/builtin/html-render/tool.ts";
+import {
+	MAX_HANDED_PAGE_CHARACTERS,
+	MAX_HANDED_PAGES_CHARACTERS,
+	showHtmlPageTool,
+} from "../../src/core/extensions/builtin/html-render/tool.ts";
 import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
 
-// senpi#6899: the page handed to the host in `details` rides every RPC record that carries the
-// result, and a record over MAX_RPC_LINE_CHARACTERS drops an attach connection. The inlined page is
-// handed only while it fits MAX_HANDED_PAGE_CHARACTERS; a larger one is handed as written.
+// senpi#6899, senpi#6907: the page handed to the host in `details` rides every RPC record that carries
+// the result, and all of a session's pages ride together in get_messages, get_tree and agent_end. A record
+// over MAX_RPC_LINE_CHARACTERS drops an attach connection, so pages are inlined only within a per-page cap
+// and a per-session budget; past either, a page is handed as written.
 
 const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const DATA_PREFIX = "data:image/png;base64,";
 
-const ctxFor = (cwd: string): ExtensionToolContext =>
-	({
+type Result = Awaited<ReturnType<typeof showHtmlPageTool.execute>>;
+
+/** A session that records each returned result the way the agent session appends it. */
+function session(cwd: string) {
+	const entries: unknown[] = [];
+	const sessionId = randomUUID();
+	const ctx = {
 		cwd,
 		hasUI: false,
 		ui: undefined,
 		tools: [],
 		executeTool: () => Promise.reject(new Error("not used")),
-	}) as unknown as ExtensionToolContext;
-
-/** A page with one image whose inlined length is `MAX_HANDED_PAGE_CHARACTERS + overBy` give or take under 4 characters. */
-function pageInlinedNear(dir: string, overBy: number): { html: string; inlinedLength: number } {
-	const path = join(dir, "shot.png");
-	const html = `<img src="${path}">`;
-	const fixed = html.length - path.length + DATA_PREFIX.length;
-	const groups = Math.floor((MAX_HANDED_PAGE_CHARACTERS + overBy - fixed) / 4);
-	writeFileSync(path, Buffer.concat([PNG_HEAD, Buffer.alloc(groups * 3 - PNG_HEAD.length, 7)]));
-	return { html, inlinedLength: fixed + groups * 4 };
+		sessionManager: { getEntries: () => entries, getSessionId: () => sessionId },
+	} as unknown as ExtensionToolContext;
+	const record = (toolCallId: string, result: Result) =>
+		entries.push({
+			type: "message",
+			id: toolCallId,
+			message: { role: "toolResult", toolCallId, toolName: "show_html_page", ...result, isError: false },
+		});
+	const show = async (toolCallId: string, html: string) => {
+		const result = await showHtmlPageTool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, ctx);
+		const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+		return { result, text };
+	};
+	return { ctx, entries, record, show };
 }
 
-async function show(cwd: string, html: string) {
-	const result = await showHtmlPageTool.execute(
-		"call-6899",
-		{ html, title: "Shot" },
-		undefined,
-		undefined,
-		ctxFor(cwd),
-	);
-	const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
-	return { result, text };
+/** A page with one image whose inlined length is `target`, give or take under 4 characters. */
+function pageInlinedTo(dir: string, name: string, target: number): { html: string; inlinedLength: number } {
+	const path = join(dir, `${name}.png`);
+	const html = `<img src="${path}">`;
+	const fixed = html.length - path.length + DATA_PREFIX.length;
+	const groups = Math.floor((target - fixed) / 4);
+	writeFileSync(path, Buffer.concat([PNG_HEAD, Buffer.alloc(groups * 3 - PNG_HEAD.length, 7)]));
+	return { html, inlinedLength: fixed + groups * 4 };
 }
 
 describe("senpi#6899: the page handed to the host stays under the RPC line limit", () => {
@@ -54,11 +67,11 @@ describe("senpi#6899: the page handed to the host stays under the RPC line limit
 	});
 
 	it("hands the inlined page when it is just under the cap, and the result record fits one RPC line", async () => {
-		const { html, inlinedLength } = pageInlinedNear(tempDir, 0);
+		const { html, inlinedLength } = pageInlinedTo(tempDir, "shot", MAX_HANDED_PAGE_CHARACTERS);
 		expect(inlinedLength).toBeLessThanOrEqual(MAX_HANDED_PAGE_CHARACTERS);
 		expect(inlinedLength).toBeGreaterThan(MAX_HANDED_PAGE_CHARACTERS - 4);
 
-		const { result, text } = await show(tempDir, html);
+		const { result, text } = await session(tempDir).show("call-6899", html);
 
 		expect(result.details.imagesInlined).toBe(true);
 		expect(result.details.html.length).toBe(inlinedLength);
@@ -69,10 +82,10 @@ describe("senpi#6899: the page handed to the host stays under the RPC line limit
 	});
 
 	it("hands the page as written when inlining takes it over the cap, keeps the inlined saved copy, and says so", async () => {
-		const { html, inlinedLength } = pageInlinedNear(tempDir, 4);
+		const { html, inlinedLength } = pageInlinedTo(tempDir, "shot", MAX_HANDED_PAGE_CHARACTERS + 4);
 		expect(inlinedLength).toBeGreaterThan(MAX_HANDED_PAGE_CHARACTERS);
 
-		const { result, text } = await show(tempDir, html);
+		const { result, text } = await session(tempDir).show("call-6899", html);
 
 		expect(result.details.imagesInlined).toBe(false);
 		expect(result.details.html).toBe(html);
@@ -86,9 +99,86 @@ describe("senpi#6899: the page handed to the host stays under the RPC line limit
 		const named = join(tempDir, "out.png");
 		const html = `<p>The chart is saved to <code>"${named}"</code>.</p>`;
 
-		const { result } = await show(tempDir, html);
+		const { result } = await session(tempDir).show("call-named", html);
 
 		expect(result.details.html).toBe(html);
 		expect(result.details.imagesInlined).toBe(true);
+	});
+});
+
+describe("senpi#6907: a session's handed pages together stay under the RPC line limit", () => {
+	let tempDir: string;
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-6907-"));
+	});
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("inlines pages near the per-page cap until the session budget is spent, and get_messages of eight such pages fits one line", async () => {
+		const { record, show, entries } = session(tempDir);
+		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+		const inlinedPerBudget = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize);
+		const outcomes: { inlined: boolean; text: string; inlinedLength: number }[] = [];
+		for (let index = 0; index < 8; index++) {
+			const { html, inlinedLength } = pageInlinedTo(tempDir, `page-${index}`, pageSize);
+			const { result, text } = await show(`call-${index}`, html);
+			record(`call-${index}`, result);
+			outcomes.push({ inlined: result.details.imagesInlined, text, inlinedLength });
+		}
+		const handedBeforeRefusal = outcomes
+			.slice(0, inlinedPerBudget)
+			.reduce((total, outcome) => total + outcome.inlinedLength, 0);
+
+		expect(outcomes.map((outcome) => outcome.inlined)).toEqual(
+			Array.from({ length: 8 }, (_, index) => index < inlinedPerBudget),
+		);
+		expect(outcomes[inlinedPerBudget]?.text).toContain(
+			`this session's pages already carry ${handedBeforeRefusal} of the ${MAX_HANDED_PAGES_CHARACTERS} characters`,
+		);
+		const getMessages = JSON.stringify({
+			type: "response",
+			command: "get_messages",
+			success: true,
+			data: { messages: entries.map((entry) => (entry as { message: unknown }).message) },
+		});
+		expect(getMessages.length).toBeLessThan(MAX_RPC_LINE_CHARACTERS);
+	});
+
+	it("counts a concurrent call's page before its result is recorded, so two pages racing for the last room do not both inline", async () => {
+		const { record, show } = session(tempDir);
+		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+		for (let index = 0; index < 2; index++) {
+			const { result } = await show(`call-${index}`, pageInlinedTo(tempDir, `page-${index}`, pageSize).html);
+			record(`call-${index}`, result);
+		}
+
+		const racing = await Promise.all(
+			[2, 3].map((index) => show(`call-${index}`, pageInlinedTo(tempDir, `page-${index}`, pageSize).html)),
+		);
+
+		expect(racing.map(({ result }) => result.details.imagesInlined).sort()).toEqual([false, true]);
+	});
+
+	it("inlines a path the page loads and leaves the same path mentioned in text as written", async () => {
+		const chart = join(tempDir, "chart.png");
+		writeFileSync(chart, PNG_HEAD);
+		const html = `<p>Saved to <code>"${chart}"</code></p><img src="${chart}">`;
+
+		const { result } = await session(tempDir).show("call-mixed", html);
+
+		expect(result.details.html).toBe(
+			`<p>Saved to <code>"${chart}"</code></p><img src="${DATA_PREFIX}${PNG_HEAD.toString("base64")}">`,
+		);
+	});
+
+	it("never reads an image only mentioned in text, so a mentioned file over the image limit does not refuse the page", async () => {
+		const big = join(tempDir, "big.png");
+		writeFileSync(big, Buffer.concat([PNG_HEAD, Buffer.alloc(11 * 1024 * 1024, 1)]));
+		const html = `<pre>const shot = "${big}";</pre>`;
+
+		const { result } = await session(tempDir).show("call-big-mention", html);
+
+		expect(result.details.html).toBe(html);
 	});
 });

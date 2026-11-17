@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +22,7 @@ const ctxFor = (cwd: string): ExtensionToolContext =>
 		ui: undefined,
 		tools: [],
 		executeTool: () => Promise.reject(new Error("not used")),
+		sessionManager: { getEntries: () => [], getSessionId: () => randomUUID() },
 	}) as unknown as ExtensionToolContext;
 
 describe("html-render builtin", () => {

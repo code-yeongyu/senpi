@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +20,7 @@ const ctxFor = (cwd: string, surface: Surface | undefined): ExtensionToolContext
 		ui: undefined,
 		tools: [],
 		executeTool: () => Promise.reject(new Error("not used")),
+		sessionManager: { getEntries: () => [], getSessionId: () => randomUUID() },
 		...(surface === undefined ? {} : { getSystemPromptOptions: () => ({ surface }) }),
 	}) as unknown as ExtensionToolContext;
 
