@@ -48,7 +48,9 @@ describe("senpi#6900 every pause seq a client must quote is announced", () => {
 
 		expect(
 			events.flatMap((event) =>
-				event.type === "session_paused" || event.type === "session_resumed" ? [`${event.type}:${event.pauseSeq}`] : [],
+				event.type === "session_paused" || event.type === "session_resumed"
+					? [`${event.type}:${event.pauseSeq}`]
+					: [],
 			),
 		).toEqual(["session_paused:1", "session_resumed:1", "session_paused:2", "session_paused:3"]);
 	});
