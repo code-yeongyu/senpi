@@ -43,7 +43,6 @@ import { listCredentialAccounts, orderCredentialAccounts } from "../../core/cred
 import { CredentialAccountNotFoundError, resetCredentialAccount } from "../../core/credential-account-reset.ts";
 import { pinCredentialAccount, removeCredentialAccount, selectedOAuthAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
-import { refusePromptAtMovedLeaf } from "./prompt-expected-leaf.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
 import {
 	emitProviderAccountsChanged,
@@ -87,6 +86,7 @@ import { ClientAdmissions } from "./client-admissions.ts";
 import { admitInputChain } from "./chain-admission.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
+import { refusePromptAtMovedLeaf } from "./prompt-expected-leaf.ts";
 import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
 import type { ConnectionOrigin } from "../../core/turn-origin.ts";

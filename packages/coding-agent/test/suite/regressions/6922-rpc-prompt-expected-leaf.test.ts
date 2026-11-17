@@ -1,5 +1,9 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { ControlAttachments } from "../../../src/modes/interactive/session-control-attach.ts";
+import { runTuiRpcCommand } from "../../../src/modes/interactive/session-control-rpc-commands.ts";
+import type { ControlConnection } from "../../../src/modes/interactive/session-control-server.ts";
+import { makeSink } from "../rpc-connection-harness.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
 
 // senpi#6922: a prompt that names the leaf it was decided at is refused with stale_leaf when the session moved,
@@ -84,6 +88,27 @@ describe("RPC prompt that names its leaf", () => {
 			expect(response.success).toBe(false);
 			expect(response.errorCode).toBe("invalid_argument");
 		}
+		expect(providerCalls()).toBe(callsBefore);
+		expect(fixture.session.sessionManager.getEntries().length).toBe(entriesBefore);
+	});
+
+	it("refuses an expected leaf by name on a terminal's session-control endpoint, sending nothing", async () => {
+		const { fixture, leaf, providerCalls } = await setup();
+		const callsBefore = providerCalls();
+		const entriesBefore = fixture.session.sessionManager.getEntries().length;
+		const attachments = new ControlAttachments(fixture.session, () => 0);
+		const connection: ControlConnection = { id: 1, transport: makeSink().sink, send: () => {} };
+
+		const answer = (await runTuiRpcCommand({ instanceId: "tui", session: fixture.session, attachments }, connection, {
+			type: "prompt",
+			id: "t-1",
+			message: "from the terminal",
+			expectedLeafId: leaf,
+		})) as { success?: boolean; errorCode?: string } | undefined;
+		await fixture.session.waitForIdle();
+
+		expect(answer?.success).toBe(false);
+		expect(answer?.errorCode).toBe("unsupported_field");
 		expect(providerCalls()).toBe(callsBefore);
 		expect(fixture.session.sessionManager.getEntries().length).toBe(entriesBefore);
 	});
