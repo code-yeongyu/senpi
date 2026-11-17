@@ -1,14 +1,22 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.17-2] - 2026-11-17
 
 ### Breaking Changes
 
 ### Added
 
+- `pi.getAllTools()` includes a tool's `renderCall` and `renderResult` when it has them ([#6903](https://github.com/code-yeongyu/senpi/pull/6903)).
+
 ### Changed
 
 ### Fixed
+
+- A model picked during an automatic retry or fallback (`set_model`, model cycle) is used at once: a pending backoff continues on it with a fresh retry budget instead of ending in "Retry cancelled", and a failure from the request already in flight on the old model is not charged to it ([#6894](https://github.com/code-yeongyu/senpi/pull/6894))
+- `show_html_page` hands the host a page with its local images inlined, so a viewer on another machine renders them, and refuses a page naming an unreadable image ([#6899](https://github.com/code-yeongyu/senpi/pull/6899))
+- A hold added while a session is already paused (a second Stop, a released Stop re-armed when the turn the user's message started is stopped, an unattended or inherited hold) now announces its `pauseSeq` with `session_paused`, and `resume_session { expectedSeq }` accepts the newest announced seq even after run fences raised the seq silently. A client quoting the last seq it saw is no longer refused as `stale` for a hold it never saw. `session_resumed` still fires once per pause, and a run fence alone emits nothing ([#6900](https://github.com/code-yeongyu/senpi/issues/6900)).
+- `pi.executeTool` keeps a failed result's `isError` when a `tool_result` hook rewrites it ([#6906](https://github.com/code-yeongyu/senpi/pull/6906)).
+- A virtual model picked during a retry is charged for its own failures, and a model picked just after a retry wait gets its own retry budget ([#6913](https://github.com/code-yeongyu/senpi/pull/6913))
 
 ### Removed
 

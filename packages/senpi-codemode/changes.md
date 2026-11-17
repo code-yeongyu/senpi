@@ -1,3 +1,43 @@
+## 2026-11-17 - A nested tool result with isError: true counts as a failure (senpi#6906, senpi#6904)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/tool-result-marshal.ts`: `toolResultIsError` reads the result's own `isError` first and keeps `details.isError` as a fallback.
+
+### Why
+
+- A tool that failed the documented way (`AgentToolResult.isError`, no throw) was a successful nested call: a success tick in the eval cell, its text as the result preview, no `hasError` for the kernel (senpi#6904).
+
+### Why an extension could not handle it
+
+- It is codemode's own reading of nested results.
+
+### Expected merge conflict zones
+
+- LOW: `toolResultIsError`.
+
+## 2026-11-17 - A nested call of a tool with its own renderers is drawn by them (senpi#6903)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/tool-widgets.ts`: `renderToolCallWidget` takes a `renderers` lookup; for a non-core tool it draws the call with the tool's `renderCall` and the result with its `renderResult` (bounded: call 5 lines, result 5 collapsed / 40 expanded), and keeps the generic row when there are none, the args were truncated, no details were kept, or the renderer throws.
+- `packages/senpi-codemode/src/tool/call-capture.ts`, `nested-tool-call.ts`, `cell-handler.ts`: a nested call of a non-core tool with `renderResult` keeps a JSON copy of its result details (at most 16 KiB) on its summary; the six core tools, drawn by codemode's own widgets, keep none.
+- `packages/senpi-codemode/src/tool/tool-widgets.ts`: a tool's renderers keep their `state` and last components per nested call across frames (a `WeakMap` keyed by the call's summary), so a renderer that prefetches (the edit row's diff read) does that work once per call, not on every frame.
+- `packages/senpi-codemode/src/tool/render-detail.ts`, `render-result.ts`, `src/index.ts`, `src/bridges/schema-bridge.ts`: the lookup is passed from the eval tool's result renderer to the widget; it reads `pi.getAllTools()` once per eval result render, on first use.
+
+### Why
+
+- Every non-core `tool.<name>()` call drew as `tool.<name>(<JSON args>)` plus the raw result preview, so eval-only tools that bring a readable row (omo's thread tools) showed raw fields in a cell (oh-my-openagent#12994).
+
+### Why an extension could not handle it
+
+- The nested rows are codemode's own rendering.
+
+### Expected merge conflict zones
+
+- MEDIUM: `renderToolCallWidget` and the context helpers in `tool-widgets.ts`.
+- LOW: `recordToolCall`'s parameter list, `runNestedTool`'s signature, the `renderers` object in `index.ts`.
+
 ## 2026-11-17 - The eval description names the eval-only tools (senpi#6886)
 
 ### What changed

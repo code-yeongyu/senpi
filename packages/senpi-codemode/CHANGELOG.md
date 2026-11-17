@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.17-2] - 2026-11-17
 
 ### Breaking Changes
 
@@ -9,6 +9,9 @@
 ### Changed
 
 ### Fixed
+
+- A `tool.<name>()` call inside an eval cell is drawn with the tool's own call and result rows when the tool has them, instead of its raw arguments and result JSON ([#6903](https://github.com/code-yeongyu/senpi/pull/6903)).
+- A `tool.<name>()` call inside an eval cell whose result reports `isError: true` is shown and passed to the cell as a failure, not a success ([#6906](https://github.com/code-yeongyu/senpi/pull/6906)).
 
 ### Removed
 
