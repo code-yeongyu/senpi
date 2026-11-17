@@ -11,6 +11,13 @@ import { HtmlRenderImagesNotFoundError, inlineLocalImages } from "./images.ts";
 // writes stays small in the tool call; the result details carry it inlined.
 const MAX_HTML_CHARACTERS = 512_000;
 
+// The page handed to the host travels in `details` on every RPC record that carries this result
+// (tool_execution_end, message_end, entry_appended, get_messages). An RPC record is at most
+// MAX_RPC_LINE_CHARACTERS (16 Mi); a longer one drops an attach connection. This cap leaves room for
+// JSON escaping (at most doubling) and the other fields, and keeps a transcript of several pages from
+// ballooning. A larger page is handed as written, and its images reach only a host that has this disk.
+export const MAX_HANDED_PAGE_CHARACTERS = 2 * 1024 * 1024;
+
 const Params = Type.Object({
 	html: Type.String({
 		description: `A complete, self-contained HTML document, at most ${MAX_HTML_CHARACTERS} characters. Pass screenshots and other images as absolute file paths (<img src="/abs/path.png">), never as base64.`,
@@ -52,11 +59,13 @@ export interface ShowHtmlPageDetails {
 	height: number | undefined;
 	prepared: boolean;
 	/**
-	 * The page as the agent wrote it with its local images inlined as data URIs, for a host that
-	 * publishes it itself (the desktop renders it in the thread). It needs no file on this machine,
-	 * so a viewer on another machine renders the same page. Never part of the model-visible content.
+	 * The page for a host that publishes it itself (the desktop renders it in the thread), never part
+	 * of the model-visible content. When it fits MAX_HANDED_PAGE_CHARACTERS its local images are inlined
+	 * as data URIs, so it needs no file on this machine and a viewer on another machine renders the same
+	 * page; otherwise it is the page as the agent wrote it, and `imagesInlined` is false.
 	 */
 	html: string;
+	imagesInlined: boolean;
 }
 
 const clampHeight = (height: number | undefined) =>
@@ -106,6 +115,7 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				.slice(0, 60) || "page";
 		const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
 		await writeFile(path, prepared, "utf8");
+		const imagesInlined = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
 		return {
 			content: [
 				{
@@ -114,7 +124,9 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 						(hostRendersPage(ctx)
 							? `The page was shown to the reader inline above your reply. A copy is saved at ${path}. `
 							: `Wrote the page to ${path}. It was not displayed in this interface. `) +
-						"Local images were inlined.",
+						(imagesInlined
+							? "Local images were inlined."
+							: `Local images were inlined into the saved copy, but with them the page is ${inlined.html.length} characters, over the ${MAX_HANDED_PAGE_CHARACTERS} a page can carry to a viewer, so a viewer on another machine will not see the images. Use smaller images to show them everywhere.`),
 				},
 			],
 			details: {
@@ -122,7 +134,8 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				title: params.title,
 				height,
 				prepared: true,
-				html: inlined.html,
+				html: imagesInlined ? inlined.html : params.html,
+				imagesInlined,
 			},
 		};
 	},
