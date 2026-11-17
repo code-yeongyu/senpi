@@ -3490,7 +3490,7 @@ Add these fields to `pi.registerTool(...)`:
 
 A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate })`. Nested calls go through argument validation and the `tool_call` and `tool_result` handlers like model-issued calls; their events carry `parentToolCallId` and ids of the form `<calling id>/<n>`. They do not appear in the transcript: a bounded record is kept as `nestedCalls` on the calling tool's result, and their usage counts toward the session cost.
 
-`ctx.issuedByModel` says whether the model issued the running call, either through the agent loop or through a provider's exec channel (Cursor), so its result joins the transcript. It is `false` for a call made through `ctx.executeTool()` or `pi.executeTool()`.
+`ctx.issuedByModel` says whether the model issued the running call, either through the agent loop or through a provider's exec channel (Cursor), so its result joins the transcript. On a hand (brain/hand split), a call the brain's agent loop dispatched counts too. It is `false` for a call made through `ctx.executeTool()` or `pi.executeTool()`.
 
 #### Prompt Cache Warning
 

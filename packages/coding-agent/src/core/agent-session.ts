@@ -2516,18 +2516,9 @@ export class AgentSession {
 		args: unknown,
 		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal; execBridge?: boolean } = {},
 	): Promise<ToolCallEventResult | undefined> {
-		if (options.execBridge) {
-			// The model issued this call through the exec channel; it counts as model-issued until its result (senpi#6915).
-			this._execBridgeToolCalls.add(toolCall.id);
-			try {
-				const result = await this.preflightToolCall(toolCall, args, { ...options, execBridge: false });
-				if (result?.block) this._execBridgeToolCalls.delete(toolCall.id);
-				return result;
-			} catch (error) {
-				this._execBridgeToolCalls.delete(toolCall.id);
-				throw error;
-			}
-		}
+		// The model issued this call through the exec channel: it counts as model-issued until the bridge releases it when
+		// the call ends, however it ends (senpi#6915, senpi#6919).
+		if (options.execBridge) this._execBridgeToolCalls.add(toolCall.id);
 		// Neither wait below has a deadline of its own: one that never settles is logged once, never cut short (senpi#6189).
 		// The call's own `timeout` bounds its execution, not this phase, which includes a human permission decision.
 		const thresholdMs = STALL_WARNING_MS;
@@ -5653,6 +5644,11 @@ export class AgentSession {
 		return this._toolRegistry.get(name);
 	}
 
+	/** The exec-frame call `toolCallId` ended, whether it ran, was blocked or was aborted: it is no longer model-issued. */
+	releaseExecBridgeToolCall(toolCallId: string): void {
+		this._execBridgeToolCalls.delete(toolCallId);
+	}
+
 	/** Cursor exec already ran the tool; still emit tool_result so plan-touch trackers see .omo/plans writes. */
 	async emitExecBridgeToolResult(
 		toolName: string,
@@ -5661,7 +5657,6 @@ export class AgentSession {
 		result: AgentToolResult<unknown>,
 		isError: boolean,
 	): Promise<void> {
-		this._execBridgeToolCalls.delete(toolCallId);
 		await this._emitAfterToolCallHooks(
 			{
 				type: "toolCall",

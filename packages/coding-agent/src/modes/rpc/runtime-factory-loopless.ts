@@ -208,7 +208,11 @@ export function createLooplessRuntimeFactory(
 				runtime.extensionRunner.emitError({ extensionPath: "<loop-hook-call>", event: "late_effect", error }),
 			),
 		);
+		// Every call `execute` runs was issued by the brain's model: the brain's remote tool host is its agent loop's
+		// toolHost, and nested calls, pi.executeTool() and Cursor exec frames run on the brain's own hosts (senpi#6919).
+		const brainCalls = new Set<string>();
 		runtime.extensionRunner.bindSessionlessFacts({
+			isModelIssuedToolCall: (toolCallId) => brainCalls.has(toolCallId),
 			getAllTools: () =>
 				toolInfosOf(
 					registry.definitions,
@@ -250,18 +254,21 @@ export function createLooplessRuntimeFactory(
 				);
 			const tool = registry.toolRegistry.get(name);
 			if (tool === undefined) return Promise.reject(new LooplessToolNotFoundError(name));
-			return presentation.present(nested, () =>
-				runLooplessToolCall(
-					tool,
-					{
-						toolCallId,
-						params,
-						...(signal ? { signal } : {}),
-						...(nested ? { nested } : {}),
-					},
-					toolHandlers,
-				),
-			);
+			brainCalls.add(toolCallId);
+			return presentation
+				.present(nested, () =>
+					runLooplessToolCall(
+						tool,
+						{
+							toolCallId,
+							params,
+							...(signal ? { signal } : {}),
+							...(nested ? { nested } : {}),
+						},
+						toolHandlers,
+					),
+				)
+				.finally(() => brainCalls.delete(toolCallId));
 		};
 		const fileGuards: HandFileGuards | undefined =
 			toolHandlers !== undefined && isLooplessExecuteGranted(local.executeGrant)

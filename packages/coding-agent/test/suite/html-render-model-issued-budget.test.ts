@@ -98,4 +98,54 @@ describe("senpi#6915: a model-issued show_html_page reserves the session's page 
 
 		expect(inlined).toEqual(expected);
 	});
+
+	// senpi#6919: a block after the session preflight passed (the owning run ended) skips afterToolCall; the call must
+	// still stop counting as model-issued.
+	it("forgets a Cursor exec-frame call the bridge blocks after its preflight passed", async () => {
+		const runSignal = new AbortController().signal;
+		let ownerSignal: AbortSignal = runSignal;
+		let markedDuringPreflight: boolean | undefined;
+		const live = await createHarness({
+			extensionFactories: [
+				htmlRenderExtension,
+				(pi) =>
+					pi.on("tool_call", (event) => {
+						if (event.toolCallId !== "late-block") return undefined;
+						markedDuringPreflight = live.session.extensionRunner.createToolContext(
+							event.toolCallId,
+							undefined,
+						).issuedByModel;
+						ownerSignal = new AbortController().signal;
+						return undefined;
+					}),
+			],
+		});
+		harness = live;
+		const agent = live.session.agent;
+		const bridge = createSessionCursorExecBridge(
+			{ current: live.session },
+			() => ({
+				signal: ownerSignal,
+				emitExternalEvent: async () => undefined,
+				batchStoreFactory: agent.batchStoreFactory,
+				executionScope: agent.executionScope,
+				getExecutionScope: () => agent.getExecutionScope?.() ?? agent.executionScope,
+				onExecutionPipeline: undefined,
+			}),
+			runSignal,
+		);
+
+		const result = await bridge.mcp?.({
+			name: "show_html_page",
+			providerIdentifier: "senpi",
+			toolName: "show_html_page",
+			toolCallId: "late-block",
+			args: { html: "<p>late</p>", title: "late" },
+			rawArgs: {},
+		});
+
+		expect(JSON.stringify(result)).toContain("Tool execution has no active run");
+		expect(markedDuringPreflight).toBe(true);
+		expect(live.session.extensionRunner.createToolContext("late-block", undefined).issuedByModel).toBe(false);
+	});
 });

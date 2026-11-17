@@ -128,10 +128,12 @@ const clampHeight = (height: number | undefined) =>
  * Whether this session's host shows the page. The OmO desktop opens every session it renders with
  * `open_session.promptSurface: "app"` and publishes a completed call from its details; every other
  * surface (terminal, chat bridge, or none named) only gets the file. The result states which happened,
- * because the model trusts it in later turns too (senpi#6273).
+ * because the model trusts it in later turns too (senpi#6273). A hand (brain/hand split) has no session, so its
+ * loop-side prompt options are not bound and the surface comes from the environment (senpi#6919).
  */
 const hostRendersPage = (ctx: ExtensionToolContext): boolean =>
-	(ctx.getSystemPromptOptions?.().surface ?? resolvePromptSurface(process.env)) === "app";
+	((ctx.sessionManager === undefined ? undefined : ctx.getSystemPromptOptions?.().surface) ??
+		resolvePromptSurface(process.env)) === "app";
 
 export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 	name: showHtmlPageName,
@@ -168,7 +170,9 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				.slice(0, 60) || "page";
 		const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
 		await writeFile(path, prepared, "utf8");
-		const inTranscript = ctx.issuedByModel;
+		// A hand (brain/hand split) has no session: the transcript its page joins is the brain's, which it cannot read, so
+		// there the page is held to the per-page cap alone (senpi#6919).
+		const inTranscript = ctx.issuedByModel && ctx.sessionManager !== undefined;
 		const alreadyHanded = inTranscript ? inlinedPageCharacters(ctx) : 0;
 		const fitsPage = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
 		const imagesInlined = fitsPage && alreadyHanded + inlined.html.length <= MAX_HANDED_PAGES_CHARACTERS;
