@@ -84,15 +84,22 @@ export interface SenpiCodemodeOptions {
 }
 
 /**
- * The row renderers a registered tool brings, so its nested `tool.<name>()` call in a cell is drawn like its direct row
- * (oh-my-openagent#12994); none while the runtime cannot be read yet.
+ * The row renderers registered tools bring, so a nested `tool.<name>()` call in a cell is drawn like its direct row
+ * (oh-my-openagent#12994). The registry is read once per eval result render, on the first lookup, not per nested call
+ * and frame; nothing while the runtime cannot be read yet.
  */
-function registeredRenderers(pi: CodemodeExtensionAPI, toolName: string): NestedToolRenderers | undefined {
-	try {
-		return pi.getAllTools().find((tool) => tool.name === toolName);
-	} catch {
-		return undefined;
-	}
+function registeredRenderers(pi: CodemodeExtensionAPI): (toolName: string) => NestedToolRenderers | undefined {
+	let byName: ReadonlyMap<string, NestedToolRenderers> | undefined;
+	return (toolName) => {
+		if (byName === undefined) {
+			try {
+				byName = new Map(pi.getAllTools().map((tool) => [tool.name, tool]));
+			} catch {
+				return undefined;
+			}
+		}
+		return byName.get(toolName);
+	};
 }
 
 /** Whether the session registry holds `monitor`; false when the runtime cannot be read yet. */
@@ -110,7 +117,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 	const renderers = {
 		renderCall: renderEvalCall,
 		renderResult: (...[result, options, theme, context]: Parameters<typeof renderEvalResult>) =>
-			renderEvalResult(result, options, theme, context, (toolName) => registeredRenderers(pi, toolName)),
+			renderEvalResult(result, options, theme, context, registeredRenderers(pi)),
 	};
 	const bunSkillPath = activeBunSkillPath();
 	let activeRuntime: SessionRuntime | undefined;

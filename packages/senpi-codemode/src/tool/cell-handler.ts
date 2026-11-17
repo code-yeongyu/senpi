@@ -26,6 +26,7 @@ import type { EvalImageResizer } from "./image.ts";
 import { type ResolvedToolReply, runNestedTool } from "./nested-tool-call.ts";
 import type { CellToolUpdateSink } from "./nested-tool-output.ts";
 import { upsertStatusEvent } from "./status-events.ts";
+import { isCoreWidgetName } from "./tool-widgets.ts";
 import type { EvalKernel, EvalStatusEvent, EvalToolDetails } from "./types.ts";
 
 export type { CellState } from "./cell-runtime.ts";
@@ -247,6 +248,8 @@ export class CellHandler {
 
 	/** True when the tool draws its own result row, so its nested call keeps the details that row is drawn from. */
 	#drawsOwnRow(toolName: string): boolean {
+		// The six core tools are drawn by codemode's own widgets, which never read the kept details.
+		if (isCoreWidgetName(toolName)) return false;
 		return this.#runtime.listTools?.().find((tool) => tool.name === toolName)?.renderResult !== undefined;
 	}
 

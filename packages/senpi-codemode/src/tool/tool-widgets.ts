@@ -159,14 +159,38 @@ function cappedLines(
 }
 
 type OwnRenderContext = Parameters<NonNullable<ToolDefinition["renderCall"]>>[2];
+type OwnComponent = ReturnType<NonNullable<ToolDefinition["renderCall"]>>;
 
-function ownRenderContext(summary: EvalToolCallSummary, options: WidgetOptions, hasResult: boolean): OwnRenderContext {
+/**
+ * What a tool's own renderers keep between the frames that redraw one nested call: their `state` and the components
+ * they returned, as the TUI keeps them for a direct row. Without it every frame handed a renderer fresh state, and one
+ * that prefetches (the edit row's diff read) started that work again on every frame. Keyed by the summary object, so a
+ * call's entry goes away with the eval result that holds it.
+ */
+type OwnRowMemory = { readonly state: Record<string, unknown>; call?: OwnComponent; result?: OwnComponent };
+const ownRowMemory = new WeakMap<EvalToolCallSummary, OwnRowMemory>();
+
+function ownRowMemoryOf(summary: EvalToolCallSummary): OwnRowMemory {
+	let memory = ownRowMemory.get(summary);
+	if (memory === undefined) {
+		memory = { state: {} };
+		ownRowMemory.set(summary, memory);
+	}
+	return memory;
+}
+
+function ownRenderContext(
+	summary: EvalToolCallSummary,
+	options: WidgetOptions,
+	hasResult: boolean,
+	memory: OwnRowMemory,
+): OwnRenderContext {
 	return {
 		args: summary.args,
 		toolCallId: summary.callId ?? summary.name,
 		invalidate: () => {},
-		lastComponent: undefined,
-		state: {},
+		lastComponent: hasResult ? memory.result : memory.call,
+		state: memory.state,
 		cwd: options.cwd,
 		executionStarted: true,
 		argsComplete: true,
@@ -193,12 +217,9 @@ function renderOwnCall(
 	if (own.renderCall === undefined || theme === undefined || innerWidth < MIN_RENDERER_WIDTH || summary.argsTruncated)
 		return undefined;
 	try {
-		return cappedLines(
-			own.renderCall(summary.args, theme, ownRenderContext(summary, options, false)),
-			innerWidth,
-			MAX_RENDERER_LINES,
-			theme,
-		);
+		const memory = ownRowMemoryOf(summary);
+		memory.call = own.renderCall(summary.args, theme, ownRenderContext(summary, options, false, memory));
+		return cappedLines(memory.call, innerWidth, MAX_RENDERER_LINES, theme);
 	} catch {
 		return undefined;
 	}
@@ -220,14 +241,15 @@ function renderOwnResult(
 	)
 		return undefined;
 	try {
-		const component = own.renderResult(
+		const memory = ownRowMemoryOf(summary);
+		memory.result = own.renderResult(
 			{ content: [{ type: "text", text: summary.resultPreview ?? summary.error ?? "" }], details: summary.details },
 			{ expanded: options.expanded, isPartial: false },
 			theme,
-			ownRenderContext(summary, options, true),
+			ownRenderContext(summary, options, true, memory),
 		);
 		return cappedLines(
-			component,
+			memory.result,
 			innerWidth,
 			options.expanded ? MAX_EXPANDED_RESULT_LINES : MAX_RENDERER_LINES,
 			theme,
@@ -283,7 +305,7 @@ function coreWidgetsFor(cwd: string): CoreWidgets {
 	return widgets;
 }
 
-function isCoreWidgetName(name: string): name is CoreWidgetName {
+export function isCoreWidgetName(name: string): name is CoreWidgetName {
 	switch (name) {
 		case "bash":
 		case "read":

@@ -351,6 +351,26 @@ describe("nested calls of registered tools that bring their own renderers", () =
 		expect(output).toBe(["  thread_list", "  ✓", '  {"kind":"ok"}'].join("\n"));
 	});
 
+	// A renderer that prefetches (the edit row starts its diff read when the args are complete) keeps its state in
+	// context.state, as on its direct row: across the frames that redraw one nested call it runs that work once.
+	it("keeps a renderer's state across renders of one nested call, so its prefetch runs once", () => {
+		let prefetches = 0;
+		const prefetching: NestedToolRenderers = {
+			renderCall: (_args, _theme, context) => {
+				const state = context.state as { started?: boolean };
+				if (context.argsComplete && state.started !== true) {
+					state.started = true;
+					prefetches += 1;
+				}
+				return component(["thread_list"]);
+			},
+		};
+		const summary = { name: "thread_list", ok: true, callId: "t-9", args: {} };
+		for (let frame = 0; frame < 4; frame += 1) render(summary, { renderers: () => prefetching });
+
+		expect(prefetches).toBe(1);
+	});
+
 	it("falls back to the generic row when the tool's renderer throws", () => {
 		const throwing: NestedToolRenderers = {
 			...THREAD_LIST,
