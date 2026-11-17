@@ -173,8 +173,10 @@ export class EngineTurnHold {
 		} catch (error) {
 			this.writeFailed(error);
 		} finally {
-			// A run fence alone does not pause the session, so it emits no `session_paused` (senpi#3811).
-			if (!this.pauseOpen && this.isHeld()) {
+			// A run fence alone does not pause the session, so it emits no `session_paused` (senpi#3811). Any other hold
+			// announces its seq, even while already paused: Resume quotes that seq, so an unannounced one could never
+			// be released (senpi#6900).
+			if (kind !== "run_fence" && this.isHeld()) {
 				this.pauseOpen = true;
 				this.emit({
 					type: "session_paused",
