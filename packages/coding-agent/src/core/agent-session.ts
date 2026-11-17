@@ -1744,11 +1744,12 @@ export class AgentSession {
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
 	/**
-	 * The model a manual switch picked while a run was live (senpi#6893). A failure
-	 * reported by any other model came from the request already in flight at the
-	 * switch, so it is not charged to the picked model.
+	 * A manual switch landed while a run was live and no request has been prepared on
+	 * the pick since (senpi#6893). A failure arriving now came from a request built
+	 * before the switch, so it is not charged to the pick. Request preparation clears
+	 * it, which holds for virtual picks too, whose responses name physical models.
 	 */
-	private _manualSwitchSelector: string | undefined = undefined;
+	private _manualSwitchAwaitingRequest = false;
 	private readonly _requestShapeRecovery = new RequestShapeRecovery();
 	/**
 	 * Failed response that the next request repeats, set by auto-retry and overflow recovery. The
@@ -2693,6 +2694,8 @@ export class AgentSession {
 	private _installAgentRequestProjection(): void {
 		const previousPrepareRequest = this.agent.prepareRequest;
 		this.agent.prepareRequest = async (request, signal) => {
+			// This request is built from the current selection, so it is the pick's own (senpi#6893).
+			this._manualSwitchAwaitingRequest = false;
 			const failed = this._failedResponse;
 			this._failedResponse = undefined;
 			const previous = (await previousPrepareRequest?.(request, signal)) ?? undefined;
@@ -4124,7 +4127,7 @@ export class AgentSession {
 		const retryableError = this._isRetryableError(lastAssistant);
 		if (
 			(retryableError || this._isHardErrorFallbackEligible(lastAssistant)) &&
-			this._isFailureFromAbandonedModel(lastAssistant)
+			this._manualSwitchAwaitingRequest
 		) {
 			return true;
 		}
@@ -4188,7 +4191,6 @@ export class AgentSession {
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
 			this._overflowRecoveryRungs = 0;
-			this._manualSwitchSelector = undefined;
 			this._retryFallback.resetTurn();
 			this._fallbackTurnFailures = [];
 			const messageText = userMessageText(event.message.content);
@@ -4344,9 +4346,6 @@ export class AgentSession {
 					assistantMsg.stopReason !== "aborted" &&
 					!isClassifierRefusal(assistantMsg);
 				if (succeeded) this._retryFallback.noteServed(`${assistantMsg.provider}/${assistantMsg.model}`);
-				if (this._manualSwitchSelector === `${assistantMsg.provider}/${assistantMsg.model}`) {
-					this._manualSwitchSelector = undefined;
-				}
 				if (succeeded && assistantMsg.stopReason !== "length") {
 					this._overflowRecoveryRungs = 0;
 				}
@@ -4412,7 +4411,7 @@ export class AgentSession {
 				this.model
 			) {
 				// The failure is the model's that produced it, not a model the user picked after it was sent (senpi#6893).
-				const abandoned = this._isFailureFromAbandonedModel(msg);
+				const abandoned = this._manualSwitchAwaitingRequest;
 				const failedModel = abandoned ? this.modelRegistry.find(msg.provider, msg.model) : this.model;
 				// Keep the provider's retry-after: without it this re-note replaced a stated reset with a guess (senpi#5568).
 				if (failedModel) {
@@ -5575,10 +5574,13 @@ export class AgentSession {
 			return result as AgentToolResult<TDetails>;
 		}
 
+		// The rewrite keeps the error flag (the hook's, else the tool's), so a caller sees a failure as one (senpi#6904).
+		const isError = hook.isError ?? result.isError;
 		return {
 			content: hook.content ?? result.content,
 			details: (hook.details ?? result.details) as TDetails,
 			terminate: result.terminate,
+			...(isError === undefined ? {} : { isError }),
 		};
 	}
 
@@ -9673,7 +9675,7 @@ export class AgentSession {
 			origin,
 		});
 		const modelChanged = previousModel === undefined || !modelsAreEqual(previousModel, model);
-		if (modelChanged && this.model && modelsAreEqual(this.model, model)) this._handOffRetryToManualModel(model);
+		if (modelChanged && this.model && modelsAreEqual(this.model, model)) this._handOffRetryToManualModel();
 		return systemPromptChange;
 	}
 
@@ -9683,15 +9685,19 @@ export class AgentSession {
 	 * budget, and a failure still to come from a request already in flight is not
 	 * charged to the picked model. An explicit abort still cancels the retry.
 	 */
-	private _handOffRetryToManualModel(model: Model<Api>): void {
+	private _handOffRetryToManualModel(): void {
 		const live = this.isStreaming || this._retryPromise !== undefined;
-		this._manualSwitchSelector = live ? formatSelector(model) : undefined;
-		if (live) this._retryAbortController?.abort(MANUAL_MODEL_SWITCH_HANDOFF);
-	}
-
-	private _isFailureFromAbandonedModel(message: AssistantMessage): boolean {
-		const picked = this._manualSwitchSelector;
-		return picked !== undefined && `${message.provider}/${message.model}` !== picked;
+		this._manualSwitchAwaitingRequest = live;
+		if (!live) return;
+		if (this._retryAbortController) {
+			this._retryAbortController.abort(MANUAL_MODEL_SWITCH_HANDOFF);
+			return;
+		}
+		// No wait left to cut (the switch landed after it): the next request, on the pick, starts a fresh budget.
+		if (this._retryAttempt > 0) {
+			this._retryAttempt = 1;
+			this._resetHintTierState();
+		}
 	}
 
 	private async _maybeRestoreFallbackPrimary(boundary: "turn" | "continuation" = "turn"): Promise<void> {
@@ -10064,7 +10070,7 @@ export class AgentSession {
 			// has to supersede a held switch itself - otherwise cycling onto a model that
 			// fits leaves an older hold to reclaim the session on the next message.
 			this._clearPendingModelSwitch();
-			if (modelIdentityChanged) this._handOffRetryToManualModel(next.model);
+			if (modelIdentityChanged) this._handOffRetryToManualModel();
 			// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
 			this._emit({
 				type: "model_changed",
@@ -13411,7 +13417,7 @@ export class AgentSession {
 		const sameModelRemint = options.sameModelRemint === true;
 		// The user switched models while this request was in flight: its failure is the
 		// old model's, so the picked model starts fresh without a fallback walk (senpi#6893).
-		const abandonedModelFailure = this._isFailureFromAbandonedModel(message);
+		const abandonedModelFailure = this._manualSwitchAwaitingRequest;
 		let switchedFallback = false;
 		let sameModelNativeRecovery = false;
 		let is429TierRouted = false;
@@ -13436,7 +13442,7 @@ export class AgentSession {
 			}
 		};
 		if (abandonedModelFailure) {
-			this._manualSwitchSelector = undefined;
+			this._manualSwitchAwaitingRequest = false;
 			this._retryAttempt = 1;
 			this._resetHintTierState();
 		} else if (usageLimitScope(errorMessage) === "account") {
@@ -13853,7 +13859,7 @@ export class AgentSession {
 		} catch {
 			if (retrySignal.reason === MANUAL_MODEL_SWITCH_HANDOFF) {
 				// A manual model change cut the backoff: continue now on the picked model with a fresh budget.
-				this._manualSwitchSelector = undefined;
+				this._manualSwitchAwaitingRequest = false;
 				this._retryAttempt = 1;
 				this._resetHintTierState();
 				this._emit({
