@@ -12,6 +12,56 @@
 
 ### Removed
 
+## [2026.11.17] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+- `move_session` `status` for an accepted move says whether the landed copy can still be written: `writable: true`, or `writable: false` with `sealed_by: { move_id, state, target }` naming the later move that released it (or the move's own revoke). A `move_fenced` refusal's `errorData` carries the same fields. Hosts advertise `move_session_status_writable` ([#6539](https://github.com/code-yeongyu/senpi/pull/6539)).
+- `set_session_archived { archived }` RPC command; `list_sessions` rows carry `archived`, `activity` and `model`, and `session_status` carries `archived` with the new `archive` cause ([#6677](https://github.com/code-yeongyu/senpi/pull/6677))
+- A hosted loop's Stop hooks run on the user's machine; their stop state and follow-up return to the loop through the session port, also when the Stop waits for the hand's background work ([#6751](https://github.com/code-yeongyu/senpi/pull/6751))
+- A hand answers `describe_tools` with the tool list, active set, eval-only routing, context files and skills a local session on its machine would show its model, so a loop running elsewhere can offer the same tools ([#6757](https://github.com/code-yeongyu/senpi/pull/6757))
+- `ToolDefinition.sessionBound` marks a tool that acts on the calling session; a hand's `describe_tools` declarations carry it so a remote loop calls such tools with its session's state ([#6757](https://github.com/code-yeongyu/senpi/pull/6757))
+- `pi.isLoopRemote()`: true on a hand whose loop runs on another machine ([#6767](https://github.com/code-yeongyu/senpi/pull/6767))
+- `set_session_settled { settled, by? }` RPC command; `list_sessions` rows carry `settled` and `settledBy`, and `session_status` carries them with the new `settle` cause ([#6768](https://github.com/code-yeongyu/senpi/pull/6768))
+- Credential injection proxy: credentials named in the global `credentialProxy.credentials` setting are withheld from every agent command and reached through a loopback proxy that adds the auth header for one declared origin ([#6828](https://github.com/code-yeongyu/senpi/pull/6828))
+
+### Changed
+
+- `move_session` `status`: `sealed_by.target` is left out when the release that sealed the copy named no device, and is never an empty string; a caller shows that as another device ([#6559](https://github.com/code-yeongyu/senpi/pull/6559)).
+
+### Fixed
+
+- Process start-time probes read in UTC, so a host child started in a DST fall-back hour is still recognized as the holder of its sessions instead of reading one hour off ([#3067](https://github.com/code-yeongyu/senpi/issues/3067), [#6118](https://github.com/code-yeongyu/senpi/pull/6118)).
+- A session whose header lies past the first megabyte of its file (a very long first line) opens in the folder that header names, instead of the host's folder ([#6458](https://github.com/code-yeongyu/senpi/pull/6458)).
+- A session move's import no longer removes, creates or copies files after it lost the move's lock. Before it replaces a read-only copy of the session at the landing, or puts moved extension state in place, each removal, each folder it creates and each copy first checks that the lock is still held; a holder that lost it stops there and the import fails with nothing more changed (senpi#6492).
+- A move bundle's paths may be at most 32 segments deep, in both forms of `move_session import`: a deeper path is refused before any folder is made. The sender refuses first, before the session is sealed: `release_session` for a move answers `release_failed`, and `move_session export` answers `move_failed` and writes no bundle; `finish` reads the bundle it kept without the rule (its format, its move and its queued input only), so a bundle written before the cap still finishes ([#6517](https://github.com/code-yeongyu/senpi/pull/6517)).
+- A session that already landed is answered to a repeated import only for the folder it landed for; a `sessionDir` the host cannot look at, or may not write into, is refused before the move is touched. A folder import whose manifest is `null` answers `move_bundle_invalid` (it answered `move_failed` before the inline import's manifest check) ([#6517](https://github.com/code-yeongyu/senpi/pull/6517)).
+- A `move_session` request refused `move_fenced` for a move already accepted here is still answered `move_fenced` when the landed file cannot be read at that moment; before, the read's own error replaced the refusal ([#6521](https://github.com/code-yeongyu/senpi/pull/6521)).
+- A move bundle holding two paths that differ only in letter case or Unicode form is refused `move_bundle_invalid` before the move is touched on a host whose file system treats them as one name, instead of failing partway; on a host that keeps them apart it is accepted as before ([#6523](https://github.com/code-yeongyu/senpi/pull/6523)).
+- A move whose bundle holds a sidecar named as its session file in another letter case is refused where the target's file system folds names, before anything is written; a probe file left by an interrupted import is removed by the next probe of that folder ([#6564](https://github.com/code-yeongyu/senpi/pull/6564)).
+- A session move no longer imports a bundle that lists two different files under one staged name, and no longer records a moved session with a hash its bytes do not have ([#6571](https://github.com/code-yeongyu/senpi/pull/6571)).
+- A session move no longer lands a sidecar whose bytes changed after the bundle was verified ([#6579](https://github.com/code-yeongyu/senpi/pull/6579)).
+- The monitor prompt and tool schema name the `<device>/<session>` target for watching a session on another device ([#6681](https://github.com/code-yeongyu/senpi/pull/6681)).
+- Closing a session (`unload_session`) whose turn only waits on an unanswered permission prompt no longer answers `turn_active`: the turn is aborted, the prompt cancelled and the session unloaded ([#6683](https://github.com/code-yeongyu/senpi/issues/6683))
+- The worker-safe edit and write tools show the fs error code a machine keeps as the error's cause, and `@code-yeongyu/senpi/tools-core` exports the `CoreCodingTools` type ([#6745](https://github.com/code-yeongyu/senpi/pull/6745))
+- A hosted loop's SessionStart hooks run on the user's machine, and a bundled builtin no longer runs as a user hook on the hand ([#6747](https://github.com/code-yeongyu/senpi/pull/6747))
+- `--hand` is its extensions' home, so a hosted loop's forwarded hooks (`input`, `before_agent_start`, `session_start`) run there instead of being refused ([#6747](https://github.com/code-yeongyu/senpi/pull/6747))
+- `UserPromptSubmit` command hooks now receive `hook_event_name` on stdin like every other hook event, so hook scripts that route or count by it see the prompt event ([#6750](https://github.com/code-yeongyu/senpi/pull/6750), senpi#6748)
+- On a hand, results that a scope's work produces after its call ended (a background command's exit, monitor events, detached eval cells, an extension's late `sendMessage`/`sendUserMessage`/`appendEntry`/notice, a loop hook's late messages, a held Stop's writes) reach the hosted loop through a durable, bounded wake outbox, at least once, or the loop is told they were dropped ([#6767](https://github.com/code-yeongyu/senpi/pull/6767))
+- A Stop hook held for background work keys its stop state to the session's leaf when it runs again, as it did before the hosted-loop port, so its reentry count is unchanged in local sessions ([#6795](https://github.com/code-yeongyu/senpi/pull/6795))
+- On a hand, a Stop held for background work keeps its stop state when the loop session has no leaf yet, instead of failing after its call ended ([#6805](https://github.com/code-yeongyu/senpi/pull/6805))
+- A session starting a turn for a delivery reports `running` instead of `waiting_background`: a delivery's own custody is no longer listed as background work while its turn start is in flight ([#6814](https://github.com/code-yeongyu/senpi/pull/6814))
+- A session whose delivery turn just ended no longer lists that delivery as background work when another wait source publishes before the run settles ([#6822](https://github.com/code-yeongyu/senpi/pull/6822))
+- Closing a session (`unload_session`) without `interrupt` no longer aborts a tool that is still running when another tool of the same turn has a dialog open: the close answers `turn_active` ([#6831](https://github.com/code-yeongyu/senpi/pull/6831))
+- Required-compaction failures no longer trigger provider fallback to another model ([#6833](https://github.com/code-yeongyu/senpi/pull/6833)).
+- `tool_search` lists matching eval-only tools (marked eval-only, with their `tool.<name>(...)` call form, never activated), and `pi.getAllTools()` marks them `evalOnly` ([#6887](https://github.com/code-yeongyu/senpi/pull/6887))
+
+### Removed
+
+- `HookModelRequestReply.droppedLate`: a hand's late effects reach the loop as wakes, so no reply carries a drop count ([#6767](https://github.com/code-yeongyu/senpi/pull/6767))
+
 ## [2026.11.15-4] - 2026-11-15
 
 ### Breaking Changes
