@@ -4363,6 +4363,14 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#RAW_TEXT_ELEMENTS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#TAG_START": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#BASE64_IMAGE": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
@@ -4370,6 +4378,10 @@
 		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#Params": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#handedNotYetRecorded": {
+			"class": "per-copy-safe",
+			"reason": "page-budget reservations of the calls this copy runs, dropped once each result is in the session's entries; a split only loses a reservation between copies racing in one turn, and every recorded page is still counted from the entries"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#showHtmlPageTool": {
 			"class": "constant",
