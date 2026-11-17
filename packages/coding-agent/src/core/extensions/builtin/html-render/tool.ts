@@ -66,6 +66,11 @@ export interface ShowHtmlPageDetails {
 	 */
 	html: string;
 	imagesInlined: boolean;
+	/**
+	 * The exact text part this call's result carries, so a later step that rewrites the result (the brain's page
+	 * budget for a hand) finds the page's own text whatever a `tool_result` handler added around it (senpi#6934).
+	 */
+	resultText: string;
 }
 
 const clampHeight = (height: number | undefined) =>
@@ -126,20 +131,16 @@ export function createShowHtmlPageTool(pending: PendingHandedPages = new Map()) 
 				fitsPage && inTranscript
 					? reserveHandedPage(ctx.sessionManager, pending, toolCallId, inlined.html.length)
 					: { inlined: fitsPage, alreadyHanded: 0 };
+			const resultText = handedPageText({
+				path,
+				shown: hostRendersPage(ctx),
+				imagesInlined,
+				fitsPage,
+				alreadyHanded,
+				inlinedLength: inlined.html.length,
+			});
 			return {
-				content: [
-					{
-						type: "text",
-						text: handedPageText({
-							path,
-							shown: hostRendersPage(ctx),
-							imagesInlined,
-							fitsPage,
-							alreadyHanded,
-							inlinedLength: inlined.html.length,
-						}),
-					},
-				],
+				content: [{ type: "text", text: resultText }],
 				details: {
 					path,
 					title: params.title,
@@ -147,6 +148,7 @@ export function createShowHtmlPageTool(pending: PendingHandedPages = new Map()) 
 					prepared: true,
 					html: imagesInlined ? inlined.html : params.html,
 					imagesInlined,
+					resultText,
 				},
 			};
 		},
