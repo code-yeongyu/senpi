@@ -37,6 +37,7 @@ import { SessionFileCallKeys } from "./session-file-call-keys.ts";
 import type { RecoveryCarrier } from "./session-recovery-identity.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
+import { listSharedStoreSessions, sharedSessionStoreDirs } from "./shared-session-stores.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
 import {
 	ALL_SESSION_LIST_PUBLISH_INTERVAL,
@@ -3629,7 +3630,10 @@ export class SessionManager {
 			? (loaded, total, partialSessions) => onProgress(loaded, total, partialSessions?.filter(includeSession))
 			: undefined;
 		const sessions = (await listSessionsFromDir(dir, progress, signal)).filter(includeSession);
-		return sortSessionInfos(sessions);
+		if (filterCwd) return sortSessionInfos(sessions);
+		const listed = new Set(sessions.map((session) => session.path));
+		const shared = await listSharedStoreSessions((session) => matchesCwd(session.cwd) && !listed.has(session.path), signal);
+		return sortSessionInfos([...sessions, ...shared]);
 	}
 
 	/**
@@ -3667,11 +3671,11 @@ export class SessionManager {
 		const sessionsDir = getSessionsDir();
 
 		try {
-			if (!existsSync(sessionsDir)) return [];
-			const entries = await readdir(sessionsDir, { withFileTypes: true });
-			const dirs = entries
+			const entries = existsSync(sessionsDir) ? await readdir(sessionsDir, { withFileTypes: true }) : [];
+			const projectDirs = entries
 				.filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
 				.map((entry) => join(sessionsDir, entry.name));
+			const dirs = [...new Set([...projectDirs, ...(await sharedSessionStoreDirs())])];
 
 			// Count total files first for accurate progress
 			let totalFiles = 0;
