@@ -1,3 +1,22 @@
+## 2026-11-17 - ExtensionToolContext.issuedByModel on hands (senpi#6920)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindSessionlessFacts` accepts `isModelIssuedToolCall`, which backs `ctx.issuedByModel` on a runtime without a session.
+- `packages/coding-agent/src/core/extensions/types.ts`: the `issuedByModel` contract names the hand case. On a hand, a call the brain's agent loop dispatched counts as issued by the model.
+
+### Why
+
+- senpi#6919 L2. Only `bindCore` provided the flag, so a hand reported every call as `false`, although the brain's model issued it.
+
+### Why an extension could not handle it
+
+- The origin of a hand's call is known only to the runtime that runs it.
+
+### Expected merge conflict zones
+
+- LOW: the `bindSessionlessFacts` parameter list and the head of its body in `runner.ts`; the `issuedByModel` doc comment in `types.ts`.
+
 ## 2026-11-17 - ExtensionToolContext.issuedByModel (senpi#6917)
 
 ### What changed

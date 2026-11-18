@@ -1,3 +1,21 @@
+## 2026-11-17 - show_html_page runs on a hand (senpi#6920)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: on a runtime without a session (a hand in a brain/hand split), `show_html_page` no longer reads loop-side context members. The page is held to `MAX_HANDED_PAGE_CHARACTERS` alone, because the transcript it joins is the brain's, and the prompt surface comes from the environment.
+
+### Why
+
+- senpi#6919. Every `show_html_page` call on a real `--hand` failed with "getSystemPromptOptions is loop-side and not bound". Once a hand reported its calls as model-issued, the call would also have failed on the missing `ctx.sessionManager`.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `hostRendersPage` and the `inTranscript` line of `execute` in `html-render/tool.ts`.
+
 ## 2026-11-17 - show_html_page: images are read only from loading contexts, and only model-issued calls hold page budget (senpi#6917)
 
 ### What changed

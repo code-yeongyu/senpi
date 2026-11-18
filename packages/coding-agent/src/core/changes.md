@@ -1,3 +1,23 @@
+## 2026-11-17 - Cursor exec-frame calls are released on every end (senpi#6920)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session preflight only marks an exec-bridge call (`execBridge`). The new `releaseExecBridgeToolCall` drops it, and the session no longer drops it on a preflight block or throw or in `emitExecBridgeToolResult`.
+- `packages/coding-agent/src/core/cursor-exec-bridge.ts`: `executeTool` reports the end of every call that reached the prepared pipeline from one `finally` (`settleToolCall`). That includes a block after a passing preflight (`NO_ACTIVE_RUN`) and an executor abort, which skip `afterToolCall`.
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts`: wires `settleToolCall` to the session's `releaseExecBridgeToolCall`.
+
+### Why
+
+- senpi#6919 L1. A call blocked after its preflight passed kept its id in `_execBridgeToolCalls` for the life of the session.
+
+### Why an extension could not handle it
+
+- The bridge's call lifecycle and the session's origin set are core state.
+
+### Expected merge conflict zones
+
+- LOW: the head of `preflightToolCall`, `releaseExecBridgeToolCall` and `emitExecBridgeToolResult` in `agent-session.ts`; the `host.execute` call in `cursor-exec-bridge.ts`.
+
 ## 2026-11-18 - `takeQueuedDeliveries`: hand back queued deliveries without touching user input (#6971)
 
 ### What changed

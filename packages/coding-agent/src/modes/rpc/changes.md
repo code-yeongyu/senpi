@@ -1,3 +1,24 @@
+## 2026-11-18 - unload_session can refuse to drop a busy session's unwritten deliveries (senpi#7004)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: `deliveries: "refuse"` refuses a busy session (any `turn_active` blocker) holding admitted deliveries not yet written with `work_pending` before anything is interrupted; every delivery-caused `work_pending` refusal names the ids in `pending.deliveries`, recorded on a failed effect and replayed.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `method-classes-schema-host.ts`, `rpc-input-validation.ts`: the `deliveries` field (`"refuse"`).
+- `packages/coding-agent/src/modes/rpc/rpc-effect-answer-types.ts`, `effect-record.ts`, `effect-ledger.ts`: `RpcUnloadAnswer.pending` and the effect record's `pending`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: capability `unload_refuse_deliveries`.
+
+### Why
+
+- An interrupting unload hands back unread deliveries (#6971), and a non-interrupting one never named them, so a client closing a stuck session dropped its unread messages without knowing which (oh-my-openagent#14234).
+
+### Why an extension could not handle it
+
+- The unload's blocker check, the interrupt and the admission ledger live in the RPC host; an extension cannot see or veto them before the interrupt.
+
+### Expected merge conflict zones
+
+- LOW: fork-only RPC host files; `session-unload.ts` blockers and the `work_pending` row of `docs/rpc.md`.
+
 ## 2026-11-18 - The handover reopen watch waits for a draining predecessor (senpi#6988)
 
 ### What changed

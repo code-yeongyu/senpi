@@ -1,14 +1,18 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.18-3] - 2026-11-18
 
 ### Breaking Changes
 
 ### Added
 
+- `unload_session { deliveries: "refuse" }` refuses a busy session that holds admitted deliveries not yet written, before interrupting anything, and every `work_pending` refusal names those deliveries in `pending.deliveries`; capability `unload_refuse_deliveries` ([#7006](https://github.com/code-yeongyu/senpi/pull/7006), fixes [#7004](https://github.com/code-yeongyu/senpi/issues/7004))
+
 ### Changed
 
 ### Fixed
+
+- `show_html_page` works on a hand in a brain/hand split (it failed on every call there). Tools on a hand now see `ctx.issuedByModel` as `true` for calls the brain's model issued, and a Cursor exec-frame call that is blocked after its preflight no longer stays marked as model-issued ([#6920](https://github.com/code-yeongyu/senpi/pull/6920))
 
 ### Removed
 
