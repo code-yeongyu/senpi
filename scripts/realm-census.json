@@ -2810,6 +2810,10 @@
 			"class": "constant",
 			"reason": "process argv or environment snapshot taken once at load"
 		},
+		"packages/coding-agent/src/cli/held-session-attach.ts#UNAPPLIED_FLAGS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/cli/auth-command.ts#AUTH_COMMAND_USAGE": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
