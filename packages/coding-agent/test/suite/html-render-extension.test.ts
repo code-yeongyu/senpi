@@ -190,7 +190,7 @@ describe("host HTML attachment", () => {
 	);
 
 	it("writes a prepared page with the theme bootstrap injected ahead of the head content", async () => {
-		const result = await createShowHtmlPageTool().execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-1",
 			{
 				html: "<!doctype html><html><head><title>t</title></head><body>hi</body></html>",
@@ -210,7 +210,7 @@ describe("host HTML attachment", () => {
 	});
 
 	it("opens the written page with the offline snapshot policy ahead of anything the page wrote", async () => {
-		const result = await createShowHtmlPageTool().execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-3",
 			{
 				html: '<!doctype html><script src="https://cdn.example/lib.js"></script><img src="http://127.0.0.1:1/x.png">',
@@ -251,7 +251,7 @@ describe("host HTML attachment", () => {
 
 	it("hands the page to the host in details and never puts it in the content the model reads", async () => {
 		const html = '<!doctype html><div id="marker-7f3a">chart</div>';
-		const result = await createShowHtmlPageTool().execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-4",
 			{ html, title: "Hidden", height: 300 },
 			undefined,
@@ -271,7 +271,7 @@ describe("host HTML attachment", () => {
 		writeFileSync(backgroundPath, PNG_BYTES);
 		const html = `<!doctype html><style>body{background:url(${backgroundPath})}</style><img src="${imagePath}">`;
 
-		const result = await createShowHtmlPageTool().execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-self-contained",
 			{ html, title: "Chart" },
 			undefined,
@@ -293,7 +293,7 @@ describe("host HTML attachment", () => {
 		const secret = join(tempDir, "secret.png");
 		writeFileSync(secret, "API_KEY=hunter2 not an image");
 
-		const refused = createShowHtmlPageTool().execute(
+		const refused = createShowHtmlPageTool(new Map()).execute(
 			"call-missing",
 			{ html: `<img src="${present}"><img src="${missing}"><img src="${secret}">`, title: "Broken" },
 			undefined,
@@ -309,7 +309,7 @@ describe("host HTML attachment", () => {
 
 	it("refuses a page over the input limit before preparing anything", async () => {
 		await expect(
-			createShowHtmlPageTool().execute(
+			createShowHtmlPageTool(new Map()).execute(
 				"call-max",
 				{ html: "x".repeat(512_001), title: "Big" },
 				undefined,
@@ -324,7 +324,7 @@ describe("host HTML attachment", () => {
 		const screenshot = `<img src="data:image/png;base64,${"A".repeat(200_000)}">`;
 		const html = `<html><body><h1>Report</h1>${screenshot.repeat(3)}</body></html>`;
 
-		const refused = createShowHtmlPageTool().execute(
+		const refused = createShowHtmlPageTool(new Map()).execute(
 			"call-b64",
 			{ html, title: "Report" },
 			undefined,
@@ -345,7 +345,7 @@ describe("host HTML attachment", () => {
 		});
 		const html = `<html><body>${paths.map((path) => `<img src="${path}">`).join("")}</body></html>`;
 
-		const result = await createShowHtmlPageTool().execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-paths",
 			{ html, title: "Report" },
 			undefined,
@@ -367,13 +367,19 @@ describe("host HTML attachment", () => {
 		});
 		const html = paths.map((path) => `<img src="${path}">`).join("");
 		await expect(
-			createShowHtmlPageTool().execute("call-5", { html, title: "Huge" }, undefined, undefined, ctxFor(tempDir)),
+			createShowHtmlPageTool(new Map()).execute(
+				"call-5",
+				{ html, title: "Huge" },
+				undefined,
+				undefined,
+				ctxFor(tempDir),
+			),
 		).rejects.toThrow(/limit is 25 MiB/);
 		expect(existsSync(join(tempDir, ".senpi/html-pages"))).toBe(false);
 	});
 
 	it("clamps the frame height to the 80-2000 range", async () => {
-		const result = await createShowHtmlPageTool().execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-2",
 			{ html: "<p>x</p>", title: "Tall", height: 99999 },
 			undefined,

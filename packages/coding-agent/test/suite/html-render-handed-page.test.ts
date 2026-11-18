@@ -27,7 +27,7 @@ type ShowHtmlPageTool = ReturnType<typeof createShowHtmlPageTool>;
 type Result = Awaited<ReturnType<ShowHtmlPageTool["execute"]>>;
 
 /** A session that records each returned result the way the agent session appends it. */
-function session(cwd: string, tool: ShowHtmlPageTool = createShowHtmlPageTool(), sessionId = randomUUID()) {
+function session(cwd: string, tool: ShowHtmlPageTool = createShowHtmlPageTool(new Map()), sessionId = randomUUID()) {
 	const entries: unknown[] = [];
 	const ctx = {
 		cwd,

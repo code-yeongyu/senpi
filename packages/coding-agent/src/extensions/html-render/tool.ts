@@ -235,7 +235,7 @@ export function handRoutedHtmlPage(
 	return handHtmlPage(toolCallId, params, ctx, pending, { ...result, details });
 }
 
-export function createShowHtmlPageTool(pending: PendingHandedPages = new Map()) {
+export function createShowHtmlPageTool(pending: PendingHandedPages) {
 	return defineTool<typeof Params, ShowHtmlPageDetails>({
 		name: showHtmlPageName,
 		label: "Show HTML Page",
@@ -264,4 +264,4 @@ export function createShowHtmlPageTool(pending: PendingHandedPages = new Map()) 
  * The tool's public descriptor (name, description, schema) for hosts that serve it. Every session runs
  * its own instance from the html-render extension, so the pending-page ledger never spans sessions.
  */
-export const showHtmlPageTool = createShowHtmlPageTool();
+export const showHtmlPageTool = createShowHtmlPageTool(new Map());
