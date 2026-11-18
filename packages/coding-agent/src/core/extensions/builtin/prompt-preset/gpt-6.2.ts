@@ -55,7 +55,8 @@ const NO_INVENTED_REQUIREMENTS =
 	" Invent no requirement, rule, or policy that blocks, delays, or narrows the work: a precaution you chose, an example you followed, or a rule from an earlier task binds only when the user, an applicable policy, or a real technical dependency requires it, and one that gets in the way is corrected at its source.";
 
 const CARRY_FOLLOW_UPS =
-	"A message mid-task steers the task: fold in corrections and constraints, answer a status question in a sentence, and keep going under the reading you already declared, so the reply opens with the work instead of another routing line; a follow-up question, a challenge to your approach, or a mistake the user points out asks you to carry the work through and make the fix, unless the user asks only for an explanation or tells you to stop; drop the task only when the user cancels it or asks for something incompatible.";
+	"; a follow-up question, a challenge to your approach, or a mistake the user points out asks you to carry the work through and make the fix, unless the user asks only for an explanation or tells you to stop";
+const STEERING_TAIL = "; drop the task only when the user cancels it or asks for something incompatible.";
 
 const EARLIER_REFUSALS =
 	" An earlier refusal or blocker does not decide a later request: before ruling an action out, asking again, or narrowing the work, name the permission rule or technical failure that still applies, and proceed once the user has clarified or approved or new evidence opens a permitted way.";
@@ -78,7 +79,7 @@ const DISCLOSING_FINAL_MESSAGE =
 
 export const GPT62_TEXT: Gpt6CoreText = {
 	initiativeBias: `${GPT6_ASTRA_TEXT.initiativeBias}${NO_INVENTED_REQUIREMENTS}`,
-	steering: CARRY_FOLLOW_UPS,
+	steering: GPT6_ASTRA_TEXT.steering.replace(STEERING_TAIL, `${CARRY_FOLLOW_UPS}${STEERING_TAIL}`),
 	unboundedRetry: `${GPT6_ASTRA_TEXT.unboundedRetry}${EARLIER_REFUSALS}`,
 	writingStyle: CODEX_62_WRITING_STYLE,
 	finalMessageShape: DISCLOSING_FINAL_MESSAGE,
