@@ -25,6 +25,10 @@ function toolInfoOf({ definition, sourceInfo }: ToolDefinitionEntry): ToolInfo {
 		promptGuidelines: definition.promptGuidelines,
 		kernelPrelude: projectKernelPrelude(definition.name, definition.kernelPrelude),
 		permissionParser: definition.permissionParser,
+		// A tool's own row renderers, so a host that draws its calls elsewhere (an eval cell's nested calls) draws
+		// them the way the tool's direct row does.
+		...(definition.renderCall ? { renderCall: definition.renderCall } : {}),
+		...(definition.renderResult ? { renderResult: definition.renderResult } : {}),
 		...(definition.namespace ? { namespace: definition.namespace } : {}),
 		...(definition.annotations ? { annotations: { ...definition.annotations } } : {}),
 		sourceInfo,

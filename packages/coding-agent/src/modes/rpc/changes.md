@@ -1,3 +1,290 @@
+## 2026-11-17 - A loopless runtime marks eval-only tools too (senpi#6886)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: `getAllTools` projects through `toolInfosOf` with the registry's armed eval-only set, as a session does.
+- `packages/coding-agent/src/modes/rpc/hand-tool-catalog.ts`: `evalOnly` comes from `registeredEvalOnlyToolNames`.
+
+### Why
+
+- A session and a loopless runtime project `pi.getAllTools()` the same way.
+
+### Why an extension could not handle it
+
+- The loopless runtime's registry facts are bound by the runtime factory.
+
+### Expected merge conflict zones
+
+- LOW: the `bindSessionlessFacts` call in `runtime-factory-loopless.ts`.
+
+## 2026-11-16 - unload_session parks a run only when no tool body is executing (senpi#6831)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: the parked predicate (a run whose only work is an unanswered dialog, unloaded without `interrupt`) also requires that no tool body is executing (`session.toolDispatcher.executing === 0`). A run with a body executing answers `turn_active` unless `interrupt: true`, even when a dialog is open.
+- `packages/coding-agent/src/core/tool-dispatch/tool-dispatcher.ts`: `ToolDispatcher.executing` counts the bodies dispatched through `run` that have not settled. `BaseToolDispatcher.run` does the counting and delegates to the subclass's `dispatch`.
+
+### Why
+
+- A running tool can open a dialog (an MCP elicitation) while another call of its batch is still working; the unload treated that run as parked and aborted the work (review L1 on senpi#6684). A dialog cannot be attributed to the body that caused it, so any executing body rules out parked; the permission prompt of senpi#6683 runs before any body of its batch is released and still unloads.
+
+### Why an extension could not handle it
+
+- The refusal is decided inside the RPC host's unload command, and the running-body count lives in the session's tool dispatcher; no extension sees either.
+
+### Expected merge conflict zones
+
+- LOW: `blockers()` in `session-unload.ts`; `BaseToolDispatcher.run` and the two subclasses' `dispatch` in `tool-dispatcher.ts`.
+
+## 2026-11-15 - Session settled (Done) flag on list_sessions rows and set_session_settled (senpi#6768)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `rpc-session-command-types.ts`, `rpc-mutation-response-types.ts`, `method-classes.ts`, `method-classes-schema-session.ts`, `rpc-client.ts`, `rpc-client-events.ts`, `rpc-session-event-types.ts`, `rpc-types.ts`: the session-scoped `set_session_settled { settled, by? }` command (class `drive`). `by` is the desktop app's `ThreadSettledBy` (`user`, `agent`, `pr-merged`, `pr-closed`, `inactivity`); an unknown kind or a malformed field is refused with `invalid_argument`. The command writes the `session_settled` custom entry and emits `session_settled_changed`.
+- `session-registry-types.ts`, `session-worker-protocol.ts`, `session-worker-snapshot.ts`, `session-worker.ts`: every `list_sessions` row carries `settled` (always) and `settledBy` (only when settled); worker snapshots carry both.
+- `session-status.ts`, `session-status-source.ts`: the `settle` cause, and `settled` / `settledBy` on the status row. Rows read the flag straight from the live session or the worker snapshot, like `activity` and `model`.
+
+### Why
+
+- The approved cross-device Done rule: Done lives in the session file on the engine that holds the session, and every device's thread list reads it from the listing row.
+
+### Why an extension could not handle it
+
+- `list_sessions` rows, RPC commands and the status stream belong to the RPC host.
+
+### Expected merge conflict zones
+
+- LOW: fork-only RPC files, next to #6677's `archived` lines.
+
+## 2026-11-15 - Late loop-hook and tool-side results go to the scope's wake outbox; a locked state-file store (senpi#5778, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loop-hook-call.ts`: `createLoopHookCall(late)` sends what a call's work does after the call ended (messages, notices, #6751's entries and user messages) to `late(sessionId)`; the per-session hold that rode the next reply (`LATE_PER_SESSION`, `dropped`) is removed. A held Stop's stop state and block follow-up therefore reach an idle loop as wakes (senpi#6770 L1).
+- `packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts`: a reply no longer carries `droppedLate`.
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: `LooplessRuntimeProfile.wake`; the runtime binds the scope's wake route (`loopWake`), the loop-hook call's late route and the presentation broker's late notices.
+- `packages/coding-agent/src/modes/rpc/remote-executor-scope.ts`: `HandWakes`; `LooplessHandOptions.wakes`. Each scope's runtime offers to its own scope, and disposing a scope closes it in the outbox (its retention starts).
+- `packages/coding-agent/src/modes/rpc/state-file-store.ts` (new): `openStateFileStore`, a durable state store in one owner-only JSON file that keeps documents and the owner epoch, never the log, so the file and every rewrite are bounded by the state (#6767 review H1). Every mutation is a locked read-check-write against the disk (`ownership-safe-lock.ts`), so a stale epoch is refused (L1). `claimStateStore` claims the next epoch. The hand-link endpoint's store (#6758) converges on it.
+
+### Why
+
+- Held late items were lost when the reply carrying them never reached the loop, when the scope was disposed, or when the session made no further call (senpi#5778); tool-side late work had no path at all (senpi#6763). The first outbox file kept the memory store's whole log and an older process could still overwrite it.
+
+### Why an extension could not handle it
+
+- The loop-hook call, the scope runtimes and the hand's durable state are hand internals.
+
+### Expected merge conflict zones
+
+- HIGH: `createLoopHookCall` and `LoopHookEffects` in `loop-hook-call.ts` (#6751's region).
+
+## 2026-11-15 - A hand tells a remote loop its tool list (describe_tools, senpi#6749)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/hand-tool-catalog.ts` (new): `describeHandTools` answers `{ tools, active, evalOnly, context }` with every tool the hand serves, nothing left out. `withToolCatalog` serves the `describe_tools` loop hook (payload `{ sessionId, idle, scope }`) beside the extension loop hooks, on any hand.
+- `packages/coding-agent/src/modes/hand/tool-catalog.ts`: each declaration carries `sessionBound` (a boolean).
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: `runLoopHooks` is `withToolCatalog(extensionLoopHooks(...), ...)` over the runtime's registry, tool selection and resource loader.
+- `packages/coding-agent/src/modes/rpc/loopless-runtime-settings.ts`: `looplessToolFilters` becomes `looplessToolSelection` (`{ filters, initialActiveToolNames }`), resolved by the session's `resolveToolSelection`.
+
+### Why
+
+- senpi#6749: a hosted loop has to show its model exactly the tools a local session on the hand's machine shows. Nothing carried that list, the eval-only routing or the machine's context files and skills.
+
+### Why an extension could not handle it
+
+- The loop-hook lane and the loopless runtime's registry are the hand's own.
+
+### Expected merge conflict zones
+
+- LOW: the `runLoopHooks` member of the loopless runtime and the `buildToolRegistry` call above it.
+
+## 2026-11-15 - A hand serves agent_end through the session port (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loop-hook-call.ts`: the session port.
+  - `run(binding, dispatch)` takes one `LoopHookCallBinding` (`{ sessionId, cwd, idle, carried?, endsTurn? }`) instead of five positional arguments.
+  - A call may carry `{ leafId, handEntries }` (`CarriedSession`): the hand-authored custom entries after the loop's last compaction. The read-only session answers `getLeafId` and `reduceHistory` over exactly those, during the call and afterwards for the call's own work (its async context, e.g. a Stop held for background work); from any other context after the call they throw `LoopHookCallEndedError`. The session's identity (`getSessionId`, `getSessionFile`, `getCwd`) stays bound to the call only.
+  - After a call with `endsTurn` (an `agent_end`) ended, `isIdle` answers `true` until the loop starts another call for that session, then `false`; other calls keep the idle value they carried.
+  - `appendEntry` and `sendUserMessage` are captured as `entries` and `userMessages` effects, and late ones are held under the existing per-session bound. Past the bound one held effect is dropped per overflow: the oldest notice, then message, then user message, and an entry only when nothing else is held.
+  - `hasPendingMessages` answers only for user messages the call (or its work) sent, never for late ones of earlier calls that ride its reply.
+- `packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts`: `extensionLoopHooks` serves `agent_end` (`{ messages, aborted?, leafId, handEntries }`) as a call that ends the turn, and every reply carries `entries` and `userMessages` when present. Its doc comment lists every served event and the provenance filter.
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: binds `loopHookWrite`.
+
+### Why
+
+- senpi#5898: the user's Stop hooks never ran for a hosted loop. On a hand, the Stop path's reads (`getLeafId`, `reduceHistory`) and writes (`appendEntry`, `sendUserMessage`) are loop-side.
+- #6751 review: a Stop held for the hand's live background work ran after its call ended, where the call-bound readers threw, `isIdle` stayed at the value carried during the turn and the signal was aborted, so its stop state and follow-up were lost. A held late stop-state entry could be dropped before messages, lowering the Stop reentry count.
+
+### Why an extension could not handle it
+
+- The loop-hook lane and the call's session facts belong to the loopless runtime.
+
+### Expected merge conflict zones
+
+- MEDIUM: `extensionLoopHooks` event branches and `dispatchLoopHook` (other #5898 slices add events there).
+
+## 2026-11-15 - A hand serves session_start for a hosted loop; user hooks by provenance (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts` (new, moved from `loopless-tool-handlers.ts` unchanged except as listed): `extensionLoopHooks` also serves `session_start` (payload `{ sessionId, idle, scope, reason, previousSessionFile? }`), so the user's SessionStart shell hooks and user extensions' `session_start` handlers run on the hand and what they send rides the reply as `sent`. Every event the hand serves now dispatches through `userLoopHooks(runner)`: `isUserLoopHook` by path AND not shipped by the loader, so a bundled builtin (codemode) no longer runs as a user hook on the hand.
+- `packages/coding-agent/src/modes/rpc/loop-hook-call.ts` (new): `LoopHookCall`, `createLoopHookCall`, `LATE_PER_SESSION`, `LoopHookCallEndedError` and the call's effects types, moved unchanged from `loopless-tool-handlers.ts`.
+- `packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts`: keeps `TwoSidedHome` and `extensionToolHandlers` only (it was over the file-size ceiling).
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: imports from the new modules.
+
+### Why
+
+- senpi#5898: a hosted session forwarded only `input`, `before_agent_start` and `before_provider_request` to the hand, so the user's SessionStart hooks never ran for a hosted loop; and the path-only filter let codemode's `session_start` run on the hand, where it failed with `model is loop-side and not bound`.
+
+### Why an extension could not handle it
+
+- The loop-hook lane and its event table are the loopless runtime's own; an extension cannot add an event the hand serves.
+
+### Expected merge conflict zones
+
+- MEDIUM: any change to `extensionLoopHooks` or the loop-hook call on `main` lands in the new files, not in `loopless-tool-handlers.ts`.
+
+## 2026-11-14 - unload_session ends a run parked on an unanswered prompt (senpi#6683)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: a run that is streaming, with no compaction or session work, while a dialog it raised (a permission prompt) is still unanswered is no longer a `turn_active` refusal. The unload aborts it, which cancels the dialog, waits for it to settle (the bounded `interrupt` settle), then unloads. A run doing real work still answers `turn_active` unless `interrupt: true`.
+
+### Why
+
+- A remote close (`unload_session`) of a session waiting for an approval was refused `turn_active`, so nobody away from that machine could end it (senpi#6683, oh-my-openagent#13441).
+
+### Why an extension could not handle it
+
+- The refusal is decided inside the RPC host's unload command; no extension sees or can answer it.
+
+### Expected merge conflict zones
+
+- LOW: `blockers()` and the `standing` refusal in `session-unload.ts`.
+
+## 2026-11-14 - Session archived flag; archived, activity and model on list_sessions rows (senpi#6677)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `rpc-session-command-types.ts`, `rpc-mutation-response-types.ts`, `method-classes.ts`, `method-classes-schema-session.ts`, `rpc-client.ts`, `rpc-client-events.ts`, `rpc-session-event-types.ts`, `rpc-types.ts`: the session-scoped `set_session_archived { archived }` command (class `drive`), which writes the `session_archived` custom entry and emits `session_archived_changed`.
+- `session-registry-types.ts`, `session-registry.ts`, `worker-session-registry.ts`, `session-worker-protocol.ts`, `session-worker-snapshot.ts`, `session-worker.ts`: every `list_sessions` row carries `archived`, `activity` (`running` | `idle`) and `model` when known; worker snapshots carry `archived`.
+- `session-status.ts`, `session-status-source.ts`: the `archive` cause and `archived` on the status row.
+- Review L1: `test/suite/rpc-session-archived-worker.test.ts` proves a worker-isolate session (`createHostCore` with `workerConfiguration`) publishes the `archive` cause and lists `archived: true`.
+
+### Why
+
+- Thread lists on every device need each session's archived flag, whether a turn runs, and its model, without a get_state per session (cross-device thread-list audit; the approved thread state model).
+
+### Why an extension could not handle it
+
+- `list_sessions` rows, RPC commands and the status stream belong to the RPC host.
+
+### Expected merge conflict zones
+
+- LOW: fork-only RPC files; `session-status.ts` next to #6672's `rename` cause.
+
+## 2026-11-12 - A move's `sealed_by.target` is left out when the sealing release named no device (senpi#6539's review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-landed.ts`: `wireLanded` leaves `target` out of `sealed_by` when the ownership rule reads no device (an empty string in the session file, or no field). It is the one producer of the field, for `status` and for a `move_fenced` refusal's `errorData`.
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`: `RpcMoveSealedBy.target` is optional; absent means the release named no device.
+- `packages/coding-agent/docs/rpc.md`: the same, where `sealed_by` is described.
+
+### Why
+
+- `release_session` takes `target` as optional. `sealed_by.target` goes on the wire for the first time with senpi#6539, and for a release that named no device it would have been an empty string inside a field that otherwise holds a device's name. The session file is unchanged: a release still writes the empty string there.
+
+### Why an extension could not handle it
+
+- It is the host's own answer and wire type.
+
+### Expected merge conflict zones
+
+- LOW: `wireLanded` in `session-move-landed.ts`; the `RpcMoveSealedBy` interface in `session-move-wire.ts`.
+
+## 2026-11-12 - move_session status says whether the landed copy can still be written (senpi#6473)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`: `RpcMoveLanded` gains `writable` and, beside `writable: false`, `sealed_by` (`RpcMoveSealedBy`: `move_id`, `state`, `target`); the capability `move_session_status_writable`.
+- `packages/coding-agent/src/modes/rpc/session-move-landed.ts`: `wireLanded` writes the two fields from the landed file's ownership, so `status` and the `move_fenced` refusal's `errorData` both carry them.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the capability is advertised.
+- `packages/coding-agent/docs/rpc.md`: the `status` row and a paragraph on `writable` and `sealed_by`.
+
+### Why
+
+- Where a move landed is read from that move's own entries. After a later move released the session from the host, the path was still answered for a copy that is read-only there, and a client that bound it was refused `session_moved_away`.
+
+### Why an extension could not handle it
+
+- The answer is the host's own `move_session` reply.
+
+### Expected merge conflict zones
+
+- LOW: `RpcMoveLanded` in `session-move-wire.ts`, `wireLanded` in `session-move-landed.ts`, the capability list in `host-capabilities.ts`.
+
+## 2026-11-12 - A fenced refusal is never replaced by a failed read of where the move landed (review of senpi#6451)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-landed.ts`: `landedWhenFenced` answers nothing when the record or the landed file cannot be read, so the refusal it was adding to still goes out as `move_fenced`.
+- `packages/coding-agent/docs/rpc.md`, `packages/coding-agent/src/modes/rpc/session-move-wire.ts`: the landed fields are described for every `move_fenced` refusal of an accepted move (a refused `import` and a refused `prepare`), as the code adds them.
+- Correction to the entry for senpi#6451: `MoveFencedError` and the move id it keeps are in `packages/coding-agent/src/core/session-move/move-record.ts`, not in `move-ledger.ts` as that entry says in two places; senpi#6451 left `move-ledger.ts` unchanged.
+
+### Why
+
+- A read that only adds detail to a refusal ran in the error handler and could throw, and the caller then lost the `move_fenced` code.
+
+### Why an extension could not handle it
+
+- It is the engine's own `move_session` handler.
+
+### Expected merge conflict zones
+
+- LOW: `landedWhenFenced` in `session-move-landed.ts`.
+
+## 2026-11-12 - The import's sessionDir check refuses a folder the host cannot use, and a move release refuses state a bundle cannot carry (senpi#6267, senpi#6469)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-import.ts`: `sessionDirRefusal` treats only ENOENT as "not there yet"; a file in its place, any other failure to look at it, and a folder the host may not write into refuse the request.
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: a `move` release asks `assertMoveFits` after its extensions staged their state and before the seal; state or a resident blob deeper than the cap answers `release_failed` and the session stays live.
+- `packages/coding-agent/src/modes/rpc/open-retention.test.ts` (new): the retention rule for the open an import asks for.
+
+### Why
+
+- A `sessionDir` behind a permission error or a symlink loop was treated as absent, and a folder that could be read but not written passed: the import began receiving and then failed, settling the move `failed`.
+- The release is what seals a session for a move; refusing only at the export would leave a session sealed that no receiver takes.
+
+### Why an extension could not handle it
+
+- It is the host's own request check.
+
+### Expected merge conflict zones
+
+- LOW: `sessionDirRefusal`; the `move` branch of `releaseSession` before `claimAndRelease`.
+
+## 2026-11-06 - Holder probes read in UTC (senpi#3067 L1)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: the comment on the holder comparison now says the probe reads in UTC (senpi#3067 L1); the probe itself changed in `packages/coding-agent/src/utils/process-identity.ts`, where `readProcessStartTime` defaults to UTC. Legacy local-format records still parse as local time: the comparison is on the parsed instant, never the raw text.
+
+### Why
+
+- The old comment said the probe reads the local form, which was the L1 bug: a UTC-tagged `host-child.pid` record compared against a local-form probe misreads by one hour in a DST fall-back hour.
+
+### Why an extension could not handle it
+
+- The session-path holder lookup runs in core RPC plumbing before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the holder comparison comment in `host-reservations.ts`.
+
 ## 2026-11-16 - The engine runs the local relay host's device operations (`machine_op`) (senpi#6752)
 
 ### What changed

@@ -12,6 +12,40 @@
 
 ### Removed
 
+## [2026.11.17-2] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.17] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+- Durable wake link between a hand and the brain that owns its scopes (`createHandWakeLink`, `serveHandWakes`, `HAND_WAKE_LANE`): commit before send, receipt after the inbox commit, re-offer on start and on request, bounded un-acked wakes with durable drop reports (`overflow`, `expired`, `refused`, `malformed`; best-effort `unrecorded`), and a brain-side session check ([#6767](https://github.com/code-yeongyu/senpi/pull/6767))
+- The brain side of a hand's wakes: `parseHandWake`, `deliverHandWake` (with the local notifiers' turn guards), `deliverHandDrop`, `scopeSessionCheck` ([#6767](https://github.com/code-yeongyu/senpi/pull/6767))
+
+### Changed
+
+- `createWakeInbox({ onUndeliverable, maxAttempts })`: one wake the loop cannot take is reported and poisoned after its attempts instead of holding every wake behind it ([#6767](https://github.com/code-yeongyu/senpi/pull/6767))
+
+### Fixed
+
+- A remote tool call still pending when the hand link closes ends as `hand_restarted` (its invoke went out, outcome uncertain) or `cancelled` (never sent), not an untyped error ([#6778](https://github.com/code-yeongyu/senpi/pull/6778))
+- A device file operation sent before the hand link closed fails `interrupted` with its outcome uncertain instead of `hand_unreachable`; under split-local placement a closed tool call returns the non-error placeholder ([#6783](https://github.com/code-yeongyu/senpi/pull/6783))
+- A remote tool call made after its hand link was closed settles at once as `cancelled` (never sent) instead of being sent on the closed link ([#6791](https://github.com/code-yeongyu/senpi/pull/6791))
+- A closed hand link no longer acks late replies or re-sends floors when frames still arrive ([#6796](https://github.com/code-yeongyu/senpi/pull/6796))
+
+### Removed
+
 ## [2026.11.15-4] - 2026-11-15
 
 ### Breaking Changes
