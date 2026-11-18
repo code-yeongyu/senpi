@@ -235,7 +235,7 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	get_loaded_surfaces: session("get_loaded_surfaces", {}),
 	get_project_trust: session("get_project_trust", {}),
 	set_project_trust: session("set_project_trust", {
-		choice: literals("trust", "trust_parent", "do_not_trust", "no_inherit"),
+		choice: literals("trust", "trust_parent", "do_not_trust"),
 		expectedCwd: OptStr,
 	}),
 	get_project_settings: session("get_project_settings", {}),

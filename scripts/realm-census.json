@@ -450,10 +450,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/agent/src/execution/wake-delivery.ts#ONE_SHOT_MODES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
 		"packages/agent/src/execution/wake-inbox.ts#EMPTY": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -473,6 +469,10 @@
 		"packages/agent/src/execution/wake-link.ts#encoder": {
 			"class": "constant",
 			"reason": "stateless helper instance; holds no mutable state"
+		},
+		"packages/agent/src/execution/wake-delivery.ts#ONE_SHOT_MODES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/agent/src/execution/wake-outbox-record.ts#REFUSALS": {
 			"class": "constant",
