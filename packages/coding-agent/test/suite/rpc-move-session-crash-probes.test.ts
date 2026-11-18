@@ -11,7 +11,7 @@ import { importMovedSession } from "../../src/core/session-move/import.ts";
 import { MoveLedger } from "../../src/core/session-move/move-ledger.ts";
 import { sessionOwnership } from "../../src/core/session-move/ownership.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { devices, exportedForB, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
+import { devices, exportedForB, importedOnB, landedOnB, move, revokedLandingOnB } from "./rpc-move-session-support.ts";
 
 const ledgerFile = (agentDir: string, moveId: string) => join(agentDir, "session-moves", "ledger", `${moveId}.json`);
 const writable = (file: string) => existsSync(file) && sessionOwnership(loadEntriesFromFile(file)).writable;
@@ -51,14 +51,14 @@ describe("move_session crash probes from the #4004 review", () => {
 			override commit<T>(
 				moveId: Parameters<MoveLedger["commit"]>[0],
 				target: string,
-				rename: () => T | Promise<T>,
+				rename: (stampStands: () => Promise<void>) => T | Promise<T>,
 				prepare?: () => void,
 			) {
 				return super.commit(
 					moveId,
 					target,
-					async () => {
-						await rename();
+					async (stampStands) => {
+						await rename(stampStands);
 						throw new Error("disk error after the rename");
 					},
 					prepare,
@@ -100,7 +100,7 @@ describe("move_session crash probes from the #4004 review", () => {
 		expect((await move(b, { op: "status", moveId: "move-c3" })).data).toEqual({
 			state: "accepted",
 			revoked: true,
-			...landedOnB(fixture, onB),
+			...revokedLandingOnB(fixture, onB, "move-c3"),
 		});
 	});
 });

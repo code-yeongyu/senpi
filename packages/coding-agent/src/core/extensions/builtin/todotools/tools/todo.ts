@@ -293,6 +293,7 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 	const tool: ToolDefinition<typeof TODO_PARAMS_SCHEMA, TodoToolDetails, unknown> = {
 		name: "todo",
 		runs: "brain",
+		sessionBound: true,
 		workspaceEffect: "read",
 		label: "Todo",
 		description: TODO_TOOL_DESCRIPTION,

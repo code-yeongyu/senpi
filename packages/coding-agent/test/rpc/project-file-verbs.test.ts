@@ -4,103 +4,19 @@
  * machine it has no filesystem access to. Records go through the multi-session host's own dispatch on
  * the in-process registry with a faux provider; the project carries a project skill, so trust gates it.
  */
-import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	realpathSync,
-	rmSync,
-	statSync,
-	symlinkSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fauxProvider } from "@earendil-works/pi-ai/compat";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseArgs } from "../../src/cli/args.ts";
-import { CONFIG_DIR_NAME } from "../../src/config.ts";
-import { createCliRuntimeFactory } from "../../src/main.ts";
+import { afterEach, describe, expect, it } from "vitest";
 import { classifyRpcMethod } from "../../src/modes/rpc/method-classes.ts";
-import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
-import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
+import { disposeFolderHosts, startFolderHost } from "./project-folder-verbs-host.ts";
+import { startHost } from "./projectHost.ts";
 
-type WireRecord = Record<string, unknown>;
 interface FileData {
 	path: string;
 	exists: boolean;
 	content: string | null;
 	etag: string | null;
 	projectTrusted: boolean;
-}
-
-const LEAN_ARGS = ["--mode", "rpc", "--multi-session", "--no-extensions", "--no-context-files"];
-
-const hosts: Array<() => Promise<void>> = [];
-afterEach(async () => {
-	for (const dispose of hosts.splice(0)) await dispose();
-	vi.unstubAllEnvs();
-});
-
-async function startHost() {
-	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "senpi-pfv-")));
-	const cwd = join(scratch, "project");
-	const outside = join(scratch, "outside");
-	const agentDir = join(scratch, "agent");
-	mkdirSync(join(cwd, CONFIG_DIR_NAME, "skills", "pfv-skill"), { recursive: true });
-	mkdirSync(outside);
-	mkdirSync(agentDir);
-	writeFileSync(
-		join(cwd, CONFIG_DIR_NAME, "skills", "pfv-skill", "SKILL.md"),
-		"---\nname: pfv-skill\ndescription: Project file verb probe.\n---\nProbe.\n",
-	);
-	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
-	for (const name of ["SENPI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) vi.stubEnv(name, agentDir);
-	for (const name of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"])
-		vi.stubEnv(name, undefined);
-	const faux = fauxProvider({ models: [{ id: "faux-1", reasoning: false, contextWindow: 128_000 }] });
-	const writer = new SessionEventWriter(() => {});
-	const answers = new Map<string, (record: WireRecord) => void>();
-	writer.registerConnection("client", {
-		writeRaw: (line) => {
-			const record = JSON.parse(line) as WireRecord;
-			if (record.type === "response" && typeof record.id === "string") answers.get(record.id)?.(record);
-		},
-		waitForBackpressure: async () => {},
-	});
-	const core = createHostCore(
-		{
-			agentDir,
-			cwd,
-			createRuntime: createCliRuntimeFactory(
-				{ parsed: parseArgs(LEAN_ARGS), cwd, agentDir, appMode: "rpc" },
-				{ extensionFactories: [(pi) => pi.registerProvider(faux.provider)] },
-			),
-		},
-		writer,
-		[],
-	);
-	let serial = 0;
-	const send = async (command: WireRecord): Promise<WireRecord> => {
-		const id = `pfv-${++serial}`;
-		const answer = Promise.withResolvers<WireRecord>();
-		answers.set(id, answer.resolve);
-		await writer.withConnection("client", () => core.handle(JSON.stringify({ ...command, id })));
-		return answer.promise;
-	};
-	hosts.push(async () => {
-		await core.router.dispose();
-		writer.unregisterConnection("client");
-		rmSync(scratch, { recursive: true, force: true });
-	});
-	const sessionId = ((await send({ type: "open_session" })).data as { sessionId: string }).sessionId;
-	const read = (path: unknown) => send({ type: "read_project_file", sessionId, path });
-	const write = (path: unknown, content: unknown, ifEtag: unknown) =>
-		send({ type: "write_project_file", sessionId, path, content, ifEtag });
-	const trust = () => send({ type: "set_project_trust", sessionId, choice: "trust" });
-	return { cwd, outside, sessionId, send, read, write, trust };
 }
 
 describe("project file verbs: classes and wire shape", () => {
@@ -124,6 +40,15 @@ describe("read_project_file", () => {
 		const answer = await host.read("AGENTS.md");
 		expect(answer).toMatchObject({ success: true, command: "read_project_file" });
 		expect(answer.data).toMatchObject({ path: "AGENTS.md", exists: false, content: null, etag: null });
+	});
+
+	// omo-desktop-app#7459: a remote desktop edits a folder's model routing in its .omo/omo.jsonc.
+	it("reads the folder's .omo/omo.jsonc while the project is untrusted", async () => {
+		const host = await startHost();
+		mkdirSync(join(host.cwd, ".omo"), { recursive: true });
+		writeFileSync(join(host.cwd, ".omo", "omo.jsonc"), '{ "agents": {} }\n');
+		const data = (await host.read(".omo/omo.jsonc")).data as FileData;
+		expect(data).toMatchObject({ path: ".omo/omo.jsonc", exists: true, content: '{ "agents": {} }\n' });
 	});
 
 	it("reads an existing file while the project is untrusted, with an etag", async () => {
@@ -191,7 +116,7 @@ describe("write_project_file", () => {
 	it("creates a nested AGENTS.md and a rule file under .omo/rules, making the folders", async () => {
 		const host = await startHost();
 		await host.trust();
-		for (const path of ["packages/app/AGENTS.md", ".omo/rules/style/naming.md"]) {
+		for (const path of ["packages/app/AGENTS.md", ".omo/rules/style/naming.md", ".omo/omo.jsonc"]) {
 			expect(await host.write(path, `# ${path}\n`, null)).toMatchObject({ success: true });
 			expect(readFileSync(join(host.cwd, path), "utf8")).toBe(`# ${path}\n`);
 		}
@@ -203,6 +128,24 @@ describe("write_project_file", () => {
 		const answer = await host.write("AGENTS.md", "x".repeat(512 * 1024 + 1), null);
 		expect(answer).toMatchObject({ success: false, errorCode: "project_file_too_large" });
 		expect(existsSync(join(host.cwd, "AGENTS.md"))).toBe(false);
+	});
+});
+
+describe("project file verbs: the machine's own edit permission", () => {
+	afterEach(disposeFolderHosts);
+
+	// omo-desktop-app#7459: .omo/omo.jsonc decides which models run, so its writes pass the same per-write gate as the
+	// folder MCP and skill-file writes (senpi#6485).
+	it.each(["AGENTS.md", ".omo/omo.jsonc"])("refuses a write to %s that the permission rules deny", async (path) => {
+		const host = await startFolderHost({
+			settings: { permission: { edit: { "**/AGENTS.md": "deny", "**/omo.jsonc": "deny" } } },
+		});
+		await host.trust();
+		expect(await host.call("write_project_file", { path, content: "x", ifEtag: null })).toMatchObject({
+			success: false,
+			errorCode: "project_file_permission_denied",
+		});
+		expect(existsSync(join(host.cwd, path))).toBe(false);
 	});
 });
 
@@ -239,6 +182,9 @@ describe("project file verbs: only allowlisted paths inside the workspace", () =
 		"src/index.ts",
 		"README.md",
 		".omo/mcp.json",
+		".omo/omo.json",
+		"packages/app/.omo/omo.jsonc",
+		".omo/omo.jsonc/x",
 		".omo/rules",
 		".git/AGENTS.md",
 		"node_modules/x/AGENTS.md",
@@ -251,7 +197,11 @@ describe("project file verbs: only allowlisted paths inside the workspace", () =
 	it.each(refused)("refuses %j for read and write", async (path) => {
 		const host = await startHost();
 		await host.trust();
-		expect(await host.read(path)).toMatchObject({ success: false, errorCode: "project_file_not_allowed" });
+		expect(await host.read(path)).toMatchObject({
+			success: false,
+			errorCode: "project_file_not_allowed",
+			errorData: { path, reason: "not_listed" },
+		});
 		expect(await host.write(path, "x", null)).toMatchObject({
 			success: false,
 			errorCode: "project_file_not_allowed",
@@ -270,7 +220,11 @@ describe("project file verbs: only allowlisted paths inside the workspace", () =
 		symlinkSync(join(host.outside, "AGENTS.md"), join(host.cwd, "AGENTS.md"));
 		symlinkSync(host.outside, join(host.cwd, "linked"));
 		for (const path of ["AGENTS.md", "linked/AGENTS.md"]) {
-			expect(await host.read(path)).toMatchObject({ success: false, errorCode: "project_file_not_allowed" });
+			expect(await host.read(path)).toMatchObject({
+				success: false,
+				errorCode: "project_file_not_allowed",
+				errorData: { path, reason: "unsafe" },
+			});
 			expect(await host.write(path, "pwned\n", null)).toMatchObject({
 				success: false,
 				errorCode: "project_file_not_allowed",

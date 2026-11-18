@@ -17,6 +17,9 @@ const DEFINES_REMEMBER = /function (rememberResolvedReferenceValue\d*)\(/;
 const DEFINES_REDACT = /function (redactResolvedReferenceValues\d*)\(/;
 const LAZY_INIT =
 	/(init_config_reference_redaction\d*)=__esm\(\{"packages\/coding-agent\/dist\/core\/config-reference-redaction\.js"\(\)\{/;
+// The module pins its slot through the realm-registry helper, which a self-contained entry carries as a lazy module
+// of its own; the redaction module's initialiser calls into it.
+const HELPER_INIT = /(init_[\w$]+)=__esm\(\{"packages\/realm-registry\/dist\/index\.js"\(\)\{/;
 const ESM_SHIM =
 	"var __esm=(fn,res)=>function(){return fn&&(res=(0,fn[Object.getOwnPropertyNames(fn)[0]])(fn=0)),res};";
 
@@ -53,7 +56,7 @@ function matchingBrace(text: string, from: number, step: 1 | -1): number {
 }
 
 /** The lazily initialised module region of a self-contained entry: its hoisted functions plus its `var ... __esm` line. */
-function lazyModuleUrl(copy: EmittedCopy, init: RegExpExecArray): LoadableCopy {
+function lazyRegion(copy: EmittedCopy, init: RegExpExecArray): string {
 	const { text } = copy;
 	const bodyClose = matchingBrace(text, init.index + init[0].length - 1, 1);
 	const end = bodyClose + 1 + "})".length;
@@ -66,11 +69,17 @@ function lazyModuleUrl(copy: EmittedCopy, init: RegExpExecArray): LoadableCopy {
 		if (signature === null) break;
 		start = open - signature[0].length;
 	}
-	const region = text.slice(start, end);
+	return text.slice(start, end);
+}
+
+function lazyModuleUrl(copy: EmittedCopy, init: RegExpExecArray): LoadableCopy {
+	const helperInit = HELPER_INIT.exec(copy.text);
+	const helper = helperInit === null ? "" : lazyRegion(copy, helperInit);
+	const region = lazyRegion(copy, init);
 	const remember = DEFINES_REMEMBER.exec(region)?.[1];
 	const redact = DEFINES_REDACT.exec(region)?.[1];
 	if (remember === undefined || redact === undefined) throw new Error(`incomplete module region in ${copy.name}`);
-	const source = `${ESM_SHIM}\n${region}\n${init[1]}();\nexport { ${remember} as remember, ${redact} as redact };\n`;
+	const source = `${ESM_SHIM}\n${helper}\n${region}\n${init[1]}();\nexport { ${remember} as remember, ${redact} as redact };\n`;
 	return {
 		name: copy.name,
 		url: `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`,

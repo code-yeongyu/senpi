@@ -2,6 +2,7 @@ import { TuiAltScreen } from "@earendil-works/pi-tui";
 import { getAgentDir } from "../../config.ts";
 import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { AttachedTui, validateAttachTerminal } from "./attach.ts";
+import type { AttachStartup } from "./attach-startup.ts";
 import { initTheme, stopThemeWatcher } from "./theme/theme.ts";
 import { createInteractiveTui } from "./tui-renderer.ts";
 
@@ -11,6 +12,7 @@ export async function runAttachedTui(options: {
 	readonly session: string;
 	readonly tuiMode?: "regular" | "fullscreen";
 	readonly theme?: string;
+	readonly startup?: AttachStartup;
 }): Promise<void> {
 	validateAttachTerminal(process.stdin.isTTY, process.stdout.isTTY);
 	initTheme(options.theme);
@@ -74,7 +76,7 @@ export async function runAttachedTui(options: {
 	ui.start();
 	try {
 		const outcome = await Promise.race([
-			view.connect(options.address, options.session).then(() => "connected" as const),
+			view.connect(options.address, options.session, options.startup).then(() => "connected" as const),
 			interrupted,
 		]);
 		if (outcome === "connected") await done;

@@ -13,9 +13,13 @@ import type { SessionControlAdmission } from "../../core/extensions/types.ts";
 import type { PermissionModeReply } from "../../core/permission-mode.ts";
 
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
+import type { InterruptOutcome } from "./session-control-actions-data.ts";
 
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { RpcProjectFile } from "./project-file-commands.ts";
+import type { RpcProjectMcpServers } from "./project-mcp-commands.ts";
+import type { RpcProjectSkillFile } from "./project-skill-commands.ts";
+import type { RpcUserSkillFile } from "./user-skill-commands.ts";
 import type { RpcProjectSettings, RpcProjectTrust } from "./project-workspace-commands.ts";
 import type { RpcAbortQuiesce, RpcEffectAnswer, RpcQueuedInputChange } from "./rpc-effect-answer-types.ts";
 import type { EditAssistantMessageResult, EditUserMessageResult, NavigateTreeResult } from "./rpc-result-types.ts";
@@ -98,7 +102,7 @@ export type RpcMutationResponse =
 			type: "response";
 			command: "interrupt";
 			success: true;
-			data: { interrupted: boolean; turnId?: string };
+			data: InterruptOutcome;
 	  }
 	| { id?: string; type: "response"; command: "abort_compaction"; success: true }
 	| { id?: string; type: "response"; command: "reload"; success: true; data: { cancelled: boolean; reason?: string } }
@@ -158,6 +162,9 @@ export type RpcMutationResponse =
 	| { id?: string; type: "response"; command: "set_project_trust"; success: true; data: RpcProjectTrust }
 	| { id?: string; type: "response"; command: "set_project_setting"; success: true; data: RpcProjectSettings }
 	| { id?: string; type: "response"; command: "write_project_file"; success: true; data: RpcProjectFile }
+	| { id?: string; type: "response"; command: "set_project_mcp_servers"; success: true; data: RpcProjectMcpServers }
+	| { id?: string; type: "response"; command: "write_project_skill_file"; success: true; data: RpcProjectSkillFile }
+	| { id?: string; type: "response"; command: "write_user_skill_file"; success: true; data: RpcUserSkillFile }
 	| { id?: string; type: "response"; command: "set_follow_up_mode"; success: true }
 	| { id?: string; type: "response"; command: "compact"; success: true; data: CompactionResult }
 	| { id?: string; type: "response"; command: "set_auto_compaction"; success: true }
@@ -213,6 +220,8 @@ export type RpcMutationResponse =
 	  }
 	| { id?: string; type: "response"; command: "clone"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "set_session_name"; success: true }
+	| { id?: string; type: "response"; command: "set_session_archived"; success: true }
+	| { id?: string; type: "response"; command: "set_session_settled"; success: true }
 	| { id?: string; type: "response"; command: "record_user_activity"; success: true }
 	| { id?: string; type: "response"; command: "import_jsonl"; success: true; data: { cancelled: boolean } }
 	| {

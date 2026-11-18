@@ -45,11 +45,11 @@ function assistantReply(): AssistantMessage {
 	};
 }
 
-function runtime(
+async function runtime(
 	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
 	controls?: { waitForIdle?: () => Promise<void> },
 ) {
-	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+	await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	const flagValues = new Map<string, boolean | string>();
 	return {
 		session: {
@@ -171,7 +171,7 @@ describe("RPC session registry", () => {
 		const registry = new RpcSessionRegistry({
 			agentDir: dir,
 			createRuntime: async (options) => {
-				const result = runtime(options, { waitForIdle: () => idle });
+				const result = await runtime(options, { waitForIdle: () => idle });
 				const dispose = result.session.dispose;
 				result.session.dispose = () => {
 					disposed = true;
@@ -200,7 +200,7 @@ describe("RPC session registry", () => {
 			agentDir: dir,
 			closeGraceMs: 50,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.abort = () => new Promise<void>(() => {});
 				result.session.dispose = () => {
 					disposed = true;
@@ -235,7 +235,7 @@ describe("RPC session registry", () => {
 			agentDir: dir,
 			closeGraceMs: 50,
 			createRuntime: async (options) => {
-				const result = runtime(options, { waitForIdle });
+				const result = await runtime(options, { waitForIdle });
 				result.session.abort = () => new Promise<void>(() => {});
 				result.session.dispose = dispose;
 				return result;
@@ -258,7 +258,7 @@ describe("RPC session registry", () => {
 			agentDir: dir,
 			closeGraceMs: 50,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.dispose = () => {
 					disposeCount += 1;
 				};
@@ -282,7 +282,7 @@ describe("RPC session registry", () => {
 			agentDir: dir,
 			closeGraceMs: 500,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.abort = () => abortFinished;
 				result.session.dispose = () => {
 					disposeCount += 1;
@@ -350,7 +350,7 @@ describe("RPC session registry", () => {
 		const registry = new RpcSessionRegistry({
 			agentDir: dir,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.dispose = () => {
 					disposed = true;
 				};
@@ -414,7 +414,7 @@ describe("RPC session registry", () => {
 		const registry = new RpcSessionRegistry({
 			agentDir: dir,
 			createRuntime: async (options) => {
-				openedRuntime = runtime(options);
+				openedRuntime = await runtime(options);
 				return openedRuntime;
 			},
 		});
@@ -472,7 +472,7 @@ describe("RPC session registry", () => {
 		const registry = new RpcSessionRegistry({
 			agentDir: dir,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.dispose = () => {
 					disposed = true;
 				};
@@ -500,7 +500,7 @@ describe("RPC session registry", () => {
 		const registry = new RpcSessionRegistry({
 			agentDir: dir,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.dispose = () => {
 					disposed += 1;
 				};
@@ -557,13 +557,13 @@ describe("RPC session registry", () => {
 		const manager = SessionManager.create(dir, dir);
 		const captured: Array<RpcSessionLaunchProfile | undefined> = [];
 		// The one fake session shape of this file, so it cannot drift from what the runtime reads.
-		const fakeSession = (sessionManager: SessionManager) =>
-			runtime({ cwd: dir, agentDir: dir, sessionManager } as Parameters<CreateAgentSessionRuntimeFactory>[0])
+		const fakeSession = async (sessionManager: SessionManager) =>
+			(await runtime({ cwd: dir, agentDir: dir, sessionManager } as Parameters<CreateAgentSessionRuntimeFactory>[0]))
 				.session as never;
 		const factory: CreateAgentSessionRuntimeFactory = async (options) => {
 			captured.push(options.launchProfile as RpcSessionLaunchProfile | undefined);
 			return {
-				session: fakeSession(options.sessionManager),
+				session: await fakeSession(options.sessionManager),
 				services: { cwd: options.cwd, agentDir: dir },
 				diagnostics: [],
 			} as unknown as CreateAgentSessionRuntimeResult;

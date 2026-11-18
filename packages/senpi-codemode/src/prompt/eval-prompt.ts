@@ -40,6 +40,8 @@ export interface EvalPromptOptions {
 	readonly maxDetachedCells?: number;
 	/** Active tools' kernel globals; each documentation line joins the prelude helper list. */
 	readonly kernelPreludes?: readonly KernelPreludeContribution[];
+	/** Tools withheld from the model's direct list and reachable only as `tool.<name>(...)` in a cell (senpi#6886). */
+	readonly evalOnlyTools?: readonly string[];
 }
 
 /** Prompt dialect for the eval-first batching emphasis. */
@@ -113,6 +115,7 @@ export function buildEvalPrompt(
 		runBudgetSeconds: String(options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS),
 		maxDetachedCells: String(options.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS),
 		kernelPreludeDocs: (options.kernelPreludes ?? []).map((prelude) => prelude.documentation).join("\n"),
+		evalOnlyTools: (options.evalOnlyTools ?? []).join(", "),
 	};
 	const rendered = renderTemplate(EVAL_PROMPT_TEMPLATE, context)
 		.replace(/\n{3,}/g, "\n\n")

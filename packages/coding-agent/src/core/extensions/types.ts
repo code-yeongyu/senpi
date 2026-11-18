@@ -9,6 +9,7 @@
  */
 
 import type { PromptSizeReport } from "../prompt-size-report.ts";
+import type { ToolMachine } from "../tools/machine.ts";
 import type { InputOrigin } from "../input-origin.ts";
 import type { LifecycleApi } from "../session-lifecycle-types.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
@@ -71,6 +72,10 @@ import type {
 	TUI,
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
+// A type-only namespace import, on purpose. The same type written inline as a `typeof` of an import expression reads as
+// a dynamic import to the tool child's import-graph audit (test/suite/no-session-write-in-tool-child.test.ts), which
+// then puts the engine barrel, and every session writer behind it, in the child's graph.
+import type * as EngineNamespace from "../../index.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { BrowserEngine } from "../browser-engine.ts";
@@ -130,6 +135,7 @@ import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
 import type { SessionDialogApi } from "./session-dialog-api.ts";
 import type { UserActivityKind } from "./user-activity.ts";
+import type { RunBackgroundJob } from "../run-background-jobs.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
@@ -146,7 +152,11 @@ export type CompactionRejectionCause =
 	| "would-overflow"
 	| "circuit-breaker"
 	| "per-turn-cap"
-	| "stale-revision";
+	| "stale-revision"
+	// The summary request failed on a transient provider error after its bounded retries;
+	// it says nothing about the context, so the session does not latch admission on it and a
+	// later attempt can retry compaction.
+	| "transient-failure";
 
 // ============================================================================
 // UI Context
@@ -603,6 +613,11 @@ export interface ExtensionContext {
 	fenceRun?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
 	/** Drop this run's fence once the run is journaled cancelled; a run with no fence is a no-op (senpi#3811). */
 	releaseRunFence?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
+	/**
+	 * Record a background job the running turn started, so `interrupt { background: "stop" }` on that turn stops it.
+	 * Outside a turn nothing is recorded. The returned release drops the job once it ended on its own.
+	 */
+	registerRunBackgroundJob?(job: RunBackgroundJob): () => void;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -779,6 +794,7 @@ export type ExtensionRuntimeContext = Pick<
 	| "getImageSettings"
 	| "getRegisteredMcpServers"
 	| "extensionConnectsMcpServers"
+	| "signal"
 >;
 
 /** Provider request prefix of the next user turn (see `ExtensionContext.getPromptCachePrefixRequest`). */
@@ -1232,6 +1248,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * its meaning.
 	 */
 	runs?: ExtensionSide;
+	/**
+	 * The tool acts on the session that calls it (its entries, goal, tool search, wakeups or placement). A hand still
+	 * advertises it to a loop that runs elsewhere, marked with this flag in its `describe_tools` declaration
+	 * (senpi#6749), so that loop calls it with its session's state. Recorded only; nothing else reads it.
+	 */
+	sessionBound?: boolean;
 	/**
 	 * The file-backed body a `"child"`-placed tool runs on the session's tool child (senpi#3566). `path` is absolute or
 	 * relative to the registering extension file and must stay inside that extension's directory; `export` names a
@@ -2648,6 +2670,12 @@ export interface ExtensionAPI {
 	 * of a shared host and still gate itself per session.
 	 */
 	readonly sessionContext: SessionContext;
+	/**
+	 * The engine this extension is running in: the namespace the loader serves for `@code-yeongyu/senpi`. An extension
+	 * that needs the running engine's exports reads them here instead of importing that specifier, because on some
+	 * runtimes its own import evaluates a second copy of the engine (omo#12965). Read-only; it adds no authority.
+	 */
+	readonly engine: typeof EngineNamespace;
 
 	// =========================================================================
 	// Event Subscription
@@ -2981,6 +3009,14 @@ export interface ExtensionAPI {
 		},
 	): void;
 
+	/**
+	 * Register the operation layer of the device this session's tools run on. Read when a routed tool executes; only
+	 * tools named in OMO_TOOLS_VIA_DAEMON use it (today: bash). One registration per session: a second one, from any
+	 * extension, throws DeviceMachineConflictError naming the extension that registered first, so two extensions
+	 * cannot silently fight over where commands run.
+	 */
+	registerDeviceMachine(machine: ToolMachine): void;
+
 	/** Register a CLI flag. */
 	registerFlag(
 		name: string,
@@ -3089,6 +3125,13 @@ export interface ExtensionAPI {
 		content: string | (TextContent | ImageContent)[],
 		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): void;
+
+	/**
+	 * True on a hand whose agent loop runs on another machine (brain/hand split): `sendMessage` and `sendUserMessage`
+	 * from background work reach that loop as durable wakes, and the loop applies its own delivery guards (its mode, its
+	 * model). A notifier that waits for `session_start` before it notifies notifies here without one.
+	 */
+	isLoopRemote(): boolean;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T, options?: AppendEntryOptions): void;
@@ -3502,6 +3545,8 @@ export type InlineExtension =
 			factory: ExtensionFactory;
 			/** Omit this extension from the startup Extensions list. */
 			hidden?: boolean;
+			/** Host-supplied default, controlled by enabledBuiltinExtensions/disabledBuiltinExtensions by name. */
+			host?: boolean;
 			/**
 			 * Leave this extension out when another extension registers a tool, command, or flag with a
 			 * name it registers during loading, instead of reporting a conflict. The CLI's built-in MCP,
@@ -3610,6 +3655,11 @@ export type GetSessionNameHandler = () => string | undefined;
 export type ExecuteToolUpdateCallback<T = unknown> = AgentToolUpdateCallback<T>;
 
 export interface ExecuteToolOptions<TDetails = unknown> {
+	/**
+	 * The call's own abort signal: the call's RUN follows it alone, so a detached caller's work survives a
+	 * later turn's abort (senpi#6679 review M2). The call's PERMISSION PROMPT runs under its union with the
+	 * turn's signal: aborting the turn also ends an unanswered prompt even when this signal is unlinked (senpi#6679).
+	 */
 	signal?: AbortSignal;
 	onUpdate?: ExecuteToolUpdateCallback<TDetails>;
 	/**
@@ -3654,7 +3704,15 @@ export type GetActiveToolsHandler = () => string[];
 /** Tool info with normalized exposure metadata and source metadata. */
 export type ToolInfo = Pick<
 	ToolDefinition,
-	"name" | "label" | "description" | "parameters" | "promptGuidelines" | "kernelPrelude" | "permissionParser"
+	| "name"
+	| "label"
+	| "description"
+	| "parameters"
+	| "promptGuidelines"
+	| "kernelPrelude"
+	| "permissionParser"
+	| "renderCall"
+	| "renderResult"
 > & {
 	namespace?: ToolNamespace;
 	annotations?: ToolAnnotations;
@@ -3664,6 +3722,11 @@ export type ToolInfo = Pick<
 	searchKeywords: readonly string[];
 	searchGroup?: string;
 	allowLazyActivation: boolean;
+	/**
+	 * True while the session routes the tool through `eval` only (senpi#6886): it is withheld from the model's direct
+	 * tool list and reached as `tool.<name>(...)` inside a cell. Absent when nothing withholds it.
+	 */
+	evalOnly?: true;
 };
 
 export type GetAllToolsHandler = () => ToolInfo[];
@@ -3720,6 +3783,10 @@ export type PendingProviderRegistration =
  */
 export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
+	/** Backs `pi.isLoopRemote()`; a hand's runner with a wake route sets it (H3). */
+	isLoopRemote: () => boolean;
+	/** The device the session's tools run on, and the extension that registered it (registerDeviceMachine). */
+	deviceMachine: { readonly machine: ToolMachine; readonly extensionPath: string } | undefined;
 	/** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
 	pendingProviderRegistrations: PendingProviderConfigRegistration[];
 	/** Native pi-ai provider registrations queued during extension loading, processed when runner binds. */
@@ -3815,6 +3882,7 @@ export interface ExtensionContextActions {
 	getPauseState?: () => { pauseSeq: number; holds: SessionHoldRecord[] };
 	fenceRun?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
 	releaseRunFence?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
+	registerRunBackgroundJob?: (job: RunBackgroundJob) => () => void;
 	/** Internal delivery for a human-settled builtin question, never exposed on ExtensionAPI. */
 	questionInput?: () => void;
 	isProjectTrusted: () => boolean;
@@ -3995,4 +4063,19 @@ export interface ExtensionError {
 	event: string;
 	error: string;
 	stack?: string;
+}
+
+/** A second registerDeviceMachine in one session. */
+export class DeviceMachineConflictError extends Error {
+	readonly code = "device_machine_conflict" as const;
+	readonly registeredBy: string;
+	readonly attemptedBy: string;
+	constructor(registeredBy: string, attemptedBy: string) {
+		super(
+			`registerDeviceMachine: extension "${attemptedBy}" tried to register a device machine, but extension "${registeredBy}" already registered one for this session`,
+		);
+		this.name = "DeviceMachineConflictError";
+		this.registeredBy = registeredBy;
+		this.attemptedBy = attemptedBy;
+	}
 }
