@@ -1,3 +1,42 @@
+## 2026-11-11 - pi-ai depends on the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/ai/package.json`: adds the `@earendil-works/pi-realm-registry` workspace dependency.
+- `packages/ai/tsconfig.build.json`: maps that package to its built declarations.
+- `packages/ai/vitest.config.ts`: aliases that package to its source, like telemetry.
+
+### Why
+
+- Provider strict mode and scope moved into a realm registry built by the shared helper (see `packages/ai/src/changes.md`).
+
+### Why an extension could not handle it
+
+- Package manifests and build configuration are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the dependency list in `package.json` and the alias list in `vitest.config.ts`.
+
+## 2026-11-10 - Claude Fable 5.2 is a released model (senpi#3893)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: no longer imports the provisional Fable 5.5 launch-constant module, and that module under `src/utils/` is deleted (its last consumer, the prompt preset, stopped importing it in #6314). `ANTHROPIC_ALLOWED_FALLBACK_MODELS` names `claude-fable-5-2` (Opus 4.8 / Opus 5, the published refusal-fallback targets) in place of the provisional launch id. The Fable/Mythos mid-conversation effort and system/tool-change patterns match `5-2` / `5.2`. The adaptive-only and adaptive-thinking predicates name the `mythos-5` family in place of the provisional id.
+- `src/providers/data/`: strict regeneration. `claude-fable-5-2` lands in anthropic, amazon-bedrock (`anthropic.`, `us.`, `global.`), openrouter, vercel-ai-gateway, opencode and venice with the models.dev price and limits and the same compat set as Fable 5.1. The same run carries current upstream drift (openrouter, opencode, opencode-go, bedrock, vercel, google, opengateway rows and prices).
+
+### Why
+
+- The provisional `claude-fable-5-5` launch shipped on 2026-11-09 as Claude Fable 5.2. The launch block's provisional id no longer names a real model, so the generator routes the released id directly.
+
+### Why an extension could not handle it
+
+- Catalog generation runs before any extension loads; the generator's per-model compat and fallback tables are the only place these facts live.
+
+### Expected merge conflict zones
+
+- MEDIUM: `ANTHROPIC_ALLOWED_FALLBACK_MODELS` and the Anthropic compat predicates in `generate-models.ts`; LOW: the regenerated `src/providers/data/*.json` snapshots.
+
 ## 2026-11-05 - GPT Image 2.6 entries in the static OpenAI image catalog (senpi#5821, fixes #5820)
 
 ### What changed

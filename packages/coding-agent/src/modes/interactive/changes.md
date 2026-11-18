@@ -1,3 +1,118 @@
+## 2026-11-15 - Terminal control endpoint lists the settled flag (senpi#6768)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`, `session-control-attach.ts`: the terminal's control endpoint accepts `set_session_settled`, and its session row and status carry `settled` / `settledBy`.
+
+### Why
+
+- A terminal session is listed like a host session.
+
+### Why an extension could not handle it
+
+- The control endpoint is host code.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files.
+
+## 2026-11-14 - Terminal control endpoint lists archived, activity and model (senpi#6677)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`, `session-control-attach.ts`: the terminal's control endpoint accepts `set_session_archived` and its session row carries the three fields.
+
+### Why
+
+- A terminal session is listed like a host session.
+
+### Why an extension could not handle it
+
+- The control endpoint is host code.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files.
+
+## 2026-11-14 - The terminal control endpoint's `interrupt` takes `background: "stop"`
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-session-commands.ts`: the control endpoint's `interrupt` passes `background` to the shared `interruptRunningTurn`, so a terminal session answers the same shape as a host session. Esc in the TUI is unchanged: it is a user Stop, which holds automatic wakes, and it leaves background sessions running.
+
+### Why
+
+- One interrupt contract for every endpoint `thread_interrupt` reaches.
+
+### Why an extension could not handle it
+
+- The control endpoint is interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: the `interrupt` case of `runSessionControlCommand`.
+
+## 2026-11-03 - Preserve Markdown selection provenance in transcript caches
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` preserves provenance in both cached-array copies.
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts` preserves provenance when slicing a stable prefix or prepending a history marker.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts` returns authored Markdown unchanged unless it replaces a diagram or adds a warning.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` and `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: equal rendered text can have different original Markdown, so cached arrays must retain their source identity and offsets.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts`: lexer normalization of CRLF during a no-op transform otherwise disables original-source copying in the default transcript chain.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` and `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: these array copies happen inside built-in transcript caches without an extension hook.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts`: the built-in transform must preserve its input before later extension transforms receive it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: `render` and `cacheRender`.
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: `paint` and `reusablePrefix`.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts`: diagram replacement and lexer/rejoin return.
+
+## 2026-11-08 - The footer names the serving account when the pin is blocked (senpi#5983, fixes #5983)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: `accountFooterSuffix` resolves the effective pin as CLI > settings > stored (new optional `pinnedAccount` option) and picks block-aware: a pin whose stored slot carries a future `blockedUntil` is skipped for the first usable slot in the same ranking, and the suffix marks the blocked pin (`@work (default blocked until 14:00)`); when every slot is blocked it names the top-ranked slot with a blocked marker. `FooterComponent` takes an optional `resolveAccountPin` resolver, used at render time. The resolver's pin is applied only when the current model uses the `anthropic-subscription` provider; a same-named slot of another pooled provider keeps its own stored pin (senpi#6222 review).
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the default footer is constructed with a resolver built from `getSessionClaudeAccountPin` and `loadAnthropicSubscriptionProviderSettingsFromDisk(...).pinnedAccount`, so CLI and settings pins are reflected the same way as the stored pin.
+
+### Why
+
+- senpi#5983: after a usage-limit refusal moved every later turn to a sibling, the footer still showed the pinned account, so users could not tell the fallback account was spending its allowance; the footer also ignored the settings pin and `--claude-account`.
+
+### Why an extension could not handle it
+
+- The footer suffix is computed in core from the stored credential; an extension cannot change which account the footer names or inject the effective pin into the render.
+
+### Expected merge conflict zones
+
+- LOW: the `accountFooterSuffix` function and the `FooterComponent` constructor in `footer.ts`, and the footer construction site in `interactive-mode.ts`.
+
+## 2026-11-10 - Refuse speculative host sessions on terminal endpoints (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts` answers `park_session` and `claim_session` with `multi_session_disabled`.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts` serves a terminal that owns one session and cannot build or claim the multi-session host's speculative pool.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts` owns the terminal endpoint's host-command boundary.
+
+### Expected merge conflict zones
+
+- LOW: the command list and switch in `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`.
+
 ## 2026-11-08 - A remote delivery leads with its engine-stamped device (senpi#6233)
 
 ### What changed

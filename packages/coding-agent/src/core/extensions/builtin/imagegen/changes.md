@@ -1,3 +1,24 @@
+## 2026-11-09 - generate_image is eval-only, like bash (senpi#6272, closes #6269)
+
+### What changed
+
+- `tool.ts`: `exposure: "eval"` replaces `exposure: "search"`; the search-only `searchGroup` and `searchKeywords` are gone because senpi's `tool_search` catalog indexes only search-exposed tools.
+- `skill/SKILL.md`: the tool-routing section says to call `generate_image` from an eval cell (`tool.generate_image({ prompt: "..." })` in js, `tool.generate_image(prompt="...")` in py, `tool_schema("generate_image")` for the parameters) and that it is a direct tool only when no eval tool exists.
+- `../../../../docs/skills.md`, `docs/extensions.md`, `docs/settings.md`: the eval-only policy text names `generate_image` (and `glob`) among the declared eval tools.
+- Tests: `test/suite/imagegen-eval-only.test.ts` (new) proves the tool is withheld while an eval tool exists, runs through `executeTool` from the registry without activating, and is direct without eval; `test/suite/regressions/issue-1682-tool-search-side-effect-free.test.ts` asserts the eval semantics for the generate_image case and drops its `evalOnlyToolNames` override (which replaced the declared set); `test/suite/regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts` lists the tool as direct in its no-eval session.
+
+### Why
+
+- Q asked for `generate_image` and the omo thread tools to be callable only through eval, exactly like `bash`. Whenever codemode's `eval` tool is registered the model never sees the ~1K-token schema and calls the tool from a cell; without an eval tool nothing changes. Behaviour, parameters, credentials, the native `image_generation` arbitration and results are untouched.
+
+### Why an extension could not handle it
+
+- This is the builtin imagegen extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the definition header of `tool.ts` and the "Which tool" section of `skill/SKILL.md`.
+
 ## 2026-11-05 - generate_image defaults to GPT Image 2.6 with a one-shot 2.5 fallback (senpi#5821, fixes #5820)
 
 ### What changed

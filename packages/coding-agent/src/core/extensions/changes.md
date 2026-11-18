@@ -1,3 +1,329 @@
+## 2026-11-17 - getAllTools() carries a tool's own row renderers (senpi#6903)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolInfo` picks `renderCall` and `renderResult` from the definition, beside `permissionParser`.
+
+### Why
+
+- A host that draws a tool's calls somewhere other than the tool's own row (codemode's nested `tool.<name>()` rows in an eval cell) had no way to reach the renderers, so those calls drew as raw fields (oh-my-openagent#12994).
+
+### Why an extension could not handle it
+
+- `ToolInfo` is the public shape `pi.getAllTools()` returns; codemode is an extension and reads tools only through it.
+
+### Expected merge conflict zones
+
+- LOW: the `ToolInfo` `Pick` list in `types.ts`.
+
+## 2026-11-17 - ToolInfo.evalOnly (senpi#6886)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolInfo.evalOnly?: true`, present while the session routes the tool through eval only.
+
+### Why
+
+- A model that searches for a tool a prompt names must be told it exists and is reachable as `tool.<name>(...)` in a cell.
+
+### Why an extension could not handle it
+
+- `ToolInfo` is the public projection `pi.getAllTools()` returns.
+
+### Expected merge conflict zones
+
+- LOW: the end of the `ToolInfo` type.
+
+## 2026-11-15 - pi.isLoopRemote() and the hand's wake route (senpi#5778, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.isLoopRemote()` and the runtime's `isLoopRemote`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the runtime answers `isLoopRemote` false until a host binds it; `pi.isLoopRemote()` reads it.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `LoopWakeRoute`; `bindSessionlessFacts({ loopWake })`: `pi.sendMessage`, `pi.sendUserMessage` and `pi.appendEntry` go to the live loop-hook call's sender or writer when a call's work makes them (#6751's `loopHookWrite`), and otherwise to the scope's wake route; `pi.isLoopRemote()` answers true. Without the route they stay loop-side and unbound.
+- `packages/coding-agent/src/core/extensions/ui-presentation.ts`: `PresentationBroker` takes an optional `lateNotify`; a notice made outside any call, or after its call's port closed, goes there instead of nowhere. It is presentation-only, so `hasUI` stays false.
+
+### Why
+
+- On a hand, a late `pi.sendMessage` threw `sendMessage is loop-side and not bound` (the sessionless binding in `packages/coding-agent/src/core/extensions/runner.ts`), and late notices reached no UI. Builtin notifiers (terminal, monitor, eval) never notified, because a hand never gets `session_start` for builtins and their guards read loop-side facts; `pi.isLoopRemote()` (`packages/coding-agent/src/core/extensions/types.ts`, backed by `packages/coding-agent/src/core/extensions/loader.ts`) tells them the loop applies those guards.
+
+### Why an extension could not handle it
+
+- The runtime's `sendMessage` / `sendUserMessage` / `appendEntry` binding (`packages/coding-agent/src/core/extensions/runner.ts`), the `pi` object built in `packages/coding-agent/src/core/extensions/loader.ts` and the `ExtensionAPI` contract in `packages/coding-agent/src/core/extensions/types.ts` are runner internals and the public API itself.
+
+### Expected merge conflict zones
+
+- MEDIUM: `bindSessionlessFacts` in `packages/coding-agent/src/core/extensions/runner.ts`; the `ExtensionAPI` message section of `packages/coding-agent/src/core/extensions/types.ts`.
+- LOW: the runtime literal and the `sendUserMessage` member of `pi` in `packages/coding-agent/src/core/extensions/loader.ts`.
+
+## 2026-11-15 - Tools declare that they act on the calling session (senpi#6749)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition.sessionBound?: boolean`, recorded with the definition only.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`, `builtin/goal/tool-registration.ts`, `builtin/tool-search/tool.ts`, `builtin/loop/tools.ts`, `builtin/schedule/tool.ts`, `builtin/relocate-session/index.ts`: `todo`, `create_goal`, `update_goal`, `get_goal`, `tool_search`, `schedule_wakeup`, `schedule_prompt`, `list_relocation_targets` and `relocate_session` declare `sessionBound: true`.
+
+### Why
+
+- Under the hosted parity design v4 the loop registers no tool, so these tools run on the hand too, reached with the session's state through the session port. The hand advertises them like every other tool, and the flag tells the loop which calls must carry that state. `runs: "brain"` cannot say this: `web_search`, `webfetch` and `ask_user` declare it, yet need no session state.
+
+### Why an extension could not handle it
+
+- The field is part of the tool definition contract the loader records.
+
+### Expected merge conflict zones
+
+- LOW: the `ToolDefinition` field list after `runs`; one line in each builtin's registration.
+
+## 2026-11-15 - A hand's loop-hook call reaches the session through the session port (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `LoopHookCallFacts` gains `appendEntry`, `sendUserMessage` and `hasPendingMessages`. `bindSessionlessFacts` takes `loopHookWrite`, routed like `loopHookSend`, so `pi.appendEntry` and `pi.sendUserMessage` from a loop-hook call's work reach that call. A call context binds `hasPendingMessages`.
+
+### Why
+
+- A hosted loop's Stop hook runs on the hand. It writes entries and a follow-up user message to a session that the loop owns, so those writes must go back to the loop instead of failing as loop-side.
+
+### Why an extension could not handle it
+
+- `pi.appendEntry` and `pi.sendUserMessage` are bound by the runner. An extension cannot redirect another extension's writes.
+
+### Expected merge conflict zones
+
+- LOW: `LoopHookCallFacts`, `bindSessionlessFacts` and the loop-hook call branch of `createContext`.
+
+## 2026-11-15 - A hand runs one forwarded loop event for the user's hooks (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitForwardedLoopEvent(event, only)` runs one loop-side event a hosted loop forwarded to this hand, for the extensions `only` accepts, serially under the host's event handler budget (the lifecycle dispatch, now with an optional filter). `getBuiltinProvenancePaths()` returns the paths of the extensions the loader shipped (`sourceInfo.source === "builtin"`: in-tree builtins, bundled modules, generated global-default shims).
+
+### Why
+
+- A hosted loop's lifecycle events must reach the user's hooks on the user's machine (K5), and a bundled builtin such as codemode has a file path, so only the loader's provenance tells it apart from a user extension.
+
+### Why an extension could not handle it
+
+- Event dispatch and extension provenance are runner state; no extension can run another extension's handlers or read its provenance.
+
+### Expected merge conflict zones
+
+- LOW: the `dispatchLifecycle` signature and the block before `getThirdPartySessionStartPaths`.
+
+## 2026-11-16 - `transient-failure` doc comment no longer ties it to `circuit-breaker` (senpi#6772)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the comment on the `transient-failure` member of `CompactionRejectionCause` says the session does not latch admission on it and a later attempt can retry compaction. Comment only; the union is unchanged.
+
+### Why
+
+- Review finding on #6764: the breaker also trips on deterministic failures, so "like `circuit-breaker`" was misleading.
+
+### Why an extension could not handle it
+
+- The comment documents the public extension type.
+
+### Expected merge conflict zones
+
+- LOW: the `CompactionRejectionCause` union in `types.ts`.
+
+## 2026-11-16 - `CompactionRejectionCause` gains `transient-failure` (senpi#6760)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `CompactionRejectionCause` adds `"transient-failure"`: the summary request failed on a transient provider error after its bounded retries. An extension returns it from `session_before_compact` with `cancel: true`; it reaches `compaction_end` and rejected `session_compact` events like the other causes.
+
+### Why
+
+- The session must tell a failure that says nothing about the context from one that proves the context cannot be compacted. Only the latter may latch automatic admission.
+
+### Why an extension could not handle it
+
+- The cause is part of the public `session_before_compact` result contract that core reads.
+
+### Expected merge conflict zones
+
+- LOW: the `CompactionRejectionCause` union in `types.ts`.
+
+## 2026-11-15 - A device machine registered during another load's staging fails that load whole (senpi#6728)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: `commit()` checks, before applying anything, whether a device machine was registered while this load's registration was staged; the load then fails with `DeviceMachineConflictError` and the first registration stays.
+
+### Why
+
+- senpi#6720 review L2: the staged write overwrote a registration made meanwhile, silently.
+
+### Why an extension could not handle it
+
+- The loader owns staging and commit.
+
+### Expected merge conflict zones
+
+- LOW: the top of `commit()` in `loader.ts`.
+
+## 2026-11-14 - `ctx.registerRunBackgroundJob`
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.registerRunBackgroundJob?(job)` and the matching `ExtensionContextActions` member; `RunBackgroundJob` is `{ kind: "bash", id, description?, stop(turnId) }`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds the action and exposes it on every runner-built context behind `assertActive`; an unbound runner answers a no-op release.
+
+### Why
+
+- An RPC `interrupt { background: "stop" }` must reach the jobs an extension started for that turn (the terminal builtin's background sessions).
+
+### Why an extension could not handle it
+
+- The job has to be recorded against the session's running turn, which only the host knows.
+
+### Expected merge conflict zones
+
+- LOW: next to `releaseRunFence` in `ExtensionContext`, `ExtensionContextActions` and the runner's context builder.
+
+## 2026-11-15 - Extensions register the session's device machine (senpi#6720)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`, `loader.ts`: `registerDeviceMachine(machine)`, one per session; a second registration throws `DeviceMachineConflictError` naming both extensions. `runtime/bootstrap.ts` and `tools/bash.ts`: bash reads the registered machine when a command runs, only with `OMO_TOOLS_VIA_DAEMON=bash`.
+- `packages/coding-agent/src/index.ts`: the public entry exports what an extension needs to build one: `createToolMachine`, `ToolMachine`, `MachineOps`, `MachineExecRequest`, `MachineExecResult`, `OpContext`, `DeviceUnavailableError`, `DeviceMachineConflictError`.
+
+### Why
+
+- Q's order that tool calls go through the hands daemon: the omo-senpi plugin supplies the local daemon's machine, and senpi stays transport-free.
+
+### Why an extension could not handle it
+
+- The session builds the bash tool's options itself; without this API no extension can supply the device it runs on.
+
+### Expected merge conflict zones
+
+- LOW: `ExtensionAPI` near `registerFlag`; the runtime literal in `loader.ts`.
+
+## 2026-11-14 - A nested call's permission prompt follows the call's own signal (senpi#6679)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/two-sided-forwarding.ts`: `ToolEventDispatchOptions` gains an optional `signal`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitToolCall` overrides `ctx.signal` with that signal for each `tool_call` hook run of that call only. `signal` joins the members a context without a session serves: it reads `undefined` there (or a signal a host bound) instead of throwing.
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionRuntimeContext` includes `signal`.
+- `runner.ts`: `emitToolCall` serves each `tool_call` hook the union of the call's signal and the context's (turn) signal via the exported `combinedToolCallSignal` (senpi#6679 review M1). A handler served on the loop side of a two-sided forward still sees its loop-hook signal: the forwarder carries the event only, the documented exception (senpi#6679 review L1).
+
+### Why
+
+- `ctx.executeTool(name, args, { signal })` dropped its signal before the `tool_call` hooks, so their `ctx.signal` was the turn's. A permission prompt for the nested call then ended only on a whole-turn abort, not when that call was cancelled (#6676 review L1).
+
+### Why an extension could not handle it
+
+- The `tool_call` context is built by the runner and the nested call's signal lives inside `AgentSession.executeTool`; an extension cannot reach either.
+
+### Expected merge conflict zones
+
+- LOW: `ToolEventDispatchOptions`, the per-handler context setup in `emitToolCall`, `RUNTIME_CONTEXT_MEMBERS` and the `ExtensionRuntimeContext` member list.
+
+## 2026-11-11 - pi.engine, and the kernel-tool contexts are one registry per realm (omo#12965)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI` gains the read-only `engine` property, typed as the engine index namespace.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API object's `engine` getter returns the namespace the loader already serves extensions for `@code-yeongyu/senpi`.
+- `packages/coding-agent/src/core/extensions/kernel-tools-context.ts`: `kernelToolsStorage` and `kernelToolInvokerStorage` are the two members of the realm's `kernel-tools/v1` registry. `activeKernelTools()` and `activeKernelToolInvoker()` read them and treat a store value missing its members as absent.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/session-scoped-callback.ts`: comment only. `bindSessionScopedCallback` now refuses inside a provider scope this copy of pi-ai cannot read, because `activeProviderScope()` throws there.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `ExtensionContext.kernelTools` reads through those two functions.
+- `packages/coding-agent/src/core/extensions/builtin/kill-guard/index.ts`: passes a `warn` callback, used when the shared kill-guard record cannot be read and this copy's own record is used.
+
+### Why
+
+- On Node a plugin bundle's own import of the engine evaluates a second copy of it. `pi.engine` lets the plugin run on the engine that loaded it, and the kernel-tool contexts must be visible to the runner whichever copy entered them.
+
+### Why an extension could not handle it
+
+- This is the extension API and the loader themselves.
+
+### Expected merge conflict zones
+
+- LOW: the session-context block at the top of `ExtensionAPI` in `types.ts`, the first lines of the API object in `createExtensionAPI`, and the `kernelTools` getter in `runner.ts`.
+
+## 2026-11-09 - Provider access declarations on provider hooks, and a hand's request-hook dispatch (custody CK21, senpi#6278)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ProviderHookOptions` (`HandlerRegistrationOptions` plus `providers?: readonly ProviderId[]`) is the registration option type of `pi.on("before_provider_request" | "provider_stream_event" | "after_provider_response", ...)`; `Extension.handlerProviders` records each declared handler's providers.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `on()` validates a `providers` declaration on those three events (a non-empty array of non-empty provider ids, else it throws naming the extension), on every side, also for a handler whose `runs` side does not register it, and records it; other events ignore the option, as they ignore `previewSafe`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeProviderRequest` takes an optional fourth argument, `HandRequestHookDispatch` (`only`, `model?`). With it, only the extensions `only` accepts run, the event carries that model and no headers, and the sessionless drop does not apply. Without it, which is every existing caller, dispatch is unchanged.
+
+### Why
+
+- A hand advertises to a hosted brain which providers' calls need the device's request and stream hooks; an undeclared hook means every provider (#5849). The declaration never filters dispatch anywhere.
+- A hand serving a hosted loop's `hook.model_request` runs the user's request hooks on a runner that has no loop of its own.
+
+### Why an extension could not handle it
+
+- The declaration is part of the extension registration API, and the hand's request-hook dispatch is the runner's own dispatch.
+
+### Expected merge conflict zones
+
+- LOW: the three provider-hook `on()` overloads in `types.ts`, the `Extension` interface, the `on()` registration body in `loader.ts`, and the head of `emitBeforeProviderRequest` in `runner.ts`.
+
+## 2026-11-10 - `ToolPermissionRequest` carries `autoApproveAsk` (senpi#6305)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolPermissionRequest` gains an optional `autoApproveAsk: true`, so a tool's own `permissionParser` can have an `ask` decision for one call approved without a prompt while `allow` and `deny` rules still match its request.
+
+### Why
+
+An omo reply to the agent that messaged the run must not wait on an approval nobody can give, but a user's `deny` rule for that tool must still apply; returning no request at all dropped the deny (oh-my-openagent#12954 review).
+
+### Why an extension could not handle it
+
+The extension tool contract is this type; the permission system reads only the fields it declares.
+
+### Expected merge conflict zones
+
+- None: one additive optional field.
+
+## 2026-11-09 - Provider model configs can declare a default thinking level (senpi#6270)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ProviderChatModelConfig` gains optional `defaultThinkingLevel?: Model<Api>["defaultThinkingLevel"]`. The provider-composer extension path already spreads definition fields into the registered Model, so the declaration completes the type end to end.
+
+### Why
+
+- The vertex-garden builtin needs per-model defaults (GLM 5.2 thinks by default on Vertex; DeepSeek V4.1 Flash does not, live-verified 2026-11-09). Without the declared field, registration cannot express them and every extension model falls through to the configured default, flipping GLM 5.2 to off.
+
+### Why an extension could not handle it
+
+- The field is part of the public `ProviderChatModelConfig` registration contract owned by `types.ts`; an extension cannot widen the host type.
+
+### Expected merge conflict zones
+
+- LOW: two lines inside `ProviderChatModelConfig` adjacent to `thinkingLevelMap`.
+
+## 2026-11-09 - A warm open_session no longer re-hashes the extension module graph (senpi#6256)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/extension-module-cache.ts`: the freshness check behind `cachedExtensionFactory` remembers each compiled source it proved to match its importer fingerprint, together with that file's stat identity (`dev:ino:size:mtimeNs:ctimeNs`, read before the hash). A later lookup re-reads and re-hashes the file only when that identity moved. A file modified within the last 2 s is never remembered (git's racy-clean rule). A changed, deleted or replaced source still drops the whole generation exactly as before. `clearExtensionCache()` also forgets the remembered proofs.
+- `packages/coding-agent/scripts/bench-open-session.ts` (new): warm `open_session` bench against the real `--listen` host from source, with a sandboxed agent dir and `HOME`, a local mock model, and extra host args after `--`. It reports the client round-trip p50 and every `SENPI_OPEN_TIMING` phase p50.
+- `knip.jsonc`: `packages/coding-agent/scripts/bench-open-session.ts` is listed as an entry next to the other by-path benchmarks, because it is run by path and nothing imports it. `qa-host.mjs#sandboxHostEnv` leaves `preprocessorOptions.preExistingExports`, because the bench now imports it.
+
+### Why
+
+- Every cached lookup, one per extension per session open, read and SHA-256-hashed every source the live generation had compiled. With omo's extensions loaded that was about 10 ms per extension per open, about 24 ms of every warm `open_session` (senpi#6256).
+
+### Why an extension could not handle it
+
+- The module cache is the host's process-wide extension loader state. No extension can see or change how the host decides to reuse a compiled graph.
+
+### Expected merge conflict zones
+
+- LOW: `sourcesUnchanged()` and `clearExtensionCache()` in `extension-module-cache.ts` (fork-only file).
+
 ## 2026-11-08 - `SessionControlRemoteOrigin` on a delivery's details (senpi#6233)
 
 ### What changed

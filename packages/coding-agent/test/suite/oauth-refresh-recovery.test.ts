@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -106,12 +107,12 @@ describe("OAuth same-model recovery (#2893)", () => {
 		vi.stubEnv("HOME", home);
 		vi.stubEnv("SENPI_CODING_AGENT_DIR", join(home, "agent"));
 	});
-	afterEach(() => {
+	afterEach(async () => {
 		vi.restoreAllMocks();
 		vi.unstubAllEnvs();
 		vi.useRealTimers();
 		while (harnesses.length) harnesses.pop()?.cleanup();
-		rmSync(home, { recursive: true, force: true });
+		await rm(home, { recursive: true, force: true });
 	});
 
 	it("marks opaque terminal refresh failures structurally before prose classification", async () => {

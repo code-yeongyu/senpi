@@ -75,11 +75,13 @@ export async function finishAuthorization(
 	let result: Awaited<ReturnType<typeof sdkAuth>>;
 	const { auth } = await loadMcpSdkAuth();
 	try {
-		result = await auth(provider, {
-			serverUrl: provider.serverUrl,
-			authorizationCode: code,
-			fetchFn: oauthFetch(options.fetchFn),
-		});
+		result = await provider.withFreshAuthorization(() =>
+			auth(provider, {
+				serverUrl: provider.serverUrl,
+				authorizationCode: code,
+				fetchFn: oauthFetch(options.fetchFn),
+			}),
+		);
 	} catch (error) {
 		if (isInvalidGrant(error) || isRejectedAuthorizationCode(error)) {
 			await provider.invalidateCredentials("tokens");
@@ -170,12 +172,15 @@ export async function clientCredentialsGrant(
 		},
 	};
 	const { fetchToken } = await loadMcpSdkAuth();
-	const tokens = await fetchToken(credentialsProvider, info.authorizationServerUrl, {
-		metadata: info.authorizationServerMetadata,
-		resource: new URL(provider.serverUrl),
-		fetchFn: oauthFetch(options.fetchFn),
+	await provider.validateResourceURL(provider.serverUrl, provider.serverUrl);
+	await provider.withFreshAuthorization(async () => {
+		const tokens = await fetchToken(credentialsProvider, info.authorizationServerUrl, {
+			metadata: info.authorizationServerMetadata,
+			resource: new URL(provider.serverUrl),
+			fetchFn: oauthFetch(options.fetchFn),
+		});
+		await provider.saveTokens({ ...tokens, issuer: validatedAuthorizationServerIssuer(info, provider.serverName) });
 	});
-	await provider.saveTokens({ ...tokens, issuer: validatedAuthorizationServerIssuer(info, provider.serverName) });
 }
 
 export async function logout(provider: McpOAuthProvider): Promise<void> {

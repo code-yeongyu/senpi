@@ -73,7 +73,8 @@ function gitConfig(file: string): Promise<readonly (readonly [string, string])[]
 		execFile(
 			"git",
 			["config", "--file", file, "--no-includes", "--list", "-z"],
-			{ env, timeout: 30_000 },
+			// senpi#3965: git is a console-subsystem exe on Windows.
+			{ env, timeout: 30_000, windowsHide: true },
 			(error, stdout) => {
 				if (error) return fail(error);
 				const records = String(stdout).split("\0").filter(Boolean);

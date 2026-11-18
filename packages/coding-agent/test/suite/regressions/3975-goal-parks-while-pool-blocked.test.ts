@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -174,7 +175,7 @@ describe("goal parks while every pool slot is blocked (#3975)", () => {
 	afterEach(async () => {
 		vi.useRealTimers();
 		await cleanupGoalMonitorTempDirs();
-		for (const dir of poolDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+		for (const dir of poolDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 	});
 
 	it.each(["event", "throw"] as const)(

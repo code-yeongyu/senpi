@@ -9,6 +9,7 @@ import {
 	queryWithAuthLane,
 	resetAuthLaneBoundary,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts";
+import { claudeCodeMaxContextTokens } from "../../../src/core/extensions/builtin/anthropic-subscription/context-window.ts";
 import { _resetLongContextForTesting } from "../../../src/core/extensions/builtin/anthropic-subscription/long-context.ts";
 import type {
 	Options,
@@ -89,7 +90,7 @@ it("restores 1M when a standard-window retry fails over to a different account",
 	]);
 	expect(attempts.map((options) => options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS)).toEqual([
 		"1000000",
-		"200000",
+		String(claudeCodeMaxContextTokens(200_000)),
 		"1000000",
 	]);
 	expect(attempts.map((options) => options.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS)).toEqual([

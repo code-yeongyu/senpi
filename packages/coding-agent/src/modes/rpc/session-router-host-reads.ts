@@ -20,6 +20,7 @@ export function answerProtocolInfo(
 ): RpcResponse {
 	const hostCapabilities = multiSessionHostCapabilities({
 		warm: host.registry.warm !== undefined,
+		parkClaim: host.registry.supportsParkClaim === true,
 		toolRuntime: host.defaults.toolRuntime ?? "in-process",
 		negotiated: host.connectionOptions?.capabilities ?? [],
 		mcpPresenters: host.writer.mcpPresenters !== undefined,

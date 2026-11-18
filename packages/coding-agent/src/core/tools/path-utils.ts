@@ -1,30 +1,13 @@
-import { accessSync, constants, type Stats } from "node:fs";
-import { access, stat } from "node:fs/promises";
-import type { EntryType } from "@code-yeongyu/senpi-machine-ops";
+import { accessSync, constants } from "node:fs";
+import { access } from "node:fs/promises";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
-
-const NARROW_NO_BREAK_SPACE = "\u202F";
-
-function tryMacOSScreenshotPath(filePath: string): string {
-	return filePath.replace(/ (AM|PM)\./gi, `${NARROW_NO_BREAK_SPACE}$1.`);
-}
-
-function tryNFDVariant(filePath: string): string {
-	// macOS stores filenames in NFD (decomposed) form, try converting user input to NFD
-	return filePath.normalize("NFD");
-}
-
-function tryCurlyQuoteVariant(filePath: string): string {
-	// macOS uses U+2019 (right single quotation mark) in screenshot names like "Capture d'écran"
-	// Users typically type U+0027 (straight apostrophe)
-	return filePath.replace(/'/g, "\u2019");
-}
-
-// Windows Explorer "Copy as path" wraps the path in double quotes (senpi#2170).
-function unquotedPath(filePath: string): string | undefined {
-	const match = /^@?(["'])(.+)\1$/.exec(filePath.trim());
-	return match?.[2];
-}
+import {
+	resolveReadPathVariants,
+	tryCurlyQuoteVariant,
+	tryMacOSScreenshotPath,
+	tryNFDVariant,
+	unquotedPath,
+} from "./file-tool-host.ts";
 
 function fileExists(filePath: string): boolean {
 	try {
@@ -42,35 +25,6 @@ export async function pathExists(filePath: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
-}
-
-function specialFileKind(stats: Stats): string | undefined {
-	if (stats.isFile() || stats.isDirectory()) return undefined;
-	if (stats.isFIFO()) return "FIFO";
-	if (stats.isCharacterDevice()) return "character device";
-	if (stats.isBlockDevice()) return "block device";
-	if (stats.isSocket()) return "socket";
-	return "special file";
-}
-
-/**
- * Refuses an existing target that is neither a regular file nor a directory, before anything opens it: opening a
- * FIFO waits for a peer that may never come, and a device may never reach end of file. A target that cannot be
- * stat'ed passes, so the caller's own access or open reports it as before.
- */
-export async function assertNotSpecialFile(
-	absolutePath: string,
-	displayPath: string,
-	verb: "edit" | "write" | "read",
-	statType?: () => Promise<EntryType | undefined>,
-): Promise<void> {
-	const kind = statType
-		? await statType().then(
-				(type) => (type === "other" ? "special file" : undefined),
-				() => undefined,
-			)
-		: await stat(absolutePath).then(specialFileKind, () => undefined);
-	if (kind) throw new Error(`Could not ${verb} file: ${displayPath}. It is a ${kind}, not a regular file.`);
 }
 
 export function expandPath(filePath: string): string {
@@ -124,41 +78,6 @@ export function resolveReadPath(filePath: string, cwd: string): string {
 	return resolved;
 }
 
-export async function resolveReadPathAsync(filePath: string, cwd: string): Promise<string> {
-	const resolved = resolveToCwd(filePath, cwd);
-
-	if (await pathExists(resolved)) {
-		return resolved;
-	}
-
-	const unquoted = unquotedPath(filePath);
-	if (unquoted !== undefined) {
-		return resolveReadPathAsync(unquoted, cwd);
-	}
-
-	// Try macOS AM/PM variant (narrow no-break space before AM/PM)
-	const amPmVariant = tryMacOSScreenshotPath(resolved);
-	if (amPmVariant !== resolved && (await pathExists(amPmVariant))) {
-		return amPmVariant;
-	}
-
-	// Try NFD variant (macOS stores filenames in NFD form)
-	const nfdVariant = tryNFDVariant(resolved);
-	if (nfdVariant !== resolved && (await pathExists(nfdVariant))) {
-		return nfdVariant;
-	}
-
-	// Try curly quote variant (macOS uses U+2019 in screenshot names)
-	const curlyVariant = tryCurlyQuoteVariant(resolved);
-	if (curlyVariant !== resolved && (await pathExists(curlyVariant))) {
-		return curlyVariant;
-	}
-
-	// Try combined NFD + curly quote (for French macOS screenshots like "Capture d'écran")
-	const nfdCurlyVariant = tryCurlyQuoteVariant(nfdVariant);
-	if (nfdCurlyVariant !== resolved && (await pathExists(nfdCurlyVariant))) {
-		return nfdCurlyVariant;
-	}
-
-	return resolved;
+export function resolveReadPathAsync(filePath: string, cwd: string): Promise<string> {
+	return resolveReadPathVariants(filePath, cwd, resolveToCwd, pathExists);
 }

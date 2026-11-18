@@ -91,6 +91,7 @@ export {
 	type KillGuardRuntime,
 	releaseKillGuardRuntime,
 } from "./core/kill-guard/runtime.ts";
+export { CREDENTIAL_PLACEHOLDER, withCredentialProxy } from "./core/credential-proxy/runtime.ts";
 // Job widgets: hosts register background jobs and their widget-author model route
 export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {
@@ -449,6 +450,16 @@ export {
 } from "./core/skills.ts";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
+// The device a session's tools run on (registerDeviceMachine; OMO_TOOLS_VIA_DAEMON).
+export type {
+	ExecRequest as MachineExecRequest,
+	ExecResult as MachineExecResult,
+	MachineOps,
+	OpContext,
+} from "@code-yeongyu/senpi-machine-ops";
+export { DeviceMachineConflictError } from "./core/extensions/types.ts";
+export { DeviceUnavailableError } from "./core/tools/bash.ts";
+export { createToolMachine, type ToolMachine, type ToolPathPolicy } from "./core/tools/machine.ts";
 // Tools
 export {
 	type BashOperations,

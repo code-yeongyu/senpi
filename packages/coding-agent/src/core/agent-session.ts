@@ -152,7 +152,9 @@ import {
 	ContinueFromLeafError,
 	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
-import { getCredentialAccounts } from "./credential-accounts.ts";
+import { accountCanServe, accountsNeedingUser, getCredentialAccounts } from "./credential-accounts.ts";
+import { type AccountLimits, subscriptionLimits } from "./subscription-limits/limit-store.ts";
+import { refreshSubscriptionUsage } from "./subscription-limits/usage-poller.ts";
 import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
@@ -273,12 +275,12 @@ import {
 	type ToolExecutionEndEvent,
 	type ToolExecutionStartEvent,
 	type ToolExecutionUpdateEvent,
-	type ToolExposure,
 	type ToolInfo,
 	type TreePreparation,
 	type TurnStartEvent,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { combinedToolCallSignal } from "./extensions/tool-call-signal.ts";
 import type {
 	ApplyCompactionOptions,
 	ApplyCompactionResult,
@@ -301,10 +303,13 @@ import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf }
 import {
 	type ConnectionOrigin,
 	copyInputTurnMark,
+	endTurnContinuation,
 	hasInputTurnMark,
 	inputTurnMark,
 	markInputTurnOrigin,
 	noteRunStart,
+	noteTurnContinuation,
+	recordIsDelegated,
 	noteUserMessageStart,
 } from "./turn-origin.ts";
 import { releaseDecisionPreset } from "./permission-decision.ts";
@@ -349,7 +354,7 @@ import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
-import { requestThinkingLevel } from "./reasoning-baseline.ts";
+import { requestThinkingLevel, withLiveConfigurationUpdate } from "./reasoning-baseline.ts";
 import type { PromptSizeInventory } from "./prompt-size-startup.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
 import {
@@ -388,7 +393,8 @@ import {
 	type ProbePhase,
 	probeBackSchedule,
 } from "./retry-fallback/hint-policy.ts";
-import { createFallbackLogger } from "./retry-fallback/log.ts";
+import { createFallbackLogger, type FallbackLogger } from "./retry-fallback/log.ts";
+import { redactAssistantErrorText } from "./assistant-error-redaction.ts";
 import {
 	createModelConfigErrorReporter,
 	isModelConfigFailure,
@@ -412,6 +418,11 @@ import {
 import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { limitResetAt } from "./retry-fallback/limit-reset.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
+import {
+	type RunBackgroundJob,
+	RunBackgroundJobs,
+	type RunBackgroundStopOutcome,
+} from "./run-background-jobs.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { SecurityNoticeSnapshot } from "./security-notices.ts";
@@ -465,8 +476,16 @@ import {
 	isBuiltinExtensionPath,
 	type ToolDefinitionEntry,
 } from "./runtime/bootstrap.ts";
+import {
+	armedEvalOnlyToolNames,
+	directActiveToolNames,
+	registeredEvalOnlyToolNames,
+	requestedActiveToolNames,
+	resolveEvalOnlyToolNames,
+	toolExposureOf,
+} from "./runtime/active-tools.ts";
 import type { SourceInfo } from "./source-info.ts";
-import { toolInfoOf } from "./tool-info.ts";
+import { toolInfosOf } from "./tool-info.ts";
 import {
 	PendingQueueLedger,
 	type PendingQueueSnapshot,
@@ -517,15 +536,13 @@ import {
 } from "./virtual-models.ts";
 import { CustodyViolation, DeliveryTicketRefused, ENGINE_DELIVERY_KEY_PREFIX } from "./work-obligations.ts";
 
-/** Externally registered tools routed through eval in addition to declared eval exposure. */
-const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["workflow", "monitor"]);
-
 /** Sample eval-cell call for an eval-only tool, using the argument name that tool actually takes. */
 function evalHelperCall(name: string): string {
 	if (name === "bash" || name === "powershell") return `tool.${name}({ command: "..." })`;
 	if (name === "grep" || name === "glob") return `tool.${name}({ pattern: "...", path: "..." })`;
 	if (name === "workflow") return `tool.${name}({ action: "..." })`;
 	if (name === "monitor") return `tool.monitor({ description: "...", command: "...", filter: "..." })`;
+	if (name === "generate_image") return `tool.generate_image({ prompt: "..." })`;
 	return `tool.${name}({ ... })`;
 }
 /**
@@ -539,6 +556,8 @@ const OVERFLOW_RECOVERY_RUNGS = 2;
 const OVERFLOW_RECOVERY_EXHAUSTED_MESSAGE =
 	"Context overflow recovery failed after two compact-and-retry attempts. Try reducing context or switching to a larger-context model.";
 const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
+/** Abort reason for a retry backoff a manual model change cuts short (senpi#6893). */
+const MANUAL_MODEL_SWITCH_HANDOFF = "manual-model-switch-handoff";
 
 // ============================================================================
 // Skill Invocation Formatting and Parsing (see ./skill-invocation.ts)
@@ -850,7 +869,7 @@ export type AgentSessionEvent =
 			/** The account a Claude CLI sign-in signed in (senpi#4436). */
 			account?: { name: string };
 			/** That account's sign-in connection test. */
-			check?: { model: string; outcome: "ok" | "failed"; reason?: string; at: number };
+			check?: { model: string; outcome: "ok" | "failed"; reason?: string; message?: string; status?: number; at: number };
 	  }
 	| {
 			type: "summarization_retry_scheduled";
@@ -1052,6 +1071,8 @@ function describeCompactionRejection(cause: CompactionRejectionCause): string {
 			return "Compaction rejected: absolute compaction cap reached for this session.";
 		case "stale-revision":
 			return "Compaction rejected: the session changed while the summary was being prepared. Retry compaction against the latest context.";
+		case "transient-failure":
+			return "Compaction rejected: the summary request failed on a transient provider error. Retry compaction.";
 	}
 }
 
@@ -1548,6 +1569,7 @@ export class AgentSession {
 	private readonly _humanInputListeners = new Set<(event: HumanInputAdmittedEvent) => void>();
 	private readonly _heldInputs: HeldInputs;
 	private readonly _runHolds: RunHolds;
+	private readonly _runBackgroundJobs = new RunBackgroundJobs();
 	private readonly _resumeEffects = new Map<string, ResumeSessionAnswer>();
 	private _stopInterrupt: StopInterrupt | undefined;
 	private _deliveredHeldInputIds: string[] = [];
@@ -1721,6 +1743,13 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	/**
+	 * A manual switch landed while a run was live and no request has been prepared on
+	 * the pick since (senpi#6893). A failure arriving now came from a request built
+	 * before the switch, so it is not charged to the pick. Request preparation clears
+	 * it, which holds for virtual picks too, whose responses name physical models.
+	 */
+	private _manualSwitchAwaitingRequest = false;
 	private readonly _requestShapeRecovery = new RequestShapeRecovery();
 	/**
 	 * Failed response that the next request repeats, set by auto-retry and overflow recovery. The
@@ -1784,8 +1813,10 @@ export class AgentSession {
 	private readonly _toolChildHostTargets = new Map<RegisteredHostCallKind, HostCallTarget>();
 	/** The composed filesystem policy the built-in file tools enforce; a tool child's `authorize` asks the same one. */
 	private _filesystemPolicy: FilesystemPolicyChecker | undefined;
-	/** Settles once dispose() has stopped the tool child, swept what it launched, and closed its in-process offload jobs. */
+	/** Settles once dispose() has stopped the tool child, swept what it launched, closed its in-process offload jobs, and the fallback log's first-start removal has finished. */
 	private _toolChildClosed: Promise<void> = Promise.resolve();
+	private _fallbackLogSettled: Promise<void> = Promise.resolve();
+	private _fallbackLog: FallbackLogger | undefined;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
@@ -1916,7 +1947,14 @@ export class AgentSession {
 			...queuedInputPort,
 			// A follow-up the core drains starts a new turn, inside the same run: the armed turn's barrier ends here.
 			commitConsumption: (queue, messages) => {
-				if (queue === "followUp") this._toolBarrier.clear();
+				if (queue === "followUp") {
+					this._toolBarrier.clear();
+					// Only drained custom follow-ups open an engine turn. Custom context in the person's initial
+					// prompt batch never crosses this boundary and must keep that person's allowance (senpi#6727).
+					for (const message of messages) {
+						if (message.role === "custom" && !hasInputTurnMark(message)) markInputTurnOrigin(message, "engine");
+					}
+				}
 				return queuedInputPort.commitConsumption(queue, messages);
 			},
 		};
@@ -1950,6 +1988,8 @@ export class AgentSession {
 		this._modelRegistry = config.modelRegistry ?? new ModelRegistry(modelRuntime);
 		this._agentDir = config.agentDir ?? getAgentDir();
 		const fallbackLogger = createFallbackLogger(this._agentDir);
+		this._fallbackLog = fallbackLogger;
+		this._fallbackLogSettled = fallbackLogger.settled();
 		this._modelConfigErrors = createModelConfigErrorReporter(fallbackLogger, (event) => this._emit(event));
 		this._sessionLogger = createSessionLogger(this._agentDir, {
 			context: () => ({
@@ -2508,7 +2548,7 @@ export class AgentSession {
 			warnStalled("tool_call_preflight_stalled", elapsedMs),
 		);
 		try {
-			const signal = options.signal ?? this.agent.signal;
+			const signal = combinedToolCallSignal(options.signal, this.agent.signal);
 			// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
 			// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
 			if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
@@ -2527,7 +2567,7 @@ export class AgentSession {
 					toolCallId: toolCall.id,
 					...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
 					input: args as Record<string, unknown>,
-				});
+				}, signal === undefined ? {} : { signal });
 			} catch (err) {
 				if (err instanceof Error) {
 					throw err;
@@ -2590,7 +2630,7 @@ export class AgentSession {
 	 */
 	private _getCallableTools(active: ReadonlySet<string> = new Set(this.getActiveToolNames())): AgentTool[] {
 		return [...this._toolRegistry.values()].filter((tool) => {
-			const exposure = this._getToolExposure(tool.name);
+			const exposure = toolExposureOf(this._toolDefinitions, tool.name);
 			return exposure === "search" || exposure === "eval" || (exposure === "direct" && active.has(tool.name));
 		});
 	}
@@ -2654,6 +2694,8 @@ export class AgentSession {
 	private _installAgentRequestProjection(): void {
 		const previousPrepareRequest = this.agent.prepareRequest;
 		this.agent.prepareRequest = async (request, signal) => {
+			// This request is built from the current selection, so it is the pick's own (senpi#6893).
+			this._manualSwitchAwaitingRequest = false;
 			const failed = this._failedResponse;
 			this._failedResponse = undefined;
 			const previous = (await previousPrepareRequest?.(request, signal)) ?? undefined;
@@ -2780,10 +2822,14 @@ export class AgentSession {
 			// The idle path tokenizes agent.state.messages in place; every provider
 			// request re-hydrates here so tokens can never reach a model.
 			this.sessionManager.getResidentStore().materializeInPlace(messages);
-			const transformed = this._requestShapeRecovery.apply(
+			const model = this.model;
+			const shaped = this._requestShapeRecovery.apply(
 				previousTransformContext ? await previousTransformContext(messages, signal) : messages,
 			);
-			const model = this.model;
+			const transformed =
+				model !== undefined && supportsConfigurationUpdate(model)
+					? withLiveConfigurationUpdate(shaped, this.agent.state.thinkingLevel, Date.now())
+					: shaped;
 			if (model?.provider !== "cursor" && model?.provider !== "cursor-cli-oauth") return transformed;
 			this._applyObservedCursorContextWindow(model);
 			const budgetBytes = cursorAdmissionBudgetBytes(model.contextWindow);
@@ -3332,7 +3378,7 @@ export class AgentSession {
 		return this._agentDir;
 	}
 
-	/** Resolves after dispose() once the tool child has exited and its launched groups are swept; awaited by disposers. */
+	/** Resolves after dispose() once the tool child has exited, its launched groups are swept and the fallback log has stopped writing; awaited by disposers. */
 	whenToolChildClosed(): Promise<void> {
 		return this._toolChildClosed;
 	}
@@ -3689,6 +3735,7 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
+		redactAssistantErrorText(event);
 		let queuedEvent: AgentEvent = event;
 		let pendingMessage: AgentMessage | undefined;
 		// Lifecycle events this event raises are delivered just before it, in the same queue (LifecycleEventSequencer).
@@ -4078,6 +4125,12 @@ export class AgentSession {
 		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 
 		const retryableError = this._isRetryableError(lastAssistant);
+		if (
+			(retryableError || this._isHardErrorFallbackEligible(lastAssistant)) &&
+			this._manualSwitchAwaitingRequest
+		) {
+			return true;
+		}
 		// The retry handler answers an account limit only with the fallback walk, and that walk skips
 		// every rung on the spent provider. Announcing a retry it will not start leaves an RPC client
 		// waiting for a terminal agent_end until the account resets (omo#9711).
@@ -4357,11 +4410,16 @@ export class AgentSession {
 				(isHealthExhaustionFailure(msg.errorMessage) || usageLimitScope(msg.errorMessage) === "account") &&
 				this.model
 			) {
+				// The failure is the model's that produced it, not a model the user picked after it was sent (senpi#6893).
+				const abandoned = this._manualSwitchAwaitingRequest;
+				const failedModel = abandoned ? this.modelRegistry.find(msg.provider, msg.model) : this.model;
 				// Keep the provider's retry-after: without it this re-note replaced a stated reset with a guess (senpi#5568).
-				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, {
-					errorMessage: msg.errorMessage,
-					retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
-				});
+				if (failedModel) {
+					this._retryFallback.noteHealthFailure(failedModel, abandoned ? undefined : this.thinkingLevel, {
+						errorMessage: msg.errorMessage,
+						retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
+					});
+				}
 			}
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
 			const retryAfterRequiredCompaction =
@@ -5019,7 +5077,7 @@ export class AgentSession {
 				?.close()
 				.catch((error: unknown) => this._sessionLogger.warn("tool_child_close_failed", { error: String(error) })) ??
 			Promise.resolve();
-		this._toolChildClosed = Promise.all([inProcessClosed, childClosed]).then(() => undefined);
+		this._toolChildClosed = Promise.all([inProcessClosed, childClosed, this._fallbackLogSettled]).then(() => undefined);
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
@@ -5228,6 +5286,17 @@ export class AgentSession {
 		return this._isAgentRunActive ? String(this.externalAdmission.turnEpoch) : undefined;
 	}
 
+	/** Record a background job under the running turn; outside a turn nothing is recorded. */
+	registerRunBackgroundJob(job: RunBackgroundJob): () => void {
+		const turnId = this.currentTurnId;
+		return turnId === undefined ? () => {} : this._runBackgroundJobs.register(turnId, job);
+	}
+
+	/** Stop the background jobs `turnId` started (`interrupt { background: "stop" }`). */
+	stopRunBackgroundJobs(turnId: string): Promise<RunBackgroundStopOutcome> {
+		return this._runBackgroundJobs.stop(turnId);
+	}
+
 	/** True while a provider retry is in flight; the deadline lease treats it as turn progress. */
 	get isRetryInFlight(): boolean {
 		return this._retryPromise !== undefined;
@@ -5388,7 +5457,13 @@ export class AgentSession {
 	 * Get all configured tools with normalized exposure metadata and source metadata.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolDefinitions.values(), toolInfoOf);
+		return toolInfosOf(
+			this._toolDefinitions,
+			registeredEvalOnlyToolNames(
+				armedEvalOnlyToolNames(this._evalOnlyToolNames, this._toolRegistry),
+				this._toolRegistry,
+			),
+		);
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
@@ -5470,6 +5545,7 @@ export class AgentSession {
 
 		const beforeResult = await this.preflightToolCall(prepared.toolCall, prepared.args, {
 			waitForEventQueue: this._toolExecutionDepth === 0,
+			...(options?.signal === undefined ? {} : { signal: options.signal }),
 		});
 		if (beforeResult?.block) {
 			throw new ExecuteToolError(
@@ -5498,10 +5574,13 @@ export class AgentSession {
 			return result as AgentToolResult<TDetails>;
 		}
 
+		// The rewrite keeps the error flag (the hook's, else the tool's), so a caller sees a failure as one (senpi#6904).
+		const isError = hook.isError ?? result.isError;
 		return {
 			content: hook.content ?? result.content,
 			details: (hook.details ?? result.details) as TDetails,
 			terminate: result.terminate,
+			...(isError === undefined ? {} : { isError }),
 		};
 	}
 
@@ -5537,15 +5616,12 @@ export class AgentSession {
 	}
 
 	private _isEvalOnlyPolicyArmed(): boolean {
-		return this._evalOnlyToolNames !== undefined && this._toolRegistry.has("eval");
+		return armedEvalOnlyToolNames(this._evalOnlyToolNames, this._toolRegistry) !== undefined;
 	}
 
 	/** Resolve fixed and declared eval-only tools, unless an SDK embedder supplied an override. */
 	private _resolveEvalOnlyToolNames(): ReadonlySet<string> {
-		const declaredEvalNames = [...this._toolDefinitions.values()]
-			.filter(({ definition }) => normalizeToolExposure(definition).exposure === "eval")
-			.map(({ definition }) => definition.name);
-		return this._evalOnlyToolNamesOverride ?? new Set([...EVAL_ONLY_TOOL_NAMES, ...declaredEvalNames]);
+		return resolveEvalOnlyToolNames(this._toolDefinitions, this._evalOnlyToolNamesOverride);
 	}
 
 	/**
@@ -5557,7 +5633,7 @@ export class AgentSession {
 	 */
 	private _publishEvalOnlyToolHints(): void {
 		const armed = this._isEvalOnlyPolicyArmed() ? (this._evalOnlyToolNames ?? new Set<string>()) : undefined;
-		const registered = armed ? new Set([...armed].filter((name) => this._toolRegistry.has(name))) : undefined;
+		const registered = armed ? registeredEvalOnlyToolNames(armed, this._toolRegistry) : undefined;
 		for (const name of this._publishedEvalOnlyHintNames) {
 			if (registered?.has(name)) continue;
 			delete this.agent.removedToolHints[name];
@@ -5609,29 +5685,21 @@ export class AgentSession {
 	}
 
 	setActiveToolsByName(toolNames: string[]): void {
-		const tools: AgentTool[] = [];
-		const validToolNames: string[] = [];
-		const policyArmed = this._isEvalOnlyPolicyArmed();
+		const armed = armedEvalOnlyToolNames(this._evalOnlyToolNames, this._toolRegistry);
 		this._publishEvalOnlyToolHints();
-		const policyNames = this._evalOnlyToolNames;
-		let filteredToolNames = toolNames;
-		if (policyArmed && policyNames) {
-			for (const name of toolNames) {
-				if (policyNames.has(name)) this._withheldEvalOnlyToolNames.add(name);
-			}
-			filteredToolNames = toolNames.filter((name) => !policyNames.has(name));
+		const { active: validToolNames, withheld } = directActiveToolNames(
+			toolNames,
+			{ definitions: this._toolDefinitions, toolRegistry: this._toolRegistry },
+			armed,
+		);
+		if (armed) {
+			for (const name of withheld) this._withheldEvalOnlyToolNames.add(name);
 		} else {
 			this._withheldEvalOnlyToolNames.clear();
 		}
 		// Remember the unfiltered request so a later disarm can restore withheld eval-only tools.
 		this._requestedActiveToolNames = [...new Set([...toolNames, ...this._withheldEvalOnlyToolNames])];
-		for (const name of filteredToolNames) {
-			const tool = this._toolRegistry.get(name);
-			if (tool && this._getToolExposure(name) !== "hidden") {
-				tools.push(tool);
-				validToolNames.push(name);
-			}
-		}
+		const tools = validToolNames.flatMap((name) => this._toolRegistry.get(name) ?? []);
 		const activeToolNamesChanged =
 			validToolNames.length !== this.agent.state.tools.length ||
 			validToolNames.some((name, index) => name !== this.agent.state.tools[index]?.name);
@@ -5906,7 +5974,7 @@ export class AgentSession {
 		};
 		const evalOnlyArmed = this._isEvalOnlyPolicyArmed();
 		const armed = evalOnlyArmed ? (this._evalOnlyToolNames ?? new Set<string>()) : new Set<string>();
-		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));
+		const registered = registeredEvalOnlyToolNames(armed, this._toolRegistry);
 		// The eval-only paragraph below states the grep rule for this render, so the grep snippet that
 		// renders the eval-only grep guideline stays out of it (senpi#5335).
 		const { grep: _grepSnippet, ...snippetsWithoutGrep } = toolSnippets;
@@ -6028,13 +6096,7 @@ export class AgentSession {
 		const accounts = summaries.filter((account) => account.unused !== true);
 		if (accounts.length < 2) return undefined;
 		const now = Date.now();
-		const blocksModel = (blocked: { readonly model: string; readonly until: number }) =>
-			blocked.until > now &&
-			(blocked.model === modelId ||
-				new RegExp(`(?:^|[^a-z])${blocked.model}(?:[^a-z]|$)`, "i").test(modelId));
-		const usable = accounts.some(
-			(account) => !account.blocked && !(account.blockedModels ?? []).some(blocksModel),
-		);
+		const usable = accounts.some((account) => accountCanServe(account, modelId, now));
 		const accountsOut = accounts
 			.map((account) => {
 				const reason = account.blockedReason ?? "blocked";
@@ -6044,6 +6106,30 @@ export class AgentSession {
 			})
 			.join(", ");
 		return { usable, accountsOut };
+	}
+
+	/**
+	 * The reported usage of this provider's accounts, without the ones only the user can bring back (a re-login, a
+	 * disabled, signed-out, billing- or organization-blocked account): the pool skips those whatever their usage reads,
+	 * so their usage must not release the provider's hold (senpi#6536). An account out only on a usage limit keeps it.
+	 * Accounts the summary does not name keep their usage, so a provider holding one credential still releases on its
+	 * own reading.
+	 */
+	private async _usageOfSelectableAccounts(provider: string): Promise<readonly AccountLimits[]> {
+		const usage = subscriptionLimits.snapshot();
+		const storage = this._modelRuntime.authStorage;
+		if (storage === undefined) return usage;
+		try {
+			const blocked = new Set(accountsNeedingUser(await getCredentialAccounts(storage, provider)));
+			return blocked.size === 0 ? usage : usage.filter((limits) => !blocked.has(limits.account));
+		} catch (error) {
+			// Unfiltered usage only widens what may release the hold; the reason it could not be narrowed is logged.
+			this._fallbackLog?.warn("usage_accounts_unread", {
+				provider,
+				error: error instanceof Error ? error.message : String(error),
+			});
+			return usage;
+		}
 	}
 
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
@@ -6190,6 +6276,7 @@ export class AgentSession {
 	}
 
 	private async _prompt(text: string, options: PromptOptions): Promise<void> {
+		let claudeRecheckProvider: string | undefined;
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
 			const error = new Error("Prompt cancelled before acceptance");
@@ -6335,9 +6422,28 @@ export class AgentSession {
 						? await this._pooledAccountHealth(model.provider, model.id)
 						: undefined;
 				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
+				// Defer this hold to the Claude pool only if the person's input is ultimately admitted (senpi#6727).
+				if (
+					model?.provider === "anthropic-subscription" &&
+					!this._pendingModelSwitch &&
+					this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
+					attributionOf(options) === "user"
+				)
+					claudeRecheckProvider = model.provider;
+				// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
+				// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
+				// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
+				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+					if (attributionOf(options) === "user") await refreshSubscriptionUsage(model.provider);
+					this._retryFallback.releaseAccountHoldShownServable(
+						model.provider,
+						await this._usageOfSelectableAccounts(model.provider),
+					);
+				}
 				if (
 					model &&
 					!this._pendingModelSwitch &&
+					claudeRecheckProvider !== model.provider &&
 					this._retryFallback.isProviderSpent(model.provider) &&
 					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
 				) {
@@ -6687,7 +6793,7 @@ export class AgentSession {
 				...clientMessageIdentity(options),
 			};
 			this._userInputSources.set(userMessage, options?.source ?? "interactive");
-			markInputTurnOrigin(userMessage, inputTurnMark(options ?? {}));
+			markInputTurnOrigin(userMessage, inputTurnMark(options ?? {}), attributionOf(options) === "user");
 			messages.push(userMessage);
 
 			// Consume next-turn messages transactionally: a final admission rejection
@@ -6728,6 +6834,12 @@ export class AgentSession {
 				return;
 			}
 			await emitInputDisposition("started");
+			if (
+				claudeRecheckProvider !== undefined &&
+				!this._pendingModelSwitch &&
+				this.model?.provider === claudeRecheckProvider
+			)
+				this._retryFallback.releaseAccountHold(claudeRecheckProvider);
 		} catch (error) {
 			await emitInputDisposition("rejected");
 			if (consumedReleaseExtras !== undefined)
@@ -7277,7 +7389,9 @@ export class AgentSession {
 		// stays unstamped: unknown origin, never defaulted to a trusted source.
 		if (input.source !== undefined) this._userInputSources.set(message, input.source);
 		// Restored input with no source keeps no mark: an unmarked turn is engine work, never a trusted origin.
-		if (input.source !== undefined) markInputTurnOrigin(message, inputTurnMark(input));
+		if (input.source !== undefined)
+			markInputTurnOrigin(message, inputTurnMark(input), attributionOf(input) === "user");
+		else if (recordIsDelegated()) markInputTurnOrigin(message, "delegated");
 		if (input.inputId !== undefined) this._queuedInputDispositions.track(message, input.inputId);
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
@@ -7716,6 +7830,9 @@ export class AgentSession {
 		} satisfies CustomMessage;
 		// A delivery that found a run already streaming becomes a steer or follow-up: it keeps the origin it was admitted with.
 		copyInputTurnMark(message, appMessage);
+		// senpi#6342: a custom message a cross-account record's own handling sends carries that origin wherever it waits
+		// (joining a streaming run, parked behind a compaction, held for the next turn), so the turn it opens still asks.
+		if (!hasInputTurnMark(appMessage) && recordIsDelegated()) markInputTurnOrigin(appMessage, "delegated");
 		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
 			// Size inspection makes no model call (#3483): keep the message for a turn that never starts.
 			this._pendingNextTurnMessages.push(appMessage);
@@ -7957,7 +8074,7 @@ export class AgentSession {
 				parentSessionId: inherited.parentSessionId,
 				...idle,
 			});
-		if (request.expectedSeq !== undefined && request.expectedSeq !== pauseSeq)
+		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
@@ -8276,12 +8393,16 @@ export class AgentSession {
 		});
 	}
 
-	noteAutomaticInput(text: string): boolean {
-		const userHold = this._engineTurnHold.holds.some(
+	/** Whether the user's Stop or a parent's run hold is live: automatic connection input is then kept as a notice. */
+	automaticInputHoldLive(): boolean {
+		return this._engineTurnHold.holds.some(
 			(hold) =>
 				(hold.kind === "session_hold" && hold.key !== "interrupted-run") || hold.kind === "inherited_hold",
 		);
-		if (!userHold) return false;
+	}
+
+	noteAutomaticInput(text: string): boolean {
+		if (!this.automaticInputHoldLive()) return false;
 		const message: CustomMessage = {
 			role: "custom",
 			customType: "rpc-automatic-input",
@@ -8458,7 +8579,7 @@ export class AgentSession {
 	}
 
 	/**
-	 * A refused engine turn still records its message and settles a cross-session delivery it carries. A delivery
+	 * A refused engine turn still records its message and settles a cross-session delivery it carries. A message
 	 * whose entry the file refuses leaves the context too: its sender redelivers it, and it must not appear twice.
 	 */
 	private _recordRefusedEngineTurnMessage(appMessage: CustomMessage): void {
@@ -8466,11 +8587,16 @@ export class AgentSession {
 			this._appendCustomMessage(appMessage);
 			this.externalAdmission.observePersisted(appMessage);
 		} catch (error) {
-			if (deliveryIdOf(appMessage) !== undefined) {
-				const index = this.agent.state.messages.lastIndexOf(appMessage);
-				if (index >= 0) this.agent.state.messages.splice(index, 1);
-			}
-			this.externalAdmission.observeRefused(appMessage, error instanceof Error ? error.message : String(error));
+			// The session file refused the entry: the message leaves the context too, so the context matches the
+			// file, and the failure follows the same contract as the main persistence path — it is recorded,
+			// logged, and emitted (senpi#2972). This holds for non-delivery messages as well as deliveries.
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			const index = this.agent.state.messages.lastIndexOf(appMessage);
+			if (index >= 0) this.agent.state.messages.splice(index, 1);
+			this._transcriptWriteFailures.record(appMessage, error);
+			this._sessionLogger.warn("transcript_write_failed", { role: appMessage.role, error: errorMessage });
+			this._emit({ type: "transcript_write_failed", role: appMessage.role, errorMessage });
+			this.externalAdmission.observeRefused(appMessage, errorMessage);
 			this._takePersistWatcher(appMessage)?.failed(error);
 		}
 	}
@@ -8573,12 +8699,26 @@ export class AgentSession {
 			appMessage.details,
 			{ recoveryOwner: recoveryCarrier(start) },
 		);
-		this._emitEntryAppended(entryId);
+		// The entry is written: only a failure of the write itself counts as refused. Bookkeeping (ticket,
+		// watcher settlement, revision) runs before any notification, and each notification is guarded on its
+		// own, so a throwing listener can neither leave a persisted delivery unsettled nor suppress a later
+		// notification (senpi#2972).
 		this._recordWrittenTicket(appMessage, entryId);
 		this._takePersistWatcher(appMessage)?.persisted(entryId);
 		this._incrementMessageRevision();
-		this._emit(start);
-		this._emit({ type: "message_end", message: appMessage });
+		const notify = (emit: () => void): void => {
+			try {
+				emit();
+			} catch (error) {
+				this._sessionLogger.warn("custom_message_listener_failed", {
+					customType: appMessage.customType,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		};
+		notify(() => this._emitEntryAppended(entryId));
+		notify(() => this._emit(start));
+		notify(() => this._emit({ type: "message_end", message: appMessage }));
 	}
 
 	private _flushPendingCustomMessages(): void {
@@ -9522,16 +9662,15 @@ export class AgentSession {
 			return undefined;
 		}
 
-		// A manual model change abandons any active fallback window; if a fallback
-		// retry sleep is still pending, cancel it so no surprise continuation fires.
-		const hadActiveFallback = this._retryFallback.activeState !== undefined;
+		// A manual model change abandons any active fallback window, and a live retry
+		// loop continues on the picked model rather than ending (senpi#6893).
 		this._probeBackScheduler.cancel("manual-model-change");
 		this._retryFallback.clearForManualModelChange(model);
-		if (hadActiveFallback && this._retryAbortController) {
-			this.abortRetry();
-		}
+		// Re-picking the model already in force changes nothing the retry depends on:
+		// its backoff, retry-after and budget stay.
+		const previousModel = this.model;
 
-		return await this._switchActiveModel(model, {
+		const systemPromptChange = await this._switchActiveModel(model, {
 			persistDefault: updateGlobalDefaults,
 			appendSessionEntry: true,
 			emitModelSelect: true,
@@ -9539,6 +9678,30 @@ export class AgentSession {
 			invalidateCompaction: true,
 			origin,
 		});
+		const modelChanged = previousModel === undefined || !modelsAreEqual(previousModel, model);
+		if (modelChanged && this.model && modelsAreEqual(this.model, model)) this._handOffRetryToManualModel();
+		return systemPromptChange;
+	}
+
+	/**
+	 * A manual model change takes over a live retry loop (senpi#6893): a pending
+	 * backoff is cut so the turn continues at once on the picked model with a fresh
+	 * budget, and a failure still to come from a request already in flight is not
+	 * charged to the picked model. An explicit abort still cancels the retry.
+	 */
+	private _handOffRetryToManualModel(): void {
+		const live = this.isStreaming || this._retryPromise !== undefined;
+		this._manualSwitchAwaitingRequest = live;
+		if (!live) return;
+		if (this._retryAbortController) {
+			this._retryAbortController.abort(MANUAL_MODEL_SWITCH_HANDOFF);
+			return;
+		}
+		// No wait left to cut (the switch landed after it): the next request, on the pick, starts a fresh budget.
+		if (this._retryAttempt > 0) {
+			this._retryAttempt = 1;
+			this._resetHintTierState();
+		}
 	}
 
 	private async _maybeRestoreFallbackPrimary(boundary: "turn" | "continuation" = "turn"): Promise<void> {
@@ -9911,6 +10074,7 @@ export class AgentSession {
 			// has to supersede a held switch itself - otherwise cycling onto a model that
 			// fits leaves an older hold to reclaim the session on the next message.
 			this._clearPendingModelSwitch();
+			if (modelIdentityChanged) this._handOffRetryToManualModel();
 			// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
 			this._emit({
 				type: "model_changed",
@@ -11395,12 +11559,7 @@ export class AgentSession {
 			// agent.continue() cannot continue from a completed assistant response.
 			if (!willRetry) {
 				const compacted = await this._runAutoCompaction("overflow", false);
-				if (
-					!compacted &&
-					this._compactionLifecycle.state.status === "failed" &&
-					this._compactionLifecycle.state.rejectionCause !== "external-owner" &&
-					getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
-				) {
+				if (!compacted && this._failedCompactionLatchesAdmission()) {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
 						contentTokens: this._blockedAdmissionContentTokens(),
@@ -11546,12 +11705,7 @@ export class AgentSession {
 				);
 			} else {
 				const compacted = await this._runAutoCompaction("threshold", retryAfterCompaction);
-				if (
-					!compacted &&
-					this._compactionLifecycle.state.status === "failed" &&
-					this._compactionLifecycle.state.rejectionCause !== "external-owner" &&
-					getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
-				) {
+				if (!compacted && this._failedCompactionLatchesAdmission()) {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
 						contentTokens: this._blockedAdmissionContentTokens(),
@@ -11561,6 +11715,27 @@ export class AgentSession {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Whether the automatic compaction that just failed proves the unchanged context cannot be
+	 * compacted, so the automatic loop must stop re-sending it (#7921 case 6). An external owner
+	 * and a transient provider failure (senpi#6760) say nothing about the context: latching on
+	 * them refused every automated send for good, while a later attempt can succeed. Neither does
+	 * a breaker cooldown rejection, which made no attempt at all. Three consecutive owned failures trip
+	 * the breaker, deterministic ones included, so this can leave a deterministic failure
+	 * unlatched for one cooldown (60 s, with #531 cooldown admission). The next real attempt
+	 * that fails deterministically latches again, and a latch already armed stays armed.
+	 */
+	private _failedCompactionLatchesAdmission(): boolean {
+		const state = this._compactionLifecycle.state;
+		return (
+			state.status === "failed" &&
+			state.rejectionCause !== "external-owner" &&
+			state.rejectionCause !== "transient-failure" &&
+			state.rejectionCause !== "circuit-breaker" &&
+			getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
+		);
 	}
 
 	private _isCompactionOnCooldown(): boolean {
@@ -11703,6 +11878,7 @@ export class AgentSession {
 	private async _continueAgentAfterCurrentRun(
 		options: AgentContinuationOptions = {},
 		retryTimeoutMs?: number,
+		keepsTurnOrigin = false,
 	): Promise<"continued" | "taken-over"> {
 		await this.agent.waitForIdle();
 		try {
@@ -11730,6 +11906,7 @@ export class AgentSession {
 
 			await runBoundedRetryContinuation({
 				continueRun: async () => {
+					if (keepsTurnOrigin) noteTurnContinuation(this.sessionManager);
 					if (this._continueWithQueuedInput) {
 						// Joined input of a start that never ran: the transcript tail may be anything, even empty.
 						this._continueWithQueuedInput = false;
@@ -11776,6 +11953,7 @@ export class AgentSession {
 			}
 			throw error;
 		} finally {
+			endTurnContinuation(this.sessionManager);
 			this._scheduledContinuationRecompacted = false;
 			this._continueWithQueuedInput = false;
 		}
@@ -11813,13 +11991,14 @@ export class AgentSession {
 		options: AgentContinuationOptions = {},
 		retryContinuation = false,
 		retryTimeoutMs?: number,
+		keepsTurnOrigin = retryContinuation,
 	): void {
 		// Tool hooks wait for queued message persistence, so continue() cannot run inside this event promise.
 		const currentEventQueue = this._agentEventQueue;
 		const finishContinuationWork = this._sessionWorkBarrier.begin();
 		const continueAfterEvent = async (): Promise<void> => {
 			try {
-				const outcome = await this._continueAgentAfterCurrentRun(options, retryTimeoutMs);
+				const outcome = await this._continueAgentAfterCurrentRun(options, retryTimeoutMs, keepsTurnOrigin);
 				if (retryContinuation && outcome === "taken-over") {
 					DEFERRED_RETRY_QUEUE_OWNERS.delete(this);
 				}
@@ -11969,7 +12148,8 @@ export class AgentSession {
 				// continue from the turn they failed to answer, so strip the whole run.
 				this._stripTrailingFailedAssistants();
 
-				this._scheduleContinuationAfterCurrentEvent();
+				// The recovery run repeats this turn, so it keeps the turn's origin.
+				this._scheduleContinuationAfterCurrentEvent({}, false, undefined, true);
 				return true;
 			} else if (this.pendingMessageCount > 0) {
 				this._scheduleContinuationAfterCurrentEvent();
@@ -12350,6 +12530,7 @@ export class AgentSession {
 				getPauseState: () => this._pauseState(),
 				fenceRun: (runRef) => this._runHolds.fence(runRef),
 				releaseRunFence: (runRef) => this._runHolds.releaseFences("run_cancelled", [runRef]),
+				registerRunBackgroundJob: (job) => this.registerRunBackgroundJob(job),
 				questionInput: () => {
 					this._humanInputAdmitted("answer");
 					// Under the parent's run pause the answer is held like every person input: nothing is released or run (senpi#3811).
@@ -12626,7 +12807,6 @@ export class AgentSession {
 			createToolContext: (signal) => this._createToolContext(signal),
 			dispatcher: this._toolDispatcher,
 		});
-		const { isAllowedTool } = registry;
 		const definitionRegistry = registry.definitions;
 		this._toolDefinitions = definitionRegistry;
 		this._toolPromptSnippets = new Map(
@@ -12654,51 +12834,20 @@ export class AgentSession {
 				)
 				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
 		);
-		const wrappedExtensionTools = registry.extensionTools;
 		this._toolRegistry = registry.toolRegistry;
 		this._evalOnlyToolNames = this._resolveEvalOnlyToolNames();
 		this._publishEvalOnlyToolHints();
-		const isDirectlyExposed = (name: string): boolean => this._isActivatedOnRegistration(name);
-
-		const nextActiveToolNames = (
-			options?.activeToolNames
-				? [...options.activeToolNames]
-				: [...(this._requestedActiveToolNames ?? previousActiveToolNames)]
-		).filter((name) => {
-			if (!isAllowedTool(name)) return false;
-			const previousRegistrationIds = options?.previousActiveToolRegistrationIds;
-			if (!previousRegistrationIds) return true;
-			const current = this._toolDefinitions.get(name);
-			return (
-				current !== undefined &&
-				previousRegistrationIds.get(name) === deriveExtensionRegistrationId(current.sourceInfo, name)
-			);
-		});
-		// Newly added tools had no previous registration to match, so they skip the identity check.
-		for (const name of options?.addedToolNames ?? []) {
-			if (isAllowedTool(name)) nextActiveToolNames.push(name);
-		}
-
-		if (allowedToolNames) {
-			for (const toolName of this._toolRegistry.keys()) {
-				// Naming a tool activates it even when it is not active by default; a hidden tool never is.
-				if (allowedToolNames.has(toolName) && this._getToolExposure(toolName) !== "hidden") {
-					nextActiveToolNames.push(toolName);
-				}
-			}
-		} else if (options?.includeAllExtensionTools) {
-			for (const tool of wrappedExtensionTools) {
-				if (isDirectlyExposed(tool.name)) nextActiveToolNames.push(tool.name);
-			}
-		} else if (!options?.activeToolNames) {
-			for (const toolName of this._toolRegistry.keys()) {
-				if (!previousRegistryNames.has(toolName) && isDirectlyExposed(toolName)) {
-					nextActiveToolNames.push(toolName);
-				}
-			}
-		}
-
-		this.setActiveToolsByName([...new Set(nextActiveToolNames)]);
+		this.setActiveToolsByName(
+			requestedActiveToolNames(registry, {
+				requested: options?.activeToolNames ?? this._requestedActiveToolNames ?? previousActiveToolNames,
+				explicit: options?.activeToolNames !== undefined,
+				includeAllExtensionTools: options?.includeAllExtensionTools,
+				previousRegistrationIds: options?.previousActiveToolRegistrationIds,
+				addedToolNames: options?.addedToolNames,
+				previousRegistryNames,
+				allowedToolNames,
+			}),
+		);
 	}
 
 	/**
@@ -12724,26 +12873,6 @@ export class AgentSession {
 		this._emit({ type: "tool_barrier_waiting", id: wait.id, toolCallId: toolCall.id, toolName: toolCall.name });
 		await wait.done;
 		return true;
-	}
-
-	/** Normalized exposure of a registered tool (C-EX-1); a name without a definition is `direct`. */
-	private _getToolExposure(name: string): ToolExposure {
-		const entry = this._toolDefinitions.get(name);
-		return entry ? normalizeToolExposure(entry.definition).exposure : "direct";
-	}
-
-	/**
-	 * Whether registering the tool activates it: `direct`, `eval` and `model-only` tools, unless the
-	 * definition sets `defaultActive: false`. `search` tools activate lazily; `hidden` tools never do.
-	 */
-	private _isActivatedOnRegistration(name: string): boolean {
-		const entry = this._toolDefinitions.get(name);
-		if (!entry) return false;
-		const exposure = normalizeToolExposure(entry.definition).exposure;
-		return (
-			(exposure === "direct" || exposure === "eval" || exposure === "model-only") &&
-			entry.definition.defaultActive !== false
-		);
 	}
 
 	private _buildRuntime(options: {
@@ -13080,6 +13209,7 @@ export class AgentSession {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			!this._isLocalFailure(message) &&
+			!this._isRequiredCompactionError(message) &&
 			!isModelConfigFailure(message) &&
 			!this._isClaudeSdkAuthMissError(message) &&
 			!this._isClaudeSdkSameModelRemintError(message) &&
@@ -13289,6 +13419,9 @@ export class AgentSession {
 		const isRefusal = isClassifierRefusal(message);
 		const hardErrorFallback = options.hardErrorFallback === true;
 		const sameModelRemint = options.sameModelRemint === true;
+		// The user switched models while this request was in flight: its failure is the
+		// old model's, so the picked model starts fresh without a fallback walk (senpi#6893).
+		const abandonedModelFailure = this._manualSwitchAwaitingRequest;
 		let switchedFallback = false;
 		let sameModelNativeRecovery = false;
 		let is429TierRouted = false;
@@ -13312,7 +13445,11 @@ export class AgentSession {
 				throw error;
 			}
 		};
-		if (usageLimitScope(errorMessage) === "account") {
+		if (abandonedModelFailure) {
+			this._manualSwitchAwaitingRequest = false;
+			this._retryAttempt = 1;
+			this._resetHintTierState();
+		} else if (usageLimitScope(errorMessage) === "account") {
 			switchedFallback = await tryFallback(isBillingErrorMessage(errorMessage) ? "billing" : "transient", {
 				errorMessage,
 				retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
@@ -13615,7 +13752,8 @@ export class AgentSession {
 			}
 		}
 
-		const providerDelayMs = isRefusal || hardErrorFallback ? undefined : this._getProviderRetryDelayMs(errorMessage);
+		const providerDelayMs =
+			isRefusal || hardErrorFallback || abandonedModelFailure ? undefined : this._getProviderRetryDelayMs(errorMessage);
 		const maxRetryDelayMs = this.settingsManager.getProviderRetrySettings().maxRetryDelayMs;
 		// Profile ceiling null (Kimi) bypasses the over-ceiling error path entirely.
 		const profileCeiling =
@@ -13670,7 +13808,7 @@ export class AgentSession {
 			this._retryRandom(),
 		);
 		const plannedDelayMs =
-			switchedFallback || sameModelNativeRecovery
+			switchedFallback || sameModelNativeRecovery || abandonedModelFailure
 				? 0
 				: is429TierRouted
 					? (hintTierDelayMs ?? providerDelayMs ?? localExponentialMs)
@@ -13698,16 +13836,17 @@ export class AgentSession {
 		const delayMs = Math.min(plannedDelayMs, agentCeilingMs ?? Number.MAX_SAFE_INTEGER);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
+		const retryErrorText =
+			usageLimitScope(errorMessage) === "account"
+				? new AccountUsageLimitError(message.provider, errorMessage).message
+				: errorMessage;
 
 		this._emit({
 			type: "auto_retry_start",
 			attempt: this._retryAttempt,
 			maxAttempts: retryProfile.turn.maxRetries,
 			delayMs,
-			errorMessage:
-				usageLimitScope(errorMessage) === "account"
-					? new AccountUsageLimitError(message.provider, errorMessage).message
-					: errorMessage,
+			errorMessage: retryErrorText,
 		});
 
 		// Remove error message from agent state (keep in session for history)
@@ -13718,23 +13857,38 @@ export class AgentSession {
 		}
 
 		// Wait with exponential backoff (abortable)
+		const retrySignal = this._retryAbortController.signal;
 		try {
-			await sleep(delayMs, this._retryAbortController.signal);
+			await sleep(delayMs, retrySignal);
 		} catch {
-			// Aborted during sleep - emit end event so UI can clean up
-			const attempt = this._retryAttempt;
-			this._retryAttempt = 0;
-			this._resetHintTierState();
-			this._retryAbortController = undefined;
-			await this._emitAgentSettled();
-			this._emit({
-				type: "auto_retry_end",
-				success: false,
-				attempt,
-				finalError: "Retry cancelled",
-			});
-			this._resolveRetry();
-			return "cancelled";
+			if (retrySignal.reason === MANUAL_MODEL_SWITCH_HANDOFF) {
+				// A manual model change cut the backoff: continue now on the picked model with a fresh budget.
+				this._manualSwitchAwaitingRequest = false;
+				this._retryAttempt = 1;
+				this._resetHintTierState();
+				this._emit({
+					type: "auto_retry_start",
+					attempt: this._retryAttempt,
+					maxAttempts: this._resolveRetryProfile().turn.maxRetries,
+					delayMs: 0,
+					errorMessage: retryErrorText,
+				});
+			} else {
+				// Aborted during sleep - emit end event so UI can clean up
+				const attempt = this._retryAttempt;
+				this._retryAttempt = 0;
+				this._resetHintTierState();
+				this._retryAbortController = undefined;
+				await this._emitAgentSettled();
+				this._emit({
+					type: "auto_retry_end",
+					success: false,
+					attempt,
+					finalError: "Retry cancelled",
+				});
+				this._resolveRetry();
+				return "cancelled";
+			}
 		}
 		this._retryAbortController = undefined;
 
@@ -14568,7 +14722,43 @@ export class AgentSession {
 		const estimate = branchEntries.some((entry) => entry.type === "context_edit")
 			? estimateProjectedContextTokens(this.sessionManager.buildSessionProjection(), branchEntries)
 			: estimateContextTokens(messages);
+		// A model switch after the last reported usage invalidates that usage: it was
+		// counted with the previous model's tokenizer, so showing it against the new
+		// model's window misstates the context (oh-my-openagent#11684). Fall back to
+		// the content estimate, like the compaction and context-edit paths above.
+		if (estimate.lastUsageIndex !== null && this._isUsageStaleAfterModelChange(branchEntries)) {
+			return { tokens: messages.reduce((sum, message) => sum + estimateTokens(message), 0), reported: false };
+		}
 		return { tokens: estimate.tokens, reported: estimate.usageTokens > 0 };
+	}
+
+	/**
+	 * Whether the latest reported usage predates the latest model switch: no
+	 * assistant message after the switch reported usage, so the last reported
+	 * figure belongs to the previous model's tokenizer. Assistant messages are
+	 * appended to the branch only once they stop streaming (a pending assistant
+	 * message is rejected), so a switch that lands mid-turn still precedes the
+	 * message entry carrying the new model's usage.
+	 */
+	private _isUsageStaleAfterModelChange(branchEntries: readonly SessionEntry[]): boolean {
+		let latestModelChangeIndex = -1;
+		for (let i = branchEntries.length - 1; i >= 0; i--) {
+			if (branchEntries[i].type === "model_change") {
+				latestModelChangeIndex = i;
+				break;
+			}
+		}
+		if (latestModelChangeIndex === -1) return false;
+		for (let i = branchEntries.length - 1; i > latestModelChangeIndex; i--) {
+			const entry = branchEntries[i];
+			if (entry.type === "message" && entry.message.role === "assistant") {
+				const assistant = entry.message;
+				if (assistant.stopReason !== "aborted" && assistant.stopReason !== "error") {
+					if (calculateContextTokens(assistant.usage) > 0) return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	/**

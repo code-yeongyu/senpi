@@ -1,3 +1,193 @@
+## 2026-11-16 - A blank or space-padded CI-basis receipt is refused (senpi#6859 follow-up)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: the "Accept or refuse the CI-basis receipt" step also refuses a `ci_basis_receipt` that is blank or has leading or trailing whitespace, with its own `::error::`. Before, a whitespace-only id passed the empty and printable checks and logged a waiver with no receipt in it.
+
+### Why
+
+- Review of senpi#6861 (LOW L1): the ruling's "receipt id non-empty" must hold for the id a reader sees, not only for its byte length.
+
+### Why an extension could not handle it
+
+- Release workflow steps are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the receipt checks inside the "Accept or refuse the CI-basis receipt" step.
+
+## 2026-11-16 - A pinned release can waive the hosted CI wait with an accepted CI-basis receipt (senpi#6859)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: two new `workflow_dispatch` inputs, `ci_basis_receipt` and `ci_basis_head` (both default empty). A new release-job step, "Accept or refuse the CI-basis receipt", runs before Checkout only when `ci_basis_receipt` is non-empty. It accepts the receipt only when the `sha` input is set, `ci_basis_head` equals it as 40 lowercase hex, the triggering actor's repository role (`GET /repos/{repo}/collaborators/{actor}/permission`, `role_name`, with `GITHUB_TOKEN`) is `admin` or `maintain`, and the receipt id is printable ASCII of at most 200 characters; a `force_tests` or `publish-only` dispatch is refused because neither waits for hosted CI. Each refusal prints its own `::error::` and fails the job. An accepted receipt writes its id, head, actor and `hosted CI wait waived by ci_basis_receipt` to the log and the run summary, and `Run release` passes `--ci-basis-receipt` to `release.mjs`. An empty receipt skips the step and leaves the release arguments unchanged.
+
+### Why
+
+- senpi#6859: when hosted CI for a pinned release commit is backlogged, a maintainer holding an equivalent CI-basis receipt for that exact commit had no auditable way to skip the 40-minute wait other than re-running the whole suite with `force_tests`.
+
+### Why an extension could not handle it
+
+- Release workflow inputs and job steps are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the `workflow_dispatch` inputs right after `sha`, the step after "Refuse a live release from any ref but main", and the env and argument lines of "Run release".
+
+## 2026-11-16 - platform-red never drops or duplicates a report; only the label call builds macOS/Windows native targets (senpi#6847)
+
+### What changed
+
+- `.github/workflows/platform-red.yml`: no concurrency group at any level. The reporter (`scripts/ci-platform-red.mjs`) lists the open tracking issue by its `platform-red` label instead of the search index. A report that loses a race to open the issue comments on the oldest open one and closes its own as a duplicate.
+- `.github/workflows/native-prebuilds.yml`: a new `full_ci` `workflow_call` input (default false). On a pull request the plan step passes the PR's labels to the classifier only when `full_ci` is set, so a labelled PR's own path-filtered run stays on Linux.
+- `.github/workflows/ci-full-label.yml`: the `native-prebuilds` call passes `full_ci: true`.
+
+### Why
+
+- Review LOWs of senpi#6836. A job-level group cancels a pending report when a newer one queues (L1). The search index lags behind a just-created issue (L2). A labelled native PR built darwin/win32 twice per push (L4).
+
+### Why an extension could not handle it
+
+- Workflow configuration and its CI scripts; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the `report` job of `platform-red.yml`, the `workflow_call` inputs and plan scope step of `native-prebuilds.yml`, and the `native-prebuilds` job of `ci-full-label.yml`.
+
+## 2026-11-16 - Pull requests run Linux only; macOS/Windows run on main, in releases and with run-full-ci (senpi#6834)
+
+### What changed
+
+- `.github/workflows/ci.yml`, `.github/workflows/read-summary-binary-parity.yml`, `.github/workflows/session-worker-compile.yml`: the `platform-scope` job no longer lists the PR's changed files; it classifies from the event and the `run-full-ci` label only (`scripts/ci-platform-scope.mjs`), so an unlabelled pull request never schedules a macOS/Windows job or matrix leg. The job drops `pull-requests: read`.
+- `.github/workflows/native-prebuilds.yml`: on a pull request the plan job runs the same classifier and `select` (`scripts/native-prebuild-reuse.mjs`, `FULL`) leaves the darwin/win32 targets out of the build matrix unless the PR is labelled; every other event builds all targets. Concurrency is per PR (cancelled by a newer head) and per commit elsewhere (never cancelled), so the next native push to main no longer cancels the previous main build. The record step declares and exports `RUSTC_VV` separately (SC2155).
+- `.github/workflows/ci-full-label.yml`: the `run-full-ci` label also calls `native-prebuilds.yml`, so the label stays the one opt-in for every macOS/Windows leg.
+- `.github/workflows/platform-red.yml` (new): on a failed main push run of CI, Native Prebuilds, Read summary binary parity or Compiled session worker, `scripts/ci-platform-red.mjs report` opens one tracking issue ("Default-branch macOS/Windows CI is red") naming the merged PR and each failed macOS/Windows job, or comments on it while it is open. Only the report job has a concurrency group (`platform-red-report`, never cancelled), so a later green completion can never replace a pending red report.
+
+### Why
+
+- senpi#6834: in one 2h10m window 49 of 55 PR runs started a macOS job while 10-16 macOS jobs sat queued and a release's macOS jobs waited 91-97 minutes. The path rule (senpi#3957) put most coding-agent PRs on macOS/Windows. Platform regressions now surface on main, so a red there files an issue and blocks the next release.
+
+### Why an extension could not handle it
+
+- Workflow triggers, job conditions and concurrency are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `platform-scope` jobs of the three workflows, the `concurrency` block and plan job of `native-prebuilds.yml`, and the job list of `ci-full-label.yml`.
+
+## 2026-11-13 - The workspace matrix comment names the job that owns the senpi-codemode suite (senpi#6631)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the comment above `test-workspaces` says `codemode-tests` (not `codemode-gate`) runs the senpi-codemode `test` script, and that `scripts/ci-workspace-coverage.test.mjs` also fails when a workspace suite runs in two CI steps. Comment only; no job changes.
+
+### Why
+
+- senpi#6623 moved the codemode package suite from `codemode-gate` into `codemode-tests`, and the comment still named the old job. The coverage test now scans every step for every suite, so the comment states both of its failure modes.
+
+### Why an extension could not handle it
+
+- This is the repository's own CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the comment block above the `test-workspaces` job.
+
+## 2026-11-13 - CI runs the workspace suites in parallel and the senpi-codemode suite once (senpi#6620)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-workspaces` is a matrix of two groups, `ai` and `agent, tui and the rest`, each running `node scripts/run-workspaces.mjs --if-present <its --workspace flags> test`. Each leg needs `build-coding-agent` and restores its `workspace-dist` artifact first, because the workspace suites import packages through their built `dist` (the old job got it from its release-graph step). `scripts/ci-workspace-coverage.test.mjs` fails when a workspace test script runs in no CI job or in two, or when a suite-owning job is missing from `Check and test`'s `needs`. The script tests, release entry graphs and bundle smoke moved unchanged into the new `test-scripts` job ("Test (scripts)"). The codemode package tests moved out of `codemode-gate` into the new parallel `codemode-tests` job, and `packages/senpi-codemode` left the workspace list, so its suite runs once per run. `Check and test` needs both new jobs and lists them in its summary; its name is unchanged.
+
+### Why
+
+- In main run 43347262747 the workspace step ran ten suites one after another for 13.0 min, making `Test (workspaces + scripts)` the longest job (17.7 min), and 8 min of it repeated the senpi-codemode suite that `codemode-gate` also ran in full (339 files and 3079 tests in both steps). `codemode-gate` itself took 17.1 min with its eval gate and the package tests in series, although the tests read nothing the gate writes.
+
+### Why an extension could not handle it
+
+- This is the repository's own CI workflow.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `test-workspaces` job, the `codemode-gate` job and the `needs` list and summary of `check-and-test`.
+
+## 2026-11-13 - CI checks the publish set against the npm registry (senpi#6636)
+
+### What changed
+
+- `.github/workflows/registry-packages-published.yml` (new): on a PR that changes `scripts/registry-packages.mjs`, `scripts/npm-registry.mjs` or the workflow, and on main, runs `node scripts/npm-registry.mjs` and fails while a publish-set name is unknown to the npm registry.
+
+### Why
+
+- A PR that adds a package to the publish set should see the missing first publish at review time, not at the next release's publish step (senpi#6636).
+
+### Why an extension could not handle it
+
+- CI configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- None: the workflow is new.
+
+## 2026-11-13 - The npm publish dispatch no longer waits for the binary smoke (senpi#6627)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `publish-npm` job, which dispatches `publish-npm.yml` publish-only and awaits it, now needs `build` instead of `stage-github-release`. `stage-github-release` still needs the full `smoke-test-binaries` matrix, and `publish-github-release` still needs both `stage-github-release` and `publish-npm`.
+- `.github/workflows/build-binaries.yml`: the "Delete draft GitHub Release after failure" step of `cleanup-draft-github-release` passes `STAGE_JOB_RESULT: ${{ needs.stage-github-release.result }}` to `scripts/release-draft-cleanup.sh`, which now advises publishing a kept draft only when staging succeeded and otherwise prints re-stage steps.
+- `.github/workflows/build-binaries.yml`: a new job, `report-smoke-failure-after-npm`, needs `smoke-test-binaries` and `publish-npm` and runs only when the smoke failed after npm published and the run is not a dry run. It has only `actions: read` and `issues: write`, and nothing waits for it. It runs `scripts/release-smoke-failure-issue.mjs`, which opens an issue naming the version, each failing smoke OS, the run, and the rollback command `npm dist-tag add @code-yeongyu/senpi@<previous> latest`, and then exits non-zero so the run fails loudly. The previous version is read by npm publish time. No job moves a dist-tag.
+
+### Why
+
+- The smoke matrix checks the standalone binaries, which ship only as GitHub Release assets and never in the npm packages. Its macos-latest row queued 30.0 min in run 43048337284, and the npm publish waited behind it.
+- That smoke was the only pre-npm check that starts the CLI on macOS and Windows. A startup bug that shows only there no longer holds npm, so its failure after npm is reported with the rollback command instead.
+
+### Why an extension could not handle it
+
+- Release workflow job ordering is repository CI configuration, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `needs:` line and comment of the `publish-npm` job, and the env block of the cleanup step, in `build-binaries.yml`; the new `report-smoke-failure-after-npm` job sits between `publish-npm` and `publish-github-release`.
+
+## 2026-11-11 - CI tests the realm-registry package (omo#12965)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the workspace test step lists `packages/realm-registry`.
+
+### Why
+
+- The new helper package carries the adoption contract every registry relies on, so its tests run in CI.
+
+### Why an extension could not handle it
+
+- CI configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `--workspace` list of that step.
+
+## 2026-11-11 - The npm audit workflow fails on any advisory that is not on a reviewed, expiring exception list (senpi#6402)
+
+### What changed
+
+- `.github/workflows/npm-audit.yml`: the audit step runs `node scripts/npm-audit-gate.mjs .github/npm-audit-exceptions.json` instead of `npm audit --omit=dev --audit-level=moderate`. The threshold stays at moderate.
+- `scripts/npm-audit-gate.mjs` (new) follows each finding's `via` chain to its advisories, and passes a finding only when every advisory (id + package) is excepted. An exception that has expired, expires more than 30 days out, is missing a field, or matches no finding fails the gate.
+- `.github/npm-audit-exceptions.json` (new): one entry, GHSA-mrhx-c7xc-m3w5 for the zod 3.x copy that `@anthropic-ai/sandbox-runtime` requires (#6399), expiring 2026-12-10. An expiry that is not a real calendar date fails the gate.
+
+### Why
+
+- The zod 3.x copy required by `@anthropic-ai/sandbox-runtime` cannot take the fix (only 4.6.6+ has it), so `npm audit --audit-level=moderate` could never pass, and a red that cannot clear hides new advisories. The one exception is scoped to that advisory and package, is reviewed and expires, so any new advisory still turns the job red. node-forge and the engine's own zod pin are fixed in this PR instead (below).
+
+### Why an extension could not handle it
+
+- This is the repository's own CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the audit step in `.github/workflows/npm-audit.yml`.
+
 ## 2026-11-06 - The forced release suite's budget comment describes the sharded run (senpi#6139)
 
 ### What changed

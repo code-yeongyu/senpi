@@ -42,6 +42,11 @@ type RpcCommandBody =
 			 */
 			expectedHostInstance?: string;
 			sessionPath?: string;
+			/**
+			 * The folder the session works in. Omitted, a `sessionPath` at which a session file exists opens where that
+			 * file's header says (capability `open_session_header_cwd`); a header folder that is not on this host refuses
+			 * the open. Any other open without it works in the host's own folder.
+			 */
 			cwd?: string;
 			provider?: string;
 			modelId?: string;
@@ -262,7 +267,22 @@ type RpcCommandBody =
 	  };
 
 /** Compact callers may identify their own admission on any correlated session request. */
-export type RpcCommand = RpcCommandBody & { readonly admissionId?: string };
+export type RpcCommand = (
+	| RpcCommandBody
+	| {
+			id?: string;
+			/** Build one invisible session for later claim; never an attachment. Requires `park_claim`. */
+			type: "park_session";
+			cwd: string;
+			kind?: SessionKind;
+			context?: Record<string, string>;
+	  }
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
+			type: "claim_session";
+			cwd: string;
+	  })
+) & { readonly admissionId?: string };
 
 /** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
 export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;

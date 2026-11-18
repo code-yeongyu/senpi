@@ -139,7 +139,7 @@ Use quick-set in non-TUI modes; the no-argument menu requires interactive UI. Pa
 
 Senpi ships built-in extensions that inject provider-native server tools when the active model supports them. These run as ordinary extensions internally but are always loaded and require no user configuration beyond having valid credentials.
 
-**openai-image-gen** injects the OpenAI Responses `image_generation` server tool when the model uses `openai-responses` on `api.openai.com`. It arbitrates against the client-side `generate_image` function tool so exactly one image surface is offered per request. A `message_end` handler decodes completed image results, writes them to `generated-images/`, and replaces the provider-native block with a text path reference before session persistence, so base64 payloads never reach the session file. Set `PI_OPENAI_IMAGE_GEN=false` to force the client tool path. Azure Responses endpoints default to the client tool unless `compat.supportsImageGeneration` opts in.
+**openai-image-gen** injects the OpenAI Responses `image_generation` server tool when the model uses `openai-responses` on `api.openai.com`. It arbitrates against the client-side `generate_image` function tool so exactly one image surface is offered per request. `generate_image` itself is eval-only like `bash` (`exposure: "eval"`): whenever an `eval` tool is registered it is withheld from the model's direct tool list and called as `tool.generate_image({ prompt: "..." })` inside a cell; without an eval tool it is an ordinary direct tool. A `message_end` handler decodes completed image results, writes them to `generated-images/`, and replaces the provider-native block with a text path reference before session persistence, so base64 payloads never reach the session file. Set `PI_OPENAI_IMAGE_GEN=false` to force the client tool path. Azure Responses endpoints default to the client tool unless `compat.supportsImageGeneration` opts in.
 
 **openai-web-search** injects the OpenAI Responses `web_search_preview` server tool following the same pattern: credential-gated, stripped on unsupported endpoints, arbitrated against its client-side counterpart.
 
@@ -492,6 +492,12 @@ fence. Human input and `resume_session` release fences together with the user's 
 journaled terminal. Later wakes tagged with the run are admitted again, fences for other runs stay, and releasing a
 run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
 emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
+
+`ctx.registerRunBackgroundJob({ kind, id, description?, stop })` records a background job under the turn running at
+that moment (outside a turn it records nothing), and returns the release to call once the job ended on its own. An RPC
+`interrupt` with `background: "stop"` calls `stop(turnId)` for each job that turn recorded and names it in its answer;
+`stop` ends the job without waking the session and rejects with the reason it could not. The terminal builtin records
+every background bash session this way.
 
 #### held_wakes_released
 
@@ -1074,6 +1080,16 @@ pi.on("before_provider_request", (event, ctx) => {
 ```
 
 This is mainly useful for debugging provider serialization and cache behavior.
+
+`before_provider_request`, `provider_stream_event` and `after_provider_response` handlers can declare the providers whose requests or streams they read or change:
+
+```typescript
+pi.on("before_provider_request", (event) => ({ ...event.payload, metadata: { tag: "x" } }), {
+  providers: ["anthropic"],
+});
+```
+
+The declaration does not filter dispatch: the handler still receives every event. A device serving a hosted session advertises it, so the hosted side knows which providers' calls need that device's hooks. A handler without `providers` counts as touching every provider. The value must be a non-empty array of provider ids; anything else throws at registration, also for a handler whose `runs` side does not register it. Every other event ignores `providers`.
 
 #### after_provider_response
 
@@ -2332,6 +2348,10 @@ From a command handler, send the text before the handler returns: messages anoth
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
+### pi.isLoopRemote()
+
+`true` when this extension runs on a hand whose agent loop runs on another machine (a hosted loop). There, `pi.sendMessage()` and `pi.sendUserMessage()` from work that outlives the call that started it (a background command, a watch, a detached task) reach that loop as durable wakes, and so does a `ctx.ui.notify()` made outside any call. The loop delivers each one as a local session would, and applies its own delivery checks (its mode, its model). A notifier that normally waits for `session_start` before it sends anything should send on a hand without one, because a hand never gets `session_start` for builtins. Everywhere else it is `false`.
+
 ### pi.appendEntry(customType, data?, options?)
 
 Persist extension data. Custom entries do NOT participate in LLM context. In interactive mode, they can also render inside the chat transcript when paired with `pi.registerEntryRenderer()`.
@@ -2559,6 +2579,18 @@ pi.registerShortcut("ctrl+shift+p", {
 });
 ```
 
+### pi.registerDeviceMachine(machine)
+
+Register the operation layer of the device this session's tools run on (a `ToolMachine`, for example from `createToolMachine({ ops })`). Only tools named in `OMO_TOOLS_VIA_DAEMON` use it, today `bash`, and the bash tool reads it when a command runs. With the flag on and no machine registered, bash fails with `DeviceUnavailableError` and never runs locally.
+
+One registration per session: a second one, from any extension, throws `DeviceMachineConflictError` (`code: "device_machine_conflict"`, with `registeredBy` and `attemptedBy`). A registration made by an extension whose factory then throws is discarded with the rest of that load. If another extension registers a device machine while this load's registration is still staged (for example from an event fired during this factory), the conflict is found when the load commits: the factory cannot catch it, and the extension fails to load as a whole with `DeviceMachineConflictError`.
+
+```typescript
+import { createToolMachine } from "@code-yeongyu/senpi";
+
+pi.registerDeviceMachine(createToolMachine({ ops: myDeviceOps }));
+```
+
 ### pi.registerFlag(name, options)
 
 Register a CLI flag.
@@ -2586,6 +2618,16 @@ pi.on("tool_call", () => {
     // Nothing will prompt for permission in this session.
   }
 });
+```
+
+### pi.engine
+
+The engine this extension is running in: the same exports `import * as engine from "@code-yeongyu/senpi"` gives when the loader serves that specifier. Read the running engine's exports here when your extension is bundled or loaded in a way where its own import of that specifier could evaluate a second copy of the engine. The property is read-only and gives nothing an import does not.
+
+```typescript
+export default function (pi: ExtensionAPI) {
+  const { createAgentSession } = pi.engine;
+}
 ```
 
 ### pi.getSubscriptionLimits()

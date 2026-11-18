@@ -44,6 +44,8 @@ describe("extension context without a session (senpi#5223)", () => {
 		expect(context.isProjectTrusted()).toBe(true);
 		expect(context.getImageSettings()).toEqual(expect.objectContaining({ autoResize: expect.any(Boolean) }));
 		expect(typeof context.agentDir).toBe("string");
+		// senpi#6676: a context with no turn serves an absent signal instead of refusing the read.
+		expect(context.signal).toBeUndefined();
 	});
 
 	it("has no session identity", async () => {

@@ -3,16 +3,22 @@ import { randomUUID } from "node:crypto";
 import type { NestedRequest, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
 import { type AgentSessionRuntimeDiagnostic, createAgentSessionServices } from "../../core/agent-session-services.ts";
+import { type HandWake, lateLoopRoute, loopWakeRoute } from "../../core/execution/hand-wake-route.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import { PresentationBroker } from "../../core/extensions/ui-presentation.ts";
 import { bootstrapRuntime, buildToolRegistry, type ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
-import { toolInfoOf } from "../../core/tool-info.ts";
+import {
+	armedEvalOnlyToolNames,
+	registeredEvalOnlyToolNames,
+	resolveEvalOnlyToolNames,
+} from "../../core/runtime/active-tools.ts";
+import { toolInfosOf } from "../../core/tool-info.ts";
 import { childModuleRoots } from "../../core/tool-dispatch/offload.ts";
 import { createToolChildRuntime } from "../../core/tool-dispatch/tool-child-runtime.ts";
 import { builtInExtensions } from "../../extensions/index.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
-import { looplessToolFilters, resolveCliPaths, resolveLooplessSettings } from "./loopless-runtime-settings.ts";
+import { looplessToolSelection, resolveCliPaths, resolveLooplessSettings } from "./loopless-runtime-settings.ts";
 import {
 	isLooplessExecuteGranted,
 	type LooplessExecuteGrant,
@@ -20,13 +26,10 @@ import {
 	looplessGrantRunsToolHandlers,
 } from "./loopless-execute-grant.ts";
 import { runLooplessToolCall } from "./loopless-tool-call.ts";
-import {
-	createLoopHookCall,
-	extensionLoopHooks,
-	extensionToolHandlers,
-	type LooplessLoopHooks,
-	type TwoSidedHome,
-} from "./loopless-tool-handlers.ts";
+import { createLoopHookCall } from "./loop-hook-call.ts";
+import { extensionLoopHooks, type LooplessLoopHooks } from "./loopless-loop-hooks.ts";
+import { withToolCatalog } from "./hand-tool-catalog.ts";
+import { extensionToolHandlers, type TwoSidedHome } from "./loopless-tool-handlers.ts";
 import { toolChildModuleRoots } from "./tool-child/session-child.ts";
 
 /**
@@ -59,7 +62,8 @@ export interface LooplessRuntime {
 	): Promise<AgentToolResult<unknown>>;
 	/**
 	 * Runs this runtime's extensions' loop hooks for a loop that runs elsewhere, on the same runner as its tool calls
-	 * (S33). Refused unless the runtime was built as its extensions' home (`twoSidedHome: "hand"`).
+	 * (S33). Refused unless the runtime was built as its extensions' home (`twoSidedHome: "hand"`). `describe_tools`
+	 * (the tool list a local session here would show its model, senpi#6749) is answered on any runtime.
 	 */
 	readonly runLoopHooks: LooplessLoopHooks;
 	/**
@@ -74,6 +78,11 @@ export interface LooplessRuntime {
 export interface LooplessRuntimeProfile {
 	cwd: string;
 	launchProfile?: Readonly<AgentSessionLaunchProfile>;
+	/**
+	 * On a hand, this runtime's scope's wake outbox (H3): what its work sends to the loop after the call that started it
+	 * ended (messages, user messages, notices) goes there. Absent, that work stays loop-side and unbound.
+	 */
+	wake?: (wake: HandWake) => void;
 }
 
 export type LooplessRuntimeFactory = (profile: LooplessRuntimeProfile) => Promise<LooplessRuntime>;
@@ -183,28 +192,50 @@ export function createLooplessRuntimeFactory(
 			modelRegistry: services.modelRegistry,
 			toolDispatcher: dispatcher,
 		});
+		const toolSelection = looplessToolSelection(parsed, services.settingsManager);
 		const registry = buildToolRegistry({
 			baseToolDefinitions: runtime.baseToolDefinitions,
 			runner: runtime.extensionRunner,
 			dispatcher,
-			...looplessToolFilters(parsed, services.settingsManager),
+			...toolSelection.filters,
 		});
 		toolNames = () => [...registry.toolRegistry.keys()];
 		const getLoadedHookSources = services.resourceLoader.getLoadedHookSources?.bind(services.resourceLoader);
-		const loopHookCall = createLoopHookCall();
+		const { wake } = profile;
+		const loopWake = wake === undefined ? undefined : loopWakeRoute(wake);
+		const loopHookCall = createLoopHookCall(
+			lateLoopRoute(wake, (error) =>
+				runtime.extensionRunner.emitError({ extensionPath: "<loop-hook-call>", event: "late_effect", error }),
+			),
+		);
 		runtime.extensionRunner.bindSessionlessFacts({
-			getAllTools: () => Array.from(registry.definitions.values(), toolInfoOf),
+			getAllTools: () =>
+				toolInfosOf(
+					registry.definitions,
+					registeredEvalOnlyToolNames(
+						armedEvalOnlyToolNames(
+							resolveEvalOnlyToolNames(registry.definitions, undefined),
+							registry.toolRegistry,
+						),
+						registry.toolRegistry,
+					),
+				),
 			loopHookCall: () => loopHookCall.current(),
 			loopHookSend: () => loopHookCall.sender(),
+			loopHookWrite: () => loopHookCall.writer(),
+			...(loopWake === undefined ? {} : { loopWake }),
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
-		// On a hand, a call's extension UI is presented by the loop that owns the call (S30).
-		const presentation = new PresentationBroker((error) =>
-			runtime.extensionRunner.emitError({
-				extensionPath: "<presentation-port>",
-				event: "ui_presentation",
-				error: `A presentation could not reach the attached client: ${error instanceof Error ? error.message : String(error)}`,
-			}),
+		// On a hand, a call's extension UI is presented by the loop that owns the call (S30); a notice made outside any
+		// call, or after its call ended, goes to the loop as a wake (H3).
+		const presentation = new PresentationBroker(
+			(error) =>
+				runtime.extensionRunner.emitError({
+					extensionPath: "<presentation-port>",
+					event: "ui_presentation",
+					error: `A presentation could not reach the attached client: ${error instanceof Error ? error.message : String(error)}`,
+				}),
+			loopWake?.notify,
 		);
 		runtime.extensionRunner.setUiBroker(presentation);
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
@@ -251,11 +282,14 @@ export function createLooplessRuntimeFactory(
 			diagnostics,
 			fileGuards,
 			execute: (name, toolCallId, params, signal, nested) => execute(name, toolCallId, params, signal, nested),
-			runLoopHooks: extensionLoopHooks(
-				runtime.extensionRunner,
-				local.twoSidedHome ?? "loop",
-				services.cwd,
-				loopHookCall,
+			runLoopHooks: withToolCatalog(
+				extensionLoopHooks(runtime.extensionRunner, local.twoSidedHome ?? "loop", services.cwd, loopHookCall),
+				{
+					registry,
+					initialActiveToolNames: toolSelection.initialActiveToolNames,
+					allowedToolNames: toolSelection.filters.allowedToolNames,
+					resources: services.resourceLoader,
+				},
 			),
 			dispose: async () => {
 				// Stale first, as a session disposes: a close that fails must not leave the contexts usable.

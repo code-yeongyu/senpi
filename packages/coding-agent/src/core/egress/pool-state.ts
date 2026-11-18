@@ -24,6 +24,8 @@ export interface PoolState {
 		material: { key?: string; access?: string; refresh?: string },
 	): Promise<StoredSlotRevisions>;
 	envCredentialRevision(envVarName: string, envValue: string): Promise<string>;
+	/** Where this machine's block log goes (senpi#3216); a state without a local file keeps no block log. */
+	blockLogPath?(): string;
 }
 
 // Compile-time proof that the fused implementation is today's repository, used as is.

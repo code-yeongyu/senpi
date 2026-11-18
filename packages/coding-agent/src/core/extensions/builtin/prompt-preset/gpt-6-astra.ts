@@ -457,8 +457,8 @@ function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
 	const asyncDefault = hasEval ? ASYNC_DEFAULT : ASYNC_DEFAULT.replace(ASYNC_EVAL_CLAUSE, ASYNC_NO_EVAL_CLAUSE);
 	const unrunChecks =
 		context.surface !== "terminal"
-			? `${GPT_APP_UNRUN_CHECK_RULE} Fix failures your change caused and report pre-existing ones.`
-			: "Say what you could not run and why; fix failures your change caused and report pre-existing ones.";
+			? `${GPT_APP_UNRUN_CHECK_RULE} Fix failures your change caused and any that sit in the code you changed; report other pre-existing ones.`
+			: "Say what you could not run and why; fix failures your change caused and any that sit in the code you changed; report other pre-existing ones.";
 	// Only the guidelines: the provider request carries every tool schema, so the core renders no tool list.
 	const guidelinesAt = context.toolSection.indexOf("## Tool Guidelines");
 	const toolSection = guidelinesAt === -1 ? "" : `\n\n${context.toolSection.slice(guidelinesAt)}`;
@@ -505,7 +505,7 @@ ${asyncDefault} ${FOREGROUND_EXCEPTION} ${TURN_END_IS_WAIT} ${monitor}
 
 ${ROOT_CAUSE}
 
-The fix lands at the cause, in the smallest correct change: fewer new names, helpers, and layers; single-use logic inline; no error handling, fallbacks, retries, or shims for cases the current contracts exclude; validation at system boundaries only. Problems outside the goal, including ones you run into, go in the final message unexplored unless one blocks the goal. Match the codebase's style.
+This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it. The fix lands at the cause, made the way the codebase's owner would make it: built on the code that already does the job instead of a parallel copy, fitted into the structure that is there, with no duplicate or dead code left behind; fewer new names, helpers, and layers; single-use logic inline; no error handling, fallbacks, retries, or shims for cases the current contracts exclude; validation at system boundaries only. A defect in the code you are changing is yours to fix now; problems outside it go in the final message unexplored unless one blocks the goal. Match the codebase's style.
 
 ${UNBOUNDED_RETRY}${toolSection}
 

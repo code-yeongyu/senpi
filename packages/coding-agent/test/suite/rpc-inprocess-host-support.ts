@@ -31,8 +31,8 @@ interface OpenFields {
 }
 
 export interface TeardownGate {
-	/** Every teardown from here on blocks until `release()`. */
-	hold(): void;
+	/** Every teardown from here on blocks until `release()`; resolves when one reaches the gate. */
+	hold(): Promise<void>;
 	/** Lets the held teardowns finish. */
 	release(): void;
 }
@@ -77,14 +77,16 @@ export function inProcessRuntimeFactory(): {
 	teardown: TeardownGate;
 } {
 	const turns = new Map<string, FakeTurn>();
-	let held: { promise: Promise<void>; resolve: () => void } | undefined;
+	let held: { promise: Promise<void>; resolve: () => void; entered: () => void } | undefined;
 	const teardown: TeardownGate = {
 		hold: () => {
+			const entered = Promise.withResolvers<void>();
 			let resolve!: () => void;
 			const promise = new Promise<void>((settle) => {
 				resolve = settle;
 			});
-			held = { promise, resolve };
+			held = { promise, resolve, entered: entered.resolve };
+			return entered.promise;
 		},
 		release: () => {
 			held?.resolve();
@@ -208,6 +210,7 @@ export function inProcessRuntimeFactory(): {
 					if (running) queueMicrotask(() => running.end(true));
 				},
 				waitForIdle: async () => {
+					held?.entered();
 					await held?.promise;
 				},
 				dispose: () => hold?.release(),

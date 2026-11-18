@@ -89,7 +89,7 @@ export interface RpcProviderAccount {
 	orgName?: string;
 	subscriptionType?: string;
 	/** The sign-in connection test's last result. */
-	check?: { model: string; outcome: "ok" | "failed"; reason?: string; at: number };
+	check?: { model: string; outcome: "ok" | "failed"; reason?: string; message?: string; status?: number; at: number };
 	/** `needs_sign_in`: the account must sign in again before it is used. */
 	signIn?: "signed_in" | "needs_sign_in";
 	/** Actual session-local selection, not a prediction from account order or pin. */

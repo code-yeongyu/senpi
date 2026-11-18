@@ -17,6 +17,15 @@ const DRAIN_SWEEP_MS = 50;
  */
 export function beginDrain(host: RouterContext): void {
 	host.draining = true;
+	void host.parks
+		.stop()
+		.catch((cause: unknown) => {
+			process.stderr.write(`senpi rpc park close failed during drain: ${String(cause)}\n`);
+		})
+		.then(() => sweepDrain(host))
+		.catch((cause: unknown) => {
+			process.stderr.write(`senpi rpc drain sweep failed after park close: ${String(cause)}\n`);
+		});
 	stopSweep(host);
 	// Armed BEFORE the first pass, so a pass that fails is retried instead of ending the drain
 	// (senpi#2285). Unref'd: a draining host must never be the reason the event loop stays open.
@@ -37,7 +46,7 @@ export function sweepDrain(host: RouterContext): void {
 	holdUnattendedTurns(host);
 	for (const sessionId of verdicts.gone) parkForHandoff(host, sessionId, "session_dir_removed");
 	for (const sessionId of verdicts.park) parkForHandoff(host, sessionId, "handoff_parked");
-	if (host.registry.size > 0 || host.handoffParks > 0 || host.finalizations.size > 0) return;
+	if (host.registry.size > 0 || host.parks.size > 0 || host.handoffParks > 0 || host.finalizations.size > 0) return;
 	if (host.drainTimer !== undefined) {
 		clearInterval(host.drainTimer);
 		host.drainTimer = undefined;

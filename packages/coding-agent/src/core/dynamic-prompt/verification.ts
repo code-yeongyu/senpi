@@ -102,7 +102,7 @@ Tier the scope, never the rigor.
 
 ${buildTestDisciplineSection("full")}
 
-"Should pass" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: ${FULL_CLAIM_AUDIT[terminalOrApp(options.surface ?? "terminal")]} Fix only issues your changes caused; note pre-existing failures separately.`;
+"Should pass" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: ${FULL_CLAIM_AUDIT[terminalOrApp(options.surface ?? "terminal")]} Fix failures your change caused and any that sit in the code you changed; note other pre-existing failures separately.`;
 	}
 	return `## Verification
 
@@ -114,5 +114,5 @@ Tier the scope, never the rigor.
 
 ${buildTestDisciplineSection()}
 
-Before reporting progress: audit each claim against a tool result from this session; ${CLAIM_AUDIT[terminalOrApp(options.surface ?? "terminal")]} Fix only issues your changes caused; note pre-existing failures separately.`;
+Before reporting progress: audit each claim against a tool result from this session; ${CLAIM_AUDIT[terminalOrApp(options.surface ?? "terminal")]} Fix failures your change caused and any that sit in the code you changed; note other pre-existing failures separately.`;
 }

@@ -21,9 +21,9 @@ import {
 	isTerminalFailure,
 } from "./session-commit-boundary.ts";
 import {
-	bindingFromEntry,
 	forgetBinding,
 	getBinding,
+	keepBindingThenClose,
 	rememberBinding,
 	rememberBindingInvalidation,
 } from "./session-reattach.ts";
@@ -34,7 +34,7 @@ import {
 	recordPendingFork,
 	switchSessionModel,
 } from "./session-registry.ts";
-import { sentHashesForEntry, sentMessageHashes, sentMessages } from "./session-sync.ts";
+import { sentMessageHashes, sentMessages } from "./session-sync.ts";
 
 const commitBoundary = new AssistantCommitBoundary();
 
@@ -64,12 +64,6 @@ async function invalidateBinding(
 	const sessionFile = ctx.sessionManager.getSessionFile?.();
 	if (sessionFile) await deleteStoredBinding(sessionFile);
 	persistBindingInvalidation(pi, sessionId, reason, divergedPath);
-}
-
-function keepBindingThenClose(sessionId: string, reason: string): void {
-	const entry = getSession(sessionId);
-	if (entry) rememberBinding(bindingFromEntry(entry, sentHashesForEntry(entry) ?? []));
-	closeSession(sessionId, reason);
 }
 
 function residentEntryFor(sessionId: string, message: AssistantMessage) {
@@ -125,7 +119,7 @@ export function registerSessionRegistry(
 		});
 		await invalidateBinding(pi, ctx, "tree_changed");
 	});
-	pi.on("model_select", async (event, ctx) => {
+	pi.on("model_select", (event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
 		// Leaving this provider is an excursion, not an invalidation: the live SDK
 		// session closes but the binding stays, so coming back to the same model
@@ -135,7 +129,8 @@ export function registerSessionRegistry(
 			keepBindingThenClose(sessionId, "model_selected");
 			return;
 		}
-		if (!(await switchSessionModel(sessionId, event.model.id, sdkModelId(event.model)))) {
+		// Started, not awaited: the next turn admission waits for it (senpi#6411).
+		if (!switchSessionModel(sessionId, event.model.id, sdkModelId(event.model))) {
 			keepBindingThenClose(sessionId, "model_selected");
 		}
 	});

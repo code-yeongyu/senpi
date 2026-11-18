@@ -24,6 +24,12 @@ import {
 import type { FauxCallLogEntry } from "@earendil-works/pi-ai/compat";
 import type { AgentSession, AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import { createHarness, type Harness, type HarnessOptions } from "../../suite/harness.ts";
+import {
+	createToolDispatchLedger,
+	recoverPendingToolCalls,
+	type ToolLedgerEntry,
+	type ToolRecovery,
+} from "./tool-dispatch.ts";
 
 export type HistoryRow =
 	| { readonly kind: "input"; readonly message: AgentMessage }
@@ -116,12 +122,7 @@ export interface ReferenceDriver {
 	readonly rebuildFailures: readonly unknown[];
 	readonly historyStoreKind: HistoryStoreKind;
 	storedRowCount(): number;
-	readonly toolLedger: ReadonlyArray<{
-		toolName: string;
-		toolCallId: string;
-		generation: number;
-		outcome: "ran" | "killed";
-	}>;
+	readonly toolLedger: readonly ToolLedgerEntry[];
 	readonly auxRows: readonly AuxRow[];
 	settleAux(): Promise<void>;
 	readonly stops: ReadonlyArray<{ readonly stepId: string; readonly while: "latched" | "active" }>;
@@ -270,6 +271,9 @@ export async function createReferenceDriver(
 	let readBacks = 0;
 	let lateLandingFloor = 0;
 	const cancelledSteps = new Set<string>();
+	// The step the current instance last admitted, so a stop of an ACTIVE step can cancel it durably
+	// before the abort, exactly as a stop of a latched one does (W14).
+	let admittedStep: { readonly stepId: string; readonly generation: number } | undefined;
 	let cancelledAbort: { readonly stepId: string; readonly message: AgentMessage } | undefined;
 	let latchedStep: { readonly stepId: string; readonly message: AgentMessage } | undefined;
 	let committingStep: { readonly stepId: string; readonly message: AgentMessage } | undefined;
@@ -301,38 +305,10 @@ export async function createReferenceDriver(
 	}
 	let adapterAppendAttempts = 0;
 	// Dispatch ledger (S8a): every tool call the loop runs is recorded before the tool executes.
-	const toolLedger: Array<{ toolName: string; toolCallId: string; generation: number; outcome: "ran" | "killed" }> =
-		[];
-	// A held dispatch (S13): the next tool call waits at dispatch until released or killed.
-	let pendingHold: { arrive: () => void; gate: Promise<"release" | "kill"> } | undefined;
-	let heldKill: (() => void) | undefined;
+	const dispatch = createToolDispatchLedger(() => generation);
+	const toolLedger = dispatch.entries;
 	let buildHold: { arrive: () => void; gate: Promise<void> } | undefined;
-	const ledgerTools = options.tools?.map((tool) => ({
-		...tool,
-		execute: async (toolCallId: string, params: unknown, signal?: AbortSignal, ...rest: unknown[]) => {
-			const entry = { toolName: tool.name, toolCallId, generation, outcome: "ran" as "ran" | "killed" };
-			toolLedger.push(entry);
-			let callSignal = signal;
-			const hold = pendingHold;
-			if (hold) {
-				pendingHold = undefined;
-				hold.arrive();
-				if ((await hold.gate) === "kill") {
-					const controller = new AbortController();
-					controller.abort();
-					callSignal = controller.signal;
-					entry.outcome = "killed";
-				}
-			}
-			const run = tool.execute as (
-				id: string,
-				p: unknown,
-				s?: AbortSignal,
-				...args: unknown[]
-			) => ReturnType<typeof tool.execute>;
-			return run(toolCallId, params, callSignal, ...rest);
-		},
-	}));
+	const ledgerTools = dispatch.wrap(options.tools);
 	options = ledgerTools ? { ...options, tools: ledgerTools } : options;
 
 	// Public seam (CK1p, C.P3): each harness gets a forwarding commitStep whose target install() fills per instance.
@@ -510,6 +486,7 @@ export async function createReferenceDriver(
 			});
 			fence = { epoch: fence.epoch, admissionSeq: fence.admissionSeq + 1, generation };
 			admitted = { stepId: `step-${fence.admissionSeq}`, fence };
+			admittedStep = { stepId: admitted.stepId, generation: instanceGeneration };
 			if (cancelNextStep) {
 				cancelNextStep = false;
 				cancelledSteps.add(admitted.stepId);
@@ -583,6 +560,24 @@ export async function createReferenceDriver(
 		}
 	}
 
+	// S8a/S13: the tool calls of the last committed step that the exactly-once ledger has not run are
+	// the rebuilt instance's to finish, through the same pipeline a live dispatch uses.
+	async function recoverCommittedTools(instance: Harness): Promise<ToolRecovery> {
+		const nothing: ToolRecovery = { ran: 0, stopped: false };
+		const last = rows.findLast((row) => row.kind !== "tombstone");
+		if (last?.kind !== "step") return nothing;
+		const assistantMessage = last.message;
+		if (assistantMessage.role !== "assistant") return nothing;
+		const { stepId } = last;
+		return recoverPendingToolCalls({
+			instance,
+			assistantMessage,
+			alreadyRan: new Set(toolLedger.filter((entry) => entry.outcome === "ran").map((entry) => entry.toolCallId)),
+			now: () => clock.now(),
+			onResult: (message) => appendRow({ kind: "step", stepId, message }),
+		});
+	}
+
 	function flushTranscriptInputs(harness: Harness): void {
 		for (const message of harness.agent.state.messages) {
 			if (message.role !== "user" || rowMessages.has(message)) continue;
@@ -621,13 +616,27 @@ export async function createReferenceDriver(
 		current = next;
 		rebuilds += 1;
 		latchedAt = undefined;
+		// Ordering rule (custody r11.2 2.3, S13): a rebuild finishes the committed step's unrun tools
+		// BEFORE it delivers any queued input. Tools dispatch only after a successful commit, and new input
+		// must never overtake a committed step's tool work. A production session driver is checked against
+		// this rule; the hand still dedupes a recovered call by (sessionId, toolCallId).
+		const recovery = await recoverCommittedTools(next);
 		const pending = inbox.filter((entry) => entry.consumedBy === undefined);
 		for (const entry of pending) {
 			if (entry.kind === "steering") await next.session.steer(entry.text);
 			else await next.session.followUp(entry.text);
 		}
-		// Re-admission: history ending in input the model has not answered (no committed row) dials again.
-		if (pending.length > 0 || rows.findLast((row) => row.kind !== "tombstone")?.kind === "input") {
+		// #6249: a stop during recovery ends the step. Its aborted results are committed and nothing is dialed
+		// after it, exactly as a stop of a live step never redials. Queued input is still handed to the rebuilt
+		// instance above, so it waits there for the next prompt, as it does after a live stop.
+		if (recovery.stopped) return;
+		// Re-admission: history ending in input the model has not answered (no committed row) dials again,
+		// and so does a recovered tool result, which the model owes an answer to.
+		if (
+			recovery.ran > 0 ||
+			pending.length > 0 ||
+			rows.findLast((row) => row.kind !== "tombstone")?.kind === "input"
+		) {
 			await next.agent.continue().catch(() => undefined);
 		}
 	}
@@ -673,44 +682,29 @@ export async function createReferenceDriver(
 		// commits its synthesized aborted message and never redials it.
 		// S8: the instance dies without a latch (process kill): a held call is killed, its late events are refused.
 		async evict() {
-			heldKill?.();
-			heldKill = undefined;
+			dispatch.killHeld();
 			generation += 1;
 		},
-		// S8a: rebuild from durable rows, then run the committed step's tool calls that never ran, exactly once.
+		// S8a: rebuild from durable rows, which runs the committed step's unrun tool calls exactly once.
 		async resume() {
 			await rebuild();
-			const last = rows.at(-1);
-			if (last?.kind !== "step" || last.message.role !== "assistant") return;
-			const ran = new Set(toolLedger.filter((entry) => entry.outcome === "ran").map((entry) => entry.toolCallId));
-			let dispatched = 0;
-			for (const block of last.message.content) {
-				if (block.type !== "toolCall" || ran.has(block.id)) continue;
-				const tool = ledgerTools?.find((candidate) => candidate.name === block.name);
-				if (!tool) continue;
-				const output = await tool.execute(block.id, block.arguments, undefined);
-				const result = {
-					role: "toolResult" as const,
-					toolCallId: block.id,
-					toolName: block.name,
-					content: output.content,
-					isError: false,
-					timestamp: clock.now(),
-				};
-				appendRow({ kind: "step", stepId: last.stepId, message: result });
-				current.agent.state.messages = [...current.agent.state.messages, result];
-				dispatched += 1;
-			}
-			// A finished step (no pending tool calls) needs nothing more: continuing from it is refused.
-			if (dispatched > 0) await current.agent.continue();
 		},
 		stop() {
 			const step = latchedStep;
 			if (latchedAt === undefined || step === undefined) {
 				// An active step: kill any held tool call and abort the run (W14, active).
-				if (heldKill === undefined && !current.session.isStreaming) return "nothing-latched";
-				heldKill?.();
-				heldKill = undefined;
+				if (!dispatch.hasHeldCall() && !current.session.isStreaming) return "nothing-latched";
+				// The admitted step is cancelled before the abort, so a commit that rejects on its way out
+				// rebuilds into one aborted message instead of redialing the unanswered input.
+				const active = admittedStep;
+				if (
+					active !== undefined &&
+					active.generation === generation &&
+					!rows.some((row) => row.kind === "step" && row.stepId === active.stepId)
+				) {
+					cancelledSteps.add(active.stepId);
+				}
+				dispatch.killHeld();
 				void current.session.abort();
 				stops.push({ stepId: committingStep?.stepId ?? "active", while: "active" });
 				return "cancelled-active-step";
@@ -793,34 +787,7 @@ export async function createReferenceDriver(
 				buildHold = { arrive, gate };
 				return { reached, release: () => release() };
 			},
-			pauseNextTool() {
-				let arrive = () => {};
-				const reached = new Promise<void>((resolve) => {
-					arrive = resolve;
-				});
-				let decide: (choice: "release" | "kill") => void = () => {};
-				const gate = new Promise<"release" | "kill">((resolve) => {
-					decide = resolve;
-				});
-				pendingHold = {
-					arrive: () => {
-						heldKill = () => decide("kill");
-						arrive();
-					},
-					gate,
-				};
-				return {
-					reached,
-					release: () => {
-						heldKill = undefined;
-						decide("release");
-					},
-					kill: () => {
-						heldKill = undefined;
-						decide("kill");
-					},
-				};
-			},
+			pauseNextTool: () => dispatch.pauseNextTool(),
 			nextCommitError(error: unknown) {
 				plannedFaults.push({ kind: "throw", error });
 			},

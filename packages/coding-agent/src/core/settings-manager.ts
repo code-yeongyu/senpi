@@ -235,6 +235,7 @@ export interface Settings {
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
 	tools?: { bash?: { redactSecretsInOutput?: boolean } }; // default: false; output only
+	credentialProxy?: { credentials?: unknown[] }; // global setting only; validated by core/credential-proxy/declarations.ts
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
@@ -1089,6 +1090,15 @@ export class SettingsManager {
 
 	getProjectSettings(): Settings {
 		return structuredClone(this.projectSettings);
+	}
+
+	/**
+	 * `contextFiles.globalPath` from the user's own layers only: session overrides, then global
+	 * settings. A project's `.senpi/settings.json` never redirects the user's global context file
+	 * (senpi#5567), so the project layer is deliberately skipped.
+	 */
+	getGlobalContextFilePath(): string | undefined {
+		return this.runtimeOverrides.contextFiles?.globalPath ?? this.globalSettings.contextFiles?.globalPath;
 	}
 
 	/** The project settings file at `path` as stored: parsed and migrated like a load, but never gated by trust. */

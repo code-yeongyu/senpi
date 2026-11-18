@@ -20,7 +20,7 @@ import { nestedToolCallBlock, renderDetailedLines, renderJsonOutputs, toolCallRo
 import { hasLiveCell } from "./render-live.ts";
 import { formatThroughputBadge, renderStatusEvents } from "./render-status.ts";
 import { formatRuntimeBadge } from "./runtime-label.ts";
-import { formatDuration } from "./tool-widgets.ts";
+import { formatDuration, type NestedToolRenderers } from "./tool-widgets.ts";
 import type { EvalResultDetails, EvalStatusEvent, EvalToolDetails } from "./types.ts";
 
 function textOutput(result: AgentToolResult<EvalResultDetails>, showImageFallback: boolean): string {
@@ -88,6 +88,7 @@ export function renderEvalResult(
 	options: ToolRenderResultOptions,
 	theme: Theme | undefined,
 	context: ResultRenderContext,
+	renderers?: (toolName: string) => NestedToolRenderers | undefined,
 ): EvalRenderComponent {
 	const component = componentFor(context);
 	const details = result.details;
@@ -101,7 +102,7 @@ export function renderEvalResult(
 	}
 	const expanded = options.expanded || context.expanded;
 	const imageProtocol = context.imageProtocol ?? null;
-	component.syncLiveTicker(hasLiveCell(details), context.invalidate);
+	component.syncLiveTicker(hasLiveCell(details), context.invalidate, expanded ? "expanded" : "collapsed");
 	if (details?.cells !== undefined && details.cells.length > 0) {
 		const blocks: RenderBlock[] = [
 			{
@@ -124,7 +125,7 @@ export function renderEvalResult(
 			},
 		];
 		const calls = toolCallRows(details);
-		const nestedCalls = nestedToolCallBlock(details, theme, context.cwd, expanded);
+		const nestedCalls = nestedToolCallBlock(details, theme, context.cwd, expanded, renderers);
 		if (calls.length > 0)
 			blocks.push({ kind: "blank" }, nestedCalls ?? { kind: "toolCalls", calls, expanded, theme });
 		component.setBlocks(blocks);
@@ -195,7 +196,7 @@ export function renderEvalResult(
 		);
 	}
 	const calls = toolCallRows(details);
-	const nestedCalls = nestedToolCallBlock(details, theme, context.cwd, expanded);
+	const nestedCalls = nestedToolCallBlock(details, theme, context.cwd, expanded, renderers);
 	if (calls.length > 0) blocks.push({ kind: "blank" }, nestedCalls ?? { kind: "toolCalls", calls, expanded, theme });
 	component.setBlocks(blocks);
 	return component;

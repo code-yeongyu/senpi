@@ -21,7 +21,10 @@ import { sweepIdleSessions } from "./session-router-occupancy.ts";
 import { followRetainedRecord } from "./session-router-residency.ts";
 import type { RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
 import { registryStatusSource } from "./session-status-source.ts";
+import { HostParkLedger } from "./host-park-ledger.ts";
+import { closePark } from "./session-router-park.ts";
 export class RouterContext {
+	readonly parks = new HostParkLedger((opened) => closePark(this, opened));
 	readonly admissions = compactUpdatesEnabled()
 		? new CompactAdmissions(ADMISSION_LIMITS, (socketEpoch, admissionId) =>
 				this.writer.routesAdmission(socketEpoch, admissionId),
@@ -56,7 +59,12 @@ export class RouterContext {
 		| "warm"
 		| "closeGraceMs"
 	> &
-		Partial<Pick<RpcSessionRegistry, "supportsCompact" | "holderPids" | "attachSession" | "agentDir">>;
+		Partial<
+			Pick<
+				RpcSessionRegistry,
+				"supportsCompact" | "supportsParkClaim" | "claimPark" | "holderPids" | "attachSession" | "agentDir"
+			>
+		>;
 
 	readonly writer: SessionEventWriter;
 
@@ -136,7 +144,12 @@ export class RouterContext {
 			| "warm"
 			| "closeGraceMs"
 		> &
-			Partial<Pick<RpcSessionRegistry, "supportsCompact" | "holderPids" | "attachSession" | "agentDir">>,
+			Partial<
+				Pick<
+					RpcSessionRegistry,
+					"supportsCompact" | "supportsParkClaim" | "claimPark" | "holderPids" | "attachSession" | "agentDir"
+				>
+			>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,

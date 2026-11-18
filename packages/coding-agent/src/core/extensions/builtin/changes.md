@@ -1,3 +1,152 @@
+## 2026-11-17 - show_html_page hands the host a page with its local images inlined (senpi#6899)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: `details.html` is the page with its absolute-path local images (`<img src>` and CSS `url()`) inlined as `data:` URIs by `inlineLocalImages`, not the page as written, while that page fits `MAX_HANDED_PAGE_CHARACTERS` (2 Mi characters, well under the 16 Mi RPC line limit with room for JSON escaping and the other fields). A larger page is handed as written, `details.imagesInlined` is false, and the result says a viewer on another machine will not see its images. A page loading a local image that cannot be read is refused with `HtmlRenderImagesNotFoundError` and nothing is written; the `missingImages` details field is removed.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: `missing` lists only paths the page loads as images (an unquoted `url()`, or a quoted value after `src=`, `srcset=`, `poster=`, `href=` or `url(`); a path only named in text or code stays as written and is no error. The doc comment now says unreadable paths are returned, not thrown.
+
+### Why
+
+- A host publishes `details.html`. For a session on another machine the viewer got raw paths on the producing machine, which it cannot read and the page sandbox blocks, so those images stayed blank. A page with a broken image was also reported as shown although the desktop refuses to publish it.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its result details are defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `execute` body and `ShowHtmlPageDetails` in `html-render/tool.ts`; `findLocalImages` and the end of `inlineLocalImages` in `html-render/images.ts`.
+
+## 2026-11-16 - `credential-proxy` builtin (senpi#6828)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/credential-proxy/index.ts`: activates the proxy at `session_start` from the global `credentialProxy` setting, reports problems as warnings and a start failure as an error (credentials stay withheld), and releases it at `session_shutdown`.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers it right after `kill-guard`, before any tool-registering builtin.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/command-runner.ts`: hook commands take their passthrough values from `withCredentialProxy(process.env)`, so a hook that passes a declared variable through gets the placeholder and can use its `baseUrlEnv` route (review L2). A hook that exits without reading its JSON input no longer raises an unhandled `EPIPE` from the stdin write; any other stdin write error is appended to the hook's stderr.
+
+### Why
+
+- senpi#6820.
+
+### Why an extension could not handle it
+
+- It is an extension; the registration line is the only edit to a shared file.
+
+### Expected merge conflict zones
+
+- LOW: one import and one array entry next to `kill-guard`.
+
+## 2026-11-15 - A held Stop with no leaf keys its stop state by the session captured at turn end (senpi#6794)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-adapter.ts`: `createStopTurnTracker().turnKey(ctx, sessionId)` falls back to the given session id when there is no leaf; `StopTurn`'s doc says when each part is read.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts`: `dispatchStop` passes the session id the Stop captured at `agent_end`.
+
+### Why
+
+- #6795 review L1: on a hand the no-leaf fallback read the session id after the loop-hook call ended, where it throws, so the stop state was lost.
+
+### Why an extension could not handle it
+
+- The Stop lifecycle is the hooks builtin's own state.
+
+### Expected merge conflict zones
+
+- LOW: `createStopTurnTracker` and the `applyStopHookResult` call in `dispatchStop`.
+
+## 2026-11-15 - A held Stop reads its turn key when it dispatches again (senpi#6794)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts`: `dispatchStop` reads the turn key (`turnTracker.turnKey(ctx)`) after the hook ran, as before #6751; a held Stop keeps only the session id it read at `agent_end` (`PendingStop.sessionId`, which replaces `turn`).
+
+### Why
+
+- senpi#6794: #6751 read the key at `agent_end`, so a Stop held for background work in a local session keyed its stop state and reentry count to the turn's end instead of the leaf when it dispatched. On a hand the held Stop dispatches in its call's own async context, where the carried leaf stays readable, so it still works there.
+
+### Why an extension could not handle it
+
+- The Stop lifecycle is the hooks builtin's own state.
+
+### Expected merge conflict zones
+
+- LOW: `PendingStop`, `dispatchStop` and the `agent_end` handler in `stop-lifecycle.ts`.
+
+## 2026-11-15 - A Stop held for background work reports its own turn, from its own context (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts`: an `agent_end` reads the ended turn (`StopTurn`: session id and turn key) and an `AsyncLocalStorage.snapshot()` when it builds the Stop. A held Stop runs inside that snapshot, so its writes go where the turn's own would, and with no signal: the drain dispatches only when the session is quiet, where a local session's `ctx.signal` is undefined.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-adapter.ts`: `applyStopHookResult` takes the `StopTurn` instead of a turn key, so it no longer reads the session id when the result arrives. The output-record and unsupported-field diagnostics moved unchanged to `packages/coding-agent/src/core/extensions/builtin/hooks/stop-output.ts` (the file was over the size ceiling).
+
+### Why
+
+- On a hand (senpi#5898) a held Stop runs after the loop-hook call that held it has ended: the drain fires from whatever work cleared the wake source, and the call's identity and signal are gone by then. Locally nothing changes: the turn key and session id are the same values read earlier, and an idle session's signal is undefined.
+
+### Why an extension could not handle it
+
+- The Stop lifecycle is the hooks builtin's own state.
+
+### Expected merge conflict zones
+
+- LOW: `PendingStop`, `dispatchStop` and the `agent_end` handler in `stop-lifecycle.ts`; the `applyStopHookResult` signature.
+
+## 2026-11-10 - show_html_page says what the host did with the page (senpi#6273)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the result text depends on the session's prompt surface (`ctx.getSystemPromptOptions().surface`, else `SENPI_PROMPT_SURFACE`). On `app`, the surface the OmO desktop opens every session it renders with, it says the page was shown to the reader inline above the reply and where the copy is saved. On every other surface (terminal, chat, none named) it says the page was written to the path and not displayed in this interface. The "Open it in the desktop to see it rendered with your theme" sentence is gone. The description says the same: inline in the OmO desktop thread, elsewhere only saved to a file, and the result says which.
+
+### Why
+
+- In a desktop thread the page renders inline, but the result told the model to open the file in the desktop, so the model reported that the page was not shown. The result stays in the thread, so later turns sometimes refused to call the tool at all (senpi#6273).
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its result text is defined here. The host signal is the existing `promptSurface`, no new capability.
+
+### Expected merge conflict zones
+
+- LOW: the result `text` and the end of the description in `html-render/tool.ts`.
+
+## 2026-11-10 - Recommended Fable slot is Fable 5.2 (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable slot of `RECOMMENDED_DEFAULT_MODELS` is `claude-fable-5-2` at `xhigh` on the same Claude lanes. The launch-flag lookup is removed.
+
+### Why
+
+- Fable 5.2 is the released Fable model.
+
+### Why an extension could not handle it
+
+- This is the builtin's own shipped list.
+
+### Expected merge conflict zones
+
+- LOW: the Fable row of `RECOMMENDED_DEFAULT_MODELS`.
+
+## 2026-11-09 - vertex-garden per-model thinking toggles (senpi#6270)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/models.ts`: each garden model declares `thinkingFormat: "chat-template"` with its own flag (GLM 5.2 `enable_thinking`, DeepSeek V4.1 Flash `thinking`), a two-level `thinkingLevelMap` (off, medium), and its live-verified Vertex default (GLM `medium`, DeepSeek `off`).
+
+### Why
+
+- Live probes against the global OpenAPI endpoint (2026-11-09) showed the endpoint toggles thinking per model through `chat_template_kwargs` and silently ignores a wrong flag name, so the previous "accepts no thinking parameters" registration hid a control both models support and risked sending one model's flag to the other.
+
+### Why an extension could not handle it
+
+- It is the extension's own model registration; only the default-level declaration needed the `types.ts` companion entry above.
+
+### Expected merge conflict zones
+
+- LOW: the `garden()` helper and the two model entries; the `NO_THINKING_CONTROLS` block is replaced outright.
+
 ## 2026-11-08 - terminal_background_age event (senpi#6201)
 
 ### What changed

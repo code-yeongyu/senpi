@@ -18,10 +18,10 @@ afterEach(() => {
 });
 
 describe("recommended-models builtin", () => {
-	it("#given the shipped recommendation list #when order is read #then opus 5.5, fable 5.1, kimi k3.1 pro, astra, 6.1 sol, glm 5.3 at their levels", () => {
+	it("#given the shipped recommendation list #when order is read #then opus 5.5, fable 5.2, kimi k3.1 pro, astra, 6.1 sol, glm 5.3 at their levels", () => {
 		expect(RECOMMENDED_DEFAULT_MODELS.map(([modelId, level]) => `${modelId} ${level}`)).toEqual([
 			"claude-opus-5-5 medium",
-			"claude-fable-5-1 xhigh",
+			"claude-fable-5-2 xhigh",
 			"kimi-k3.1-pro max",
 			"gpt-6-astra xhigh",
 			"gpt-6.1-sol medium",

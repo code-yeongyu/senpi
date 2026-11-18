@@ -1,9 +1,9 @@
-import { FABLE55_LAUNCH, isFable55ModelId } from "@earendil-works/pi-ai/utils/fable55-launch";
 import {
 	extractClaudeOpusVersion,
 	extractGpt5Version,
 	isClaudeFable5Model,
 	isClaudeFable51Model,
+	isClaudeFable52Model,
 	isClaudeHaiku55Model,
 	isClaudeOpus5Model,
 	isClaudeOpus55Model,
@@ -61,8 +61,8 @@ export function resolvePresetName(input: {
 		return "kimi-k2-6";
 	}
 	// The dotted release must resolve before the generic fable-5 substring.
-	if (isFable55ModelId(model.id)) {
-		return "claude-fable-5-5";
+	if (isClaudeFable52Model(model.id)) {
+		return "claude-fable-5-2";
 	}
 	if (isClaudeFable51Model(model.id)) {
 		return "claude-fable-5-1";
@@ -129,7 +129,7 @@ export function resolvePresetName(input: {
 const FULL_SHARED_SECTION_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
 	"claude-fable-5",
 	"claude-fable-5-1",
-	"claude-fable-5-5",
+	"claude-fable-5-2",
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-opus-4-8",
@@ -169,7 +169,7 @@ export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
 	{ providerID: "deepseek", modelID: "deepseek-v4-pro", preset: "deepseek-v4-pro" },
 	{ providerID: "anthropic", modelID: "claude-fable-5", preset: "claude-fable-5" },
 	{ providerID: "anthropic", modelID: "claude-fable-5.1", preset: "claude-fable-5-1" },
-	{ providerID: "anthropic", modelID: FABLE55_LAUNCH.modelId, preset: "claude-fable-5-5" },
+	{ providerID: "anthropic", modelID: "claude-fable-5.2", preset: "claude-fable-5-2" },
 	{ providerID: "anthropic", modelID: "claude-opus-5.5", preset: "claude-opus-5-5" },
 	{ providerID: "anthropic", modelID: "claude-opus-5", preset: "claude-opus-5" },
 	{ providerID: "anthropic", modelID: "claude-sonnet-5.5", preset: "claude-sonnet-5-5" },
@@ -210,7 +210,7 @@ export const AUTO_RESOLVED_PRESET_NAMES: readonly ResolvedPresetName[] = [
 	"grok-4.5",
 	"claude-fable-5",
 	"claude-fable-5-1",
-	"claude-fable-5-5",
+	"claude-fable-5-2",
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5-5",

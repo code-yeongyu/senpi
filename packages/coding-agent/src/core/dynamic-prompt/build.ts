@@ -31,6 +31,12 @@ export interface DynamicPromptCoreContext {
 	toolSection: string;
 	/** The wording the shared section builders render for this prompt (senpi#5665). */
 	sharedSections: SharedSections;
+	/**
+	 * True when the session can search through a provider-native search tool
+	 * added to the request (e.g. Anthropic-native web search), even when the
+	 * builtin `web_search` tool is not among the active tools (senpi#2935).
+	 */
+	nativeSearchAvailable?: boolean;
 }
 
 /** Tool snippets and guidelines as the pre-diet prompt listed them, rendered for `sharedSections: "full"`. */
@@ -56,6 +62,13 @@ export interface BuildDynamicSystemPromptOptions {
 	 */
 	cwd: string;
 	selectedTools: string[];
+	/**
+	 * Whether a provider-native search tool is available for this session
+	 * (e.g. Anthropic-native web search added to the request), even when the
+	 * builtin `web_search` tool is not selected (senpi#2935). Presets that
+	 * gate search wording on the builtin tool read this as a second signal.
+	 */
+	nativeSearchAvailable?: boolean;
 	/** One-line snippets, listed under "## Available Tools" for selected tools; pass none for a tool whose schema description the model already sees. */
 	toolSnippets: Record<string, string>;
 	promptGuidelines: string[];
@@ -124,7 +137,16 @@ export function buildDynamicSystemPromptParts(options: BuildDynamicSystemPromptO
 
 	const surface = options.surface ?? "terminal";
 	const sections = options.corePrompt
-		? [options.corePrompt({ tools, toolSection, surface, appName: options.appName, sharedSections })]
+		? [
+				options.corePrompt({
+					tools,
+					toolSection,
+					surface,
+					appName: options.appName,
+					sharedSections,
+					nativeSearchAvailable: options.nativeSearchAvailable,
+				}),
+			]
 		: [
 				buildIdentitySection(options.appName, sharedSections),
 				"",

@@ -1,3 +1,185 @@
+## 2026-11-16 - Export `withCredentialProxy` (senpi#6828)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `withCredentialProxy` and `CREDENTIAL_PLACEHOLDER` for the codemode kernels.
+
+### Why
+
+- Eval kernels and their children must see the same withheld view as the bash tool.
+
+### Why an extension could not handle it
+
+- The codemode package reaches engine state only through the public entry.
+
+### Expected merge conflict zones
+
+- LOW: one export line beside the kill-guard runtime exports.
+
+## 2026-11-15 - The hand's durable, bounded wake outbox (senpi#5778, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/hand-wakes.ts` (new): `openHandWakeOutbox` on the hand's state file (it claims the file's next owner epoch, so an older hand is refused from then on), with `HAND_WAKE_LIMITS` (256 per scope, 1024 in total) and `onFault`; `handWakesOver`, a hand's scopes' wakes over its wake link.
+- `packages/coding-agent/src/modes/hand/hand-entry.ts`: opens the outbox at `<agentDir>/rpc/hand-wakes.json` after the live-hand check (faults reported on stderr), splits the `hand.wake` lane off the transport (`splitLanes`), starts the hand wake link and gives the loopless hand its wakes.
+
+### Why
+
+- A wake committed before a hand process dies must be re-offered by the next one, and the file must stay bounded by what is pending (#6767 review H1, M1).
+
+### Why an extension could not handle it
+
+- The hand entry owns the transport and the process lifetime.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runHand` in `hand-entry.ts`.
+
+## 2026-11-15 - Correction: what `--hand` as its extensions' home changes (senpi#5898, corrects #6747)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/hand-entry.ts`: `runHand` builds its hand with `twoSidedHome: "hand"` (#6747). Its forwarded loop hooks that run there are `input`, `before_agent_start`, `before_provider_request` and `session_start` (#6747's entry left out `before_provider_request`), and `agent_end` from this PR. The same option also moves two-sided extensions' tool hooks: on `--hand`, `extensionToolHandlers` (`packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts`) no longer forwards their `tool_call`/`tool_result` to the loop; they run on the hand, beside the same extensions' loop hooks.
+
+### Why
+
+- #6747's review (L1): its fragment named neither `hand-entry.ts` nor the tool-hook placement change. Fragments are immutable once written, so the correction rides this PR.
+
+### Why an extension could not handle it
+
+- Where a two-sided extension's hooks run is the loopless runtime's choice, made by the hand's entry point.
+
+### Expected merge conflict zones
+
+- LOW: the `createLooplessHand` call in `runHand`.
+
+## 2026-11-16 - The private-fd capture releases startup fillers first (senpi#6769)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts`: `capturedState()` runs `releaseInheritedStartupFillers(process.env)` on the main thread before it reads and removes `SENPI_PRIVATE_FDS` / `SENPI_PRIVATE_FDS_FINAL`. The release is idempotent: it strips the hand-off's filler list, so an entry's own earlier or later release does nothing more.
+- `packages/coding-agent/src/private-fd-startup-release.ts`: the doc comment states that the capture runs the same release.
+
+### Why
+
+- The bundled CLI entry (`dist/bundle/cli.js`) evaluates the release's side effect in its own body, after every imported chunk, so the capture had already deleted the table. The release then treated the slots the table named as fillers and closed them. A supervisor-started engine (`host ensure`) lost its private descriptors, for example a desktop's memory-sync socket at fd 5.
+
+### Why an extension could not handle it
+
+- The descriptor is closed during the engine's startup, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the top of `capturedState()` in `private-fds.ts`; its import list.
+
+## 2026-11-15 - The public entry exports the device machine pieces (senpi#6720)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `createToolMachine`, `ToolMachine`, `ToolPathPolicy`, `MachineOps`, `MachineExecRequest`, `MachineExecResult`, `OpContext`, `DeviceUnavailableError` and `DeviceMachineConflictError`.
+
+### Why
+
+- An extension such as the omo-senpi plugin builds the device machine against the published package; `@code-yeongyu/senpi-machine-ops` is a private workspace package.
+
+### Why an extension could not handle it
+
+- Without the exports an extension cannot build a `ToolMachine` or match the typed errors with `instanceof`.
+
+### Expected merge conflict zones
+
+- LOW: the tools export block in `src/index.ts`.
+
+## 2026-11-13 - A binary's `update --self` points at the download page when its release lookup fails (senpi#6633)
+
+### What changed
+
+- `packages/coding-agent/src/package-manager-cli.ts`: `selfUpdatePlanAfterLookupFailure` (exported) decides what `update --self` does when the latest-version lookup throws or returns nothing. A standalone binary prints the failure and "Download from: https://github.com/code-yeongyu/senpi/releases/latest" and exits cleanly; every other install still fails with "Could not determine latest ... version". `getSelfUpdatePlan` calls it with `detectInstallMethod()`.
+
+### Why
+
+- Since senpi#6633 a binary's lookup asks the unauthenticated GitHub API (60 requests per hour per IP). A rate limit made `update --self` fail before it reached the download instruction, although a binary has no in-place update to run anyway.
+
+### Why an extension could not handle it
+
+- `update --self` is a built-in CLI command in this file; no extension hook wraps its version lookup.
+
+### Expected merge conflict zones
+
+- LOW: the lookup try/catch in `getSelfUpdatePlan` in `package-manager-cli.ts`.
+
+## 2026-11-12 - A cold experimental server gets a load-tolerant startup wait (senpi#6487)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/server.ts`: `activateServer` waits for the server it started under its own bound, `ACTIVATION_STARTUP_HANG_MS` (120 s), measured with `performance.now()`. It used `ACTIVATION_TIMEOUT_MS` (10 s) on `Date.now()`. The wait still ends at once when the server accepts a connection, exits, fails to spawn, or the activation lock is lost. The activation lock timings are unchanged.
+
+### Why
+
+- A cold start on a loaded host took longer than 10 s, so the client failed with "Timed out waiting for automatically activated server" while the server was still starting (seen in the experimental runtime tests at load ~30 on a 14-core host). A system clock step could also end the wall-clock wait early.
+
+### Why an extension could not handle it
+
+- Server activation is the experimental client's own startup path; no extension runs before it.
+
+### Expected merge conflict zones
+
+- LOW: the activation constants and the startup wait loop in `activateServer`.
+
+## 2026-11-09 - Startup fillers are released only while the process still holds them (senpi#6282)
+
+### What changed
+
+- `packages/coding-agent/src/private-fd-startup-fillers.ts`: `releaseInheritedStartupFillers()` closes a listed filler slot only when, on POSIX, the startup pipe at `STARTUP_EVENT_FD` is still a socket and the slot is a socket that is not a copy of stdin, stdout, stderr or that pipe. Otherwise the slot is left open; the list is still stripped from the hand-off. Windows keeps the plain list.
+
+### Why
+
+- A compiled omo launch re-execs itself (the engine trust exec) after Bun marked every inherited descriptor from 4 up close-on-exec, so the host's first entry held a filler list for slots it no longer had while Bun's own copies of stdout and stderr sat at 5 and 6. Closing them by number made the internal bootstrap's first stderr write fail with `EBADF: bad file descriptor, write`, and the task host exited within seconds of every spawn (senpi#6282).
+
+### Why an extension could not handle it
+
+- The release runs in the startup stub every host and supervisor entry imports before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the new helpers above `releaseInheritedStartupFillers` and its loop condition.
+
+## 2026-11-09 - Isolated CLI re-launch no longer replays the caller's eval entry mode (senpi#2952)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: `requiresIsolatedProcess()` now decides on the sanitized argv from `utils/runtime-exec-argv.ts` instead of the raw `process.execArgv`, and `spawnFullCli()` forwards `runtimeExecArgv()` instead of the raw argv. Both entries now carry the `SENPI_CLI_ISOLATED_CHILD=1` recursion guard in the child environment (previously only the bundled entry did).
+
+### Why
+
+- An embedder that loads the CLI entry from `node -e` had its own `-e` code replayed in the isolated child (`node -e <caller code> dist/cli-main.js`), which re-imported the entry and spawned again: the unbundled entry recursed until an external guard stopped it, the bundled entry replayed the caller once (senpi#2952, the one site #2950 did not cover).
+
+### Why an extension could not handle it
+
+- The isolated re-launch decision and argv forwarding live in the CLI bootstrap itself, before any extension loads; no extension hook runs early enough to sanitize the argv the launcher replays.
+
+### Expected merge conflict zones
+
+- LOW: the `runtimeExecArgv` import, the `requiresIsolatedProcess()` decision, and the `spawnFullCli()` spawn line plus child environment in `cli.ts`.
+
+## 2026-11-09 - Hide the console window for self-update bootstrap commands on Windows (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/self-update-bootstrap.ts`: `runCommand` now passes `windowsHide: true` to its spawn.
+
+### Why
+
+- Update commands (npm/bun) are console-subsystem exes on Windows, but `runCommand` inherits the parent console (`stdio: "inherit"`), so `windowsHide` hides no new window here; the flag is kept for uniformity with the other win32 spawns.
+
+### Why an extension could not handle it
+
+- The spawn is the self-update bootstrap's own command runner, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in the bootstrap runner.
+
 ## 2026-11-07 - A saved trust decision outranks the per-process trust memo (senpi#6176)
 
 ### What changed

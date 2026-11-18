@@ -14,6 +14,7 @@
 #   RELEASE_TAG         release tag, e.g. v2026.10.24-1 (required)
 #   PUBLISH_RUN_ID      id of the dispatched publish-npm.yml run, when the publish-npm job found it
 #   PUBLISH_JOB_RESULT  result of the publish-npm job; "skipped" means nothing was dispatched
+#   STAGE_JOB_RESULT    result of the stage-github-release job; anything but "success" means the draft may lack assets
 #   NPM_PACKAGE         package that marks the npm side as published (default @code-yeongyu/senpi)
 #   GH_BIN              gh executable (default gh)
 #   NPM_BIN             npm executable (default npm)
@@ -23,11 +24,31 @@ set -euo pipefail
 : "${RELEASE_TAG:?RELEASE_TAG is required}"
 PUBLISH_RUN_ID="${PUBLISH_RUN_ID:-}"
 PUBLISH_JOB_RESULT="${PUBLISH_JOB_RESULT:-}"
+STAGE_JOB_RESULT="${STAGE_JOB_RESULT:-}"
 NPM_PACKAGE="${NPM_PACKAGE:-@code-yeongyu/senpi}"
 GH_BIN="${GH_BIN:-gh}"
 NPM_BIN="${NPM_BIN:-npm}"
 version="${RELEASE_TAG#v}"
 spec="${NPM_PACKAGE}@${version}"
+
+# npm publishes in parallel with staging (senpi#6627), so a failed or cancelled staging job can leave a draft with
+# missing assets. Every branch that keeps the draft prints its "publish it" advice through this one function, which
+# replaces that advice with re-stage steps whenever staging did not finish.
+staging_incomplete() {
+	[[ -n "${STAGE_JOB_RESULT}" && "${STAGE_JOB_RESULT}" != "success" ]]
+}
+print_publish_or_restage() {
+	if staging_incomplete; then
+		echo "::error::stage-github-release ended '${STAGE_JOB_RESULT}': staging did not finish, so the draft may lack assets. Do not publish it."
+		echo "Re-stage it from this run's release-assets-${RELEASE_TAG} artifact, or re-run this run's failed jobs (staging deletes and re-creates the draft):"
+		echo "  gh release delete ${RELEASE_TAG} --yes"
+		echo "  gh run download <this run id> --name release-assets-${RELEASE_TAG} --dir release-assets"
+		echo "  gh release create ${RELEASE_TAG} --verify-tag --draft --title ${RELEASE_TAG} --notes-file release-assets/RELEASE_NOTES.md <the release-assets files except RELEASE_NOTES.md>"
+		echo "Publish the re-created draft only once npm has ${spec}, its asset list matches and 'sha256sum -c SHA256SUMS' passes."
+	else
+		echo "  gh release edit ${RELEASE_TAG} --draft=false"
+	fi
+}
 
 is_draft="$("${GH_BIN}" release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
 if [[ "${is_draft}" != "true" ]]; then
@@ -43,17 +64,19 @@ npm_out="$(printf '%s' "${npm_out}" | tr -d '[:space:]')"
 
 if [[ "${npm_status}" -eq 0 && "${npm_out}" == "${version}" ]]; then
 	echo "::error::npm already has ${spec}, so the draft GitHub Release ${RELEASE_TAG} was kept instead of deleted."
-	echo "Recover by publishing the kept draft after verifying both sides:"
+	echo "Recover after verifying both sides:"
 	echo "  npm view ${spec} version"
 	echo "  gh release view ${RELEASE_TAG} --json isDraft,assets"
-	echo "  gh release edit ${RELEASE_TAG} --draft=false"
+	print_publish_or_restage
 	exit 1
 fi
 
 if ! { [[ "${npm_status}" -eq 0 && -z "${npm_out}" ]] || grep -q 'E404' "${npm_err}"; }; then
 	echo "::error::Could not determine whether npm has ${spec} (npm exit ${npm_status}); keeping the draft GitHub Release ${RELEASE_TAG}."
 	cat "${npm_err}" >&2
-	echo "Check npm by hand: if ${spec} is published, run 'gh release edit ${RELEASE_TAG} --draft=false'; otherwise 'gh release delete ${RELEASE_TAG} --yes'."
+	echo "Check npm by hand. If ${spec} is published:"
+	print_publish_or_restage
+	echo "Otherwise: gh release delete ${RELEASE_TAG} --yes"
 	exit 1
 fi
 
@@ -63,7 +86,8 @@ keep_for_publish_run() {
 	echo "Once the publish run has finished:"
 	echo "  ${2}"
 	echo "  npm view ${spec} version"
-	echo "If npm has ${spec}: gh release edit ${RELEASE_TAG} --draft=false"
+	echo "If npm has ${spec}:"
+	print_publish_or_restage
 	echo "Otherwise: gh release delete ${RELEASE_TAG} --yes"
 	exit 1
 }

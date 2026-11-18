@@ -21,6 +21,22 @@ export type RpcHostCommandResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "park_session";
+			success: true;
+			data: { state: "parked" | "already_parked" | "full" };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "claim_session";
+			success: true;
+			data:
+				| { claimed: false }
+				| { sessionId: string; state: RpcSessionState; attached?: boolean; presence?: RpcSessionPresence };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "list_hands";
 			success: true;
 			data: {

@@ -13,7 +13,6 @@ export function copyJsonModelGenerationFixture(destination: string): void {
 		"src/api/cloudflare.ts",
 		"src/utils/provider-env.ts",
 		"src/utils/openai-input-cap.ts",
-		"src/utils/fable55-launch.ts",
 		"src/providers/opengateway-catalog.ts",
 		"src/providers/radius-config.ts",
 	]) {

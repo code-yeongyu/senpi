@@ -57,7 +57,7 @@ import {
 	runBudgetedHandler,
 	runBudgetedSequence,
 } from "./handler-budget.ts";
-import { type ExtensionKernelTools, kernelToolInvokerStorage, kernelToolsStorage } from "./kernel-tools-context.ts";
+import { activeKernelToolInvoker, activeKernelTools, type ExtensionKernelTools } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
 import type { RuntimeUiBroker } from "../runtime/ui-broker.ts";
@@ -91,6 +91,7 @@ import type {
 	ExtensionEvent,
 	ExtensionFlag,
 	ExtensionMode,
+	ExtensionAPI,
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
@@ -147,6 +148,7 @@ import {
 	type ToolEventDispatchOptions,
 	twoSidedExtensions,
 } from "./two-sided-forwarding.ts";
+import { combinedToolCallSignal } from "./tool-call-signal.ts";
 
 const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
 	"offload",
@@ -166,6 +168,7 @@ const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRunt
 	"getImageSettings",
 	"getRegisteredMcpServers",
 	"extensionConnectsMcpServers",
+	"signal",
 ]);
 
 /** Session identity a context of a runner without a session does not have; dispatchers treat its absence as context-free. */
@@ -179,6 +182,23 @@ export interface LoopHookCallFacts {
 	/** `pi.sendMessage` from the call's work: the hand carries the message back to the loop, which sends it there. */
 	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
 	/** `ctx.ui.notify` during the call: the hand carries the notice back to the loop, which shows it there. */
+	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
+	/** `pi.appendEntry` from the call's work: the loop appends the entry to its own session (session port, write). */
+	appendEntry(...args: Parameters<ExtensionRuntime["appendEntry"]>): void;
+	/** `pi.sendUserMessage` from the call's work: the loop sends it as its own session's (session port, write). */
+	sendUserMessage(...args: Parameters<ExtensionRuntime["sendUserMessage"]>): void;
+	/** `ctx.hasPendingMessages()` during the call: whether this call has sent a user message the loop will deliver. */
+	hasPendingMessages(): boolean;
+}
+
+/**
+ * Where a hand runtime's loop-side effects from work outside any live loop-hook call go (brain/hand split H3): to the
+ * brain that owns the runtime's scope, as durable wakes, delivered there as a local session would deliver them.
+ */
+export interface LoopWakeRoute {
+	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
+	sendUserMessage(...args: Parameters<ExtensionAPI["sendUserMessage"]>): void;
+	appendEntry(...args: Parameters<ExtensionRuntime["appendEntry"]>): void;
 	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
 }
 
@@ -496,6 +516,15 @@ function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["t
 	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
 }
 
+/**
+ * A hand's dispatch of a hosted loop's request hooks (CK21): only the extensions `only` accepts, with the effective
+ * model the loop sent and no headers (they never leave the loop's side).
+ */
+export interface HandRequestHookDispatch {
+	readonly only: (extensionPath: string) => boolean;
+	readonly model?: Model<Api>;
+}
+
 /** `before_agent_start` dispatch order: every handler in load order, then the `runLast` ones (senpi#4448). */
 function beforeAgentStartDispatchOrder(extensions: Extension[]) {
 	const snapshot = snapshotEventHandlers(extensions, "before_agent_start");
@@ -651,6 +680,7 @@ export class ExtensionRunner {
 	private engineTurnsHeldFn: () => boolean = () => false;
 	private noteHeldWakeFn: (source: string) => void = () => {};
 	private pauseActions: Pick<ExtensionContextActions, "getPauseState" | "fenceRun" | "releaseRunFence"> = {};
+	private registerRunBackgroundJobFn: ExtensionContextActions["registerRunBackgroundJob"];
 	private questionInput: ExtensionContextActions["questionInput"];
 	private personAnswerPending = false;
 	private isProjectTrustedFn: () => boolean = () => true;
@@ -780,16 +810,40 @@ export class ExtensionRunner {
 		 * still deliver it): the call's sender, which carries it to the loop. None outside any call's work.
 		 */
 		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
+		/** Where `pi.appendEntry` and `pi.sendUserMessage` go from a loop-hook call's work, routed as `loopHookSend`. */
+		readonly loopHookWrite?: () => Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
+		/**
+		 * A hand's route to the brain that owns its scope (H3): `pi.sendMessage`, `pi.sendUserMessage` and `pi.appendEntry`
+		 * from work no loop-hook call started (a background command, a monitor, a detached eval cell, a subagent) go there,
+		 * and `pi.isLoopRemote()` answers true. Without it they stay loop-side and unbound.
+		 */
+		readonly loopWake?: LoopWakeRoute;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
 		this.loopHookCallFn = facts.loopHookCall;
 		const send = facts.loopHookSend;
-		if (send !== undefined)
+		const wake = facts.loopWake;
+		if (send !== undefined || wake !== undefined)
 			this.runtime.sendMessage = (message, options) => {
-				const sendMessage = send();
+				const sendMessage = send?.() ?? wake?.sendMessage;
 				if (sendMessage === undefined) throw loopSideUnbound("sendMessage");
 				sendMessage(message, options);
 			};
+		const write = facts.loopHookWrite;
+		if (write !== undefined || wake !== undefined) {
+			// A loop-hook call's work writes through that call; any other work (or none bound) through the scope's wake route.
+			this.runtime.appendEntry = (customType, data) => {
+				const appendEntry = write?.()?.appendEntry ?? wake?.appendEntry;
+				if (appendEntry === undefined) throw loopSideUnbound("appendEntry");
+				appendEntry(customType, data);
+			};
+			this.runtime.sendUserMessage = (content, options) => {
+				const sendUserMessage = write?.()?.sendUserMessage ?? wake?.sendUserMessage;
+				if (sendUserMessage === undefined) throw loopSideUnbound("sendUserMessage");
+				sendUserMessage(content, options);
+			};
+		}
+		if (wake !== undefined) this.runtime.isLoopRemote = () => true;
 		this.runtime.getActiveTools = () => this.getActiveTools();
 		this.runtime.setActiveTools = () => {};
 		if (facts.getLoadedHookSources === undefined) return;
@@ -872,6 +926,7 @@ export class ExtensionRunner {
 			fenceRun: contextActions.fenceRun,
 			releaseRunFence: contextActions.releaseRunFence,
 		};
+		this.registerRunBackgroundJobFn = contextActions.registerRunBackgroundJob;
 		this.questionInput = contextActions.questionInput;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
@@ -1453,9 +1508,18 @@ export class ExtensionRunner {
 		});
 	}
 
+	/**
+	 * One loop-side event a hosted loop forwarded to this hand (senpi#5898): only the extensions `only` accepts run it,
+	 * serially under the host's event handler budget, with failures reported as in a session.
+	 */
+	emitForwardedLoopEvent(event: RunnerEmitEvent, only: (extensionPath: string) => boolean): Promise<undefined> {
+		return this.dispatchLifecycle(event, only);
+	}
+
 	/** Agent lifecycle events: every handler runs, serially, under the host budget (senpi#3650). */
-	private dispatchLifecycle(event: RunnerEmitEvent): Promise<undefined> {
-		const entries = flattenHandlers(this.extensions, event.type);
+	private dispatchLifecycle(event: RunnerEmitEvent, only?: (extensionPath: string) => boolean): Promise<undefined> {
+		const all = flattenHandlers(this.extensions, event.type);
+		const entries = only === undefined ? all : all.filter((entry) => only(entry.path));
 		return this.walkHandlers<undefined>({
 			event: event.type,
 			length: entries.length,
@@ -1790,6 +1854,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				runner.pauseActions.releaseRunFence?.(runRef);
 			},
+			registerRunBackgroundJob: (job) => {
+				runner.assertActive();
+				return runner.registerRunBackgroundJobFn?.(job) ?? (() => {});
+			},
 			isProjectTrusted: () => {
 				runner.assertActive();
 				return runner.isProjectTrustedFn();
@@ -1800,7 +1868,7 @@ export class ExtensionRunner {
 			},
 			get kernelTools() {
 				runner.assertActive();
-				const tools = kernelToolsStorage.getStore();
+				const tools = activeKernelTools();
 				if (!tools) return undefined;
 				return {
 					capabilities: tools.capabilities,
@@ -1809,7 +1877,7 @@ export class ExtensionRunner {
 						runner.assertActive();
 						return tools.invoke(request, {
 							...(options && ("aborted" in options ? { signal: options } : options)),
-							invoker: kernelToolInvokerStorage.getStore() ?? {
+							invoker: activeKernelToolInvoker() ?? {
 								sessionId: runner.boundSessionManager().getSessionId(),
 							},
 						});
@@ -1992,6 +2060,7 @@ export class ExtensionRunner {
 					sessionManager: { configurable: true, enumerable: true, value: call.sessionManager },
 					signal: { configurable: true, enumerable: true, value: call.signal },
 					isIdle: { configurable: true, enumerable: true, value: call.isIdle },
+					hasPendingMessages: { configurable: true, enumerable: true, value: call.hasPendingMessages },
 					ui: { configurable: true, enumerable: true, value: withLoopNotices(context.ui, call.notify) },
 				});
 		}
@@ -2526,10 +2595,21 @@ export class ExtensionRunner {
 				own,
 				"tool_call",
 				options,
+				// The forwarder carries the event only, never the call's signal (senpi#6679 L1): a handler served on the
+				// loop side of a forward sees the loop-hook signal, the exception ToolEventDispatchOptions.signal documents.
 				(index) => async () => options.forward?.toolCall(ext.path, index, event),
 			);
 			for (const handler of handlers) {
-				const hookRun = this.beginToolHookRun(this.createContext(), {
+				const baseContext = this.createContext();
+				if (options.signal !== undefined) {
+					const callSignal = combinedToolCallSignal(options.signal, baseContext.signal);
+					Object.defineProperty(baseContext, "signal", {
+						get: () => callSignal,
+						configurable: true,
+						enumerable: true,
+					});
+				}
+				const hookRun = this.beginToolHookRun(baseContext, {
 					hookName: "PreToolUse",
 					toolName: event.toolName,
 					toolCallId: event.toolCallId,
@@ -2632,12 +2712,18 @@ export class ExtensionRunner {
 		payload: unknown,
 		excludeExtensionPath?: string,
 		request?: { model: Model<Api>; headers: ProviderHeaders },
+		hand?: HandRequestHookDispatch,
 	): Promise<unknown> {
 		let currentPayload = payload;
 
-		const requestHandlers = this.dropsLoopEvent("before_provider_request")
-			? []
-			: snapshotEventHandlers(this.extensions, "before_provider_request");
+		// A hand running a hosted loop's request hooks (CK21) names whose handlers run; it has no loop of its own, so the
+		// sessionless drop does not apply to that explicit dispatch. Every other caller keeps the dispatch it had.
+		const requestHandlers =
+			hand !== undefined
+				? snapshotEventHandlers(this.extensions, "before_provider_request").filter(({ ext }) => hand.only(ext.path))
+				: this.dropsLoopEvent("before_provider_request")
+					? []
+					: snapshotEventHandlers(this.extensions, "before_provider_request");
 		for (const { ext, handlers } of requestHandlers) {
 			if (ext.path === excludeExtensionPath) continue;
 			for (const handler of handlers) {
@@ -2646,6 +2732,7 @@ export class ExtensionRunner {
 						type: "before_provider_request",
 						payload: currentPayload,
 						...(request ? { model: request.model, headers: request.headers } : {}),
+						...(hand?.model === undefined ? {} : { model: hand.model }),
 					};
 					const handlerResult = await handler(event, this.createContext(ext.path));
 					if (handlerResult !== undefined) {
@@ -2694,6 +2781,11 @@ export class ExtensionRunner {
 		}
 
 		return headers;
+	}
+
+	/** Paths of the extensions the loader shipped: in-tree builtins, bundled modules and generated global-default shims. */
+	getBuiltinProvenancePaths(): Set<string> {
+		return new Set(this.extensions.filter((ext) => ext.sourceInfo.source === "builtin").map((ext) => ext.path));
 	}
 
 	/** Use the loader's provenance, including bundled modules and generated global-default shims. */

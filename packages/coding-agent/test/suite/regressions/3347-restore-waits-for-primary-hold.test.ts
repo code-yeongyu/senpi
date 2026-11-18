@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -108,7 +109,7 @@ describe("retry fallback: restoring the primary honours its account hold (senpi#
 			expect(selector()).toBe(fallback);
 		} finally {
 			unfollow();
-			rmSync(directory, { recursive: true, force: true });
+			await rm(directory, { recursive: true, force: true });
 		}
 	});
 

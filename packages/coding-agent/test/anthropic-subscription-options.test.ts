@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Context, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { claudeCodeMaxContextTokens } from "../src/core/extensions/builtin/anthropic-subscription/context-window.ts";
 import { resetPresetAppendDeprecation } from "../src/core/extensions/builtin/anthropic-subscription/guidance.ts";
 import {
 	type AnthropicSubscriptionAuthLane,
@@ -229,7 +230,7 @@ describe("Claude SDK OAuth query options", () => {
 	it("turns Claude Code's total-tokens reminder and compaction off, at senpi's window, only while senpi owns compaction", () => {
 		expect(optionsFor({}).env).toEqual({
 			CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off",
-			CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(model().contextWindow),
+			CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(claudeCodeMaxContextTokens(model().contextWindow)),
 			DISABLE_COMPACT: "1",
 		});
 		expect(optionsFor({ compactionOwner: "sdk" }).env).toBeUndefined();

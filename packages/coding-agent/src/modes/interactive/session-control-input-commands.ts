@@ -38,6 +38,8 @@ const UNSERVED_INPUT_FIELDS = [
 	"enqueueOrder",
 	// A thread call's hop count cannot travel through text-only admission, so its chain would restart here (K8).
 	"chainCount",
+	// Admission queues the text and starts the turn later, at a leaf an admission-time check never sees (senpi#6922).
+	"expectedLeafId",
 ] as const;
 
 export function admitInput(

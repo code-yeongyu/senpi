@@ -109,22 +109,22 @@ describe.runIf(process.platform !== "win32")("edit, write and read with a non-re
 				factory: "createEditTool",
 				args: { path: "pipe", edits: [{ oldText: "a", newText: "b" }] },
 			},
-			refusal: /Could not edit file: pipe\. It is a FIFO, not a regular file\./,
+			refusal: /Could not edit file: pipe\. It is a special file, not a regular file\./,
 		},
 		{
 			name: "write on a FIFO",
 			call: { module: "write", factory: "createWriteTool", args: { path: "pipe", content: "x" } },
-			refusal: /Could not write file: pipe\. It is a FIFO, not a regular file\./,
+			refusal: /Could not write file: pipe\. It is a special file, not a regular file\./,
 		},
 		{
 			name: "read on a FIFO",
 			call: { module: "read", factory: "createReadTool", args: { path: "pipe" } },
-			refusal: /Could not read file: pipe\. It is a FIFO, not a regular file\./,
+			refusal: /Could not read file: pipe\. It is a special file, not a regular file\./,
 		},
 		{
 			name: "write on a character device",
 			call: { module: "write", factory: "createWriteTool", args: { path: "/dev/null", content: "x" } },
-			refusal: /Could not write file: \/dev\/null\. It is a character device, not a regular file\./,
+			refusal: /Could not write file: \/dev\/null\. It is a special file, not a regular file\./,
 		},
 	])(
 		"$name is refused at once and the target is untouched",
@@ -159,7 +159,8 @@ describe.runIf(process.platform !== "win32")("edit, write and read with a non-re
 			name: "write",
 			call: (cwd, machine, path) =>
 				createWriteTool(cwd, { machine }).execute("c", { path, content: "fresh\n" }, undefined),
-			localSpecialControl: true,
+			// The local write tool reads its diff baseline from this host, so a local FIFO at the path still blocks it.
+			localSpecialControl: false,
 		},
 		{
 			name: "read",
