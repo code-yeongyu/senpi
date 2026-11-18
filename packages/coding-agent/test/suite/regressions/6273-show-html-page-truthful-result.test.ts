@@ -25,7 +25,7 @@ const ctxFor = (cwd: string, surface: Surface | undefined): ExtensionToolContext
 	}) as unknown as ExtensionToolContext;
 
 async function show(cwd: string, surface: Surface | undefined): Promise<{ text: string; path: string }> {
-	const result = await createShowHtmlPageTool().execute(
+	const result = await createShowHtmlPageTool(new Map()).execute(
 		"call-6273",
 		{ html: "<p>chart</p>", title: "Chart" },
 		undefined,
