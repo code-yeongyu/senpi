@@ -1,6 +1,27 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6903": {
+			"additions": [
+				"legacyContracts/test/call-capture-details.test.ts/nested call details keeps a JSON copy of a tool result's details on the enriched summary",
+				"legacyContracts/test/call-capture-details.test.ts/nested call details drops details that are too large or not JSON",
+				"legacyContracts/test/eval-tool-call-capture.test.ts/nested call details are kept only for rows drawn by the tool read keeps details: false",
+				"legacyContracts/test/eval-tool-call-capture.test.ts/nested call details are kept only for rows drawn by the tool thread_list keeps details: true",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers draws the call with the tool's renderCall and the result with its renderResult",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers keeps the raw preview under the tool's call line when no details were captured",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers keeps a renderer's state across renders of one nested call, so its prefetch runs once",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers falls back to the generic row when the tool's renderer throws"
+			],
+			"reason": "senpi#6903 (d260c98fe0, 51e0f8dff7): a nested tool call of a registered tool that brings its own renderCall/renderResult is drawn by those renderers (raw preview kept when no details were captured, renderer state kept per nested call so a prefetch runs once, generic row when the renderer throws), and the capture keeps a bounded JSON copy of result.details only for tools whose rows the tool itself draws. Main's codemode-gate went red on these as unreviewed additions after the merge.",
+			"changes": []
+		},
+		"senpi#6906": {
+			"additions": [
+				"legacyContracts/test/eval-tool-call-capture.test.ts/eval tool-call capture capture: records a result-level isError: true as a failure and hands the kernel hasError"
+			],
+			"reason": "senpi#6906 (1e6a51d7d2, fixes #6904): a nested tool result with isError: true is recorded as a failed call (ok: false) and the kernel gets hasError. Main's codemode-gate went red on this as an unreviewed addition after the merge.",
+			"changes": []
+		},
 		"senpi#6887": {
 			"additions": [
 				"legacyContracts/test/eval-only-tools-prompt.test.ts/eval description names the session's eval-only tools lists every eval-only tool the session routes through eval",
