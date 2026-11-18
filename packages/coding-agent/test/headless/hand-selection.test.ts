@@ -175,7 +175,6 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => [],
-				getSessionId: () => "stub-session",
 				appendCustomEntry: () => "unused",
 			},
 			sessionId: "s-closing",
@@ -247,7 +246,6 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => entries,
-				getSessionId: () => "stub-session",
 				appendCustomEntry: () => "unused",
 			},
 		});
@@ -302,7 +300,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent: { toolHost: own as ToolHost | undefined },
 			isStreaming: false,
 			promptSurface: "terminal" as const,
-			sessionManager: { getEntries: () => [], getSessionId: () => "stub-session", appendCustomEntry: () => "e" },
+			sessionManager: { getEntries: () => [], appendCustomEntry: () => "e" },
 		};
 		selection.restore("s1", session);
 
@@ -317,7 +315,6 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const entries: SessionEntry[] = [];
 		const manager = {
 			getEntries: () => entries,
-			getSessionId: () => "stub-session",
 			appendCustomEntry: (customType: string, data?: unknown) => {
 				entries.push({
 					type: "custom",
@@ -399,7 +396,6 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 				promptSurface: "terminal" as const,
 				sessionManager: {
 					getEntries: () => entries,
-					getSessionId: () => "stub-session",
 					appendCustomEntry: () => "e",
 				},
 			}),
@@ -420,7 +416,6 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => entries,
-				getSessionId: () => "stub-session",
 				appendCustomEntry: () => "e",
 			},
 			dispose: () => {
@@ -467,7 +462,6 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => entries,
-				getSessionId: () => "stub-session",
 				appendCustomEntry: () => "e",
 			},
 		};
@@ -512,7 +506,6 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => [] as SessionEntry[],
-				getSessionId: () => "stub-session",
 				appendCustomEntry: () => "e",
 			},
 			dispose: () => {},
@@ -546,7 +539,6 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => entries,
-				getSessionId: () => "stub-session",
 				appendCustomEntry: () => "e",
 			},
 		};
@@ -573,7 +565,6 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => [] as SessionEntry[],
-				getSessionId: () => "stub-session",
 				appendCustomEntry: (_type: string, data?: unknown) => {
 					appended.push(data);
 					return "e";

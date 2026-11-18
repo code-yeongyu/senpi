@@ -1,7 +1,13 @@
 import type { AgentEvent, AgentToolCall, ToolHost } from "@earendil-works/pi-agent-core";
 import type { JsonObject, TextContent } from "@earendil-works/pi-ai";
-import type { PromptSurface } from "../../../dynamic-prompt/build.ts";
-import { type HandedPageSession, handedPageText, reserveHandedPage, SHOW_HTML_PAGE_NAME } from "./handed-pages.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
+import {
+	type HandedPageSession,
+	handedPageText,
+	type PendingHandedPages,
+	reserveHandedPage,
+	SHOW_HTML_PAGE_NAME,
+} from "./handed-pages.ts";
 
 /** The brain session whose transcript a hand's pages join. */
 export interface HandPageBudgetSession {
@@ -26,6 +32,8 @@ const isJsonObject = (value: unknown): value is JsonObject =>
  * text saying so, as a session that ran the tool itself would (senpi#6921).
  */
 export function withHandPageBudget(host: ToolHost, session: HandPageBudgetSession): ToolHost {
+	// A hand is installed only between runs, so this ledger never outlives the pages it holds by more than one run.
+	const pending: PendingHandedPages = new Map();
 	return {
 		...(host.deviceFiles === undefined ? {} : { deviceFiles: host.deviceFiles.bind(host) }),
 		async execute(call, options) {
@@ -34,7 +42,7 @@ export function withHandPageBudget(host: ToolHost, session: HandPageBudgetSessio
 			const budgeted = (toolCallId: string, toolName: string, details: unknown): PageOverride | undefined => {
 				if (toolName !== SHOW_HTML_PAGE_NAME) return undefined;
 				if (!decisions.has(toolCallId))
-					decisions.set(toolCallId, overBudget(call.calls, toolCallId, details, session));
+					decisions.set(toolCallId, overBudget(call.calls, toolCallId, details, session, pending));
 				return decisions.get(toolCallId);
 			};
 			const emit = (event: AgentEvent) => options.emit(budgetedEvent(event, budgeted));
@@ -71,6 +79,7 @@ function overBudget(
 	toolCallId: string,
 	details: unknown,
 	session: HandPageBudgetSession,
+	pending: PendingHandedPages,
 ): PageOverride | undefined {
 	const written = calls.find((call) => call.id === toolCallId)?.arguments.html;
 	if (
@@ -81,7 +90,7 @@ function overBudget(
 		typeof written !== "string"
 	)
 		return undefined;
-	const reservation = reserveHandedPage(session.sessionManager, toolCallId, details.html.length);
+	const reservation = reserveHandedPage(session.sessionManager, pending, toolCallId, details.html.length);
 	if (reservation.inlined) return undefined;
 	const text: TextContent = {
 		type: "text",

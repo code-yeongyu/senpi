@@ -1,5 +1,25 @@
 # core/tools changes
 
+## 2026-11-18 - The local shell attests its spawned shell to the calling session (#6978)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/shell-operations.ts`: `BashOperations.exec` options take an optional `sessionId`, and `ShellExecHost` an optional `attestSessionSpawn(sessionId, pid)`. When both are present, the spawned shell's pid is attested on spawn and released on exit, alongside the host's own `onSpawn`/`onExit`.
+- `packages/coding-agent/src/core/tools/bash-core.ts` passes the session id whenever it exposes the session environment.
+- `packages/coding-agent/src/core/tools/bash.ts` (`createLocalShellOperations`) supplies `attestSessionSpawn` from `core/session-spawn-attestation.ts`; the worker-safe core imports nothing new.
+
+### Why
+
+- senpi#6972: a process a tool call started must be provable as that session's, not as whichever session its environment names.
+
+### Why an extension could not handle it
+
+- The pid exists only inside the core shell path's spawn callback.
+
+### Expected merge conflict zones
+
+- LOW: the `exec` option list in `shell-operations.ts` and the `createLocalShellOperations` host object in `bash.ts`.
+
 ## 2026-11-15 - The tool cores show the fs code a wrapped machine error keeps (senpi#6745)
 
 ### What changed

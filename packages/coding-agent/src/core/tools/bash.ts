@@ -12,6 +12,7 @@ import {
 	trackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
+import { attestSessionSpawn } from "../session-spawn-attestation.ts";
 import { createShellToolCore } from "./bash-core.ts";
 import {
 	type BashSpawnHook,
@@ -63,6 +64,7 @@ export function createLocalShellOperations(
 		// is released only once that group is empty (senpi#1697).
 		onSpawn: trackDetachedChildPid,
 		onExit: noteDetachedChildExited,
+		attestSessionSpawn,
 		// Groups kept past their shell's exit must not accumulate across a session.
 		afterExec: pruneTrackedDetachedChildren,
 	});

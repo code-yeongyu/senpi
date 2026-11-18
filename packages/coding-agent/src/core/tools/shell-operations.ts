@@ -40,6 +40,8 @@ export interface BashOperations {
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
 			redactSecretsInOutput?: boolean;
+			/** The session the command runs for; a local host attests the spawned shell to it (senpi#6972). */
+			sessionId?: string;
 		},
 	) => Promise<{ exitCode: number | null }>;
 }
@@ -58,6 +60,8 @@ export interface ShellExecHost {
 	signalNumber(signal: string): number | undefined;
 	onSpawn?(pid: number): void;
 	onExit?(pid: number): void;
+	/** Attests a shell this process spawned to the calling session; absent where the shell is not our child. */
+	attestSessionSpawn?(sessionId: string, pid: number): { release(): unknown };
 	/** Runs once the exec settles, success or not. */
 	afterExec?(): void;
 }
@@ -84,7 +88,7 @@ export function machineShellExecHost(machine: ToolMachine, shell?: ExecShell): S
  */
 export function createShellOperations(shellName: string, machine: ToolMachine, host: ShellExecHost): BashOperations {
 	return {
-		exec: async (command, cwd, { onData, signal, timeout, env }) => {
+		exec: async (command, cwd, { onData, signal, timeout, env, sessionId }) => {
 			const timeoutMs = resolveTimeoutMs(timeout);
 			if (signal?.aborted) {
 				throw new Error("aborted");
@@ -118,6 +122,22 @@ export function createShellOperations(shellName: string, machine: ToolMachine, h
 				}
 			};
 			const execSignal = signal ? AbortSignal.any([signal, callbackAbort.signal]) : callbackAbort.signal;
+			const attest = host.attestSessionSpawn;
+			let attestation: { release(): unknown } | undefined;
+			const onSpawn =
+				attest === undefined || sessionId === undefined
+					? host.onSpawn
+					: (pid: number) => {
+							attestation = attest(sessionId, pid);
+							host.onSpawn?.(pid);
+						};
+			const onExit =
+				attest === undefined || sessionId === undefined
+					? host.onExit
+					: (pid: number) => {
+							void attestation?.release();
+							host.onExit?.(pid);
+						};
 			let result: Awaited<ReturnType<typeof machine.ops.process.exec>>;
 			try {
 				result = await machine.ops.process.exec(
@@ -129,8 +149,8 @@ export function createShellOperations(shellName: string, machine: ToolMachine, h
 						...(shell !== undefined ? { shell } : {}),
 						timeoutMs: timeoutMs ?? Number.POSITIVE_INFINITY,
 						onOutput: handleData,
-						...(host.onSpawn !== undefined ? { onSpawn: host.onSpawn } : {}),
-						...(host.onExit !== undefined ? { onExit: host.onExit } : {}),
+						...(onSpawn !== undefined ? { onSpawn } : {}),
+						...(onExit !== undefined ? { onExit } : {}),
 					},
 					machine.context(execSignal),
 				);

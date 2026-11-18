@@ -110,7 +110,7 @@ describe("write_project_skill_file: refusals", () => {
 	it("checks trust on every write: a 'do not trust' saved by another session refuses the next write", async () => {
 		const host = await startFolderHost();
 		const first = await trustedRead(host);
-		new ProjectTrustStore(host.agentDir).set(host.cwd, false);
+		await new ProjectTrustStore(host.agentDir).set(host.cwd, false);
 		expect(await write(host, SKILL_NAME, EDITED, first.etag)).toMatchObject({
 			success: false,
 			errorCode: "project_not_trusted",

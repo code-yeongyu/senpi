@@ -1,3 +1,119 @@
+## 2026-11-17 - show_html_page: images are read only from loading contexts, and only model-issued calls hold page budget (senpi#6917)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts` (new): `findLocalImages` moved here from `images.ts` and now tokenizes the page the way HTML does. `<!-->` and `<!--->` end a comment at once. A quote starts an attribute value only right after `=`. A tag the page never closes is dropped. A path counts as loaded only in `src`, `srcset`, `poster`, `href`/`xlink:href`, `data` and `background` attributes, in `url()` inside a `style` attribute or a `<style>` body, and as a quoted path in a `<script>` body or an `on*` handler. Other attributes, `<xmp>`/`<noscript>`/`<iframe>`/`<noembed>`/`<noframes>` bodies and CDATA sections only show a path.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: imports `findLocalImages` and `IMAGE_MIME_TYPES` from `image-references.ts` and keeps the reading and inlining.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the session's page budget is reserved and counted only when `ctx.issuedByModel` is true. That covers agent-loop calls and Cursor exec-frame calls. Calls from `ctx.executeTool()` and `pi.executeTool()` (`codemode-<uuid>`) no longer keep a reservation.
+- `image-references.ts` also reads only the first of a tag's repeated attribute names, as a browser does.
+
+### Why
+
+- senpi#6915 (review LOWs L4-L7 of senpi#6912), and the queue review of senpi#6917 (M1, L1, L2). A Cursor exec-frame call runs while its issuing message is still streaming, so a lookup in saved messages missed it, and the page skipped the session budget although its result joins the transcript. An empty comment hid the next image. An apostrophe in an unquoted value swallowed the rest of the page. A path only shown in `alt`, `title`, `<xmp>`, `<noscript>` or CDATA refused the whole page. Calls from `pi.executeTool()` held budget until the session shut down.
+
+### Why an extension could not handle it
+
+- `show_html_page` and its image inliner are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `html-render/image-references.ts` (new), the imports of `html-render/images.ts`, and `issuedByModel`/`execute` in `html-render/tool.ts`.
+
+## 2026-10-30 - Remove unconditional host HTML registration (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` no longer imports or registers `html-render`.
+- Its file-producing implementation now belongs to the standalone host's `src/extensions/html-render/`; the single-tool registration wrapper was removed.
+
+### Why
+
+- Host tools attach through the SDK rather than being unconditional engine builtins.
+
+### Why an extension could not handle it
+
+- Removing the unconditional catalog entry requires changing the builtin composition root.
+
+### Expected merge conflict zones
+
+- Import and registration entries in `packages/coding-agent/src/core/extensions/builtin/index.ts`.
+
+## 2026-11-17 - createShowHtmlPageTool requires its pending ledger (senpi#6930)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: `createShowHtmlPageTool(pending)` no longer defaults `pending` to a new map; every caller passes its ledger.
+
+### Why
+
+- The default was used only by tests. A caller that omitted it would get a ledger nothing clears on `agent_end` or `session_shutdown` (senpi#6927).
+
+### Why an extension could not handle it
+
+- This is the builtin's own tool factory.
+
+### Expected merge conflict zones
+
+- LOW: the `createShowHtmlPageTool` signature in `html-render/tool.ts`.
+
+## 2026-11-17 - show_html_page keeps its pending handed-page ledger per session and clears it when a run ends (senpi#6926)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the module-level `handedNotYetRecorded` map is gone. `createShowHtmlPageTool(pending)` replaces the module-level `showHtmlPageTool` and takes the ledger of handed but not yet recorded pages, keyed by tool call id. `forgetHandedPages` (senpi#6912) is removed with the map; calls another tool makes through `ctx.executeTool()` still neither spend nor hold the budget.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/index.ts`: each extension load creates its own ledger, registers the tool with it, and clears it on `agent_end` and `session_shutdown`.
+
+### Why
+
+- The module-level map never dropped a session's key, and a pending entry was pruned only by that session's next `show_html_page` call, so a long-lived multi-session host kept one small map per session until exit (senpi#6924).
+
+### Why an extension could not handle it
+
+- This is the builtin's own tool and its own lifecycle handlers.
+
+### Expected merge conflict zones
+
+- LOW: `inlinedPageCharacters` and the `createShowHtmlPageTool` wrapper in `html-render/tool.ts`; `html-render/index.ts`.
+
+## 2026-11-17 - show_html_page: nested calls hold no page budget, and images a script loads are inlined again (senpi#6912)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: a call made through `ctx.executeTool()` (id `<parent>/<n>`) is held to `MAX_HANDED_PAGE_CHARACTERS` only. It neither reads nor reserves the session's `MAX_HANDED_PAGES_CHARACTERS` budget, because nested results never enter the transcript. A session's reservation map is dropped once its last reservation is recorded, and `forgetHandedPages` drops it on shutdown. The comment now states that only image-inlined pages count toward the session budget.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/index.ts`: calls `forgetHandedPages` on `session_shutdown`.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: `findLocalImages` takes a quoted path or `url()` as loaded when it sits inside a tag or a `<script>`/`<style>` body (`loadingSpans`). This replaces the attribute-name rule, so script data such as `{ src: "/abs/x.png" }` or a path array is inlined again. Text, `<code>`/`<pre>` samples, escaped tags, `<title>`/`<textarea>` bodies and comments are never read.
+
+### Why
+
+- senpi#6910. Nested calls kept a reservation for the rest of the process and starved the session's later pages. The rule from senpi#6908 left images a script loads uninlined and unreported, so they broke silently for a viewer on another machine.
+
+### Why an extension could not handle it
+
+- `show_html_page` and its image inliner are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `execute` and the reservation helpers in `html-render/tool.ts`; `findLocalImages` in `html-render/images.ts`.
+
+## 2026-11-17 - show_html_page bounds a session's handed pages and inlines only loaded images (senpi#6908)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: a page's images are inlined into `details.html` only while the session's inlined pages together, counted from `ctx.sessionManager.getEntries()` plus concurrent calls not yet recorded, stay within `MAX_HANDED_PAGES_CHARACTERS` (6 Mi), besides the per-page `MAX_HANDED_PAGE_CHARACTERS`. Past it the page is handed as written with `imagesInlined: false`, and the result says so.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: `inlineLocalImages` only finds paths the page loads (an unquoted `url()`, or a quoted value after `src=`, `srcset=`, `poster=`, `href=` or `url(`); a path only mentioned in text or code is never read and stays as written.
+
+### Why
+
+- `get_messages`, `get_tree` and `agent_end` carry every handed page in one RPC record, so about eight image-heavy pages could pass `MAX_RPC_LINE_CHARACTERS` and drop the attach connection (senpi#6907). A mentioned-only path was replaced with a base64 blob, and a mentioned file over 10 MiB refused the whole page.
+
+### Why an extension could not handle it
+
+- `show_html_page` and its image inliner are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: the handed-page constants and `execute` in `html-render/tool.ts`; `findLocalImages` and the end of `inlineLocalImages` in `html-render/images.ts`.
+
 ## 2026-11-17 - show_html_page hands the host a page with its local images inlined (senpi#6899)
 
 ### What changed

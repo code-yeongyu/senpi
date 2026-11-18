@@ -104,6 +104,8 @@ describe.each(["openai", "chatgpt-subscription"] as const)("%s Ultrafast price s
 				{ id: "gpt-6.1-sol", upstreamModelId: "gpt-6.1-sol" },
 				{ id: "gpt-6.1-sol-ultrafast", upstreamModelId: "gpt-6.1-sol" },
 				{ id: "gpt-6-astra-ultrafast", upstreamModelId: "gpt-6-astra" },
+				{ id: "gpt-6.2-sol-ultrafast", upstreamModelId: "gpt-6.2-sol" },
+				{ id: "gpt-6.2-astra-ultrafast", upstreamModelId: "gpt-6.2-astra" },
 			] as const
 		).flatMap((model) => [100_000, 300_000].map((inputTokens) => ({ ...model, inputTokens }))),
 	)(
@@ -132,13 +134,17 @@ describe.each(["openai", "chatgpt-subscription"] as const)("%s Ultrafast price s
 			expect(payload).toMatchObject({ model: id, service_tier: "ultrafast" });
 			const longContext = inputTokens > 272_000;
 			const standard =
-				upstreamModelId === "gpt-6.1-sol"
+				upstreamModelId === "gpt-6.1-sol" || upstreamModelId === "gpt-6.2-sol"
 					? longContext
 						? { input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }
 						: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }
-					: longContext
-						? { input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }
-						: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 };
+					: upstreamModelId === "gpt-6.2-astra"
+						? longContext
+							? { input: 16, output: 60, cacheRead: 0.8, cacheWrite: 20 }
+							: { input: 8, output: 40, cacheRead: 0.4, cacheWrite: 10 }
+						: longContext
+							? { input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }
+							: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 };
 			for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
 				expect(result.usage.cost[key]).toBeCloseTo((result.usage[key] * standard[key] * multiplier) / 1_000_000, 8);
 			}
@@ -176,9 +182,14 @@ describe.each(["openai", "chatgpt-subscription"] as const)("%s Ultrafast price s
 });
 
 describe("Ultrafast documented models", () => {
-	it("lists GPT-6 Astra and GPT-6.1 Sol as the documented Ultrafast models", () => {
+	it("lists GPT-6 Astra, GPT-6.1 Sol and the GPT-6.2 tiers as the documented Ultrafast models", () => {
 		// senpi#2978: one list, read by both pricing adapters and the selection warning.
-		expect([...ULTRAFAST_DOCUMENTED_MODEL_IDS].sort()).toEqual(["gpt-6-astra", "gpt-6.1-sol"]);
+		expect([...ULTRAFAST_DOCUMENTED_MODEL_IDS].sort()).toEqual([
+			"gpt-6-astra",
+			"gpt-6.1-sol",
+			"gpt-6.2-astra",
+			"gpt-6.2-sol",
+		]);
 	});
 });
 

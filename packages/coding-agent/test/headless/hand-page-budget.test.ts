@@ -5,7 +5,8 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, ToolHost } from "@earendil-works/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MAX_HANDED_PAGE_CHARACTERS } from "../../src/core/extensions/builtin/html-render/handed-pages.ts";
+import { MAX_HANDED_PAGE_CHARACTERS } from "../../src/extensions/html-render/handed-pages.ts";
+import { builtInExtensions } from "../../src/extensions/index.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHandSelection, type HandRow } from "../../src/modes/headless/hand-selection.ts";
 import { cleanupHands, handDirs, openLink, startHand, toolCall } from "../hand/remote-hand-fixture.ts";
@@ -37,7 +38,7 @@ describe("senpi#6921: show_html_page on a hand, seen from the brain session", ()
 			list: () => [ROW],
 			link: () => {
 				const link = openLink();
-				startHand(link, dirs, []);
+				startHand(link, dirs, [...builtInExtensions]);
 				return { transport: link.brain, placement: "split-local" };
 			},
 		});

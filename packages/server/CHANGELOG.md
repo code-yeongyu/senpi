@@ -8,6 +8,22 @@
 
 ### Fixed
 
+## [2026.11.18-2] - 2026-11-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.18] - 2026-11-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
 ## [2026.11.17-2] - 2026-11-17
 
 ### Breaking Changes

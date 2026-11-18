@@ -1,3 +1,40 @@
+## 2026-11-17 - ExtensionToolContext.issuedByModel (senpi#6917)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionToolContext` gains `readonly issuedByModel: boolean`. It is true when the model issued the running call, through the agent loop or a provider's exec channel (Cursor). `ExtensionContextActions` gains the optional `isModelIssuedToolCall(toolCallId)` that backs it.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createToolContext` sets `issuedByModel` from the bound `isModelIssuedToolCall`, and is false when no host binds one.
+
+### Why
+
+- senpi#6915 / senpi#6917 review M1. show_html_page must know whether its result joins the transcript, so the page counts against the session's page budget. Only the session knows a call's origin. Looking the id up in saved messages missed Cursor exec-frame calls, which run before their issuing message is saved.
+
+### Why an extension could not handle it
+
+- A tool sees only its call id; the origin of the call is known only to the session that ran it.
+
+### Expected merge conflict zones
+
+- LOW: the end of `ExtensionToolContext` and `ExtensionContextActions` in `types.ts`; the tool-context fields in `runner.ts` (`createToolContext`, the bound-action fields and their assignment).
+
+## 2026-10-30 - Declare host-supplied default extensions (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds `InlineExtension.host` so an SDK host can supply a default extension under existing per-name settings.
+
+### Why
+
+- Host tools must not live in the engine's unconditional catalog, and relocating them must not revive a tool the user disabled.
+
+### Why an extension could not handle it
+
+- The public factory contract tells the resource loader how to compose defaults before extension execution.
+
+### Expected merge conflict zones
+
+- The named `InlineExtension` variant in `packages/coding-agent/src/core/extensions/types.ts`.
+
 ## 2026-11-17 - getAllTools() carries a tool's own row renderers (senpi#6903)
 
 ### What changed

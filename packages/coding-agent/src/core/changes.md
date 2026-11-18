@@ -1,3 +1,230 @@
+## 2026-11-18 - `takeQueuedDeliveries`: hand back queued deliveries without touching user input (#6971)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `takeQueuedDeliveries()` removes every queued `session_control_delivery` carrier from the agent queues, ticketed or not. It settles each one as `clearQueue` does: engine custody cancelled (a producer's retired), a send waiting on it failed, admissions dropped. Queued user input stays.
+
+### Why
+
+- An interrupting unload or release must hand back the deliveries an aborted run left queued, including one whose start the abort cut short (queued again under its engine ticket). `clearQueue` would also drop the user's queued input, which an unload keeps for the reopen (oh-my-openagent#14169).
+
+### Why an extension could not handle it
+
+- The agent queues, the custody ledger and the carriers' persist watchers are private to `AgentSession`.
+
+### Expected merge conflict zones
+
+- `AgentSession.clearQueue` and its neighbours.
+
+## 2026-11-18 - Re-land: the explicit no-decision trust entry, with asynchronous trust store writes (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`, `packages/coding-agent/src/core/linked-worktree-checkout.ts`: #6823 again, as its fragment (`changes/unreleased/6823.md`) describes: an explicit `null` in `trust.json` is an entry that holds no decision and stops inheritance, `ProjectTrustUpdate.decision` takes `"no_inherit"`, and every write through the store bumps the generation under the store lock before it writes `trust.json`. What differs from #6823: `ProjectTrustStore.setMany` and `set` are asynchronous and return a promise; the generation is read, written and renamed with `node:fs/promises`; `revision()` is asynchronous and reads the generation and `trust.json`'s modification time and size with `node:fs/promises`. Reads (`get`, `getEntry`, `getNearestEntry`) stay synchronous.
+- `packages/coding-agent/src/core/trust-store-writers.ts`: new. A realm registry (`@code-yeongyu/senpi/trust-store-writers/v1`, shared by every engine copy) in which trust store writes take turns per file and record which of them holds the store lock. `setMany` takes the lock synchronously, as before, and records it in the same synchronous step (#6958 review M1: recording it only after an asynchronous acquisition left a window where the lock existed unrecorded), then holds it across the asynchronous generation bump. A synchronous reader of the realm whose write holds the lock reads without taking it: waiting would spin on a lock only the blocked event loop can release, and the writer replaces `trust.json` in one synchronous call, so the reader never sees half of it. Engine copies older than the registry do not consult it; their synchronous reads and writes wait out the lock's 200 ms budget while such a write holds it.
+- `packages/coding-agent/src/core/project-trust.ts`: `resolveProjectTrusted` awaits the saves it makes (a remembered `project_trust` handler answer, the prompt's choice).
+
+### Why
+
+- #6823 was reverted (#6954) because it added five synchronous fs calls on the RPC session path (`existsSync` and `readFileSync` in `readGeneration`, `renameSync` and `writeFileSync` in `setMany`, `statSync` in `revision`), which the frozen, shrink-only baseline of `test/suite/no-sync-in-session-path.test.ts` forbids. Those calls are asynchronous now; the baseline is unchanged.
+- senpi#6951: a test now pins that a failed generation bump rejects and leaves `trust.json` byte-identical, and that the lock is released afterwards.
+
+### Why an extension could not handle it
+
+- The trust store, its lock and its inheritance rule are core.
+
+### Expected merge conflict zones
+
+- LOW: `ProjectTrustStore.revision`/`setMany`/`set`, `withTrustFileLock`, the saves in `resolveProjectTrusted`.
+
+## 2026-11-17 - The session reports which tool calls the model issued (senpi#6917)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session binds `isModelIssuedToolCall` for the extension runner. It is true for an agent-loop call while its issuer is recorded (`_toolCallIssuers`). It is also true for a Cursor exec-frame call from its preflight, which the bridge now calls with `{ execBridge: true }`, to its result (`emitExecBridgeToolResult`) or its block (`_execBridgeToolCalls`).
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts`: passes `{ execBridge: true }` to the session preflight.
+
+### Why
+
+- senpi#6917 review M1. A Cursor exec-frame call is issued by the model, and its result joins the transcript, but it runs while the issuing message is still streaming. A tool needs the session to tell it so.
+
+### Why an extension could not handle it
+
+- The call's origin is session state; no extension hook sees it.
+
+### Expected merge conflict zones
+
+- LOW: `preflightToolCall`'s options and the head of its body, `emitExecBridgeToolResult`, the `_execBridgeToolCalls` field, and the extension context actions in `agent-session.ts`.
+
+## 2026-10-30 - Host-supplied extension defaults retain settings control (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` composes explicitly supplied `host` factories with the session's default factories, outside the unconditional engine catalog.
+
+### Why
+
+- Moving a presentation tool to its host must preserve `enabledBuiltinExtensions`, `disabledBuiltinExtensions`, and explicit `builtin:<name>` loading.
+
+### Why an extension could not handle it
+
+- Default selection happens before extension factories run or settings are bound to the extension runtime.
+
+### Expected merge conflict zones
+
+- Factory classification in the `DefaultResourceLoader` constructor.
+
+## 2026-11-18 - GPT-6.2 in the provider defaults, recommended models and high-reasoning warning (senpi#6962, senpi#6942)
+
+### What changed
+
+- `model-resolver.ts`: `openai` and `chatgpt-subscription` default to `gpt-6.2-sol`.
+- `extensions/builtin/recommended-models/index.ts`: `gpt-6.2-astra` (xhigh) and `gpt-6.2-sol` (medium) are added ahead of `gpt-6-astra` and `gpt-6.1-sol` on the subscription, API and OpenCode lanes. GitHub Copilot does not serve 6.2.
+- `high-reasoning-warning.ts`: the pattern covers GPT-6.x Astra.
+
+### Why
+
+- These defaults moved the same way for GPT-6.1 Sol in #2390.
+
+### Why an extension could not handle it
+
+- The defaults table and the warning are core; the recommended list is this builtin's data.
+
+### Expected merge conflict zones
+
+- LOW: the default table rows, the recommendation list, the warning regex.
+
+## 2026-11-18 - AgentSession names the automatic-input hold check once (senpi#6957)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: new `automaticInputHoldLive()` (the user's Stop or a parent's run hold is live); `noteAutomaticInput` uses it instead of its inline check.
+
+### Why
+
+- The RPC `prompt` leaf guard (senpi#6922) predicts whether this hold would keep a prompt as a notice. It needs the same predicate the hold uses, not a copy that can drift.
+
+### Why an extension could not handle it
+
+- The hold state lives in the session's engine turn hold, which extensions do not own.
+
+### Expected merge conflict zones
+
+- LOW: `noteAutomaticInput` in `agent-session.ts`.
+
+## 2026-11-18 - Revert: the explicit no-decision trust entry (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts` and `linked-worktree-checkout.ts` return to their state before #6823: an explicit `null` in `trust.json` no longer stops inheritance, and `ProjectTrustUpdate.decision` no longer takes `"no_inherit"`.
+
+### Why
+
+- #6823 added five synchronous fs calls on the RPC session path (`existsSync` and `readFileSync` in `readGeneration`, `renameSync` and `writeFileSync` in `setMany`, `statSync` in `revision`), which breaks the frozen, shrink-only no-sync baseline (`test/suite/no-sync-in-session-path.test.ts`). It merged on a runner exit code while its filed receipt was red. It re-lands with those calls asynchronous.
+
+### Why an extension could not handle it
+
+- This reverts core code that #6823 changed.
+
+### Expected merge conflict zones
+
+- LOW: the same lines #6823 touched.
+
+## 2026-11-18 - Session lists include stores registered in the shared session index (senpi#6941, omo-desktop-app#8097)
+
+### What changed
+
+- `packages/coding-agent/src/core/shared-session-stores.ts` (new, fork-only): reads `<agentDir>/session-stores/*.json` (`{ "version": 1, "root": "<absolute path>" }`, one file per store, written by its owner) and returns each registered root's session directories. Entries of another version, malformed, relative or missing roots contribute nothing. `isSharedSessionStoreDir` tells whether a session dir sits in a registered store; `sharedStoreSummaryDir` places a store's listing summary cache under `<agentDir>/cache/session-store-summaries/`, never in the store.
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionManager.list` in the default per-folder layout also lists registered-store sessions whose cwd matches the folder (same `sessionCwdMatcher`), deduplicated by path and session id. `SessionManager.listAll` with the default root walks the registered store directories after the project directories and lists a store's copy of one of this agent dir's sessions once, as the original. New `getHomeSessionDir()` / `adoptHomeSessionDir()`: a session opened from a store keeps this folder's own session dir as home for listing, `/new`, branches and imports; `newSession` and branch creation write there. An explicit custom session dir is unchanged.
+- `packages/coding-agent/src/core/session-discovery.ts`, `session-summary-index.ts`: an optional index dir, so a store's summaries are cached outside the store.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` (`/resume`) adopts the home session dir after opening the picked file; `newSession`, fork-to-new and import use `getHomeSessionDir()` instead of the open file's directory.
+
+### Why
+
+- The OmO desktop keeps its sessions in its own store, so a running terminal's `/resume` never listed sessions created in the app (omo-desktop-app#8097). Nothing is cached between listings, so a session the app creates shows in the next list of an already running process. Resuming such a session must not make the app's store the terminal's session folder (review M1), and listing must not write into a store the terminal does not own (review L2).
+
+### Why an extension could not handle it
+
+- Session directory enumeration and the session dir a manager creates new files in live inside core `SessionManager` and `AgentSessionRuntime`, before any extension or selector hook sees a session.
+
+### Expected merge conflict zones
+
+- LOW: the import block, `newSession`, `getSessionDir` neighbours, the tail of `SessionManager.list()` and the directory collection in `SessionManager.listAll()` in `session-manager.ts`; the `sessionDir` lines of `switchSession`, `newSession`, fork and import in `agent-session-runtime.ts`.
+
+## 2026-11-18 - hostAttachSocket refuses an unproven holder (senpi#6914)
+
+### What changed
+
+- `packages/coding-agent/src/core/foreign-session-holders.ts`: `hostAttachSocket` returns nothing when any holder is `unproven`, so the "could not be verified" refusal applies, as it does for take-over.
+
+### Why
+
+- senpi#6911 L3: a stale or reused-pid host record led to a failed dial (exit 1) where the clear refusal used to be.
+
+### Why an extension could not handle it
+
+- Holder records are core session ownership.
+
+### Expected merge conflict zones
+
+- LOW: `hostAttachSocket`.
+
+## 2026-11-17 - hostAttachSocket names the one host that holds a session (senpi#6909)
+
+### What changed
+
+- `packages/coding-agent/src/core/foreign-session-holders.ts`: `hostAttachSocket(holders)` returns the public socket when every holder is a session of one multi-session host that published it; `sessionIdFromFile` is exported for the admission.
+
+### Why
+
+- Startup attaches to that host instead of refusing a session it holds.
+
+### Why an extension could not handle it
+
+- Holder records are core session ownership.
+
+### Expected merge conflict zones
+
+- LOW: next to `takeOverRefusal`.
+
+## 2026-11-17 - selectLocalGrant: the bounded local grant select with caller-named choices (senpi#6901)
+
+### What changed
+
+- `packages/coding-agent/src/core/mcp-grant-presentations.ts`: `selectLocalGrant(select, title, [grant, decline], signal?)` is the bounded select `selectMcpGrant` ran, returning the answer (or nothing on abort, timeout or a disconnected presentation). `selectMcpGrant` keeps its contract on top of it.
+
+### Why
+
+- `write_user_skill_file` asks the same local-only presentation with its own choices.
+
+### Why an extension could not handle it
+
+- The grant presentation registry is core engine state the RPC host fills.
+
+### Expected merge conflict zones
+
+- LOW: `selectMcpGrant` in `mcp-grant-presentations.ts`.
+
+## 2026-11-16 - An explicit no-decision trust entry stops inheritance (desktop pull request worktrees)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: an explicit `null` saved for a folder in `trust.json` is now an entry that holds no decision. The nearest-entry walk stops there, so neither a folder above it nor, for a linked git worktree, the main checkout decides for it (`getSavedProjectTrust` returns `null`). `ProjectTrustUpdate.decision` takes `"no_inherit"`, which `setMany` saves as that `null`; a `null` update still removes the folder's entry. `ProjectTrustStore.getNearestEntry` returns the nearest entry including the no-decision one; `getEntry` and `get` report it as no decision. `getProjectTrustNoInheritOption(cwd)` is the option that saves it; `/trust` never offers it. `getSavedProjectTrustState` reports what is saved as a decision, `"no_inherit"` for the explicit no-decision entry, or `null` for nothing saved; `getSavedProjectTrust` keeps returning the decision alone, with both undecided values as `null`. `ProjectTrustStore.revision()` changes on every write made through the store by an engine with this change, in any process: each write first bumps a generation file (`trust.json.generation`, replaced whole) under the store lock. An older engine sharing the agent directory is seen only through `trust.json`'s modification time and size.
+- `packages/coding-agent/src/core/linked-worktree-checkout.ts`: `linkedWorktreeMainCheckoutDir` and its file helpers moved here unchanged from `trust-manager.ts` (the file was at the size ceiling).
+
+### Why
+
+- The desktop app: a pull-request worktree of another repository took the base checkout's trust through linked-worktree inheritance. Saving "do not trust" for it also overrides Full access; an entry that only withholds inheritance leaves the folder decided as if nothing were saved, so Full access still trusts it.
+- Compatibility: `readTrustFile` has accepted `null` since trust gating was added, and no earlier writer saved one (a `null` update deleted the key). Older readers skip the entry and keep walking, so there the folder inherits as before.
+
+### Why an extension could not handle it
+
+- The trust store and its inheritance rule are core; a `project_trust` handler cannot change what a saved decision means for other readers.
+
+### Expected merge conflict zones
+
+- LOW: `findNearestTrustEntry`, `ProjectTrustStore.getEntry`/`setMany`, `getSavedProjectTrust`.
+
 ## 2026-11-18 - The manual-switch handoff is tied to request preparation (senpi#6893)
 
 ### What changed

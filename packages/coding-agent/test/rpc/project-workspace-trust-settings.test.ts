@@ -15,12 +15,13 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { CONFIG_DIR_NAME } from "../../src/config.ts";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
+import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { classifyRpcMethod } from "../../src/modes/rpc/method-classes.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
@@ -37,7 +38,11 @@ afterEach(async () => {
 	vi.unstubAllEnvs();
 });
 
-async function startHost(extraArgs: string[] = [], extensionFactories: ExtensionFactory[] = []) {
+async function startHost(
+	extraArgs: string[] = [],
+	extensionFactories: ExtensionFactory[] = [],
+	globalSettings: Record<string, unknown> = {},
+) {
 	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "senpi-6176-")));
 	const cwd = join(scratch, "project");
 	const agentDir = join(scratch, "agent");
@@ -50,7 +55,10 @@ async function startHost(extraArgs: string[] = [], extensionFactories: Extension
 	);
 	const projectSettingsPath = join(configDir, "settings.json");
 	writeFileSync(projectSettingsPath, JSON.stringify({ steeringMode: "one-at-a-time" }));
-	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
+	writeFileSync(
+		join(agentDir, "settings.json"),
+		JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1", ...globalSettings }),
+	);
 	for (const name of ["SENPI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) vi.stubEnv(name, agentDir);
 	for (const name of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"])
 		vi.stubEnv(name, undefined);
@@ -105,7 +113,8 @@ async function startHost(extraArgs: string[] = [], extensionFactories: Extension
 		commandNames,
 		steeringMode,
 		projectSettingsPath,
-		savedTrust: () => JSON.parse(readFileSync(join(agentDir, "trust.json"), "utf8")) as Record<string, boolean>,
+		savedTrust: () =>
+			JSON.parse(readFileSync(join(agentDir, "trust.json"), "utf8")) as Record<string, boolean | null>,
 		projectFile: () => JSON.parse(readFileSync(projectSettingsPath, "utf8")) as Record<string, unknown>,
 	};
 }
@@ -165,6 +174,127 @@ describe("senpi#6176: project trust over RPC", () => {
 		expect(host.savedTrust()).toEqual({ [host.cwd]: false });
 		expect(await host.commandNames(sessionId)).not.toContain(SKILL_COMMAND);
 		expect(await host.steeringMode(sessionId)).toBe("all");
+	});
+
+	// The desktop app's pull request worktrees: a client marks a folder that must inherit no decision, without saving "do not trust".
+	it("saves no_inherit as an explicit no-decision entry: never listed, adds no trust, and a trusted folder above stops deciding", async () => {
+		const host = await startHost();
+		const sessionId = await host.open();
+		await host.send({ type: "set_project_trust", sessionId, choice: "trust_parent" });
+		expect(await host.commandNames(sessionId)).toContain(SKILL_COMMAND);
+		const answer = await host.send({ type: "set_project_trust", sessionId, choice: "no_inherit" });
+		expect(answer).toMatchObject({ success: true, data: { projectTrusted: false, saved: null } });
+		expect(
+			(answer.data as { choices: Array<{ choice: string }> }).choices.map((entry) => entry.choice),
+		).not.toContain("no_inherit");
+		expect(host.savedTrust()).toEqual({ [dirname(host.cwd)]: true, [host.cwd]: null });
+		expect(await host.commandNames(sessionId)).not.toContain(SKILL_COMMAND);
+		expect(await host.commandNames(await host.open())).not.toContain(SKILL_COMMAND);
+	});
+
+	it("under Full access, no_inherit drops a trust that came from a saved decision, keeps one from Full access alone, and the next session is trusted", async () => {
+		const host = await startHost([], [], { permissionPreset: "full-access" });
+		writeFileSync(host.trustFile, JSON.stringify({ [host.cwd]: true }));
+		const savedTrusted = await host.open();
+		expect(
+			await host.send({ type: "set_project_trust", sessionId: savedTrusted, choice: "no_inherit" }),
+		).toMatchObject({
+			success: true,
+			data: { projectTrusted: false, saved: null },
+		});
+		const fullAccess = await host.open();
+		expect(await host.commandNames(fullAccess)).toContain(SKILL_COMMAND);
+		expect(await host.send({ type: "set_project_trust", sessionId: fullAccess, choice: "no_inherit" })).toMatchObject(
+			{
+				success: true,
+				data: { projectTrusted: true },
+			},
+		);
+		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
+	});
+
+	// #6823 review H1: the host process remembers an unsaved answer per folder; an explicit no_inherit entry is a saved
+	// choice, so that memory must never stand in for it.
+	it("opens a no_inherit folder undecided although this process earlier resolved it trusted without saving", async () => {
+		let grant = true;
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: grant ? "yes" : "undecided" }));
+				},
+			],
+		);
+		const first = await host.open();
+		expect(await host.commandNames(first)).toContain(SKILL_COMMAND);
+		grant = false;
+		expect(await host.send({ type: "set_project_trust", sessionId: first, choice: "no_inherit" })).toMatchObject({
+			success: true,
+			data: { saved: null },
+		});
+		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
+		expect(await host.commandNames(await host.open())).not.toContain(SKILL_COMMAND);
+	});
+
+	// #6823 review L1: an answer given under the explicit no-decision entry (what "Trust (this session only)" leaves)
+	// holds for this process's later sessions of that folder, as /new and /fork open them.
+	it("keeps an unsaved answer given under a no_inherit entry for later sessions of that folder", async () => {
+		let grant = true;
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: grant ? "yes" : "undecided" }));
+				},
+			],
+		);
+		writeFileSync(host.trustFile, JSON.stringify({ [host.cwd]: null }));
+		expect(await host.commandNames(await host.open())).toContain(SKILL_COMMAND);
+		grant = false;
+		expect(await host.commandNames(await host.open())).toContain(SKILL_COMMAND);
+		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
+	});
+
+	// #6823 review M1: a save ends a remembered answer, even when a later save restores the entry it was given under.
+	it("drops an answer given under a no_inherit entry once the folder's trust is saved again, even back to no_inherit", async () => {
+		let grant = true;
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: grant ? "yes" : "undecided" }));
+				},
+			],
+		);
+		writeFileSync(host.trustFile, JSON.stringify({ [host.cwd]: null }));
+		const first = await host.open();
+		expect(await host.commandNames(first)).toContain(SKILL_COMMAND);
+		grant = false;
+		await host.send({ type: "set_project_trust", sessionId: first, choice: "do_not_trust" });
+		await host.send({ type: "set_project_trust", sessionId: first, choice: "no_inherit" });
+		expect(host.savedTrust()).toEqual({ [host.cwd]: null });
+		expect(await host.commandNames(await host.open())).not.toContain(SKILL_COMMAND);
+	});
+
+	// #6823 review round 4 L1: an answer given with nothing saved keeps holding while nothing is saved for the folder,
+	// whatever is saved for other folders (the behaviour before #6823, which a TUI /new or /fork relies on).
+	it("keeps an unsaved answer given with nothing saved across a save for another folder", async () => {
+		let grant = true;
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: grant ? "yes" : "undecided" }));
+				},
+			],
+		);
+		expect(await host.commandNames(await host.open())).toContain(SKILL_COMMAND);
+		grant = false;
+		const elsewhere = join(dirname(host.cwd), "elsewhere");
+		mkdirSync(elsewhere);
+		await new ProjectTrustStore(dirname(host.trustFile)).set(elsewhere, true);
+		expect(host.savedTrust()).toEqual({ [elsewhere]: true });
+		expect(await host.commandNames(await host.open())).toContain(SKILL_COMMAND);
 	});
 
 	it("refuses an unknown choice and saves nothing", async () => {
