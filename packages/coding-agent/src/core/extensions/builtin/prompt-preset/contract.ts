@@ -148,6 +148,24 @@ export function presetSharedSections(name: ResolvedPresetName | undefined): Shar
 	return name !== undefined && FULL_SHARED_SECTION_PRESETS.has(name) ? "full" : "diet";
 }
 
+/**
+ * The handoff block a preset's prompt defines, so the todo tool's cue can name that block in the
+ * prompt's own words instead of the default core's (senpi#6977): the GPT block presets render the
+ * outcome-first block, the rewritten gpt-6.2 core renders no handoff block at all, and every other
+ * preset (and the default dynamic prompt) renders the Ask / For you / Now / Next block.
+ */
+export type HandoffCueKind = "default" | "gpt-block" | "none";
+
+const GPT_BLOCK_HANDOFF_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-5.5", "gpt-5.6", "gpt-6-astra"]);
+const NO_HANDOFF_BLOCK_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-6.2"]);
+
+export function presetHandoffCueKind(name: ResolvedPresetName | undefined): HandoffCueKind {
+	if (name === undefined) return "default";
+	if (GPT_BLOCK_HANDOFF_PRESETS.has(name)) return "gpt-block";
+	if (NO_HANDOFF_BLOCK_PRESETS.has(name)) return "none";
+	return "default";
+}
+
 export type PromptPresetModelCase = {
 	readonly providerID: string;
 	readonly modelID: string;

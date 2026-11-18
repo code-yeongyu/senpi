@@ -1,10 +1,39 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	PROMPT_PRESET_MODEL_CASES,
+	presetHandoffCueKind,
+} from "../../src/core/extensions/builtin/prompt-preset/contract.ts";
+import { type PromptPresetSettings, resolvePreset } from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
-import { HANDOFF_CUES, handoffMomentOf, type TodoPhase } from "../../src/core/extensions/builtin/todotools/state.ts";
+import {
+	GPT_HANDOFF_BLOCK_LINE,
+	GPT_HANDOFF_CUES,
+	HANDOFF_CUES,
+	handoffMomentOf,
+	type TodoPhase,
+} from "../../src/core/extensions/builtin/todotools/state.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 const harnesses: Harness[] = [];
+
+function createModel(id: string): Model<Api> {
+	return {
+		id,
+		name: id,
+		api: "openai-responses",
+		provider: "openai",
+		baseUrl: "https://example.com/v1",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 400_000,
+		maxTokens: 128_000,
+	};
+}
+
+const AUTO: PromptPresetSettings = { promptPreset: "auto" };
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -51,9 +80,14 @@ describe("handoffMomentOf", () => {
 	});
 });
 
-async function runFourTodoCalls(): Promise<string[]> {
-	const harness = await createHarness({ extensionFactories: [todotoolsExtension] });
+async function runFourTodoCalls(modelId?: string): Promise<string[]> {
+	const harness = await createHarness({
+		extensionFactories: [todotoolsExtension],
+		...(modelId === undefined ? {} : { models: [{ id: modelId }] }),
+	});
 	harnesses.push(harness);
+	const targetModel = modelId === undefined ? undefined : harness.getModel(modelId);
+	if (targetModel) await harness.session.setModel(targetModel);
 	harness.setResponses([
 		fauxAssistantMessage(
 			[
@@ -108,5 +142,68 @@ describe("todo results carry the handoff cue at handoff moments", () => {
 		// then: the todo results still report the list, and none carries a handoff cue
 		expect(texts).toHaveLength(4);
 		for (const text of texts) expect(text).not.toContain("Handoff due");
+	});
+});
+
+describe("the cue names the handoff block the active preset defines (senpi#6977)", () => {
+	it("names the Outcome / You need block under a GPT preset that renders it", async () => {
+		// given: a session on a model whose prompt renders the GPT family handoff block
+		vi.stubEnv("SENPI_PROMPT_SURFACE", "terminal");
+
+		// when
+		const texts = await runFourTodoCalls("gpt-6-astra");
+
+		// then: each handoff-moment result cues that block, and no cue names the default Ask / For you block
+		expect(texts).toHaveLength(4);
+		for (const text of [texts[0], texts[2]]) {
+			expect(text).toContain("Handoff due");
+			expect(text).toContain(GPT_HANDOFF_BLOCK_LINE);
+			expect(text).not.toContain("Ask / For you / Now / Next");
+		}
+		expect(texts[3]).toContain("Handoff due");
+		expect(texts[3]).toContain("goes inside You need");
+		expect(texts[3]).not.toContain("Ask / For you / Now / Next");
+		expect(texts[1]).not.toContain("Handoff due");
+	});
+
+	it("emits no cue under the gpt-6.2 preset, whose prompt defines no handoff block", async () => {
+		// given: a session on gpt-6.2, whose rewritten core renders no four-slot handoff block on any surface
+		vi.stubEnv("SENPI_PROMPT_SURFACE", "terminal");
+
+		// when
+		const texts = await runFourTodoCalls("gpt-6.2-astra");
+
+		// then: the todo results still report the list, and none carries a handoff cue
+		expect(texts).toHaveLength(4);
+		for (const text of texts) expect(text).not.toContain("Handoff due");
+	});
+
+	it("maps every preset to the cue kind its prompt implies", () => {
+		// given: the preset case table covers every preset family
+		const expected: Record<string, ReturnType<typeof presetHandoffCueKind>> = {
+			"gpt-5.5": "gpt-block",
+			"gpt-5.6": "gpt-block",
+			"gpt-6-astra": "gpt-block",
+			"gpt-6.2": "none",
+		};
+
+		// then: the GPT block presets, the blockless gpt-6.2, and everything else on the default cue
+		for (const { preset } of PROMPT_PRESET_MODEL_CASES) {
+			expect(presetHandoffCueKind(preset), preset).toBe(expected[preset] ?? "default");
+		}
+		expect(presetHandoffCueKind(undefined)).toBe("default");
+	});
+
+	it("cites the GPT handoff block byte-equal to the prompts that render it", () => {
+		// given: the three presets that render the GPT block
+		// then: each rendered prompt contains the cue's block line, so the cue cannot drift from the prompt
+		for (const id of ["gpt-5.5", "gpt-5.6", "gpt-6-astra"]) {
+			const prompt = resolvePreset(createModel(id), AUTO)?.prompt ?? "";
+			expect(prompt, id).toContain(GPT_HANDOFF_BLOCK_LINE);
+		}
+		for (const cue of [GPT_HANDOFF_CUES["list-created"], GPT_HANDOFF_CUES["phase-closed"]]) {
+			expect(cue).toContain(GPT_HANDOFF_BLOCK_LINE);
+		}
+		expect(GPT_HANDOFF_CUES["all-closed"]).toContain("goes inside You need");
 	});
 });

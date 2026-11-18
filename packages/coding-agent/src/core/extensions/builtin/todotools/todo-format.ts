@@ -3,6 +3,7 @@
 // Copyright (c) 2025-2026 Can Bölük
 // https://github.com/can1357/oh-my-pi
 
+import type { HandoffCueKind } from "../prompt-preset/contract.ts";
 import { stripAnsi } from "../../../../utils/ansi.ts";
 import { nextActionableTask } from "./todo-query.ts";
 import type { TodoAsk, TodoItem, TodoPhase } from "./todo-types.ts";
@@ -67,9 +68,28 @@ export const HANDOFF_CUES: Readonly<Record<HandoffMoment, string>> = {
 		"Handoff due: every task is closed. Your final message is the Ask / For you / Now / Next block, with Now and Next saying no task remains; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside For you.",
 };
 
-/** The cue line appended to a todo result, or nothing when no handoff moment was reached. */
-export function formatHandoffCue(moment: HandoffMoment | undefined): string {
-	return moment ? `\n\n${HANDOFF_CUES[moment]}` : "";
+/**
+ * The handoff block line every GPT block preset renders verbatim (gpt-5.5, gpt-5.6, gpt-6-astra; the
+ * gpt-6.2 core inherits it until its rewrite lands). The cue quotes it so the tool result and the
+ * system prompt name one block, and a test pins this line byte-equal against the rendered presets.
+ */
+export const GPT_HANDOFF_BLOCK_LINE =
+	"[Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].";
+
+export const GPT_HANDOFF_CUES: Readonly<Record<HandoffMoment, string>> = {
+	"list-created": `Handoff due: the plan exists. Before your next tool call, write the handoff block: ${GPT_HANDOFF_BLOCK_LINE}`,
+	"phase-closed": `Handoff due: a phase closed. Before your next tool call, write the handoff block: ${GPT_HANDOFF_BLOCK_LINE}`,
+	"all-closed":
+		"Handoff due: every task is closed. Your final message is the Outcome so far / You need / Now / Next handoff block, with Now and Next saying no task remains; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside You need.",
+};
+
+/**
+ * The cue line appended to a todo result, or nothing when no handoff moment was reached or the
+ * active preset defines no handoff block to cue (senpi#6977).
+ */
+export function formatHandoffCue(moment: HandoffMoment | undefined, kind: HandoffCueKind = "default"): string {
+	if (moment === undefined || kind === "none") return "";
+	return `\n\n${(kind === "gpt-block" ? GPT_HANDOFF_CUES : HANDOFF_CUES)[moment]}`;
 }
 
 /** `Ask:` / `Now:` / `Next:` lines plus a blank separator line. */
