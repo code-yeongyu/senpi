@@ -6394,6 +6394,14 @@
 			"class": "per-copy-safe",
 			"reason": "per-process random or derived key material held by the copy that uses it; a split only means two copies use different keys for their own records"
 		},
+		"packages/coding-agent/src/core/kernel-process-identity.ts#darwinReader": {
+			"class": "per-copy-safe",
+			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
+		},
+		"packages/coding-agent/src/core/kernel-process-identity.ts#linuxBootSeconds": {
+			"class": "per-copy-safe",
+			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
+		},
 		"packages/coding-agent/src/core/keybindings.ts#KEYBINDINGS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -7046,6 +7054,10 @@
 		"packages/coding-agent/src/core/session-sidecar-store.ts#snapshots": {
 			"class": "per-copy-safe",
 			"reason": "derived-value cache; a split only recomputes or misses"
+		},
+		"packages/coding-agent/src/core/session-spawn-attestation.ts#ownIdentity": {
+			"class": "per-copy-safe",
+			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
 		},
 		"packages/coding-agent/src/core/session-summary-cache.ts#cache": {
 			"class": "per-copy-safe",
