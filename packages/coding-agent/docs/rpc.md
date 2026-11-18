@@ -3088,7 +3088,7 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 | `reason` | When | Override |
 |---|---|---|
 | `turn_active` | an agent run, a prompt about to start, compaction, barrier-held work, and a run with any tool body executing even while a dialog is open (a running tool can open one, such as an MCP elicitation); never a run whose only work is an unanswered dialog with no tool body executing (a permission prompt before its call starts), which the unload aborts (the dialog is cancelled) and waits for, bounded, as with `interrupt: true` | `interrupt: true` aborts and waits (bounded) first |
-| `work_pending` | bash, an admitted delivery not yet written, another request for the session | `interrupt: true` |
+| `work_pending` | bash, an admitted delivery not yet written, another request for the session | `interrupt: true`; once the aborted work settles, a delivery still waiting in the runtime's queues leaves them and the ledger unwritten (its sender redelivers it), and every later answer lists its id in `dropped.deliveries` |
 | `extension_work` | extension-published work: background terminal jobs, non-persistent monitors, detached eval cells, a pending question; `detail` names the sources | `force: true` (that work is stopped; only persistent monitors come back on the reopen) |
 | `children_live` | child tasks still working, or worker sessions here whose `context` names this session as parent or root | `children: "detach"` leaves them running |
 | `attached` | other clients hold the session (none of the caller's own holds count) | `force: true`; they receive the park |

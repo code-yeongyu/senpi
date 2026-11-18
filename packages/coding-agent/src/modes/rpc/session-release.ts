@@ -124,8 +124,9 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	try {
 		if (interrupted) {
 			admission.close(RELEASED_ADMISSION_CLOSED);
-			dropped = takeQueuedInput(first.session);
-			await abortAndSettle(port, command.sessionId, first.session);
+			const taken = takeQueuedInput(first.session);
+			const handedBack = await abortAndSettle(port, command.sessionId, first.session);
+			dropped = { ...taken, deliveries: [...taken.deliveries, ...handedBack] };
 			// What the clear retired is on disk before `session_released` seals the file (senpi#3549).
 			await first.session.whenQueueClearRecorded();
 		}

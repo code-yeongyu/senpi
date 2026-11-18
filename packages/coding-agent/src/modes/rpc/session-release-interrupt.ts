@@ -4,6 +4,8 @@
  * for it to settle. Taking the input is synchronous, so what it took is known before anything can fail.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { deliveryIdOf } from "../../core/external-admission.ts";
+import { messageTicket } from "../../core/lifecycle-delivery.ts";
 
 /** How long an `interrupt` release waits for the aborted work to settle before it re-checks. */
 export const RELEASE_SETTLE_MS = 10_000;
@@ -36,7 +38,15 @@ export function takeQueuedInput(session: AgentSession): ReleaseDropped {
 	};
 }
 
-export async function abortAndSettle(port: ReleaseSettlePort, sessionId: string, session: AgentSession): Promise<void> {
+/**
+ * Aborts the work, waits (bounded) for it to settle, then hands back the deliveries it left unwritten: their ids, for
+ * the caller to report. Nothing is handed back while the session is still busy.
+ */
+export async function abortAndSettle(
+	port: ReleaseSettlePort,
+	sessionId: string,
+	session: AgentSession,
+): Promise<readonly string[]> {
 	session.abortBash();
 	// A prompt still in preflight, or an admitted delivery, may start its run after the abort below.
 	const stopStarts = session.subscribe((event) => {
@@ -59,4 +69,23 @@ export async function abortAndSettle(port: ReleaseSettlePort, sessionId: string,
 		clearTimeout(deadline);
 		stopStarts();
 	}
+	return session.isIdle ? handBackUnwrittenDeliveries(session) : [];
+}
+
+/**
+ * A delivery admitted while a run was busy waits in the runtime's follow-up queue. When that run is aborted it stays
+ * there for a person's next turn and its admission stays pending, which refused every interrupting unload forever
+ * (oh-my-openagent#14169). Settled after an interrupt, such deliveries leave the queue and the ledger unwritten, so
+ * their sender redelivers them to the next owner, as `takeQueuedInput` does for a release. A delivery in engine
+ * custody (a ticket) is the lifecycle's own and stays.
+ */
+function handBackUnwrittenDeliveries(session: AgentSession): readonly string[] {
+	const admittedBefore = session.externalAdmission.list().pending;
+	for (const queued of session.agent.peekQueuedMessages({ all: true })) {
+		if (queued.role === "custom" && deliveryIdOf(queued) !== undefined && messageTicket(queued) === undefined)
+			session.agent.removeQueuedMessage(queued);
+	}
+	session.externalAdmission.dropQueued();
+	const stillAdmitted = new Set(session.externalAdmission.list().pending);
+	return admittedBefore.filter((deliveryId) => !stillAdmitted.has(deliveryId));
 }

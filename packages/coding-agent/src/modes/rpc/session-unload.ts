@@ -10,7 +10,8 @@
  * Refusals change nothing and answer `outcome: "refused"` with `reason`, `detail` and `action`:
  * - `turn_active` / `work_pending`: an agent run, a prompt in preflight, compaction, barrier-held work,
  *   bash, an admitted delivery or another request for the session. `interrupt` aborts the run and bash
- *   and waits (bounded) before the final check. A run whose only work is waiting on a dialog nobody
+ *   and waits (bounded) before the final check; a delivery the aborted run left queued is handed back
+ *   unwritten (`dropped.deliveries`), so an interrupted run never pins its session (oh-my-openagent#14169). A run whose only work is waiting on a dialog nobody
  *   answered (a permission prompt) is no refusal: the unload aborts it, which cancels the dialog, as if
  *   `interrupt` were set (senpi#6683). A run with a tool body executing is not parked, even when a dialog
  *   is open: the body may be doing real work beside the dialog.
@@ -97,16 +98,22 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 		(refusal) => !interruptible(refusal) || (command.interrupt !== true && refusal.parked !== true),
 	);
 	if (standing !== undefined) return fail(command, first.session, standing);
-	if (blocked.length > 0) await abortAndSettle(port, command.sessionId, first.session);
-	return claimAndUnload(port, command);
+	const handedBack = blocked.length > 0 ? await abortAndSettle(port, command.sessionId, first.session) : [];
+	return claimAndUnload(port, command, handedBack);
 }
 
 /** The final check and the unload, without an await between them and the close claim. */
-async function claimAndUnload(port: SessionUnloadPort, command: UnloadSessionCommand): Promise<RpcResponse> {
+async function claimAndUnload(
+	port: SessionUnloadPort,
+	command: UnloadSessionCommand,
+	handedBack: readonly string[],
+): Promise<RpcResponse> {
+	// Deliveries the interrupt handed back are gone from this runtime whatever the answer: every answer names them.
+	const dropped = handedBack.length === 0 ? {} : { dropped: { deliveries: handedBack } };
 	const ready = loaded(port, command.sessionId);
-	if ("reason" in ready) return answer(command, refused(ready));
+	if ("reason" in ready) return answer(command, { ...refused(ready), ...dropped });
 	const stillBlocked = blockers(port, command, ready.session, ready.durableSessionId);
-	if (stillBlocked.length > 0) return fail(command, ready.session, stillBlocked[0] as Refusal);
+	if (stillBlocked.length > 0) return fail(command, ready.session, stillBlocked[0] as Refusal, dropped);
 	if (command.clearQueue === true) {
 		ClientAdmissions.clearQueuedFor(ready.session);
 		ready.session.clearQueue();
@@ -120,11 +127,13 @@ async function claimAndUnload(port: SessionUnloadPort, command: UnloadSessionCom
 			outcome: "refused",
 			reason: "session_closing",
 			detail: "another close of this session finished first",
+			...dropped,
 		});
 	}
 	return answer(command, {
 		outcome: "unloaded",
 		sessionPath: ready.sessionPath,
+		...dropped,
 		...(effect === undefined ? {} : effectAnswer(effect, command.sessionId)),
 	});
 }
@@ -217,8 +226,13 @@ function loaded(
 }
 
 /** A refusal after the effect began records it `failed`; the answer carries the receipt. */
-function fail(command: UnloadSessionCommand, session: AgentSession, refusal: Refusal): RpcResponse {
-	if (command.effectId === undefined) return answer(command, refused(refusal));
+function fail(
+	command: UnloadSessionCommand,
+	session: AgentSession,
+	refusal: Refusal,
+	dropped: Pick<RpcUnloadAnswer, "dropped"> = {},
+): RpcResponse {
+	if (command.effectId === undefined) return answer(command, { ...refused(refusal), ...dropped });
 	const status = EffectLedger.forSession(session).transition(command.effectId, "failed", {
 		outcome: {
 			kind: "refused",
@@ -227,7 +241,7 @@ function fail(command: UnloadSessionCommand, session: AgentSession, refusal: Ref
 			...(refusal.action === undefined ? {} : { action: refusal.action }),
 		},
 	});
-	return answer(command, { ...refused(refusal), ...effectAnswer(status, command.sessionId) });
+	return answer(command, { ...refused(refusal), ...dropped, ...effectAnswer(status, command.sessionId) });
 }
 
 function refusalFields(
