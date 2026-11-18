@@ -312,7 +312,7 @@ export default function (pi: ExtensionAPI) {
 
 			try {
 				const targetCwd = ctx.sessionManager.getCwd();
-				const sessionDir = ctx.sessionManager.getHomeSessionDir();
+				const sessionDir = ctx.sessionManager.getSessionDir();
 				const parsedRef = parseRef(ref, targetCwd);
 
 				ctx.ui.notify(`Importing repro session from ${ref}...`, "info");
