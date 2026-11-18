@@ -65,6 +65,7 @@ const PROMPTING_SCHEMAS = {
 		clientMessageId: OptId,
 		clientTurnId: OptId,
 		expectedTurnId: OptId,
+		expectedLeafId: OptId,
 		toolBarrier: Opt(Type.Object({ id: Id, deadlineMs: Num })),
 		chainCount: Opt(ChainCount),
 	}),
