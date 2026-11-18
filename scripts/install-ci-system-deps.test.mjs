@@ -46,17 +46,19 @@ const etc = process.env.APT_ETC_DIR;
 const source = fs.readFileSync(path.join(etc, "sources.list.d/ubuntu.sources"), "utf8");
 const mirrors = source.includes("mirror+file:") ? fs.readFileSync(path.join(etc, "apt-mirrors.txt"), "utf8") : source;
 const mirror = mirrors.match(/https?:\\/\\/[^\\s]+/)[0];
-const archives = args.find((arg) => arg.startsWith("Dir::Cache::archives="))?.slice("Dir::Cache::archives=".length);
+const option = (name) => args.find((arg) => arg.startsWith(name + "="))?.slice(name.length + 1);
+const archives = option("Dir::Cache::archives");
+const lists = option("Dir::State::Lists");
 const action = args.includes("update") ? "update" : args.includes("--download-only") ? "download" : "offline";
+if (action === "update" && lists) fs.writeFileSync(path.join(lists, "archive.ubuntu.com_ubuntu_dists_noble_main_binary-amd64_Packages"), "Package: ripgrep\\n");
 if (action === "download" && archives) fs.writeFileSync(path.join(archives, "ripgrep_14.1.0-1_amd64.deb"), "deb");
-record({ action, mirror, mirrors, archives, args });
+record({ action, mirror, mirrors, archives, lists, args });
+const failsWith = process.env.FAKE_OFFLINE_FAILS_WITH;
+if (action === "offline" && failsWith && archives && fs.existsSync(path.join(archives, failsWith))) process.exit(100);
 `, { mode: 0o755 });
 	writeFileSync(join(bin, "dpkg"), `${prelude}
 record({ action: "dpkg", args });
-process.exit(args[0] === "-i" && process.env.FAKE_DPKG_STATUS ? Number(process.env.FAKE_DPKG_STATUS) : 0);
-`, { mode: 0o755 });
-	writeFileSync(join(bin, "dpkg-query"), `${prelude}
-process.stdout.write(process.env.FAKE_INSTALLED === "1" ? "installed" : "not-installed");
+
 `, { mode: 0o755 });
 	writeFileSync(join(bin, "timeout"), `${prelude}
 const { spawnSync } = require("node:child_process");
@@ -124,45 +126,58 @@ for (const mirrorHost of ["azure.archive.ubuntu.com", "us-east-2.ec2.archive.ubu
 	}
 }
 
-test("a restored .deb set installs with dpkg and never contacts a mirror", () => {
+function seedCache(cache, deb) {
+	mkdirSync(join(cache, "archives"), { recursive: true });
+	mkdirSync(join(cache, "lists"), { recursive: true });
+	writeFileSync(join(cache, "archives", deb), "deb");
+	writeFileSync(join(cache, "lists", "archive.ubuntu.com_ubuntu_dists_noble_main_binary-amd64_Packages"), "Package: ripgrep\n");
+}
+
+const debs = (cache) => readdirSync(join(cache, "archives")).filter((name) => name.endsWith(".deb"));
+
+test("a restored cache installs offline with its own lists and never contacts a mirror", () => {
 	withFixture((fixture) => {
 		const fake = fakeApt(fixture, "us-east-2.ec2.archive.ubuntu.com", true);
-		const cache = join(fixture, "debs");
-		mkdirSync(cache);
-		writeFileSync(join(cache, "ripgrep_14.1.0-1_amd64.deb"), "deb");
-		const { result, events } = runInstaller(fixture, fake, { APT_DEB_CACHE_DIR: cache, FAKE_INSTALLED: "1" });
+		const cache = join(fixture, "apt-cache");
+		seedCache(cache, "ripgrep_14.1.0-1_amd64.deb");
+		const { result, events } = runInstaller(fixture, fake, { APT_DEB_CACHE_DIR: cache });
 		assert.equal(result.status, 0, result.stderr || result.error?.message);
-		assert.deepEqual(events.map((entry) => entry.action), ["dpkg"]);
-		assert.deepEqual(events[0].args, ["-i", join(cache, "ripgrep_14.1.0-1_amd64.deb")]);
-		assert.match(result.stdout, /from the cached \.deb set/);
+		assert.deepEqual(events.map((entry) => entry.action), ["timeout", "offline"]);
+		assert.ok(events[1].args.includes("--no-download"));
+		assert.equal(events[1].archives, join(cache, "archives"));
+		assert.equal(events[1].lists, join(cache, "lists"));
+		assert.match(result.stdout, /no mirror was contacted/);
 	});
 });
 
-test("an empty cache downloads into the cache directory and installs from it", () => {
+test("an empty cache receives the lists and .deb files the mirror run fetched", () => {
 	withFixture((fixture) => {
 		const fake = fakeApt(fixture, "us-east-2.ec2.archive.ubuntu.com", true);
-		const cache = join(fixture, "debs");
+		const cache = join(fixture, "apt-cache");
 		const { result, events } = runInstaller(fixture, fake, { APT_DEB_CACHE_DIR: cache });
 		assert.equal(result.status, 0, result.stderr || result.error?.message);
 		assert.deepEqual(events.map((entry) => entry.action), ["timeout", "update", "download", "timeout", "offline"]);
-		for (const entry of events.filter((event) => event.action !== "timeout")) assert.equal(entry.archives, cache);
-		assert.deepEqual(readdirSync(cache).filter((name) => name.endsWith(".deb")), ["ripgrep_14.1.0-1_amd64.deb"]);
+		for (const entry of events.filter((event) => event.action !== "timeout")) {
+			assert.equal(entry.archives, join(cache, "archives"));
+			assert.equal(entry.lists, join(cache, "lists"));
+		}
+		assert.deepEqual(debs(cache), ["ripgrep_14.1.0-1_amd64.deb"]);
+		assert.ok(readdirSync(join(cache, "lists")).some((name) => name.endsWith("_Packages")));
 	});
 });
 
-test("a cached set that does not install is dropped and the packages come from the mirror", () => {
+test("a cached set that does not install is repaired, dropped and fetched again from the mirror", () => {
 	withFixture((fixture) => {
 		const fake = fakeApt(fixture, "us-east-2.ec2.archive.ubuntu.com", true);
-		const cache = join(fixture, "debs");
-		mkdirSync(cache);
-		writeFileSync(join(cache, "stale_1.0_amd64.deb"), "deb");
-		const { result, events } = runInstaller(fixture, fake, { APT_DEB_CACHE_DIR: cache, FAKE_DPKG_STATUS: "1" });
+		const cache = join(fixture, "apt-cache");
+		seedCache(cache, "stale_1.0_amd64.deb");
+		const { result, events } = runInstaller(fixture, fake, { APT_DEB_CACHE_DIR: cache, FAKE_OFFLINE_FAILS_WITH: "stale_1.0_amd64.deb" });
 		assert.equal(result.status, 0, result.stderr || result.error?.message);
-		assert.match(result.stdout, /::warning::The cached \.deb set did not install ripgrep/);
+		assert.match(result.stdout, /::warning::The cached APT set did not install ripgrep/);
 		assert.deepEqual(events.map((entry) => entry.action),
-			["dpkg", "dpkg", "timeout", "update", "download", "timeout", "offline"]);
-		assert.deepEqual(events[1].args, ["--configure", "-a"]);
-		assert.deepEqual(readdirSync(cache).filter((name) => name.endsWith(".deb")), ["ripgrep_14.1.0-1_amd64.deb"]);
+			["timeout", "offline", "dpkg", "timeout", "update", "download", "timeout", "offline"]);
+		assert.deepEqual(events[2].args, ["--configure", "-a"]);
+		assert.deepEqual(debs(cache), ["ripgrep_14.1.0-1_amd64.deb"]);
 	});
 });
 

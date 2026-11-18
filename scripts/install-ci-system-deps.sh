@@ -4,8 +4,8 @@ set -euo pipefail
 apt_etc="${APT_ETC_DIR:-/etc/apt}"
 
 # --cache-key prints the actions/cache key for this package set on this runner image (senpi#4552).
-# The image version is part of it: a .deb set downloaded for one image must never be installed on another,
-# where dpkg would silently downgrade libraries the image already ships newer.
+# The image version is part of it: package lists and .deb files fetched for one image must never be
+# installed on another, where they would downgrade libraries the image already ships newer.
 if [ "${1:-}" = "--cache-key" ]; then
   shift
   packages_hash=$(printf '%s\n' "$@" | { sha256sum 2> /dev/null || shasum -a 256; } | cut -c1-16)
@@ -13,50 +13,48 @@ if [ "${1:-}" = "--cache-key" ]; then
   exit 0
 fi
 
-deb_cache="${APT_DEB_CACHE_DIR:-}"
-
-installed() {
-  local package
-  for package in "$@"; do
-    [ "$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null)" = installed ] || return 1
-  done
-}
-
-if [ -n "$deb_cache" ]; then
-  mkdir -p "$deb_cache/partial"
-  if compgen -G "$deb_cache/*.deb" > /dev/null; then
-    # One dpkg call unpacks the whole set before configuring it, so dependencies inside the set resolve.
-    # No transfer happens here, so the step's own timeout bounds it: killing dpkg midway would leave
-    # the package database interrupted for the fallback below.
-    if sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a dpkg -i "$deb_cache"/*.deb && installed "$@"; then
-      echo "Installed $* from the cached .deb set; no mirror was contacted"
-      exit 0
-    fi
-    echo "::warning::The cached .deb set did not install $*; downloading from the mirror instead"
-    sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a dpkg --configure -a
-    rm -f "$deb_cache"/*.deb
-  fi
-fi
+# With APT_DEB_CACHE_DIR set, apt keeps its package lists and downloaded .deb files there, so the
+# runner's cache step can hand both to the next run on the same image.
+apt_cache="${APT_DEB_CACHE_DIR:-}"
 
 # Bound the whole transfer, not just idle sockets: a slow mirror can keep making
 # progress for minutes. Download first so a timeout never interrupts dpkg.
 apt_run() {
   local budget="$1"
   shift
-  sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a APT_ARCHIVES="$deb_cache" \
-    timeout --kill-after=5s "$budget" "$@"
+  sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a APT_CACHE="$apt_cache" \
+    timeout --kill-after=5s "$budget" bash -e -c '
+      options=(-o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+      if [ -n "$APT_CACHE" ]; then
+        options+=(-o "Dir::Cache::archives=$APT_CACHE/archives" -o "Dir::State::Lists=$APT_CACHE/lists")
+      fi
+      '"$1"'
+    ' -- "${@:2}"
 }
 
 download() {
-  local budget="$1"
-  shift
-  apt_run "$budget" bash -e -c '
-    options=(-o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
-    if [ -n "$APT_ARCHIVES" ]; then options+=(-o "Dir::Cache::archives=$APT_ARCHIVES"); fi
-    apt-get "${options[@]}" -o APT::Update::Error-Mode=any update
-    apt-get "${options[@]}" --download-only install -y "$@"
-  ' -- "$@"
+  apt_run "$1" 'apt-get "${options[@]}" -o APT::Update::Error-Mode=any update
+    apt-get "${options[@]}" --download-only install -y "$@"' "${@:2}"
 }
+
+install_offline() {
+  apt_run "$1" 'apt-get "${options[@]}" --no-download install -y "$@"' "${@:2}"
+}
+
+if [ -n "$apt_cache" ]; then
+  mkdir -p "$apt_cache/archives/partial" "$apt_cache/lists/partial"
+  if compgen -G "$apt_cache/archives/*.deb" > /dev/null; then
+    if install_offline 120s "$@"; then
+      echo "Installed $* from the cached package lists and .deb files; no mirror was contacted"
+      sudo chown -R "$(id -u):$(id -g)" "$apt_cache"
+      exit 0
+    fi
+    echo "::warning::The cached APT set did not install $*; downloading from the mirror instead"
+    sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a dpkg --configure -a
+    sudo rm -rf "$apt_cache/archives" "$apt_cache/lists"
+    mkdir -p "$apt_cache/archives/partial" "$apt_cache/lists/partial"
+  fi
+fi
 
 if ! download 60s "$@"; then
   echo "::warning::APT transfer failed or exceeded 60s; retrying once via archive.ubuntu.com"
@@ -71,13 +69,9 @@ if ! download 60s "$@"; then
   download 150s "$@"
 fi
 
-apt_run 60s bash -e -c '
-  options=()
-  if [ -n "$APT_ARCHIVES" ]; then options+=(-o "Dir::Cache::archives=$APT_ARCHIVES"); fi
-  apt-get "${options[@]}" --no-download install -y "$@"
-' -- "$@"
+install_offline 60s "$@"
 
 # The runner's cache step saves the directory as the runner user after the job.
-if [ -n "$deb_cache" ]; then
-  sudo chown -R "$(id -u):$(id -g)" "$deb_cache"
+if [ -n "$apt_cache" ]; then
+  sudo chown -R "$(id -u):$(id -g)" "$apt_cache"
 fi
