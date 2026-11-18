@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { resolvePromptSurface } from "../../../dynamic-prompt/build.ts";
+import { rootToolCallId } from "../../../nested-tool-calls.ts";
 import { defineTool, type ExtensionToolContext } from "../../types.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
 import { HtmlRenderImagesNotFoundError, inlineLocalImages } from "./images.ts";
@@ -15,9 +16,13 @@ const MAX_HTML_CHARACTERS = 512_000;
 // (tool_execution_end, message_end, entry_appended), and every handed page travels together in the
 // records that carry the transcript (get_messages, get_tree, agent_end). An RPC record is at most
 // MAX_RPC_LINE_CHARACTERS (16 Mi); a longer one drops an attach connection. So one page carries its
-// images inlined only up to MAX_HANDED_PAGE_CHARACTERS, and all of a session's handed pages together only
+// images inlined only up to MAX_HANDED_PAGE_CHARACTERS, and a session's image-inlined pages together only
 // up to MAX_HANDED_PAGES_CHARACTERS, which leaves room for JSON escaping and the rest of the transcript.
 // Past either, the page is handed as written, and its images reach only a host that has this disk.
+// A page handed as written (`imagesInlined: false`) is not counted: it carries at most MAX_HTML_CHARACTERS,
+// in `details.html` and again in the call's arguments, so those pages are bounded per page, not per session. A call another tool makes through
+// ctx.executeTool() (id `<parent>/<n>`) is never recorded in the transcript, so its page only rides its own
+// tool_execution_end and is held to the per-page cap alone.
 export const MAX_HANDED_PAGE_CHARACTERS = 2 * 1024 * 1024;
 export const MAX_HANDED_PAGES_CHARACTERS = 6 * 1024 * 1024;
 
@@ -77,8 +82,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
 // Pages handed but not yet in the session's entries: calls in one turn run concurrently, and each
-// result is recorded only after it returns. Keyed by session id, then tool call id.
+// result is recorded only after it returns. Keyed by session id, then tool call id. Only model-issued
+// calls are held here, and each is dropped once its result is in the entries or the session shuts down.
 const handedNotYetRecorded = new Map<string, Map<string, number>>();
+
+/** Drop what a session's calls still hold, when its runtime shuts down. */
+export function forgetHandedPages(sessionId: string): void {
+	handedNotYetRecorded.delete(sessionId);
+}
 
 /** Characters of inlined pages this session already hands to the host, across every branch. */
 function inlinedPageCharacters(ctx: ExtensionToolContext): number {
@@ -92,11 +103,13 @@ function inlinedPageCharacters(ctx: ExtensionToolContext): number {
 		if (isRecord(details) && details.imagesInlined === true && typeof details.html === "string")
 			total += details.html.length;
 	}
-	const pending = handedNotYetRecorded.get(ctx.sessionManager.getSessionId());
+	const sessionId = ctx.sessionManager.getSessionId();
+	const pending = handedNotYetRecorded.get(sessionId);
 	for (const [toolCallId, characters] of pending ?? []) {
 		if (recorded.has(toolCallId)) pending?.delete(toolCallId);
 		else total += characters;
 	}
+	if (pending?.size === 0) handedNotYetRecorded.delete(sessionId);
 	return total;
 }
 
@@ -154,10 +167,11 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				.slice(0, 60) || "page";
 		const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
 		await writeFile(path, prepared, "utf8");
-		const alreadyHanded = inlinedPageCharacters(ctx);
+		const inTranscript = rootToolCallId(toolCallId) === toolCallId;
+		const alreadyHanded = inTranscript ? inlinedPageCharacters(ctx) : 0;
 		const fitsPage = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
 		const imagesInlined = fitsPage && alreadyHanded + inlined.html.length <= MAX_HANDED_PAGES_CHARACTERS;
-		if (imagesInlined) recordHandedPage(ctx, toolCallId, inlined.html.length);
+		if (imagesInlined && inTranscript) recordHandedPage(ctx, toolCallId, inlined.html.length);
 		return {
 			content: [
 				{

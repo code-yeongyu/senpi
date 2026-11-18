@@ -182,3 +182,93 @@ describe("senpi#6907: a session's handed pages together stay under the RPC line 
 		expect(result.details.html).toBe(html);
 	});
 });
+
+describe("senpi#6910: nested calls, pages handed as written, and images a script loads", () => {
+	let tempDir: string;
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-6910-"));
+	});
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("a call another tool makes through ctx.executeTool neither spends nor keeps the session's budget", async () => {
+		const { show } = session(tempDir);
+		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+		const nestedCount = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize) + 1;
+		const nested: boolean[] = [];
+		for (let index = 1; index <= nestedCount; index++) {
+			const { result } = await show(`call-eval/${index}`, pageInlinedTo(tempDir, `nested-${index}`, pageSize).html);
+			nested.push(result.details.imagesInlined);
+		}
+
+		const { result } = await show("call-after", pageInlinedTo(tempDir, "after", pageSize).html);
+
+		expect(nested).toEqual(Array.from({ length: nestedCount }, () => true));
+		expect(result.details.imagesInlined).toBe(true);
+	});
+
+	it("does not count a page handed as written against the budget, and hands it exactly as written", async () => {
+		const { record, show } = session(tempDir);
+		for (let index = 0; index < 3; index++) {
+			const { html } = pageInlinedTo(tempDir, `over-${index}`, MAX_HANDED_PAGE_CHARACTERS + 4);
+			const { result } = await show(`call-over-${index}`, html);
+			record(`call-over-${index}`, result);
+			expect(result.details).toMatchObject({ imagesInlined: false, html });
+		}
+		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+		const inlined: boolean[] = [];
+		for (let index = 0; index < Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize); index++) {
+			const { result } = await show(`call-image-${index}`, pageInlinedTo(tempDir, `image-${index}`, pageSize).html);
+			record(`call-image-${index}`, result);
+			inlined.push(result.details.imagesInlined);
+		}
+
+		expect(inlined.every(Boolean)).toBe(true);
+	});
+
+	it("inlines an image a script loads from an object literal", async () => {
+		const chart = join(tempDir, "chart.png");
+		writeFileSync(chart, PNG_HEAD);
+		const html = `<img id="shot"><script>const shot = { src: "${chart}", alt: "chart" }; document.getElementById("shot").src = shot.src;</script>`;
+
+		const { result } = await session(tempDir).show("call-object", html);
+
+		expect(result.details.html).toBe(html.replace(chart, DATA_PREFIX + PNG_HEAD.toString("base64")));
+	});
+
+	it("inlines every image of a path array a script assigns later", async () => {
+		const first = join(tempDir, "first.png");
+		const second = join(tempDir, "second.png");
+		writeFileSync(first, PNG_HEAD);
+		writeFileSync(second, PNG_HEAD);
+		const html = `<img id="shot"><script>const shots = ['${first}', '${second}']; let at = 0; setInterval(() => { document.getElementById("shot").src = shots[at++ % shots.length]; }, 1000);</script>`;
+
+		const { result } = await session(tempDir).show("call-array", html);
+
+		expect(result.details.html).not.toContain(first);
+		expect(result.details.html).not.toContain(second);
+		expect(result.details.html.split(DATA_PREFIX)).toHaveLength(3);
+	});
+
+	it("refuses a page whose script loads a missing image, naming the path", async () => {
+		const missing = join(tempDir, "missing.png");
+		const html = `<script>const shots = ["${missing}"];</script>`;
+
+		await expect(session(tempDir).show("call-missing", html)).rejects.toThrow(
+			`These local images could not be read: ${missing}.`,
+		);
+	});
+
+	it("leaves a missing path only mentioned in prose, a code sample or an escaped tag as written", async () => {
+		const missing = join(tempDir, "missing.png");
+		const html =
+			`<title>"${missing}"</title><p>Saved to "${missing}".</p>` +
+			`<pre><code>const shot = { src: "${missing}" };</code></pre>` +
+			`<pre>&lt;img src="${missing}"&gt;</pre><!-- <img src="${missing}"> -->`;
+
+		const { result } = await session(tempDir).show("call-mentions", html);
+
+		expect(result.details.html).toBe(html);
+	});
+});
