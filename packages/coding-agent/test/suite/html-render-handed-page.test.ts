@@ -3,12 +3,15 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
+import { createEventBus } from "../../src/core/event-bus.ts";
+import htmlRenderExtension from "../../src/extensions/html-render/index.ts";
 import {
 	MAX_HANDED_PAGE_CHARACTERS,
 	MAX_HANDED_PAGES_CHARACTERS,
 	createShowHtmlPageTool,
-} from "../../src/core/extensions/builtin/html-render/tool.ts";
+	writeHtmlPage,
+} from "../../src/extensions/html-render/tool.ts";
+import { HOST_TOOL_ROUTE_CHANNEL } from "../../src/host-tools.ts";
 import type { ExtensionAPI, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
 
@@ -52,14 +55,21 @@ function session(cwd: string, tool: ShowHtmlPageTool = createShowHtmlPageTool(ne
 function loadExtension() {
 	let tool: ShowHtmlPageTool | undefined;
 	const handlers = new Map<string, () => void>();
+	const events = createEventBus();
 	htmlRenderExtension({
 		registerTool: (registered: ShowHtmlPageTool) => {
 			tool = registered;
 		},
 		on: (event: string, handler: () => void) => handlers.set(event, handler),
+		events,
 	} as unknown as ExtensionAPI);
 	if (tool === undefined) throw new Error("show_html_page was not registered");
-	return { tool, emit: (event: string) => handlers.get(event)?.() };
+	return {
+		tool,
+		emit: (event: string) => handlers.get(event)?.(),
+		route: (execute: (toolCallId: string, args: { html: string; title: string }) => Promise<unknown>) =>
+			events.emit(HOST_TOOL_ROUTE_CHANNEL, { name: "show_html_page", execute }),
+	};
 }
 
 /** A page with one image whose inlined length is `target`, give or take under 4 characters. */
@@ -195,6 +205,38 @@ describe("senpi#6907: a session's handed pages together stay under the RPC line 
 		const { result } = await session(tempDir).show("call-big-mention", html);
 
 		expect(result.details.html).toBe(html);
+	});
+});
+
+describe("senpi#5045: a page a host route serves rides the same transcript", () => {
+	let tempDir: string;
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-5045-"));
+	});
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("counts routed pages against the session budget and hands a routed page as written past it", async () => {
+		const extension = loadExtension();
+		extension.route((_toolCallId, args) => writeHtmlPage(args, tempDir));
+		const { show } = session(tempDir, extension.tool);
+		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+		const pagesPerBudget = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize);
+		for (let index = 0; index < pagesPerBudget; index++) {
+			const { result } = await show(`routed-${index}`, pageInlinedTo(tempDir, `routed-${index}`, pageSize).html);
+			expect(result.details.imagesInlined).toBe(true);
+		}
+
+		const { html } = pageInlinedTo(tempDir, "over", pageSize);
+		const { result, text } = await show("over", html);
+
+		expect(result.details.imagesInlined).toBe(false);
+		expect(result.details.html).toBe(html);
+		expect(text).toContain("The page was shown to the reader inline above your reply.");
+		expect(text).toContain(
+			`of the ${MAX_HANDED_PAGES_CHARACTERS} characters of images a session can carry to a viewer`,
+		);
 	});
 });
 

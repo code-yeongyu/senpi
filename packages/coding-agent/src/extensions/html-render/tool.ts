@@ -1,9 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Type } from "typebox";
-import { resolvePromptSurface } from "../../../dynamic-prompt/build.ts";
-import { rootToolCallId } from "../../../nested-tool-calls.ts";
-import { defineTool, type ExtensionToolContext } from "../../types.ts";
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
+import { resolvePromptSurface } from "../../core/dynamic-prompt/build.ts";
+import { defineTool, type ExtensionToolContext, type ToolDefinition } from "../../core/extensions/types.ts";
+import { rootToolCallId } from "../../core/nested-tool-calls.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
 import { HtmlRenderImagesNotFoundError, inlineLocalImages } from "./images.ts";
 
@@ -120,6 +121,120 @@ const clampHeight = (height: number | undefined) =>
 const hostRendersPage = (ctx: ExtensionToolContext): boolean =>
 	(ctx.getSystemPromptOptions?.().surface ?? resolvePromptSurface(process.env)) === "app";
 
+type ShowHtmlPageResult = Awaited<ReturnType<ToolDefinition<typeof Params, ShowHtmlPageDetails>["execute"]>>;
+
+const IMAGES_INLINED = "Local images were inlined.";
+
+/**
+ * The standalone file producer, shared by CLI and desktop host attachments. `shownInline` says whether
+ * the host shows the page to the reader; the result states which happened, because the model trusts
+ * it in later turns too (senpi#6273). A host attachment serves its own renderer (the OmO desktop shows
+ * the page inline), so it defaults to true; the standalone tool passes what its session's surface does.
+ * The page is handed with its images inlined when it fits MAX_HANDED_PAGE_CHARACTERS; the session's
+ * budget across pages is applied by handHtmlPage, which sees the session.
+ */
+export async function writeHtmlPage(
+	params: Static<typeof Params>,
+	cwd: string,
+	shownInline = true,
+): Promise<ShowHtmlPageResult> {
+	assertWithinInputLimit(params.html);
+	const inlined = await inlineLocalImages(params.html);
+	// A page with a broken image is refused, as the desktop refuses to publish one, so the
+	// agent learns which path to fix instead of being told the page was shown.
+	if (inlined.missing.length > 0) throw new HtmlRenderImagesNotFoundError(inlined.missing);
+	const prepared = injectHtmlRenderBootstrap(inlined.html);
+	const height = clampHeight(params.height);
+	const dir = join(cwd, OUTPUT_DIR);
+	await mkdir(dir, { recursive: true });
+	const safeName =
+		params.title
+			.replace(/[\\/:*?"<>|\p{Cc}]+/gu, " ")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, 60) || "page";
+	const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
+	await writeFile(path, prepared, "utf8");
+	const imagesInlined = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
+	return {
+		content: [
+			{
+				type: "text",
+				text:
+					(shownInline
+						? `The page was shown to the reader inline above your reply. A copy is saved at ${path}. `
+						: `Wrote the page to ${path}. It was not displayed in this interface. `) +
+					(imagesInlined
+						? IMAGES_INLINED
+						: `Local images were inlined into the saved copy, but with them the page is ${inlined.html.length} characters, over the ${MAX_HANDED_PAGE_CHARACTERS} a page can carry to a viewer, so a viewer on another machine will not see the images. Use smaller images to show them everywhere.`),
+			},
+		],
+		details: {
+			path,
+			title: params.title,
+			height,
+			prepared: true,
+			html: imagesInlined ? inlined.html : params.html,
+			imagesInlined,
+		},
+	};
+}
+
+/**
+ * Holds a model-issued call's page to the session's MAX_HANDED_PAGES_CHARACTERS: within it, the page is
+ * counted in `pending` until its result is recorded; past it, the page is handed as written. Applied to
+ * every show_html_page result, whether the standalone writer or a host route produced it, because the
+ * session's transcript carries both.
+ */
+function handHtmlPage(
+	toolCallId: string,
+	params: Static<typeof Params>,
+	ctx: ExtensionToolContext,
+	pending: PendingHandedPages,
+	result: ShowHtmlPageResult,
+): ShowHtmlPageResult {
+	const { details } = result;
+	if (!details.imagesInlined || rootToolCallId(toolCallId) !== toolCallId) return result;
+	const alreadyHanded = inlinedPageCharacters(ctx, pending);
+	if (alreadyHanded + details.html.length <= MAX_HANDED_PAGES_CHARACTERS) {
+		pending.set(toolCallId, details.html.length);
+		return result;
+	}
+	const overBudget = `Local images were inlined into the saved copy, but this session's pages already carry ${alreadyHanded} of the ${MAX_HANDED_PAGES_CHARACTERS} characters of images a session can carry to a viewer, so a viewer on another machine will not see this page's images.`;
+	return {
+		...result,
+		content: result.content.map((part) =>
+			part.type === "text" ? { ...part, text: part.text.replace(IMAGES_INLINED, overBudget) } : part,
+		),
+		details: { ...details, html: params.html, imagesInlined: false },
+	};
+}
+
+const isShowHtmlPageDetails = (details: unknown): details is ShowHtmlPageDetails =>
+	isRecord(details) &&
+	typeof details.path === "string" &&
+	typeof details.title === "string" &&
+	(details.height === undefined || typeof details.height === "number") &&
+	typeof details.prepared === "boolean" &&
+	typeof details.html === "string" &&
+	typeof details.imagesInlined === "boolean";
+
+/**
+ * handHtmlPage for a result a host route produced in another process: its params and details are checked
+ * here, and a result of another shape is recorded as the host returned it.
+ */
+export function handRoutedHtmlPage(
+	toolCallId: string,
+	params: unknown,
+	ctx: ExtensionToolContext,
+	pending: PendingHandedPages,
+	result: Awaited<ReturnType<ToolDefinition["execute"]>>,
+): Awaited<ReturnType<ToolDefinition["execute"]>> {
+	const { details } = result;
+	if (!Check(Params, params) || !isShowHtmlPageDetails(details)) return result;
+	return handHtmlPage(toolCallId, params, ctx, pending, { ...result, details });
+}
+
 export function createShowHtmlPageTool(pending: PendingHandedPages) {
 	return defineTool<typeof Params, ShowHtmlPageDetails>({
 		name: showHtmlPageName,
@@ -139,52 +254,14 @@ export function createShowHtmlPageTool(pending: PendingHandedPages) {
 		searchKeywords: ["html", "chart", "table", "diagram", "visualize", "render page", "mockup"],
 		parameters: Params,
 		async execute(toolCallId, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
-			assertWithinInputLimit(params.html);
-			const inlined = await inlineLocalImages(params.html);
-			// A page with a broken image is refused, as the desktop refuses to publish one, so the
-			// agent learns which path to fix instead of being told the page was shown.
-			if (inlined.missing.length > 0) throw new HtmlRenderImagesNotFoundError(inlined.missing);
-			const prepared = injectHtmlRenderBootstrap(inlined.html);
-			const height = clampHeight(params.height);
-			const dir = join(ctx.cwd, OUTPUT_DIR);
-			await mkdir(dir, { recursive: true });
-			const safeName =
-				params.title
-					.replace(/[\\/:*?"<>|\p{Cc}]+/gu, " ")
-					.replace(/\s+/g, " ")
-					.trim()
-					.slice(0, 60) || "page";
-			const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
-			await writeFile(path, prepared, "utf8");
-			const inTranscript = rootToolCallId(toolCallId) === toolCallId;
-			const alreadyHanded = inTranscript ? inlinedPageCharacters(ctx, pending) : 0;
-			const fitsPage = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
-			const imagesInlined = fitsPage && alreadyHanded + inlined.html.length <= MAX_HANDED_PAGES_CHARACTERS;
-			if (imagesInlined && inTranscript) pending.set(toolCallId, inlined.html.length);
-			return {
-				content: [
-					{
-						type: "text",
-						text:
-							(hostRendersPage(ctx)
-								? `The page was shown to the reader inline above your reply. A copy is saved at ${path}. `
-								: `Wrote the page to ${path}. It was not displayed in this interface. `) +
-							(imagesInlined
-								? "Local images were inlined."
-								: fitsPage
-									? `Local images were inlined into the saved copy, but this session's pages already carry ${alreadyHanded} of the ${MAX_HANDED_PAGES_CHARACTERS} characters of images a session can carry to a viewer, so a viewer on another machine will not see this page's images.`
-									: `Local images were inlined into the saved copy, but with them the page is ${inlined.html.length} characters, over the ${MAX_HANDED_PAGE_CHARACTERS} a page can carry to a viewer, so a viewer on another machine will not see the images. Use smaller images to show them everywhere.`),
-					},
-				],
-				details: {
-					path,
-					title: params.title,
-					height,
-					prepared: true,
-					html: imagesInlined ? inlined.html : params.html,
-					imagesInlined,
-				},
-			};
+			const result = await writeHtmlPage(params, ctx.cwd, hostRendersPage(ctx));
+			return handHtmlPage(toolCallId, params, ctx, pending, result);
 		},
 	});
 }
+
+/**
+ * The tool's public descriptor (name, description, schema) for hosts that serve it. Every session runs
+ * its own instance from the html-render extension, so the pending-page ledger never spans sessions.
+ */
+export const showHtmlPageTool = createShowHtmlPageTool(new Map());
