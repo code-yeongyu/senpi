@@ -7,7 +7,9 @@ import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import { isKernelToHostMessage, parseBridgeJsonLine, validateBridgeMessage } from "../../bridge/protocol.ts";
 import type { EvalRuntimeInfo } from "../../tool/types.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
+import { attestKernelChild } from "../shared/session-spawn-attestation.ts";
 import { type SubprocessLike, SubprocessProcess, spawnSubprocess } from "../shared/subprocess-process.ts";
+import type { SessionEnvironment } from "../session-env.ts";
 import type { WorkerLike } from "./inline-worker.ts";
 import { runtimeNameOf } from "./runtime-name.ts";
 import { JavaScriptWorkerExitedError } from "./worker-host.ts";
@@ -45,6 +47,8 @@ export interface JavaScriptProcessWorkerOptions {
 	readonly searchPath?: string;
 	readonly execPath?: string;
 	readonly env?: NodeJS.ProcessEnv;
+	/** The session the kernel process runs for; the process is attested to it (senpi#6972). */
+	readonly sessionEnv?: SessionEnvironment;
 	readonly spawn?: (
 		command: string,
 		args: readonly string[],
@@ -132,6 +136,7 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 		options.spawn === undefined
 			? spawnSubprocess(undefined, { command, args, cwd: options.cwd, env })
 			: options.spawn(command, args, { cwd: options.cwd, env });
+	attestKernelChild(options.sessionEnv, child);
 	const messageHandlers = new Set<(message: KernelToHostMessage) => void>();
 	const errorHandlers = new Set<(error: Error) => void>();
 	const frameToken = randomBytes(16).toString("hex");

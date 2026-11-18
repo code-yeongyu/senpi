@@ -77,13 +77,16 @@ export function attestSessionSpawn(
 	pid: number,
 	options: SessionSpawnStoreOptions = {},
 ): SessionSpawnAttestation {
-	const dir = options.dir ?? sessionSpawnsDir();
-	const path = join(dir, `${pid}.json`);
-	const recorded = writeRecord(dir, path, sessionId, pid).catch(() => false);
+	let path: string | undefined;
+	const recorded = (async () => {
+		const dir = options.dir ?? sessionSpawnsDir();
+		path = join(dir, `${pid}.json`);
+		return await writeRecord(dir, path, sessionId, pid);
+	})().catch(() => false);
 	return {
 		recorded,
 		async release() {
-			if (await recorded) await unlink(path).catch(() => undefined);
+			if ((await recorded) && path !== undefined) await unlink(path).catch(() => undefined);
 		},
 	};
 }
