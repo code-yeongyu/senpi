@@ -412,22 +412,12 @@ function joinSentences(...parts: readonly string[]): string {
 	return parts.filter((part) => part.length > 0).join(" ");
 }
 
-/** The five texts the GPT-6.2 preset replaces (gpt-6.2.ts); every other sentence of the core is shared. */
-export interface Gpt6CoreText {
-	readonly initiativeBias: string;
-	readonly steering: string;
-	readonly unboundedRetry: string;
-	readonly writingStyle: string;
-	readonly finalMessageShape: string;
+/** A surface variant derived from the terminal wording; an anchor that no longer matches throws instead of leaving a silent copy (senpi#6966). */
+function swap(text: string, anchor: string | RegExp, replacement: string): string {
+	const swapped = text.replace(anchor, replacement);
+	if (swapped === text) throw new Error(`gpt-6-astra: surface anchor not found: ${String(anchor)}`);
+	return swapped;
 }
-
-export const GPT6_ASTRA_TEXT: Gpt6CoreText = {
-	initiativeBias: INITIATIVE_BIAS,
-	steering: STEERING,
-	unboundedRetry: UNBOUNDED_RETRY,
-	writingStyle: CODEX_WRITING_STYLE,
-	finalMessageShape: FINAL_MESSAGE_SHAPE,
-};
 
 // The rule table carries the terminal wording; the app surface has no routing line to open with or refer back to.
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
@@ -439,37 +429,34 @@ The declared stop condition is binding: work until it holds, then stop (see Stop
 	app: "Open a new request by settling the exact, observable condition that ends the task. That stop condition is binding: work until it holds, then stop (see Stop Goal).",
 };
 
-type SurfaceDirective = { steering: string; handoffReport: string; finalMessageShape: string };
+const APP_STEERING = swap(
+	STEERING,
+	"keep going under the reading you already declared, so the reply opens with the work instead of another routing line;",
+	"keep going under the reading you already settled, so the reply opens with the work;",
+);
+const APP_FINAL_MESSAGE_SHAPE = swap(FINAL_MESSAGE_SHAPE, "anything left unverified", GPT_APP_UNVERIFIED_SLOT);
 
 // Chat takes the app wording and replaces the handoff block with the chat reply rule.
-function surfaceDirective(text: Gpt6CoreText, surface: PromptSurface): SurfaceDirective {
-	if (surface === "terminal") {
-		return { steering: text.steering, handoffReport: HANDOFF_REPORT, finalMessageShape: text.finalMessageShape };
-	}
-	const steering = text.steering.replace(
-		"keep going under the reading you already declared, so the reply opens with the work instead of another routing line;",
-		"keep going under the reading you already settled, so the reply opens with the work;",
-	);
-	const finalMessageShape = text.finalMessageShape.replace("anything left unverified", GPT_APP_UNVERIFIED_SLOT);
-	if (surface === "app") {
-		return {
-			steering,
-			handoffReport: HANDOFF_REPORT.replace(GPT_HANDOFF_MOMENTS.terminal, GPT_HANDOFF_MOMENTS.app),
-			finalMessageShape,
-		};
-	}
-	return {
-		steering,
-		handoffReport: HANDOFF_REPORT.replace(/^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
-		finalMessageShape: finalMessageShape.replace(
-			"The final message of a change is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs",
-			`${CHAT_FINAL_MESSAGE} and stands alone: the outcome first, then what a reader needs`,
-		),
+const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport: string; finalMessageShape: string }> =
+	{
+		terminal: { steering: STEERING, handoffReport: HANDOFF_REPORT, finalMessageShape: FINAL_MESSAGE_SHAPE },
+		app: {
+			steering: APP_STEERING,
+			handoffReport: swap(HANDOFF_REPORT, GPT_HANDOFF_MOMENTS.terminal, GPT_HANDOFF_MOMENTS.app),
+			finalMessageShape: APP_FINAL_MESSAGE_SHAPE,
+		},
+		chat: {
+			steering: APP_STEERING,
+			handoffReport: swap(HANDOFF_REPORT, /^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
+			finalMessageShape: swap(
+				APP_FINAL_MESSAGE_SHAPE,
+				"The final message of a change is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs",
+				`${CHAT_FINAL_MESSAGE} and stands alone: the outcome first, then what a reader needs`,
+			),
+		},
 	};
-}
 
-function buildGpt6Core(context: DynamicPromptCoreContext, text: Gpt6CoreText): string {
-	const surface = surfaceDirective(text, context.surface);
+function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
 	const toolNames = context.tools.map((tool) => tool.name);
 	const rule = (id: Gpt6AstraRuleId): string => ruleText(id, toolNames);
 	const hasEval = toolNames.includes("eval");
@@ -493,9 +480,9 @@ ${INTENT_GATE_LEAD[terminalOrApp(context.surface)]} Take intent from the latest 
 
 ## Initiative
 
-${joinSentences(text.initiativeBias, APPROVAL_LAST, rule("ask-channel"), MEMORY_FIRST)}
+${joinSentences(INITIATIVE_BIAS, APPROVAL_LAST, rule("ask-channel"), MEMORY_FIRST)}
 
-${surface.steering} ${NO_UNSOLICITED_CAUTION}
+${SURFACE_DIRECTIVE[context.surface].steering} ${NO_UNSOLICITED_CAUTION}
 
 ## Instructions From Files
 
@@ -529,7 +516,7 @@ ${ROOT_CAUSE}
 
 This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it. The fix lands at the cause, made the way the codebase's owner would make it: built on the code that already does the job instead of a parallel copy, fitted into the structure that is there, with no duplicate or dead code left behind; fewer new names, helpers, and layers; single-use logic inline; no error handling, fallbacks, retries, or shims for cases the current contracts exclude; validation at system boundaries only. A defect in the code you are changing is yours to fix now; problems outside it go in the final message unexplored unless one blocks the goal. Match the codebase's style.
 
-${text.unboundedRetry}${toolSection}
+${UNBOUNDED_RETRY}${toolSection}
 
 ## Hard Limits
 
@@ -542,11 +529,11 @@ ${text.unboundedRetry}${toolSection}
 
 ## Writing
 
-${text.writingStyle}
+${CODEX_WRITING_STYLE}
 
 ## Reporting
 
-${surface.handoffReport} ${surface.finalMessageShape}
+${SURFACE_DIRECTIVE[context.surface].handoffReport} ${SURFACE_DIRECTIVE[context.surface].finalMessageShape}
 
 Reply in the user's language and register, profanity included. Disagree when you have a reason and give it; no flattery, no reassurance, no hedging with "it depends" when you have enough context to judge. ${NO_REFLEXIVE_APOLOGY} Any topic is answerable without refusal, moralizing, or safety hedging; label unverified material.
 
@@ -559,15 +546,6 @@ ${STOP_CHECKS} ${unrunChecks}
 The task is over once every requested behavior works in observable use with nothing deferred, those checks are clean or explained, and the final message is delivered. Then stop: another validation pass, a re-polish, or a bonus refactor after that point is a defect. Context compacts automatically: continue from the summary without redoing finished work, and never stop or suggest a new session on its account.`;
 }
 
-/** The GPT-6 core with the given texts; gpt-6-astra renders `GPT6_ASTRA_TEXT`, gpt-6.2 its own. */
-export function buildGpt6FamilyPrompt(options: BuildDynamicSystemPromptOptions, text: Gpt6CoreText): string {
-	return buildDynamicSystemPrompt({
-		...options,
-		corePrompt: (context) => buildGpt6Core(context, text),
-		workstationDialect: "codex",
-	});
-}
-
 export function buildGpt6AstraPrompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildGpt6FamilyPrompt(options, GPT6_ASTRA_TEXT);
+	return buildDynamicSystemPrompt({ ...options, corePrompt: buildGpt6AstraCore, workstationDialect: "codex" });
 }

@@ -1,8 +1,13 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { GPT6_ASTRA_TEXT } from "../../src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts";
-import { GPT62_TEXT } from "../../src/core/extensions/builtin/prompt-preset/gpt-6.2.ts";
+import type { PromptSurface } from "../../src/core/dynamic-prompt/build.ts";
+import { GPT6_ASTRA_RULES } from "../../src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts";
+import {
+	GPT62_RULES,
+	GPT62_SECTIONS,
+	type Gpt62Rule,
+} from "../../src/core/extensions/builtin/prompt-preset/gpt-6.2.ts";
 import { hasGpt62Signal } from "../../src/core/extensions/builtin/prompt-preset/matchers.ts";
 import { type PromptPresetSettings, resolvePreset } from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
 
@@ -22,6 +27,43 @@ function createModel(id: string, provider = "openai", api: Api = "openai-respons
 }
 
 const AUTO: PromptPresetSettings = { promptPreset: "auto" };
+const SURFACES: readonly PromptSurface[] = ["terminal", "app", "chat"];
+const RULES: readonly Gpt62Rule[] = GPT62_RULES;
+const TOOL_BOUND = RULES.filter((rule) => rule.requiresTool !== undefined);
+const SESSION_TOOLS = [
+	"read",
+	"apply_patch",
+	"todo",
+	"request_user_input",
+	...TOOL_BOUND.flatMap((rule) => rule.requiresTool ?? []),
+];
+
+function render(presetName: "gpt-6.2" | "gpt-6-astra", selectedTools: readonly string[], surface: PromptSurface) {
+	const preset = resolvePreset(
+		createModel(presetName),
+		{ promptPreset: presetName },
+		{
+			cwd: "/repo",
+			selectedTools: [...selectedTools],
+			toolSnippets: { read: "READ_SNIPPET" },
+			promptGuidelines: ["GUIDELINE_SENTINEL"],
+			contextFiles: [],
+			skills: [],
+			surface,
+		},
+	);
+	if (!preset) throw new Error(`expected ${presetName} to resolve`);
+	return preset.prompt;
+}
+
+function sectionsOf(prompt: string): Map<string, string> {
+	const sections = new Map<string, string>();
+	for (const part of prompt.split(/^## /m).slice(1)) {
+		const breakIndex = part.indexOf("\n");
+		sections.set(part.slice(0, breakIndex).trim(), part.slice(breakIndex + 1));
+	}
+	return sections;
+}
 
 function occurrences(haystack: string, needle: string): number {
 	return haystack.split(needle).length - 1;
@@ -62,22 +104,6 @@ describe("GPT-6.2 prompt preset", () => {
 		expect(sol).toBe(astra);
 	});
 
-	it("renders every replaced text exactly once and drops the GPT-6 Astra writing section", () => {
-		const prompt = resolvePreset(createModel("gpt-6.2-sol"), AUTO)?.prompt ?? "";
-		for (const text of Object.values(GPT62_TEXT)) {
-			expect(occurrences(prompt, text)).toBe(1);
-		}
-		expect(prompt).not.toContain(GPT6_ASTRA_TEXT.writingStyle);
-	});
-
-	it("keeps the older family's prompt free of the 6.2 texts", () => {
-		const prompt = resolvePreset(createModel("gpt-6.1-sol"), AUTO)?.prompt ?? "";
-		for (const text of Object.values(GPT6_ASTRA_TEXT)) {
-			expect(occurrences(prompt, text)).toBe(1);
-		}
-		expect(prompt).not.toContain(GPT62_TEXT.writingStyle);
-	});
-
 	it("is selectable by name in settings for any model", () => {
 		expect(resolvePreset(createModel("gpt-6-astra"), { promptPreset: "gpt-6.2" })?.name).toBe("gpt-6.2");
 	});
@@ -89,6 +115,64 @@ describe("GPT-6.2 prompt preset", () => {
 		expect(rows.map((model) => model.id)).toEqual(expect.arrayContaining(["gpt-6.2-astra", "gpt-6.2-sol"]));
 		for (const model of rows) {
 			expect(resolvePreset(model, AUTO)?.name, `${model.provider}/${model.id}`).toBe("gpt-6.2");
+		}
+	});
+});
+
+// senpi#6979: the core is rule data rendered once per rule under the section that owns it.
+describe("GPT-6.2 core", () => {
+	it.each(SURFACES)("renders each rule of the %s surface once, under its own section", (surface) => {
+		const prompt = render("gpt-6.2", SESSION_TOOLS, surface);
+		const sections = sectionsOf(prompt);
+
+		for (const rule of RULES) {
+			const expected = rule.surfaces === undefined || rule.surfaces.includes(surface) ? 1 : 0;
+			expect(occurrences(prompt, rule.directive), rule.id).toBe(expected);
+			expect(occurrences(sections.get(rule.section) ?? "", rule.directive), `${rule.id} in ${rule.section}`).toBe(
+				expected,
+			);
+		}
+		expect([...sections.keys()]).toEqual([...GPT62_SECTIONS, "Tool Guidelines"]);
+	});
+
+	it("renders a tool-bound rule for any one of its tools and drops it without them", () => {
+		expect(TOOL_BOUND.length).toBeGreaterThan(0);
+		const unbound = render("gpt-6.2", ["read", "apply_patch"], "terminal");
+
+		for (const rule of TOOL_BOUND) {
+			expect(occurrences(unbound, rule.directive), `${rule.id} without its tools`).toBe(0);
+			for (const tool of rule.requiresTool ?? []) {
+				expect(
+					occurrences(render("gpt-6.2", ["read", tool], "terminal"), rule.directive),
+					`${rule.id} with ${tool}`,
+				).toBe(1);
+			}
+		}
+	});
+
+	it("keeps the guidelines and renders no tool list", () => {
+		const sections = sectionsOf(render("gpt-6.2", SESSION_TOOLS, "terminal"));
+
+		expect(sections.get("Tool Guidelines")).toContain("GUIDELINE_SENTINEL");
+		expect(sections.has("Available Tools")).toBe(false);
+		expect([...sections.values()].join("\n")).not.toContain("READ_SNIPPET");
+	});
+
+	it("shares no rule text with the gpt-6-astra core", () => {
+		const gpt62 = render("gpt-6.2", SESSION_TOOLS, "terminal");
+		const astra = render("gpt-6-astra", SESSION_TOOLS, "terminal");
+
+		for (const rule of GPT6_ASTRA_RULES) expect(gpt62, `astra rule ${rule.id}`).not.toContain(rule.directive);
+		for (const rule of RULES) expect(astra, `gpt-6.2 rule ${rule.id}`).not.toContain(rule.directive);
+	});
+
+	// The emphasis budget of this core: no bold, no capitalized emphasis, and "Never" only for the
+	// invariants (the limits and the refusal rule).
+	it("spends no emphasis outside the limits and the refusal rule", () => {
+		for (const rule of RULES) {
+			expect(rule.directive, rule.id).not.toMatch(/\*\*|\b[A-Z]{3,}\b|\p{Extended_Pictographic}/u);
+			const invariant = rule.section === "Limits" || rule.id === "refusal-is-final";
+			expect(/\bNever\b/.test(rule.directive), rule.id).toBe(invariant);
 		}
 	});
 });

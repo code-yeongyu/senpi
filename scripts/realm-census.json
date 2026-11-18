@@ -5335,15 +5335,19 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#APP_FINAL_MESSAGE_SHAPE": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#APP_STEERING": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#CODEX_WRITING_STYLE": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#GPT6_ASTRA_RULES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#GPT6_ASTRA_TEXT": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -5359,11 +5363,23 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#CODEX_62_WRITING_STYLE": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#SURFACE_DIRECTIVE": {
 			"class": "constant",
-			"reason": "value derived from constants at load; never written after load"
+			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#GPT62_TEXT": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#APP_AND_CHAT": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#GPT62_RULES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#LIST_SECTIONS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#TERMINAL": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
