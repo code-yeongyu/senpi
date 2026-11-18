@@ -1,4 +1,5 @@
 import { lstatSync } from "node:fs";
+import { userInfo } from "node:os";
 import { dirname, join, normalize } from "node:path";
 
 export const MAX_PARENT_CONFIG_SEARCH_DEPTH = 100;
@@ -19,9 +20,20 @@ function isFile(path: string): boolean {
 	}
 }
 
+/** The account-database home, normalized; the walk never crosses it (#6459). */
+function realAccountHomeDir(): string | undefined {
+	try {
+		return normalize(userInfo().homedir);
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * Finds the nearest non-symlinked config directory between cwd and home.
- * Home is excluded so its config remains the global fallback layer.
+ * Home is excluded so its config remains the global fallback layer. The walk also stops
+ * at the account-database home, so a redirected `$HOME` (tests, sandboxes) can never
+ * adopt the real account's config directory as project config (#6459).
  *
  * A flat-layout product has no marker subdirectory to look for, so it passes
  * `requiredChildFile` instead: the directory only counts as a config directory when it
@@ -36,10 +48,11 @@ export function findNearestParentConfigDir(
 	requiredChildFile?: string,
 ): string | undefined {
 	const normalizedHomeDir = normalize(homeDir);
+	const accountHomeDir = realAccountHomeDir();
 	let currentDir = normalize(cwd);
 
 	for (let depth = 0; depth <= MAX_PARENT_CONFIG_SEARCH_DEPTH; depth += 1) {
-		if (currentDir === normalizedHomeDir) {
+		if (currentDir === normalizedHomeDir || (accountHomeDir !== undefined && currentDir === accountHomeDir)) {
 			return undefined;
 		}
 
