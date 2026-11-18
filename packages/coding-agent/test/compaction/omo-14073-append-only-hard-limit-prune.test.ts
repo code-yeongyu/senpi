@@ -8,7 +8,10 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type Api, type Model, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { sentMessageHashes, sentMessages } from "../../src/core/extensions/builtin/anthropic-subscription/session-sync.ts";
+import {
+	sentMessageHashes,
+	sentMessages,
+} from "../../src/core/extensions/builtin/anthropic-subscription/session-sync.ts";
 import { buildCompactionContext } from "../../src/core/extensions/builtin/compaction/context-pipeline.ts";
 import { createEmergencyPruneLatch } from "../../src/core/extensions/builtin/compaction/emergency-prune.ts";
 import type { ExtensionContext } from "../../src/core/extensions/index.ts";
@@ -30,7 +33,11 @@ function fauxModel(): Model<Api> {
 function longConversation(turns: number): AgentMessage[] {
 	const messages: AgentMessage[] = [];
 	for (let turn = 1; turn <= turns; turn++) {
-		messages.push({ role: "user", content: [{ type: "text", text: `turn ${turn} ${"u".repeat(40_000)}` }], timestamp: turn * 2 });
+		messages.push({
+			role: "user",
+			content: [{ type: "text", text: `turn ${turn} ${"u".repeat(40_000)}` }],
+			timestamp: turn * 2,
+		});
 		if (turn < turns) {
 			messages.push({
 				role: "assistant",
@@ -38,7 +45,14 @@ function longConversation(turns: number): AgentMessage[] {
 				api: "faux",
 				provider: "faux",
 				model: "faux",
-				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
 				stopReason: "stop",
 				timestamp: turn * 2 + 1,
 			} as AgentMessage);
@@ -48,7 +62,11 @@ function longConversation(turns: number): AgentMessage[] {
 }
 
 function outgoing(messages: AgentMessage[], appendOnlyTranscript: boolean) {
-	const ctx = { model: fauxModel(), cwd: process.cwd(), sessionManager: SessionManager.inMemory() } as unknown as ExtensionContext;
+	const ctx = {
+		model: fauxModel(),
+		cwd: process.cwd(),
+		sessionManager: SessionManager.inMemory(),
+	} as unknown as ExtensionContext;
 	return buildCompactionContext({
 		event: { type: "context", messages },
 		ctx,
@@ -78,6 +96,7 @@ describe("oh-my-openagent#14073 hard-limit prune on an append-only transcript", 
 	});
 
 	it("still prunes the same load on a lane that re-sends the full context", () => {
+		// Proves the fixture crosses the hard limit, which is what makes the case above a RED proof.
 		expect(outgoing(longConversation(5), false).length).toBeLessThan(9);
 	});
 });
