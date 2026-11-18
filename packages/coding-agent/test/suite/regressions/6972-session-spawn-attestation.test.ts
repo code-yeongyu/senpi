@@ -77,7 +77,7 @@ describe.skipIf(!supported)("session spawn attestation (#6972)", () => {
 
 	it("does not believe a re-exec that rewrites PI_SESSION_ID", async () => {
 		const forger = start("read _go; exec env PI_SESSION_ID=session-b sh -c 'echo ready; exec sleep 30'", {
-			...process.env,
+			PATH: process.env.PATH,
 			PI_SESSION_ID: "session-a",
 		});
 		await attestSessionSpawn("session-a", forger.pid, { dir }).recorded;

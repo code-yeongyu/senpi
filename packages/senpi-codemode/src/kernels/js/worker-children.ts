@@ -1,5 +1,6 @@
 import type { EvalStatusEvent } from "../../bridge/protocol.ts";
 import type { SessionSpawnAttestation } from "@code-yeongyu/senpi";
+import type { AttestKernelSpawn } from "../shared/session-spawn-attestation.ts";
 import { terminateProcessTrees } from "./process-tree-host.ts";
 
 /** How long a lost worker's children get to honour SIGTERM before the host sends SIGKILL. */
@@ -9,12 +10,9 @@ const WORKER_LOSS_CHILD_GRACE_MS = 1_000;
 export class WorkerChildren {
 	readonly #pids = new Map<number, SessionSpawnAttestation | undefined>();
 	readonly #collectOrphanedChildren: ((pids: readonly number[]) => Promise<unknown>) | undefined;
-	readonly #attest: (pid: number) => SessionSpawnAttestation | undefined;
+	readonly #attest: AttestKernelSpawn | undefined;
 
-	constructor(
-		collectOrphanedChildren?: (pids: readonly number[]) => Promise<unknown>,
-		attest: (pid: number) => SessionSpawnAttestation | undefined = () => undefined,
-	) {
+	constructor(collectOrphanedChildren?: (pids: readonly number[]) => Promise<unknown>, attest?: AttestKernelSpawn) {
 		this.#collectOrphanedChildren = collectOrphanedChildren;
 		this.#attest = attest;
 	}
@@ -23,7 +21,7 @@ export class WorkerChildren {
 		const pid = event.pid;
 		if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return;
 		if (event.state === "spawned") {
-			if (!this.#pids.has(pid)) this.#pids.set(pid, this.#attest(pid));
+			if (!this.#pids.has(pid)) this.#pids.set(pid, this.#attest?.(pid));
 		} else if (event.state === "exited") {
 			void this.#pids.get(pid)?.release();
 			this.#pids.delete(pid);

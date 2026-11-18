@@ -25,7 +25,6 @@ import type {
 import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
 import { JavaScriptRunQueue, type PendingJavaScriptRun } from "./run-queue.ts";
 import { ToolCallQueue } from "./tool-call-queue.ts";
-import { attestKernelSpawn } from "../shared/session-spawn-attestation.ts";
 import { WorkerChildren } from "./worker-children.ts";
 import { WorkerRecovery } from "./worker-recovery.ts";
 import { WorkerSlot } from "./worker-slot.ts";
@@ -87,9 +86,7 @@ export class JavaScriptKernel {
 			clearToolCalls: () => this.#toolCalls.clear(),
 		});
 		this.#memory = new JavaScriptKernelMemory(options, () => this.#slot.processPid);
-		this.#children = new WorkerChildren(options.collectOrphanedChildren, (pid) =>
-			attestKernelSpawn(options.sessionEnv, pid),
-		);
+		this.#children = new WorkerChildren(options.collectOrphanedChildren, options.attestSpawn);
 		this.#moduleLoader = new LocalModuleLoader(options);
 		this.#slot = new WorkerSlot(
 			options,

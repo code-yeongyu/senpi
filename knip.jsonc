@@ -2,10 +2,12 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   // Exported types are part of our contracts even before they have consumers.
   "rules": { "types": "off", "nsTypes": "off" },
-  // These executables are supplied by the OS, a language toolchain, or a test that expects a missing command.
+  // These executables are supplied by the OS, a language toolchain, or a test that expects a missing command;
+  // session-of-pid is a senpi subcommand a test runs as `bun <cli> session-of-pid`, which knip reads as a binary.
   "ignoreBinaries": [
     "cc", "hdiutil", "julia", "mkfifo", "mount", "ollama", "openssl", "perl", "pgrep", "rg", "ruby", "script",
-    "senpi-deliberately-missing-probe-command", "taskkill.exe", "tasklist", "trash", "vmmap", "where", "xclip",
+    "senpi-deliberately-missing-probe-command", "session-of-pid", "taskkill.exe", "tasklist", "trash", "vmmap", "where",
+    "xclip",
   ],
   // Findings marked "pre-existing at origin main aceb1cc1d9" were already present when this check was added. Each
   // ignore is scoped to one file or one dependency, so new dead code anywhere else still fails the check. Remove an
@@ -930,6 +932,8 @@
       "packages/coding-agent/src/core/held-inputs.ts": ["HELD_INPUTS_CONSUMED_ENTRY", "HELD_INPUT_WITHDRAWN_ENTRY"],
       // pre-existing at origin main aceb1cc1d9: unused exports INTERRUPTED_TOOL_TEXT
       "packages/coding-agent/src/core/interrupted-tool-result.ts": ["INTERRUPTED_TOOL_TEXT"],
+      // a test imports it by URL in a child process pinned to a time zone, not an import
+      "packages/coding-agent/src/core/kernel-process-identity.ts": ["parseDarwinPsIdentity"],
       // pre-existing at origin main aceb1cc1d9: unused exports KERNEL_REGISTRY_KEY
       "packages/coding-agent/src/core/memory-report/kernel-registry-read.ts": ["KERNEL_REGISTRY_KEY"],
       // pre-existing at origin main aceb1cc1d9: unused exports MEMORY_REPORT_ENV, MEMORY_REPORT_SNAPSHOT_ENV
