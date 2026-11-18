@@ -37,7 +37,12 @@ import { SessionFileCallKeys } from "./session-file-call-keys.ts";
 import type { RecoveryCarrier } from "./session-recovery-identity.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
-import { listSharedStoreSessions, sharedSessionStoreDirs } from "./shared-session-stores.ts";
+import {
+	isSharedSessionStoreDir,
+	listSharedStoreSessions,
+	sharedSessionStoreDirs,
+	sharedStoreSummaryDir,
+} from "./shared-session-stores.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
 import {
 	ALL_SESSION_LIST_PUBLISH_INTERVAL,
@@ -1197,6 +1202,8 @@ export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
 	private sessionDir: string;
+	/** Set by `adoptHomeSessionDir` when the open session lives in another app's store. */
+	private homeSessionDir: string | undefined;
 	private cwd: string;
 	private persist: boolean;
 	private readonly writeGuard = new SessionWriteGuard();
@@ -1513,7 +1520,7 @@ export class SessionManager {
 		this.ownedHeaderFile = undefined;
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			const path = join(this.moveToHomeSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
 			reserveSessionWrite(path);
 			this.sessionFile = path;
 		}
@@ -1808,8 +1815,34 @@ export class SessionManager {
 		return this.sessionDir;
 	}
 
+	/**
+	 * Where this folder lists its sessions and creates new ones. A session opened from another app's
+	 * registered store keeps its per-session state beside its file (`getSessionDir()`), but listing and
+	 * new files stay in this folder's own session dir, never in that store (omo-desktop-app#8097).
+	 */
+	getHomeSessionDir(): string {
+		return this.homeSessionDir ?? this.sessionDir;
+	}
+
+	/**
+	 * Called right after opening a picked session (`/resume`, `--resume`): when its file lives in another
+	 * app's registered store, this folder's own session dir stays the home for listing and new sessions.
+	 */
+	async adoptHomeSessionDir(): Promise<void> {
+		if (!(await isSharedSessionStoreDir(this.sessionDir))) return;
+		const home = getDefaultSessionDirPath(this.cwd);
+		if (this.persist) await mkdir(home, { recursive: true });
+		this.homeSessionDir = home;
+	}
+
 	usesDefaultSessionDir(): boolean {
-		return this.sessionDir === getDefaultSessionDirPath(this.cwd);
+		return this.getHomeSessionDir() === getDefaultSessionDirPath(this.cwd);
+	}
+
+	private moveToHomeSessionDir(): string {
+		this.sessionDir = this.getHomeSessionDir();
+		this.homeSessionDir = undefined;
+		return this.sessionDir;
 	}
 
 	getSessionId(): string {
@@ -3335,7 +3368,7 @@ export class SessionManager {
 		const newSessionId = createSessionId();
 		const timestamp = new Date().toISOString();
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-		const newSessionFile = join(this.getSessionDir(), `${fileTimestamp}_${newSessionId}.jsonl`);
+		const newSessionFile = join(this.getHomeSessionDir(), `${fileTimestamp}_${newSessionId}.jsonl`);
 
 		const header: SessionHeader = {
 			type: "session",
@@ -3389,6 +3422,7 @@ export class SessionManager {
 			// The branch is a new session: the original's binding never takes its writes (it is imported on a durable open).
 			this.durable = undefined;
 			this.sessionId = newSessionId;
+			this.moveToHomeSessionDir();
 			this.sessionFile = newSessionFile;
 			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 			this._buildIndex();
@@ -3631,8 +3665,11 @@ export class SessionManager {
 			: undefined;
 		const sessions = (await listSessionsFromDir(dir, progress, signal)).filter(includeSession);
 		if (filterCwd) return sortSessionInfos(sessions);
-		const listed = new Set(sessions.map((session) => session.path));
-		const shared = await listSharedStoreSessions((session) => matchesCwd(session.cwd) && !listed.has(session.path), signal);
+		const listed = new Set(sessions.flatMap((session) => [session.path, session.id]));
+		const shared = await listSharedStoreSessions(
+			(session) => matchesCwd(session.cwd) && !listed.has(session.path) && !listed.has(session.id),
+			signal,
+		);
 		return sortSessionInfos([...sessions, ...shared]);
 	}
 
@@ -3675,7 +3712,8 @@ export class SessionManager {
 			const projectDirs = entries
 				.filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
 				.map((entry) => join(sessionsDir, entry.name));
-			const dirs = [...new Set([...projectDirs, ...(await sharedSessionStoreDirs())])];
+			const storeDirs = new Set((await sharedSessionStoreDirs()).filter((dir) => !projectDirs.includes(dir)));
+			const dirs = [...projectDirs, ...storeDirs];
 
 			// Count total files first for accurate progress
 			let totalFiles = 0;
@@ -3700,8 +3738,17 @@ export class SessionManager {
 				progress?.(loaded, totalFiles, publish ? sortSessionInfos([...partialSessions]) : undefined);
 			};
 			const sessions: SessionInfo[] = [];
+			const ownIds = new Set<string>();
 			for (const [index, dir] of dirs.entries()) {
-				sessions.push(...(await listSessionFilesInDir(dir, dirFiles[index] ?? [], onLoaded, abortSignal)));
+				const fromStore = storeDirs.has(dir);
+				const summaryDir = fromStore ? sharedStoreSummaryDir(dir) : undefined;
+				const listed = await listSessionFilesInDir(dir, dirFiles[index] ?? [], onLoaded, abortSignal, summaryDir);
+				// A store's copy of one of this agent dir's own sessions (same header id) is listed once, as the original.
+				for (const session of listed) {
+					if (!fromStore) ownIds.add(session.id);
+					else if (ownIds.has(session.id)) continue;
+					sessions.push(session);
+				}
 			}
 
 			return sortSessionInfos(sessions);

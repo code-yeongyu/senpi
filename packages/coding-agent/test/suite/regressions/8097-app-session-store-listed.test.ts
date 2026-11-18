@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { getDefaultSessionDir, getDefaultSessionDirPath, SessionManager } from "../../../src/core/session-manager.ts";
@@ -46,7 +46,7 @@ function registerStore(name: string, contents: string): void {
 
 const terminal = () => ({
 	getCwd: () => project,
-	getSessionDir: () => getDefaultSessionDirPath(project),
+	getHomeSessionDir: () => getDefaultSessionDirPath(project),
 	usesDefaultSessionDir: () => true,
 });
 
@@ -96,5 +96,64 @@ describe("desktop#8097: a terminal lists the sessions the desktop keeps in its o
 
 		expect(ids(await SessionManager.list(project, custom))).toEqual(["custom-own"]);
 		expect(ids(await SessionManager.listAll(custom))).toEqual(["custom-own"]);
+	});
+
+	it("keeps the terminal's own session folder after resuming an app session, for listing and /new", async () => {
+		const own = writeSession(getDefaultSessionDir(project), "cli-own", project);
+		const appThread = writeSession(join(appStore, "omo-instance"), "app-thread", project);
+		registerStore("omo-desktop-a.json", JSON.stringify({ version: 1, root: appStore }));
+
+		// What /resume's switchSession does with the picked path.
+		const resumed = SessionManager.open(appThread, undefined, undefined);
+		await resumed.adoptHomeSessionDir();
+
+		expect(resumed.getSessionDir()).toBe(dirname(appThread));
+		expect(resumed.usesDefaultSessionDir()).toBe(true);
+		expect(resumed.getHomeSessionDir()).toBe(getDefaultSessionDirPath(project));
+		expect(ids(await currentScopeSessions(resumed))).toEqual(["app-thread", "cli-own"]);
+
+		// What /new does next: create in the current manager's session home.
+		const created = SessionManager.create(project, resumed.getHomeSessionDir());
+		created.newSession();
+		expect(dirname(created.getSessionFile() ?? "")).toBe(dirname(own));
+
+		const inPlace = resumed.newSession();
+		expect(dirname(inPlace ?? "")).toBe(dirname(own));
+		expect(readdirSync(join(appStore, "omo-instance")).sort()).toEqual(["app-thread.jsonl"]);
+	});
+
+	it("ignores a registration whose version is not 1", async () => {
+		writeSession(join(appStore, "omo-instance"), "app-thread", project);
+		const otherStore = join(tempDir, "future-state", "omo-sessions");
+		writeSession(join(otherStore, "omo-instance"), "future-thread", project);
+		registerStore("omo-desktop-a.json", JSON.stringify({ version: 1, root: appStore }));
+		registerStore("future.json", JSON.stringify({ version: 2, root: otherStore }));
+		registerStore("unversioned.json", JSON.stringify({ root: otherStore }));
+
+		expect(ids(await currentScopeSessions(terminal()))).toEqual(["app-thread"]);
+		expect(ids(await allScopeSessions(terminal()))).toEqual(["app-thread"]);
+	});
+
+	it("writes no summary cache into the app's store and keeps it under the agent dir", async () => {
+		writeSession(join(appStore, "omo-instance"), "app-thread", project);
+		registerStore("omo-desktop-a.json", JSON.stringify({ version: 1, root: appStore }));
+
+		await currentScopeSessions(terminal());
+		await allScopeSessions(terminal());
+
+		expect(readdirSync(join(appStore, "omo-instance"))).toEqual(["app-thread.jsonl"]);
+		expect(existsSync(join(agentDir, "cache", "session-store-summaries"))).toBe(true);
+	});
+
+	it("lists an app's copy of a terminal session once, as the terminal's original", async () => {
+		const own = writeSession(getDefaultSessionDir(project), "shared-id", project);
+		writeSession(join(appStore, "omo-instance"), "shared-id", project);
+		registerStore("omo-desktop-a.json", JSON.stringify({ version: 1, root: appStore }));
+
+		const current = await currentScopeSessions(terminal());
+		const all = await allScopeSessions(terminal());
+
+		expect(current.map((session) => session.path)).toEqual([own]);
+		expect(all.map((session) => session.path)).toEqual([own]);
 	});
 });

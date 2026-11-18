@@ -671,7 +671,9 @@ export async function createSessionManager(
 				return process.exit(1);
 			});
 			if (target.rebound) console.log(chalk.dim(`Session moved to ${cwd}`));
-			return SessionManager.open(target.path, sessionDir);
+			const resumed = SessionManager.open(target.path, sessionDir);
+			if (sessionDir === undefined) await resumed.adoptHomeSessionDir();
+			return resumed;
 		} finally {
 			stopThemeWatcher();
 		}
