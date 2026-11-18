@@ -90,14 +90,23 @@ function loadDarwinReader(): DarwinReader {
 	return darwinReader;
 }
 
-function darwinPsIdentity(pid: number): Promise<KernelProcessIdentity | undefined> {
+/**
+ * The darwin-on-Node `ps` reader; exported so the spawn-failure regression (#6990) can pin its never-throw contract.
+ * `execFile` throws synchronously when the spawn itself fails (EPERM, EAGAIN), inside the Promise executor.
+ */
+export function darwinPsIdentity(pid: number): Promise<KernelProcessIdentity | undefined> {
 	return new Promise((resolve) => {
-		execFile(
-			"ps",
-			["-o", "ppid=,stat=,lstart=", "-p", String(pid)],
-			{ encoding: "utf8", timeout: 5_000, env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" } },
-			(error, stdout) => resolve(error === null ? parseDarwinPsIdentity(stdout) : undefined),
-		);
+		try {
+			execFile(
+				"ps",
+				["-o", "ppid=,stat=,lstart=", "-p", String(pid)],
+				{ encoding: "utf8", timeout: 5_000, env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" } },
+				(error, stdout) => resolve(error === null ? parseDarwinPsIdentity(stdout) : undefined),
+			);
+		} catch {
+			// This module never throws: an unreadable pid is an unidentified pid, exactly like the linux reader's catch.
+			resolve(undefined);
+		}
 	});
 }
 
