@@ -92,6 +92,8 @@ export const admissionCommands = [
 	"set_project_mcp_servers",
 	"read_project_skill_file",
 	"write_project_skill_file",
+	"read_user_skill_file",
+	"write_user_skill_file",
 	"extension_request",
 	"eval_cells.list",
 	"eval_cells.peek",

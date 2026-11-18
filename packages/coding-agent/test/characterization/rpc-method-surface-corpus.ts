@@ -155,6 +155,10 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 		'{"skill":"x14-none"} => no:project_skill_not_listed:No skill named "x14-none" is listed for this session.',
 	write_project_skill_file:
 		'{"skill":"x14-none","content":"x","ifEtag":null} => no:project_skill_not_listed:No skill named "x14-none" is listed for this session.',
+	read_user_skill_file:
+		'{"skill":"x14-none"} => no:user_skill_not_listed:No user skill named "x14-none" is listed for this session.',
+	write_user_skill_file:
+		'{"skill":"x14-none","content":"x","ifEtag":null} => no:user_skill_not_listed:No user skill named "x14-none" is listed for this session.',
 	extension_request: '{"name":"x14-none"} => no::Unknown extension RPC request: x14-none',
 	"eval_cells.list": "ok:object",
 	"eval_cells.peek": '{"cellId":"$NO"} => no:eval_cell_not_found:Unknown detached eval cell "<uuid>"',

@@ -9258,6 +9258,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/user-skill-approval.ts#USER_SKILL_AUDIT_FILE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/project-write-gate.ts#RPC_WRITE_IDENTITY": {
 			"class": "per-copy-safe",
 			"reason": "identity token an approval is matched against by reference within this copy; a split only stops one copy's approvals from matching another copy's writes (stricter), holds no A1-A3 asset"
@@ -11081,6 +11085,10 @@
 		"packages/senpi-codemode/src/tool/tool-widgets.ts#coreWidgetsByCwd": {
 			"class": "per-copy-safe",
 			"reason": "derived-value cache; a split only recomputes or misses"
+		},
+		"packages/senpi-codemode/src/tool/tool-widgets.ts#ownRowMemory": {
+			"class": "per-copy-safe",
+			"reason": "per-nested-call renderer memory keyed weakly by the call's summary; a split copy only misses and redoes one call's prefetch"
 		},
 		"packages/senpi-codemode/src/tool/types.ts#defaultEvalDeadlineSeconds": {
 			"class": "constant",

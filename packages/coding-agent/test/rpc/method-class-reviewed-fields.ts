@@ -42,6 +42,7 @@ export const REVIEWED_FIELDS = {
 			"clientMessageId",
 			"clientTurnId",
 			"expandPromptTemplates",
+			"expectedLeafId",
 			"expectedTurnId",
 			"id",
 			"images",

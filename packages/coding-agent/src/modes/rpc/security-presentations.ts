@@ -116,7 +116,9 @@ export class RpcSecurityPresentations {
 		title?: string,
 	): { readonly accepted: boolean; readonly connection?: string } {
 		const attached = this.fanout.attachedConnections(sessionId);
-		const raiser = attached.includes(preferred ?? "") && this.fanout.connectionHas(preferred, "grant_select");
+		// A raiser that speaks for another device never answers a grant (D11 R-1): a remote requester could otherwise
+		// approve its own request (senpi#6901 review H1); the grant goes to a local presenter or nowhere.
+		const raiser = preferred !== undefined && attached.includes(preferred) && this.#localPresenter(preferred);
 		const connection = raiser ? preferred : attached.find((id) => this.#localPresenter(id));
 		const accepted =
 			connection !== undefined || (this.fanout.isEmpty() && fallbackCapabilities.includes("grant_select"));
