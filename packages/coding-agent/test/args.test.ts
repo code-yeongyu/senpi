@@ -249,6 +249,24 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--supervised flag", () => {
+		test("is a built-in flag, not an extension flag, and is documented in help", () => {
+			const parsed = parseArgs(["-p", "--supervised", "hello"]);
+			expect(parsed.supervised).toBe(true);
+			expect(parsed.unknownFlags.has("supervised")).toBe(false);
+			expect(parsed.messages).toEqual(["hello"]);
+			expect(parseArgs(["-p", "hello"]).supervised).toBeUndefined();
+
+			const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+			try {
+				printHelp();
+				expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("--supervised");
+			} finally {
+				logSpy.mockRestore();
+			}
+		});
+	});
+
 	describe("--no-session flag", () => {
 		test("parses --no-session flag", () => {
 			const result = parseArgs(["--no-session"]);

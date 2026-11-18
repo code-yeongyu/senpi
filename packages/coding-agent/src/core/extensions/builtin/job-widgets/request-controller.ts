@@ -33,10 +33,11 @@ export type JobWidgetRequestOutcome =
 	/** Invalid twice (or once with no request left for the retry); without a spec in place the job falls back. */
 	| { readonly kind: "rejected"; readonly errors: readonly string[] }
 	/**
-	 * The author has no model: the call is not counted against the job or the hourly cap, and the
-	 * session asks again once {@link JobWidgetRequestLimits.noModelRetryMs} has passed.
+	 * No designated model resolved (the session's own model is never a fallback): the call is not
+	 * counted against the job or the hourly cap, and the session asks again once
+	 * {@link JobWidgetRequestLimits.noModelRetryMs} has passed.
 	 */
-	| { readonly kind: "unavailable" }
+	| { readonly kind: "unavailable"; readonly reason: "no_designated_model" }
 	| { readonly kind: "failed"; readonly error: unknown }
 	| { readonly kind: "aborted" };
 
@@ -173,7 +174,7 @@ export class JobWidgetRequestController {
 				const slot = this.#sent.indexOf(sentAt);
 				if (slot !== -1) this.#sent.splice(slot, 1);
 				this.#noModelUntil = this.#now() + this.#limits.noModelRetryMs;
-				return { kind: "unavailable" };
+				return { kind: "unavailable", reason: "no_designated_model" };
 			}
 			const skip = jobWidgetSkip(answer);
 			if (skip !== undefined) {

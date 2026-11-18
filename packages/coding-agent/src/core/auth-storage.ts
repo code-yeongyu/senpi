@@ -260,6 +260,10 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		let attempt = 0;
 		while (true) {
 			try {
+				// senpi#6431: proper-lockfile releases this lock by path without checking it is still this holder's (the
+				// race #6430 fixed for lockWithLossHandling). A sync holder cannot refresh or yield, so it is taken over only if this
+				// whole process stalls past the lock's stale bound inside its short critical section, e.g. the machine suspends or
+				// the process is SIGSTOPped at that instant; its release could then remove the next holder's lock. Tracked in #6431.
 				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
 				if (!isLockError(error)) throw error;

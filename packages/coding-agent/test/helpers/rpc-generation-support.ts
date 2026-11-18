@@ -42,7 +42,9 @@ export function generationScratch(label: string): GenerationScratch {
 		cwd: join(root, "w"),
 		socket: join(root, "rpc.sock"),
 	};
-	for (const dir of [scratch.agentDir, scratch.sessionDir, scratch.cwd]) mkdirSync(dir, { recursive: true });
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	mkdirSync(scratch.agentDir, { recursive: true, mode: 0o700 });
+	for (const dir of [scratch.sessionDir, scratch.cwd]) mkdirSync(dir, { recursive: true });
 	return scratch;
 }
 

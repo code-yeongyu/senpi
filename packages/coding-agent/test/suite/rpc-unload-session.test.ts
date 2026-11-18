@@ -178,6 +178,91 @@ describe("unload_session", () => {
 		await host.stop();
 	}, 240_000);
 
+	it("dry run: answers what the unload would do now and changes nothing (senpi#6443)", async () => {
+		await using world = await effectHostWorld();
+		const host = await world.start();
+		const owner = await host.connect();
+		const other = await host.connect();
+		const opened = await openSession(owner, { cwd: world.cwd, ...MODEL });
+		await settledTurn(owner, opened.sessionId);
+		await openSession(other, { sessionPath: opened.sessionPath });
+
+		const dry = await owner.request({ type: "unload_session", sessionId: opened.sessionId, dryRun: true });
+		const real = await owner.request({ type: "unload_session", sessionId: opened.sessionId });
+
+		expect(dry).toMatchObject({
+			success: true,
+			data: {
+				dry_run: true,
+				outcome: "refused",
+				reason: "attached",
+				blockers: [expect.objectContaining({ reason: "attached" })],
+				interruptible: [],
+			},
+		});
+		// The dry run answers what the real call then refuses with: a pre-check cannot disagree with the refusal.
+		expect(real).toMatchObject({ data: { outcome: "refused", reason: dry.data?.reason, detail: dry.data?.detail } });
+		const listed = await owner.request({ type: "list_sessions" });
+		expect(((listed.data?.sessions ?? []) as { sessionId: string }[]).map((row) => row.sessionId)).toContain(
+			opened.sessionId,
+		);
+		await host.stop();
+	}, 240_000);
+
+	it("dry run: with interrupt names the running turn as interruptible, answers ready, and the turn keeps running (senpi#6443)", async () => {
+		await using world = await effectHostWorld();
+		const host = await world.start();
+		const client = await host.connect();
+		const opened = await openSession(client, { cwd: world.cwd, ...MODEL });
+		const started = client.wait((record) => record.type === "agent_start" && record.sessionId === opened.sessionId);
+		await client.request({ type: "prompt", sessionId: opened.sessionId, message: "keep running" });
+		await started;
+
+		const plain = await client.request({ type: "unload_session", sessionId: opened.sessionId, dryRun: true });
+		const withInterrupt = await client.request({
+			type: "unload_session",
+			sessionId: opened.sessionId,
+			dryRun: true,
+			interrupt: true,
+		});
+		const state = await client.request({ type: "get_state", sessionId: opened.sessionId });
+
+		expect(plain).toMatchObject({
+			data: { dry_run: true, outcome: "refused", reason: "turn_active", interruptible: [] },
+		});
+		expect(withInterrupt).toMatchObject({
+			data: {
+				dry_run: true,
+				outcome: "ready",
+				blockers: [],
+				interruptible: [expect.objectContaining({ reason: "turn_active" })],
+			},
+		});
+		expect(state.data?.isStreaming).toBe(true);
+		await host.stop();
+	}, 240_000);
+
+	it("dry run: records no effect, so the same effectId still drives the real unload (senpi#6443)", async () => {
+		await using world = await effectHostWorld();
+		const host = await world.start();
+		const client = await host.connect();
+		const opened = await openSession(client, { cwd: world.cwd, ...MODEL });
+		await settledTurn(client, opened.sessionId);
+
+		const dry = await client.request({
+			type: "unload_session",
+			sessionId: opened.sessionId,
+			dryRun: true,
+			effectId: "d1",
+		});
+		const real = await client.request({ type: "unload_session", sessionId: opened.sessionId, effectId: "d1" });
+
+		expect(dry).toMatchObject({ data: { dry_run: true, outcome: "ready" } });
+		expect(dry.data).not.toHaveProperty("effect");
+		expect(real).toMatchObject({ data: { outcome: "unloaded", effectId: "d1", state: "done" } });
+		await host.stop();
+	}, 240_000);
+
 	it("refuses while another client is attached, and unloads with force, parking it for that client too", async () => {
 		await using world = await effectHostWorld();
 		const host = await world.start();

@@ -84,6 +84,7 @@ import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/
 import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { launchRetryFallback } from "./core/launch-model-pin.ts";
 import { installMemoryReportSignal } from "./core/memory-report/memory-report-write.ts";
 import {
 	getModelNarrowingPatterns,
@@ -94,7 +95,7 @@ import {
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
-import { recordProcessLifetime } from "./core/process-crash-record.ts";
+import { processHasSupervisor, recordProcessLifetime } from "./core/process-crash-record.ts";
 import { type AppMode, presetTrustsProject, resolveProjectTrusted } from "./core/project-trust.ts";
 import { resolveResumeTarget } from "./core/resume-target.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
@@ -345,7 +346,7 @@ type ResolvedSession =
 	| { type: "path"; path: string } // Direct file path
 	| { type: "local"; path: string } // Found in current project
 	| { type: "global"; path: string; cwd: string } // Found in different project
-	| { type: "not_found"; arg: string }; // Not found anywhere
+	| { type: "not_found"; arg: string; path?: string }; // Not found anywhere; `path` is the missing file a path argument named
 
 /**
  * Resolve a session argument to a file path.
@@ -374,9 +375,10 @@ function findSessionByIdOrFileName<T extends { id: string; path: string }>(sessi
 }
 
 async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: string): Promise<ResolvedSession> {
-	// If it looks like a file path, resolve it before handing it to the session manager.
+	// A file path must name an existing file: the session manager would start a new session at a missing one (senpi#2889).
 	if (sessionArg.includes("/") || sessionArg.includes("\\") || sessionArg.endsWith(".jsonl")) {
-		return { type: "path", path: resolvePath(sessionArg, cwd) };
+		const path = resolvePath(sessionArg, cwd);
+		return existsSync(path) ? { type: "path", path } : { type: "not_found", arg: sessionArg, path };
 	}
 
 	// Try to match as session ID in current project first
@@ -397,6 +399,12 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
 
 	// Not found anywhere
 	return { type: "not_found", arg: sessionArg };
+}
+
+function sessionNotFoundMessage(resolved: { arg: string; path?: string }): string {
+	return resolved.path === undefined
+		? `No session found matching '${resolved.arg}'`
+		: `No session file at ${resolved.path}`;
 }
 
 /**
@@ -586,7 +594,7 @@ export async function createSessionManager(
 				return forkSessionOrExit(resolved.path, cwd, sessionDir, parsed.sessionId);
 
 			case "not_found":
-				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+				console.error(chalk.red(sessionNotFoundMessage(resolved)));
 				process.exit(1);
 		}
 	}
@@ -594,7 +602,7 @@ export async function createSessionManager(
 	if (parsed.rebind) {
 		const resolved = await resolveSessionPath(parsed.rebind, cwd, sessionDir);
 		if (resolved.type === "not_found") {
-			console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+			console.error(chalk.red(sessionNotFoundMessage(resolved)));
 			process.exit(1);
 		}
 		const sessionCwd = resolved.type === "global" ? resolved.cwd : await sessionCwdOrUndefined(resolved.path);
@@ -645,7 +653,7 @@ export async function createSessionManager(
 			}
 
 			case "not_found":
-				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+				console.error(chalk.red(sessionNotFoundMessage(resolved)));
 				process.exit(1);
 		}
 	}
@@ -979,7 +987,13 @@ export function createCliRuntimeFactory(
 			projectTrustLocked: parsed.projectTrustOverride !== undefined,
 		});
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
-		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
+		// A host session's policy comes from its open (`validatedOpenProfile` pins a named model there); a
+		// standalone run's `--model` is its explicit choice and pins it the same way (omo#13243).
+		const retryFallback =
+			launchProfile === undefined
+				? launchRetryFallback({ namedModel: parsed.model !== undefined, retryFallback: undefined })
+				: launchProfile.retryFallback;
+		if (retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, retryFallback);
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
@@ -1241,12 +1255,14 @@ export async function main(args: string[], options?: MainOptions) {
 	const hostExitCode = await dispatchHostCommand(args);
 	if (hostExitCode !== undefined) {
 		await exitAfterOutput("", hostExitCode);
+		return;
 	}
 
 	// Durable scheduled prompts: fired out of process, so a job scheduled by an exited --print run still runs.
 	const scheduleExitCode = await dispatchScheduleCommand(args);
 	if (scheduleExitCode !== undefined) {
 		await exitAfterOutput("", scheduleExitCode);
+		return;
 	}
 
 	const parsed = parseArgs(args);
@@ -1270,6 +1286,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (parsed.version) {
 		await printThenExit(() => console.log(DISPLAY_VERSION), 0);
+		return;
 	}
 
 	if (parsed.attach && parsed.session && !parsed.help) {
@@ -1299,9 +1316,10 @@ export async function main(args: string[], options?: MainOptions) {
 		} catch (error: unknown) {
 			const message = error instanceof Error ? error.message : "Failed to export session";
 			console.error(chalk.red(`Error: ${message}`));
-			process.exit(1);
+			return process.exit(1);
 		}
 		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
+		return;
 	}
 
 	let appMode: AppMode = parsed.printPromptSizes
@@ -1312,13 +1330,24 @@ export async function main(args: string[], options?: MainOptions) {
 	if (shouldTakeOverStdout) {
 		takeOverStdout();
 	}
+	let restoreConsoleLog: (() => void) | undefined;
 	if (parsed.mode === "json") {
-		const log = console.log.bind(console);
+		const log = console.log;
 		console.log = (...args: unknown[]) => console.error(...args);
-		process.once("exit", () => {
+		restoreConsoleLog = () => {
 			console.log = log;
-		});
+		};
+		process.once("exit", restoreConsoleLog);
 	}
+	// A command that returns before print mode hands stdout back as print mode does, for a caller whose
+	// process.exit returns (an embedder or a test).
+	const releaseOutput = (): void => {
+		restoreStdout();
+		if (restoreConsoleLog) {
+			process.off("exit", restoreConsoleLog);
+			restoreConsoleLog();
+		}
+	};
 
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
 		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
@@ -1359,11 +1388,14 @@ export async function main(args: string[], options?: MainOptions) {
 			printHelp(flags);
 			printTimings();
 		}, 0);
+		return;
 	}
 
 	if (parsed.listTips) {
 		const { listTips } = await import("./cli/list-tips.ts");
 		await printThenExit(listTips, 0);
+		releaseOutput();
+		return;
 	}
 
 	if (parsed.listModels !== undefined) {
@@ -1392,6 +1424,8 @@ export async function main(args: string[], options?: MainOptions) {
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await printThenExit(() => listModels(services.modelRuntime, searchPattern), 0);
+		releaseOutput();
+		return;
 	}
 
 	// Experimental first-time setup: theme choice and analytics opt-in.
@@ -1574,6 +1608,9 @@ export async function main(args: string[], options?: MainOptions) {
 	const extensionFlags = loadedExtensions.flatMap((extension) => Array.from(extension.flags.values()));
 	if (parsed.help) {
 		await printThenExit(() => printHelp(extensionFlags), 0);
+		await runtime.dispose();
+		releaseOutput();
+		return;
 	}
 	time("extensionFlags");
 	// Every full launch refreshes what `--help` reads, so the fast path stays warm without a help
@@ -1594,8 +1631,9 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 	}
 	time("readPipedStdin");
-	// An RPC process always has a parent that watches its exit; every other mode dies unobserved.
-	recordProcessLifetime(agentDir, appMode, { supervised: appMode === "rpc" });
+	// An RPC process always has a parent that watches its exit; any other mode dies unobserved unless
+	// its launcher passed --supervised and records the death itself.
+	recordProcessLifetime(agentDir, appMode, { supervised: processHasSupervisor(appMode, parsed.supervised === true) });
 	time("recordProcessLifetime");
 
 	const { initialMessage, initialImages, initialTitlePrompt } = await prepareInitialMessage(

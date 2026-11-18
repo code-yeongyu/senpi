@@ -1,4 +1,9 @@
-import { type AssistantMessage, describeProviderFailureForUser, isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	describeProviderFailureForUser,
+	isEntitlementRefusalMessage,
+	isQuotaExhaustionMessage,
+} from "@earendil-works/pi-ai";
 import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
 import type { SessionEntry } from "../session-manager.ts";
 import { isBillingErrorMessage } from "./billing.ts";
@@ -34,9 +39,14 @@ export class AccountUsageLimitError extends Error {
 			families === undefined || families.length === 0
 				? message
 				: `${message} The limit named no model family; it was confirmed on ${families.join(" and ")}.`;
-		super(accountsOut === undefined ? withFamilies : `${withFamilies} No account can serve: ${accountsOut}.`);
+		super(withAccountsOut(withFamilies, accountsOut));
 		this.name = "AccountUsageLimitError";
 	}
+}
+
+/** Appends a pooled provider's accounts, each with why it cannot serve (senpi#5590, senpi#5963). */
+export function withAccountsOut(message: string | undefined, accountsOut: string | undefined): string | undefined {
+	return accountsOut === undefined ? message : `${message} No account can serve: ${accountsOut}.`;
 }
 
 // The same reader-local time plus timezone the credential pool's blocked message uses.
@@ -75,6 +85,7 @@ export function usageLimitScope(
 	const limited =
 		isQuotaExhaustionMessage(errorMessage) ||
 		isBillingErrorMessage(errorMessage) ||
+		isEntitlementRefusalMessage(errorMessage) ||
 		SUBSCRIPTION_LIMIT_PATTERN.test(errorMessage) ||
 		PLAN_MODEL_LIMIT_PATTERN.test(errorMessage);
 	if (!limited) return undefined;

@@ -169,6 +169,11 @@ type RpcCommandBody =
 			clearQueue?: boolean;
 			children?: "refuse" | "detach";
 			force?: boolean;
+			/**
+			 * Answer what this unload would do now and do nothing (senpi#6443): every standing blocker, and what it
+			 * would interrupt. Nothing is interrupted, unloaded or recorded. Advertised as `unload_session_dry_run`.
+			 */
+			dryRun?: boolean;
 	  }
 	| {
 			id?: string;

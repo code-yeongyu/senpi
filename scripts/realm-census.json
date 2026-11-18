@@ -2594,9 +2594,17 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/ai/src/utils/retry.ts#ENTITLEMENT_REFUSAL_PATTERN": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
 		"packages/ai/src/utils/retry.ts#NON_QUOTA_NON_RETRYABLE_PATTERN": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/ai/src/utils/retry.ts#NON_QUOTA_NON_RETRYABLE_PATTERNS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/ai/src/utils/retry.ts#NON_RETRYABLE_PROVIDER_ERROR_PATTERN": {
 			"class": "constant",
@@ -5019,6 +5027,10 @@
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/moved-path-guard/command-paths.ts#NETWORK_URL": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/moved-path-guard/command-paths.ts#QUOTED": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
@@ -5444,6 +5456,10 @@
 			"reason": "lookup collection filled at load; never written after load"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/rules/index.ts#MODE_VALUES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/rules/rules/constants.ts#OVERRIDDEN_SINGLE_FILES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
@@ -6260,7 +6276,7 @@
 		},
 		"packages/coding-agent/src/core/extensions/kernel-tools-context.ts#kernelToolContexts": {
 			"class": "realm-registry",
-			"reason": "kernel-tools/v1: the two async contexts are entered by codemode, dispatcher, loader and wrapper and read by the runner, possibly in different copies (design 3.2, 3.3). The invoker store was not exported and is reachable through the registry; that adds no reach, because the raw invoke of the public kernelToolsStorage store already takes options.invoker from its caller"
+			"reason": "kernel-tools/v1: the two async contexts are entered by codemode, dispatcher, loader and wrapper and read by the runner, possibly in different copies (design 3.2, 3.3). The invoker store is exported by its module (kernelToolInvokerStorage) but not from the package entry, and is reachable through the registry; that adds no reach, because the raw invoke of the public kernelToolsStorage store already takes options.invoker from its caller"
 		},
 		"packages/coding-agent/src/core/extensions/kernel-tools-context.ts#kernelToolInvokerStorage": {
 			"class": "realm-registry",
@@ -6485,6 +6501,10 @@
 		"packages/coding-agent/src/core/kill-guard/verdict.ts#RULE_NAMES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/launch-model-pin.ts#PINNED_MODEL_RETRY_FALLBACK": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
 		},
 		"packages/coding-agent/src/core/lifecycle-delivery.ts#lifecycleDeliveryEntries": {
 			"class": "constant",
@@ -6774,6 +6794,50 @@
 		"packages/coding-agent/src/core/remote-catalog-provider.ts#remoteCatalogConflicts": {
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
+		},
+		"packages/coding-agent/src/core/reply-language-reading.ts#LANGUAGE_OF_SCRIPT": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/reply-language-reading.ts#SCRIPTS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/reply-language-reading.ts#SCRIPT_LANGUAGE_NAMES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/reply-language-request.ts#DIRECTIVES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/reply-language-request.ts#ENGLISH_NAMES": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/core/reply-language-request.ts#KOREAN_NAMES": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/core/reply-language-request.ts#KOREAN_NAME_TO_LANGUAGE": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/reply-language-request.ts#LEAD": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/core/reply-language-request.ts#REPORTED_CONTENT": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/reply-language-request.ts#REQUESTABLE_LANGUAGES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/reply-language-request.ts#REQUESTABLE_LANGUAGE_NAMES": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
 		},
 		"packages/coding-agent/src/core/repository-identity.ts#GIT_LOCATION_ENV": {
 			"class": "constant",
@@ -7499,6 +7563,22 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/core/user-language.ts#NOTED_LANGUAGE": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/core/user-language.ts#REPLY_LANGUAGE_NAMES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/user-language.ts#readings": {
+			"class": "per-copy-safe",
+			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
+		},
+		"packages/coding-agent/src/core/user-prose.ts#QUOTED_SPAN": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
 		"packages/coding-agent/src/core/verify-api-key.ts#AUTH_HEADERS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -8083,7 +8163,11 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/modes/interactive/model-catalog-refresh.ts#modelCatalogRefreshCoordinator": {
+		"packages/coding-agent/src/modes/interactive/model-catalog-refresh.ts#networkCatalogRefreshCoordinator": {
+			"class": "per-copy-safe",
+			"reason": "stateful instance used only through this copy's module API; holds no A1-A3 asset"
+		},
+		"packages/coding-agent/src/modes/interactive/model-catalog-refresh.ts#offlineCatalogRefreshCoordinator": {
 			"class": "per-copy-safe",
 			"reason": "stateful instance used only through this copy's module API; holds no A1-A3 asset"
 		},
@@ -8693,6 +8777,10 @@
 		"packages/coding-agent/src/modes/rpc/effect-transcript-lookup.ts#headerSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/endpoint-reservation-store.ts#RESERVATION_STATES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/get-entries-page.ts#heldWalks": {
 			"class": "per-copy-safe",

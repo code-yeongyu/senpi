@@ -14,7 +14,7 @@ import {
 	isEffectBegin,
 	refuse,
 	respond,
-} from "./effect-commands.ts";
+} from "./effect-answers.ts";
 import { EffectLedger } from "./effect-ledger.ts";
 import {
 	contextBudgetOutcome,

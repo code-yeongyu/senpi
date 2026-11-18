@@ -96,6 +96,16 @@ export interface RecordProcessLifetimeOptions {
 }
 
 /**
+ * Whether a parent watches this process's exit and owns the record of its death. An RPC process
+ * always has one; any other mode has one only when its launcher says so with `--supervised` (a
+ * memory-reflection print child its supervisor deadline-kills, oh-my-openagent#10334), because the
+ * marker of a deliberately killed process is indistinguishable from a crash.
+ */
+export function processHasSupervisor(kind: string, explicitlySupervised: boolean): boolean {
+	return kind === "rpc" || explicitlySupervised;
+}
+
+/**
  * The launch seam: turn every dead peer's marker into a crash record, then, for a process no parent
  * supervises, start this process's own marker. Returns the disposer of this process's marker.
  */

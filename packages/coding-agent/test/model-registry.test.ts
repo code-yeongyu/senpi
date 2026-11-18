@@ -1334,6 +1334,7 @@ describe("ModelRegistry", () => {
 					CLOUDFLARE_ACCOUNT_ID: "stored-account",
 					CLOUDFLARE_GATEWAY_ID: "stored-gateway",
 				},
+				rotatesCredentials: true,
 			});
 		});
 

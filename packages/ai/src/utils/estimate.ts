@@ -16,6 +16,32 @@ export interface ContextUsageEstimate {
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 
+/**
+ * Whether a UTF-16 code unit belongs to a script tokenizers spend about one token per character on: Hangul jamo and
+ * syllables, CJK radicals, punctuation, kana and ideographs (incl. extension A), compatibility ideographs and
+ * fullwidth forms. Latin-script text runs near four characters per token; counting these at that rate undercounts
+ * CJK-heavy prompts by 2-4x, so every guard built on the estimate acts too late (senpi#3032).
+ */
+function isWideScriptCodeUnit(code: number): boolean {
+	return (
+		(code >= 0x1100 && code <= 0x11ff) ||
+		(code >= 0x2e80 && code <= 0x9fff) ||
+		(code >= 0xa960 && code <= 0xa97f) ||
+		(code >= 0xac00 && code <= 0xd7ff) ||
+		(code >= 0xf900 && code <= 0xfaff) ||
+		(code >= 0xff00 && code <= 0xffef)
+	);
+}
+
+/** Length in Latin-equivalent characters: a wide-script character weighs one token (`CHARS_PER_TOKEN`). */
+function weightedLength(text: string): number {
+	let wide = 0;
+	for (let index = 0; index < text.length; index++) {
+		if (isWideScriptCodeUnit(text.charCodeAt(index))) wide++;
+	}
+	return text.length + wide * (CHARS_PER_TOKEN - 1);
+}
+
 export function calculateContextTokens(usage: Usage): number {
 	if (usage.contextUsage !== undefined) {
 		return usage.contextUsage === null ? 0 : usage.contextUsage.input + usage.contextUsage.output;
@@ -32,15 +58,15 @@ function safeJsonStringify(value: unknown): string {
 }
 
 function estimateTextAndImageContentChars(content: string | Array<TextContent | ImageContent>): number {
-	if (typeof content === "string") return content.length;
+	if (typeof content === "string") return weightedLength(content);
 
 	let chars = 0;
-	for (const block of content) chars += block.type === "text" ? block.text.length : ESTIMATED_IMAGE_CHARS;
+	for (const block of content) chars += block.type === "text" ? weightedLength(block.text) : ESTIMATED_IMAGE_CHARS;
 	return chars;
 }
 
 export function estimateTextTokens(text: string): number {
-	return Math.ceil(text.length / CHARS_PER_TOKEN);
+	return Math.ceil(weightedLength(text) / CHARS_PER_TOKEN);
 }
 
 export function estimateTextAndImageContentTokens(content: string | Array<TextContent | ImageContent>): number {
@@ -63,13 +89,13 @@ export function estimateMessageTokens(message: Message): number {
 
 	for (const block of message.content) {
 		if (block.type === "text") {
-			chars += block.text.length;
+			chars += weightedLength(block.text);
 		} else if (block.type === "thinking") {
-			chars += block.thinking.length;
+			chars += weightedLength(block.thinking);
 		} else if (block.type === "toolCall") {
-			chars += block.name.length + safeJsonStringify(block.arguments).length;
+			chars += block.name.length + weightedLength(safeJsonStringify(block.arguments));
 		} else {
-			chars += block.subtype.length + safeJsonStringify(block.raw).length;
+			chars += block.subtype.length + weightedLength(safeJsonStringify(block.raw));
 		}
 	}
 	return Math.ceil(chars / CHARS_PER_TOKEN);

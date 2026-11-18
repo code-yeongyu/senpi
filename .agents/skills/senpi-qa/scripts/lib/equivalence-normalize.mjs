@@ -51,6 +51,12 @@ const ID_KEYS = new Set([
 const BLOB_ID_FIELDS = new Set(["conversationState.rootPromptMessagesJson", "conversationState.turns"]);
 /** Ids shorter than this are only tokenized under their key, never searched for inside other text. */
 const EMBEDDED_ID_MIN = 6;
+/**
+ * A pure-hex id this long is generated, never a word: session entry ids are `Math.random().toString(16).slice(2, 10)`,
+ * so a run can mint one with no decimal digit at all (`babaacde`) and it still has to normalize wherever it is embedded.
+ */
+const GENERATED_HEX_ID_MIN = 8;
+const PURE_HEX_ID = /^[0-9a-f]+$/i;
 const TIME_KEY = /^(ts|at|since|time|timestamp|date)$|(Time|At|Timestamp|Since)(Ms)?$/;
 // `wall_time_seconds` is the bash tool's structured result field (packages/coding-agent/src/core/tools/bash.ts), the
 // command's wall time rounded to 0.1 s (P0-05e: E28 runs bash through the sandbox example).
@@ -139,11 +145,17 @@ export function createNormalizer({ roots = [], hostFacts = [] } = {}) {
 			return map.get(raw);
 		};
 		// An id seen under an id key is the same id wherever else it is embedded (`turnKey: "1:<entry id>"`): it gets the
-		// same token there. Tokens are numbered by first keyed occurrence. Only generated-looking values (a digit, at least
-		// EMBEDDED_ID_MIN characters) are searched for in text, so a word-like id never masks prose.
+		// same token there. Tokens are numbered by first keyed occurrence. Only generated-looking values are searched for in
+		// text, so a word-like id never masks prose: a value carrying a decimal digit, or one that is pure hex at
+		// GENERATED_HEX_ID_MIN or more characters (`babaacde`, `d1303e80`). A digitless value below that length stays
+		// keyed-only, so `facade` in prose is untouched.
 		for (const raw of keyedIds) token("id", raw);
 		const embedded = [...maps.id.keys()]
-			.filter((raw) => raw.length >= EMBEDDED_ID_MIN && /\d/.test(raw))
+			.filter(
+				(raw) =>
+					raw.length >= EMBEDDED_ID_MIN &&
+					(/\d/.test(raw) || (raw.length >= GENERATED_HEX_ID_MIN && PURE_HEX_ID.test(raw))),
+			)
 			.sort((a, b) => b.length - a.length);
 		const replaceIds = (text) =>
 			embedded.reduce((out, raw) => (out.includes(raw) ? out.split(raw).join(maps.id.get(raw)) : out), text);

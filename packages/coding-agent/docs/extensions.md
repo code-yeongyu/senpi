@@ -12,7 +12,7 @@ Extensions are TypeScript modules that extend senpi's behavior. They can subscri
 - **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, question, notify)
 - **Custom UI components** - Full TUI components with keyboard input via `ctx.ui.custom()` for complex interactions
 - **Custom commands** - Register commands like `/mycommand` via `pi.registerCommand()`
-- **Model fallback** - The bundled [`/fallback`](#bundled-fallback-command) command manages global per-model retry chains. Use `/fallback <target> <fallback1> [fallback2 ...]` for scripts, or `/fallback` in the TUI to view and edit chains. `--no-model-fallback` and `SENPI_NO_FALLBACK=1` disable it for one run.
+- **Model fallback** - The bundled [`/fallback`](#bundled-fallback-command) command manages global per-model retry chains. Use `/fallback <target> <fallback1> [fallback2 ...]` for scripts, or `/fallback` in the TUI to view and edit chains. `--no-model-fallback`, `SENPI_NO_FALLBACK=1` and an explicitly chosen model (`--model`, or `open_session` naming a model) disable it for one run.
 - **Session persistence** - Store state that survives restarts via `pi.appendEntry()`
 - **Custom rendering** - Control how tool calls/results and messages appear in TUI
 
@@ -1017,6 +1017,8 @@ pi.on("context", async (event, ctx) => {
 ```
 
 `context` handlers see conversation messages without the prompt and tool system messages; senpi restores that state after they run, so filtering or slicing messages no longer drops the system prompt or tool declarations.
+
+What a `context` handler returns is exactly what the provider is sent, so keep a message the same once a request has sent it. A handler that changes an earlier message between requests (for example, appending a reminder to whichever user message is newest, which leaves the previous one bare on the next request) makes every later request differ from the one before at that message. Provider prompt caches then read only up to that message, and the Claude subscription lane cannot continue its native session, so it re-sends the conversation (`sent_stream_diverged`). Make a per-request addition a pure function of the message it decorates (add it to every matching message, or keep it on the message that first carried it), or persist it as a real message from `before_agent_start`. Removing or pruning older messages is a real change and is re-sent the same way.
 
 By default `event.messages` is a deep copy of the live transcript, so in-place edits never reach the session. A handler that never mutates message objects in place can declare it and skip that copy:
 

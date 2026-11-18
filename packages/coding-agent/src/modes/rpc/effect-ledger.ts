@@ -190,12 +190,8 @@ export class EffectLedger {
 	 */
 	async begin(command: EffectCommandKind, effectId: string, payload: object, by: EffectActor): Promise<EffectBegin> {
 		await this.session.sessionManager.persistHeaderNow();
-		const fingerprint = effectFingerprint(command, payload);
-		const existing = this.records.get(effectId);
-		if (existing) {
-			if (existing.fingerprint !== fingerprint) throw new EffectIdConflict(effectId);
-			return { replay: projectEffect(existing) };
-		}
+		const recorded = this.recorded(command, effectId, payload);
+		if (recorded !== undefined) return { replay: recorded };
 		const now = new Date().toISOString();
 		const record: RpcEffectRecord = {
 			effectId,
@@ -205,10 +201,21 @@ export class EffectLedger {
 			acceptedAt: now,
 			updatedAt: now,
 			durableSessionId: this.durableSessionId,
-			fingerprint,
+			fingerprint: effectFingerprint(command, payload),
 		};
 		this.append(record);
 		return { record };
+	}
+
+	/**
+	 * What `begin` answers for an id this ledger already holds, without recording anything: the stored status for the
+	 * same semantic payload, `EffectIdConflict` for a different one, nothing for an id it has not seen.
+	 */
+	recorded(command: EffectCommandKind, effectId: string, payload: object): EffectStatus | undefined {
+		const existing = this.records.get(effectId);
+		if (existing === undefined) return undefined;
+		if (existing.fingerprint !== effectFingerprint(command, payload)) throw new EffectIdConflict(effectId);
+		return projectEffect(existing);
 	}
 
 	transition(

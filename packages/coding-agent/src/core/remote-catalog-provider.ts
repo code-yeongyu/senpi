@@ -50,9 +50,13 @@ function isSupportedModelType(model: { type?: unknown }): boolean {
 	);
 }
 
+function modelKey(model: AnyModel): string {
+	return `${getModelType(model)}\0${model.id}`;
+}
+
 function mergeModels<TModel extends AnyModel>(baseline: readonly TModel[], dynamic: readonly TModel[]): TModel[] {
 	const merged = new Map<string, TModel>();
-	for (const model of [...baseline, ...dynamic]) merged.set(`${getModelType(model)}\0${model.id}`, model);
+	for (const model of [...baseline, ...dynamic]) merged.set(modelKey(model), model);
 	return [...merged.values()];
 }
 
@@ -97,12 +101,21 @@ function parseCatalog(providerId: string, value: unknown): AnyModel[] {
 	return [...parseRemoteCatalog(providerId, chat), ...other];
 }
 
-function remoteModels(entry: ModelsStoreEntry | undefined, localGeneratedAt: number | undefined): readonly AnyModel[] {
+/**
+ * The overlay a stored catalog entry contributes. A catalog that is not newer than the bundled one must not
+ * override bundled metadata, but the model ids the bundled catalog lacks still come from it (senpi#4314).
+ */
+function remoteModels(
+	entry: ModelsStoreEntry | undefined,
+	localGeneratedAt: number | undefined,
+	bundled: readonly AnyModel[],
+): readonly AnyModel[] {
 	if (!entry) return [];
-	if (localGeneratedAt !== undefined && (entry.lastModified === undefined || entry.lastModified <= localGeneratedAt)) {
-		return [];
+	if (localGeneratedAt === undefined || (entry.lastModified !== undefined && entry.lastModified > localGeneratedAt)) {
+		return entry.models;
 	}
-	return entry.models;
+	const bundledKeys = new Set(bundled.map(modelKey));
+	return entry.models.filter((model) => !bundledKeys.has(modelKey(model)));
 }
 
 /** Add a persisted pi.dev catalog overlay to a static built-in provider. */
@@ -112,6 +125,8 @@ export function withRemoteCatalog(
 	localGeneratedAt?: number,
 ): Provider {
 	let dynamicModels: readonly AnyModel[] = [];
+	const overlay = (entry: ModelsStoreEntry | undefined): readonly AnyModel[] =>
+		remoteModels(entry, localGeneratedAt, provider.getAllModels?.() ?? provider.getModels());
 	const currentChatModels = (): Model<Api>[] =>
 		mergeRemoteCatalogModels(provider.id, provider.getModels(), chatModels(dynamicModels)).models;
 	const conflictsFor = (models: readonly AnyModel[]): readonly RemoteCatalogConflict[] =>
@@ -125,7 +140,7 @@ export function withRemoteCatalog(
 		],
 		refreshModels: async (context) => {
 			const stored = context.stored;
-			const restored = remoteModels(stored, localGeneratedAt).filter((model) => model.provider === provider.id);
+			const restored = overlay(stored).filter((model) => model.provider === provider.id);
 			if (
 				!(await context.publish({
 					update: () => {
@@ -175,12 +190,7 @@ export function withRemoteCatalog(
 			}
 			if (response.status === 404 || response.status === 501) {
 				await context.publish({
-					persist: {
-						...(stored ?? { models: [] }),
-						checkedAt,
-						lastModified: 0,
-						etag: undefined,
-					},
+					persist: { models: [], checkedAt, lastModified: 0, etag: undefined },
 				});
 				return;
 			}
@@ -199,7 +209,7 @@ export function withRemoteCatalog(
 				lastModified: Number.isNaN(lastModified) ? 0 : lastModified,
 				etag: response.headers.get("etag") ?? undefined,
 			};
-			const published = remoteModels(entry, localGeneratedAt);
+			const published = overlay(entry);
 			await context.publish({
 				persist: entry,
 				update: () => {

@@ -278,6 +278,8 @@ Extensions can intercept and customize both compaction and branch summarization.
 
 Fired before auto-compaction or `/compact`. Can cancel or provide custom summary. See `SessionBeforeCompactEvent` and `CompactionPreparation` in the types file.
 
+A non-builtin extension that registers this handler is the session's compaction owner. With `compaction.enabled: false`, resuming a session whose context is over the model budget is refused unless an owner is registered; with one, the resume is admitted and the first prompt asks the owner to compact before the provider request.
+
 ```typescript
 pi.on("session_before_compact", async (event, ctx) => {
   const { preparation, branchEntries, customInstructions, reason, willRetry, signal } = event;

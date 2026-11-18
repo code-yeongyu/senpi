@@ -350,6 +350,7 @@ import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
+import { modelSwitchMarker } from "./model-switch-marker.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
@@ -414,6 +415,7 @@ import {
 	describeUsageLimitEntry,
 	describeUsageLimitMessage,
 	usageLimitScope,
+	withAccountsOut,
 } from "./retry-fallback/usage-limit.ts";
 import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { limitResetAt } from "./retry-fallback/limit-reset.ts";
@@ -1629,6 +1631,8 @@ export class AgentSession {
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	private _pendingCustomMessages: CustomMessage[] = [];
+	/** Fallback switch notes waiting for the next request boundary, where the model reads them (omo#13243). */
+	private _pendingModelSwitchMarkers: CustomMessage[] = [];
 	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
@@ -2080,6 +2084,7 @@ export class AgentSession {
 			circuits: this._fallbackCircuits,
 			logger: fallbackLogger,
 			switchModel: async (model, thinking, reason) => {
+				const from = this.model ? `${this.model.provider}/${this.model.id}` : undefined;
 				await this._switchActiveModel(model, {
 					persistDefault: false,
 					appendSessionEntry: true,
@@ -2092,6 +2097,9 @@ export class AgentSession {
 					allowDeferral: false,
 					repairWithSlice: true,
 				});
+				this._pendingModelSwitchMarkers.push(
+					modelSwitchMarker({ from, to: `${model.provider}/${model.id}`, reason }),
+				);
 			},
 			isCandidateRefusal: (error) => error instanceof ModelUsabilityBudgetError,
 			emit: (event) => this._emit(event),
@@ -2272,8 +2280,11 @@ export class AgentSession {
 		}
 
 		try {
-			const storedResult = await this._modelRuntime.getAuth(model, { signal });
 			const activeApiKey = await this.agent.getApiKey?.(model.provider);
+			// A pooled provider selects its account per request, as the main turn does; an explicit key
+			// resolved here would pin the request to the stored top-level slot (senpi#1814, senpi#1556).
+			if (activeApiKey === undefined && this._modelRuntime.rotatesCredentials(model)) return { model, thinkingLevel };
+			const storedResult = await this._modelRuntime.getAuth(model, { signal });
 			const result =
 				activeApiKey !== undefined && storedResult?.source !== "OAuth"
 					? await this._modelRuntime.getAuth(model, { apiKey: activeApiKey, signal })
@@ -3158,7 +3169,7 @@ export class AgentSession {
 			event = {
 				...event,
 				messages: event.messages.map((message) =>
-					message.role === "assistant" ? describeUsageLimitMessage(message) : message,
+					message.role === "assistant" ? this._describeUsageLimit(message) : message,
 				),
 			};
 		}
@@ -3168,7 +3179,7 @@ export class AgentSession {
 			(event.type === "message_end" || event.type === "message_start" || event.type === "message_update") &&
 			event.message.role === "assistant"
 		) {
-			const message = describeUsageLimitMessage(event.message);
+			const message = this._describeUsageLimit(event.message);
 			event =
 				event.type === "message_update"
 					? {
@@ -3670,6 +3681,9 @@ export class AgentSession {
 			}
 			this.agent.abortServerSideFallback =
 				this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
+			// Every switch made before this request (a revert at the turn boundary, routing around a spent account
+			// or a held family, one made while idle) is written here, so the model that answers reads it.
+			if (!this.agent.state.isStreaming) this._flushModelSwitchMarkers();
 			await this.agent.prompt(messages);
 			// AgentSession's subscriber intentionally queues event work instead of
 			// blocking Agent core. Wait for this run's queued recovery decision
@@ -3732,6 +3746,8 @@ export class AgentSession {
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
 	private _requestSelectedModel: SelectedModel | undefined;
 	private readonly _endSelectedModels = new WeakMap<AgentEvent, SelectedModel>();
+	/** A failed turn's pooled accounts, each with why it cannot serve, named in its surfaced error (senpi#5963). */
+	private readonly _accountsOutOf = new WeakMap<AgentMessage, string>();
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
@@ -4271,6 +4287,17 @@ export class AgentSession {
 			} catch (error) {
 				this._transcriptWriteFailures.record(event.message, error);
 			}
+		}
+		// A fresh process's cooling probe (senpi#3771) that failed on a spent pool names its accounts, as the
+		// turn-boundary refusal does (senpi#5963).
+		if (
+			event.type === "message_end" &&
+			event.message.role === "assistant" &&
+			event.message.stopReason === "error" &&
+			usageLimitScope(event.message) === "account"
+		) {
+			const pool = await this._pooledAccountHealth(event.message.provider, event.message.model);
+			if (pool && !pool.usable) this._accountsOutOf.set(event.message, pool.accountsOut);
 		}
 		this._recoveryIdentity?.hint(event, consumedEntry);
 		this._bridgedCallKeys.observe(event);
@@ -6081,6 +6108,14 @@ export class AgentSession {
 	 * Undefined for a single-credential provider, or when pool health cannot be read (the hold then stays).
 	 * Reads pool health only, never key material.
 	 */
+	private _describeUsageLimit(message: AssistantMessage): AssistantMessage {
+		const described = describeUsageLimitMessage(message);
+		const accountsOut = this._accountsOutOf.get(message);
+		return accountsOut === undefined || described.errorMessage === undefined
+			? described
+			: { ...described, errorMessage: withAccountsOut(described.errorMessage, accountsOut) };
+	}
+
 	private async _pooledAccountHealth(
 		provider: string,
 		modelId: string,
@@ -8715,6 +8750,13 @@ export class AgentSession {
 		notify(() => this._emitEntryAppended(entryId));
 		notify(() => this._emit(start));
 		notify(() => this._emit({ type: "message_end", message: appMessage }));
+	}
+
+	/** Writes the fallback switch notes before a request starts, so the model sees which model it is. */
+	private _flushModelSwitchMarkers(): void {
+		const pending = this._pendingModelSwitchMarkers;
+		this._pendingModelSwitchMarkers = [];
+		for (const message of pending) this._appendCustomMessage(message);
 	}
 
 	private _flushPendingCustomMessages(): void {
@@ -11906,6 +11948,7 @@ export class AgentSession {
 					if (this._continueWithQueuedInput) {
 						// Joined input of a start that never ran: the transcript tail may be anything, even empty.
 						this._continueWithQueuedInput = false;
+						this._flushModelSwitchMarkers();
 						await this.agent.continueWithQueuedMessages(options);
 					} else if (this._scheduledContinuationRecompacted) {
 						const tail = this.agent.state.messages.at(-1);
@@ -11916,8 +11959,10 @@ export class AgentSession {
 								this._incrementMessageRevision();
 							}
 						}
+						this._flushModelSwitchMarkers();
 						await this.agent.continueWithQueuedMessages(options);
 					} else {
+						this._flushModelSwitchMarkers();
 						await this.agent.continue(options);
 					}
 				},
@@ -14884,6 +14929,17 @@ export class AgentSession {
 	 */
 	hasExtensionHandlers(eventType: string): boolean {
 		return this._extensionRunner.hasHandlers(eventType);
+	}
+
+	/**
+	 * Whether a non-builtin extension owns compaction through `session_before_compact`. Such a session can
+	 * still compact with `compaction.enabled: false`, so resume admission treats it as compaction-capable
+	 * (senpi#3121). The builtin compaction and hooks handlers do not count: they are always registered.
+	 */
+	hasCompactionOwner(): boolean {
+		return this._extensionRunner
+			.getHandlerExtensionPaths("session_before_compact")
+			.some((path) => !this._isBuiltinExtensionPath(path));
 	}
 
 	/**

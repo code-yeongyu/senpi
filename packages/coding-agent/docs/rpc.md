@@ -1651,7 +1651,8 @@ parsing a version string:
     "version": 1,
     "digest": "71d68465…",
     "classes": { "get_state": "observe", "prompt": "dynamic", "...": "..." },
-    "dynamic_versions": { "prompt": 1, "...": 1 }
+    "dynamic_versions": { "prompt": 1, "...": 1 },
+    "rule_data": { "set_model": { "version": 1, "field": "scope", "map": { "session": "drive" }, "default": "device_admin" }, "...": {} }
   }
 }
 ```
@@ -1680,9 +1681,10 @@ parsing a version string:
   record-dependent entry). A client that classifies records with its own copy of the table uses that copy only
   while its digest equals this one, and otherwise treats every record as unclassified. `classes` is the whole
   table as data: each inbound type's class, or `dynamic` when the class depends on the record's fields, with that
-  rule's version in `dynamic_versions` (the rules themselves are never shipped; ask `classify_record`, see
-  "Delegated connections"). Hosts released before the field omit it; hosts released before `classes` send only
-  `version` and `digest`.
+  rule's version in `dynamic_versions`. `rule_data` carries, for each `dynamic` entry whose rule is one field
+  lookup, that rule as data (see "Rule data" under "Delegated connections"); every other rule is never shipped, so
+  ask `classify_record`. Hosts released before the field omit it; hosts released before `classes` send only
+  `version` and `digest`, and hosts released before `rule_data` omit that member.
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
   above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
@@ -2936,6 +2938,23 @@ are not role-bound never get `authority`, and `relayExec` is an ignored member t
 type (`rule` is then absent), so a client may cache static answers per `digest`. It is never an authorization: the
 host decides again when the record arrives.
 
+#### Rule data
+
+When a record-dependent rule reads one field of the record, the answer also carries the rule itself as data, next
+to `static: false` and `rule` (senpi#6318):
+
+```json
+{ "id": "c2", "type": "response", "command": "classify_record", "success": true, "data": { "class": "device_admin", "version": 1, "digest": "71d68465…", "static": false, "rule": 1, "rule_data": { "version": 1, "field": "scope", "map": { "session": "drive" }, "default": "device_admin" } } }
+```
+
+`rule_data.version` is the version of the rule-data language, not of the rule (that is `rule`). Version 1 has one
+form: read `record[field]`; when it is a string and an own key of `map`, the class is `map[value]`, otherwise
+`default`. Nothing in it executes. The engine's own classifier for that rule is built from the same data, so a client
+that evaluates it decides every record as the engine does, and may keep it per `digest` and type like a static answer
+(`get_protocol_info.method_classes.rule_data` lists the same data for every such type). A client that does not know
+the `rule_data.version`, or cannot read its shape, ignores it and asks for every record, as for a rule without
+`rule_data` (`prompt`, `open_session`, ...). Like every answer here, it is never an authorization.
+
 ### Prompt surface
 
 Where a session's replies render decides its system prompt. `terminal` is the classic prompt; `app` (a host that
@@ -2974,6 +2993,11 @@ fallback setting through the settings setters, that write follows the setters' o
 settings file) and replaces the session's override for that one key only: a `setFallbackChain` drops the profile's
 chains, while `modelFallback` keeps the profile's value. The policy is not stored with the session, so a client that
 reopens a session after it was closed sends the profile again.
+
+An open that names a model (`provider` and `modelId`) and sends no `retryFallback` is pinned to that model: it runs
+with `{ modelFallback: false, fallbackChains: {} }`, so a failed turn ends with that model's error instead of moving to
+another model. Send `retryFallback` with `modelFallback: true` to keep fallback for a named model. A host's default
+model is not a choice the client made and keeps the host's settings.
 
 #### Browser engine per session (`browser_engine`)
 
@@ -3073,7 +3097,7 @@ open --(turns)--> idle --unload_session / idle sweep--> unloaded (session_parked
                                                         close_session / release_session --> closed (session_closed, terminal for this handle)
 ```
 
-`unload_session { sessionId, effectId?, interrupt?, clearQueue?, children?: "refuse" | "detach", force? }` frees a session this host keeps loaded. The transcript stays on disk; queued input stays in the admission ledger and is restored on the reopen (input sent without a `clientMessageId` too) unless `clearQueue`; every attached client receives `session_parked { sessionId, sessionPath, reason: "unloaded" }` (the idle sweep's park says `reason: "idle"`); the session leaves `list_sessions`; `open_session { sessionPath }` reopens it.
+`unload_session { sessionId, effectId?, interrupt?, clearQueue?, children?: "refuse" | "detach", force?, dryRun? }` frees a session this host keeps loaded. The transcript stays on disk; queued input stays in the admission ledger and is restored on the reopen (input sent without a `clientMessageId` too) unless `clearQueue`; every attached client receives `session_parked { sessionId, sessionPath, reason: "unloaded" }` (the idle sweep's park says `reason: "idle"`); the session leaves `list_sessions`; `open_session { sessionPath }` reopens it.
 
 The answer is always `success: true` with `data.outcome`: `unloaded` (with `sessionPath`), or `refused` with `reason`, `detail` and `action`, changing nothing:
 
@@ -3085,6 +3109,10 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 | `children_live` | child tasks still working, or worker sessions here whose `context` names this session as parent or root | `children: "detach"` leaves them running |
 | `attached` | other clients hold the session (none of the caller's own holds count) | `force: true`; they receive the park |
 | `host_draining`, `session_closing`, `unsupported` | the host is draining, the session is already closing, or it has no file / a worker isolate owns it | none |
+
+**Who holds a session** is counted per CLIENT, not per connection (capability `client_identity`, senpi#6443): a connection that sent `set_client_info { client_id }` is the same client as every other connection carrying that id, so a client's own second connection (an automated send, a reconnect) is never "another client" for the `attached` refusal of `unload_session` and `release_session`, nor for the dry run below. `client_id` is an opaque string of 1 to 256 characters, compared byte for byte; a connection that sends none is its own client, which is the behaviour without the capability. The name counts on either form of the declaration, with a `sessionId` or without, and only once that declaration was accepted: a refused `set_client_info` (an unknown session, `connection_role_fixed`, `delegation_incarnation_stale`) keeps no name, a declaration that is never answered (no `id`, under the compact flag) keeps none either when it names a session this host does not have, and one that carries `client_id` under a retired incarnation is refused `delegation_incarnation_stale` whether or not it carries capabilities. The name belongs to one incarnation of the connection: within it, a later `set_client_info` without `client_id` keeps the name (a client sends the declaration again on every resize) and one with another id replaces it; `detach_connection` drops it with the roles, so the next viewer on that socket is another client until it declares its own name. A delegated connection is named by `client_id` only: the device its forwarder declared does not name the client, so two delegated connections for one device that send no `client_id` are two clients, and a forwarder that carries several clients gives each its own connection and its own `client_id`. On a host that runs sessions in worker isolates, `unload_session` and `release_session` do not apply to those sessions, so no holds are counted for them and a name declared with such a session's `sessionId` is not used.
+
+**A dry run** (`dryRun: true`, capability `unload_session_dry_run`, senpi#6443) answers what this unload would do now and does nothing else: it interrupts no run, clears no queue, unloads nothing and records no effect, so an `effectId` it carried stays free for the real call. An `effectId` this session already recorded for an unload is not judged again: the real call replays that record, so the dry run answers the same replay (`dry_run: true` and `replayed: true`, with the recorded `outcome`, `reason`, `detail` and `action`, the effect's fields, and no `blockers` list). The same id with another payload (`interrupt`, `clearQueue`, `children` or `force` changed), or an id recorded for another kind of effect, is refused `effect_id_conflict` by the real call, and the dry run answers that same refusal. The answer carries `dry_run: true` and `outcome: "ready"` (no standing blocker) or `refused` with the `reason`, `detail` and `action` the real call would refuse with now, plus `blockers` (every standing blocker, in the order the real call checks them; the first is the one it refuses on) and `interruptible` (the `turn_active` and `work_pending` blockers this call would interrupt instead, because it carries `interrupt: true`). Send it with the same `interrupt`, `children` and `force` as the real call: they decide which blockers stand. It answers only for the moment it is asked: work that starts after it, or a client that attaches after it, is caught by the real call's own check. A client that must stop work of its own before it unloads (cancel child tasks, take back queued input, stop the run) asks first, so it never does that work for an unload the engine would refuse.
 
 With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays. Capability: `unload_session`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
 
@@ -6959,7 +6987,8 @@ Extensions that run their own long jobs offer them through the root package expo
 `registerJobWidgetSource({ sessionId, id, kind, sources, brief, startedAtMs })` returns a handle (`notify`,
 `update`, `settle`, `dispose`), or `undefined` when the session has no widgets; a source is any
 `JobTextSource`, for example a `TextTap` the extension appends text to. `setJobWidgetAuthorResolver(resolver)`
-routes spec writing to a host-chosen model (behind an explicit `jobWidgets.model`), and
+routes spec writing to a host-chosen model (behind an explicit `jobWidgets.model`; when neither yields a model no
+spec is written, and the session's own model is never used), and
 `getJobWidgetState(sessionId)` reads the current state.
 
 ### agent_start

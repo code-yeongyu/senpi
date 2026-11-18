@@ -1,5 +1,6 @@
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
+import { trackCleanup } from "../support/pending-cleanups.ts";
 
 export type StructuredHarness = Pick<
 	Harness,
@@ -28,10 +29,14 @@ export async function createStructuredHarness(
 			...fixture,
 			agent: session.agent,
 			session,
-			cleanup: () => {
-				session.dispose();
-				fixture.cleanup();
-			},
+			// Dispose runs before cleanup() returns, as the harness's own does: callers start closing their scope next.
+			cleanup: () =>
+				trackCleanup(
+					new Promise<void>((resolve, reject) => {
+						session.dispose();
+						fixture.cleanup().then(resolve, reject);
+					}),
+				),
 		};
 	} catch (error) {
 		fixture.cleanup();

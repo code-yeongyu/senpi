@@ -155,6 +155,14 @@ function handleMessage(
 		else if (message.type === "result" && resultMatchesTurn(message, turn)) {
 			const failure = sdkResultFailure(message);
 			if (failure) throw failure;
+			// Our own result with no replay echo proves the segment dropped on overflow was this turn's output.
+			// Resolving it as an answer records the turn as synced, so a retry would continue a transcript that
+			// holds output senpi never saw (senpi#4137); failing it leaves the retry checkpoint at the pre-turn boundary.
+			if (turn.preReplayOverflowed) {
+				throw new SessionTurnAttributionError(
+					"Anthropic Subscription turn output was dropped before its replay claim",
+				);
+			}
 			for (const buffered of claimTurn(entry, turn)) deliver(entry, turn, buffered);
 			finishTurn(registry, entry, turn, message);
 			return false;

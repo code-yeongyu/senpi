@@ -67,7 +67,8 @@ export class TuiMainScreen extends TuiBase {
 		const supported =
 			Boolean(process.stdout.isTTY) &&
 			!process.env.TERMUX_VERSION &&
-			(process.platform !== "win32" || Boolean(process.env.WT_SESSION));
+			// A herdr pane is not Windows Terminal and sets no WT_SESSION, but it forwards SGR mouse reports (senpi#3353).
+			(process.platform !== "win32" || Boolean(process.env.WT_SESSION) || process.env.HERDR_ENV === "1");
 		const next = enabled && supported && !this.stopped;
 		this.clicks.cancel();
 		this.mousePress = undefined;

@@ -47,13 +47,18 @@ export class FileHookStateStorage implements HookStateStorage {
 
 	read(scope: HookTrustStorageScope): HookTrustState {
 		const path = statePathForScope(scope, this.globalStatePath, this.projectStatePath);
-		const snapshot = parseHookTrustStateJson(existsSync(path) ? readFileSync(path, "utf-8") : undefined);
+		const stateExists = existsSync(path);
+		const snapshot = parseHookTrustStateJson(stateExists ? readFileSync(path, "utf-8") : undefined);
 		if (snapshot !== undefined) {
 			return snapshot;
 		}
-		// No state directory means no writer and nothing to revalidate. Locking would create it, leaving an
-		// empty config folder in every project a session merely reads.
-		if (!existsSync(dirname(path))) {
+		// No state file means nothing to revalidate: writers publish atomically by
+		// rename, so a concurrent publish is picked up by the next read. Locking
+		// here only created and removed the lock directory on every read of a
+		// session with no trusted hooks (senpi#5096). Likewise, no state directory
+		// means no writer; locking would create it, leaving an empty config folder
+		// in every project a session merely reads.
+		if (!stateExists || !existsSync(dirname(path))) {
 			return emptyHookTrustState();
 		}
 
@@ -143,6 +148,10 @@ function acquireHookStateLockSync(path: string): () => void {
 
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		try {
+			// senpi#6431: proper-lockfile releases this lock by path without checking it is still this holder's (the
+			// race #6430 fixed for lockWithLossHandling). A sync holder cannot refresh or yield, so it is taken over only if this
+			// whole process stalls past the lock's stale bound inside its short critical section, e.g. the machine suspends or
+			// the process is SIGSTOPped at that instant; its release could then remove the next holder's lock. Tracked in #6431.
 			return lockfile.lockSync(stateDir, { realpath: false, lockfilePath: `${path}.lock` });
 		} catch (error) {
 			const code = errorCode(error);
