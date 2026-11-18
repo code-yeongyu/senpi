@@ -264,12 +264,16 @@ describe("the trust store revision", () => {
 		utimesSync(trustFile, 1_700_000_000, 1_700_000_000);
 		const revision = await store.revision();
 		const trustManager = new URL("../../src/core/trust-manager.ts", import.meta.url).href;
+		// The workspace package from source, as vitest's alias resolves it, so the child needs no built dist.
+		const realmRegistry = new URL("../../../realm-registry/src/index.ts", import.meta.url).href;
 		execFileSync(
 			process.execPath,
 			[
 				"--input-type=module",
 				"-e",
-				`const { ProjectTrustStore } = await import(${JSON.stringify(trustManager)});
+				`const { registerHooks } = await import("node:module");
+registerHooks({ resolve: (specifier, context, next) => next(specifier === "@earendil-works/pi-realm-registry" ? ${JSON.stringify(realmRegistry)} : specifier, context) });
+const { ProjectTrustStore } = await import(${JSON.stringify(trustManager)});
 const other = new ProjectTrustStore(${JSON.stringify(agentDir)});
 await other.set(${JSON.stringify(cwd)}, false);
 await other.set(${JSON.stringify(cwd)}, true);`,
