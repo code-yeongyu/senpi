@@ -75,7 +75,7 @@ async function createMonitor(
 	if (input.persistent === true && terminalDir !== undefined) {
 		envOverrides[MONITOR_ENV_STATE_DIR] = await ensureMonitorStateDir(terminalDir, monitorId);
 	}
-	const sessionId = ctx.getSessionContext?.()?.sessionManager.getSessionId();
+	const sessionId = manifestSessionKey(ctx);
 	const { id, runtime } = await spawnCommandSession(ctx, {
 		...(sessionId === undefined ? {} : { sessionId }),
 		command: input.command,

@@ -229,7 +229,7 @@ export class SubprocessKernel {
 					? applySessionEnvironment(globalThis.process.env, this.options.sessionEnv)
 					: undefined),
 		});
-		attestKernelChild(this.options.sessionEnv, child);
+		attestKernelChild(this.options.attestSpawn, child);
 		const process = new SubprocessProcess(child, {
 			onLine: (source, line) => this.handleLine(source, line),
 			onStderr: (source, data) => this.handleMessage(source, { type: "text", stream: "stderr", data }),

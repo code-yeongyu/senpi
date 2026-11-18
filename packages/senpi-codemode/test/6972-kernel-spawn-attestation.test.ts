@@ -3,14 +3,13 @@ import { once } from "node:events";
 import { existsSync, mkdirSync, watch } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir } from "@code-yeongyu/senpi";
+import { attestSessionSpawn, getAgentDir } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import { readKernelProcessIdentity } from "../../coding-agent/src/core/kernel-process-identity.ts";
 import { resolvePidSession, sessionSpawnsDir } from "../../coding-agent/src/core/session-spawn-attestation.ts";
 import { CHILD_LIFECYCLE_OP } from "../src/bridge/reserved.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import { WorkerChildren } from "../src/kernels/js/worker-children.ts";
-import { attestKernelSpawn } from "../src/kernels/shared/session-spawn-attestation.ts";
 import { resolveJavaScriptProcessCommand, runtimeNameOf } from "../src/kernels/js/process-worker.ts";
 import { NO_CELL_DEADLINE, parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
 import { hasPython3, liveKernel, runCell } from "./py-kernel/fixtures.ts";
@@ -21,6 +20,8 @@ import { hasPython3, liveKernel, runCell } from "./py-kernel/fixtures.ts";
  */
 const supported = process.platform === "linux" || process.platform === "darwin";
 const SESSION = "eval-session-6972";
+/** What the extension injects for a session (`session-manager.ts`): a record bound to the host's own session id. */
+const attestSpawn = (pid: number) => attestSessionSpawn(SESSION, pid);
 const attestationModule = fileURLToPath(
 	new URL("../../coding-agent/src/core/session-spawn-attestation.ts", import.meta.url),
 );
@@ -68,6 +69,7 @@ describe.skipIf(!supported)("eval kernel spawn attestation (#6972)", () => {
 				isolation: "process",
 				processExecPath: bunChild,
 				sessionEnv: { PI_SESSION_ID: SESSION },
+				attestSpawn,
 			});
 			kernels.push(kernel);
 			await runJavaScriptCell(kernel, "return 1", NO_CELL_DEADLINE);
@@ -98,7 +100,7 @@ describe.skipIf(!supported)("eval kernel spawn attestation (#6972)", () => {
 		const sleeper = spawn("sleep", ["30"]);
 		const pid = sleeper.pid;
 		if (pid === undefined) throw new Error("the test child did not start");
-		const children = new WorkerChildren(undefined, (child) => attestKernelSpawn({ PI_SESSION_ID: SESSION }, child));
+		const children = new WorkerChildren(undefined, attestSpawn);
 		try {
 			children.track({ op: CHILD_LIFECYCLE_OP, pid, state: "spawned" });
 			await recordWritten(pid);
@@ -114,7 +116,7 @@ describe.skipIf(!supported)("eval kernel spawn attestation (#6972)", () => {
 
 describe.skipIf(!supported || !(await hasPython3()))("python kernel spawn attestation (#6972)", () => {
 	it("a subprocess of the python kernel resolves to the calling session", async () => {
-		const kernel = await liveKernel({ sessionEnv: { PI_SESSION_ID: SESSION } });
+		const kernel = await liveKernel({ sessionEnv: { PI_SESSION_ID: SESSION }, attestSpawn });
 		try {
 			const started = await runCell(
 				kernel,
