@@ -114,7 +114,11 @@ import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { startOpenTimer } from "./core/open-timing.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
-import { getSavedProjectTrust, hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
+import {
+	getSavedProjectTrustState,
+	hasTrustRequiringProjectResources,
+	ProjectTrustStore,
+} from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { getFromSourceRealConfigWarning } from "./from-source-config-guard.ts";
 import { legacyPiEditStartupNotice } from "./legacy-pi-edits.ts";
@@ -947,7 +951,12 @@ export function createCliRuntimeFactory(
 			label: `Loading ${APP_NAME}`,
 		});
 	const trustStore = new ProjectTrustStore(agentDir);
-	const projectTrustByCwd = new Map<string, boolean>();
+	// An answer this process gave a folder without saving it, with the trust store revision it was given under. It
+	// lives until the store is next written, by anyone, for any folder (#6823 review M1).
+	const projectTrustByCwd = new Map<
+		string,
+		{ readonly savedState: null | "no_inherit"; readonly revision: string; readonly trusted: boolean }
+	>();
 	const trustPromptMode: AppMode =
 		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : appMode;
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
@@ -970,10 +979,21 @@ export function createCliRuntimeFactory(
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
 		// The saved decision, including the one a linked git worktree inherits from its main checkout (senpi#4388).
-		const savedProjectTrust = await getSavedProjectTrust(trustStore, cwd);
-		// The memo stands in for an unsaved answer only: a decision saved since (an RPC `set_project_trust`, senpi#6176)
-		// is what a fresh process would read, so it outranks what an earlier session of this process resolved.
-		const cachedProjectTrust = savedProjectTrust === null ? projectTrustByCwd.get(cwd) : undefined;
+		const savedState = await getSavedProjectTrustState(trustStore, cwd);
+		const savedProjectTrust = savedState === "no_inherit" ? null : savedState;
+		// The memo stands in for an unsaved answer only while it still answers what is saved. Given with nothing saved,
+		// it holds while nothing is saved for the folder (#6823 review L2); given under a `no_inherit` entry, only
+		// while the trust store is unchanged since, so no save in between, even one that restores the entry, can
+		// bring it back (#6823 review H1, M1), while with no save in between it holds for this process's later
+		// sessions of the folder (#6823 review L1). A saved decision always wins.
+		const trustRevision = trustStore.revision();
+		const remembered = projectTrustByCwd.get(cwd);
+		const cachedProjectTrust =
+			remembered !== undefined &&
+			remembered.savedState === savedState &&
+			(savedState === null || remembered.revision === trustRevision)
+				? remembered.trusted
+				: undefined;
 		timer.mark("project_trust");
 		// A full-access session trusts its project without asking, for that session only: nothing is
 		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
@@ -1037,7 +1057,8 @@ export function createCliRuntimeFactory(
 									),
 								onExtensionError: (message) => projectTrustDiagnostics.push({ type: "warning", message }),
 							});
-							projectTrustByCwd.set(cwd, trusted);
+							if (savedState === null || savedState === "no_inherit")
+								projectTrustByCwd.set(cwd, { savedState, revision: trustRevision, trusted });
 							return trusted;
 						},
 					}

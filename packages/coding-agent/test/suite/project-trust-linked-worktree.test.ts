@@ -5,7 +5,18 @@
  * "Trust project folder?" before its first turn. The fixtures write exactly the files
  * `git worktree add` writes (no git is spawned, as the trust store spawns none either).
  */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -216,5 +227,58 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 			resolveProjectTrusted({ cwd: worktree, trustStore: store, projectTrustContext: trusted.context }),
 		).resolves.toBe(true);
 		expect(trusted.prompts).toEqual([]);
+	});
+});
+
+// The desktop app: a pull request worktree of another repository must not take the base checkout's
+// trust, without saving "do not trust" (Full access still trusts it). Storage contract: the explicit `null` entry.
+describe("an explicit no-decision entry (set_project_trust no_inherit) inherits nothing", () => {
+	it("leaves a worktree undecided although its main checkout and a folder above it are trusted", async () => {
+		const { main, worktree } = linkedWorktree();
+		mkdirSync(join(worktree, "packages", "app"), { recursive: true });
+		store.set(main, true);
+		store.set(join(scratch, "workspaces"), true);
+		expect(await getSavedProjectTrust(store, worktree)).toBe(true);
+
+		store.setMany([{ path: worktree, decision: "no_inherit" }]);
+
+		expect(await getSavedProjectTrust(store, worktree)).toBeNull();
+		expect(await getSavedProjectTrust(store, join(worktree, "packages", "app"))).toBeNull();
+		expect(store.getEntry(worktree)).toBeNull();
+		expect(JSON.parse(readFileSync(join(scratch, "agent", "trust.json"), "utf8"))).toMatchObject({
+			[worktree]: null,
+		});
+	});
+});
+
+// #6823 review round 3 L1: the CLI keeps an unsaved trust answer only while the store revision is unchanged, so a
+// write by another process must change it even when the file ends with the same bytes and modification time.
+describe("the trust store revision", () => {
+	it("changes when another process writes through the store, even back to the same content and modification time", () => {
+		const cwd = join(scratch, "projects", "app");
+		mkdirSync(cwd, { recursive: true });
+		const agentDir = join(scratch, "agent");
+		const trustFile = join(agentDir, "trust.json");
+		store.set(cwd, true);
+		const content = readFileSync(trustFile, "utf8");
+		utimesSync(trustFile, 1_700_000_000, 1_700_000_000);
+		const revision = store.revision();
+		const trustManager = new URL("../../src/core/trust-manager.ts", import.meta.url).href;
+		execFileSync(
+			process.execPath,
+			[
+				"--input-type=module",
+				"-e",
+				`const { ProjectTrustStore } = await import(${JSON.stringify(trustManager)});
+const other = new ProjectTrustStore(${JSON.stringify(agentDir)});
+other.set(${JSON.stringify(cwd)}, false);
+other.set(${JSON.stringify(cwd)}, true);`,
+			],
+			{ stdio: "pipe" },
+		);
+		utimesSync(trustFile, 1_700_000_000, 1_700_000_000);
+		expect(readFileSync(trustFile, "utf8")).toBe(content);
+		expect(statSync(trustFile).mtimeMs).toBe(1_700_000_000_000);
+		expect(store.revision()).not.toBe(revision);
 	});
 });
