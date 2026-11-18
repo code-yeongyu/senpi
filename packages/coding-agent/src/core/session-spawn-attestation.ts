@@ -6,8 +6,11 @@
  * The spawner therefore records each child it starts for a session in `<agentDir>/session-spawns/<pid>.json`:
  * the child's pid and kernel start time, the session id, and the spawner's own pid and start time. The runtime reaps a
  * child on its own, so the identity read is issued as soon as the spawner learns the pid: in the core shell's spawn
- * callback, and right after the PTY session is created. A child that exits and is reaped before that read is never
- * recorded (it fails closed); recording a different process would take a full pid wrap inside that window.
+ * callback, right after the PTY session is created, right after a codemode kernel process is spawned (the js process
+ * worker, the python transport, the shared subprocess kernel), and, in the widest window, only once a worker kernel
+ * reports a child through its cross-thread status event (`WorkerChildren`). A child that exits and is reaped before
+ * that read is never recorded (it fails closed); recording a different process would take a full pid wrap inside
+ * that window.
  *
  * `resolvePidSession` answers "which session owns pid P" from the kernel alone: it walks P's ppid chain to the nearest
  * ancestor with a record and believes that record only when the ancestor's start time, its parent and that parent's
