@@ -45,7 +45,13 @@ const NON_SOL_MODEL_IDS = [
 	"deepseek-v4-flash",
 ];
 
-const ASTRA_MODEL_IDS = ["gpt-6-astra", "gpt-6-astra-fast", "openai/gpt-6-astra"];
+const ASTRA_MODEL_IDS = [
+	"gpt-6-astra",
+	"gpt-6-astra-fast",
+	"openai/gpt-6-astra",
+	"gpt-6.2-astra",
+	"openai/gpt-6.2-astra-fast",
+];
 const GPT6_SOL_MODEL_IDS = [
 	"gpt-6-sol",
 	"gpt-6-sol-fast",
