@@ -45,7 +45,7 @@ describe("subscription lanes win the automatic default over their metered API tw
 
 		const initial = await findInitialModel({ scopedModels: [], isContinuing: false, modelRuntime: runtime });
 
-		expect(initial.model).toMatchObject({ provider: "chatgpt-subscription", id: "gpt-6.1-sol" });
+		expect(initial.model).toMatchObject({ provider: "chatgpt-subscription", id: "gpt-6.2-sol" });
 		expect(initial.provenance).toBe("provider-default");
 	});
 
@@ -57,7 +57,7 @@ describe("subscription lanes win the automatic default over their metered API tw
 
 		const restored = await restoreModelFromSession("deepseek", "deepseek-retired-4412", undefined, false, runtime);
 
-		expect(restored.model).toMatchObject({ provider: "chatgpt-subscription", id: "gpt-6.1-sol" });
+		expect(restored.model).toMatchObject({ provider: "chatgpt-subscription", id: "gpt-6.2-sol" });
 	});
 
 	const stored: AuthStatus = { configured: true, source: "stored" };

@@ -1,3 +1,122 @@
+## 2026-11-18 - The leaf guard's hold prediction reuses the session's predicate (senpi#6957)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/automatic-input-gate.ts`: `automaticInputWouldBeHeld` returns `!interactiveUser && session.automaticInputHoldLive()` instead of repeating the hold check.
+
+### Why
+
+- With its own copy of the predicate, the `prompt` leaf guard's prediction could drift from the hold it predicts.
+
+### Why an extension could not handle it
+
+- Command admission happens in the RPC connection handler before any extension hook sees the prompt.
+
+### Expected merge conflict zones
+
+- LOW: `automaticInputWouldBeHeld` in `automatic-input-gate.ts`.
+
+## 2026-11-18 - Revert: `set_project_trust` `no_inherit` (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`, `method-classes-schema-session.ts` and `rpc-session-command-types.ts` no longer accept `no_inherit`.
+
+### Why
+
+- #6823 added five synchronous fs calls on the RPC session path (`existsSync` and `readFileSync` in `readGeneration`, `renameSync` and `writeFileSync` in `setMany`, `statSync` in `revision`), which breaks the frozen, shrink-only no-sync baseline (`test/suite/no-sync-in-session-path.test.ts`). It merged on a runner exit code while its filed receipt was red. It re-lands with those calls asynchronous.
+
+### Why an extension could not handle it
+
+- This reverts core code that #6823 changed.
+
+### Expected merge conflict zones
+
+- LOW: the same lines #6823 touched.
+
+## 2026-11-17 - A prompt can name the leaf it was decided at (senpi#6922)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: `prompt` accepts optional `expectedLeafId`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `prompt` case calls `refusePromptAtMovedLeaf` (new `prompt-expected-leaf.ts`) before chain admission, notice holding or turn admission. A stale `expectedLeafId` is refused `stale_leaf` with the edit commands' `assertExpectedLeaf` message, compared against `lifecycleEditLeaf` so lifecycle bookkeeping after the turn end is not a move. Combining it with `streamingBehavior` is refused `invalid_argument`, because a queued prompt runs at a later leaf. From a connection without `interactive_user`, it is also refused `invalid_argument` while a Stop or run hold is live (`automaticInputWouldBeHeld` in `automatic-input-gate.ts`), because the hold would keep the prompt as a notice for a later turn at another leaf; nothing is stored. Nothing is appended or sent on either refusal.
+
+### Why
+
+- A client that decides to run a prompt at one leaf (a desktop "Run it" on an unanswered prompt) could check the leaf, but an entry landing between that check and the prompt made it run from wherever the session had moved.
+
+### Why an extension could not handle it
+
+- Command admission happens in the RPC connection handler before any extension hook sees the prompt; an `input` handler runs after the command is already accepted.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `prompt` case in `connection-handler.ts`; the `prompt` schema field list.
+
+## 2026-11-17 - read_user_skill_file / write_user_skill_file: user-global skills through the one trust gate (senpi#6901)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/user-skill-commands.ts`: new. `read_user_skill_file` / `write_user_skill_file` read and edit the file of a user-global skill the engine lists for the session, by name: one under the agent dir's `skills` root or `~/.agents/skills`. The file is taken relative to the root's real path and resolved segment by segment with `lstat`, so a link, a `..` path or a file outside every root is refused (`user_skill_file_not_allowed`). Writes are etag-guarded and serialized per file. A write from this device's own connection commits at once.
+- `packages/coding-agent/src/modes/rpc/user-skill-approval.ts`: new. A write from a connection that speaks for another device (`connectionRoles.originOf`: a delegated principal or a declared `remoteOrigin`) commits only once THIS device approves it through the session's local grant presentation, which only a local attached client registers. The question names the origin device, the real path and the unified diff (the whole content for a new file; a diff over 20,000 characters is cut and says so). Choices are "Allow this change" / "Deny", with no "always". No presenter or no answer refuses with `user_skill_write_unconfirmed`, a denial with `user_skill_write_declined`. Every remote attempt appends one line to `<agentDir>/audit/user-skill-writes.jsonl` (`at`, origin device, `path`, `sha256Before`, `sha256After`, `decision`).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: dispatches both verbs; the write passes the connection's origin. `refreshGrantPresentation` registers no grant presentation for a connection that speaks for another device (`connectionRoles.originOf`), and `set_client_info` refreshes it when a `remoteOrigin` is declared, so a classic handler stops presenting the moment its connection declares one.
+- `packages/coding-agent/src/modes/rpc/security-presentations.ts`: `routeWorkerGrant` takes the raiser only when it is a local presenter (`#localPresenter`: `grant_select` and not remote); a remote or delegated raiser falls back to a local presenter or the grant is refused. Before, on the worker session runtime, a remote requester advertising `grant_select` received its own user-skill question and could approve its own write (review H1).
+- Every remote `write_user_skill_file` attempt is audited once, including one refused before the question (`decision: "refused"`, `reason`), and an audit line that cannot be written is reported as `auditError` beside the real outcome, never instead of it (review L1, L2).
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`, `method-classes-schema-session.ts`, `rpc-session-command-types.ts`, `rpc-read-response-types.ts`, `rpc-mutation-response-types.ts`: both verbs are `device_admin`, with their schemas and response types.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `session-command-activity.ts`: `read_user_skill_file` is an observing read, like `read_project_skill_file`.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `user_skill_not_listed`, `user_skill_file_not_allowed`, `user_skill_write_declined`, `user_skill_write_unconfirmed`.
+
+### Why
+
+- Duty ruling on omo-desktop-app#7981: remote clients may write user-global skill files through the same single trust gate as #6127. A write whose origin is this device is pre-trusted; one from another device needs confirmation naming the origin device and the target path. LEAD conditions: the confirmation is answered only on the target device (the requester can never answer it, no "always allow"), containment by real path with link and `..` escapes refused, the prompt shows the diff, and one local audit entry per remote write.
+
+### Why an extension could not handle it
+
+- RPC verbs, their method classes and the connection's origin live in the RPC host; an extension cannot add a classed RPC verb or read which device a connection speaks for.
+
+### Expected merge conflict zones
+
+- MEDIUM: `routeWorkerGrant` in `security-presentations.ts` and `refreshGrantPresentation` in `connection-handler.ts` (locality checks).
+- MEDIUM: the method tables (`method-classes.ts`, `method-classes-schema-session.ts`, the command/response unions) when another verb lands at the same time; the `connection-handler.ts` switch next to the project skill cases.
+
+## 2026-11-17 - read_project_file / write_project_file serve the folder's .omo/omo.jsonc (senpi#6896)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-file-path.ts`: the allowlist also admits `.omo/omo.jsonc` at the workspace root (per-agent and per-category model routing), with the same canonical-path and link-free resolution as the instruction files.
+- `packages/coding-agent/src/modes/rpc/project-file-commands.ts`: `write_project_file` commits through `commitGuardedWrite` (`project-write-gate.ts`): trust read again at commit, this machine's permission decision for a `write` of the path, and the version re-checked after it. A `project_file_not_allowed` refusal carries `errorData.reason`: `not_listed` or `unsafe`.
+
+### Why
+
+- A remote desktop reads and writes a copy's model routing the way it edits Rules; that file decides which models run, so its writes need the same per-write gate as the folder MCP and skill-file writes (senpi#6485). An engine that predates the path sends no `reason`, so a client names that machine's update instead of a refusal on disk.
+
+### Why an extension could not handle it
+
+- The project-file verbs and their path policy are RPC host commands; extensions cannot widen them.
+
+### Expected merge conflict zones
+
+- LOW: `parseProjectFilePath` in `project-file-path.ts`; `writeChecked` in `project-file-commands.ts`.
+
+## 2026-11-16 - `set_project_trust` takes `no_inherit` (desktop pull request worktrees)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`: `set_project_trust` accepts `no_inherit`, which saves the explicit no-decision entry for the session's folder. `get_project_trust` never lists it. It adds no trust to the session it is sent in: a trust that came only from Full access stays, any other trust goes unless a `project_trust` handler decides the folder is trusted; such a handler never refuses it.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`: the `no_inherit` literal.
+
+### Why
+
+- The desktop marks a pull-request worktree of another repository with it before the head is checked out, instead of saving "do not trust". An engine without it answers `invalid_argument`, which tells the desktop to fall back to `do_not_trust`.
+
+### Why an extension could not handle it
+
+- `set_project_trust` is an RPC core command.
+
+### Expected merge conflict zones
+
+- LOW: `writeProjectTrust` and the `set_project_trust` schema literal.
+
 ## 2026-11-17 - A loopless runtime marks eval-only tools too (senpi#6886)
 
 ### What changed

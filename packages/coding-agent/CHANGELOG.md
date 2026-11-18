@@ -12,6 +12,40 @@
 
 ### Removed
 
+## [2026.11.18] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+- `set_project_trust` takes `no_inherit`: the folder keeps no saved decision and inherits none from a folder above it or from its main checkout, so Full access still trusts it ([#6823](https://github.com/code-yeongyu/senpi/pull/6823))
+- `read_project_file` / `write_project_file` serve the folder's `.omo/omo.jsonc`, so a remote client edits per-agent model routing; their writes now pass the machine's own edit permission like the folder MCP and skill writes ([#6896](https://github.com/code-yeongyu/senpi/pull/6896))
+- RPC `read_user_skill_file` / `write_user_skill_file` read and edit a user-global skill's file by name. A write from another device of the account commits only after it is approved on this machine (the prompt names the device, the path and the diff), and each such write is recorded in `<agentDir>/audit/user-skill-writes.jsonl`.
+- RPC `prompt` accepts `expectedLeafId`; a prompt whose leaf moved is refused with `stale_leaf` and sends nothing ([#6923](https://github.com/code-yeongyu/senpi/pull/6923))
+- GPT-6.2 Astra and GPT-6.2 Sol get their own `gpt-6.2` system prompt preset, selected automatically for every 6.2 id and settable as `promptPreset: "gpt-6.2"` ([#6962](https://github.com/code-yeongyu/senpi/pull/6962))
+- GPT-6.2 Astra (`xhigh`) and GPT-6.2 Sol (`medium`) are recommended default models, ahead of GPT-6 Astra and GPT-6.1 Sol ([#6962](https://github.com/code-yeongyu/senpi/pull/6962))
+
+### Changed
+
+- Tips name the current models: ulw-plan on `fable-5.2` xhigh, the ulw loop on `gpt-6.1-sol` fast/medium, and the `--models` example scopes `gpt-6*` ([#6877](https://github.com/code-yeongyu/senpi/pull/6877))
+- The `openai` and `chatgpt-subscription` provider default model is now `gpt-6.2-sol` (was `gpt-6.1-sol`) ([#6962](https://github.com/code-yeongyu/senpi/pull/6962))
+
+### Fixed
+
+- A goal paused by Stop stays paused when a slash command is typed under the Stop; it no longer resumed and kept counting while the session footer still said "Paused · type to continue" ([#6897](https://github.com/code-yeongyu/senpi/issues/6897))
+- `move_session` refuses a `prepare` or `import` into a folder that does not exist on the receiving host with `workspace_missing` instead of `move_repository_mismatch`; an existing folder holding another repository is still `move_repository_mismatch`, and the import still declines the move `repository` in both cases ([#6902](https://github.com/code-yeongyu/senpi/pull/6902))
+- `show_html_page` keeps a session's handed pages within the RPC line limit and leaves image paths only mentioned in text as written ([#6908](https://github.com/code-yeongyu/senpi/pull/6908))
+- Opening a session the OmO desktop runs (`--session`, `--continue`, `--resume`) from a terminal attaches to it live instead of refusing, so a message or model switch on either side shows on the other ([#6909](https://github.com/code-yeongyu/senpi/pull/6909))
+- `show_html_page` inlines images a page's script loads again, and a call made from another tool no longer uses up the session's image budget. Only pages with inlined images count toward that budget. A page handed as written still carries up to 512,000 characters ([#6912](https://github.com/code-yeongyu/senpi/pull/6912))
+- A terminal start that attaches to a session the OmO desktop runs now sends its prompts and applies `--model`, `--thinking`, `--use-theme` and `--tui-mode`. A model it cannot apply exactly refuses the start with a notice, as does any start flag the attached session cannot apply (system prompt, API key, tools, extensions and the like). An unproven host record and a redirected stdout keep the plain refusal ([#6914](https://github.com/code-yeongyu/senpi/pull/6914))
+- `show_html_page` no longer keeps per-session bookkeeping for the life of the process on a multi-session host ([#6926](https://github.com/code-yeongyu/senpi/pull/6926))
+- A running terminal's session list shows sessions an app on the same machine keeps in its own store once the app registers that store under `<agentDir>/session-stores/`; opening one of them keeps the terminal's own session folder for listing and new sessions ([#6941](https://github.com/code-yeongyu/senpi/pull/6941)).
+- The shallow ulw-loop tip recommends `gpt-6.2-sol`, the newest Sol release in the catalog ([#6947](https://github.com/code-yeongyu/senpi/pull/6947))
+- On the Claude subscription lane, a long session past 95% of the context window no longer re-sends its whole history twice per compaction. The hard-limit prune no longer drops already-sent messages from the append-only transcript ([#6950](https://github.com/code-yeongyu/senpi/pull/6950))
+- Reverted `set_project_trust` `no_inherit` (#6823): it added synchronous file calls on the RPC session path; it returns with asynchronous ones ([#6954](https://github.com/code-yeongyu/senpi/pull/6954))
+
+### Removed
+
 ## [2026.11.17-2] - 2026-11-17
 
 ### Breaking Changes

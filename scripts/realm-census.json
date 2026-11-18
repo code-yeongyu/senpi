@@ -2810,6 +2810,10 @@
 			"class": "constant",
 			"reason": "process argv or environment snapshot taken once at load"
 		},
+		"packages/coding-agent/src/cli/held-session-attach.ts#UNAPPLIED_FLAGS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/cli/auth-command.ts#AUTH_COMMAND_USAGE": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -4315,83 +4319,47 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#BOOTSTRAP_SCRIPT": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#BOOTSTRAP_SCRIPT": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#DARK_VARS": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#DARK_VARS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#HTML_RENDER_CONTENT_SECURITY_POLICY": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#HTML_RENDER_CONTENT_SECURITY_POLICY": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#LIGHT_VARS": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#LIGHT_VARS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#POLICY_META": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#POLICY_META": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#PREAMBLE": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#PREAMBLE": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts#ABSOLUTE_PATH": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#MAX_IMAGE_BYTES": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts#CSS_URL": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#MAX_PAGE_BYTES": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/tool.ts#BASE64_IMAGE": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts#IMAGE_EXTENSIONS": {
+		"packages/coding-agent/src/extensions/html-render/tool.ts#Params": {
 			"class": "constant",
-			"reason": "value derived from constants at load; never written after load"
+			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts#IMAGE_MIME_TYPES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts#IMAGE_PATH": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts#RAW_TEXT_ELEMENTS": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts#SCRIPT_PATH": {
-			"class": "per-copy-safe",
-			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts#TAG_START": {
-			"class": "per-copy-safe",
-			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts#UNQUOTED_URL": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts#URL_ATTRIBUTES": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#MAX_IMAGE_BYTES": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#MAX_PAGE_BYTES": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#BASE64_IMAGE": {
-			"class": "per-copy-safe",
-			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#Params": {
+		"packages/coding-agent/src/extensions/html-render/tool.ts#showHtmlPageTool": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
@@ -5363,19 +5331,15 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#APP_FINAL_MESSAGE_SHAPE": {
-			"class": "constant",
-			"reason": "value derived from constants at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#APP_STEERING": {
-			"class": "constant",
-			"reason": "value derived from constants at load; never written after load"
-		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#CODEX_WRITING_STYLE": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#GPT6_ASTRA_RULES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#GPT6_ASTRA_TEXT": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -5391,7 +5355,11 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#SURFACE_DIRECTIVE": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#CODEX_62_WRITING_STYLE": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#GPT62_TEXT": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -7494,6 +7462,10 @@
 		"packages/coding-agent/src/core/tools/write-core.ts#writeSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/core/trust-store-writers.ts#trustStoreWriters": {
+			"class": "realm-registry",
+			"reason": "trust-store-writers/v1: trust store writes of every copy take turns per file, and a synchronous reader in any copy must see that a writer of the realm holds the store lock, or it spins on a lock only the blocked event loop can release. Copies older than this registry do not consult it and wait out the lock's 200 ms budget while such a write holds it"
 		},
 		"packages/coding-agent/src/core/turn-origin.ts#continuingTurns": {
 			"class": "per-copy-safe",
@@ -11541,6 +11513,46 @@
 		"packages/tui/src/wsl-session.ts#WSL_ENV_MARKERS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#ABSOLUTE_PATH": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#CSS_URL": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#IMAGE_EXTENSIONS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#IMAGE_MIME_TYPES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#IMAGE_PATH": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#RAW_TEXT_ELEMENTS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#SCRIPT_PATH": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#TAG_START": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#UNQUOTED_URL": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#URL_ATTRIBUTES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
 		}
 	}
 }

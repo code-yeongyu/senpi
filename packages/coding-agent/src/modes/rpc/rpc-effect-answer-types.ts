@@ -40,6 +40,8 @@ export interface RpcUnloadAnswer {
 	reason?: UnloadRefusalReason;
 	detail?: string;
 	action?: string;
+	/** Deliveries an `interrupt` handed back unwritten: their sender redelivers them. Absent when there were none. */
+	dropped?: { deliveries: readonly string[] };
 	effectId?: string;
 	effect?: EffectStatus;
 	replayed?: boolean;

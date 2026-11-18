@@ -8404,12 +8404,16 @@ export class AgentSession {
 		});
 	}
 
-	noteAutomaticInput(text: string): boolean {
-		const userHold = this._engineTurnHold.holds.some(
+	/** Whether the user's Stop or a parent's run hold is live: automatic connection input is then kept as a notice. */
+	automaticInputHoldLive(): boolean {
+		return this._engineTurnHold.holds.some(
 			(hold) =>
 				(hold.kind === "session_hold" && hold.key !== "interrupted-run") || hold.kind === "inherited_hold",
 		);
-		if (!userHold) return false;
+	}
+
+	noteAutomaticInput(text: string): boolean {
+		if (!this.automaticInputHoldLive()) return false;
 		const message: CustomMessage = {
 			role: "custom",
 			customType: "rpc-automatic-input",
@@ -9044,6 +9048,25 @@ export class AgentSession {
 		}
 		this._emitQueueUpdate();
 		return nextText === undefined ? "removed" : "edited";
+	}
+
+	/**
+	 * Takes every queued cross-session delivery out of the queues unwritten and settles it as `clearQueue` does (its
+	 * engine custody cancelled, a send waiting on it failed, its admission dropped), leaving user input queued. An
+	 * interrupt does this once the aborted work settled, so a delivery the aborted run left queued never pins the
+	 * session; its sender redelivers it (oh-my-openagent#14169).
+	 */
+	takeQueuedDeliveries(): void {
+		const removed = this.agent.peekQueuedMessages({ all: true }).filter((queued) => deliveryIdOf(queued) !== undefined);
+		for (const message of removed) this.agent.removeQueuedMessage(message);
+		const tickets = removed.flatMap((message) => {
+			const ticket = message.role === "custom" ? messageTicket(message) : undefined;
+			return ticket === undefined ? [] : [ticket];
+		});
+		this._releaseQueuedDeliveries(tickets, "cleared");
+		this._settleRemovedCarriers(removed);
+		this.externalAdmission.dropQueued();
+		this._emitQueueUpdate();
 	}
 
 	/**

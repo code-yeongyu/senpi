@@ -705,7 +705,7 @@
       // pre-existing at origin main aceb1cc1d9: unused exports UNSUPPORTED_HANDLER_TYPES
       "packages/coding-agent/src/core/extensions/builtin/hooks/types.ts": ["UNSUPPORTED_HANDLER_TYPES"],
       // pre-existing at origin main aceb1cc1d9: unused exports HtmlRenderImageTooLargeError, HtmlRenderPageTooLargeError
-      "packages/coding-agent/src/core/extensions/builtin/html-render/images.ts": ["HtmlRenderImageTooLargeError", "HtmlRenderPageTooLargeError"],
+      "packages/coding-agent/src/extensions/html-render/images.ts": ["HtmlRenderImageTooLargeError", "HtmlRenderPageTooLargeError"],
       // pre-existing at origin main aceb1cc1d9: unused exports LOOK_AT_USAGE
       "packages/coding-agent/src/core/extensions/builtin/look-at/arguments.ts": ["LOOK_AT_USAGE"],
       // pre-existing at origin main aceb1cc1d9: unused exports IMAGE_ATTACHMENT_REFERENCE_REGEX
@@ -1022,8 +1022,6 @@
       "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": ["wrapToolDefinitions"],
       // pre-existing at origin main aceb1cc1d9: unused exports truncateMiddle
       "packages/coding-agent/src/core/tools/truncate.ts": ["truncateMiddle"],
-      // pre-existing at origin main aceb1cc1d9: unused exports getProjectTrustParentPath
-      "packages/coding-agent/src/core/trust-manager.ts": ["getProjectTrustParentPath"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_TURN_INACTIVITY_MS, MIN_TURN_INACTIVITY_MS, DEFAULT_TURN_MAX_RUNTIME_MS
       "packages/coding-agent/src/core/turn-deadline.ts": ["DEFAULT_TURN_INACTIVITY_MS", "DEFAULT_TURN_MAX_RUNTIME_MS", "MIN_TURN_INACTIVITY_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports VIRTUAL_MODEL_API
@@ -1142,12 +1140,12 @@
       "packages/coding-agent/src/modes/rpc/multi-session-host.ts": ["DEFAULT_HOST_EMPTY_EXIT_MS", "DEFAULT_SESSION_IDLE_EVICTION_MS", "RPC_HOST_EMPTY_EXIT_MS_ENV", "RPC_SESSION_IDLE_EVICTION_MS_ENV", "resolveHostIdlePolicy"],
       // pre-existing at origin main aceb1cc1d9: unused exports HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV
       "packages/coding-agent/src/modes/rpc/protocol-identity.ts": ["HOST_GENERATION_ENV", "HOST_INSTANCE_ID_ENV"],
-      // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_SESSION_IDENTITY_MISMATCH, RPC_ERROR_SESSION_BUSY_LIFECYCLE, RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_SESSION_PATH_IN_USE, RPC_ERROR_SESSION_RESERVATION_LIMIT, RPC_ERROR_SESSION_NOT_HELD (+7 more)
-      "packages/coding-agent/src/modes/rpc/rpc-error-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STALE_LEAF", "RPC_ERROR_STREAMING"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_SESSION_IDENTITY_MISMATCH, RPC_ERROR_SESSION_BUSY_LIFECYCLE, RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_SESSION_PATH_IN_USE, RPC_ERROR_SESSION_RESERVATION_LIMIT, RPC_ERROR_SESSION_NOT_HELD (+6 more)
+      "packages/coding-agent/src/modes/rpc/rpc-error-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STREAMING"],
       // pre-existing at origin main aceb1cc1d9: unused exports checkRpcKeyDirectory
       "packages/coding-agent/src/modes/rpc/rpc-public-key.ts": ["checkRpcKeyDirectory"],
-      // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_EMPTY_TEXT, RPC_ERROR_HOST_MEMORY_PRESSURE, RPC_ERROR_HOST_STOPPING, RPC_ERROR_INVALID_SESSION_ID, RPC_ERROR_SESSION_BUSY_LIFECYCLE (+7 more)
-      "packages/coding-agent/src/modes/rpc/rpc-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STALE_LEAF", "RPC_ERROR_STREAMING"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_EMPTY_TEXT, RPC_ERROR_HOST_MEMORY_PRESSURE, RPC_ERROR_HOST_STOPPING, RPC_ERROR_INVALID_SESSION_ID, RPC_ERROR_SESSION_BUSY_LIFECYCLE (+6 more)
+      "packages/coding-agent/src/modes/rpc/rpc-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STREAMING"],
       // pre-existing at origin main aceb1cc1d9: unused exports loadedRuntimeSource
       "packages/coding-agent/src/modes/rpc/runtime-build-id.ts": ["loadedRuntimeSource"],
       // pre-existing at origin main aceb1cc1d9: unused exports SESSION_CONTEXT_PATCH_LIMITS, RESERVED_SESSION_CONTEXT_KEYS
