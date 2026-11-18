@@ -67,6 +67,7 @@ describe("multi-session RPC protocol info", () => {
 					"same_account_delegation_v1",
 					"machine_op_v1", // senpi#6752: the local relay host's device ops run in the engine.
 					"unload_session",
+					"unload_refuse_deliveries", // senpi#7004: an unload can refuse to drop a busy session's unwritten deliveries.
 					"move_session",
 					"move_session_revoke",
 					"move_session_copy",

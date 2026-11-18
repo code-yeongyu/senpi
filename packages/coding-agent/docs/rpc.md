@@ -3081,20 +3081,20 @@ open --(turns)--> idle --unload_session / idle sweep--> unloaded (session_parked
                                                         close_session / release_session --> closed (session_closed, terminal for this handle)
 ```
 
-`unload_session { sessionId, effectId?, interrupt?, clearQueue?, children?: "refuse" | "detach", force? }` frees a session this host keeps loaded. The transcript stays on disk; queued input stays in the admission ledger and is restored on the reopen (input sent without a `clientMessageId` too) unless `clearQueue`; every attached client receives `session_parked { sessionId, sessionPath, reason: "unloaded" }` (the idle sweep's park says `reason: "idle"`); the session leaves `list_sessions`; `open_session { sessionPath }` reopens it.
+`unload_session { sessionId, effectId?, interrupt?, clearQueue?, children?: "refuse" | "detach", force?, deliveries?: "refuse" }` frees a session this host keeps loaded. The transcript stays on disk; queued input stays in the admission ledger and is restored on the reopen (input sent without a `clientMessageId` too) unless `clearQueue`; every attached client receives `session_parked { sessionId, sessionPath, reason: "unloaded" }` (the idle sweep's park says `reason: "idle"`); the session leaves `list_sessions`; `open_session { sessionPath }` reopens it.
 
 The answer is always `success: true` with `data.outcome`: `unloaded` (with `sessionPath`), or `refused` with `reason`, `detail` and `action`, changing nothing:
 
 | `reason` | When | Override |
 |---|---|---|
 | `turn_active` | an agent run, a prompt about to start, compaction, barrier-held work, and a run with any tool body executing even while a dialog is open (a running tool can open one, such as an MCP elicitation); never a run whose only work is an unanswered dialog with no tool body executing (a permission prompt before its call starts), which the unload aborts (the dialog is cancelled) and waits for, bounded, as with `interrupt: true` | `interrupt: true` aborts and waits (bounded) first |
-| `work_pending` | bash, an admitted delivery not yet written, another request for the session | `interrupt: true`; once the aborted work settles, a delivery still waiting in the runtime's queues leaves them and the ledger unwritten (its sender redelivers it), and every later answer lists its id in `dropped.deliveries` |
+| `work_pending` | bash, an admitted delivery not yet written (its ids in `pending.deliveries`), another request for the session | `interrupt: true`; once the aborted work settles, a delivery still waiting in the runtime's queues leaves them and the ledger unwritten (its sender redelivers it), and every later answer lists its id in `dropped.deliveries`. With `deliveries: "refuse"` a busy session (any `turn_active` blocker) holding such deliveries is refused here, with or without `interrupt` and before anything is interrupted; a delivery admitted while an interrupt it did allow is settling, and an idle session's stranded deliveries, are still handed back and named in `dropped.deliveries` |
 | `extension_work` | extension-published work: background terminal jobs, non-persistent monitors, detached eval cells, a pending question; `detail` names the sources | `force: true` (that work is stopped; only persistent monitors come back on the reopen) |
 | `children_live` | child tasks still working, or worker sessions here whose `context` names this session as parent or root | `children: "detach"` leaves them running |
 | `attached` | other clients hold the session (none of the caller's own holds count) | `force: true`; they receive the park |
 | `host_draining`, `session_closing`, `unsupported` | the host is draining, the session is already closing, or it has no file / a worker isolate owns it | none |
 
-With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays. Capability: `unload_session`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
+With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays (a refusal with its `pending.deliveries`). Capability: `unload_session`; `deliveries` and `pending.deliveries`: `unload_refuse_deliveries`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
 
 ### Multi-session host lifecycle (cold start + idle exit)
 
