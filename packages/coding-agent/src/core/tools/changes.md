@@ -1,5 +1,24 @@
 # core/tools changes
 
+## 2026-11-15 - The tool cores show the fs code a wrapped machine error keeps (senpi#6745)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/fs-error-code.ts`: the fs code on the error itself or on its `cause` wins; the operation layer's `not_found`/`permission_denied`/`aborted` map back to ENOENT/EACCES/ABORT_ERR only when no fs code is carried.
+- `packages/coding-agent/src/tools-core.ts`: exports the `CoreCodingTools` type.
+
+### Why
+
+- Review LOWs on #6740 (senpi#6744): a machine that wraps EISDIR as `io_error` made the core edit tool show `io_error` where the local tool shows EISDIR; consumers of the tools-core entry could not name the tuple `createCoreCodingTools` returns.
+
+### Why an extension could not handle it
+
+- Both live in the built-in tools' worker-safe cores and their package entry.
+
+### Expected merge conflict zones
+
+- LOW: `fs-error-code.ts` (fork-only) and the coding-tools export in `tools-core.ts`.
+
 ## 2026-11-15 - The bash, read, write and edit tools split into worker-safe cores and local extras (senpi#6740)
 
 ### What changed
