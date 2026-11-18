@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { resolvePromptSurface } from "../../../dynamic-prompt/build.ts";
+import { rootToolCallId } from "../../../nested-tool-calls.ts";
 import { defineTool, type ExtensionToolContext } from "../../types.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
 import { HtmlRenderImagesNotFoundError, inlineLocalImages } from "./images.ts";
@@ -15,9 +16,13 @@ const MAX_HTML_CHARACTERS = 512_000;
 // (tool_execution_end, message_end, entry_appended), and every handed page travels together in the
 // records that carry the transcript (get_messages, get_tree, agent_end). An RPC record is at most
 // MAX_RPC_LINE_CHARACTERS (16 Mi); a longer one drops an attach connection. So one page carries its
-// images inlined only up to MAX_HANDED_PAGE_CHARACTERS, and all of a session's handed pages together only
+// images inlined only up to MAX_HANDED_PAGE_CHARACTERS, and a session's image-inlined pages together only
 // up to MAX_HANDED_PAGES_CHARACTERS, which leaves room for JSON escaping and the rest of the transcript.
 // Past either, the page is handed as written, and its images reach only a host that has this disk.
+// A page handed as written (`imagesInlined: false`) is not counted: it carries at most MAX_HTML_CHARACTERS,
+// in `details.html` and again in the call's arguments, so those pages are bounded per page, not per session. A call another tool makes through
+// ctx.executeTool() (id `<parent>/<n>`) is never recorded in the transcript, so its page only rides its own
+// tool_execution_end and is held to the per-page cap alone.
 export const MAX_HANDED_PAGE_CHARACTERS = 2 * 1024 * 1024;
 export const MAX_HANDED_PAGES_CHARACTERS = 6 * 1024 * 1024;
 
@@ -79,7 +84,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 /**
  * Pages handed but not yet in the session's entries, by tool call id: calls in one turn run concurrently,
  * and each result is recorded only after it returns. One ledger belongs to one extension instance, so it is
- * released with the session that loaded it, and the extension clears it when a run ends (index.ts).
+ * released with the session that loaded it, and the extension clears it when a run ends (index.ts). Only
+ * model-issued calls are held: a call another tool makes through ctx.executeTool() is never recorded in the transcript.
  */
 export type PendingHandedPages = Map<string, number>;
 
@@ -150,10 +156,11 @@ export function createShowHtmlPageTool(pending: PendingHandedPages = new Map()) 
 					.slice(0, 60) || "page";
 			const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
 			await writeFile(path, prepared, "utf8");
-			const alreadyHanded = inlinedPageCharacters(ctx, pending);
+			const inTranscript = rootToolCallId(toolCallId) === toolCallId;
+			const alreadyHanded = inTranscript ? inlinedPageCharacters(ctx, pending) : 0;
 			const fitsPage = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
 			const imagesInlined = fitsPage && alreadyHanded + inlined.html.length <= MAX_HANDED_PAGES_CHARACTERS;
-			if (imagesInlined) pending.set(toolCallId, inlined.html.length);
+			if (imagesInlined && inTranscript) pending.set(toolCallId, inlined.html.length);
 			return {
 				content: [
 					{
