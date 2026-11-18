@@ -19,7 +19,8 @@ import type { SessionInfo } from "./session-manager.ts";
  * `<agentDir>/cache/session-store-summaries/`, never in the store. Nothing else is cached: each listing
  * reads the entries and the store directories again, so a session the app creates shows in the next
  * list of an already running process. A session opened from a store keeps this agent dir's own session
- * folder for listing and new sessions; only that session's file lives in the store.
+ * folder for listing, new sessions and imports. That session's file, and the per-session extension state kept
+ * beside it (goal, loop and terminal state under `<storeDir>/extensions/`), stay in the store.
  */
 export const SHARED_SESSION_STORES_DIR_NAME = "session-stores";
 const SHARED_SESSION_STORES_VERSION = 1;

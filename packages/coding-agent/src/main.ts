@@ -495,10 +495,20 @@ async function admitOrExit(sessionFile: string, appMode: AppMode): Promise<void>
 	if (admission !== "open") process.exit(admission === "cancelled" ? 0 : SESSION_HELD_EXIT_CODE);
 }
 
+/**
+ * Opens a session file the user named or picked. Without an explicit session dir, a session that lives in another
+ * app's registered store keeps this folder's own session dir for listing and new sessions (omo-desktop-app#8097).
+ */
+async function openWithHomeSessionDir(path: string, sessionDir: string | undefined): Promise<SessionManager> {
+	const sessionManager = SessionManager.open(path, sessionDir);
+	if (sessionDir === undefined) await sessionManager.adoptHomeSessionDir();
+	return sessionManager;
+}
+
 async function openSessionOrExit(path: string, appMode: AppMode, sessionDir?: string): Promise<SessionManager> {
 	await admitOrExit(path, appMode);
 	try {
-		return SessionManager.open(path, sessionDir);
+		return await openWithHomeSessionDir(path, sessionDir);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(chalk.red(`Error: ${message}`));
@@ -526,7 +536,7 @@ async function rebindSessionOrExit(
 	try {
 		const reboundPath = await rebindSessionFile(sourcePath, cwd, sessionDir);
 		console.log(chalk.dim(`Session moved to ${cwd}`));
-		return SessionManager.open(reboundPath, sessionDir);
+		return await openWithHomeSessionDir(reboundPath, sessionDir);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(chalk.red(`Error: ${message}`));
@@ -671,9 +681,7 @@ export async function createSessionManager(
 				return process.exit(1);
 			});
 			if (target.rebound) console.log(chalk.dim(`Session moved to ${cwd}`));
-			const resumed = SessionManager.open(target.path, sessionDir);
-			if (sessionDir === undefined) await resumed.adoptHomeSessionDir();
-			return resumed;
+			return openWithHomeSessionDir(target.path, sessionDir);
 		} finally {
 			stopThemeWatcher();
 		}
@@ -685,7 +693,7 @@ export async function createSessionManager(
 		const movedHere = sessionDir === undefined ? await movedHereSessionToContinue(cwd) : undefined;
 		if (movedHere !== undefined) {
 			await admitOrExit(movedHere, appMode);
-			return SessionManager.open(movedHere, sessionDir);
+			return openWithHomeSessionDir(movedHere, sessionDir);
 		}
 		// Loading the recent session can migrate and rewrite it, so its file is admitted before it is loaded.
 		const recentPath = SessionManager.recentSessionFile(cwd, sessionDir);
@@ -710,7 +718,7 @@ export async function createSessionManager(
 			if (parsed.spawnedBy)
 				console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming an existing session."));
 			await admitOrExit(existingSession.path, appMode);
-			return SessionManager.open(existingSession.path, sessionDir);
+			return openWithHomeSessionDir(existingSession.path, sessionDir);
 		}
 		console.error(
 			chalk.yellow(

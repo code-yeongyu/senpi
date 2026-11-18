@@ -2,7 +2,10 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Args } from "../../../src/cli/args.ts";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
+import { SettingsManager } from "../../../src/core/settings-manager.ts";
+import { createSessionManager } from "../../../src/main.ts";
 import { getDefaultSessionDir, getDefaultSessionDirPath, SessionManager } from "../../../src/core/session-manager.ts";
 import { allScopeSessions, currentScopeSessions } from "../../../src/modes/interactive/resume-rebind.ts";
 
@@ -120,6 +123,21 @@ describe("desktop#8097: a terminal lists the sessions the desktop keeps in its o
 		const inPlace = resumed.newSession();
 		expect(dirname(inPlace ?? "")).toBe(dirname(own));
 		expect(readdirSync(join(appStore, "omo-instance")).sort()).toEqual(["app-thread.jsonl"]);
+	});
+
+	it("keeps the terminal's own session folder when `--session <id>` opens an app session", async () => {
+		const own = writeSession(getDefaultSessionDir(project), "cli-own", project);
+		writeSession(join(appStore, "omo-instance"), "app-thread", project);
+		registerStore("omo-desktop-a.json", JSON.stringify({ version: 1, root: appStore }));
+		const args: Args = { messages: [], fileArgs: [], unknownFlags: new Map(), diagnostics: [], session: "app-thread" };
+
+		const opened = await createSessionManager(args, project, undefined, SettingsManager.inMemory(), "print");
+
+		expect(opened.getSessionId()).toBe("app-thread");
+		expect(opened.getHomeSessionDir()).toBe(getDefaultSessionDirPath(project));
+		expect(ids(await currentScopeSessions(opened))).toEqual(["app-thread", "cli-own"]);
+		expect(dirname(opened.newSession() ?? "")).toBe(dirname(own));
+		expect(readdirSync(join(appStore, "omo-instance"))).toEqual(["app-thread.jsonl"]);
 	});
 
 	it("ignores a registration whose version is not 1", async () => {
