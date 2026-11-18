@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,8 +11,9 @@ import {
 	projectAgentsSkillDirs,
 } from "../src/core/trust-manager.ts";
 
-// The real lock library, with a hook that runs the moment a store lock is acquired (the #6958 review M1 window).
-const lockHooks = vi.hoisted(() => ({ acquired: undefined as (() => Promise<void> | undefined) | undefined }));
+// The real lock library and fs, with a hook that holds a write at its first await inside the store lock: right after an
+// asynchronous lock() resolves, or, when the lock is taken synchronously, at the generation read (#6958 review M1).
+const writeHold = vi.hoisted(() => ({ pause: undefined as (() => Promise<void>) | undefined }));
 vi.mock("proper-lockfile", async (importOriginal) => {
 	const actual = await importOriginal<{ default: typeof import("proper-lockfile") }>();
 	const real = actual.default;
@@ -20,16 +21,21 @@ vi.mock("proper-lockfile", async (importOriginal) => {
 		...real,
 		lock: async (...args) => {
 			const release = await real.lock(...args);
-			await lockHooks.acquired?.();
-			return release;
-		},
-		lockSync: (...args) => {
-			const release = real.lockSync(...args);
-			void lockHooks.acquired?.();
+			await writeHold.pause?.();
 			return release;
 		},
 	};
 	return { ...actual, default: wrapped };
+});
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return {
+		...actual,
+		readFile: (async (...args: Parameters<typeof actual.readFile>) => {
+			if (String(args[0]).endsWith("trust.json.generation")) await writeHold.pause?.();
+			return actual.readFile(...args);
+		}) as typeof actual.readFile,
+	};
 });
 
 describe("ProjectTrustStore", () => {
@@ -212,25 +218,26 @@ describe("ProjectTrustStore", () => {
 
 	// #6958 review M1: a write's own lock must count as this process's from the moment it exists on disk.
 	it("answers a synchronous read in the same process issued the moment a write acquires the store lock", async () => {
-		// Given a saved decision, and a write stopped right where it has acquired the store lock
+		// Given a saved decision, and a write held at its first await inside the store lock
 		const store = new ProjectTrustStore(agentDir);
 		await store.set(cwd, true);
-		const acquired = Promise.withResolvers<void>();
+		const held = Promise.withResolvers<void>();
 		const proceed = Promise.withResolvers<void>();
-		lockHooks.acquired = () => {
-			acquired.resolve();
+		writeHold.pause = () => {
+			writeHold.pause = undefined;
+			held.resolve();
 			return proceed.promise;
 		};
 		const writing = store.set(cwd, false);
 		try {
-			await acquired.promise;
-			lockHooks.acquired = undefined;
+			await held.promise;
+			expect(existsSync(join(agentDir, "trust.json.lock"))).toBe(true);
 
-			// When this process reads the store then
+			// When this process reads the store while the write holds the lock
 			// Then it answers from what is saved
 			expect(store.get(cwd)).toBe(true);
 		} finally {
-			lockHooks.acquired = undefined;
+			writeHold.pause = undefined;
 			proceed.resolve();
 			await writing.catch(() => undefined);
 		}
