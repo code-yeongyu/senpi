@@ -1,6 +1,6 @@
 import { constants, type Stats } from "node:fs";
 import { access, mkdir, open, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { MachineOpError } from "../errors.ts";
 import { checkPath, gated, resolveOpPath } from "../policy/gate.ts";
 import type {
@@ -158,14 +158,20 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 		},
 
 		async glob(req: GlobRequest, ctx: OpContext): Promise<GlobResult> {
-			const cwd = resolveOpPath(req.cwd ?? ".", ctx);
-			if (ctx.scope.root !== undefined && (isAbsolute(req.pattern) || req.pattern.split(/[\\/]/).includes(".."))) {
-				throw new MachineOpError("policy_denied", "a glob pattern may not leave the scope root");
+			let cwd = resolveOpPath(req.cwd ?? ".", ctx);
+			let pattern = req.pattern;
+			if (ctx.scope.root !== undefined && (isAbsolute(pattern) || pattern.split(/[\\/]/).includes(".."))) {
+				// An absolute or ".." pattern is judged by where its fixed part resolves, like every other path: the
+				// check below allows it inside the scope root and refuses it outside.
+				const split = splitGlobBase(pattern, cwd);
+				if (split === undefined) {
+					throw new MachineOpError("policy_denied", "a glob pattern may not use '..' after a wildcard");
+				}
+				cwd = split.base;
+				pattern = split.rest;
 			}
 			await checkPath(cwd, "enumerate", "files.glob", ctx);
-			return gated("files.glob", req, ctx, () =>
-				localGlob(req.pattern, cwd, req.limit, ctx.signal, options.resolveFd),
-			);
+			return gated("files.glob", req, ctx, () => localGlob(pattern, cwd, req.limit, ctx.signal, options.resolveFd));
 		},
 
 		async grep(req: GrepRequest, ctx: OpContext): Promise<GrepResult> {
@@ -195,4 +201,26 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 			});
 		},
 	};
+}
+
+const GLOB_SYNTAX = /[*?[\]{}]/;
+
+/**
+ * Split a glob pattern into the directory its fixed leading segments name (resolved against `cwd`) and the rest,
+ * which starts at the first segment with glob syntax. A pattern with no glob syntax splits before its last segment; one
+ * ending in a separator lists that directory.
+ * Undefined when ".." follows a wildcard: where that lands is known only after matching.
+ */
+function splitGlobBase(pattern: string, cwd: string): { base: string; rest: string } | undefined {
+	const segments = pattern.split(/[\\/]/);
+	const firstGlob = segments.findIndex((segment) => GLOB_SYNTAX.test(segment));
+	const cut = firstGlob === -1 ? segments.length - 1 : firstGlob;
+	const fixed = segments.slice(0, cut);
+	const rest = segments.slice(cut);
+	if (rest.includes("..")) return undefined;
+	// A pattern ending in a separator (`<root>/`, `../dir/`) names a directory: list its entries, as `*` would.
+	if (rest.join("/") === "")
+		return { base: isAbsolute(pattern) ? resolve(sep, ...fixed) : resolve(cwd, ...fixed), rest: "*" };
+	const base = isAbsolute(pattern) ? resolve(sep, ...fixed) : resolve(cwd, ...fixed);
+	return { base, rest: rest.join("/") };
 }

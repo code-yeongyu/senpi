@@ -5,6 +5,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { latestPlatformResults, releaseBlockers } from "./ci-platform-red.mjs";
 import { runGenerateModels, runProviderDefaultsCheck } from "./release-artifacts.mjs";
 import { captureOutput } from "./release-capture.mjs";
 import { captureCommand, dryRunLog, gitCommit, log, runCommand } from "./release-commands.mjs";
@@ -95,9 +96,10 @@ function remoteMain() {
 /**
  * The release's test evidence is CI's sharded run, never a second serial run of the suite here (senpi#2943).
  * A regenerated model catalog is committed on the release only and requires --force-tests (never pushed untested); the
- * release ships (the gap behind senpi#2645); then the release waits for that commit's green "Check and test".
+ * release ships (the gap behind senpi#2645); then the release waits for that commit's green "Check and test", unless the
+ * release workflow accepted a CI-basis receipt for the pinned commit (`ciBasisReceipt`, senpi#6859).
  */
-export function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
+export function secureCiEvidence(version, dryRun, forceTests, pinnedSha, ciBasisReceipt) {
 	runGenerateModels(dryRun, runCommand, log, dryRunLog);
 	runProviderDefaultsCheck(dryRun, runCommand, log, dryRunLog);
 	if (dryRun) {
@@ -110,7 +112,9 @@ export function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
 		dryRunLog(
 			forceTests
 				? "no CI wait (--force-tests runs the suite in this job)"
-				: 'wait for the release commit\'s green "Check and test"',
+				: ciBasisReceipt
+					? `no CI wait (hosted CI wait waived by ci_basis_receipt ${ciBasisReceipt})`
+					: 'wait for the release commit\'s green "Check and test"',
 		);
 		return;
 	}
@@ -136,6 +140,18 @@ export function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
 		log(
 			"test gate: --force-tests given; the suite runs in this job on the release code, before version and changelog stamping",
 		);
+		return;
+	}
+	if (ciBasisReceipt) {
+		// The receipt waives the wait, not a known result: hosted CI is read once, and a red run still stops the release.
+		const plan = planCiEvidence({ sha: pinnedSha, checkRuns: lookupCiCheckRuns(pinnedSha) });
+		log(`test gate: ${plan.reason}`);
+		if (plan.action === "stop") {
+			throw new Error(
+				`CI failed on ${pinnedSha.slice(0, 12)}: ${plan.reason}; a ci_basis_receipt waives only the wait for hosted CI, not a red result`,
+			);
+		}
+		log(`test gate: hosted CI wait waived by ci_basis_receipt ${ciBasisReceipt} for the pinned commit ${pinnedSha}`);
 		return;
 	}
 	awaitCiEvidence(
@@ -172,4 +188,22 @@ export function verifyTestedRelease({ sha, testedSha, shardResults }) {
 		`test gate: ${parts.length} forced-suite matrix jobs passed on ${testedSha.slice(0, 12)} ` +
 			(lineage === "unchanged" ? "(the dispatched commit)" : `(the release-only catalog commit on ${sha.slice(0, 12)})`),
 	);
+}
+
+/**
+ * Pull requests run Linux only (senpi#6834), so macOS and Windows are tested on main after each merge. Whatever its
+ * test evidence, a release refuses while the latest settled main run of any workflow with macOS/Windows legs has a
+ * failed macOS/Windows job (platform-red.yml has filed the tracking issue for it). A dry run only reports it.
+ */
+export function assertPlatformsGreen(dryRun) {
+	const blockers = releaseBlockers(latestPlatformResults((args) => captureOutput("gh", args)));
+	if (blockers.length === 0) {
+		(dryRun ? dryRunLog : log)("platform gate: no macOS/Windows job is red in the latest main runs");
+		return;
+	}
+	if (dryRun) {
+		for (const blocker of blockers) dryRunLog(`platform gate would refuse: ${blocker}`);
+		return;
+	}
+	throw new Error(`a macOS/Windows job is red on main; fix it before releasing:\n${blockers.map((line) => `  ${line}`).join("\n")}`);
 }

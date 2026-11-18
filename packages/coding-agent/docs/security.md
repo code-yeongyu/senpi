@@ -40,6 +40,33 @@ This is intentional. senpi is designed to operate on local source trees, invoke 
 
 Project trust is only an input-loading guard. It prevents a repository from silently changing senpi's settings or extensions before you approve it. It does not make untrusted code, untrusted prompts, or untrusted model output safe. Prompt injection from repository files, comments, documentation, context files, or build output is expected local-agent risk and cannot be reliably prevented by senpi.
 
+## Credential Injection Proxy
+
+Credentials named in the global `credentialProxy.credentials` setting (`~/.senpi/agent/settings.json`; project settings are ignored for this key) never reach a process the agent starts. Each declared variable, and any other variable holding the same value, is replaced by `senpi-credential-proxy-placeholder` in the environment of the bash tool, PTY bash sessions, monitors, the tool child, hook commands and eval kernels and their children. A declared `baseUrlEnv` points at a loopback proxy route; the proxy adds the auth header for that credential's one `origin` and nowhere else.
+
+```json
+{
+  "credentialProxy": {
+    "credentials": [
+      { "env": "OPENAI_API_KEY", "origin": "https://api.openai.com", "baseUrlEnv": "OPENAI_BASE_URL" }
+    ]
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `env` | Engine environment variable holding the value |
+| `origin` | The only upstream the value is sent to; https, or plain http for a loopback host |
+| `header` | Header to set (default `authorization`) |
+| `scheme` | Prefix before the value (default `Bearer` for `authorization`) |
+| `baseUrlEnv` | Child variable set to the proxy route |
+| `pathPrefixes` | Optional allowed request paths below `origin` |
+
+If the proxy cannot start, the declared variables stay withheld and no route is set. Your own `!` commands keep your full environment.
+
+What it does not cover: the proxy runs inside the senpi process as your OS user. A process running as the same user can still read senpi's startup environment (for example `/proc/<pid>/environ` on Linux or `ps eww` on macOS) or its memory. Only variables whose whole value equals a declared credential are replaced; a variable that embeds the value in a longer string (`Bearer <value>`, a URL carrying the key) is passed through unchanged, so declare that variable as well or remove it from the environment senpi starts with. The proxy keeps the value out of agent command environments and transcripts; it is not isolation from a same-user process.
+
 ## Running Untrusted or Unmonitored Work
 
 For untrusted repositories, generated code you do not intend to monitor closely, or unattended automation, run senpi in a contained environment. Use a container, VM, micro-VM, remote sandbox, or policy-controlled sandbox with only the files and credentials required for the task.

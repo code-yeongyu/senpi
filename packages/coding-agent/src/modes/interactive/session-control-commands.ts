@@ -10,6 +10,13 @@
 import { VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import { isSessionArchived, setSessionArchived } from "../../core/session-archived.ts";
+import {
+	parseSessionSettled,
+	readSessionSettled,
+	setSessionSettled,
+	settledFields,
+} from "../../core/session-settled.ts";
 import type {
 	AdmissionHoldReason,
 	QuestionRequest,
@@ -25,6 +32,7 @@ import {
 import { answerGetEntries } from "../rpc/get-entries-command.ts";
 import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
 import { describeRpcMethodClasses } from "../rpc/method-classes.ts";
+import { RPC_ERROR_INVALID_ARGUMENT } from "../rpc/rpc-error-types.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
 import { sessionUiAnswerLedger } from "../rpc/ui-answer-ledger.ts";
 import type { ControlAttachments } from "./session-control-attach.ts";
@@ -64,6 +72,8 @@ const TUI_CONTROL_COMMANDS = [
 	"get_messages",
 	"get_entries",
 	"set_session_name",
+	"set_session_archived",
+	"set_session_settled",
 	"subscribe",
 	"wake",
 	"extension_ui_response",
@@ -124,6 +134,23 @@ export async function runControlCommand(
 			session.setSessionName(name);
 			return success(id, type);
 		}
+		case "set_session_archived": {
+			if (typeof command.archived !== "boolean") return failure(id, type, "archived must be a boolean");
+			const { attachments } = context;
+			setSessionArchived(session.sessionManager, command.archived);
+			const change = { type: "session_archived_changed", archived: command.archived };
+			attachments.run(connection, () => attachments.writer.enqueue(attachments.handle, change));
+			return success(id, type);
+		}
+		case "set_session_settled": {
+			const parsed = parseSessionSettled({ settled: command.settled, by: command.by });
+			if (!parsed.ok) return { ...failure(id, type, parsed.error), errorCode: RPC_ERROR_INVALID_ARGUMENT };
+			const { attachments } = context;
+			setSessionSettled(session.sessionManager, parsed.value);
+			const change = { type: "session_settled_changed", ...settledFields(parsed.value) };
+			attachments.run(connection, () => attachments.writer.enqueue(attachments.handle, change));
+			return success(id, type);
+		}
 		case "subscribe": {
 			const cursor = typeof command.cursor === "number" ? command.cursor : undefined;
 			return success(id, type, { cursor: context.feed.subscribe(connection.id, cursor, connection.send) });
@@ -162,6 +189,10 @@ function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
 		attachments: 1,
 		// A release here never ends the terminal's own session.
 		retain_on_disconnect: true,
+		archived: isSessionArchived(manager),
+		...settledFields(readSessionSettled(manager)),
+		activity: session.isStreaming ? "running" : "idle",
+		...(session.model !== undefined ? { model: { provider: session.model.provider, id: session.model.id } } : {}),
 	};
 }
 

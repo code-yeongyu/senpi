@@ -22,6 +22,7 @@ import {
 	Strings,
 	session,
 	ThinkingLevel,
+	ThreadSettledBy,
 } from "./method-classes-schema-fields.ts";
 import { DELIVERY_RECORD_SCHEMAS } from "./method-classes-schema-delivery.ts";
 
@@ -64,6 +65,7 @@ const PROMPTING_SCHEMAS = {
 		clientMessageId: OptId,
 		clientTurnId: OptId,
 		expectedTurnId: OptId,
+		expectedLeafId: OptId,
 		toolBarrier: Opt(Type.Object({ id: Id, deadlineMs: Num })),
 		chainCount: Opt(ChainCount),
 	}),
@@ -94,7 +96,11 @@ const PROMPTING_SCHEMAS = {
 		graceMs: OptNum,
 		intent: Opt(literals("stop", "abort")),
 	}),
-	interrupt: session("interrupt", { turnId: OptId, intent: Opt(literals("stop", "abort")) }),
+	interrupt: session("interrupt", {
+		turnId: OptId,
+		intent: Opt(literals("stop", "abort")),
+		background: Opt(literals("stop")),
+	}),
 	hold_input: session("hold_input", {
 		inputId: Id,
 		revision: Num,
@@ -216,6 +222,8 @@ const BASH_AND_TREE_SCHEMAS = {
 	get_tree: session("get_tree", {}),
 	get_last_assistant_text: session("get_last_assistant_text", {}),
 	set_session_name: session("set_session_name", { name: Str }),
+	set_session_archived: session("set_session_archived", { archived: Bool }),
+	set_session_settled: session("set_session_settled", { settled: Bool, by: Opt(ThreadSettledBy) }),
 	record_user_activity: session("record_user_activity", { kind: Type.Literal("draft") }),
 	import_jsonl: session("import_jsonl", { inputPath: PathStr, cwdOverride: OptPath }),
 	get_messages: session("get_messages", {}),
@@ -227,7 +235,7 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	get_loaded_surfaces: session("get_loaded_surfaces", {}),
 	get_project_trust: session("get_project_trust", {}),
 	set_project_trust: session("set_project_trust", {
-		choice: literals("trust", "trust_parent", "do_not_trust"),
+		choice: literals("trust", "trust_parent", "do_not_trust", "no_inherit"),
 		expectedCwd: OptStr,
 	}),
 	get_project_settings: session("get_project_settings", {}),
@@ -238,6 +246,25 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 		content: Str,
 		ifEtag: Type.Union([Id, Type.Null()]),
 		expectedCwd: OptStr,
+	}),
+	get_project_mcp_servers: session("get_project_mcp_servers", {}),
+	set_project_mcp_servers: session("set_project_mcp_servers", {
+		patch: Type.Unknown(),
+		ifEtag: Type.Union([Id, Type.Null()]),
+		expectedCwd: OptStr,
+	}),
+	read_project_skill_file: session("read_project_skill_file", { skill: Id }),
+	write_project_skill_file: session("write_project_skill_file", {
+		skill: Id,
+		content: Str,
+		ifEtag: Type.Union([Id, Type.Null()]),
+		expectedCwd: OptStr,
+	}),
+	read_user_skill_file: session("read_user_skill_file", { skill: Id }),
+	write_user_skill_file: session("write_user_skill_file", {
+		skill: Id,
+		content: Str,
+		ifEtag: Type.Union([Id, Type.Null()]),
 	}),
 	extension_request: session("extension_request", { name: Id, data: Opt(Type.Unknown()) }),
 	"eval_cells.list": session("eval_cells.list", {}),

@@ -11,6 +11,7 @@ import {
 } from "../../bridge/protocol.ts";
 import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
 import type { KernelPreludePlan } from "../shared/kernel-prelude-plan.ts";
+import { type AttestKernelSpawn, attestKernelChild } from "../shared/session-spawn-attestation.ts";
 import { readKernelCpuTime } from "../shared/process-cpu.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
@@ -50,6 +51,8 @@ export interface PythonTransportOptions {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** Attests the interpreter process to the session it runs for (senpi#6972). */
+	readonly attestSpawn?: AttestKernelSpawn;
 	/** The kill guard (senpi#5349): the host's protected pids; absent = the guard is off for this kernel. */
 	readonly killGuard?: { readonly protectedPids: readonly number[] };
 	readonly startupTimeoutMs: number;
@@ -141,6 +144,7 @@ export class PythonKernelTransport {
 			},
 		};
 		const child = (options.spawnProcess ?? defaultSpawn)(spawnOptions);
+		attestKernelChild(options.attestSpawn, child);
 		const transport = new PythonKernelTransport(options, child);
 		try {
 			await transport.#initialize();

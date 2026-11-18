@@ -102,6 +102,7 @@ describe("terminal extension pulse gating", () => {
 			setActiveTools: (next: string[]) => {
 				activeTools = next;
 			},
+			isLoopRemote: () => false,
 		} as unknown as ExtensionAPI;
 		registerTerminalExtension(pi);
 		const statuses: Array<string | undefined> = [];

@@ -137,6 +137,7 @@ describe("builtin hooks UserPromptSubmit adapter", () => {
 			expect(stdin).toMatchObject({
 				cwd: harness.tempDir,
 				event: "UserPromptSubmit",
+				hook_event_name: "UserPromptSubmit",
 				permission_mode: "default",
 				prompt: "ship it",
 				session_id: harness.session.sessionId,

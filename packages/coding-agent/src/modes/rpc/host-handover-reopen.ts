@@ -1,5 +1,8 @@
 import { existsSync } from "node:fs";
-import { createHostDaemonPaths } from "./host-daemon-paths.ts";
+import { readdir } from "node:fs/promises";
+import { processIsLive } from "../../utils/process-identity.ts";
+import { createHostDaemonPaths, generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
+import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import {
 	clearHandoverParkedSession,
 	clearInheritedParkedSession,
@@ -8,6 +11,7 @@ import {
 	readHandoverParkedSessions,
 } from "./host-handover-parked.ts";
 import { type ResidentWriter, residentWriterProbe } from "./host-handover-resident-writer.ts";
+import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 
 /**
@@ -26,6 +30,9 @@ const HANDOVER_PARKED_REOPEN_BUDGET_MS = 120_000;
 const HANDOVER_PARKED_REOPEN_POLL_MS = 250;
 const HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS = 8;
 const HANDOVER_PARKED_REOPEN_QUIET_STREAK = 8;
+// Past the quiet streak or the budget the watch only waits on a predecessor that is still draining (senpi#6988): a
+// busy turn can hold its park for minutes, and a slower poll keeps that wait cheap (senpi#3515).
+const HANDOVER_PARKED_PREDECESSOR_POLL_MS = 2_000;
 
 /**
  * The host the watch reopens into. `shouldReopen` returns false once that host is draining for a
@@ -49,7 +56,8 @@ export async function reopenHandoverParkedSessions(
 	socket: string,
 	holder?: ReopenHolder,
 ): Promise<void> {
-	const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
+	const paths = createHostDaemonPaths({ socket, agentDir });
+	const daemonDir = paths.dir;
 	// The predecessor parks its retained sessions AFTER this generation binds the public socket (its
 	// drain fires on detecting supersession), so the record is not necessarily present at startup,
 	// and a session still busy at the drain start parks only after its turn settles. Returning on the
@@ -71,6 +79,8 @@ export async function reopenHandoverParkedSessions(
 	const writerAlive = residentWriterProbe();
 	let emptyStreak = 0;
 	let sawAnyPark = false;
+	let waitedOnPredecessor = false;
+	let finalPass = false;
 	for (;;) {
 		// A draining predecessor must not reopen into its own registry a session it just parked for
 		// its successor: stop consuming the record and leave every entry for the next generation
@@ -85,10 +95,37 @@ export async function reopenHandoverParkedSessions(
 		const remaining = (await inheritedParks(daemonDir, holder, writerAlive)).length;
 		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
 		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
-		if (sawAnyPark && emptyStreak >= HANDOVER_PARKED_REOPEN_QUIET_STREAK) return;
-		if (Date.now() >= deadline) return;
-		await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_REOPEN_POLL_MS));
+		const settled = (sawAnyPark && emptyStreak >= HANDOVER_PARKED_REOPEN_QUIET_STREAK) || Date.now() >= deadline;
+		if (!settled) {
+			await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_REOPEN_POLL_MS));
+			continue;
+		}
+		// A session still mid-turn when the drain began parks only once its turn settles, which can be long after the
+		// record went quiet and after the budget (senpi#6988): neither may end the watch while the predecessor runs.
+		if (await predecessorAlive(paths, holder?.hostInstance)) {
+			waitedOnPredecessor = true;
+			await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_PREDECESSOR_POLL_MS));
+			continue;
+		}
+		// The predecessor writes its last park before it exits: one more pass after it is gone picks that up.
+		if (waitedOnPredecessor && !finalPass) {
+			finalPass = true;
+			continue;
+		}
+		return;
 	}
+}
+
+/** Whether another generation of this endpoint (a draining predecessor) still has a live supervisor or host child. */
+async function predecessorAlive(paths: HostDaemonPaths, self: string | undefined): Promise<boolean> {
+	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
+		if (instanceId === self) continue;
+		const generation = generationPaths(paths, instanceId);
+		const record = parseJson(await readFileOrUndefined(generation.pidFile).catch(() => undefined));
+		if (typeof record?.pid === "number" && processIsLive(record.pid)) return true;
+		if ((await hostChildAlive(generation)) === true) return true;
+	}
+	return false;
 }
 
 /**

@@ -16,7 +16,7 @@ import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
-import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
+import type { DynamicSystemPromptPart, PromptSurface } from "../dynamic-prompt/build.ts";
 import {
 	createEventBus,
 	type EventBus,
@@ -91,6 +91,7 @@ import type {
 	ExtensionEvent,
 	ExtensionFlag,
 	ExtensionMode,
+	ExtensionAPI,
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
@@ -147,6 +148,7 @@ import {
 	type ToolEventDispatchOptions,
 	twoSidedExtensions,
 } from "./two-sided-forwarding.ts";
+import { combinedToolCallSignal } from "./tool-call-signal.ts";
 
 const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
 	"offload",
@@ -166,6 +168,7 @@ const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRunt
 	"getImageSettings",
 	"getRegisteredMcpServers",
 	"extensionConnectsMcpServers",
+	"signal",
 ]);
 
 /** Session identity a context of a runner without a session does not have; dispatchers treat its absence as context-free. */
@@ -179,6 +182,23 @@ export interface LoopHookCallFacts {
 	/** `pi.sendMessage` from the call's work: the hand carries the message back to the loop, which sends it there. */
 	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
 	/** `ctx.ui.notify` during the call: the hand carries the notice back to the loop, which shows it there. */
+	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
+	/** `pi.appendEntry` from the call's work: the loop appends the entry to its own session (session port, write). */
+	appendEntry(...args: Parameters<ExtensionRuntime["appendEntry"]>): void;
+	/** `pi.sendUserMessage` from the call's work: the loop sends it as its own session's (session port, write). */
+	sendUserMessage(...args: Parameters<ExtensionRuntime["sendUserMessage"]>): void;
+	/** `ctx.hasPendingMessages()` during the call: whether this call has sent a user message the loop will deliver. */
+	hasPendingMessages(): boolean;
+}
+
+/**
+ * Where a hand runtime's loop-side effects from work outside any live loop-hook call go (brain/hand split H3): to the
+ * brain that owns the runtime's scope, as durable wakes, delivered there as a local session would deliver them.
+ */
+export interface LoopWakeRoute {
+	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
+	sendUserMessage(...args: Parameters<ExtensionAPI["sendUserMessage"]>): void;
+	appendEntry(...args: Parameters<ExtensionRuntime["appendEntry"]>): void;
 	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
 }
 
@@ -660,6 +680,7 @@ export class ExtensionRunner {
 	private engineTurnsHeldFn: () => boolean = () => false;
 	private noteHeldWakeFn: (source: string) => void = () => {};
 	private pauseActions: Pick<ExtensionContextActions, "getPauseState" | "fenceRun" | "releaseRunFence"> = {};
+	private registerRunBackgroundJobFn: ExtensionContextActions["registerRunBackgroundJob"];
 	private questionInput: ExtensionContextActions["questionInput"];
 	private personAnswerPending = false;
 	private isProjectTrustedFn: () => boolean = () => true;
@@ -728,6 +749,8 @@ export class ExtensionRunner {
 	private executeToolFn: ExtensionContextActions["executeTool"];
 	private offloadFn: ExtensionContextActions["offload"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
+	private isModelIssuedToolCallFn: (toolCallId: string) => boolean = () => false;
+	private promptSurfaceOfFn: (toolCallId: string) => PromptSurface | undefined = () => undefined;
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
@@ -789,16 +812,46 @@ export class ExtensionRunner {
 		 * still deliver it): the call's sender, which carries it to the loop. None outside any call's work.
 		 */
 		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
+		/** Where `pi.appendEntry` and `pi.sendUserMessage` go from a loop-hook call's work, routed as `loopHookSend`. */
+		readonly loopHookWrite?: () => Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
+		/**
+		 * A hand's route to the brain that owns its scope (H3): `pi.sendMessage`, `pi.sendUserMessage` and `pi.appendEntry`
+		 * from work no loop-hook call started (a background command, a monitor, a detached eval cell, a subagent) go there,
+		 * and `pi.isLoopRemote()` answers true. Without it they stay loop-side and unbound.
+		 */
+		readonly loopWake?: LoopWakeRoute;
+		/** Backs `ExtensionToolContext.issuedByModel` on a runtime without a session (a hand's calls from the brain). */
+		readonly isModelIssuedToolCall?: (toolCallId: string) => boolean;
+		/** Backs `ExtensionToolContext.promptSurface` on a runtime without a session: the brain's, sent with the call. */
+		readonly promptSurfaceOf?: (toolCallId: string) => PromptSurface | undefined;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
+		if (facts.isModelIssuedToolCall !== undefined) this.isModelIssuedToolCallFn = facts.isModelIssuedToolCall;
+		if (facts.promptSurfaceOf !== undefined) this.promptSurfaceOfFn = facts.promptSurfaceOf;
 		this.loopHookCallFn = facts.loopHookCall;
 		const send = facts.loopHookSend;
-		if (send !== undefined)
+		const wake = facts.loopWake;
+		if (send !== undefined || wake !== undefined)
 			this.runtime.sendMessage = (message, options) => {
-				const sendMessage = send();
+				const sendMessage = send?.() ?? wake?.sendMessage;
 				if (sendMessage === undefined) throw loopSideUnbound("sendMessage");
 				sendMessage(message, options);
 			};
+		const write = facts.loopHookWrite;
+		if (write !== undefined || wake !== undefined) {
+			// A loop-hook call's work writes through that call; any other work (or none bound) through the scope's wake route.
+			this.runtime.appendEntry = (customType, data) => {
+				const appendEntry = write?.()?.appendEntry ?? wake?.appendEntry;
+				if (appendEntry === undefined) throw loopSideUnbound("appendEntry");
+				appendEntry(customType, data);
+			};
+			this.runtime.sendUserMessage = (content, options) => {
+				const sendUserMessage = write?.()?.sendUserMessage ?? wake?.sendUserMessage;
+				if (sendUserMessage === undefined) throw loopSideUnbound("sendUserMessage");
+				sendUserMessage(content, options);
+			};
+		}
+		if (wake !== undefined) this.runtime.isLoopRemote = () => true;
 		this.runtime.getActiveTools = () => this.getActiveTools();
 		this.runtime.setActiveTools = () => {};
 		if (facts.getLoadedHookSources === undefined) return;
@@ -881,6 +934,7 @@ export class ExtensionRunner {
 			fenceRun: contextActions.fenceRun,
 			releaseRunFence: contextActions.releaseRunFence,
 		};
+		this.registerRunBackgroundJobFn = contextActions.registerRunBackgroundJob;
 		this.questionInput = contextActions.questionInput;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
@@ -921,6 +975,8 @@ export class ExtensionRunner {
 		this.onUserActivityFn = contextActions.onUserActivity;
 		this.executeToolFn = contextActions.executeTool;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
+		this.isModelIssuedToolCallFn = contextActions.isModelIssuedToolCall ?? (() => false);
+		this.promptSurfaceOfFn = () => this.getSystemPromptOptionsFn().surface;
 		// Servers registered from now on reach the extension that connects them right away. Servers
 		// registered during loading are read on session_start.
 		this.runtime.mcpServers.setChangeListener(() => {
@@ -1462,9 +1518,18 @@ export class ExtensionRunner {
 		});
 	}
 
+	/**
+	 * One loop-side event a hosted loop forwarded to this hand (senpi#5898): only the extensions `only` accepts run it,
+	 * serially under the host's event handler budget, with failures reported as in a session.
+	 */
+	emitForwardedLoopEvent(event: RunnerEmitEvent, only: (extensionPath: string) => boolean): Promise<undefined> {
+		return this.dispatchLifecycle(event, only);
+	}
+
 	/** Agent lifecycle events: every handler runs, serially, under the host budget (senpi#3650). */
-	private dispatchLifecycle(event: RunnerEmitEvent): Promise<undefined> {
-		const entries = flattenHandlers(this.extensions, event.type);
+	private dispatchLifecycle(event: RunnerEmitEvent, only?: (extensionPath: string) => boolean): Promise<undefined> {
+		const all = flattenHandlers(this.extensions, event.type);
+		const entries = only === undefined ? all : all.filter((entry) => only(entry.path));
 		return this.walkHandlers<undefined>({
 			event: event.type,
 			length: entries.length,
@@ -1799,6 +1864,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				runner.pauseActions.releaseRunFence?.(runRef);
 			},
+			registerRunBackgroundJob: (job) => {
+				runner.assertActive();
+				return runner.registerRunBackgroundJobFn?.(job) ?? (() => {});
+			},
 			isProjectTrusted: () => {
 				runner.assertActive();
 				return runner.isProjectTrustedFn();
@@ -2001,6 +2070,7 @@ export class ExtensionRunner {
 					sessionManager: { configurable: true, enumerable: true, value: call.sessionManager },
 					signal: { configurable: true, enumerable: true, value: call.signal },
 					isIdle: { configurable: true, enumerable: true, value: call.isIdle },
+					hasPendingMessages: { configurable: true, enumerable: true, value: call.hasPendingMessages },
 					ui: { configurable: true, enumerable: true, value: withLoopNotices(context.ui, call.notify) },
 				});
 		}
@@ -2021,6 +2091,12 @@ export class ExtensionRunner {
 		const runner = this;
 		// createContext() returns a fresh object, so adding properties does not affect other contexts.
 		return Object.defineProperties(baseContext as ExtensionToolContext, {
+			issuedByModel: { value: runner.isModelIssuedToolCallFn(toolCallId) },
+			promptSurface: {
+				get() {
+					return runner.promptSurfaceOfFn(toolCallId);
+				},
+			},
 			tools: {
 				get() {
 					runner.assertActive();
@@ -2535,10 +2611,21 @@ export class ExtensionRunner {
 				own,
 				"tool_call",
 				options,
+				// The forwarder carries the event only, never the call's signal (senpi#6679 L1): a handler served on the
+				// loop side of a forward sees the loop-hook signal, the exception ToolEventDispatchOptions.signal documents.
 				(index) => async () => options.forward?.toolCall(ext.path, index, event),
 			);
 			for (const handler of handlers) {
-				const hookRun = this.beginToolHookRun(this.createContext(), {
+				const baseContext = this.createContext();
+				if (options.signal !== undefined) {
+					const callSignal = combinedToolCallSignal(options.signal, baseContext.signal);
+					Object.defineProperty(baseContext, "signal", {
+						get: () => callSignal,
+						configurable: true,
+						enumerable: true,
+					});
+				}
+				const hookRun = this.beginToolHookRun(baseContext, {
 					hookName: "PreToolUse",
 					toolName: event.toolName,
 					toolCallId: event.toolCallId,
@@ -2710,6 +2797,11 @@ export class ExtensionRunner {
 		}
 
 		return headers;
+	}
+
+	/** Paths of the extensions the loader shipped: in-tree builtins, bundled modules and generated global-default shims. */
+	getBuiltinProvenancePaths(): Set<string> {
+		return new Set(this.extensions.filter((ext) => ext.sourceInfo.source === "builtin").map((ext) => ext.path));
 	}
 
 	/** Use the loader's provenance, including bundled modules and generated global-default shims. */

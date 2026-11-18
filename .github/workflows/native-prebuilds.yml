@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: ''
+      full_ci:
+        description: 'Set by ci-full-label.yml: on a pull request labelled run-full-ci, this call builds every target'
+        required: false
+        type: boolean
+        default: false
     outputs:
       ready:
         description: "'true' when every target's prebuild was reused or built in this run (see job ready)"
@@ -59,9 +64,12 @@ on:
 permissions:
   contents: read
 
+# A newer head of a pull request cancels its superseded run. Every other run (a push to main, a release calling this
+# workflow, a dispatch) keys on its own commit and is never cancelled, so each merge keeps its own macOS/Windows build
+# result. The workflow name keeps a run-full-ci label call (ci-full-label.yml) apart from the PR's own run (senpi#6834).
 concurrency:
-  group: native-prebuilds-${{ github.ref }}
-  cancel-in-progress: true
+  group: native-prebuilds-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_ZIGBUILD_VERSION: 0.23.0
@@ -163,9 +171,22 @@ jobs:
           path: .native-prebuild-cache/native-prebuild-linux-arm64
           key: ${{ fromJSON(steps.keys.outputs.keys)['native-prebuild-linux-arm64'] }}
 
+      # A pull request builds the Linux targets only, unless it carries the run-full-ci label (scripts/ci-platform-scope.mjs,
+      # senpi#6834). The label counts only in the run ci-full-label.yml calls (full_ci), so a labelled PR's own path-filtered
+      # run stays on Linux and the darwin/win32 targets build once per push. Only a pull request runs the classifier: a
+      # release checks out its tag, whose copy may predate it, and always builds every target.
+      - name: Platform scope
+        id: scope
+        if: github.event_name == 'pull_request'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_LABELS: ${{ inputs.full_ci && toJSON(github.event.pull_request.labels.*.name) || '[]' }}
+        run: node scripts/ci-platform-scope.mjs classify --event "$EVENT_NAME" --labels "$PR_LABELS"
+
       - name: Select targets to reuse or build
         id: select
         env:
+          FULL: ${{ steps.scope.outputs.full || 'true' }}
           KEYS: ${{ steps.keys.outputs.keys }}
           RUSTC: ${{ steps.keys.outputs.rustc }}
           # actions/cache can match the primary key as a prefix; only an entry stored under exactly the
@@ -491,7 +512,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          export RUSTC_VV="$(rustc -vV)"
+          RUSTC_VV="$(rustc -vV)"
+          export RUSTC_VV
           node scripts/native-prebuild-reuse.mjs record --artifact-dir "${RUNNER_TEMP}/native-prebuild-artifact"
 
       - name: Upload native prebuild

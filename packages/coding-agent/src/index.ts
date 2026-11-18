@@ -1,4 +1,6 @@
 // Core session management
+export { attachHostTools, HOST_TOOL_ROUTE_CHANNEL, HOST_TOOL_ROUTE_UNAVAILABLE } from "./host-tools.ts";
+export { showHtmlPageTool, type ShowHtmlPageDetails, writeHtmlPage } from "./extensions/html-render/tool.ts";
 export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./core/extensions/secret-input.ts";
 export type { RpcSecretInputSettledEvent } from "./modes/rpc/rpc-types.ts";
 export type {
@@ -91,6 +93,7 @@ export {
 	type KillGuardRuntime,
 	releaseKillGuardRuntime,
 } from "./core/kill-guard/runtime.ts";
+export { CREDENTIAL_PLACEHOLDER, withCredentialProxy } from "./core/credential-proxy/runtime.ts";
 // Job widgets: hosts register background jobs and their widget-author model route
 export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {
@@ -339,6 +342,14 @@ export {
 	readOwnFootprint,
 	readProcessFootprint,
 } from "./core/process-footprint.ts";
+// Which session spawned a process, attested by its spawner (senpi#6972)
+export {
+	attestSessionSpawn,
+	type PidSession,
+	resolvePidSession,
+	type SessionSpawnAttestation,
+	sessionSpawnsDir,
+} from "./core/session-spawn-attestation.ts";
 export {
 	findReservedKeywordRuns,
 	findReservedKeywordSpans,
@@ -449,6 +460,16 @@ export {
 } from "./core/skills.ts";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
+// The device a session's tools run on (registerDeviceMachine; OMO_TOOLS_VIA_DAEMON).
+export type {
+	ExecRequest as MachineExecRequest,
+	ExecResult as MachineExecResult,
+	MachineOps,
+	OpContext,
+} from "@code-yeongyu/senpi-machine-ops";
+export { DeviceMachineConflictError } from "./core/extensions/types.ts";
+export { DeviceUnavailableError } from "./core/tools/bash.ts";
+export { createToolMachine, type ToolMachine, type ToolPathPolicy } from "./core/tools/machine.ts";
 // Tools
 export {
 	type BashOperations,

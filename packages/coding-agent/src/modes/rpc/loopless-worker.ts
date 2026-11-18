@@ -2,7 +2,8 @@ import { parentPort } from "node:worker_threads";
 import "../../windows-power-throttling-startup.ts";
 import { isBunBinary } from "../../config.ts";
 import type { HostToLooplessWorker, LooplessWorkerToHost } from "./loopless-worker-protocol.ts";
-import { createLooplessRuntimeFactory, type LooplessRuntime } from "./runtime-factory-loopless.ts";
+import type { LooplessRuntime } from "./loopless-runtime.ts";
+import { createLooplessRuntimeFactory } from "./runtime-factory-loopless.ts";
 
 if (isBunBinary) {
 	const { registerBunRuntimeModules } = await import("../../bun/runtime-modules.ts");

@@ -180,7 +180,8 @@ The result lists every matched session (`<label> <status> (<n> attached, model <
 status change arrives as `rpc <label> status <from> -> <to> (<cause>, by <by>) seq=<n>` and each effect
 receipt as `rpc <label> effect <kind> <id tail> <state> (<disposition|reason>)`. `target` is
 `"children"` (matched by the host, so children spawned after arming appear), `"all"` (every session of
-every host and terminal endpoint you run) or one session id, path or `st_` task id. `events` names any
+every host and terminal endpoint you run) or one session id, path or `st_` task id; a session on another
+device is `<device>/<session>` (e.g. `"laptop/abc123"`). `events` names any
 RPC record kinds (default `["session_status"]`, children add `"effect_status"`); `"all"` adds content,
 with streaming collapsed to `rpc <label> streaming +<n> deltas (last: "...")` per session per 2 s and
 `exclude` dropping kinds. Content is a `mirror` opt-in: the monitor never attaches, so the session's
