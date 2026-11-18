@@ -3,11 +3,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
 import {
 	MAX_HANDED_PAGE_CHARACTERS,
 	MAX_HANDED_PAGES_CHARACTERS,
 } from "../../src/core/extensions/builtin/html-render/handed-pages.ts";
-import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
 import { createShowHtmlPageTool } from "../../src/core/extensions/builtin/html-render/tool.ts";
 import type { ExtensionAPI, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
@@ -199,6 +199,60 @@ describe("senpi#6907: a session's handed pages together stay under the RPC line 
 		const { result } = await session(tempDir).show("call-big-mention", html);
 
 		expect(result.details.html).toBe(html);
+	});
+});
+
+describe("senpi#6924: the ledger of not-yet-recorded pages lives and ends with its session", () => {
+	let tempDir: string;
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-6924-"));
+	});
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+	const pagesPerBudget = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize);
+
+	/** Hands pages in one session without recording their results, until the budget refuses one. */
+	async function fillWithUnrecordedPages(show: ReturnType<typeof session>["show"]) {
+		for (let index = 0; index < pagesPerBudget; index++) {
+			const { result } = await show(`fill-${index}`, pageInlinedTo(tempDir, `fill-${index}`, pageSize).html);
+			expect(result.details.imagesInlined).toBe(true);
+		}
+		const { result } = await show("refused", pageInlinedTo(tempDir, "refused", pageSize).html);
+		expect(result.details.imagesInlined).toBe(false);
+	}
+
+	it.each(["agent_end", "session_shutdown"])(
+		"forgets pages handed but never recorded once %s fires, without another show_html_page call",
+		async (event) => {
+			const extension = loadExtension();
+			const { show } = session(tempDir, extension.tool);
+			await fillWithUnrecordedPages(show);
+
+			extension.emit(event);
+
+			const { result } = await show("after", pageInlinedTo(tempDir, "after", pageSize).html);
+			expect(result.details.imagesInlined).toBe(true);
+		},
+	);
+
+	it("keeps no ledger across session runtimes on one host: a new runtime for the same session starts empty", async () => {
+		const sessionId = randomUUID();
+		const first = loadExtension();
+		await fillWithUnrecordedPages(session(tempDir, first.tool, sessionId).show);
+
+		const runtimes = Array.from({ length: 10 }, () => loadExtension());
+		const outcomes = await Promise.all(
+			runtimes.map(async (runtime, index) => {
+				const { show } = session(tempDir, runtime.tool, sessionId);
+				const { result } = await show(`next-${index}`, pageInlinedTo(tempDir, `next-${index}`, pageSize).html);
+				return result.details.imagesInlined;
+			}),
+		);
+
+		expect(outcomes.every(Boolean)).toBe(true);
 	});
 });
 
