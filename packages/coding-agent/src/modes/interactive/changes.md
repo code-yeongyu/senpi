@@ -1,3 +1,39 @@
+## 2026-11-15 - Terminal control endpoint lists the settled flag (senpi#6768)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`, `session-control-attach.ts`: the terminal's control endpoint accepts `set_session_settled`, and its session row and status carry `settled` / `settledBy`.
+
+### Why
+
+- A terminal session is listed like a host session.
+
+### Why an extension could not handle it
+
+- The control endpoint is host code.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files.
+
+## 2026-11-14 - Terminal control endpoint lists archived, activity and model (senpi#6677)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`, `session-control-attach.ts`: the terminal's control endpoint accepts `set_session_archived` and its session row carries the three fields.
+
+### Why
+
+- A terminal session is listed like a host session.
+
+### Why an extension could not handle it
+
+- The control endpoint is host code.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files.
+
 ## 2026-11-14 - The terminal control endpoint's `interrupt` takes `background: "stop"`
 
 ### What changed
