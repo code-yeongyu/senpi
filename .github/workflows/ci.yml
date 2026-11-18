@@ -171,10 +171,12 @@ jobs:
 
       - name: Install system dependencies
         timeout-minutes: 5
-        run: |
-          bash scripts/install-ci-system-deps.sh \
-            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+        uses: ./.github/actions/install-ci-system-deps
+        with:
+          packages: libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+
+      - name: Link fd
+        run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -323,10 +325,12 @@ jobs:
 
       - name: Install system dependencies
         timeout-minutes: 5
-        run: |
-          bash scripts/install-ci-system-deps.sh \
-            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+        uses: ./.github/actions/install-ci-system-deps
+        with:
+          packages: libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+
+      - name: Link fd
+        run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -485,7 +489,9 @@ jobs:
 
       - name: Install system dependencies
         timeout-minutes: 5
-        run: bash scripts/install-ci-system-deps.sh ripgrep
+        uses: ./.github/actions/install-ci-system-deps
+        with:
+          packages: ripgrep
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -1467,10 +1473,12 @@ jobs:
 
       - name: Install system dependencies
         timeout-minutes: 5
-        run: |
-          bash scripts/install-ci-system-deps.sh \
-            fd-find ripgrep
-          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+        uses: ./.github/actions/install-ci-system-deps
+        with:
+          packages: fd-find ripgrep
+
+      - name: Link fd
+        run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -1529,10 +1537,12 @@ jobs:
 
       - name: Install system dependencies
         timeout-minutes: 5
-        run: |
-          bash scripts/install-ci-system-deps.sh \
-            fd-find ripgrep
-          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+        uses: ./.github/actions/install-ci-system-deps
+        with:
+          packages: fd-find ripgrep
+
+      - name: Link fd
+        run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts

@@ -23,7 +23,7 @@ import { type NameFolding, refuseNamesThatFold } from "./name-folding.ts";
 import { STAGED_PAYLOADS, stagedName, stagedNames, stagedTwice } from "./staged-layout.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
-import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
+import { checkoutRefusal, checkoutVerdict } from "./repository-check.ts";
 import { moveLockKey } from "./session-lock.ts";
 
 export { MoveRefusedError } from "./repository-check.ts";
@@ -179,9 +179,12 @@ export async function importMovedSession(
 	// Before the repository check: an import into a folder this move was not readied for must not decline the move,
 	// which that check does, because the move still lands in the folder its `prepare` checked (senpi#6435).
 	await options.ledger.requireReadiedFor(manifest.moveId, targetCwd);
-	if (!(await isCheckoutOfRepository(targetCwd, manifest.repository, options.readIdentity))) {
+	const verdict = await checkoutVerdict(targetCwd, manifest.repository, options.readIdentity);
+	if (verdict !== "same") {
+		// A missing folder declines the move as a mismatch does: a sender settles from this record, and gives the session
+		// back only on a decline. Only the refusal's code tells the two apart.
 		if (!(await landed())) await options.ledger.decline(manifest.moveId, "repository");
-		throw new MoveRefusedError(targetCwd, manifest.sourceCwd);
+		throw checkoutRefusal(verdict, targetCwd, manifest.sourceCwd);
 	}
 	try {
 		await options.ledger.beginReceive(manifest.moveId, target, { cwd: targetCwd });

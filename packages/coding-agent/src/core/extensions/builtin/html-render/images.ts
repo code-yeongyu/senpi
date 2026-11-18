@@ -61,23 +61,82 @@ interface ImageReference {
 	readonly path: string;
 }
 
-// What may precede the opening quote of a path the page loads: an attribute or property
-// (`src=`, `srcset=`, `poster=`, `href=`, `img.src = `) or a CSS `url(`.
-const LOADING_CONTEXT = /(?:\b(?:src|srcset|poster|href)\s*=\s*|url\(\s*)$/i;
+// Elements whose body is not markup: a <script> or <style> body is code the page runs, which may load any
+// path it names; a <textarea> or <title> body is text the page only shows.
+const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
+const TAG_START = /<\/?([a-z][^\s/>]*)/iy;
+
+/** The end of the tag whose attributes start at `from`, skipping quoted values, or -1 when it never ends. */
+const tagEnd = (html: string, from: number) => {
+	let at = from;
+	while (at !== -1 && at < html.length) {
+		const char = html[at];
+		if (char === ">") return at + 1;
+		at = char === '"' || char === "'" ? after(html, char, at + 1) : at + 1;
+	}
+	return -1;
+};
 
 /**
- * The absolute image paths the page loads: an unquoted url(), or a quoted value after src=, url( and the
- * like. A path only named in text or a code sample is no reference: it is never read and stays as written.
+ * The spans of the page that can load a path, in order: every tag (its attributes, an inline handler or
+ * style included) and every <script> or <style> body, where a path may be data the script assigns later.
+ * Text, <code> and <pre> samples, <textarea> and <title> bodies and comments are only shown, never loaded.
  */
-const findLocalImages = (html: string): ImageReference[] =>
-	Array.from(html.matchAll(LOCAL_IMAGE_PATTERN)).flatMap((match) => {
-		const quoted = match.indices?.[2];
-		const span = quoted ?? match.indices?.[3];
-		if (!span) return [];
-		if (quoted !== undefined && !LOADING_CONTEXT.test(html.slice(Math.max(0, match.index - 40), match.index)))
-			return [];
-		return [{ start: span[0], end: span[1], path: html.slice(span[0], span[1]) }];
-	});
+const loadingSpans = (html: string): (readonly [number, number])[] => {
+	const spans: (readonly [number, number])[] = [];
+	const lower = html.toLowerCase();
+	let at = 0;
+	while (at < html.length) {
+		const open = html.indexOf("<", at);
+		if (open === -1) break;
+		if (html.startsWith("<!--", open)) {
+			at = after(html, "-->", open + 4);
+			if (at === -1) break;
+			continue;
+		}
+		TAG_START.lastIndex = open;
+		const name = TAG_START.exec(html);
+		if (!name) {
+			at = open + 1;
+			continue;
+		}
+		const end = tagEnd(html, TAG_START.lastIndex);
+		spans.push([open, end === -1 ? html.length : end]);
+		if (end === -1) break;
+		at = end;
+		const element = name[1]?.toLowerCase() ?? "";
+		if (html[open + 1] === "/" || !RAW_TEXT_ELEMENTS.has(element)) continue;
+		const close = lower.indexOf(`</${element}`, end);
+		const bodyEnd = close === -1 ? html.length : close;
+		if (element === "script" || element === "style") spans.push([end, bodyEnd]);
+		at = bodyEnd;
+	}
+	return spans;
+};
+
+/**
+ * The absolute image paths the page loads: a quoted path or url() inside a tag or a <script> or <style>
+ * body, such as `src="/abs/x.png"` or script data like `{ src: "/abs/x.png" }` and path arrays. A path only
+ * named in text or a <code>/<pre> sample is no reference: it is never read and stays as written.
+ */
+const findLocalImages = (html: string): ImageReference[] => {
+	const spans = loadingSpans(html);
+	const pattern = new RegExp(LOCAL_IMAGE_PATTERN.source, LOCAL_IMAGE_PATTERN.flags);
+	const references: ImageReference[] = [];
+	let span = 0;
+	for (let match = pattern.exec(html); match !== null; match = pattern.exec(html)) {
+		while (span < spans.length && (spans[span]?.[1] ?? 0) <= match.index) span += 1;
+		const loads = (spans[span]?.[0] ?? Number.POSITIVE_INFINITY) <= match.index;
+		const path = match.indices?.[2] ?? match.indices?.[3];
+		if (!loads || path === undefined) {
+			// A quoted mention may have swallowed the start of a real reference: look again one character on.
+			pattern.lastIndex = match.index + 1;
+			continue;
+		}
+		references.push({ start: path[0], end: path[1], path: html.slice(path[0], path[1]) });
+	}
+	return references;
+};
 
 const filePathFor = (reference: string) =>
 	/^[a-z]:/i.test(reference) ? reference.replaceAll("\\\\", "\\") : reference;

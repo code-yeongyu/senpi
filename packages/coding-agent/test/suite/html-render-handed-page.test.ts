@@ -3,12 +3,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
 import {
 	MAX_HANDED_PAGE_CHARACTERS,
 	MAX_HANDED_PAGES_CHARACTERS,
-	showHtmlPageTool,
+	createShowHtmlPageTool,
 } from "../../src/core/extensions/builtin/html-render/tool.ts";
-import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
 
 // senpi#6899, senpi#6907: the page handed to the host in `details` rides every RPC record that carries
@@ -19,12 +20,12 @@ import { MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
 const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const DATA_PREFIX = "data:image/png;base64,";
 
-type Result = Awaited<ReturnType<typeof showHtmlPageTool.execute>>;
+type ShowHtmlPageTool = ReturnType<typeof createShowHtmlPageTool>;
+type Result = Awaited<ReturnType<ShowHtmlPageTool["execute"]>>;
 
 /** A session that records each returned result the way the agent session appends it. */
-function session(cwd: string) {
+function session(cwd: string, tool: ShowHtmlPageTool = createShowHtmlPageTool(), sessionId = randomUUID()) {
 	const entries: unknown[] = [];
-	const sessionId = randomUUID();
 	const ctx = {
 		cwd,
 		hasUI: false,
@@ -40,11 +41,25 @@ function session(cwd: string) {
 			message: { role: "toolResult", toolCallId, toolName: "show_html_page", ...result, isError: false },
 		});
 	const show = async (toolCallId: string, html: string) => {
-		const result = await showHtmlPageTool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, ctx);
+		const result = await tool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, ctx);
 		const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
 		return { result, text };
 	};
 	return { ctx, entries, record, show };
+}
+
+/** Loads the extension the way a session runtime does: one instance, its tool and its lifecycle handlers. */
+function loadExtension() {
+	let tool: ShowHtmlPageTool | undefined;
+	const handlers = new Map<string, () => void>();
+	htmlRenderExtension({
+		registerTool: (registered: ShowHtmlPageTool) => {
+			tool = registered;
+		},
+		on: (event: string, handler: () => void) => handlers.set(event, handler),
+	} as unknown as ExtensionAPI);
+	if (tool === undefined) throw new Error("show_html_page was not registered");
+	return { tool, emit: (event: string) => handlers.get(event)?.() };
 }
 
 /** A page with one image whose inlined length is `target`, give or take under 4 characters. */
@@ -178,6 +193,150 @@ describe("senpi#6907: a session's handed pages together stay under the RPC line 
 		const html = `<pre>const shot = "${big}";</pre>`;
 
 		const { result } = await session(tempDir).show("call-big-mention", html);
+
+		expect(result.details.html).toBe(html);
+	});
+});
+
+describe("senpi#6924: the ledger of not-yet-recorded pages lives and ends with its session", () => {
+	let tempDir: string;
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-6924-"));
+	});
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+	const pagesPerBudget = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize);
+
+	/** Hands pages in one session without recording their results, until the budget refuses one. */
+	async function fillWithUnrecordedPages(show: ReturnType<typeof session>["show"]) {
+		for (let index = 0; index < pagesPerBudget; index++) {
+			const { result } = await show(`fill-${index}`, pageInlinedTo(tempDir, `fill-${index}`, pageSize).html);
+			expect(result.details.imagesInlined).toBe(true);
+		}
+		const { result } = await show("refused", pageInlinedTo(tempDir, "refused", pageSize).html);
+		expect(result.details.imagesInlined).toBe(false);
+	}
+
+	it.each(["agent_end", "session_shutdown"])(
+		"forgets pages handed but never recorded once %s fires, without another show_html_page call",
+		async (event) => {
+			const extension = loadExtension();
+			const { show } = session(tempDir, extension.tool);
+			await fillWithUnrecordedPages(show);
+
+			extension.emit(event);
+
+			const { result } = await show("after", pageInlinedTo(tempDir, "after", pageSize).html);
+			expect(result.details.imagesInlined).toBe(true);
+		},
+	);
+
+	it("keeps no ledger across session runtimes on one host: a new runtime for the same session starts empty", async () => {
+		const sessionId = randomUUID();
+		const first = loadExtension();
+		await fillWithUnrecordedPages(session(tempDir, first.tool, sessionId).show);
+
+		const runtimes = Array.from({ length: 10 }, () => loadExtension());
+		const outcomes = await Promise.all(
+			runtimes.map(async (runtime, index) => {
+				const { show } = session(tempDir, runtime.tool, sessionId);
+				const { result } = await show(`next-${index}`, pageInlinedTo(tempDir, `next-${index}`, pageSize).html);
+				return result.details.imagesInlined;
+			}),
+		);
+
+		expect(outcomes.every(Boolean)).toBe(true);
+	});
+});
+
+describe("senpi#6910: nested calls, pages handed as written, and images a script loads", () => {
+	let tempDir: string;
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-6910-"));
+	});
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("a call another tool makes through ctx.executeTool neither spends nor keeps the session's budget", async () => {
+		const { show } = session(tempDir);
+		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+		const nestedCount = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize) + 1;
+		const nested: boolean[] = [];
+		for (let index = 1; index <= nestedCount; index++) {
+			const { result } = await show(`call-eval/${index}`, pageInlinedTo(tempDir, `nested-${index}`, pageSize).html);
+			nested.push(result.details.imagesInlined);
+		}
+
+		const { result } = await show("call-after", pageInlinedTo(tempDir, "after", pageSize).html);
+
+		expect(nested).toEqual(Array.from({ length: nestedCount }, () => true));
+		expect(result.details.imagesInlined).toBe(true);
+	});
+
+	it("does not count a page handed as written against the budget, and hands it exactly as written", async () => {
+		const { record, show } = session(tempDir);
+		for (let index = 0; index < 3; index++) {
+			const { html } = pageInlinedTo(tempDir, `over-${index}`, MAX_HANDED_PAGE_CHARACTERS + 4);
+			const { result } = await show(`call-over-${index}`, html);
+			record(`call-over-${index}`, result);
+			expect(result.details).toMatchObject({ imagesInlined: false, html });
+		}
+		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+		const inlined: boolean[] = [];
+		for (let index = 0; index < Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize); index++) {
+			const { result } = await show(`call-image-${index}`, pageInlinedTo(tempDir, `image-${index}`, pageSize).html);
+			record(`call-image-${index}`, result);
+			inlined.push(result.details.imagesInlined);
+		}
+
+		expect(inlined.every(Boolean)).toBe(true);
+	});
+
+	it("inlines an image a script loads from an object literal", async () => {
+		const chart = join(tempDir, "chart.png");
+		writeFileSync(chart, PNG_HEAD);
+		const html = `<img id="shot"><script>const shot = { src: "${chart}", alt: "chart" }; document.getElementById("shot").src = shot.src;</script>`;
+
+		const { result } = await session(tempDir).show("call-object", html);
+
+		expect(result.details.html).toBe(html.replace(chart, DATA_PREFIX + PNG_HEAD.toString("base64")));
+	});
+
+	it("inlines every image of a path array a script assigns later", async () => {
+		const first = join(tempDir, "first.png");
+		const second = join(tempDir, "second.png");
+		writeFileSync(first, PNG_HEAD);
+		writeFileSync(second, PNG_HEAD);
+		const html = `<img id="shot"><script>const shots = ['${first}', '${second}']; let at = 0; setInterval(() => { document.getElementById("shot").src = shots[at++ % shots.length]; }, 1000);</script>`;
+
+		const { result } = await session(tempDir).show("call-array", html);
+
+		expect(result.details.html).not.toContain(first);
+		expect(result.details.html).not.toContain(second);
+		expect(result.details.html.split(DATA_PREFIX)).toHaveLength(3);
+	});
+
+	it("refuses a page whose script loads a missing image, naming the path", async () => {
+		const missing = join(tempDir, "missing.png");
+		const html = `<script>const shots = ["${missing}"];</script>`;
+
+		await expect(session(tempDir).show("call-missing", html)).rejects.toThrow(
+			`These local images could not be read: ${missing}.`,
+		);
+	});
+
+	it("leaves a missing path only mentioned in prose, a code sample or an escaped tag as written", async () => {
+		const missing = join(tempDir, "missing.png");
+		const html =
+			`<title>"${missing}"</title><p>Saved to "${missing}".</p>` +
+			`<pre><code>const shot = { src: "${missing}" };</code></pre>` +
+			`<pre>&lt;img src="${missing}"&gt;</pre><!-- <img src="${missing}"> -->`;
+
+		const { result } = await session(tempDir).show("call-mentions", html);
 
 		expect(result.details.html).toBe(html);
 	});
