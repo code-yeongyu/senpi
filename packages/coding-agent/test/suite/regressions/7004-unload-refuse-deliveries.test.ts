@@ -89,6 +89,11 @@ describe('unload_session { deliveries: "refuse" }', () => {
 		expect(await local.send({ ...UNLOAD, sessionId, deliveries: "refuse", effectId: "r1" })).toMatchObject({
 			data: { outcome: "refused", reason: "work_pending", pending, replayed: true },
 		});
+		// The option is part of the effect: the same id without it is another request, never a replay of the refusal.
+		expect(await local.send({ ...UNLOAD, sessionId, effectId: "r1" })).toMatchObject({
+			success: false,
+			errorCode: "effect_id_conflict",
+		});
 
 		// The caller chose to drop them: the default mode interrupts and names what it handed back.
 		expect(await local.send({ ...UNLOAD, sessionId })).toMatchObject({

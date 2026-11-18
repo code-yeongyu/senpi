@@ -125,7 +125,7 @@ const SEMANTIC_FIELDS: Readonly<Record<EffectCommandKind, readonly string[]>> = 
 	abort: ["awaitIdle", "clearQueue", "graceMs"],
 	set_model: ["provider", "modelId", "thinkingLevel", "scope"],
 	set_thinking_level: ["level", "scope"],
-	unload: ["interrupt", "clearQueue", "children", "force"],
+	unload: ["interrupt", "clearQueue", "children", "force", "deliveries"],
 	dequeue: ["queuedId", "expectedRevision"],
 	edit_queued: ["queuedId", "text", "expectedRevision"],
 };
