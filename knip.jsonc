@@ -1398,6 +1398,8 @@
       // jsPlugins entry loaded by oxlint from .oxlintrc.json, not imported (same shape as copy.mjs above)
       "scripts/oxlint/egress.mjs": ["default"],
       "scripts/oxlint/model-type-comparison.ts": ["default"],
+      // jsPlugins entry loaded by oxlint from scripts/lint-ratchet.oxlintrc.json, not imported (#7000)
+      "scripts/oxlint/testing.mjs": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused export pinSenpiPeerDependency (run-by-path entry, newly export-checked)
       "scripts/publish-manifest.mjs": ["pinSenpiPeerDependency"],
       // pre-existing at origin main aceb1cc1d9: unused export default (run-by-path entry, newly export-checked)
