@@ -64,6 +64,8 @@ export const rpcEffectRecordSchema = z.object({
 			currentRevision: z.number().int().positive().optional(),
 		})
 		.optional(),
+	// Deliveries an interrupting unload handed back unwritten, so a replay names them as the live answer did.
+	dropped: z.object({ deliveries: z.array(z.string()) }).optional(),
 	by: actorSchema,
 	acceptedAt: z.string(),
 	updatedAt: z.string(),
@@ -81,6 +83,8 @@ export interface EffectStatus {
 	readonly outcome?: EffectOutcome;
 	/** A queued-input change's answer fields (`text`/`revision` for edited, `currentRevision` for conflict). */
 	readonly answer?: QueuedChangeAnswer;
+	/** An interrupting unload's handed-back deliveries (`unload_session` `dropped`). */
+	readonly dropped?: { readonly deliveries: readonly string[] };
 	readonly by?: EffectActor;
 	readonly acceptedAt?: string;
 	readonly updatedAt?: string;
