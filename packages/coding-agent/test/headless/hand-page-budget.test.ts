@@ -72,6 +72,20 @@ function olderHand(pi: ExtensionAPI): void {
 	);
 }
 
+/** A hand-side extension that leaves an older hand's result with no text part at all: one image, no `resultText`. */
+function olderHandImageOnly(pi: ExtensionAPI): void {
+	pi.on("tool_result", (event) =>
+		event.toolName === "show_html_page"
+			? {
+					content: [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }],
+					details: Object.fromEntries(
+						Object.entries(Object(event.details)).filter(([key]) => key !== "resultText"),
+					),
+				}
+			: undefined,
+	);
+}
+
 /**
  * A brain session (surface "app", no html-render loaded) and the hand selection that links it to an in-process hand.
  * `endRun` delivers the `agent_end` a run of the session would; `listeners` counts who listens for it.
@@ -233,6 +247,21 @@ describe("senpi#6921: show_html_page on a hand, seen from the brain session", ()
 			expect(pageDetails(messages[3]?.details).imagesInlined).toBe(false);
 		},
 	);
+
+	// senpi#6939: with no text part at all, the over-budget sentence goes first, as the brain put it before the marker.
+	it("puts the over-budget sentence first when an older hand's result has no text part", async () => {
+		const dirs = await handDirs("page-no-text");
+		const { selection, session } = brainOnHand(dirs, [olderHandImageOnly]);
+		expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
+
+		const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "imageonly", 4));
+
+		expect(messages[2]?.content.map((part) => part.type)).toEqual(["image"]);
+		const page = messages[3]?.content ?? [];
+		expect(page.map((part) => part.type)).toEqual(["text", "image"]);
+		expect(page[0]?.type === "text" ? page[0].text : "").toContain("this session's pages already carry");
+		expect(pageDetails(messages[3]?.details).imagesInlined).toBe(false);
+	});
 
 	it("forgets the pages a session's link let through once the session is released", async () => {
 		const dirs = await handDirs("page-ledger");

@@ -108,7 +108,8 @@ function budgetedEvent(
 /**
  * The page's own text is the text part equal to the one the tool emitted (`details.resultText`), wherever a hand-side
  * `tool_result` handler moved it; it alone is replaced, and every other part stays where it is. When no part equals it
- * (a handler rewrote it), nothing is replaced and the over-budget sentence is appended as its own part (senpi#6934).
+ * (a handler rewrote it), nothing is replaced and the over-budget sentence is appended as its own part (senpi#6934). A
+ * result with no text part at all gets the sentence first, as the brain put it before the marker (senpi#6939).
  */
 function applied(downgrade: PageDowngrade, content: ResultContent): PageOverride {
 	const own =
@@ -117,7 +118,12 @@ function applied(downgrade: PageDowngrade, content: ResultContent): PageOverride
 			: content.findIndex((part) => part.type === "text" && part.text === downgrade.ownText);
 	const text = { type: "text" as const, text: downgrade.text };
 	return {
-		content: own === -1 ? [...content, text] : content.map((part, index) => (index === own ? text : part)),
+		content:
+			own !== -1
+				? content.map((part, index) => (index === own ? text : part))
+				: content.some((part) => part.type === "text")
+					? [...content, text]
+					: [text, ...content],
 		details: downgrade.details,
 	};
 }
