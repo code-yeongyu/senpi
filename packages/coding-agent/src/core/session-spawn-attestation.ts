@@ -4,19 +4,23 @@
  * Every session of a shared rpc host runs its tool commands as children of ONE host process, so the kernel ancestry
  * of a caller proves the host, not the session, and the caller's `PI_SESSION_ID` is whatever its last `exec` said.
  * The spawner therefore records each child it starts for a session in `<agentDir>/session-spawns/<pid>.json`:
- * the child's pid and kernel start time, the session id, and the spawner's own pid and start time. A child pid cannot
- * be reused before its parent reaps it, so the start time read after the spawn is the child's.
+ * the child's pid and kernel start time, the session id, and the spawner's own pid and start time. The runtime reaps a
+ * child on its own, so the identity read is issued from the spawn callback, before the event loop can process the
+ * child's exit; a different process could wear the pid by then only after a full pid wrap inside that window.
  *
  * `resolvePidSession` answers "which session owns pid P" from the kernel alone: it walks P's ppid chain to the nearest
  * ancestor with a record and believes that record only when the ancestor's start time, its parent and that parent's
  * start time all match. An environment is never read. Anything outside a recorded child's tree (a daemon re-parented
  * to init, a child an in-process runtime spawned directly) is `attested: false`.
  *
+ * A record that still holds a live process is never replaced, and a release removes only the record it wrote, so one
+ * session's record cannot be overwritten or deleted through another session's spawn or a recycled pid.
+ *
  * The record lands a few event-loop turns after the spawn; it does not gate the command. Same-uid processes can write
  * the agent directory, as they can every other record under it, so this proves against a forged environment and a
  * recycled pid, not against deliberate tampering with the store.
  */
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "../config.ts";
 import { type KernelProcessIdentity, readKernelProcessIdentity } from "./kernel-process-identity.ts";
@@ -30,6 +34,8 @@ export interface SessionSpawnRecord {
 	readonly version: typeof RECORD_VERSION;
 	readonly pid: number;
 	readonly startedAtMs: number;
+	/** The boot `startedAtMs` is relative to; null where it is a wall-clock stamp (darwin). */
+	readonly bootId: string | null;
 	readonly sessionId: string;
 	readonly hostPid: number;
 	readonly hostStartedAtMs: number;
@@ -77,30 +83,38 @@ export function attestSessionSpawn(
 	pid: number,
 	options: SessionSpawnStoreOptions = {},
 ): SessionSpawnAttestation {
+	const identity = readKernelProcessIdentity(pid);
 	let path: string | undefined;
-	const recorded = (async () => {
+	const written = (async () => {
 		const dir = options.dir ?? sessionSpawnsDir();
 		path = join(dir, `${pid}.json`);
-		return await writeRecord(dir, path, sessionId, pid);
-	})().catch(() => false);
+		return await writeRecord(dir, path, sessionId, pid, await identity);
+	})().catch(() => undefined);
 	return {
-		recorded,
+		recorded: written.then((record) => record !== undefined),
 		async release() {
-			if ((await recorded) && path !== undefined) await unlink(path).catch(() => undefined);
+			const mine = await written;
+			if (mine === undefined || path === undefined) return;
+			const current = await readRecord(path);
+			if (current !== undefined && sameRecord(current, mine)) await unlink(path).catch(() => undefined);
 		},
 	};
 }
 
-async function writeRecord(dir: string, path: string, sessionId: string, pid: number): Promise<boolean> {
-	const [child, host] = await Promise.all([
-		readKernelProcessIdentity(pid),
-		(ownIdentity ??= readKernelProcessIdentity(process.pid)),
-	]);
-	if (child === undefined || host === undefined || child.ppid !== process.pid) return false;
+async function writeRecord(
+	dir: string,
+	path: string,
+	sessionId: string,
+	pid: number,
+	child: KernelProcessIdentity | undefined,
+): Promise<SessionSpawnRecord | undefined> {
+	const host = await (ownIdentity ??= readKernelProcessIdentity(process.pid));
+	if (child === undefined || host === undefined || child.ppid !== process.pid) return undefined;
 	const record: SessionSpawnRecord = {
 		version: RECORD_VERSION,
 		pid,
 		startedAtMs: child.startedAtMs,
+		bootId: child.bootId ?? null,
 		sessionId,
 		hostPid: process.pid,
 		hostStartedAtMs: host.startedAtMs,
@@ -108,8 +122,34 @@ async function writeRecord(dir: string, path: string, sessionId: string, pid: nu
 	await mkdir(dir, { recursive: true, mode: 0o700 });
 	const temp = `${path}.${process.pid}.tmp`;
 	await writeFile(temp, JSON.stringify(record), { mode: 0o600 });
-	await rename(temp, path);
-	return true;
+	try {
+		// link() publishes only where no record exists; an existing one is replaced only when it no longer holds.
+		try {
+			await link(temp, path);
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+			const existing = await readRecord(path);
+			if (existing !== undefined && (await recordHolds(existing, pid, child))) {
+				return sameRecord(existing, record) ? record : undefined;
+			}
+			await rename(temp, path);
+			return record;
+		}
+	} finally {
+		await unlink(temp).catch(() => undefined);
+	}
+	return record;
+}
+
+function sameRecord(a: SessionSpawnRecord, b: SessionSpawnRecord): boolean {
+	return (
+		a.pid === b.pid &&
+		a.startedAtMs === b.startedAtMs &&
+		a.bootId === b.bootId &&
+		a.sessionId === b.sessionId &&
+		a.hostPid === b.hostPid &&
+		a.hostStartedAtMs === b.hostStartedAtMs
+	);
 }
 
 /** Which session owns `pid`, from the kernel's ancestry and the spawners' records. Never throws. */
@@ -140,7 +180,12 @@ export async function resolvePidSession(pid: number, options: SessionSpawnStoreO
 }
 
 async function recordHolds(record: SessionSpawnRecord, pid: number, identity: KernelProcessIdentity): Promise<boolean> {
-	if (record.pid !== pid || record.startedAtMs !== identity.startedAtMs || record.hostPid !== identity.ppid) {
+	if (
+		record.pid !== pid ||
+		record.startedAtMs !== identity.startedAtMs ||
+		record.bootId !== (identity.bootId ?? null) ||
+		record.hostPid !== identity.ppid
+	) {
 		return false;
 	}
 	const host = await readKernelProcessIdentity(record.hostPid);
@@ -164,6 +209,7 @@ function isSessionSpawnRecord(value: unknown): value is SessionSpawnRecord {
 		record.version === RECORD_VERSION &&
 		typeof record.sessionId === "string" &&
 		record.sessionId.length > 0 &&
+		(record.bootId === null || typeof record.bootId === "string") &&
 		["pid", "startedAtMs", "hostPid", "hostStartedAtMs"].every((key) => Number.isFinite(record[key]))
 	);
 }

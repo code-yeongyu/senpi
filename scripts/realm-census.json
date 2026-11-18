@@ -6398,7 +6398,7 @@
 			"class": "per-copy-safe",
 			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
 		},
-		"packages/coding-agent/src/core/kernel-process-identity.ts#linuxBootSeconds": {
+		"packages/coding-agent/src/core/kernel-process-identity.ts#linuxBootId": {
 			"class": "per-copy-safe",
 			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
 		},

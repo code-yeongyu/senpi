@@ -1,16 +1,17 @@
 /**
  * Who a pid is, as the kernel reports it: its parent and when it started. Never throws.
  *
- * - linux: `/proc/<pid>/stat`, fields 4 (ppid), 3 (state) and 22 (start in clock ticks since boot) plus `btime` from
- *   `/proc/stat`;
+ * - linux: `/proc/<pid>/stat`, fields 4 (ppid), 3 (state) and 22 (start in clock ticks since boot), kept boot-relative
+ *   so a stepped wall clock (an NTP step, a VM resume) never changes it, plus `/proc/sys/kernel/random/boot_id`;
  * - darwin on Bun: `sysctl(KERN_PROC, KERN_PROC_PID, pid)`, the `kinfo_proc` `ps` itself reads, through `bun:ffi`,
  *   without spawning (a `ps` probe from Bun is the zombie bug omo-desktop#594 fixed);
  * - darwin on Node: `ps -o ppid=,stat=,lstart=` (Node reaps its children);
  * - anything else: `undefined`.
  *
  * `startedAtMs` is derived the same way on every read on one boot, so two reads of one process compare EQUAL; a
- * different process wearing the same pid compares unequal. darwin keeps whole seconds, the precision `ps` reports, so
- * both darwin readers agree.
+ * different process wearing the same pid compares unequal. It is milliseconds since boot on linux, scoped by `bootId`,
+ * and the kernel's fixed wall-clock start stamp in whole seconds on darwin (the precision `ps` reports, so both darwin
+ * readers agree; darwin has no `bootId`).
  *
  * RUNTIME BOUNDARY: `bun:ffi` is fetched with `process.getBuiltinModule("bun:ffi")` (as `process-footprint.ts` does),
  * which answers `undefined` on Node instead of making this module unloadable.
@@ -22,6 +23,8 @@ import { processStartTimeMs } from "../utils/process-identity.ts";
 export interface KernelProcessIdentity {
 	readonly ppid: number;
 	readonly startedAtMs: number;
+	/** The boot this start time is relative to (linux); undefined where the start time is a wall-clock stamp. */
+	readonly bootId: string | undefined;
 	/** Exited but not yet reaped: the pid is still taken, but nothing runs under it. */
 	readonly zombie: boolean;
 }
@@ -39,7 +42,7 @@ const KINFO_STAT_OFFSET = 36;
 const KINFO_PPID_OFFSET = 560;
 const SZOMB = 5;
 
-let linuxBootSeconds: Promise<number | undefined> | undefined;
+let linuxBootId: Promise<string | undefined> | undefined;
 let darwinReader: DarwinReader | undefined;
 
 export async function readKernelProcessIdentity(pid: number): Promise<KernelProcessIdentity | undefined> {
@@ -56,23 +59,24 @@ async function linuxIdentity(pid: number): Promise<KernelProcessIdentity | undef
 	} catch {
 		return undefined;
 	}
-	const boot = await (linuxBootSeconds ??= readLinuxBootSeconds());
+	const bootId = await (linuxBootId ??= readLinuxBootId());
 	// comm (field 2) is parenthesised and may hold spaces, so the fields are counted from its last ")".
 	const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
 	const ppid = Number(fields[1]);
 	const startTicks = Number(fields[19]);
-	if (boot === undefined || !Number.isInteger(ppid) || !Number.isInteger(startTicks)) return undefined;
+	if (bootId === undefined || !Number.isInteger(ppid) || !Number.isInteger(startTicks)) return undefined;
 	return {
 		ppid,
-		startedAtMs: boot * 1000 + startTicks * (1000 / LINUX_CLOCK_TICKS_PER_SECOND),
+		startedAtMs: startTicks * (1000 / LINUX_CLOCK_TICKS_PER_SECOND),
+		bootId,
 		zombie: fields[0] === "Z",
 	};
 }
 
-async function readLinuxBootSeconds(): Promise<number | undefined> {
+async function readLinuxBootId(): Promise<string | undefined> {
 	try {
-		const seconds = Number(/^btime (\d+)$/m.exec(await readFile("/proc/stat", "utf8"))?.[1]);
-		return Number.isInteger(seconds) ? seconds : undefined;
+		const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+		return bootId.length > 0 ? bootId : undefined;
 	} catch {
 		return undefined;
 	}
@@ -96,7 +100,12 @@ function darwinPsIdentity(pid: number): Promise<KernelProcessIdentity | undefine
 				const match = error === null ? /^\s*(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(stdout) : null;
 				const startedAtMs = match?.[3] === undefined ? undefined : processStartTimeMs(match[3]);
 				if (match === null || startedAtMs === undefined) return resolve(undefined);
-				resolve({ ppid: Number(match[1]), startedAtMs, zombie: match[2]?.startsWith("Z") === true });
+				resolve({
+					ppid: Number(match[1]),
+					startedAtMs,
+					bootId: undefined,
+					zombie: match[2]?.startsWith("Z") === true,
+				});
 			},
 		);
 	});
@@ -137,6 +146,7 @@ function darwinSysctlReader({ dlopen, FFIType, ptr }: BunFfi): SysctlReader {
 		return {
 			ppid: view.getInt32(KINFO_PPID_OFFSET, true),
 			startedAtMs: Number(view.getBigInt64(KINFO_STARTTIME_SEC_OFFSET, true)) * 1000,
+			bootId: undefined,
 			zombie: row[KINFO_STAT_OFFSET] === SZOMB,
 		};
 	};

@@ -138,6 +138,42 @@ describe.skipIf(!supported)("session spawn attestation (#6972)", () => {
 		expect(await resolvePidSession(orphan.pid, { dir })).toMatchObject({ attested: false });
 	});
 
+	it("never replaces a record that still holds a live process, so another session cannot take it over", async () => {
+		const shell = start("echo ready; exec sleep 30");
+		await nextLine(shell);
+		expect(await attestSessionSpawn("session-a", shell.pid, { dir }).recorded).toBe(true);
+		expect(await attestSessionSpawn("session-b", shell.pid, { dir }).recorded).toBe(false);
+
+		expect(await resolvePidSession(shell.pid, { dir })).toMatchObject({ attested: true, sessionId: "session-a" });
+	});
+
+	it("a release removes only the record it wrote, never a newer one for the same pid", async () => {
+		const sleeper = start("echo ready; exec sleep 30");
+		await nextLine(sleeper);
+		const attestation = attestSessionSpawn("session-a", sleeper.pid, { dir });
+		await attestation.recorded;
+		const path = join(dir, `${sleeper.pid}.json`);
+		const record: SessionSpawnRecord = JSON.parse(readFileSync(path, "utf8"));
+		// What another spawn wrote after this pid was recycled.
+		const newer = JSON.stringify({ ...record, sessionId: "session-b", startedAtMs: record.startedAtMs + 60_000 });
+		writeFileSync(path, newer);
+		await attestation.release();
+
+		expect(readFileSync(path, "utf8")).toBe(newer);
+	});
+
+	it.skipIf(process.platform !== "linux")("does not attribute a record from another boot", async () => {
+		const sleeper = start("echo ready; exec sleep 30");
+		await nextLine(sleeper);
+		await attestSessionSpawn("session-a", sleeper.pid, { dir }).recorded;
+		const path = join(dir, `${sleeper.pid}.json`);
+		const record: SessionSpawnRecord = JSON.parse(readFileSync(path, "utf8"));
+		expect(record.bootId).toBe(readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim());
+		writeFileSync(path, JSON.stringify({ ...record, bootId: "00000000-0000-0000-0000-000000000000" }));
+
+		expect(await resolvePidSession(sleeper.pid, { dir })).toMatchObject({ attested: false });
+	});
+
 	it("removes the record when the child exits, so the dead pid resolves to nothing", async () => {
 		const short = start("read _go; exit 0");
 		const attestation = attestSessionSpawn("session-a", short.pid, { dir });
