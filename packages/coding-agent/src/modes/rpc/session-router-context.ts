@@ -37,6 +37,9 @@ export class RouterContext {
 	/** Session handles opened by each connection, with one count per attachment. */
 	readonly sessionsByConnection = new Map<string, Map<string, number>>();
 
+	/** The client each connection declared with `set_client_info { client_id }` (senpi#6443): two connections of one client share an id. */
+	readonly clientIds = new Map<string, string>();
+
 	/** When each connection first attached to each session: relocation asks the earliest offerer (senpi#3994). */
 	readonly attachOrder = new SessionAttachOrder();
 

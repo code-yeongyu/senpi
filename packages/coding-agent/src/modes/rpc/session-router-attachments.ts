@@ -86,6 +86,8 @@ async function releaseConnectionHolds(host: RouterContext, connectionId: string)
 	host.releasedConnections.add(connectionId);
 	host.writer.clearConnectionCapabilities(connectionId);
 	host.connectionRoles.release(connectionId);
+	// senpi#6443: the name follows the incarnation, as the roles do: a detach or a drop ends it, whatever was held.
+	host.clientIds.delete(connectionId);
 	for (const sessionId of host.sessionsByConnection.get(connectionId)?.keys() ?? []) {
 		host.writer.detachConnectionFromSession(connectionId, sessionId);
 		connectionLeft(host, sessionId, connectionId);
@@ -181,4 +183,21 @@ export function forgetSessionOwnership(host: RouterContext, sessionId: string): 
 		owned.delete(sessionId);
 		if (owned.size === 0) host.sessionsByConnection.delete(connection);
 	}
+}
+
+/**
+ * Attachments held by OTHER clients (senpi#6443): every hold of every connection of the caller's own client is
+ * excluded, not only the asking connection's. One client holds a session through more than one connection of its own
+ * (a second connection for an automated send), and counting those as another client's refuses an unload for nobody.
+ * A connection that declared no `client_id` is its own client, which is the rule as it was.
+ */
+export function otherAttachments(host: RouterContext, caller: string | undefined, sessionId: string): number {
+	const total = host.registry.peek(sessionId)?.attachments ?? 0;
+	if (caller === undefined) return Math.max(0, total);
+	const client = host.clientIds.get(caller);
+	let own = 0;
+	for (const [connection, held] of host.sessionsByConnection)
+		if (connection === caller || (client !== undefined && host.clientIds.get(connection) === client))
+			own += held.get(sessionId) ?? 0;
+	return Math.max(0, total - own);
 }
