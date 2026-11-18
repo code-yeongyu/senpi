@@ -854,6 +854,11 @@ export interface ExtensionToolContext extends ExtensionContext {
 	 * errors come back as `isError: true`.
 	 */
 	executeTool(name: string, args: unknown, options?: ExecuteToolOptions): Promise<AgentToolCallOutcome>;
+	/**
+	 * Whether the model issued this call, through the agent loop or a provider's exec channel (Cursor), so its result
+	 * joins the transcript. False for a call made through {@link executeTool} or `pi.executeTool()`.
+	 */
+	readonly issuedByModel: boolean;
 }
 
 /**
@@ -3932,6 +3937,8 @@ export interface ExtensionContextActions {
 	) => Promise<AgentToolCallOutcome>;
 	/** Backs `ExtensionToolContext.tools`. */
 	getCallableTools?: () => readonly AgentTool[];
+	/** Backs `ExtensionToolContext.issuedByModel`. Without it, no call counts as issued by the model. */
+	isModelIssuedToolCall?: (toolCallId: string) => boolean;
 }
 
 export interface LoadedHookSources {
