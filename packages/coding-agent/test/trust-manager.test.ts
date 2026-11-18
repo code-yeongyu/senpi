@@ -1,4 +1,6 @@
-import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,18 +28,18 @@ describe("ProjectTrustStore", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	it("stores decisions and inherits from parent directories", () => {
+	it("stores decisions and inherits from parent directories", async () => {
 		const store = new ProjectTrustStore(agentDir);
 		const parentDir = join(tempDir, "trusted-parent");
 		const childDir = join(parentDir, "project");
 		mkdirSync(childDir, { recursive: true });
 
 		expect(store.get(childDir)).toBeNull();
-		store.set(parentDir, true);
+		await store.set(parentDir, true);
 		expect(store.get(childDir)).toBe(true);
-		store.set(childDir, false);
+		await store.set(childDir, false);
 		expect(store.get(childDir)).toBe(false);
-		store.set(childDir, null);
+		await store.set(childDir, null);
 		expect(store.get(childDir)).toBe(true);
 	});
 
@@ -138,6 +140,64 @@ describe("ProjectTrustStore", () => {
 		const realKey = realpathSync.native(reachedThroughSymlink);
 		writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realKey]: true }, null, 2), "utf-8");
 		expect(new ProjectTrustStore(agentDir).get(reachedThroughSymlink)).toBe(true);
+	});
+
+	// senpi#6951: the generation is bumped before trust.json is written, so a failed bump saves nothing.
+	it("saves nothing and rejects when the generation bump fails, then releases the store lock", async () => {
+		// Given a saved decision, and a directory where the bump writes its next generation
+		const store = new ProjectTrustStore(agentDir);
+		await store.set(cwd, true);
+		const trustFile = join(agentDir, "trust.json");
+		const before = readFileSync(trustFile);
+		const nextGeneration = join(agentDir, "trust.json.generation.next");
+		mkdirSync(join(nextGeneration, "occupied"), { recursive: true });
+
+		// When a write cannot bump the generation
+		// Then it rejects and trust.json keeps its bytes
+		await expect(store.set(cwd, false)).rejects.toThrow();
+		expect(readFileSync(trustFile).equals(before)).toBe(true);
+		expect(store.get(cwd)).toBe(true);
+
+		// And the store lock was released: once the bump can succeed, the next write saves
+		rmSync(nextGeneration, { recursive: true });
+		await store.set(cwd, false);
+		expect(store.get(cwd)).toBe(false);
+	});
+
+	it.skipIf(process.platform === "win32")(
+		"answers a synchronous read in the same process while a write holds the store lock",
+		async () => {
+			// Given a write that holds the store lock, parked reading a generation file nobody has written yet
+			const store = new ProjectTrustStore(agentDir);
+			await store.set(cwd, true);
+			const generation = join(agentDir, "trust.json.generation");
+			rmSync(generation);
+			execFileSync("mkfifo", [generation]);
+			const writing = store.set(cwd, false);
+			const generationWriter = await open(generation, "w");
+
+			// When this process reads the store meanwhile
+			// Then it answers from what is saved instead of waiting for a lock its own writer holds
+			expect(store.get(cwd)).toBe(true);
+
+			// And the write completes once the generation can be read
+			await generationWriter.writeFile("3\n");
+			await generationWriter.close();
+			await writing;
+			expect(store.get(cwd)).toBe(false);
+			expect(readFileSync(generation, "utf-8")).toBe("4\n");
+		},
+	);
+
+	it("lets two writes in one process wait for each other instead of failing on the lock", async () => {
+		const store = new ProjectTrustStore(agentDir);
+		const other = join(tempDir, "other");
+		mkdirSync(other, { recursive: true });
+
+		await Promise.all([store.set(cwd, true), store.set(other, false)]);
+
+		expect(store.get(cwd)).toBe(true);
+		expect(store.get(other)).toBe(false);
 	});
 });
 
