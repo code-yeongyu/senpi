@@ -1,19 +1,23 @@
 /**
- * Who a pid is, as the kernel reports it: its parent and when it started. Never spawns a child (a `ps` probe per read
- * is the zombie bug omo-desktop#594 fixed) and never throws.
+ * Who a pid is, as the kernel reports it: its parent and when it started. Never throws.
  *
  * - linux: `/proc/<pid>/stat`, fields 4 (ppid), 3 (state) and 22 (start in clock ticks since boot) plus `btime` from
  *   `/proc/stat`;
- * - darwin: `sysctl(KERN_PROC, KERN_PROC_PID, pid)`, the `kinfo_proc` `ps` itself reads, through `bun:ffi`;
- * - anything else, or Node on darwin: `undefined`.
+ * - darwin on Bun: `sysctl(KERN_PROC, KERN_PROC_PID, pid)`, the `kinfo_proc` `ps` itself reads, through `bun:ffi`,
+ *   without spawning (a `ps` probe from Bun is the zombie bug omo-desktop#594 fixed);
+ * - darwin on Node: `ps -o ppid=,stat=,lstart=` (Node reaps its children);
+ * - anything else: `undefined`.
  *
  * `startedAtMs` is derived the same way on every read on one boot, so two reads of one process compare EQUAL; a
- * different process wearing the same pid compares unequal.
+ * different process wearing the same pid compares unequal. darwin keeps whole seconds, the precision `ps` reports, so
+ * both darwin readers agree.
  *
  * RUNTIME BOUNDARY: `bun:ffi` is fetched with `process.getBuiltinModule("bun:ffi")` (as `process-footprint.ts` does),
  * which answers `undefined` on Node instead of making this module unloadable.
  */
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { processStartTimeMs } from "../utils/process-identity.ts";
 
 export interface KernelProcessIdentity {
 	readonly ppid: number;
@@ -23,25 +27,25 @@ export interface KernelProcessIdentity {
 }
 
 type BunFfi = typeof import("bun:ffi");
-type DarwinReader = (pid: number) => KernelProcessIdentity | undefined;
+type SysctlReader = (pid: number) => KernelProcessIdentity | undefined;
+type DarwinReader = (pid: number) => KernelProcessIdentity | undefined | Promise<KernelProcessIdentity | undefined>;
 
 /** The Linux USER_HZ every supported kernel exports to userspace. */
 const LINUX_CLOCK_TICKS_PER_SECOND = 100;
-/** `struct kinfo_proc` (darwin, 64-bit): its size, `p_starttime` (timeval), `p_stat` and `e_ppid`. */
+/** `struct kinfo_proc` (darwin, 64-bit): its size, `p_starttime.tv_sec`, `p_stat` and `e_ppid`. */
 const KINFO_PROC_BYTES = 648;
 const KINFO_STARTTIME_SEC_OFFSET = 0;
-const KINFO_STARTTIME_USEC_OFFSET = 8;
 const KINFO_STAT_OFFSET = 36;
 const KINFO_PPID_OFFSET = 560;
 const SZOMB = 5;
 
 let linuxBootSeconds: Promise<number | undefined> | undefined;
-let darwinReader: DarwinReader | null | undefined;
+let darwinReader: DarwinReader | undefined;
 
 export async function readKernelProcessIdentity(pid: number): Promise<KernelProcessIdentity | undefined> {
 	if (!Number.isInteger(pid) || pid <= 0) return undefined;
 	if (process.platform === "linux") return linuxIdentity(pid);
-	if (process.platform === "darwin") return loadDarwinReader()?.(pid);
+	if (process.platform === "darwin") return await loadDarwinReader()(pid);
 	return undefined;
 }
 
@@ -74,15 +78,32 @@ async function readLinuxBootSeconds(): Promise<number | undefined> {
 	}
 }
 
-function loadDarwinReader(): DarwinReader | undefined {
-	if (darwinReader === undefined) darwinReader = createDarwinReader() ?? null;
-	return darwinReader ?? undefined;
+function loadDarwinReader(): DarwinReader {
+	if (darwinReader === undefined) {
+		const ffi = process.getBuiltinModule("bun:ffi") as BunFfi | undefined;
+		darwinReader = ffi === undefined ? darwinPsIdentity : (createDarwinReader(ffi) ?? (() => undefined));
+	}
+	return darwinReader;
 }
 
-function createDarwinReader(): DarwinReader | undefined {
-	const ffi = process.getBuiltinModule("bun:ffi") as BunFfi | undefined;
-	if (ffi === undefined) return undefined;
-	let read: DarwinReader;
+function darwinPsIdentity(pid: number): Promise<KernelProcessIdentity | undefined> {
+	return new Promise((resolve) => {
+		execFile(
+			"ps",
+			["-o", "ppid=,stat=,lstart=", "-p", String(pid)],
+			{ encoding: "utf8", timeout: 5_000, env: { ...process.env, LC_ALL: "C", LANG: "C" } },
+			(error, stdout) => {
+				const match = error === null ? /^\s*(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(stdout) : null;
+				const startedAtMs = match?.[3] === undefined ? undefined : processStartTimeMs(match[3]);
+				if (match === null || startedAtMs === undefined) return resolve(undefined);
+				resolve({ ppid: Number(match[1]), startedAtMs, zombie: match[2]?.startsWith("Z") === true });
+			},
+		);
+	});
+}
+
+function createDarwinReader(ffi: BunFfi): SysctlReader | undefined {
+	let read: SysctlReader;
 	try {
 		read = darwinSysctlReader(ffi);
 	} catch {
@@ -94,7 +115,7 @@ function createDarwinReader(): DarwinReader | undefined {
 	return self !== undefined && self.ppid === process.ppid && !self.zombie ? read : undefined;
 }
 
-function darwinSysctlReader({ dlopen, FFIType, ptr }: BunFfi): DarwinReader {
+function darwinSysctlReader({ dlopen, FFIType, ptr }: BunFfi): SysctlReader {
 	const library = dlopen("libSystem.B.dylib", {
 		sysctl: {
 			args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.i32],
@@ -113,11 +134,9 @@ function darwinSysctlReader({ dlopen, FFIType, ptr }: BunFfi): DarwinReader {
 		if (library.symbols.sysctl(ptr(mib), mib.length, ptr(row), ptr(length), ptr(none), 0) !== 0) return undefined;
 		// No such process: the kernel answers success with an empty buffer.
 		if (length[0] < KINFO_PROC_BYTES) return undefined;
-		const seconds = Number(view.getBigInt64(KINFO_STARTTIME_SEC_OFFSET, true));
-		const micros = view.getInt32(KINFO_STARTTIME_USEC_OFFSET, true);
 		return {
 			ppid: view.getInt32(KINFO_PPID_OFFSET, true),
-			startedAtMs: seconds * 1000 + Math.floor(micros / 1000),
+			startedAtMs: Number(view.getBigInt64(KINFO_STARTTIME_SEC_OFFSET, true)) * 1000,
 			zombie: row[KINFO_STAT_OFFSET] === SZOMB,
 		};
 	};
