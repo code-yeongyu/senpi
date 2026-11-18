@@ -8549,7 +8549,7 @@ export class InteractiveMode {
 		}
 	}
 
-	private maybeSaveImplicitProjectTrustAfterReload(): boolean {
+	private async maybeSaveImplicitProjectTrustAfterReload(): Promise<boolean> {
 		const cwd = this.sessionManager.getCwd();
 		if (this.autoTrustOnReloadCwd !== cwd) {
 			return false;
@@ -8564,7 +8564,7 @@ export class InteractiveMode {
 				this.autoTrustOnReloadCwd = undefined;
 				return false;
 			}
-			trustStore.set(cwd, true);
+			await trustStore.set(cwd, true);
 			this.autoTrustOnReloadCwd = undefined;
 			return true;
 		} catch (error) {
@@ -8585,10 +8585,16 @@ export class InteractiveMode {
 				savedDecision,
 				projectTrusted: this.settingsManager.isProjectTrusted(),
 				onSelect: (selection) => {
-					trustStore.setMany(selection.updates);
 					done();
-					this.showStatus(
-						`Saved trust decision: ${selection.trusted ? "trusted" : "untrusted"}. Restart ${APP_NAME} for this to take effect.`,
+					trustStore.setMany(selection.updates).then(
+						() =>
+							this.showStatus(
+								`Saved trust decision: ${selection.trusted ? "trusted" : "untrusted"}. Restart ${APP_NAME} for this to take effect.`,
+							),
+						(error: unknown) =>
+							this.showWarning(
+								`Could not save trust decision: ${error instanceof Error ? error.message : String(error)}`,
+							),
 					);
 				},
 				onCancel: () => {
@@ -9880,7 +9886,7 @@ export class InteractiveMode {
 				force: false,
 				showDiagnosticsWhenQuiet: true,
 			});
-			const savedImplicitProjectTrust = this.maybeSaveImplicitProjectTrustAfterReload();
+			const savedImplicitProjectTrust = await this.maybeSaveImplicitProjectTrustAfterReload();
 			const modelsJsonError = this.session.modelRuntime.getError();
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);
