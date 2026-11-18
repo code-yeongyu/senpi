@@ -36,7 +36,7 @@ export const MODEL_TIPS = [
 		id: "model-cycling-scope",
 		bindings: ["app.model.cycleForward"],
 		render: (keys) =>
-			`Start ${APP_NAME} with --models "anthropic/*,gpt-5*" to limit which models ${keys("app.model.cycleForward")} cycles through.`,
+			`Start ${APP_NAME} with --models "anthropic/*,gpt-6*" to limit which models ${keys("app.model.cycleForward")} cycles through.`,
 	},
 	{
 		id: "thinking-budgets",

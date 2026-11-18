@@ -1,8 +1,12 @@
 import type { ExtensionAPI } from "../../types.ts";
-import { forgetHandedPages } from "./handed-pages.ts";
-import { showHtmlPageTool } from "./tool.ts";
+import { createShowHtmlPageTool, type PendingHandedPages } from "./tool.ts";
 
 export default function htmlRenderExtension(pi: ExtensionAPI): void {
-	pi.registerTool(showHtmlPageTool);
-	pi.on("session_shutdown", (_event, ctx) => forgetHandedPages(ctx.sessionManager.getSessionId()));
+	const pending: PendingHandedPages = new Map();
+	pi.registerTool(createShowHtmlPageTool(pending));
+	// Once a run ends every handed page is recorded in the session's entries or never will be, so the
+	// ledger of not-yet-recorded pages is empty from then on; shutdown releases it with the session.
+	const forget = () => pending.clear();
+	pi.on("agent_end", forget);
+	pi.on("session_shutdown", forget);
 }

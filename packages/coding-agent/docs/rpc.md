@@ -100,8 +100,10 @@ holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCount
 keys each record by `key` (defaulting to its kind) and preserves opaque `data`
 through a restart. Persisted additions carry `key`/`data`, and release entries list `keys`. It
 implements only `unattended`. Consumers must distinguish kinds rather than infer
-them from the notification text. The first hold that pauses the session emits `session_paused` with `kind`,
-`pauseSeq`, `at`, `noticeCount`, and `persisted`. The release that ends the pause emits
+them from the notification text. Every hold that pauses the session emits `session_paused` with `kind`,
+`pauseSeq`, `at`, `noticeCount`, and `persisted`, including a hold added while the session is already paused
+(a second Stop, a re-armed hold), so the last `pauseSeq` a client saw is always the one `resume_session`
+accepts as `expectedSeq`. The release that ends the pause emits
 `session_resumed { cause: "input" | "resume_session", pauseSeq, at }` once; a run fence alone pauses nothing and
 emits neither.
 The ordinary extension UI `notify` event shows the paused count and Resume
@@ -4498,6 +4500,12 @@ Queued prompts cannot include `thinkingLevel`; wait for the current turn to comp
 {"type": "prompt", "message": "Use the other file", "streamingBehavior": "steer", "expectedTurnId": "3"}
 ```
 
+**Prompting from a specific leaf**: `prompt` may name the session leaf it was decided at with `expectedLeafId` (the id `get_tree` or the edit commands report as the current leaf). If the session's current leaf differs when the command is admitted, it is refused with `errorCode: "stale_leaf"` (the same code and message the edit commands use), and nothing is appended or sent to the model. As with the edit commands, session-lifecycle bookkeeping entries written after the leaf (for example the `done` marker a finished turn appends) do not count as a move. The check runs at admission, so `expectedLeafId` cannot be combined with `streamingBehavior` (`steer` or `followUp`): such a prompt would run later, at a leaf the check never saw, and is refused with `errorCode: "invalid_argument"`. For the same reason it is refused with `errorCode: "invalid_argument"` from a connection without the `interactive_user` role while the user's Stop or a parent's run hold is live: such a prompt would otherwise be kept as a notice that a later turn consumes at another leaf, and nothing is stored. A session whose leaf is the root (no entries yet) has no leaf id to name, so it cannot be guarded this way; the edit commands have the same limit. Omitting the field keeps the old behaviour.
+
+```json
+{"type": "prompt", "message": "Run this again", "expectedLeafId": "a1b2c3d4"}
+```
+
 **Model not ready**: A prompt that would start a turn is refused before the model is called when the session
 cannot run one. The `error` text is the same guidance the TUI shows; the `errorCode` says why:
 
@@ -6589,6 +6597,47 @@ gates as `set_project_mcp_servers` and answers the read after it. Errors: `proje
 `project_file_write_failed`.
 
 All four are `device_admin`: they read and write files in the session's folder.
+
+#### read_user_skill_file
+
+Read the file of a user-global skill the engine lists for the session (one in the agent directory's `skills` folder
+or in `~/.agents/skills`), by skill name. The same verb serves this machine and another device of the account.
+
+```json
+{"type": "read_user_skill_file", "skill": "deploy"}
+```
+
+#### write_user_skill_file
+
+Replace the file of a user-global skill the engine lists for the session, by skill name. `ifEtag` is the `etag` the
+last read answered.
+
+```json
+{"type": "write_user_skill_file", "skill": "deploy", "content": "---\nname: deploy\n…", "ifEtag": "sha256-…"}
+```
+
+`data` is `{ skill, path, exists, content, etag }`, with `path` the file's real absolute path. The file must lie inside
+a user skills folder, taken from that folder's real path and resolved without following any link; a skill outside,
+behind a link or reached through `..` is refused with `user_skill_file_not_allowed`.
+
+A write from this machine's own connection commits at once. A write from a connection that speaks for another
+device (a delegated connection, or one that declared `remoteOrigin`) commits only after someone on this machine
+approves it: the engine asks the session's local grant presentation (an attached local client with `grant_select`,
+never a remote or delegated connection), and the question names the origin device, the file's path and the diff
+of the change (the whole content for a new file). The choices are "Allow this change" and "Deny"; there is no
+"always". Every write attempt from another device appends exactly one line to
+`<agentDir>/audit/user-skill-writes.jsonl`: `{ at, originDeviceId, originDeviceName?, path, sha256Before,
+sha256After, decision, reason? }` with `decision` one of `approved`, `denied`, `unconfirmed`, or `refused` for an
+attempt refused before the question (`reason` is its error code; `path` and the hashes are `null` unless the file
+was located inside a user skills folder). An audit line that cannot be written never changes the write's outcome:
+the answer carries `auditError` beside it (in `data` on success, in `errorData` on a refusal). A connection that
+speaks for another device never presents or answers this question (nor any grant select), on the in-process and the
+worker session runtime alike, even when it advertises `grant_select`.
+
+Errors: `user_skill_not_listed` (`errorData: { skill }`), `user_skill_file_not_allowed`, `user_skill_write_declined`
+(denied on this machine), `user_skill_write_unconfirmed` (no local presenter, or no answer within 120 s),
+`project_file_conflict` (`errorData: { currentEtag, exists }`), `project_file_too_large`, `project_file_write_failed`,
+and `invalid_argument`. Both are `device_admin`.
 
 ### extension_request
 

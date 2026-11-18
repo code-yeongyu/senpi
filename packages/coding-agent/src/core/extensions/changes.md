@@ -1,3 +1,116 @@
+## 2026-11-17 - getAllTools() carries a tool's own row renderers (senpi#6903)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolInfo` picks `renderCall` and `renderResult` from the definition, beside `permissionParser`.
+
+### Why
+
+- A host that draws a tool's calls somewhere other than the tool's own row (codemode's nested `tool.<name>()` rows in an eval cell) had no way to reach the renderers, so those calls drew as raw fields (oh-my-openagent#12994).
+
+### Why an extension could not handle it
+
+- `ToolInfo` is the public shape `pi.getAllTools()` returns; codemode is an extension and reads tools only through it.
+
+### Expected merge conflict zones
+
+- LOW: the `ToolInfo` `Pick` list in `types.ts`.
+
+## 2026-11-17 - ToolInfo.evalOnly (senpi#6886)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolInfo.evalOnly?: true`, present while the session routes the tool through eval only.
+
+### Why
+
+- A model that searches for a tool a prompt names must be told it exists and is reachable as `tool.<name>(...)` in a cell.
+
+### Why an extension could not handle it
+
+- `ToolInfo` is the public projection `pi.getAllTools()` returns.
+
+### Expected merge conflict zones
+
+- LOW: the end of the `ToolInfo` type.
+
+## 2026-11-15 - pi.isLoopRemote() and the hand's wake route (senpi#5778, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.isLoopRemote()` and the runtime's `isLoopRemote`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the runtime answers `isLoopRemote` false until a host binds it; `pi.isLoopRemote()` reads it.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `LoopWakeRoute`; `bindSessionlessFacts({ loopWake })`: `pi.sendMessage`, `pi.sendUserMessage` and `pi.appendEntry` go to the live loop-hook call's sender or writer when a call's work makes them (#6751's `loopHookWrite`), and otherwise to the scope's wake route; `pi.isLoopRemote()` answers true. Without the route they stay loop-side and unbound.
+- `packages/coding-agent/src/core/extensions/ui-presentation.ts`: `PresentationBroker` takes an optional `lateNotify`; a notice made outside any call, or after its call's port closed, goes there instead of nowhere. It is presentation-only, so `hasUI` stays false.
+
+### Why
+
+- On a hand, a late `pi.sendMessage` threw `sendMessage is loop-side and not bound` (the sessionless binding in `packages/coding-agent/src/core/extensions/runner.ts`), and late notices reached no UI. Builtin notifiers (terminal, monitor, eval) never notified, because a hand never gets `session_start` for builtins and their guards read loop-side facts; `pi.isLoopRemote()` (`packages/coding-agent/src/core/extensions/types.ts`, backed by `packages/coding-agent/src/core/extensions/loader.ts`) tells them the loop applies those guards.
+
+### Why an extension could not handle it
+
+- The runtime's `sendMessage` / `sendUserMessage` / `appendEntry` binding (`packages/coding-agent/src/core/extensions/runner.ts`), the `pi` object built in `packages/coding-agent/src/core/extensions/loader.ts` and the `ExtensionAPI` contract in `packages/coding-agent/src/core/extensions/types.ts` are runner internals and the public API itself.
+
+### Expected merge conflict zones
+
+- MEDIUM: `bindSessionlessFacts` in `packages/coding-agent/src/core/extensions/runner.ts`; the `ExtensionAPI` message section of `packages/coding-agent/src/core/extensions/types.ts`.
+- LOW: the runtime literal and the `sendUserMessage` member of `pi` in `packages/coding-agent/src/core/extensions/loader.ts`.
+
+## 2026-11-15 - Tools declare that they act on the calling session (senpi#6749)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition.sessionBound?: boolean`, recorded with the definition only.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`, `builtin/goal/tool-registration.ts`, `builtin/tool-search/tool.ts`, `builtin/loop/tools.ts`, `builtin/schedule/tool.ts`, `builtin/relocate-session/index.ts`: `todo`, `create_goal`, `update_goal`, `get_goal`, `tool_search`, `schedule_wakeup`, `schedule_prompt`, `list_relocation_targets` and `relocate_session` declare `sessionBound: true`.
+
+### Why
+
+- Under the hosted parity design v4 the loop registers no tool, so these tools run on the hand too, reached with the session's state through the session port. The hand advertises them like every other tool, and the flag tells the loop which calls must carry that state. `runs: "brain"` cannot say this: `web_search`, `webfetch` and `ask_user` declare it, yet need no session state.
+
+### Why an extension could not handle it
+
+- The field is part of the tool definition contract the loader records.
+
+### Expected merge conflict zones
+
+- LOW: the `ToolDefinition` field list after `runs`; one line in each builtin's registration.
+
+## 2026-11-15 - A hand's loop-hook call reaches the session through the session port (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `LoopHookCallFacts` gains `appendEntry`, `sendUserMessage` and `hasPendingMessages`. `bindSessionlessFacts` takes `loopHookWrite`, routed like `loopHookSend`, so `pi.appendEntry` and `pi.sendUserMessage` from a loop-hook call's work reach that call. A call context binds `hasPendingMessages`.
+
+### Why
+
+- A hosted loop's Stop hook runs on the hand. It writes entries and a follow-up user message to a session that the loop owns, so those writes must go back to the loop instead of failing as loop-side.
+
+### Why an extension could not handle it
+
+- `pi.appendEntry` and `pi.sendUserMessage` are bound by the runner. An extension cannot redirect another extension's writes.
+
+### Expected merge conflict zones
+
+- LOW: `LoopHookCallFacts`, `bindSessionlessFacts` and the loop-hook call branch of `createContext`.
+
+## 2026-11-15 - A hand runs one forwarded loop event for the user's hooks (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitForwardedLoopEvent(event, only)` runs one loop-side event a hosted loop forwarded to this hand, for the extensions `only` accepts, serially under the host's event handler budget (the lifecycle dispatch, now with an optional filter). `getBuiltinProvenancePaths()` returns the paths of the extensions the loader shipped (`sourceInfo.source === "builtin"`: in-tree builtins, bundled modules, generated global-default shims).
+
+### Why
+
+- A hosted loop's lifecycle events must reach the user's hooks on the user's machine (K5), and a bundled builtin such as codemode has a file path, so only the loader's provenance tells it apart from a user extension.
+
+### Why an extension could not handle it
+
+- Event dispatch and extension provenance are runner state; no extension can run another extension's handlers or read its provenance.
+
+### Expected merge conflict zones
+
+- LOW: the `dispatchLifecycle` signature and the block before `getThirdPartySessionStartPaths`.
+
 ## 2026-11-16 - `transient-failure` doc comment no longer ties it to `circuit-breaker` (senpi#6772)
 
 ### What changed

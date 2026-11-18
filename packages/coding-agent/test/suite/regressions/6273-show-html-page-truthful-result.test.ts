@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage, fauxToolCall, type ToolResultMessage } from "@earendil-works/pi-ai";
 import htmlRenderExtension from "../../../src/core/extensions/builtin/html-render/index.ts";
-import { showHtmlPageTool } from "../../../src/core/extensions/builtin/html-render/tool.ts";
+import { createShowHtmlPageTool } from "../../../src/core/extensions/builtin/html-render/tool.ts";
 import type { ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 import { createHarness } from "../harness.ts";
 
@@ -28,7 +28,7 @@ const ctxFor = (cwd: string, surface: Surface | undefined): ExtensionToolContext
 	}) as unknown as ExtensionToolContext;
 
 async function show(cwd: string, surface: Surface | undefined): Promise<{ text: string; path: string }> {
-	const result = await showHtmlPageTool.execute(
+	const result = await createShowHtmlPageTool().execute(
 		"call-6273",
 		{ html: "<p>chart</p>", title: "Chart" },
 		undefined,
