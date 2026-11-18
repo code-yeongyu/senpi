@@ -5,7 +5,8 @@
  *   so a stepped wall clock (an NTP step, a VM resume) never changes it, plus `/proc/sys/kernel/random/boot_id`;
  * - darwin on Bun: `sysctl(KERN_PROC, KERN_PROC_PID, pid)`, the `kinfo_proc` `ps` itself reads, through `bun:ffi`,
  *   without spawning (a `ps` probe from Bun is the zombie bug omo-desktop#594 fixed);
- * - darwin on Node: `ps -o ppid=,stat=,lstart=` (Node reaps its children);
+ * - darwin on Node: `ps -o ppid=,stat=,lstart=` in UTC (Node reaps its children; UTC has no repeated hour, so this
+ *   agrees with the kernel's stamp all year);
  * - anything else: `undefined`.
  *
  * `startedAtMs` is derived the same way on every read on one boot, so two reads of one process compare EQUAL; a
@@ -18,7 +19,6 @@
  */
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { processStartTimeMs } from "../utils/process-identity.ts";
 
 export interface KernelProcessIdentity {
 	readonly ppid: number;
@@ -95,20 +95,23 @@ function darwinPsIdentity(pid: number): Promise<KernelProcessIdentity | undefine
 		execFile(
 			"ps",
 			["-o", "ppid=,stat=,lstart=", "-p", String(pid)],
-			{ encoding: "utf8", timeout: 5_000, env: { ...process.env, LC_ALL: "C", LANG: "C" } },
-			(error, stdout) => {
-				const match = error === null ? /^\s*(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(stdout) : null;
-				const startedAtMs = match?.[3] === undefined ? undefined : processStartTimeMs(match[3]);
-				if (match === null || startedAtMs === undefined) return resolve(undefined);
-				resolve({
-					ppid: Number(match[1]),
-					startedAtMs,
-					bootId: undefined,
-					zombie: match[2]?.startsWith("Z") === true,
-				});
-			},
+			{ encoding: "utf8", timeout: 5_000, env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" } },
+			(error, stdout) => resolve(error === null ? parseDarwinPsIdentity(stdout) : undefined),
 		);
 	});
+}
+
+/** One `ps -o ppid=,stat=,lstart=` line printed under `TZ=UTC`; the start time is read as UTC whatever the reader's zone. */
+export function parseDarwinPsIdentity(stdout: string): KernelProcessIdentity | undefined {
+	const match = /^\s*(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(stdout);
+	const startedAtMs = match?.[3] === undefined ? Number.NaN : Date.parse(`${match[3]} UTC`);
+	if (match === null || !Number.isFinite(startedAtMs)) return undefined;
+	return {
+		ppid: Number(match[1]),
+		startedAtMs,
+		bootId: undefined,
+		zombie: match[2]?.startsWith("Z") === true,
+	};
 }
 
 function createDarwinReader(ffi: BunFfi): SysctlReader | undefined {

@@ -5,8 +5,9 @@
  * of a caller proves the host, not the session, and the caller's `PI_SESSION_ID` is whatever its last `exec` said.
  * The spawner therefore records each child it starts for a session in `<agentDir>/session-spawns/<pid>.json`:
  * the child's pid and kernel start time, the session id, and the spawner's own pid and start time. The runtime reaps a
- * child on its own, so the identity read is issued from the spawn callback, before the event loop can process the
- * child's exit; a different process could wear the pid by then only after a full pid wrap inside that window.
+ * child on its own, so the identity read is issued as soon as the spawner learns the pid: in the core shell's spawn
+ * callback, and right after the PTY session is created. A child that exits and is reaped before that read is never
+ * recorded (it fails closed); recording a different process would take a full pid wrap inside that window.
  *
  * `resolvePidSession` answers "which session owns pid P" from the kernel alone: it walks P's ppid chain to the nearest
  * ancestor with a record and believes that record only when the ancestor's start time, its parent and that parent's
