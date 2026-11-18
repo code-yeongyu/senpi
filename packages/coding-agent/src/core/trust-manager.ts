@@ -6,7 +6,7 @@ import { canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { linkedWorktreeMainCheckoutDir } from "./linked-worktree-checkout.ts";
 import { fsErrorCode } from "./tools/fs-error-code.ts";
-import { trustStoreLockHeldInRealm, withTrustStoreWriteLock } from "./trust-store-write-lock.ts";
+import { holdTrustStoreLockInRealm, inTrustStoreWriteTurn, trustStoreLockHeldInRealm } from "./trust-store-writers.ts";
 
 export { hasTrustRequiringProjectResources, projectAgentsSkillDirs } from "./trust-requiring-resources.ts";
 
@@ -213,6 +213,23 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 	}
 }
 
+/**
+ * Runs `write` holding the store lock across its awaits, after every earlier write of this realm. The lock is taken
+ * and recorded as this realm's in one synchronous step, so a synchronous reader of the realm never meets it unrecorded.
+ */
+function withTrustFileWriteLock(path: string, write: () => Promise<void>): Promise<void> {
+	return inTrustStoreWriteTurn(path, async () => {
+		const release = acquireTrustLockSync(path);
+		const releaseHold = holdTrustStoreLockInRealm(path);
+		try {
+			await write();
+		} finally {
+			releaseHold();
+			release();
+		}
+	});
+}
+
 export class ProjectTrustStore {
 	private trustPath: string;
 	/** Counts the writes made through `setMany`, by any process; bumped under the store lock. */
@@ -264,7 +281,7 @@ export class ProjectTrustStore {
 	}
 
 	async setMany(decisions: ProjectTrustUpdate[]): Promise<void> {
-		await withTrustStoreWriteLock(this.trustPath, async () => {
+		await withTrustFileWriteLock(this.trustPath, async () => {
 			const data = readTrustFile(this.trustPath);
 			for (const { path, decision } of decisions) {
 				const key = normalizeCwd(path);

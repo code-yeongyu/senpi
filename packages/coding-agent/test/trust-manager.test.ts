@@ -3,13 +3,34 @@ import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSy
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
 import {
 	hasTrustRequiringProjectResources,
 	ProjectTrustStore,
 	projectAgentsSkillDirs,
 } from "../src/core/trust-manager.ts";
+
+// The real lock library, with a hook that runs the moment a store lock is acquired (the #6958 review M1 window).
+const lockHooks = vi.hoisted(() => ({ acquired: undefined as (() => Promise<void> | undefined) | undefined }));
+vi.mock("proper-lockfile", async (importOriginal) => {
+	const actual = await importOriginal<{ default: typeof import("proper-lockfile") }>();
+	const real = actual.default;
+	const wrapped: typeof real = {
+		...real,
+		lock: async (...args) => {
+			const release = await real.lock(...args);
+			await lockHooks.acquired?.();
+			return release;
+		},
+		lockSync: (...args) => {
+			const release = real.lockSync(...args);
+			void lockHooks.acquired?.();
+			return release;
+		},
+	};
+	return { ...actual, default: wrapped };
+});
 
 describe("ProjectTrustStore", () => {
 	let tempDir: string;
@@ -188,6 +209,36 @@ describe("ProjectTrustStore", () => {
 			expect(readFileSync(generation, "utf-8")).toBe("4\n");
 		},
 	);
+
+	// #6958 review M1: a write's own lock must count as this process's from the moment it exists on disk.
+	it("answers a synchronous read in the same process issued the moment a write acquires the store lock", async () => {
+		// Given a saved decision, and a write stopped right where it has acquired the store lock
+		const store = new ProjectTrustStore(agentDir);
+		await store.set(cwd, true);
+		const acquired = Promise.withResolvers<void>();
+		const proceed = Promise.withResolvers<void>();
+		lockHooks.acquired = () => {
+			acquired.resolve();
+			return proceed.promise;
+		};
+		const writing = store.set(cwd, false);
+		try {
+			await acquired.promise;
+			lockHooks.acquired = undefined;
+
+			// When this process reads the store then
+			// Then it answers from what is saved
+			expect(store.get(cwd)).toBe(true);
+		} finally {
+			lockHooks.acquired = undefined;
+			proceed.resolve();
+			await writing.catch(() => undefined);
+		}
+
+		// And the write completes
+		await writing;
+		expect(store.get(cwd)).toBe(false);
+	});
 
 	it("lets two writes in one process wait for each other instead of failing on the lock", async () => {
 		const store = new ProjectTrustStore(agentDir);
