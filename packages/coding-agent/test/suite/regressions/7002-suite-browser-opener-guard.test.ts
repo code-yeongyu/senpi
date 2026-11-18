@@ -29,19 +29,22 @@ async function recordedUrls(record: string, probe: string, deadlineMs = 5_000): 
 // failing (or opening a real browser on a desktop host) on win32, mirroring the platform gates the
 // claude-cli suite uses (senpi#7003 review L2).
 describe("suite browser-opener guard (senpi#7002)", () => {
-	it.skipIf(process.platform === "win32")("a TUI auth_url with no injected launcher is recorded by the guard, never opened", async () => {
-		const record = process.env.SENPI_TEST_BROWSER_GUARD_RECORD;
-		if (record === undefined) {
-			throw new Error(
-				"SENPI_TEST_BROWSER_GUARD_RECORD is missing: the test setup no longer installs the browser-opener guard",
-			);
-		}
-		const { ctx } = createAccountCommandContext(AuthStorage.inMemory(), "/tmp");
-		const interaction = createExtensionLoginInteraction(ctx, { providerLabel: "Guard probe" });
+	it.skipIf(process.platform === "win32")(
+		"a TUI auth_url with no injected launcher is recorded by the guard, never opened",
+		async () => {
+			const record = process.env.SENPI_TEST_BROWSER_GUARD_RECORD;
+			if (record === undefined) {
+				throw new Error(
+					"SENPI_TEST_BROWSER_GUARD_RECORD is missing: the test setup no longer installs the browser-opener guard",
+				);
+			}
+			const { ctx } = createAccountCommandContext(AuthStorage.inMemory(), "/tmp");
+			const interaction = createExtensionLoginInteraction(ctx, { providerLabel: "Guard probe" });
 
-		interaction.notify({ type: "auth_url", url: GUARD_URL });
+			interaction.notify({ type: "auth_url", url: GUARD_URL });
 
-		const lines = await recordedUrls(record, "client_id=guard-probe");
-		expect(lines).toContain(GUARD_URL);
-	});
+			const lines = await recordedUrls(record, "client_id=guard-probe");
+			expect(lines).toContain(GUARD_URL);
+		},
+	);
 });
