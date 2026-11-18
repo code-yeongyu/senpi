@@ -1022,8 +1022,6 @@
       "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": ["wrapToolDefinitions"],
       // pre-existing at origin main aceb1cc1d9: unused exports truncateMiddle
       "packages/coding-agent/src/core/tools/truncate.ts": ["truncateMiddle"],
-      // pre-existing at origin main aceb1cc1d9: unused exports getProjectTrustParentPath
-      "packages/coding-agent/src/core/trust-manager.ts": ["getProjectTrustParentPath"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_TURN_INACTIVITY_MS, MIN_TURN_INACTIVITY_MS, DEFAULT_TURN_MAX_RUNTIME_MS
       "packages/coding-agent/src/core/turn-deadline.ts": ["DEFAULT_TURN_INACTIVITY_MS", "DEFAULT_TURN_MAX_RUNTIME_MS", "MIN_TURN_INACTIVITY_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports VIRTUAL_MODEL_API
