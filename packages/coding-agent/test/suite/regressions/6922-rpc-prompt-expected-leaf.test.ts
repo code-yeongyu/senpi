@@ -113,6 +113,29 @@ describe("RPC prompt that names its leaf", () => {
 		expect(fixture.session.sessionManager.getEntries().length).toBe(entriesBefore);
 	});
 
+	it("refuses an expected leaf while a hold would keep the prompt as a notice, storing nothing", async () => {
+		const { fixture, promptSettled, providerCalls } = await setup();
+		fixture.session.pauseForRun({ parentSessionId: "parent", parentPauseSeq: 1, runRef: { kind: "task", id: "r1" } });
+		const leaf = fixture.session.sessionManager.getLeafId();
+		if (leaf === null) throw new Error("the held session has no leaf");
+		const callsBefore = providerCalls();
+		const entriesBefore = fixture.session.sessionManager.getEntries().length;
+		const holdsBefore = JSON.stringify(fixture.session.holds);
+
+		const response = (await promptSettled({ message: "held", expectedLeafId: leaf })) as {
+			success?: boolean;
+			errorCode?: string;
+			data?: { heldAsNotice?: boolean };
+		};
+
+		expect(response.success).toBe(false);
+		expect(response.errorCode).toBe("invalid_argument");
+		expect(response.data?.heldAsNotice).toBeUndefined();
+		expect(JSON.stringify(fixture.session.holds)).toBe(holdsBefore);
+		expect(providerCalls()).toBe(callsBefore);
+		expect(fixture.session.sessionManager.getEntries().length).toBe(entriesBefore);
+	});
+
 	it("runs a prompt that omits the expected leaf, as before", async () => {
 		const { promptSettled, providerCalls } = await setup();
 		const callsBefore = providerCalls();

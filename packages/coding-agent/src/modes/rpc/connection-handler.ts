@@ -80,7 +80,7 @@ import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
-import { holdAutomaticInput } from "./automatic-input-gate.ts";
+import { automaticInputWouldBeHeld, holdAutomaticInput } from "./automatic-input-gate.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { admitInputChain } from "./chain-admission.ts";
@@ -1416,7 +1416,11 @@ export function createRpcConnectionHandler(
 
 			case "prompt": {
 				// senpi#6922: a prompt decided at one leaf never runs from another; nothing is appended or sent.
-				const leafRefusal = refusePromptAtMovedLeaf(session, command);
+				const leafRefusal = refusePromptAtMovedLeaf(
+					session,
+					command,
+					automaticInputWouldBeHeld(session, hasRole(INTERACTIVE_USER_CAPABILITY)),
+				);
 				if (leafRefusal !== undefined) return error(id, "prompt", leafRefusal.message, leafRefusal.errorCode);
 				const chain = admitInputChain(command.chainCount, session.settingsManager);
 				if (chain.kind === "refused")
