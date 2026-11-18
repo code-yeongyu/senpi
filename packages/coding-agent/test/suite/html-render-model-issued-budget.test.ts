@@ -8,11 +8,8 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createSessionCursorExecBridge } from "../../src/core/cursor-exec-bridge-session.ts";
-import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
-import {
-	MAX_HANDED_PAGE_CHARACTERS,
-	MAX_HANDED_PAGES_CHARACTERS,
-} from "../../src/core/extensions/builtin/html-render/tool.ts";
+import htmlRenderExtension from "../../src/extensions/html-render/index.ts";
+import { MAX_HANDED_PAGE_CHARACTERS, MAX_HANDED_PAGES_CHARACTERS } from "../../src/extensions/html-render/tool.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 // senpi#6915: a show_html_page call the model issued joins the transcript, so the session marks it `issuedByModel`

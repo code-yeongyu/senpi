@@ -1,3 +1,95 @@
+## 2026-11-18 - Revert: the trust memo keyed by the no-decision entry (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` returns to the saved-trust read and per-process memo it had before #6823.
+
+### Why
+
+- #6823 added five synchronous fs calls on the RPC session path (`existsSync` and `readFileSync` in `readGeneration`, `renameSync` and `writeFileSync` in `setMany`, `statSync` in `revision`), which breaks the frozen, shrink-only no-sync baseline (`test/suite/no-sync-in-session-path.test.ts`). It merged on a runner exit code while its filed receipt was red. It re-lands with those calls asynchronous.
+
+### Why an extension could not handle it
+
+- This reverts core code that #6823 changed.
+
+### Expected merge conflict zones
+
+- LOW: the same lines #6823 touched.
+
+## 2026-11-18 - Opening a store session keeps the terminal's session folder (senpi#6941, omo-desktop-app#8097)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `openWithHomeSessionDir` opens a named or picked session file and, without an explicit `--session-dir`, adopts the folder's own session dir as home when the file lives in a registered app store. `--session <id|path>`, `--resume`, `--continue` of a moved session, `--session-id` of an existing session and the rebind path all open through it.
+
+### Why
+
+- `--session <id>` finds app-store sessions now that listing includes registered stores; opened plainly, the store became the session's home, so the next list dropped the terminal's own sessions and `/new` wrote into the app's store (review M1 at cc4c386231).
+
+### Why an extension could not handle it
+
+- Startup session selection runs in `main.ts` before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `openSessionOrExit`, `rebindSessionOrExit` and the `--resume` / `--continue` / `--session-id` returns in `createSessionManager`.
+
+## 2026-11-18 - The attaching start passes its command line; both ends must be a terminal (senpi#6914)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `admitOrExit(sessionFile, appMode, attach?)` takes the command line (`HeldSessionAttach`) from `createSessionManager`. An attach admission builds the plan (a refusal exits 1 with a notice) and runs `runAttachedTui` with the socket, session, `tuiMode`, `theme` and `startup`. Without the context (a rebind), it never attaches. `canAsk` now also requires stdout to be a terminal.
+
+### Why
+
+- senpi#6911 L1 and L4: the command line reaches the attached session, and `omo --session X > log` keeps the exit-76 refusal instead of failing in the attached view's terminal check.
+
+### Why an extension could not handle it
+
+- Mode dispatch happens in `main.ts` before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `admitOrExit`, `openSessionOrExit` and the top of `createSessionManager`.
+
+## 2026-11-17 - Startup runs the attached TUI for a host-held session (senpi#6909)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `admitOrExit(sessionFile, appMode, canAttach = true)` runs `runAttachedTui` on the admitted socket and session, then exits, so the in-process runtime never opens the held file. `rebindSessionOrExit` passes `canAttach = false` (a rebind rewrites the file).
+
+### Why
+
+- Follows the senpi#6909 admission: the terminal follows the host's live session as one more client, so one writer remains.
+
+### Why an extension could not handle it
+
+- Mode dispatch happens in `main.ts` before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `admitOrExit` and `rebindSessionOrExit`.
+
+## 2026-11-16 - A remembered trust answer never stands in for an explicit no-decision entry (desktop pull request worktrees)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the runtime factory reads what is saved for the folder with `getSavedProjectTrustState`. Its per-process memo of an unsaved answer (`projectTrustByCwd`) records what was saved for the folder when the answer was given and the store's `revision()`. An answer given with nothing saved holds while nothing is saved for the folder. An answer given under the explicit no-decision entry (`set_project_trust` `no_inherit`) holds only while the store revision is unchanged. A saved decision is always re-read, never remembered.
+
+### Why
+
+- #6823 review H1: both undecided values read as `null`, so a folder this process had earlier resolved trusted without saving (for example through a `project_trust` handler, or a session-only answer) stayed trusted for every later session after `no_inherit`, which defeats the marker in the desktop's own flow (it saves `no_inherit` on an open session).
+- #6823 review L1: keying the memo by the entry it was answered under keeps an answer given under `no_inherit` ("Trust (this session only)") for the process's later sessions of that folder (`/new`, `/fork`), which open without a prompt, instead of dropping it silently.
+- #6823 review M1: a memo keyed only by the saved value came back after an intervening save restored that value (`no_inherit`, `do_not_trust`, `no_inherit`); a `no_inherit` answer now needs an unchanged store revision, and every write through the store by an engine with this change, in any process, bumps the revision's generation under the store lock (review round 3, L1; an older engine's writes are seen only through modification time and size). An answer given with nothing saved keeps the base behaviour and survives writes for other folders (round 3, L2).
+
+### Why an extension could not handle it
+
+- The memo lives in the CLI runtime factory's closure.
+
+### Expected merge conflict zones
+
+- LOW: the saved-trust read at the top of `createServices` in `main.ts`.
+
 ## 2026-11-16 - Export `withCredentialProxy` (senpi#6828)
 
 ### What changed

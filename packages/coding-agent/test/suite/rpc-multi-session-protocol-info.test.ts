@@ -89,6 +89,7 @@ describe("multi-session RPC protocol info", () => {
 					"prompt_surface",
 					"prompt_surface_chat",
 					"browser_engine",
+					"host_tools", // senpi#5045: sessions attach show_html_page through the SDK, so an app may serve it.
 					"session_env",
 					"retry_fallback_profile",
 					"permission_preset_accept_edits",

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createShowHtmlPageTool } from "../../../src/core/extensions/builtin/html-render/tool.ts";
+import { createShowHtmlPageTool } from "../../../src/extensions/html-render/tool.ts";
 import type { ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 
 // senpi#6273: show_html_page said "Open it in the desktop" even where the desktop had already shown the page
@@ -25,7 +25,7 @@ const ctxFor = (cwd: string, surface: Surface | undefined): ExtensionToolContext
 	}) as unknown as ExtensionToolContext;
 
 async function show(cwd: string, surface: Surface | undefined): Promise<{ text: string; path: string }> {
-	const result = await createShowHtmlPageTool().execute(
+	const result = await createShowHtmlPageTool(new Map()).execute(
 		"call-6273",
 		{ html: "<p>chart</p>", title: "Chart" },
 		undefined,

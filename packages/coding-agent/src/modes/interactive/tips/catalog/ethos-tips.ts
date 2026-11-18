@@ -31,7 +31,7 @@ export const ETHOS_TIPS = [
 		bindings: [],
 		requiresCommand: "tasks",
 		render: () =>
-			"For days when deep thought sounds awful, run the ulw loop with gpt-6.1-sol fast/medium. Fair warning: shallow thinking sends invoices.",
+			"For days when deep thought sounds awful, run the ulw loop with gpt-6.2-sol fast/medium. Fair warning: shallow thinking sends invoices.",
 	},
 	{
 		id: "ethos.monitor-subscribe",

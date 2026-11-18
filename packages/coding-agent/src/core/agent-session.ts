@@ -8409,12 +8409,16 @@ export class AgentSession {
 		});
 	}
 
-	noteAutomaticInput(text: string): boolean {
-		const userHold = this._engineTurnHold.holds.some(
+	/** Whether the user's Stop or a parent's run hold is live: automatic connection input is then kept as a notice. */
+	automaticInputHoldLive(): boolean {
+		return this._engineTurnHold.holds.some(
 			(hold) =>
 				(hold.kind === "session_hold" && hold.key !== "interrupted-run") || hold.kind === "inherited_hold",
 		);
-		if (!userHold) return false;
+	}
+
+	noteAutomaticInput(text: string): boolean {
+		if (!this.automaticInputHoldLive()) return false;
 		const message: CustomMessage = {
 			role: "custom",
 			customType: "rpc-automatic-input",

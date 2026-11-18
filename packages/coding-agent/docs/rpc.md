@@ -2989,6 +2989,14 @@ also when the attach lands while one of them is still building the replacement. 
 `get_protocol_info` before sending the field; the capability is advertised only because the value reaches every
 consumer above. Any other value is refused with `invalid_launch_profile`.
 
+#### Host tools (`host_tools`)
+
+Every session on a host that advertises `host_tools` registers its host tools (today `show_html_page`) through the
+SDK's `attachHostTools`: the tool always serves on its own, and a host bridge may route its calls to an app that
+serves the same public name. The public SDK exports the writer such an app calls back (`writeHtmlPage`). An app
+offers its host tool attachment (and the credential that serves it) only to a session on a host that names this
+capability; any other host keeps the standalone tool.
+
 #### Caller env per session (`session_env`)
 
 `open_session.env: Record<string, string>` is the per-spawn caller env channel (senpi#4381): the small, explicit set
@@ -3720,7 +3728,7 @@ A session moves only into a checkout of the same repository, and until senpi#643
 - `{"op":"identity","sessionPath":"…"}` on the SENDER answers what the session recorded: `{ repository: { rootCommits, originUrl? } }`, or `{}` when it recorded none. It is the value `export` writes into its bundle, read the same way (the file's last `repository-identity` entry wins). It reads only a session file of that host's own session folder (`<agentDir>/sessions/<folder>/<name>.jsonl`, decided on the resolved path, so a link out of that folder is refused without being opened) and scans at most 1 GiB of it. Every path it will not read answers one and the same refusal, `move_failed`, so the answer never says which paths exist. A larger file answers `move_failed` too, with its own detail.
 - `{"op":"identity","cwd":"…"}` on the RECEIVER answers that folder's own git identity: the read `import` already makes on the folder a caller names. It never refuses for what the folder is. A folder with no repository, one that is not there, one that is not a directory and one that cannot be read all answer `{}`, so it never says which folders exist. Only a malformed request is refused with `invalid_move_request`: a relative `cwd`, both fields at once, or neither.
 
-`prepare { moveId, cwd, repository }` then decides with the comparison the import makes. The same repository readies the move and the record keeps `cwd`; anything else answers `move_repository_mismatch` and readies nothing, so the sender never releases. A `cwd` with no `repository` is compared as "the session recorded none", which is a mismatch, exactly as that bundle's import would be. `repository` without `cwd`, a relative `cwd`, or a `repository` that is not `{ rootCommits: string[], originUrl?: string }` is refused `invalid_move_request`, and nothing is readied. The folder is kept and compared as resolved text: `.` and `..` segments and doubled or trailing slashes are normalised, but a symbolic link is not followed and letter case is not folded, so a path through a link, or in another case on a disk that ignores case, is another folder to the move. An `import` that spells the folder that other way is refused `move_fenced`: it writes no session file and no record, though it may leave an empty session folder for that other spelling, and the move stays ready for the spelling it was readied with; send `prepare` and `import` the same `cwd`.
+`prepare { moveId, cwd, repository }` then decides with the comparison the import makes. The same repository readies the move and the record keeps `cwd`; a `cwd` that does not exist on this host answers `workspace_missing`, anything else answers `move_repository_mismatch`, and neither readies anything, so the sender never releases. A `cwd` with no `repository` is compared as "the session recorded none", which is a mismatch, exactly as that bundle's import would be. `repository` without `cwd`, a relative `cwd`, or a `repository` that is not `{ rootCommits: string[], originUrl?: string }` is refused `invalid_move_request`, and nothing is readied. The folder is kept and compared as resolved text: `.` and `..` segments and doubled or trailing slashes are normalised, but a symbolic link is not followed and letter case is not folded, so a path through a link, or in another case on a disk that ignores case, is another folder to the move. An `import` that spells the folder that other way is refused `move_fenced`: it writes no session file and no record, though it may leave an empty session folder for that other spelling, and the move stays ready for the spelling it was readied with; send `prepare` and `import` the same `cwd`.
 
 A move readied for a folder lands only there: an `import` naming another `cwd` is refused `move_fenced`: it writes no session file and no record, though it may leave an empty session folder for that other `cwd`, and the move stays ready for the folder its `prepare` checked, so the right import still lands. A second `prepare` for the same folder answers the same record with the same `expires_at`; one for another folder is refused `move_fenced`; one naming no folder answers the record and leaves the folder as it is, so an older client's `prepare` changes nothing. A move readied with no folder takes the folder of the first `import` that receives it, and `cancel` is unchanged throughout.
 
@@ -3730,7 +3738,7 @@ A `prepare` with neither `cwd` nor `repository` behaves exactly as it always did
 
 The order is: the sender reads the session's repository (`identity`, alongside its `get_state`) and the receiver reads the target folder's; the receiver `prepare`s with both, which refuses a folder of another repository before anything is released; the sender releases the session with `release_session` reason `move` (usually with `interrupt: true`) and passes its `dropped.user_messages` to `export`; the transport carries `bundle_dir` to the receiver, which `import`s it; the sender asks `status` (on start, on reconnect, and when the session is opened) and `finish`es with the answer. `accepted` leaves the sender's copy read-only for good; `declined`, `failed`, or `accepted` with `revoked: true` makes it writable again with its queued input back. `receiving` changes nothing.
 
-Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, a bundle for a move the receiver never readied, or an `import` or `prepare` naming a folder other than the one the move was readied for), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository: from `prepare` before the release, and from `import`), `move_target_occupied`, `move_mismatch`, `move_already_moved` (a revoked answer for a sender already marked moved), `session_moved_away`, `session_held`, and `move_failed` for anything else. `move_failed` also refuses an `export` whose sealing `release_session` staged extension state that is no longer on disk: the session is never bundled without it, and `finish` with a `declined` answer takes it back.
+Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, a bundle for a move the receiver never readied, or an `import` or `prepare` naming a folder other than the one the move was readied for), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository: from `prepare` before the release, and from `import`), `workspace_missing` (`cwd` does not exist on this host, from the same two steps; an `import` declines the move `repository` exactly as for a mismatch, so only the code tells the two apart), `move_target_occupied`, `move_mismatch`, `move_already_moved` (a revoked answer for a sender already marked moved), `session_moved_away`, `session_held`, and `move_failed` for anything else. `move_failed` also refuses an `export` whose sealing `release_session` staged extension state that is no longer on disk: the session is never bundled without it, and `finish` with a `declined` answer takes it back.
 
 #### Moving without a bundle folder
 
@@ -6452,8 +6460,9 @@ commands read and write a file in the session's folder).
 
 #### read_project_file
 
-Reads one of the workspace's instruction files: `AGENTS.md` or `CLAUDE.md` at the session's folder or in any folder
-below it, or a file under `.omo/rules/`. Reading runs nothing, so it works while the project is untrusted.
+Reads one of the workspace's project files: `AGENTS.md` or `CLAUDE.md` at the session's folder or in any folder
+below it, a file under `.omo/rules/`, or the folder's OmO config `.omo/omo.jsonc` (per-agent and per-category model
+routing; at the folder itself only). Reading runs nothing, so it works while the project is untrusted.
 
 ```json
 {"type": "read_project_file", "path": "AGENTS.md"}
@@ -6478,8 +6487,9 @@ below it, or a file under `.omo/rules/`. Reading runs nothing, so it works while
 `path` is relative to the session's folder, `/`-separated and canonical: no empty, `.` or `..` segment, no `\\`, `:`
 or NUL, and never through `.git` or `node_modules`. A file that does not exist yet is a success with `exists: false`
 and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: compare it, never parse it.
-Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path }`) for any
-other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
+Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path, reason }`):
+`reason` is `not_listed` for any other path and `unsafe` when a folder on the way or the file itself is a symlink or
+not a regular file and folder (an engine before `.omo/omo.jsonc` was listed sends no `reason`), and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
 
 #### The folder a project write is for
@@ -6508,7 +6518,9 @@ writes to one file are applied one at a time. The response carries the same `dat
 after the write. The session reads its instruction files when they are next loaded (a new session or `reload`).
 Errors: `invalid_argument` when `content` is not a string, `ifEtag` is neither a string nor `null`, or `expectedCwd` is
 not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
-`project_not_trusted` while the project is untrusted, `project_file_not_allowed` as for `read_project_file`,
+`project_not_trusted` while the project is untrusted (read again when the write commits),
+`project_file_permission_denied` when this machine's own permission rules for an edit of that path refuse it (the same
+decision the write tool gets), `project_file_not_allowed` as for `read_project_file`,
 `project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB or a stored file over 512 KiB (its
 version cannot be checked without reading it), `project_file_conflict` when
 `ifEtag` is not the file's current version (`errorData: { currentEtag, exists }`; nothing is written; read again
