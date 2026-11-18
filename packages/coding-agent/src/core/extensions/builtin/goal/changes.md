@@ -1,3 +1,21 @@
+## 2026-11-17 - A Stop-paused goal stays paused when an input releases and retakes the hold (senpi#6897)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: `session_hold_changed` edges are applied one at a time, each against the current hold (Stop live pauses the goal, released resumes it), instead of trusting the edge's direction.
+
+### Why
+
+- An input that admits no turn (a slash command) releases the Stop and takes it back within milliseconds. The two edges were handled concurrently: the resume write landed after the pause read, leaving the goal active and ticking under a live Stop.
+
+### Why an extension could not handle it
+
+- The goal extension owns its own hold handling; the fix is inside it.
+
+### Expected merge conflict zones
+
+- LOW: the `session_hold_changed` handler in `goal/index.ts`.
+
 ## 2026-11-11 - A goal waiting out a limit resumes when its session reopens (senpi#4085)
 
 ### What changed

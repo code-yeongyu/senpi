@@ -1,3 +1,21 @@
+## 2026-11-18 - GPT-6.2 Astra and GPT-6.2 Sol catalog rows (senpi#6948, senpi#6942)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the ChatGPT subscription catalog gains `gpt-6.2-astra` and `gpt-6.2-sol`. Every GPT-6 id table (tool search, additional tools, short-context cap, long-context pricing, priority tier on both lanes, subscription `configuration_update`, standard costs, flagship and family context windows, the no-`none` effort markers, the thinking-level pass and the subscription Ultrafast clone) now lists both ids. The dotless Venice spellings (`gpt-62-astra`, `gpt-62-sol`) are listed as family markers. `isGpt61SolId` became `isGpt6NoNoneEffortId`, which covers every GPT-6 id that rejects effort `none`.
+
+### Why
+
+- OpenAI released both models on 2026-11-17 (developers.openai.com/api/docs/models/gpt-6.2-astra, gpt-6.2-sol). The subscription had no row for either id, and the API rows from models.dev carried the raw 922k window with no long-context tiers, Fast rows or tool flags. Astra follows gpt-6-astra's 600k budget. Sol follows gpt-6.1-sol: 400k on the API and 500k on the subscription, which openai/codex's models.json also uses. Both reject effort `none` and are flagged `supports_reasoning_effort_updates` in openai/codex.
+
+### Why an extension could not handle it
+
+- The bundled catalog and its per-id metadata passes are generated here. An extension can register a custom provider, but it cannot add rows or capability flags to the built-in `chatgpt-subscription` and `openai` catalogs.
+
+### Expected merge conflict zones
+
+- LOW: the GPT-6 id sets and context-window tables near the top of the file, and the Codex model list. Upstream pi adding its own 6.2 rows would touch the same lists.
+
 ## 2026-11-11 - pi-ai depends on the realm-registry helper (omo#12965)
 
 ### What changed

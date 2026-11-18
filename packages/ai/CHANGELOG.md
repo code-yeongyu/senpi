@@ -1,10 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.18] - 2026-11-18
 
 ### Breaking Changes
 
 ### Added
+
+- GPT-6.2 Astra and GPT-6.2 Sol on the ChatGPT subscription (with Fast and, for Sol, Ultrafast variants), plus GPT-6 tier metadata for their OpenAI API and gateway rows ([#6948](https://github.com/code-yeongyu/senpi/pull/6948))
 
 ### Changed
 
