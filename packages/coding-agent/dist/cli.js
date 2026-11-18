@@ -22,6 +22,7 @@ import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.js";
 import { isFifoMode } from "./utils/inherited-duplex.js";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.js";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.js";
+import { dispatchSessionOfPidCommand } from "./cli/session-of-pid-command.js";
 import { dispatchKillGuardCommand } from "./cli/kill-guard-command.js";
 import { enableStartupCompileCache } from "./compile-cache.js";
 import { APP_NAME, DISPLAY_VERSION, findNodePackageDir, getAgentDir, getInstallPackageDir, isBundledNode, } from "./config.js";
@@ -130,6 +131,7 @@ if (reexecUnderBunIfNeeded()) {
 }
 const args = process.argv.slice(2);
 await dispatchAgentDirectoryCommand(args);
+await dispatchSessionOfPidCommand(args);
 // Must run before cli-main is loaded, by either path: it caches the engine graph this process
 // imports on the fast path below, and it publishes NODE_COMPILE_CACHE so a spawned cli-main child
 // inherits this process's cache directory instead of resolving and re-filling its own.
