@@ -129,7 +129,13 @@ describe("desktop#8097: a terminal lists the sessions the desktop keeps in its o
 		const own = writeSession(getDefaultSessionDir(project), "cli-own", project);
 		writeSession(join(appStore, "omo-instance"), "app-thread", project);
 		registerStore("omo-desktop-a.json", JSON.stringify({ version: 1, root: appStore }));
-		const args: Args = { messages: [], fileArgs: [], unknownFlags: new Map(), diagnostics: [], session: "app-thread" };
+		const args: Args = {
+			messages: [],
+			fileArgs: [],
+			unknownFlags: new Map(),
+			diagnostics: [],
+			session: "app-thread",
+		};
 
 		const opened = await createSessionManager(args, project, undefined, SettingsManager.inMemory(), "print");
 
