@@ -21,7 +21,7 @@
 //   change produces the result, and ask why the cause is there.
 // - Reporting is decided by the reader (what this user needs or ought to know, and why), so the core
 //   carries no four-slot handoff block and no stop-condition template; the terminal surface keeps a
-//   one-line "I read this as" opener. The todo tool emits no handoff cue for this preset.
+//   one-line "I read this as" opener. senpi#6977 stops the todo tool from cueing a block for this preset.
 // - No delegation guidance, and no capitalized or bold emphasis: "Never" appears only in the limits
 //   and the refusal rule (the guide's predecessor: absolutes for true invariants only).
 // - Harness facts the model cannot derive are short sentences bound to the tools they describe
@@ -72,7 +72,7 @@ const TERMINAL: readonly PromptSurface[] = ["terminal"];
 const APP_AND_CHAT: readonly PromptSurface[] = ["app", "chat"];
 
 function finalAnswer(unverified: string): string {
-	return `Treat the final answer as the user's first look at your work. It stands alone, without the earlier updates or the shorthand you built up while working. Lead with the outcome, then give what changed and where, the checks you ran and their results, the assumptions and decisions you made without the user's guidance, every obstacle that blocked or narrowed the work, and ${unverified} or outside the goal.`;
+	return `Treat the final answer as the user's first look at your work. It stands alone, without the earlier updates or the shorthand you built up while working. Lead with the outcome, then give what changed and where, the checks you ran and their results, the assumptions and decisions you made without the user's guidance, every obstacle that blocked or narrowed the work, anything outside the goal, and ${unverified}.`;
 }
 
 export const GPT62_RULES = [
@@ -117,7 +117,7 @@ export const GPT62_RULES = [
 		id: "no-early-stop",
 		section: "Keep going",
 		directive:
-			'Work until the goal is met. The only earlier stops are the ones listed under "When to involve the user". If the message you are about to end on is a plan, a suggested next step, a request for a routine decision, or an offer to continue, do that work instead. Fill gaps in detail with reasonable, reversible assumptions, and keep each one for the final report.',
+			'Work until the goal is met. Hand the turn back earlier only in the cases listed under "When to involve the user". If the message you are about to end on is a plan, a suggested next step, a request for a routine decision, or an offer to continue, and the goal still needs that work, do it instead. Fill gaps in detail with reasonable, reversible assumptions, and keep each one for the final report.',
 	},
 	{
 		id: "obstacles",
@@ -143,7 +143,7 @@ export const GPT62_RULES = [
 		section: "Keep going",
 		requiresTool: ["eval", "monitor"],
 		directive:
-			"Start a long run (a build, a test suite, a deploy) in the background, subscribe to its result, and keep working on what does not need it. There is no wait tool, so a turn may also end when every remaining step needs a pending result that will wake you.",
+			"Start a long run (a build, a test suite, a deploy) in the background, subscribe to its result, and keep working on what does not need it. There is no wait tool: when every remaining step needs a pending result that will wake you, ending the turn is how you wait.",
 	},
 	{
 		id: "compaction",
@@ -251,9 +251,7 @@ export const GPT62_RULES = [
 	},
 ] as const satisfies readonly Gpt62Rule[];
 
-export type Gpt62RuleId = (typeof GPT62_RULES)[number]["id"];
-
-export function activeGpt62Rules(toolNames: readonly string[], surface: PromptSurface): readonly Gpt62Rule[] {
+function activeGpt62Rules(toolNames: readonly string[], surface: PromptSurface): readonly Gpt62Rule[] {
 	return GPT62_RULES.filter((rule: Gpt62Rule) => {
 		const hasTool = rule.requiresTool === undefined || rule.requiresTool.some((name) => toolNames.includes(name));
 		return hasTool && (rule.surfaces === undefined || rule.surfaces.includes(surface));
