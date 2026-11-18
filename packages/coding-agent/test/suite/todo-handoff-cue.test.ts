@@ -8,8 +8,8 @@ import {
 import { type PromptPresetSettings, resolvePreset } from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
 import {
-	GPT_HANDOFF_BLOCK_LINE,
 	GPT_HANDOFF_CUES,
+	GPT_HANDOFF_LABELS,
 	HANDOFF_CUES,
 	handoffMomentOf,
 	type TodoPhase,
@@ -153,11 +153,11 @@ describe("the cue names the handoff block the active preset defines (senpi#6977)
 		// when
 		const texts = await runFourTodoCalls("gpt-6-astra");
 
-		// then: each handoff-moment result cues that block, and no cue names the default Ask / For you block
+		// then: each handoff-moment result cues that block's labels, and no cue names the default Ask / For you block
 		expect(texts).toHaveLength(4);
 		for (const text of [texts[0], texts[2]]) {
 			expect(text).toContain("Handoff due");
-			expect(text).toContain(GPT_HANDOFF_BLOCK_LINE);
+			expect(text).toContain(`${GPT_HANDOFF_LABELS} handoff block`);
 			expect(text).not.toContain("Ask / For you / Now / Next");
 		}
 		expect(texts[3]).toContain("Handoff due");
@@ -182,26 +182,30 @@ describe("the cue names the handoff block the active preset defines (senpi#6977)
 
 	it("maps every preset to the cue kind its rendered prompt implies", () => {
 		// given: the preset case table covers every preset family; the expectation is DERIVED from
-		// each case's rendered prompt (a prompt containing the GPT block line must be mapped gpt-block),
+		// each case's rendered prompt (a prompt rendering the outcome-first block must be mapped gpt-block),
 		// so a preset that starts or stops rendering the block fails here until the table is set deliberately
 		for (const { providerID, modelID, preset } of PROMPT_PRESET_MODEL_CASES) {
 			const prompt = resolvePreset(createModel(modelID, providerID), AUTO)?.prompt ?? "";
 			const expected =
-				preset === "gpt-6.2" ? "none" : prompt.includes(GPT_HANDOFF_BLOCK_LINE) ? "gpt-block" : "default";
+				preset === "gpt-6.2" ? "none" : prompt.includes("[Outcome so far] toward") ? "gpt-block" : "default";
 			expect(presetHandoffCueKind(preset), preset).toBe(expected);
 		}
 		expect(presetHandoffCueKind(undefined)).toBe("default");
 	});
 
-	it("cites the GPT handoff block byte-equal to the prompts that render it", () => {
+	it("names the GPT handoff labels the prompts that render the block carry", () => {
 		// given: the three presets that render the GPT block
-		// then: each rendered prompt contains the cue's block line, so the cue cannot drift from the prompt
+		// then: each rendered prompt opens the block with the labels the cue names, so the cue
+		// cannot name labels the prompt does not define
 		for (const id of ["gpt-5.5", "gpt-5.6", "gpt-6-astra"]) {
 			const prompt = resolvePreset(createModel(id), AUTO)?.prompt ?? "";
-			expect(prompt, id).toContain(GPT_HANDOFF_BLOCK_LINE);
+			expect(prompt, id).toContain("[Outcome so far] toward");
+			expect(prompt, id).toContain("You need:");
+			expect(prompt, id).toContain("Now:");
+			expect(prompt, id).toContain("Next:");
 		}
 		for (const cue of [GPT_HANDOFF_CUES["list-created"], GPT_HANDOFF_CUES["phase-closed"]]) {
-			expect(cue).toContain(GPT_HANDOFF_BLOCK_LINE);
+			expect(cue).toContain(GPT_HANDOFF_LABELS);
 		}
 		expect(GPT_HANDOFF_CUES["all-closed"]).toContain("goes inside You need");
 	});

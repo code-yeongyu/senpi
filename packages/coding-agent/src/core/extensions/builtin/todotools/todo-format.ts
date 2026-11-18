@@ -69,16 +69,16 @@ export const HANDOFF_CUES: Readonly<Record<HandoffMoment, string>> = {
 };
 
 /**
- * The handoff block line every GPT block preset renders verbatim (gpt-5.5, gpt-5.6, gpt-6-astra; the
- * gpt-6.2 core inherits it until its rewrite lands). The cue quotes it so the tool result and the
- * system prompt name one block, and a test pins this line byte-equal against the rendered presets.
+ * The labels of the handoff block every GPT block preset renders (gpt-5.5, gpt-5.6, gpt-6-astra;
+ * the gpt-6.2 core inherits it until its rewrite lands). The cue names these labels - the prompt
+ * itself carries the full template, so the cue does not repeat it - and a test pins the labels
+ * against the rendered presets.
  */
-export const GPT_HANDOFF_BLOCK_LINE =
-	"[Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].";
+export const GPT_HANDOFF_LABELS = "Outcome so far / You need / Now / Next";
 
 export const GPT_HANDOFF_CUES: Readonly<Record<HandoffMoment, string>> = {
-	"list-created": `Handoff due: the plan exists. Before your next tool call, write the handoff block: ${GPT_HANDOFF_BLOCK_LINE}`,
-	"phase-closed": `Handoff due: a phase closed. Before your next tool call, write the handoff block: ${GPT_HANDOFF_BLOCK_LINE}`,
+	"list-created": `Handoff due: the plan exists. Before your next tool call, write the ${GPT_HANDOFF_LABELS} handoff block.`,
+	"phase-closed": `Handoff due: a phase closed. Before your next tool call, write the ${GPT_HANDOFF_LABELS} handoff block.`,
 	"all-closed":
 		"Handoff due: every task is closed. Your final message is the Outcome so far / You need / Now / Next handoff block, with Now and Next saying no task remains; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside You need.",
 };
