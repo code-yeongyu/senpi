@@ -1,14 +1,35 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.18-2] - 2026-11-18
 
 ### Breaking Changes
 
+- Host presentation tools now attach through the SDK. Standalone `show_html_page` retains its existing file output, schema, and lazy activation; a bare engine no longer registers it unconditionally.
+- `show_html_page` leaves the engine catalog: an SDK session created with `createAgentSession` no longer receives it. The `senpi` CLI still registers it; an SDK host that wants it attaches `showHtmlPageTool` with `attachHostTools`.
+- `ProjectTrustStore.set` and `setMany` return a promise; await them ([#6958](https://github.com/code-yeongyu/senpi/pull/6958))
+
 ### Added
+
+- `find_session { durableSessionId }` answers which session file of the host carries a durable id, and the folder its header names, so a client can reopen a session that is closed and unlisted. It is read-only, reads only the host's own session folder, needs `device_admin` on a delegated connection, and is bounded. Hosts advertise `find_session` ([#6450](https://github.com/code-yeongyu/senpi/pull/6450)).
+- `set_project_trust` takes `no_inherit` again: the folder keeps no saved decision and inherits none from a folder above it or from its main checkout, so Full access still trusts it; the generation the CLI's trust memo checks is read and written asynchronously ([#6958](https://github.com/code-yeongyu/senpi/pull/6958))
+- The engine records which session spawned each tool process, and `senpi session-of-pid <pid> --json` answers which session owns a pid from the kernel's ancestry, never from `PI_SESSION_ID`, so a command that re-execs with another session's id is still attributed to its own session ([#6978](https://github.com/code-yeongyu/senpi/pull/6978))
 
 ### Changed
 
+- GPT-6.2 Astra and GPT-6.2 Sol get their own standalone system prompt at about half the size (3,466 to 1,692 `o200k_base` tokens on the terminal surface). It reads before it edits, asks one question when a request is still ambiguous after looking, accounts for every part of the request, reports proactively what the user needs to know, and no longer renders the stop-condition line or the four-slot handoff block. Older GPT-6 ids keep their prompt unchanged ([#6980](https://github.com/code-yeongyu/senpi/pull/6980))
+
 ### Fixed
+
+- Cancelled host-tool calls no longer run the standalone implementation after the host route becomes unavailable.
+- `show_html_page` now reads a page's images the way a browser does. An image after an empty comment `<!-->` is inlined. A path only shown in `alt`, `title`, `value`, `data-*`, `<xmp>`, `<noscript>` or CDATA no longer refuses the page. An apostrophe in an unquoted attribute value no longer swallows the rest of the page. Of a repeated attribute, only the first counts. Pages shown through Cursor's exec channel now count toward the session's image budget, and calls an extension makes through `pi.executeTool()` no longer use it up. Tools can read `ctx.issuedByModel` ([#6917](https://github.com/code-yeongyu/senpi/pull/6917))
+- `unload_session { interrupt: true }` no longer refuses `work_pending` forever after an interrupted run left a delivery queued. Once the aborted work settles, such a delivery is handed back unwritten, so its sender redelivers it, and the answer lists it in `dropped.deliveries` (oh-my-openagent#14169).
+- The goal continuation prompt drops the completion audits for every GPT-6 Astra tier (gpt-6.2-astra and future releases included), not only the two launch ids ([#6976](https://github.com/code-yeongyu/senpi/pull/6976))
+- The project config walk no longer adopts the real account's agent directory when `$HOME` is redirected ([#6981](https://github.com/code-yeongyu/senpi/pull/6981))
+- The todo handoff cue names the handoff block the active preset actually defines - the outcome-first block under GPT presets, no cue under the rewritten gpt-6.2 core - instead of always naming the default Ask / For you block ([#6982](https://github.com/code-yeongyu/senpi/pull/6982))
+- On macOS under Node, a session-spawn record now matches the process it names even when that process started inside the repeated hour at the end of daylight saving time: the `ps` start time is read in UTC, the same instant the Bun reader takes from the kernel ([#6987](https://github.com/code-yeongyu/senpi/pull/6987))
+- A retained session still mid-turn during a host generation handoff is reopened by the successor with the same id instead of being stranded as `unknown_session` ([#6989](https://github.com/code-yeongyu/senpi/pull/6989))
+- On macOS under Node, a failed `ps` spawn (EPERM, EAGAIN) no longer rejects the process-identity read: an unreadable pid reads as unidentified, so the never-throw contract of `readKernelProcessIdentity` and `resolvePidSession` holds, and the session-spawn attestation header now names every surface that attests, including the codemode kernels and worker-reported children ([#6993](https://github.com/code-yeongyu/senpi/pull/6993))
+- The `monitor` tool no longer throws when its context carries no session manager ([#6996](https://github.com/code-yeongyu/senpi/pull/6996))
 
 ### Removed
 

@@ -1,3 +1,79 @@
+## 2026-11-18 - `takeQueuedDeliveries`: hand back queued deliveries without touching user input (#6971)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `takeQueuedDeliveries()` removes every queued `session_control_delivery` carrier from the agent queues, ticketed or not. It settles each one as `clearQueue` does: engine custody cancelled (a producer's retired), a send waiting on it failed, admissions dropped. Queued user input stays.
+
+### Why
+
+- An interrupting unload or release must hand back the deliveries an aborted run left queued, including one whose start the abort cut short (queued again under its engine ticket). `clearQueue` would also drop the user's queued input, which an unload keeps for the reopen (oh-my-openagent#14169).
+
+### Why an extension could not handle it
+
+- The agent queues, the custody ledger and the carriers' persist watchers are private to `AgentSession`.
+
+### Expected merge conflict zones
+
+- `AgentSession.clearQueue` and its neighbours.
+
+## 2026-11-18 - Re-land: the explicit no-decision trust entry, with asynchronous trust store writes (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`, `packages/coding-agent/src/core/linked-worktree-checkout.ts`: #6823 again, as its fragment (`changes/unreleased/6823.md`) describes: an explicit `null` in `trust.json` is an entry that holds no decision and stops inheritance, `ProjectTrustUpdate.decision` takes `"no_inherit"`, and every write through the store bumps the generation under the store lock before it writes `trust.json`. What differs from #6823: `ProjectTrustStore.setMany` and `set` are asynchronous and return a promise; the generation is read, written and renamed with `node:fs/promises`; `revision()` is asynchronous and reads the generation and `trust.json`'s modification time and size with `node:fs/promises`. Reads (`get`, `getEntry`, `getNearestEntry`) stay synchronous.
+- `packages/coding-agent/src/core/trust-store-writers.ts`: new. A realm registry (`@code-yeongyu/senpi/trust-store-writers/v1`, shared by every engine copy) in which trust store writes take turns per file and record which of them holds the store lock. `setMany` takes the lock synchronously, as before, and records it in the same synchronous step (#6958 review M1: recording it only after an asynchronous acquisition left a window where the lock existed unrecorded), then holds it across the asynchronous generation bump. A synchronous reader of the realm whose write holds the lock reads without taking it: waiting would spin on a lock only the blocked event loop can release, and the writer replaces `trust.json` in one synchronous call, so the reader never sees half of it. Engine copies older than the registry do not consult it; their synchronous reads and writes wait out the lock's 200 ms budget while such a write holds it.
+- `packages/coding-agent/src/core/project-trust.ts`: `resolveProjectTrusted` awaits the saves it makes (a remembered `project_trust` handler answer, the prompt's choice).
+
+### Why
+
+- #6823 was reverted (#6954) because it added five synchronous fs calls on the RPC session path (`existsSync` and `readFileSync` in `readGeneration`, `renameSync` and `writeFileSync` in `setMany`, `statSync` in `revision`), which the frozen, shrink-only baseline of `test/suite/no-sync-in-session-path.test.ts` forbids. Those calls are asynchronous now; the baseline is unchanged.
+- senpi#6951: a test now pins that a failed generation bump rejects and leaves `trust.json` byte-identical, and that the lock is released afterwards.
+
+### Why an extension could not handle it
+
+- The trust store, its lock and its inheritance rule are core.
+
+### Expected merge conflict zones
+
+- LOW: `ProjectTrustStore.revision`/`setMany`/`set`, `withTrustFileLock`, the saves in `resolveProjectTrusted`.
+
+## 2026-11-17 - The session reports which tool calls the model issued (senpi#6917)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session binds `isModelIssuedToolCall` for the extension runner. It is true for an agent-loop call while its issuer is recorded (`_toolCallIssuers`). It is also true for a Cursor exec-frame call from its preflight, which the bridge now calls with `{ execBridge: true }`, to its result (`emitExecBridgeToolResult`) or its block (`_execBridgeToolCalls`).
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts`: passes `{ execBridge: true }` to the session preflight.
+
+### Why
+
+- senpi#6917 review M1. A Cursor exec-frame call is issued by the model, and its result joins the transcript, but it runs while the issuing message is still streaming. A tool needs the session to tell it so.
+
+### Why an extension could not handle it
+
+- The call's origin is session state; no extension hook sees it.
+
+### Expected merge conflict zones
+
+- LOW: `preflightToolCall`'s options and the head of its body, `emitExecBridgeToolResult`, the `_execBridgeToolCalls` field, and the extension context actions in `agent-session.ts`.
+
+## 2026-10-30 - Host-supplied extension defaults retain settings control (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` composes explicitly supplied `host` factories with the session's default factories, outside the unconditional engine catalog.
+
+### Why
+
+- Moving a presentation tool to its host must preserve `enabledBuiltinExtensions`, `disabledBuiltinExtensions`, and explicit `builtin:<name>` loading.
+
+### Why an extension could not handle it
+
+- Default selection happens before extension factories run or settings are bound to the extension runtime.
+
+### Expected merge conflict zones
+
+- Factory classification in the `DefaultResourceLoader` constructor.
+
 ## 2026-11-18 - GPT-6.2 in the provider defaults, recommended models and high-reasoning warning (senpi#6962, senpi#6942)
 
 ### What changed

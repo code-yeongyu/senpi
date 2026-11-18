@@ -1,3 +1,22 @@
+## 2026-11-18 - The audit-free continuation prompt follows the Astra family (senpi#6975)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts`: `isGpt6AstraReceiver` now delegates to the new `hasGpt6AstraSignal` family matcher instead of exact-set membership on `gpt-6-astra` / `gpt-6-astra-fast`.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts`: new `hasGpt6AstraSignal` id grammar beside the existing family signals.
+
+### Why
+
+- The receiver set held two exact launch ids, so gpt-6.2-astra and every future Astra release silently fell back to the full audit prompt the short form was created to avoid (senpi#2796): the audits amplify Astra's over-verification and contradict the preset's settled-check rule on every wake.
+
+### Why an extension could not handle it
+
+- The receiver choice sits inside the goal builtin itself and in the preset matcher module both extensions already share; there is no outer extension seam.
+
+### Expected merge conflict zones
+
+- LOW: the receiver check is three lines in `goal/prompt.ts`; `matchers.ts` gains one pure export with no callers moved.
+
 ## 2026-11-17 - A Stop-paused goal stays paused when an input releases and retakes the hold (senpi#6897)
 
 ### What changed

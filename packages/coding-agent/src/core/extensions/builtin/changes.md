@@ -1,3 +1,43 @@
+## 2026-11-17 - show_html_page: images are read only from loading contexts, and only model-issued calls hold page budget (senpi#6917)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts` (new): `findLocalImages` moved here from `images.ts` and now tokenizes the page the way HTML does. `<!-->` and `<!--->` end a comment at once. A quote starts an attribute value only right after `=`. A tag the page never closes is dropped. A path counts as loaded only in `src`, `srcset`, `poster`, `href`/`xlink:href`, `data` and `background` attributes, in `url()` inside a `style` attribute or a `<style>` body, and as a quoted path in a `<script>` body or an `on*` handler. Other attributes, `<xmp>`/`<noscript>`/`<iframe>`/`<noembed>`/`<noframes>` bodies and CDATA sections only show a path.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: imports `findLocalImages` and `IMAGE_MIME_TYPES` from `image-references.ts` and keeps the reading and inlining.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the session's page budget is reserved and counted only when `ctx.issuedByModel` is true. That covers agent-loop calls and Cursor exec-frame calls. Calls from `ctx.executeTool()` and `pi.executeTool()` (`codemode-<uuid>`) no longer keep a reservation.
+- `image-references.ts` also reads only the first of a tag's repeated attribute names, as a browser does.
+
+### Why
+
+- senpi#6915 (review LOWs L4-L7 of senpi#6912), and the queue review of senpi#6917 (M1, L1, L2). A Cursor exec-frame call runs while its issuing message is still streaming, so a lookup in saved messages missed it, and the page skipped the session budget although its result joins the transcript. An empty comment hid the next image. An apostrophe in an unquoted value swallowed the rest of the page. A path only shown in `alt`, `title`, `<xmp>`, `<noscript>` or CDATA refused the whole page. Calls from `pi.executeTool()` held budget until the session shut down.
+
+### Why an extension could not handle it
+
+- `show_html_page` and its image inliner are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `html-render/image-references.ts` (new), the imports of `html-render/images.ts`, and `issuedByModel`/`execute` in `html-render/tool.ts`.
+
+## 2026-10-30 - Remove unconditional host HTML registration (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` no longer imports or registers `html-render`.
+- Its file-producing implementation now belongs to the standalone host's `src/extensions/html-render/`; the single-tool registration wrapper was removed.
+
+### Why
+
+- Host tools attach through the SDK rather than being unconditional engine builtins.
+
+### Why an extension could not handle it
+
+- Removing the unconditional catalog entry requires changing the builtin composition root.
+
+### Expected merge conflict zones
+
+- Import and registration entries in `packages/coding-agent/src/core/extensions/builtin/index.ts`.
+
 ## 2026-11-17 - createShowHtmlPageTool requires its pending ledger (senpi#6930)
 
 ### What changed

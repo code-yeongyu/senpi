@@ -1,3 +1,87 @@
+## 2026-11-18 - The handover reopen watch waits for a draining predecessor (senpi#6988)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: `reopenHandoverParkedSessions` no longer ends on the quiet streak or the budget while another generation of the endpoint is alive (`predecessorAlive`, from each other generation's `host.pid` and host child record); once none is, it makes one final pass and returns. Past the streak/budget it polls every 2 s.
+
+### Why
+
+- A retained session mid-turn when the drain starts parks only after its turn settles, which can be minutes after the successor bound; the watch had already returned, the park stayed on disk and the session answered `unknown_session` by its durable id after an update.
+
+### Why an extension could not handle it
+
+- The handover-parked record and the successor's reopen watch are host internals with no extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, the watch loop exits and the new `predecessorAlive` helper.
+
+## 2026-11-18 - An interrupt hands back deliveries the aborted run left queued (#6971)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release-interrupt.ts`: once its bounded settle ends and the session is idle, `abortAndSettle` hands back every queued `session_control_delivery` carrier through `AgentSession.takeQueuedDeliveries` and returns the delivery ids it dropped. This includes a carrier the abort queued again under its engine ticket. A busy session hands back nothing.
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: an interrupting unload reports those ids as `dropped.deliveries` in every later answer (unloaded or refused), and records them on its effect (`done` or `failed`), so a replay names them too.
+- `packages/coding-agent/src/modes/rpc/effect-record.ts`, `effect-ledger.ts`: `RpcEffectRecord.dropped` / `EffectStatus.dropped`, and a `dropped` transition patch.
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: an interrupting release adds them to its existing `dropped.deliveries`.
+- `packages/coding-agent/src/modes/rpc/rpc-effect-answer-types.ts`: `RpcUnloadAnswer.dropped`.
+
+### Why
+
+- An aborted run leaves its queued follow-ups for a person's next turn. A delivery admitted while that run was busy stayed `pending` in the admission ledger with nothing to run it, and every forced, interrupting unload was refused `work_pending` (oh-my-openagent#14169).
+
+### Why an extension could not handle it
+
+- The unload's final check and the admission ledger are engine-owned; an extension cannot reach either.
+
+### Expected merge conflict zones
+
+- `abortAndSettle` and the interrupt branches of `unloadSession` / `releaseSession`.
+- The effect record schema.
+
+## 2026-11-18 - Re-land: `set_project_trust` takes `no_inherit` (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`: #6823 again: `set_project_trust` accepts `no_inherit`. `writeProjectTrust` awaits the now asynchronous `ProjectTrustStore.setMany`.
+
+### Why
+
+- #6823 was reverted (#6954) for synchronous fs calls on the RPC session path; it re-lands with asynchronous trust store I/O.
+
+### Why an extension could not handle it
+
+- `set_project_trust` is an RPC core command.
+
+### Expected merge conflict zones
+
+- LOW: `writeProjectTrust` and the `set_project_trust` schema literal.
+
+## 2026-11-11 - find_session answers which session file carries a durable id (senpi#6429)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/find-session.ts` (new): `find_session { durableSessionId }` answers `{ found: { sessionPath, cwd, open } }`, `{ ambiguous: true }` or `{ unknown: true }`. It reads only this host's own session folder (`<agentDir>/sessions/<folder>/`), never a path from the request, and only each file's first line, its header. It counts the session files first and answers `find_session_too_many` past 20,000 before reading any of them; a live session and its own file are one candidate. A missing, empty or non-string id is `invalid_argument`; a host built with no agent directory answers `find_session_unsupported`; every host this package starts has one.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-host-response-types.ts`: the request and its answer.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: `find_session` is `device_admin`, as a path-naming `open_session` is, which moves `RPC_METHOD_CLASSES_DIGEST`.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`: its bounded inbound schema.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: multi-session hosts advertise `find_session`.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: dispatch, with the session registry's agent directory, or the host's own when the registry carries none, and its listed sessions. A host that runs its sessions in workers has no directory on its registry and used to answer `find_session_unsupported` while advertising the capability; it now answers.
+- `packages/coding-agent/src/modes/rpc/session-move-router.ts`: unchanged in behaviour, and a comment says why it reads the registry's directory only: `move_session` stays refused on a host that runs its sessions in workers.
+- `packages/coding-agent/scripts/rpc-inbound-samples.ts` and the regenerated `docs/engine-socket/fixtures/rpc-inbound-samples.json`: its sample row.
+
+### Why
+
+- A client keeps a session's routing key and durable id, not its path. When the session closes, for example a move given back after its release, the key names nothing, every command that takes a durable id works only on an open session, and `open_session` needs the path, so the session was intact on disk and could not be reopened from the client. The lookup existed only inside the engine's own CLI (`host-session-ref.ts`).
+
+### Why an extension could not handle it
+
+- Host-level RPC commands, the method-class table that decides a delegated connection's standing, and the capability list are the multi-session host's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the host command and response unions, the method-class table (and with it the pinned digest in `rpc-delegated-connection.test.ts`), the capability list, the routing chain, and the inbound-sample table and fixture. Any other PR that adds a host command moves the same digest and fixture: regenerate both after merging.
+
 ## 2026-11-18 - The leaf guard's hold prediction reuses the session's predicate (senpi#6957)
 
 ### What changed

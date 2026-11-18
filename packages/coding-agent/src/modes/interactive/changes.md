@@ -1,3 +1,21 @@
+## 2026-11-18 - `/trust` and the reload trust save await the asynchronous trust store (#6823 re-land)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `/trust` selector saves through the now asynchronous `ProjectTrustStore.setMany` and shows "Saved trust decision" once the save lands, or a warning when it fails; the save after `/reload` (`maybeSaveImplicitProjectTrustAfterReload`) awaits it.
+
+### Why
+
+- `ProjectTrustStore` writes are asynchronous so the RPC session path keeps no new synchronous fs calls (#6954).
+
+### Why an extension could not handle it
+
+- The `/trust` selector and reload belong to the interactive core.
+
+### Expected merge conflict zones
+
+- LOW: `showTrustSelector`, `maybeSaveImplicitProjectTrustAfterReload`.
+
 ## 2026-11-17 - A terminal's session-control endpoint refuses expectedLeafId by name (senpi#6922)
 
 ### What changed

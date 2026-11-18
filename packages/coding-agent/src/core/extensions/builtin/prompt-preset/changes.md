@@ -1,3 +1,53 @@
+## 2026-11-18 - The gpt-6.2 preset is one standalone core, about half the size (#6980, senpi#6979)
+
+### What changed
+
+- `gpt-6.2.ts`: rewritten. The preset no longer renders the `gpt-6-astra` core with five texts replaced; it owns one complete core. Every sentence is rule data in `GPT62_RULES` (id, owning section, `requiresTool`, `surfaces`), and `buildGpt62Core` renders each rule once under its section, then the tool guidelines. Sections: Intent Gate, Understand before you change, Keep going, When to involve the user, Code, Done means verified, Reporting, Limits.
+- What the new core says that the old one did not: read first and edit only when the mechanism and the reason the change works can be explained, then ask why the cause is there; a request still ambiguous after looking gets one question; every part of the request is accounted for; after three failed approaches stop editing, re-read, continue (no attempt cap); reporting is proactive and decided by what this user needs or ought to know; answer length and style follow the user's situation, in their language and tone, with exact terms kept and explained.
+- What left the 6.2 prompt: the stop-condition template and its binding rule (the terminal keeps a one-line "I read this as" opener), the proposal-then-confirm rule for open-ended asks, the four-slot handoff block on every surface, the bold capitalized Asynchronous Work section (one plain tool-bound paragraph, `background-runs`, replaces it), codex's Writing style list, the delegation, eval-routing, symbol-lookup and todo sentences (tool descriptions and Task_Management carry those), the code-review and formatting conventions, and the persona lines.
+- `gpt-6-astra.ts`: the text-replacement seam added for 6.2 (`Gpt6CoreText`, `GPT6_ASTRA_TEXT`, `buildGpt6FamilyPrompt`) is removed. The app and chat wordings are derived through `swap`, which throws when its anchor no longer matches (senpi#6966). Every rendered byte is unchanged.
+- `test/suite/prompt-presets-gpt-6-2.test.ts`: the replaced-text checks become rule-table checks (each rule once under its section per surface, tool-bound rules gated, guidelines kept without a tool list, no rule text shared with `gpt-6-astra`, the emphasis budget).
+- `test/suite/prompt-presets-app-surface.test.ts`: the surface contract knows presets without a handoff block (`BLOCKLESS_PRESETS`); for those no surface asks for one.
+- `test/suite/prompt-presets-native-baseline.json`: the six `gpt-6.2` rows are recaptured. No other hash changes.
+
+Token count of the rendered preset (`o200k_base`; the tool set an OmO session has, no tool guidelines, workstation block included):
+
+| Surface | before | after | change |
+|---|---|---|---|
+| terminal | 3,466 | 1,692 | -51.2% |
+| app | 3,505 | 1,747 | -50.2% |
+| chat | 3,390 | 1,731 | -48.9% |
+
+### Why
+
+- A maintainer review of the composed GPT-6.2 prompt (senpi#6979) asked for one prompt written for 6.2 instead of a core shared with GPT-6, and for it to be shorter. OpenAI's 6.2 guide describes a model that is concise by default, that proposes a next step and waits when intent is unclear, and that is sensitive to conflicting instructions; the old core stated when to stop in several places with different conditions and carried a mandatory block beside "no narration".
+
+### Why an extension could not handle it
+
+- Preset resolution and the cores are this builtin's own code.
+
+### Expected merge conflict zones
+
+- Fork-only files. `gpt-6.2.ts` is a full rewrite, so any open change to it conflicts as a whole.
+
+## 2026-11-18 - `hasGpt6AstraSignal` joins the model-id grammars (senpi#6975)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts`: `hasGpt6AstraSignal(value)` matches the Astra tier of any GPT-6 point release (`gpt-6-astra`, `gpt-6.2-astra`, `-fast` / `-ultrafast`, a colon effort decorator, Venice's dotless form); Sol, Luna, previews and dated snapshots stay out.
+
+### Why
+
+- The goal extension's audit-free continuation prompt needed family/version keying so a new Astra release cannot silently regress to the long audit prompt.
+
+### Why an extension could not handle it
+
+- Model-id grammar is owned by the preset matchers; duplicating it in the goal extension is the bug being fixed.
+
+### Expected merge conflict zones
+
+- LOW: one new pure function beside `hasGpt6FamilySignal` / `hasGpt62Signal`.
+
 ## 2026-11-18 - GPT-6.2 Astra and Sol get their own gpt-6.2 preset (senpi#6962, senpi#6942)
 
 ### What changed

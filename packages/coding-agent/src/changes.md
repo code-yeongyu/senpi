@@ -1,3 +1,86 @@
+## 2026-11-18 - The parent config walk stops at the account home (senpi#6459)
+
+### What changed
+
+- `packages/coding-agent/src/nearest-parent-config.ts`: `findNearestParentConfigDir` stops the upward walk at the account-database home (`userInfo().homedir`, normalized) in addition to the caller-supplied home directory.
+
+### Why
+
+- With `$HOME` redirected to a temp dir (test harness, sandbox), a checkout under the real home climbed past the stubbed home and adopted the real account's `~/.senpi/agent` as *project* config; `test/suite/regressions/4272-recovery-health.test.ts` then failed with `RealAgentDirInTestError` on any machine whose checkout sits under a home with a real agent dir (senpi#6459, duplicate analysis in #6640). Home stays excluded so its config remains the global fallback layer; the account home now bounds the walk from the other side, so a redirected `$HOME` can never read the real account's global layer as project config.
+
+### Why an extension could not handle it
+
+- Agent-dir resolution runs in `resolveAgentDir` during bootstrap, before extensions load; extensions cannot re-bound the parent walk.
+
+### Expected merge conflict zones
+
+- LOW: the loop head of `findNearestParentConfigDir` and the file's imports.
+
+## 2026-11-18 - Answer `session-of-pid` before the engine loads (#6978)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` exports `attestSessionSpawn`, `resolvePidSession`, `sessionSpawnsDir` and their types, so the codemode extension attests the kernel processes it spawns for a session.
+- `packages/coding-agent/src/cli.ts`, `packages/coding-agent/src/bun/cli.ts` and `packages/coding-agent/src/cli-main.ts` call `dispatchSessionOfPidCommand()` (new `src/cli/session-of-pid-command.ts`) right after the agent-directory command. `session-of-pid <pid> --json` prints one version-1 JSON record from `resolvePidSession` and exits 0 when the pid is attested, 1 when it is not, 2 on invalid arguments.
+
+### Why
+
+- A gate in a shared rpc host must learn which session called it (senpi#6972). The caller's `PI_SESSION_ID` is whatever its last `exec` set; the engine's spawn records plus the kernel ancestry are not.
+
+### Why an extension could not handle it
+
+- The command is a metadata query of every CLI entry, answered before providers, migrations or hosts load, like `config agent-dir`.
+
+### Expected merge conflict zones
+
+- LOW: the metadata-command dispatch lines at the top of `src/cli.ts`, `src/bun/cli.ts` and `src/cli-main.ts`, and the export list in `src/index.ts`.
+
+## 2026-11-18 - Re-land: a remembered trust answer never stands in for an explicit no-decision entry (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: #6823's memo again (keyed by what was saved for the folder and by the store's `revision()`), awaiting the now asynchronous `revision()`.
+
+### Why
+
+- #6823 was reverted (#6954) for synchronous fs calls on the RPC session path; it re-lands with asynchronous trust store I/O.
+
+### Why an extension could not handle it
+
+- The memo lives in the CLI runtime factory's closure.
+
+### Expected merge conflict zones
+
+- LOW: the saved-trust read at the top of `createServices` in `main.ts`.
+
+## 2026-10-30 - Attach presentation tools at the host SDK boundary (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/index.ts` explicitly attaches the standalone HTML tool through `attachHostTools`.
+- `packages/coding-agent/src/host-tools.ts` provides generic host registration; calls use a host route while one is announced and otherwise run the standalone implementation.
+- `packages/coding-agent/src/host-tools.ts` takes `HostTool` entries (`{ tool, settleRouted? }`); `settleRouted` applies the tool's own session-level step to a routed result before the session records it.
+- `packages/coding-agent/src/host-tools.ts` clears an unavailable host route but throws `AbortError` instead of running the standalone fallback when the call's signal has been aborted.
+- A host bridge must re-announce `senpi:host-tool-route` after an extension reload because the new registration starts without a route.
+- `packages/coding-agent/src/index.ts` exports the attachment contract.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts` adds `HOST_TOOLS_CAPABILITY` (`host_tools`), and `packages/coding-agent/src/modes/rpc/host-capabilities.ts` advertises it from every multi-session host, so an app offers its host tool attachment only to an engine that can route it.
+- The HTML implementation moved from engine builtins to `src/extensions/html-render/` without changing its schema, file preparation, result, or lazy exposure. `src/extensions/html-render/index.ts` holds the extension factory: one pending-page ledger per instance, cleared on `agent_end` and `session_shutdown`.
+- The public SDK exposes writeHtmlPage and showHtmlPageTool. Both standalone execution and desktop host attachments use the same writer; its prepared bytes are compared against the pre-change output.
+- `writeHtmlPage(params, cwd, shownInline = true)` keeps main's truthful result (senpi#6273): the standalone tool passes whether its session's surface shows the page (`app`); a host attachment serves its own renderer, so it defaults to shown inline. Only the result text depends on it; the written file bytes do not. The writer refuses a page whose loaded image is missing and inlines images into `details.html` up to `MAX_HANDED_PAGE_CHARACTERS`.
+- `handHtmlPage` holds every model-issued `show_html_page` result to the session's `MAX_HANDED_PAGES_CHARACTERS`, whether the standalone writer or a host route produced it, because both ride the same transcript; past the budget the page is handed as written.
+
+### Why
+
+- A bare SDK engine must not acquire host presentation tools unconditionally. The CLI retains file output while desktop can supply the same callable through MCP.
+
+### Why an extension could not handle it
+
+- The implementation is an extension. Its default composition and public SDK export are owned by the host entry point.
+
+### Expected merge conflict zones
+
+- The `src/index.ts` public exports and `src/extensions/index.ts` host factories.
+
 ## 2026-11-18 - Revert: the trust memo keyed by the no-decision entry (#6823)
 
 ### What changed
