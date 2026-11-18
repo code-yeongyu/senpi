@@ -72,7 +72,7 @@ const ACTIONS = {
 	turn_active: "wait for the turn to end, or unload with interrupt: true to stop it first",
 	work_pending: "wait for the work to finish, or unload with interrupt: true",
 	work_pending_refused_deliveries:
-		'the session\'s work would still read these deliveries: wait for it, or unload with interrupt: true and without deliveries: "refuse" to hand them back to their senders',
+		"the session's work would still read these deliveries: wait for it, or unload with interrupt: true and without deliveries to hand them back to their senders",
 	children_live: 'wait for the child tasks, or unload with children: "detach" to leave them running',
 	attached: "ask the other clients to detach, or unload with force: true (they receive session_parked)",
 } as const;
@@ -104,12 +104,8 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 			});
 	}
 	const blocked = blockers(port, command, first.session, first.durableSessionId);
-	// Never stop work for an unload that would still be refused: only interruptible blockers are interrupted.
-	const standing = blocked.find(
-		(refusal) => !interruptible(refusal) || (command.interrupt !== true && refusal.parked !== true),
-	);
-	if (standing !== undefined) return fail(command, first.session, standing);
-	// senpi#7004: unread deliveries the busy work would still consume are never dropped unless the caller allows it.
+	// senpi#7004: a busy session's unread deliveries are what its work would still read. With `deliveries: "refuse"` they
+	// decide the answer before anything else, with or without `interrupt`: the caller learns their ids, nothing stops.
 	const unread = blocked.find((refusal) => refusal.deliveries !== undefined);
 	if (
 		command.deliveries === "refuse" &&
@@ -117,6 +113,11 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 		blocked.some((refusal) => refusal.reason === "turn_active")
 	)
 		return fail(command, first.session, { ...unread, action: ACTIONS.work_pending_refused_deliveries });
+	// Never stop work for an unload that would still be refused: only interruptible blockers are interrupted.
+	const standing = blocked.find(
+		(refusal) => !interruptible(refusal) || (command.interrupt !== true && refusal.parked !== true),
+	);
+	if (standing !== undefined) return fail(command, first.session, standing);
 	const handedBack = blocked.length > 0 ? await abortAndSettle(port, command.sessionId, first.session) : [];
 	return claimAndUnload(port, command, handedBack);
 }

@@ -171,11 +171,11 @@ type RpcCommandBody =
 			force?: boolean;
 			/**
 			 * `"refuse"` (senpi#7004): a busy session holding admitted deliveries not yet written is refused
-			 * `work_pending` with their ids in `pending.deliveries`, before anything is interrupted. An idle session's are
-			 * handed back either way. Absent or `"hand_back"`: an interrupt hands them back (`dropped.deliveries`).
-			 * Capability `unload_refuse_deliveries`.
+			 * `work_pending` with their ids in `pending.deliveries`, with or without `interrupt`, and nothing is
+			 * interrupted. An idle session's are handed back either way. Absent: an interrupt hands them back
+			 * (`dropped.deliveries`). Capability `unload_refuse_deliveries`.
 			 */
-			deliveries?: "refuse" | "hand_back";
+			deliveries?: "refuse";
 	  }
 	| {
 			id?: string;

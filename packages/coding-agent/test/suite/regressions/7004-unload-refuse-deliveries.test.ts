@@ -68,9 +68,17 @@ describe('unload_session { deliveries: "refuse" }', () => {
 		expect(await deliver("second")).toMatchObject({ data: { kind: "queued" } });
 		expect(await deliver("third")).toMatchObject({ data: { kind: "queued" } });
 
+		const pending = { deliveries: [id("second"), id("third")] };
+		// Without the option and without interrupt the run is the answer, as before.
+		expect(await local.send({ type: "unload_session", sessionId, force: true, children: "detach" })).toMatchObject({
+			data: { outcome: "refused", reason: "turn_active" },
+		});
+		// With it, the unread deliveries are the answer whether or not the caller asked to interrupt.
+		expect(
+			await local.send({ type: "unload_session", sessionId, force: true, children: "detach", deliveries: "refuse" }),
+		).toMatchObject({ data: { outcome: "refused", reason: "work_pending", pending } });
 		const refusedAnswer = await local.send({ ...UNLOAD, sessionId, deliveries: "refuse", effectId: "r1" });
 
-		const pending = { deliveries: [id("second"), id("third")] };
 		expect(refusedAnswer).toMatchObject({
 			success: true,
 			data: { outcome: "refused", reason: "work_pending", pending },
@@ -87,7 +95,7 @@ describe('unload_session { deliveries: "refuse" }', () => {
 			success: true,
 			data: { outcome: "unloaded", dropped: pending },
 		});
-	}, 120_000);
+	});
 
 	it("still hands back an idle session's stranded deliveries left by an interrupted run (senpi#6971)", async () => {
 		const toolRunning = Promise.withResolvers<void>();
@@ -124,5 +132,5 @@ describe('unload_session { deliveries: "refuse" }', () => {
 			success: true,
 			data: { outcome: "unloaded", dropped: { deliveries: [id("second")] } },
 		});
-	}, 120_000);
+	});
 });

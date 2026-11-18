@@ -126,7 +126,7 @@ export const HOST_RECORD_SCHEMAS = {
 		clearQueue: OptBool,
 		children: Opt(literals("refuse", "detach")),
 		force: OptBool,
-		deliveries: Opt(literals("refuse", "hand_back")),
+		deliveries: Opt(Type.Literal("refuse")),
 	}),
 	detach_connection: command("detach_connection", {}),
 	find_session: command("find_session", { durableSessionId: Id }),
