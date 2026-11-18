@@ -2,12 +2,15 @@ import { type JsonObject, registerToolArgumentValidator, validateToolArguments }
 import type { TSchema } from "typebox";
 import { EVAL_LANGUAGE_INFERRED_KEY, inferEvalLanguage, markEvalLanguageFilled } from "./eval-language-inference.ts";
 import { type EvalRunField, evalRunFieldRequiredMessage, normalizeEvalSummary } from "./eval-request.ts";
-import type { EvalLanguage } from "./types.ts";
+import { type EvalLanguage, evalLanguageOrder } from "./types.ts";
 
 type EvalArgumentValidator = Parameters<typeof registerToolArgumentValidator>[1];
 type EvalArgumentError = NonNullable<EvalArgumentValidator["errors"]>[number];
 
 const RUN_FIELDS: readonly EvalRunField[] = ["language", "code", "summary"];
+
+// A run language inside the quote and whitespace junk a quoting slip leaves around it (senpi#6618).
+const JUNK_WRAPPED_LANGUAGE = /^[\s"'`]*(.*?)[\s"'`]*$/su;
 
 /**
  * Owns eval argument validation (senpi#5138). A run call (action omitted or "run") missing a run field fails with
@@ -25,6 +28,7 @@ export function registerEvalArgumentValidator(schema: TSchema, languages: readon
 		);
 	const validate: EvalArgumentValidator = (value) => {
 		const callerArguments = structuredClone(value);
+		const recovered = recoverRunLanguage(value, languages);
 		const inferred = fillInferredLanguage(value, languages);
 		const missing = missingRunFieldErrors(value, languages);
 		if (missing.length > 0) {
@@ -36,8 +40,8 @@ export function registerEvalArgumentValidator(schema: TSchema, languages: readon
 			// Throws the generic validation error unchanged when the call is invalid for any other reason.
 			coerced = genericValidate(value);
 		} catch (error) {
-			// A filled language stands only for a call that validates; otherwise report what the caller sent.
-			if (inferred !== undefined) genericValidate(callerArguments);
+			// A recovered or filled language stands only for a call that validates; otherwise report what the caller sent.
+			if (recovered || inferred !== undefined) genericValidate(callerArguments);
 			throw error;
 		}
 		// A registered validator's input is what the caller returns, so the generic coercion lands in place.
@@ -56,8 +60,24 @@ export function registerEvalArgumentValidator(schema: TSchema, languages: readon
 }
 
 /**
+ * A run language wrapped in quote or whitespace junk (`js"`, ` 'py' `) is that language when it is enabled. Any other
+ * string that is not a language counts as omitted, so inference or the missing-language teaching error applies instead
+ * of the generic anyOf dump (senpi#6618). An exact language, enabled or not, is left to the schema. True when changed.
+ */
+function recoverRunLanguage(value: unknown, languages: readonly EvalLanguage[]): boolean {
+	if (!isRecord(value) || (value.action !== undefined && value.action !== "run")) return false;
+	const language = value.language;
+	if (typeof language !== "string" || evalLanguageOrder.some((known) => known === language)) return false;
+	const token = JUNK_WRAPPED_LANGUAGE.exec(language)?.[1];
+	const enabled = languages.find((candidate) => candidate === token);
+	if (enabled === undefined) delete value.language;
+	else value.language = enabled;
+	return true;
+}
+
+/**
  * Fills an omitted run language when it is unambiguous (senpi#5154), before the missing-field check, and drops any
- * inference marker the caller sent so only this fill can set it. An explicit language is never changed.
+ * inference marker the caller sent so only this fill can set it. An explicit language is never changed here.
  */
 function fillInferredLanguage(value: unknown, languages: readonly EvalLanguage[]): string | undefined {
 	if (!isRecord(value) || (value.action !== undefined && value.action !== "run")) return undefined;
