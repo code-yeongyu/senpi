@@ -819,8 +819,11 @@ export class ExtensionRunner {
 		 * and `pi.isLoopRemote()` answers true. Without it they stay loop-side and unbound.
 		 */
 		readonly loopWake?: LoopWakeRoute;
+		/** Backs `ExtensionToolContext.issuedByModel` on a runtime without a session (a hand's calls from the brain). */
+		readonly isModelIssuedToolCall?: (toolCallId: string) => boolean;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
+		if (facts.isModelIssuedToolCall !== undefined) this.isModelIssuedToolCallFn = facts.isModelIssuedToolCall;
 		this.loopHookCallFn = facts.loopHookCall;
 		const send = facts.loopHookSend;
 		const wake = facts.loopWake;

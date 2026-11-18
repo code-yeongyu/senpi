@@ -78,6 +78,7 @@ describe("cursor exec bridge on the prepared pipeline (issue #5780)", () => {
 			getRegisteredTool: (name) => (name === "read" ? read : undefined),
 			preflightToolCall: preflight,
 			emitExecBridgeToolResult: toolResults,
+			releaseExecBridgeToolCall: () => undefined,
 		};
 		const receipts: ExecutionPipelineWitness[] = [];
 		let handlers: ExecHandlers = {};

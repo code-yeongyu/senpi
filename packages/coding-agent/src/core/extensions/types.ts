@@ -856,7 +856,8 @@ export interface ExtensionToolContext extends ExtensionContext {
 	executeTool(name: string, args: unknown, options?: ExecuteToolOptions): Promise<AgentToolCallOutcome>;
 	/**
 	 * Whether the model issued this call, through the agent loop or a provider's exec channel (Cursor), so its result
-	 * joins the transcript. False for a call made through {@link executeTool} or `pi.executeTool()`.
+	 * joins the transcript. On a hand (brain/hand split) a call the brain's agent loop dispatched counts too. False for a
+	 * call made through {@link executeTool} or `pi.executeTool()`.
 	 */
 	readonly issuedByModel: boolean;
 }
