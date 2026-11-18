@@ -71,7 +71,7 @@ import {
 export const UNLOAD_SESSION_CAPABILITY = "unload_session";
 
 /** `unload_session { deliveries: "refuse" }` and `pending.deliveries` on its `work_pending` refusal (senpi#7004). */
-export const UNLOAD_REFUSE_DELIVERIES_CAPABILITY = "unload_refuse_deliveries";
+const UNLOAD_REFUSE_DELIVERIES_CAPABILITY = "unload_refuse_deliveries";
 
 /** `get_subscription_limits` and the `subscription_limits` host record (senpi#3370). */
 export const SUBSCRIPTION_LIMITS_CAPABILITY = "subscription_limits";
