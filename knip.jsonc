@@ -704,8 +704,8 @@
       "packages/coding-agent/src/core/extensions/builtin/hooks/trust.ts": ["hashCommandHook"],
       // pre-existing at origin main aceb1cc1d9: unused exports UNSUPPORTED_HANDLER_TYPES
       "packages/coding-agent/src/core/extensions/builtin/hooks/types.ts": ["UNSUPPORTED_HANDLER_TYPES"],
-      // pre-existing at origin main aceb1cc1d9: unused exports HtmlRenderImagesNotFoundError, HtmlRenderImageTooLargeError, HtmlRenderPageTooLargeError
-      "packages/coding-agent/src/core/extensions/builtin/html-render/images.ts": ["HtmlRenderImageTooLargeError", "HtmlRenderImagesNotFoundError", "HtmlRenderPageTooLargeError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HtmlRenderImageTooLargeError, HtmlRenderPageTooLargeError
+      "packages/coding-agent/src/core/extensions/builtin/html-render/images.ts": ["HtmlRenderImageTooLargeError", "HtmlRenderPageTooLargeError"],
       // pre-existing at origin main aceb1cc1d9: unused exports LOOK_AT_USAGE
       "packages/coding-agent/src/core/extensions/builtin/look-at/arguments.ts": ["LOOK_AT_USAGE"],
       // pre-existing at origin main aceb1cc1d9: unused exports IMAGE_ATTACHMENT_REFERENCE_REGEX
