@@ -87,8 +87,10 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 		if ("replay" in begun)
 			return answer(command, {
 				outcome: begun.replay.state === "failed" ? "refused" : "unloaded",
-				// A replayed refusal answers the same reason, detail and action as the first one.
+				// A replayed refusal answers the same reason, detail and action as the first one, and either answer names
+				// the deliveries the first one handed back.
 				...refusalFields(begun.replay.outcome),
+				...(begun.replay.dropped === undefined ? {} : { dropped: begun.replay.dropped }),
 				...effectAnswer(begun.replay, command.sessionId, true),
 			});
 	}
@@ -109,7 +111,7 @@ async function claimAndUnload(
 	handedBack: readonly string[],
 ): Promise<RpcResponse> {
 	// Deliveries the interrupt handed back are gone from this runtime whatever the answer: every answer names them.
-	const dropped = handedBack.length === 0 ? {} : { dropped: { deliveries: handedBack } };
+	const dropped = handedBack.length === 0 ? {} : { dropped: { deliveries: [...handedBack] } };
 	const ready = loaded(port, command.sessionId);
 	if ("reason" in ready) return answer(command, { ...refused(ready), ...dropped });
 	const stillBlocked = blockers(port, command, ready.session, ready.durableSessionId);
@@ -121,7 +123,10 @@ async function claimAndUnload(
 	const effect =
 		command.effectId === undefined
 			? undefined
-			: EffectLedger.forSession(ready.session).transition(command.effectId, "done", { disposition: "unloaded" });
+			: EffectLedger.forSession(ready.session).transition(command.effectId, "done", {
+					disposition: "unloaded",
+					...dropped,
+				});
 	if (!(await port.tearDown(command.sessionId, ready.sessionPath))) {
 		return answer(command, {
 			outcome: "refused",
@@ -230,10 +235,11 @@ function fail(
 	command: UnloadSessionCommand,
 	session: AgentSession,
 	refusal: Refusal,
-	dropped: Pick<RpcUnloadAnswer, "dropped"> = {},
+	dropped: { readonly dropped?: { deliveries: string[] } } = {},
 ): RpcResponse {
 	if (command.effectId === undefined) return answer(command, { ...refused(refusal), ...dropped });
 	const status = EffectLedger.forSession(session).transition(command.effectId, "failed", {
+		...dropped,
 		outcome: {
 			kind: "refused",
 			reason: refusal.reason,
