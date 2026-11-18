@@ -22,10 +22,10 @@ import type { SessionInfo } from "./session-manager.ts";
  * folder for listing and new sessions. That session's file, and the per-session extension state kept
  * beside it (goal, loop and terminal state under `<storeDir>/extensions/`), stay in the store.
  */
-export const SHARED_SESSION_STORES_DIR_NAME = "session-stores";
+const SHARED_SESSION_STORES_DIR_NAME = "session-stores";
 const SHARED_SESSION_STORES_VERSION = 1;
 
-export function getSharedSessionStoresDir(agentDir: string = getAgentDir()): string {
+function getSharedSessionStoresDir(agentDir: string = getAgentDir()): string {
 	return join(agentDir, SHARED_SESSION_STORES_DIR_NAME);
 }
 
