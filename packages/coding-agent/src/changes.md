@@ -1,3 +1,23 @@
+## 2026-11-18 - Claude account selection can break weekly-reset ties
+
+### What changed
+
+- `packages/coding-agent/docs/providers.md`: document the opt-in `anthropicSubscriptionProvider.weeklyResetTieBreak` setting and its deterministic first-two swap guards.
+- `packages/coding-agent/src/core/credential-pool/selection-order.ts` and `src/core/extensions/builtin/anthropic-subscription/`: add and wire the guarded weekly-reset tie-break for new Claude sessions.
+- `packages/coding-agent/test/suite/regressions/claude-weekly-reset-tie-break.test.ts` (new): add deterministic setting and selection coverage with an injected clock.
+
+### Why
+
+- New sessions can consume similarly loaded weekly allowance that will reset soon while existing affinity, pins, stored order, and blocked-account behavior remain unchanged.
+
+### Why an extension could not handle it
+
+- The account pool and the Claude subscription provider own this policy before normal extension hooks run.
+
+### Expected merge conflict zones
+
+- LOW: the Claude account-strategy documentation and option assembly.
+
 ## 2026-11-18 - Revert: the trust memo keyed by the no-decision entry (#6823)
 
 ### What changed

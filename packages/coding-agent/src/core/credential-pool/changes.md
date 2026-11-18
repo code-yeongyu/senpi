@@ -1,3 +1,21 @@
+## 2026-11-18 - New Claude sessions can spend weekly capacity that resets soon
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/selection-order.ts`: `preferHeadroom` accepts an opt-in weekly-reset tie-break. After the existing near-limit preference, it may swap only the first two accounts when every live usage window is within five whole percentage points, both reports are at most 15 minutes old, and the second account's weekly window resets within 24 hours. Multiple weekly windows use the highest usage, then the earliest reset.
+
+### Why
+
+- Two equally usable accounts can have different weekly reset times. Spending the allowance that expires soon keeps longer-lived headroom without changing the ordinary affinity order or broadening failover.
+
+### Why an extension could not handle it
+
+- Subscription-limit snapshots and shared credential ordering meet inside the credential-pool selection helper, before the Claude extension receives its selected account.
+
+### Expected merge conflict zones
+
+- LOW: the optional tail argument and final ordering step in `preferHeadroom`.
+
 ## 2026-11-13 - A ChatGPT sign-in without Responses access fails the request instead of blocking the slot (senpi#6643)
 
 ### What changed

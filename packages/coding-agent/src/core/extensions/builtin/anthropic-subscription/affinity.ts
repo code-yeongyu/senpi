@@ -24,6 +24,8 @@ export type AffinityOptions = {
 	/** The user's account order (senpi#3591): tried after the pin and the session's own account, before HRW. */
 	accountOrder?: readonly string[];
 	readonly accountStrategy?: AccountStrategy;
+	/** For new sessions only, prefer a similarly used weekly window that resets within 24 hours. */
+	readonly weeklyResetTieBreak?: boolean;
 	now?: number;
 	/** The requested model; an account blocked only for another model stays eligible for it. */
 	model?: string;
@@ -207,7 +209,14 @@ function selectUnblocked(
 		options.accountStrategy,
 		roundRobinOffset,
 	).filter((account) => !isBlockedFor(account, now, options.model));
-	return preferHeadroom(usable, "anthropic-subscription", subscriptionLimits.snapshot(), now, preferred?.name)[0];
+	return preferHeadroom(
+		usable,
+		"anthropic-subscription",
+		subscriptionLimits.snapshot(),
+		now,
+		preferred?.name,
+		options.weeklyResetTieBreak === true && (options.accountOrder === undefined || options.accountOrder.length === 0),
+	)[0];
 }
 
 function unblockAt(account: AccountSlot, now: number, model: string | undefined): number | undefined {
