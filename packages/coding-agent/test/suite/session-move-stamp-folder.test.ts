@@ -24,8 +24,9 @@ afterEach(() => {
 async function stampedMove(readiedFor: string | undefined) {
 	const dir = realpathSync(mkdtempSync(join(tmpdir(), "senpi-move-stamp-")));
 	dirs.push(dir);
-	const clock = { now: 1_000_000 };
-	const book = new MoveLedger(dir, { now: () => clock.now });
+	// Two clocks, as the ledger has two: a stamp is old only when the machine's uptime and the wall clock both say so.
+	const clock = { now: 1_000_000, up: 0 };
+	const book = new MoveLedger(dir, { now: () => clock.now, uptime: () => clock.up });
 	const stored = () => JSON.parse(readFileSync(join(dir, `${MOVE}.json`), "utf8")) as Record<string, unknown>;
 	await book.prepare(MOVE, readiedFor);
 	await book.beginReceive(MOVE, LANDING, { cwd: readiedFor });
@@ -59,6 +60,7 @@ describe("a commit stamp keeps the folder its move was readied for (senpi#6435, 
 		const { book, clock, stored, stampedAt } = await stampedMove(undefined);
 		const stamp = stored();
 		clock.now = stampedAt + COMMIT_SETTLE_AFTER_MS;
+		clock.up = COMMIT_SETTLE_AFTER_MS;
 
 		expect(await book.prepare(MOVE, FOLDER)).toEqual({ state: "receiving" });
 		expect(stored()).toEqual(stamp);

@@ -1,3 +1,137 @@
+## 2026-11-17 - A terminal's session-control endpoint refuses expectedLeafId by name (senpi#6922)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`: `expectedLeafId` is in `UNSERVED_INPUT_FIELDS`, so a `prompt` carrying it is refused with `unsupported_field` instead of being admitted with the guard silently dropped.
+
+### Why
+
+- That endpoint delivers through the session's external admission, which queues the text and starts the turn later, at a leaf an admission-time check never sees; refusing by name keeps the guard's promise honest.
+
+### Why an extension could not handle it
+
+- The terminal control endpoint's field allow-list is fixed in core before any extension sees the input.
+
+### Expected merge conflict zones
+
+- LOW: `UNSERVED_INPUT_FIELDS`.
+
+## 2026-11-18 - The attached TUI applies a start's model, thinking and prompts (senpi#6914)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/attach-startup.ts` (new): `applyAttachStartup(request, sessionId, startup)` sends `set_model` with `scope: "session"` (only this session's model, as a local `--model`; the device's saved default stays), then `set_thinking_level`, then each prompt as `prompt` with `streamingBehavior: "followUp"`. A host refusal rejects, so the prompts never run on a model the session refused.
+- `packages/coding-agent/src/modes/interactive/attach.ts`: `connect(address, ref, startup?)` applies the startup once the history is shown.
+- `packages/coding-agent/src/modes/interactive/run-attached-tui.ts`: takes `startup` and passes it to `connect`.
+
+### Why
+
+- senpi#6911 L1: a terminal start's command line becomes the attached session's own commands.
+
+### Why an extension could not handle it
+
+- The attached TUI loads no extensions.
+
+### Expected merge conflict zones
+
+- LOW: the end of `connect()` in `attach.ts`; the options of `runAttachedTui`.
+
+## 2026-11-17 - The attached TUI shows the session's model live (senpi#6909)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/attach.ts`: the status line names the session's model from `get_state`, and a `model_changed` record updates it, so a switch another client of the session makes shows at once.
+
+### Why
+
+- With a terminal attached to a session the desktop also drives, a model switch in either must show in the other.
+
+### Why an extension could not handle it
+
+- The attached TUI loads no extensions.
+
+### Expected merge conflict zones
+
+- LOW: `record()` and `showStatus()` in `attach.ts`.
+
+## 2026-11-15 - Terminal control endpoint lists the settled flag (senpi#6768)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`, `session-control-attach.ts`: the terminal's control endpoint accepts `set_session_settled`, and its session row and status carry `settled` / `settledBy`.
+
+### Why
+
+- A terminal session is listed like a host session.
+
+### Why an extension could not handle it
+
+- The control endpoint is host code.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files.
+
+## 2026-11-14 - Terminal control endpoint lists archived, activity and model (senpi#6677)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`, `session-control-attach.ts`: the terminal's control endpoint accepts `set_session_archived` and its session row carries the three fields.
+
+### Why
+
+- A terminal session is listed like a host session.
+
+### Why an extension could not handle it
+
+- The control endpoint is host code.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files.
+
+## 2026-11-14 - The terminal control endpoint's `interrupt` takes `background: "stop"`
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-session-commands.ts`: the control endpoint's `interrupt` passes `background` to the shared `interruptRunningTurn`, so a terminal session answers the same shape as a host session. Esc in the TUI is unchanged: it is a user Stop, which holds automatic wakes, and it leaves background sessions running.
+
+### Why
+
+- One interrupt contract for every endpoint `thread_interrupt` reaches.
+
+### Why an extension could not handle it
+
+- The control endpoint is interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: the `interrupt` case of `runSessionControlCommand`.
+
+## 2026-11-03 - Preserve Markdown selection provenance in transcript caches
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` preserves provenance in both cached-array copies.
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts` preserves provenance when slicing a stable prefix or prepending a history marker.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts` returns authored Markdown unchanged unless it replaces a diagram or adds a warning.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` and `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: equal rendered text can have different original Markdown, so cached arrays must retain their source identity and offsets.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts`: lexer normalization of CRLF during a no-op transform otherwise disables original-source copying in the default transcript chain.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` and `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: these array copies happen inside built-in transcript caches without an extension hook.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts`: the built-in transform must preserve its input before later extension transforms receive it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: `render` and `cacheRender`.
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: `paint` and `reusablePrefix`.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts`: diagram replacement and lexer/rejoin return.
+
 ## 2026-11-08 - The footer names the serving account when the pin is blocked (senpi#5983, fixes #5983)
 
 ### What changed

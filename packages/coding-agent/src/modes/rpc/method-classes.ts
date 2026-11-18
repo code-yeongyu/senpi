@@ -214,6 +214,8 @@ export const RPC_METHOD_CLASS = {
 	navigate_tree: "drive",
 	set_label: "drive",
 	set_session_name: "drive",
+	set_session_archived: "drive",
+	set_session_settled: "drive",
 	// drive only for this turn's level; otherwise it remembers the model's level in the device-wide settings
 	set_thinking_level: { classify: thinkingLevelClass, version: 1 },
 	// drive only for this session's model; otherwise it persists the default model in the device-wide settings
@@ -295,6 +297,14 @@ export const RPC_METHOD_CLASS = {
 	// reads or replaces an instruction file in the session's cwd (AGENTS.md, CLAUDE.md, .omo/rules/**)
 	read_project_file: "device_admin",
 	write_project_file: "device_admin",
+	// reads or edits the session folder's project MCP file, or the file of a skill the engine lists inside that folder
+	get_project_mcp_servers: "device_admin",
+	set_project_mcp_servers: "device_admin",
+	read_project_skill_file: "device_admin",
+	write_project_skill_file: "device_admin",
+	// reads or edits the file of a user-global skill the engine lists; a write from another device needs this device's approval
+	read_user_skill_file: "device_admin",
+	write_user_skill_file: "device_admin",
 	// switch_session opens (and appends to) the named session file; import_jsonl reads any host file into a session
 	// both write what the model reads as engine work: an assistant reply it never gave, a custom context message
 	// (append_session_entry classes the same entries appended directly as device_admin)

@@ -1,3 +1,223 @@
+## 2026-11-18 - Revert: the trust memo keyed by the no-decision entry (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` returns to the saved-trust read and per-process memo it had before #6823.
+
+### Why
+
+- #6823 added five synchronous fs calls on the RPC session path (`existsSync` and `readFileSync` in `readGeneration`, `renameSync` and `writeFileSync` in `setMany`, `statSync` in `revision`), which breaks the frozen, shrink-only no-sync baseline (`test/suite/no-sync-in-session-path.test.ts`). It merged on a runner exit code while its filed receipt was red. It re-lands with those calls asynchronous.
+
+### Why an extension could not handle it
+
+- This reverts core code that #6823 changed.
+
+### Expected merge conflict zones
+
+- LOW: the same lines #6823 touched.
+
+## 2026-11-18 - Opening a store session keeps the terminal's session folder (senpi#6941, omo-desktop-app#8097)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `openWithHomeSessionDir` opens a named or picked session file and, without an explicit `--session-dir`, adopts the folder's own session dir as home when the file lives in a registered app store. `--session <id|path>`, `--resume`, `--continue` of a moved session, `--session-id` of an existing session and the rebind path all open through it.
+
+### Why
+
+- `--session <id>` finds app-store sessions now that listing includes registered stores; opened plainly, the store became the session's home, so the next list dropped the terminal's own sessions and `/new` wrote into the app's store (review M1 at cc4c386231).
+
+### Why an extension could not handle it
+
+- Startup session selection runs in `main.ts` before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `openSessionOrExit`, `rebindSessionOrExit` and the `--resume` / `--continue` / `--session-id` returns in `createSessionManager`.
+
+## 2026-11-18 - The attaching start passes its command line; both ends must be a terminal (senpi#6914)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `admitOrExit(sessionFile, appMode, attach?)` takes the command line (`HeldSessionAttach`) from `createSessionManager`. An attach admission builds the plan (a refusal exits 1 with a notice) and runs `runAttachedTui` with the socket, session, `tuiMode`, `theme` and `startup`. Without the context (a rebind), it never attaches. `canAsk` now also requires stdout to be a terminal.
+
+### Why
+
+- senpi#6911 L1 and L4: the command line reaches the attached session, and `omo --session X > log` keeps the exit-76 refusal instead of failing in the attached view's terminal check.
+
+### Why an extension could not handle it
+
+- Mode dispatch happens in `main.ts` before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `admitOrExit`, `openSessionOrExit` and the top of `createSessionManager`.
+
+## 2026-11-17 - Startup runs the attached TUI for a host-held session (senpi#6909)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `admitOrExit(sessionFile, appMode, canAttach = true)` runs `runAttachedTui` on the admitted socket and session, then exits, so the in-process runtime never opens the held file. `rebindSessionOrExit` passes `canAttach = false` (a rebind rewrites the file).
+
+### Why
+
+- Follows the senpi#6909 admission: the terminal follows the host's live session as one more client, so one writer remains.
+
+### Why an extension could not handle it
+
+- Mode dispatch happens in `main.ts` before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `admitOrExit` and `rebindSessionOrExit`.
+
+## 2026-11-16 - A remembered trust answer never stands in for an explicit no-decision entry (desktop pull request worktrees)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the runtime factory reads what is saved for the folder with `getSavedProjectTrustState`. Its per-process memo of an unsaved answer (`projectTrustByCwd`) records what was saved for the folder when the answer was given and the store's `revision()`. An answer given with nothing saved holds while nothing is saved for the folder. An answer given under the explicit no-decision entry (`set_project_trust` `no_inherit`) holds only while the store revision is unchanged. A saved decision is always re-read, never remembered.
+
+### Why
+
+- #6823 review H1: both undecided values read as `null`, so a folder this process had earlier resolved trusted without saving (for example through a `project_trust` handler, or a session-only answer) stayed trusted for every later session after `no_inherit`, which defeats the marker in the desktop's own flow (it saves `no_inherit` on an open session).
+- #6823 review L1: keying the memo by the entry it was answered under keeps an answer given under `no_inherit` ("Trust (this session only)") for the process's later sessions of that folder (`/new`, `/fork`), which open without a prompt, instead of dropping it silently.
+- #6823 review M1: a memo keyed only by the saved value came back after an intervening save restored that value (`no_inherit`, `do_not_trust`, `no_inherit`); a `no_inherit` answer now needs an unchanged store revision, and every write through the store by an engine with this change, in any process, bumps the revision's generation under the store lock (review round 3, L1; an older engine's writes are seen only through modification time and size). An answer given with nothing saved keeps the base behaviour and survives writes for other folders (round 3, L2).
+
+### Why an extension could not handle it
+
+- The memo lives in the CLI runtime factory's closure.
+
+### Expected merge conflict zones
+
+- LOW: the saved-trust read at the top of `createServices` in `main.ts`.
+
+## 2026-11-16 - Export `withCredentialProxy` (senpi#6828)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `withCredentialProxy` and `CREDENTIAL_PLACEHOLDER` for the codemode kernels.
+
+### Why
+
+- Eval kernels and their children must see the same withheld view as the bash tool.
+
+### Why an extension could not handle it
+
+- The codemode package reaches engine state only through the public entry.
+
+### Expected merge conflict zones
+
+- LOW: one export line beside the kill-guard runtime exports.
+
+## 2026-11-15 - The hand's durable, bounded wake outbox (senpi#5778, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/hand-wakes.ts` (new): `openHandWakeOutbox` on the hand's state file (it claims the file's next owner epoch, so an older hand is refused from then on), with `HAND_WAKE_LIMITS` (256 per scope, 1024 in total) and `onFault`; `handWakesOver`, a hand's scopes' wakes over its wake link.
+- `packages/coding-agent/src/modes/hand/hand-entry.ts`: opens the outbox at `<agentDir>/rpc/hand-wakes.json` after the live-hand check (faults reported on stderr), splits the `hand.wake` lane off the transport (`splitLanes`), starts the hand wake link and gives the loopless hand its wakes.
+
+### Why
+
+- A wake committed before a hand process dies must be re-offered by the next one, and the file must stay bounded by what is pending (#6767 review H1, M1).
+
+### Why an extension could not handle it
+
+- The hand entry owns the transport and the process lifetime.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runHand` in `hand-entry.ts`.
+
+## 2026-11-15 - Correction: what `--hand` as its extensions' home changes (senpi#5898, corrects #6747)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/hand-entry.ts`: `runHand` builds its hand with `twoSidedHome: "hand"` (#6747). Its forwarded loop hooks that run there are `input`, `before_agent_start`, `before_provider_request` and `session_start` (#6747's entry left out `before_provider_request`), and `agent_end` from this PR. The same option also moves two-sided extensions' tool hooks: on `--hand`, `extensionToolHandlers` (`packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts`) no longer forwards their `tool_call`/`tool_result` to the loop; they run on the hand, beside the same extensions' loop hooks.
+
+### Why
+
+- #6747's review (L1): its fragment named neither `hand-entry.ts` nor the tool-hook placement change. Fragments are immutable once written, so the correction rides this PR.
+
+### Why an extension could not handle it
+
+- Where a two-sided extension's hooks run is the loopless runtime's choice, made by the hand's entry point.
+
+### Expected merge conflict zones
+
+- LOW: the `createLooplessHand` call in `runHand`.
+
+## 2026-11-16 - The private-fd capture releases startup fillers first (senpi#6769)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts`: `capturedState()` runs `releaseInheritedStartupFillers(process.env)` on the main thread before it reads and removes `SENPI_PRIVATE_FDS` / `SENPI_PRIVATE_FDS_FINAL`. The release is idempotent: it strips the hand-off's filler list, so an entry's own earlier or later release does nothing more.
+- `packages/coding-agent/src/private-fd-startup-release.ts`: the doc comment states that the capture runs the same release.
+
+### Why
+
+- The bundled CLI entry (`dist/bundle/cli.js`) evaluates the release's side effect in its own body, after every imported chunk, so the capture had already deleted the table. The release then treated the slots the table named as fillers and closed them. A supervisor-started engine (`host ensure`) lost its private descriptors, for example a desktop's memory-sync socket at fd 5.
+
+### Why an extension could not handle it
+
+- The descriptor is closed during the engine's startup, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the top of `capturedState()` in `private-fds.ts`; its import list.
+
+## 2026-11-15 - The public entry exports the device machine pieces (senpi#6720)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `createToolMachine`, `ToolMachine`, `ToolPathPolicy`, `MachineOps`, `MachineExecRequest`, `MachineExecResult`, `OpContext`, `DeviceUnavailableError` and `DeviceMachineConflictError`.
+
+### Why
+
+- An extension such as the omo-senpi plugin builds the device machine against the published package; `@code-yeongyu/senpi-machine-ops` is a private workspace package.
+
+### Why an extension could not handle it
+
+- Without the exports an extension cannot build a `ToolMachine` or match the typed errors with `instanceof`.
+
+### Expected merge conflict zones
+
+- LOW: the tools export block in `src/index.ts`.
+
+## 2026-11-13 - A binary's `update --self` points at the download page when its release lookup fails (senpi#6633)
+
+### What changed
+
+- `packages/coding-agent/src/package-manager-cli.ts`: `selfUpdatePlanAfterLookupFailure` (exported) decides what `update --self` does when the latest-version lookup throws or returns nothing. A standalone binary prints the failure and "Download from: https://github.com/code-yeongyu/senpi/releases/latest" and exits cleanly; every other install still fails with "Could not determine latest ... version". `getSelfUpdatePlan` calls it with `detectInstallMethod()`.
+
+### Why
+
+- Since senpi#6633 a binary's lookup asks the unauthenticated GitHub API (60 requests per hour per IP). A rate limit made `update --self` fail before it reached the download instruction, although a binary has no in-place update to run anyway.
+
+### Why an extension could not handle it
+
+- `update --self` is a built-in CLI command in this file; no extension hook wraps its version lookup.
+
+### Expected merge conflict zones
+
+- LOW: the lookup try/catch in `getSelfUpdatePlan` in `package-manager-cli.ts`.
+
+## 2026-11-12 - A cold experimental server gets a load-tolerant startup wait (senpi#6487)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/server.ts`: `activateServer` waits for the server it started under its own bound, `ACTIVATION_STARTUP_HANG_MS` (120 s), measured with `performance.now()`. It used `ACTIVATION_TIMEOUT_MS` (10 s) on `Date.now()`. The wait still ends at once when the server accepts a connection, exits, fails to spawn, or the activation lock is lost. The activation lock timings are unchanged.
+
+### Why
+
+- A cold start on a loaded host took longer than 10 s, so the client failed with "Timed out waiting for automatically activated server" while the server was still starting (seen in the experimental runtime tests at load ~30 on a 14-core host). A system clock step could also end the wall-clock wait early.
+
+### Why an extension could not handle it
+
+- Server activation is the experimental client's own startup path; no extension runs before it.
+
+### Expected merge conflict zones
+
+- LOW: the activation constants and the startup wait loop in `activateServer`.
+
 ## 2026-11-09 - Startup fillers are released only while the process still holds them (senpi#6282)
 
 ### What changed

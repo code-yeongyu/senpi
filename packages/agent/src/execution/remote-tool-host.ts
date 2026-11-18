@@ -47,7 +47,10 @@ function errorResult(text: string): RemoteToolResult {
 	return { content: [{ type: "text", text }], details: {}, isError: true };
 }
 
-function terminalResult(placement: HandPlacement, terminal: RemoteTerminal): RemoteToolResult {
+function terminalResult(
+	placement: HandPlacement,
+	terminal: Pick<RemoteTerminal, "reason" | "uncertain" | "hooksRan">,
+): RemoteToolResult {
 	if (placement === "split-local")
 		return { content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }], details: {}, isError: false };
 	const { reason, uncertain, hooksRan } = terminal;
@@ -87,7 +90,14 @@ export function createRemoteToolHost(
 			case "unreachable":
 				return errorResult(`The hand is unreachable: ${reply.reason}`);
 			case "closed":
-				return errorResult("The hand link was closed before the call settled");
+				// The hand died or was replaced while the call was in flight (omo-service#997). A call it may have received
+				// ends as a hand restart with its outcome unknown; one it never received had no effect. Neither runs again.
+				return terminalResult(
+					options.placement,
+					reply.sent
+						? { reason: "hand_restarted", uncertain: true, hooksRan: true }
+						: { reason: "cancelled", uncertain: false, hooksRan: false },
+				);
 			case "epoch_refused":
 				return errorResult(`The hand refused this session's epoch: ${reply.reason}`);
 		}

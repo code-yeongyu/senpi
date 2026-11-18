@@ -46,6 +46,7 @@ export function streamAnthropicSubscription(
 	model: Model<Api>,
 	context: Context,
 	options?: SimpleStreamOptions,
+	recheckedAccounts?: Set<string>,
 ): AssistantMessageEventStream {
 	const stream = createAssistantMessageEventStream();
 	void (async () => {
@@ -194,6 +195,7 @@ export function streamAnthropicSubscription(
 						model,
 						context,
 						streamOptions: options,
+						recheckedAccounts,
 						providerSettings,
 						pinnedAccount: getSessionClaudeAccountPin(options.sessionId),
 						buildOptions,
@@ -231,6 +233,7 @@ export function streamAnthropicSubscription(
 						onAttemptStart,
 						providerSettings,
 						env: options?.env,
+						recheckedAccounts,
 						signal: options?.signal,
 						sessionId: affinityKey,
 						model: model.id,

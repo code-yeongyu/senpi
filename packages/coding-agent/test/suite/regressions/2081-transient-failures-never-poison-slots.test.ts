@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AssistantMessageEvent, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
@@ -89,8 +90,8 @@ describe("transient failures never poison credential slots (senpi#2081)", () => 
 		clock = NOW;
 	});
 
-	afterEach(() => {
-		rmSync(dir, { recursive: true, force: true });
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
 	});
 
 	function sources(): RotationSources {
@@ -215,8 +216,8 @@ describe("a provider that selects its own accounts is never wrapped by the gener
 		laneAnswer = () => undefined;
 	});
 
-	afterEach(() => {
-		rmSync(dir, { recursive: true, force: true });
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
 	});
 
 	async function laneRuntime(): Promise<ModelRuntime> {
@@ -370,8 +371,8 @@ describe("a custom provider's unknown or transient error shapes never persist a 
 		repository = new CredentialSlotRepository(join(dir, "credential-pool-state.json"));
 	});
 
-	afterEach(() => {
-		rmSync(dir, { recursive: true, force: true });
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
 	});
 
 	const sources = (): RotationSources => ({

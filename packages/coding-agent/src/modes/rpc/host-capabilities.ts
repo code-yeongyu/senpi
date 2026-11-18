@@ -21,6 +21,7 @@ import {
 	DELEGATION_ROLES_CAPABILITY,
 	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
+	HOST_TOOLS_CAPABILITY,
 	PEER_AGENT_ROLE_CAPABILITY,
 	SAME_ACCOUNT_DELEGATION_CAPABILITY,
 	ENTRIES_TAIL_CAPABILITY,
@@ -47,6 +48,7 @@ import {
 	PARK_CLAIM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
+import { MACHINE_OP_CAPABILITY } from "./machine-op/wire.ts";
 import { SESSION_MODEL_SCOPE_CAPABILITY } from "./rpc-session-command-types.ts";
 import { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-types.ts";
 import {
@@ -62,6 +64,7 @@ import {
 	MOVE_SESSION_REVOKE_CAPABILITY,
 	MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
 	MOVE_SESSION_STATUS_LANDING_CAPABILITY,
+	MOVE_SESSION_STATUS_WRITABLE_CAPABILITY,
 } from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
@@ -149,6 +152,8 @@ export function multiSessionHostCapabilities(options: {
 			PEER_AGENT_ROLE_CAPABILITY,
 			// ...and lets the forwarder state a device is the host's own account, whose turns then ask nothing extra.
 			SAME_ACCOUNT_DELEGATION_CAPABILITY,
+			// ...and runs the local relay host's device ops on a launch-proven, non-delegated connection (senpi#6752).
+			MACHINE_OP_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
@@ -166,6 +171,8 @@ export function multiSessionHostCapabilities(options: {
 			MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
 			// ...and says where an accepted move landed (senpi#6436).
 			MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
+			// ...and whether the copy there can still be written (senpi#6473).
+			MOVE_SESSION_STATUS_WRITABLE_CAPABILITY,
 			// ...and a `status` that names where the move would have landed is answered from the file there first.
 			MOVE_SESSION_STATUS_LANDING_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
@@ -185,6 +192,8 @@ export function multiSessionHostCapabilities(options: {
 			PROMPT_SURFACE_CHAT_CAPABILITY,
 			// Each session's tool subprocesses and eval kernel get its own OMO_BROWSER_ENGINE from its launch profile.
 			BROWSER_ENGINE_CAPABILITY,
+			// Every session attaches its host tools through the SDK, so an app may serve them (senpi#5045).
+			HOST_TOOLS_CAPABILITY,
 			// Each session's caller env lives on its own launch profile; the host process never holds it (senpi#4381).
 			SESSION_ENV_CAPABILITY,
 			// Each session's fallback chain is its own in-memory settings override, never the host's file.

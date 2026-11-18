@@ -40,6 +40,7 @@ export type ResidentSessionStreamInput = {
 	model: Model<Api>;
 	context: Context;
 	streamOptions: SimpleStreamOptions;
+	recheckedAccounts?: Set<string>;
 	providerSettings: AnthropicSubscriptionProviderSettings;
 	pinnedAccount?: string;
 	buildOptions: Parameters<typeof queryWithAuthLane>[0]["buildOptions"];
@@ -281,6 +282,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		prompt: "",
 		query: getSdkBoundary().query,
 		providerSettings: input.providerSettings,
+		recheckedAccounts: input.recheckedAccounts,
 		env: input.streamOptions.env,
 		signal: input.streamOptions.signal,
 		sessionId: input.streamOptions.affinitySessionId ?? input.streamOptions.sessionId,

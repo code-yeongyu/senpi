@@ -113,7 +113,7 @@ describe("loopless worker runtime (senpi#5413)", () => {
 
 		const result = await runtime.execute("start_turn", "call-turn", {});
 
-		expect(text(result)).toMatch(/^refused: Extension runtime not initialized/);
+		expect(text(result)).toMatch(/^refused: sendUserMessage is loop-side and not bound/);
 	});
 
 	it("refuses an unknown tool before anything runs", async () => {
