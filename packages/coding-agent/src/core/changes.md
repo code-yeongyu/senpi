@@ -1,3 +1,95 @@
+## 2026-11-18 - The manual-switch handoff is tied to request preparation (senpi#6893)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_manualSwitchAwaitingRequest` replaces the selector-name match of #6894. `_installAgentRequestProjection`'s `prepareRequest` clears it at entry, so a failure while it is set came from a request built before the switch, for physical and virtual picks alike. `_handOffRetryToManualModel` resets the retry budget when the switch lands after the wait and before the continuation.
+
+### Why
+
+- A virtual pick's responses name physical models, so the name match never cleared and its own first failure got an immediate extra retry; a switch after the wait kept the old model's spent budget.
+
+### Why an extension could not handle it
+
+- The retry loop's budget and the request projection are private `AgentSession` state.
+
+### Expected merge conflict zones
+
+- LOW: `_installAgentRequestProjection`, `_handOffRetryToManualModel`.
+
+## 2026-11-17 - executeTool keeps a rewritten result's error flag (senpi#6906, senpi#6904)
+
+### What changed
+
+- `packages/coding-agent/src/core/execute-tool-on-host.ts`: `ExecuteToolHookResult` carries `isError`, the flag `_emitAfterToolCallHooks` already computes (the hook's, else the tool's).
+- `packages/coding-agent/src/core/agent-session.ts`: `executeTool` keeps that `isError` when a `tool_result` hook rewrites the result's content or details.
+
+### Why
+
+- The rewrite rebuilt the result from `content`, `details` and `terminate` only, so a failed call came back to an extension caller (codemode's nested `tool.<name>()` calls) without its error flag (senpi#6904).
+
+### Why an extension could not handle it
+
+- `pi.executeTool` builds the returned result in core; an extension only receives it.
+
+### Expected merge conflict zones
+
+- LOW: the returned object at the end of `executeTool` in `agent-session.ts`; the `ExecuteToolHookResult` interface.
+
+## 2026-11-17 - Resume accepts the newest announced pause seq (senpi#6900)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resumeOnce` answers `stale` only when `expectedSeq` is older than the newest hold that paused the session, or newer than the current seq (`EngineTurnHold.isCurrentPauseSeq`). Before, it required `expectedSeq` to equal the current seq exactly.
+
+### Why
+
+- A run fence raises `pauseSeq` without pausing the session or emitting an event, so after a Stop that fenced its runs, every Resume that quoted the announced seq was refused as `stale` (senpi#6900, desktop QA D7).
+
+### Why an extension could not handle it
+
+- The stale check sits inside `resume_session` admission in the session core; extensions never see a refused Resume.
+
+### Expected merge conflict zones
+
+- LOW: the `expectedSeq` guard in `_resumeOnce`.
+
+## 2026-11-17 - The tool projection carries a tool's row renderers (senpi#6903)
+
+### What changed
+
+- `packages/coding-agent/src/core/tool-info.ts`: `toolInfoOf` projects `renderCall` and `renderResult` when the definition has them; a tool without them projects neither key.
+
+### Why
+
+- So `getAllTools()` hands them to hosts that draw the tool's calls elsewhere (oh-my-openagent#12994).
+
+### Why an extension could not handle it
+
+- The projection is core's; extensions only read its output.
+
+### Expected merge conflict zones
+
+- LOW: the object literal in `toolInfoOf`.
+
+## 2026-11-17 - A manual model change takes over a live retry loop (senpi#6893)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_setModel` and the favorite cycle hand a live retry loop to the picked model (`_handOffRetryToManualModel`). A pending backoff is aborted with the `MANUAL_MODEL_SWITCH_HANDOFF` reason, and the sleep's catch continues at once on the picked model at attempt 1 (a fresh `auto_retry_start { delayMs: 0 }`) instead of ending with "Retry cancelled". `_setModel` no longer calls `abortRetry()` when a fallback is active.
+- `_manualSwitchSelector` records the picked model while a run is live. A failure from any other model (`_isFailureFromAbandonedModel`) came from the request in flight at the switch: `_willRetryAfterAgentEnd` retries it, `_handleRetryableError` continues on the picked model at attempt 1 with no fallback walk and no delay, and the agent_end health note charges the model that failed, not the picked one. The selector clears when the picked model answers, the retry takes it, or a user message starts a turn.
+
+### Why
+
+- After a rate limit and a fallback, a model picked from the client ended the run ("Retry cancelled") or kept the old model's backoff and spent budget; a failure from the request still in flight was charged to the picked model (cooldown, circuit, fallback walk from it).
+
+### Why an extension could not handle it
+
+- The retry loop, its backoff signal and the fallback bookkeeping are private `AgentSession` state.
+
+### Expected merge conflict zones
+
+- LOW: `_setModel`, the end of `_cycleFavoriteModel`, the sleep catch and the first branch of `_handleRetryableError`, the agent_end health note.
+
 ## 2026-11-17 - getAllTools() marks the session's eval-only tools (senpi#6886)
 
 ### What changed

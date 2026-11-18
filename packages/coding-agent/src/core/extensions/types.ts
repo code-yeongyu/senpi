@@ -3704,7 +3704,15 @@ export type GetActiveToolsHandler = () => string[];
 /** Tool info with normalized exposure metadata and source metadata. */
 export type ToolInfo = Pick<
 	ToolDefinition,
-	"name" | "label" | "description" | "parameters" | "promptGuidelines" | "kernelPrelude" | "permissionParser"
+	| "name"
+	| "label"
+	| "description"
+	| "parameters"
+	| "promptGuidelines"
+	| "kernelPrelude"
+	| "permissionParser"
+	| "renderCall"
+	| "renderResult"
 > & {
 	namespace?: ToolNamespace;
 	annotations?: ToolAnnotations;

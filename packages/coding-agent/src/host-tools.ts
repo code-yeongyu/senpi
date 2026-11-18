@@ -18,15 +18,21 @@ const routeFor = (data: unknown, name: string): { readonly matched: boolean; rea
 };
 
 /**
+ * A host tool and, optionally, what its session does with a routed result before recording it, the same
+ * session-level step its standalone implementation applies to its own result.
+ */
+export interface HostTool {
+	readonly tool: ToolDefinition;
+	settleRouted?(result: Awaited<ReturnType<Execute>>, ...args: Parameters<Execute>): Awaited<ReturnType<Execute>>;
+}
+
+/**
  * Attach host tools through the SDK. Each tool is registered exactly once, under its own name, and always serves:
  * a host bridge may route its calls to the host once the host is confirmed, and a route that reports
  * `HOST_TOOL_ROUTE_UNAVAILABLE` is dropped and the call runs on the standalone implementation.
  */
-export function attachHostTools(
-	api: Pick<ExtensionAPI, "registerTool" | "events">,
-	tools: readonly ToolDefinition[],
-): void {
-	for (const tool of tools) {
+export function attachHostTools(api: Pick<ExtensionAPI, "registerTool" | "events">, tools: readonly HostTool[]): void {
+	for (const { tool, settleRouted } of tools) {
 		let route: Execute | undefined;
 		api.events.on(HOST_TOOL_ROUTE_CHANNEL, (data) => {
 			const update = routeFor(data, tool.name);
@@ -37,8 +43,9 @@ export function attachHostTools(
 			async execute(...args) {
 				const routed = route;
 				if (routed === undefined) return tool.execute(...args);
+				let result: Awaited<ReturnType<Execute>>;
 				try {
-					return await routed(...args);
+					result = await routed(...args);
 				} catch (error) {
 					if (!(error instanceof Error) || error.name !== HOST_TOOL_ROUTE_UNAVAILABLE) throw error;
 					if (route === routed) route = undefined;
@@ -49,6 +56,7 @@ export function attachHostTools(
 					}
 					return tool.execute(...args);
 				}
+				return settleRouted === undefined ? result : settleRouted(result, ...args);
 			},
 		});
 	}

@@ -40,6 +40,7 @@ import {
 } from "./tool/eval-execution-event.ts";
 import { createEvalTool } from "./tool/eval-tool.ts";
 import { renderEvalCall, renderEvalResult } from "./tool/render.ts";
+import type { NestedToolRenderers } from "./tool/tool-widgets.ts";
 
 // session_before_switch / session_before_fork are veto points another extension can cancel, so they never
 // tear the runtime down; a switch or fork that goes ahead emits session_shutdown before the old session ends.
@@ -82,6 +83,25 @@ export interface SenpiCodemodeOptions {
 	readonly now?: () => number;
 }
 
+/**
+ * The row renderers registered tools bring, so a nested `tool.<name>()` call in a cell is drawn like its direct row
+ * (oh-my-openagent#12994). The registry is read once per eval result render, on the first lookup, not per nested call
+ * and frame; nothing while the runtime cannot be read yet.
+ */
+function registeredRenderers(pi: CodemodeExtensionAPI): (toolName: string) => NestedToolRenderers | undefined {
+	let byName: ReadonlyMap<string, NestedToolRenderers> | undefined;
+	return (toolName) => {
+		if (byName === undefined) {
+			try {
+				byName = new Map(pi.getAllTools().map((tool) => [tool.name, tool]));
+			} catch {
+				return undefined;
+			}
+		}
+		return byName.get(toolName);
+	};
+}
+
 /** Whether the session registry holds `monitor`; false when the runtime cannot be read yet. */
 function monitorIsRegistered(pi: CodemodeExtensionAPI): boolean {
 	try {
@@ -94,7 +114,11 @@ function monitorIsRegistered(pi: CodemodeExtensionAPI): boolean {
 export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCodemodeOptions = {}): void {
 	const manager = new SessionManagerProxy();
 	const complete = options.complete ?? ((request, ctx) => createCompletionHandler()(ctx)(request));
-	const renderers = { renderCall: renderEvalCall, renderResult: renderEvalResult };
+	const renderers = {
+		renderCall: renderEvalCall,
+		renderResult: (...[result, options, theme, context]: Parameters<typeof renderEvalResult>) =>
+			renderEvalResult(result, options, theme, context, registeredRenderers(pi)),
+	};
 	const bunSkillPath = activeBunSkillPath();
 	let activeRuntime: SessionRuntime | undefined;
 	let activeModelId: string | undefined;

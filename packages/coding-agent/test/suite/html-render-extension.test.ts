@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +12,7 @@ import {
 	injectHtmlRenderBootstrap,
 } from "../../src/extensions/html-render/bootstrap.ts";
 import { inlineLocalImages } from "../../src/extensions/html-render/images.ts";
-import { showHtmlPageTool, writeHtmlPage } from "../../src/extensions/html-render/tool.ts";
+import { createShowHtmlPageTool, writeHtmlPage } from "../../src/extensions/html-render/tool.ts";
 import { builtInExtensions } from "../../src/extensions/index.ts";
 import { HOST_TOOL_ROUTE_CHANNEL, HOST_TOOL_ROUTE_UNAVAILABLE } from "../../src/host-tools.ts";
 import { createHarness } from "./harness.ts";
@@ -26,6 +26,7 @@ const ctxFor = (cwd: string): ExtensionToolContext =>
 		ui: undefined,
 		tools: [],
 		executeTool: () => Promise.reject(new Error("not used")),
+		sessionManager: { getEntries: () => [], getSessionId: () => randomUUID() },
 	}) as unknown as ExtensionToolContext;
 
 describe("host HTML attachment", () => {
@@ -79,6 +80,12 @@ describe("host HTML attachment", () => {
 			tempDir,
 		);
 		const bytes = readFileSync(result.details.path);
+		expect(result.content).toEqual([
+			{
+				type: "text",
+				text: `The page was shown to the reader inline above your reply. A copy is saved at ${result.details.path}. Local images were inlined.`,
+			},
+		]);
 		expect(bytes.length).toBe(2680);
 		expect(createHash("sha256").update(bytes).digest("hex")).toBe(
 			"5263f097ae148714873275e07beef128f9fa2ff62ba0918245a202af36af1aa4",
@@ -131,7 +138,6 @@ describe("host HTML attachment", () => {
 		expect(pages()).toBe(3);
 
 		// #5005 / PR #5045: losing a host route must not write a cancelled page standalone.
-		const standalone = vi.spyOn(showHtmlPageTool, "execute");
 		const controller = new AbortController();
 		const unavailable = vi.fn(async () => {
 			controller.abort();
@@ -139,11 +145,9 @@ describe("host HTML attachment", () => {
 		});
 		bus.emit(HOST_TOOL_ROUTE_CHANNEL, { name: "show_html_page", execute: unavailable });
 		await expect(call(controller.signal)).rejects.toMatchObject({ name: "AbortError" });
-		expect(standalone).not.toHaveBeenCalled();
 		expect(pages()).toBe(3);
 		await call();
 		expect(unavailable).toHaveBeenCalledTimes(1);
-		expect(standalone).toHaveBeenCalledTimes(1);
 		expect(pages()).toBe(4);
 
 		const abort = Object.assign(new Error("host call cancelled"), { name: "AbortError" });
@@ -152,7 +156,6 @@ describe("host HTML attachment", () => {
 			execute: () => Promise.reject(abort),
 		});
 		await expect(call()).rejects.toBe(abort);
-		expect(standalone).toHaveBeenCalledTimes(1);
 		expect(pages()).toBe(4);
 
 		bus.emit(HOST_TOOL_ROUTE_CHANNEL, {
@@ -187,7 +190,7 @@ describe("host HTML attachment", () => {
 	);
 
 	it("writes a prepared page with the theme bootstrap injected ahead of the head content", async () => {
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-1",
 			{
 				html: "<!doctype html><html><head><title>t</title></head><body>hi</body></html>",
@@ -207,7 +210,7 @@ describe("host HTML attachment", () => {
 	});
 
 	it("opens the written page with the offline snapshot policy ahead of anything the page wrote", async () => {
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-3",
 			{
 				html: '<!doctype html><script src="https://cdn.example/lib.js"></script><img src="http://127.0.0.1:1/x.png">',
@@ -248,7 +251,7 @@ describe("host HTML attachment", () => {
 
 	it("hands the page to the host in details and never puts it in the content the model reads", async () => {
 		const html = '<!doctype html><div id="marker-7f3a">chart</div>';
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-4",
 			{ html, title: "Hidden", height: 300 },
 			undefined,
@@ -259,9 +262,54 @@ describe("host HTML attachment", () => {
 		expect(JSON.stringify(result.content)).not.toContain("marker-7f3a");
 	});
 
+	it("hands the host a self-contained page: absolute-path images and CSS url() images arrive as data URIs", async () => {
+		// A viewer on another machine cannot read this machine's files, so the page in details
+		// must already carry the image bytes.
+		const imagePath = join(tempDir, "chart.png");
+		const backgroundPath = join(tempDir, "bg.png");
+		writeFileSync(imagePath, PNG_BYTES);
+		writeFileSync(backgroundPath, PNG_BYTES);
+		const html = `<!doctype html><style>body{background:url(${backgroundPath})}</style><img src="${imagePath}">`;
+
+		const result = await createShowHtmlPageTool().execute(
+			"call-self-contained",
+			{ html, title: "Chart" },
+			undefined,
+			undefined,
+			ctxFor(tempDir),
+		);
+
+		const handed = (result.details as { html: string }).html;
+		const dataUri = `data:image/png;base64,${PNG_BYTES.toString("base64")}`;
+		expect(handed).toBe(`<!doctype html><style>body{background:url(${dataUri})}</style><img src="${dataUri}">`);
+		expect(handed).not.toContain(tempDir);
+		expect(handed).not.toContain('id="t3-theme"');
+	});
+
+	it("refuses a page naming an image that cannot be read, names the path, and writes nothing", async () => {
+		const present = join(tempDir, "present.png");
+		writeFileSync(present, PNG_BYTES);
+		const missing = join(tempDir, "missing.png");
+		const secret = join(tempDir, "secret.png");
+		writeFileSync(secret, "API_KEY=hunter2 not an image");
+
+		const refused = createShowHtmlPageTool().execute(
+			"call-missing",
+			{ html: `<img src="${present}"><img src="${missing}"><img src="${secret}">`, title: "Broken" },
+			undefined,
+			undefined,
+			ctxFor(tempDir),
+		);
+
+		await expect(refused).rejects.toThrow(
+			`These local images could not be read: ${missing}, ${secret}. Use absolute paths to existing image files, or remove them.`,
+		);
+		expect(existsSync(join(tempDir, ".senpi/html-pages"))).toBe(false);
+	});
+
 	it("refuses a page over the input limit before preparing anything", async () => {
 		await expect(
-			showHtmlPageTool.execute(
+			createShowHtmlPageTool().execute(
 				"call-max",
 				{ html: "x".repeat(512_001), title: "Big" },
 				undefined,
@@ -276,7 +324,7 @@ describe("host HTML attachment", () => {
 		const screenshot = `<img src="data:image/png;base64,${"A".repeat(200_000)}">`;
 		const html = `<html><body><h1>Report</h1>${screenshot.repeat(3)}</body></html>`;
 
-		const refused = showHtmlPageTool.execute(
+		const refused = createShowHtmlPageTool().execute(
 			"call-b64",
 			{ html, title: "Report" },
 			undefined,
@@ -297,7 +345,7 @@ describe("host HTML attachment", () => {
 		});
 		const html = `<html><body>${paths.map((path) => `<img src="${path}">`).join("")}</body></html>`;
 
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-paths",
 			{ html, title: "Report" },
 			undefined,
@@ -319,13 +367,13 @@ describe("host HTML attachment", () => {
 		});
 		const html = paths.map((path) => `<img src="${path}">`).join("");
 		await expect(
-			showHtmlPageTool.execute("call-5", { html, title: "Huge" }, undefined, undefined, ctxFor(tempDir)),
+			createShowHtmlPageTool().execute("call-5", { html, title: "Huge" }, undefined, undefined, ctxFor(tempDir)),
 		).rejects.toThrow(/limit is 25 MiB/);
 		expect(existsSync(join(tempDir, ".senpi/html-pages"))).toBe(false);
 	});
 
 	it("clamps the frame height to the 80-2000 range", async () => {
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool().execute(
 			"call-2",
 			{ html: "<p>x</p>", title: "Tall", height: 99999 },
 			undefined,
