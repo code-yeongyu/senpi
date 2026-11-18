@@ -3490,6 +3490,8 @@ Add these fields to `pi.registerTool(...)`:
 
 A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate })`. Nested calls go through argument validation and the `tool_call` and `tool_result` handlers like model-issued calls; their events carry `parentToolCallId` and ids of the form `<calling id>/<n>`. They do not appear in the transcript: a bounded record is kept as `nestedCalls` on the calling tool's result, and their usage counts toward the session cost.
 
+`ctx.issuedByModel` says whether the model issued the running call, either through the agent loop or through a provider's exec channel (Cursor), so its result joins the transcript. It is `false` for a call made through `ctx.executeTool()` or `pi.executeTool()`.
+
 #### Prompt Cache Warning
 
 Activating a tool that includes `promptSnippet` or `promptGuidelines` rebuilds the system prompt. Even when the provider supports deferred schemas, changing the system prompt may invalidate the cached prefix. Lazily loaded tools should usually rely on their `description` and omit active-only prompt metadata to get the best cache performance.

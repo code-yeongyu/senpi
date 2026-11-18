@@ -26,7 +26,10 @@ const DATA_PREFIX = "data:image/png;base64,";
 type ShowHtmlPageTool = ReturnType<typeof createShowHtmlPageTool>;
 type Result = Awaited<ReturnType<ShowHtmlPageTool["execute"]>>;
 
-/** A session that records each returned result the way the agent session appends it. */
+/**
+ * A session that records each returned result the way the agent session appends it. A model call's context says
+ * `issuedByModel`, as the session sets it; a call a tool or an extension makes (`origin: "tool"`) does not.
+ */
 function session(cwd: string, tool: ShowHtmlPageTool = createShowHtmlPageTool(new Map()), sessionId = randomUUID()) {
 	const entries: unknown[] = [];
 	const ctx = {
@@ -43,8 +46,9 @@ function session(cwd: string, tool: ShowHtmlPageTool = createShowHtmlPageTool(ne
 			id: toolCallId,
 			message: { role: "toolResult", toolCallId, toolName: "show_html_page", ...result, isError: false },
 		});
-	const show = async (toolCallId: string, html: string) => {
-		const result = await tool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, ctx);
+	const show = async (toolCallId: string, html: string, origin: "model" | "tool" = "model") => {
+		const callCtx = { ...ctx, issuedByModel: origin === "model" };
+		const result = await tool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, callCtx);
 		const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
 		return { result, text };
 	};
@@ -309,13 +313,29 @@ describe("senpi#6910: nested calls, pages handed as written, and images a script
 		const nestedCount = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize) + 1;
 		const nested: boolean[] = [];
 		for (let index = 1; index <= nestedCount; index++) {
-			const { result } = await show(`call-eval/${index}`, pageInlinedTo(tempDir, `nested-${index}`, pageSize).html);
+			const { html } = pageInlinedTo(tempDir, `nested-${index}`, pageSize);
+			const { result } = await show(`call-eval/${index}`, html, "tool");
 			nested.push(result.details.imagesInlined);
 		}
 
 		const { result } = await show("call-after", pageInlinedTo(tempDir, "after", pageSize).html);
 
 		expect(nested).toEqual(Array.from({ length: nestedCount }, () => true));
+		expect(result.details.imagesInlined).toBe(true);
+	});
+
+	// senpi#6915: pi.executeTool() gives its call the id `codemode-<uuid>`, with no `/`, yet no message records it.
+	it("a call an extension makes through pi.executeTool neither spends nor keeps the session's budget", async () => {
+		const { show } = session(tempDir);
+		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+		for (let index = 0; index <= Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize); index++) {
+			const { html } = pageInlinedTo(tempDir, `extension-${index}`, pageSize);
+			const { result } = await show(`codemode-${randomUUID()}`, html, "tool");
+			expect(result.details.imagesInlined).toBe(true);
+		}
+
+		const { result } = await show("call-after-extension", pageInlinedTo(tempDir, "after", pageSize).html);
+
 		expect(result.details.imagesInlined).toBe(true);
 	});
 

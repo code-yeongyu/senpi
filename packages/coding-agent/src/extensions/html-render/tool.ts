@@ -4,7 +4,6 @@ import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import { resolvePromptSurface } from "../../core/dynamic-prompt/build.ts";
 import { defineTool, type ExtensionToolContext, type ToolDefinition } from "../../core/extensions/types.ts";
-import { rootToolCallId } from "../../core/nested-tool-calls.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
 import { HtmlRenderImagesNotFoundError, inlineLocalImages } from "./images.ts";
 
@@ -21,9 +20,10 @@ const MAX_HTML_CHARACTERS = 512_000;
 // up to MAX_HANDED_PAGES_CHARACTERS, which leaves room for JSON escaping and the rest of the transcript.
 // Past either, the page is handed as written, and its images reach only a host that has this disk.
 // A page handed as written (`imagesInlined: false`) is not counted: it carries at most MAX_HTML_CHARACTERS,
-// in `details.html` and again in the call's arguments, so those pages are bounded per page, not per session. A call another tool makes through
-// ctx.executeTool() (id `<parent>/<n>`) is never recorded in the transcript, so its page only rides its own
-// tool_execution_end and is held to the per-page cap alone.
+// in `details.html` and again in the call's arguments, so those pages are bounded per page, not per session. Only a
+// call the model issued is recorded in the transcript. A call another tool makes through ctx.executeTool() (id
+// `<parent>/<n>`) or an extension makes through pi.executeTool() (id `codemode-<uuid>`) is not, so its page only
+// rides its own tool_execution_end and is held to the per-page cap alone.
 export const MAX_HANDED_PAGE_CHARACTERS = 2 * 1024 * 1024;
 export const MAX_HANDED_PAGES_CHARACTERS = 6 * 1024 * 1024;
 
@@ -86,10 +86,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * Pages handed but not yet in the session's entries, by tool call id: calls in one turn run concurrently,
  * and each result is recorded only after it returns. One ledger belongs to one extension instance, so it is
  * released with the session that loaded it, and the extension clears it when a run ends (index.ts). Only
- * model-issued calls are held: a call another tool makes through ctx.executeTool() is never recorded in the transcript.
+ * calls the model issued (ctx.issuedByModel, which the session sets for agent-loop and Cursor exec-frame
+ * calls) are held: a call another tool makes through ctx.executeTool() (id <parent>/<n>) or an extension
+ * makes through pi.executeTool() (id codemode-<uuid>) is never recorded in the transcript.
  */
 export type PendingHandedPages = Map<string, number>;
-
 /** Characters of inlined pages this session already hands to the host, across every branch. */
 function inlinedPageCharacters(ctx: ExtensionToolContext, pending: PendingHandedPages): number {
 	let total = 0;
@@ -194,7 +195,7 @@ function handHtmlPage(
 	result: ShowHtmlPageResult,
 ): ShowHtmlPageResult {
 	const { details } = result;
-	if (!details.imagesInlined || rootToolCallId(toolCallId) !== toolCallId) return result;
+	if (!details.imagesInlined || !ctx.issuedByModel) return result;
 	const alreadyHanded = inlinedPageCharacters(ctx, pending);
 	if (alreadyHanded + details.html.length <= MAX_HANDED_PAGES_CHARACTERS) {
 		pending.set(toolCallId, details.html.length);

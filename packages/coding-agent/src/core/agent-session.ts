@@ -251,6 +251,7 @@ import {
 	type ContextUsage,
 	ExecuteToolError,
 	type ExecuteToolOptions,
+	type ToolCallEventResult,
 	type ExtensionCommandContextActions,
 	type ExtensionContext,
 	type ExtensionErrorListener,
@@ -1884,6 +1885,8 @@ export class AgentSession {
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
 	/** The issuing assistant message of each model-issued call while it runs, for its nested calls (senpi#5234). */
 	private readonly _toolCallIssuers = new Map<string, AssistantMessage>();
+	/** Calls a provider's exec channel (the Cursor bridge) runs for the model, from their preflight to their result. */
+	private readonly _execBridgeToolCalls = new Set<string>();
 	private readonly _toolBarrier = new ToolBarrier((spec) => this._emit({ type: "tool_barrier_expired", ...spec }));
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
@@ -2520,8 +2523,20 @@ export class AgentSession {
 	async preflightToolCall(
 		toolCall: AgentToolCall,
 		args: unknown,
-		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal } = {},
-	) {
+		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal; execBridge?: boolean } = {},
+	): Promise<ToolCallEventResult | undefined> {
+		if (options.execBridge) {
+			// The model issued this call through the exec channel; it counts as model-issued until its result (senpi#6915).
+			this._execBridgeToolCalls.add(toolCall.id);
+			try {
+				const result = await this.preflightToolCall(toolCall, args, { ...options, execBridge: false });
+				if (result?.block) this._execBridgeToolCalls.delete(toolCall.id);
+				return result;
+			} catch (error) {
+				this._execBridgeToolCalls.delete(toolCall.id);
+				throw error;
+			}
+		}
 		// Neither wait below has a deadline of its own: one that never settles is logged once, never cut short (senpi#6189).
 		// The call's own `timeout` bounds its execution, not this phase, which includes a human permission decision.
 		const thresholdMs = STALL_WARNING_MS;
@@ -5671,6 +5686,7 @@ export class AgentSession {
 		result: AgentToolResult<unknown>,
 		isError: boolean,
 	): Promise<void> {
+		this._execBridgeToolCalls.delete(toolCallId);
 		await this._emitAfterToolCallHooks(
 			{
 				type: "toolCall",
@@ -12749,6 +12765,8 @@ export class AgentSession {
 					),
 				executeTool: (callerId, name, args, options) => this._executeNestedToolCall(callerId, name, args, options),
 				getCallableTools: () => this._getCallableTools(),
+				isModelIssuedToolCall: (toolCallId) =>
+					this._toolCallIssuers.has(toolCallId) || this._execBridgeToolCalls.has(toolCallId),
 			},
 			{
 				registerProvider: (name, config, extensionPath) => {
