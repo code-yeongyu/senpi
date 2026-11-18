@@ -986,7 +986,7 @@ export function createCliRuntimeFactory(
 		// while the trust store is unchanged since, so no save in between, even one that restores the entry, can
 		// bring it back (#6823 review H1, M1), while with no save in between it holds for this process's later
 		// sessions of the folder (#6823 review L1). A saved decision always wins.
-		const trustRevision = trustStore.revision();
+		const trustRevision = await trustStore.revision();
 		const remembered = projectTrustByCwd.get(cwd);
 		const cachedProjectTrust =
 			remembered !== undefined &&

@@ -450,10 +450,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/agent/src/execution/wake-delivery.ts#ONE_SHOT_MODES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
 		"packages/agent/src/execution/wake-inbox.ts#EMPTY": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -473,6 +469,10 @@
 		"packages/agent/src/execution/wake-link.ts#encoder": {
 			"class": "constant",
 			"reason": "stateless helper instance; holds no mutable state"
+		},
+		"packages/agent/src/execution/wake-delivery.ts#ONE_SHOT_MODES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/agent/src/execution/wake-outbox-record.ts#REFUSALS": {
 			"class": "constant",
@@ -7482,6 +7482,10 @@
 		"packages/coding-agent/src/core/tools/write-core.ts#writeSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/core/trust-store-write-lock.ts#trustStoreWriters": {
+			"class": "realm-registry",
+			"reason": "trust-store-writers/v1: trust store writes of every copy take turns per file, and a synchronous reader in any copy must see that a writer of the realm holds the store lock, or it spins on a lock only the blocked event loop can release"
 		},
 		"packages/coding-agent/src/core/turn-origin.ts#continuingTurns": {
 			"class": "per-copy-safe",

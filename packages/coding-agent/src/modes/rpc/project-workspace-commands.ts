@@ -159,7 +159,7 @@ export async function writeProjectTrust(
 				errorCode: RPC_ERROR_PROJECT_TRUST_EXTENSION_DECIDED,
 			};
 		}
-		new ProjectTrustStore(session.agentDir).setMany(selected.option.updates);
+		await new ProjectTrustStore(session.agentDir).setMany(selected.option.updates);
 		const trusted =
 			!requiresTrust || (decided ?? (noInherit ? settings.isTrustFromFullAccess() : selected.option.trusted));
 		if (settings.isProjectTrusted() !== trusted) {

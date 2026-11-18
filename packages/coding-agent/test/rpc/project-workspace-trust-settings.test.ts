@@ -292,7 +292,7 @@ describe("senpi#6176: project trust over RPC", () => {
 		grant = false;
 		const elsewhere = join(dirname(host.cwd), "elsewhere");
 		mkdirSync(elsewhere);
-		new ProjectTrustStore(dirname(host.trustFile)).set(elsewhere, true);
+		await new ProjectTrustStore(dirname(host.trustFile)).set(elsewhere, true);
 		expect(host.savedTrust()).toEqual({ [elsewhere]: true });
 		expect(await host.commandNames(await host.open())).toContain(SKILL_COMMAND);
 	});
