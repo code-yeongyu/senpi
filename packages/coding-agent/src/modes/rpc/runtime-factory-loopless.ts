@@ -223,9 +223,23 @@ export function createLooplessRuntimeFactory(
 			loopHookCall: () => loopHookCall.current(),
 			loopHookSend: () => loopHookCall.sender(),
 			loopHookWrite: () => loopHookCall.writer(),
+			getAgentDir: () => agentDir,
 			...(loopWake === undefined ? {} : { loopWake }),
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
+		// A forwarded loop event's handlers are bounded as a session bounds them, by this runtime's own settings.
+		runtime.extensionRunner.setEventHandlerBudget(
+			() => ({
+				warnMs: services.settingsManager.getExtensionEventHandlerWarnMs(),
+				timeoutMs: services.settingsManager.getExtensionEventHandlerTimeoutMs(),
+			}),
+			(stall) => {
+				if (stall.stage === "warn")
+					console.warn(
+						`Extension ${stall.extensionPath} is still running its ${stall.event} handler after ${stall.elapsedMs}ms.`,
+					);
+			},
+		);
 		// On a hand, a call's extension UI is presented by the loop that owns the call (S30); a notice made outside any
 		// call, or after its call ended, goes to the loop as a wake (H3).
 		const presentation = new PresentationBroker(

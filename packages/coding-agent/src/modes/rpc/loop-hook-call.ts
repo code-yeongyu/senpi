@@ -52,6 +52,8 @@ export interface LoopHookCallBinding {
 	 * the loop starts another call for that session, as a local session is idle after a turn until the next one starts.
 	 */
 	readonly endsTurn?: boolean;
+	/** Aborts when the loop cancels the call (its caller stopped waiting); the call's own signal then aborts. */
+	readonly cancel?: AbortSignal;
 }
 
 /** A notice a loop hook showed during its call, for the loop to show on its own UI. */
@@ -77,8 +79,14 @@ export interface LoopHookCall {
 	sender(): LoopHookCallFacts["sendMessage"] | undefined;
 	/** The call's session writes (`appendEntry`, `sendUserMessage`) for its work, routed like {@link sender}. */
 	writer(): Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
-	/** Runs `dispatch` as the call bound to `binding`; `effects` collects what its handlers send, notify and write. */
-	run<T>(binding: LoopHookCallBinding, dispatch: (effects: LoopHookEffects) => Promise<T>): Promise<T>;
+	/**
+	 * Runs `dispatch` as the call bound to `binding`; `effects` collects what its handlers send, notify and write, and
+	 * `signal` is the call's own, aborted when the loop cancels the call or the call ends.
+	 */
+	run<T>(
+		binding: LoopHookCallBinding,
+		dispatch: (effects: LoopHookEffects, signal: AbortSignal) => Promise<T>,
+	): Promise<T>;
 }
 
 /**
@@ -101,12 +109,15 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 		sender: () => calls.getStore()?.facts.sendMessage,
 		writer: () => calls.getStore()?.facts,
 		async run(binding, dispatch) {
-			const { sessionId, idle } = binding;
+			const { sessionId, idle, cancel } = binding;
 			const token = {};
 			latest.set(sessionId, token);
 			let live = true;
 			let userMessagesSent = 0;
 			const controller = new AbortController();
+			const onCancel = () => controller.abort();
+			if (cancel?.aborted === true) controller.abort();
+			else cancel?.addEventListener("abort", onCancel, { once: true });
 			const effects: LoopHookEffects = { sent: [], notices: [], entries: [], userMessages: [] };
 			const facts: LoopHookCallFacts = Object.freeze({
 				sessionManager: readOnlySession(binding, {
@@ -140,9 +151,10 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 				hasPendingMessages: () => userMessagesSent > 0,
 			});
 			try {
-				return await calls.run({ live: () => live, facts }, () => dispatch(effects));
+				return await calls.run({ live: () => live, facts }, () => dispatch(effects, controller.signal));
 			} finally {
 				live = false;
+				cancel?.removeEventListener("abort", onCancel);
 				controller.abort();
 			}
 		},
