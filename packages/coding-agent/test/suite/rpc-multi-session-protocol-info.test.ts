@@ -41,6 +41,7 @@ describe("multi-session RPC protocol info", () => {
 					"effect_ledger",
 					"subscription_limits",
 					"resolve_path",
+					"find_session", // senpi#6429: which session file carries a durable id, read-only.
 					"steer_when_idle",
 					"continue_from_leaf",
 					"eval_cells",
