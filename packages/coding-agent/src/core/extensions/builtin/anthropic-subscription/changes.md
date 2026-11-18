@@ -1,23 +1,3 @@
-## 2026-11-18 - Claude weekly-reset ties can prefer capacity that expires soon
-
-### What changed
-
-- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/settings.ts`: load the opt-in `anthropicSubscriptionProvider.weeklyResetTieBreak` boolean with normal project-over-global precedence and a default of `false`.
-- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`, `auth-lane.ts`, and `account-command.ts`: pass the setting only through new-session selection. A usable resident account, a pin, or explicit stored account order is never displaced.
-- `packages/coding-agent/test/suite/regressions/claude-weekly-reset-tie-break.test.ts` (new): cover setting precedence, the five-point tie, 15-minute freshness, 24-hour reset horizon, multiple weekly windows, short-window disagreement, near-limit accounts, resident affinity, stored order, and blocked accounts.
-
-### Why
-
-- When otherwise tied weekly allowances reset at different times, the account expiring first can serve a new session without changing existing sessions or the failover/block model.
-
-### Why an extension could not handle it
-
-- This is the builtin Claude provider's private account-selection policy and settings surface.
-
-### Expected merge conflict zones
-
-- LOW: the account-policy fields in `settings.ts` and the `selectAccount` option assembly in `auth-lane.ts` and `account-command.ts`.
-
 ## 2026-11-15 - Re-check stale Claude rate-limit blocks once per person-started turn (senpi#6727)
 
 ### What changed
