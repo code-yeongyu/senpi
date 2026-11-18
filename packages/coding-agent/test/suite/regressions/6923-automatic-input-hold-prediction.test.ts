@@ -2,40 +2,40 @@ import { afterEach, describe, expect, it } from "vitest";
 import { automaticInputWouldBeHeld, holdAutomaticInput } from "../../../src/modes/rpc/automatic-input-gate.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
 
-// senpi#6923 review L: the leaf guard's "would this prompt be held" check and the hold that actually keeps automatic
-// input as a notice share one predicate, so the guard can never answer differently from the hold it predicts.
-describe("automatic input hold prediction", () => {
+// senpi#6957: which hold states keep automatic connection input as a notice. The leaf guard's prediction
+// (`automaticInputWouldBeHeld`) and the hold itself (`holdAutomaticInput`) are each pinned to the expected outcome.
+describe("automatic input hold", () => {
 	const fixtures: Awaited<ReturnType<typeof createIdentityHarness>>[] = [];
 	afterEach(async () => {
 		for (const fixture of fixtures.splice(0)) await fixture.cleanup();
 	});
 
-	const predictionMatchesHold = async (fixture: Awaited<ReturnType<typeof createIdentityHarness>>) => {
-		const predicted = automaticInputWouldBeHeld(fixture.session, false);
-		const held = holdAutomaticInput(fixture.session, { type: "prompt", message: "automatic" }, false);
-		expect(predicted).toBe(held);
-		return held;
+	const created = async () => {
+		const fixture = await createIdentityHarness();
+		fixtures.push(fixture);
+		return fixture.session;
 	};
 
-	it("predicts no hold on a free session and on an unattended hold alone", async () => {
-		const fixture = await createIdentityHarness();
-		fixtures.push(fixture);
-		expect(await predictionMatchesHold(fixture)).toBe(false);
+	it("does not hold on a free session or on an unattended hold alone", async () => {
+		const session = await created();
+		expect(automaticInputWouldBeHeld(session, false)).toBe(false);
+		expect(holdAutomaticInput(session, { type: "prompt", message: "automatic" }, false)).toBe(false);
 
-		fixture.session.holdAutomaticTurns();
-		expect(await predictionMatchesHold(fixture)).toBe(false);
+		session.holdAutomaticTurns();
+		expect(automaticInputWouldBeHeld(session, false)).toBe(false);
+		expect(holdAutomaticInput(session, { type: "prompt", message: "automatic" }, false)).toBe(false);
 	});
 
-	it("predicts the hold while a parent's run hold is live, and never for an interactive user", async () => {
-		const fixture = await createIdentityHarness();
-		fixtures.push(fixture);
-		await fixture.session.pauseForRun({
-			parentSessionId: "parent",
-			parentPauseSeq: 1,
-			runRef: { kind: "task", id: "r1" },
-		});
+	it("holds while a parent's run hold is live, except for an interactive user or a steer naming its turn", async () => {
+		const session = await created();
+		await session.pauseForRun({ parentSessionId: "parent", parentPauseSeq: 1, runRef: { kind: "task", id: "r1" } });
 
-		expect(automaticInputWouldBeHeld(fixture.session, true)).toBe(false);
-		expect(await predictionMatchesHold(fixture)).toBe(true);
+		expect(automaticInputWouldBeHeld(session, false)).toBe(true);
+		expect(automaticInputWouldBeHeld(session, true)).toBe(false);
+		expect(holdAutomaticInput(session, { type: "steer", message: "turn-bound", expectedTurnId: "t1" }, false)).toBe(
+			false,
+		);
+		expect(holdAutomaticInput(session, { type: "prompt", message: "automatic" }, true)).toBe(false);
+		expect(holdAutomaticInput(session, { type: "prompt", message: "automatic" }, false)).toBe(true);
 	});
 });
