@@ -490,7 +490,7 @@ function validateSessionIdFlags(parsed: Args): void {
 /** The command line a terminal start applies to a host-held session it attaches to (senpi#6911). */
 interface HeldSessionAttach {
 	readonly parsed: Args;
-	readonly autoResizeImages: boolean;
+	readonly settingsManager: SettingsManager;
 }
 
 async function admitOrExit(sessionFile: string, appMode: AppMode, attach?: HeldSessionAttach): Promise<void> {
@@ -503,7 +503,9 @@ async function admitOrExit(sessionFile: string, appMode: AppMode, attach?: HeldS
 	});
 	if (typeof admission === "object" && attach !== undefined) {
 		// #6059: the session runs on this machine's multi-session host; this terminal follows it there.
-		const plan = await heldSessionAttachPlan(attach.parsed, attach);
+		const plan = await heldSessionAttachPlan(attach.parsed, {
+			autoResizeImages: attach.settingsManager.getImageAutoResize(),
+		});
 		if ("refusal" in plan) {
 			console.error(chalk.red(`Not opened: ${plan.refusal}`));
 			process.exit(1);
@@ -585,7 +587,7 @@ export async function createSessionManager(
 	settingsManager: SettingsManager,
 	appMode: AppMode,
 ): Promise<SessionManager> {
-	const attach: HeldSessionAttach = { parsed, autoResizeImages: settingsManager.getImageAutoResize() };
+	const attach: HeldSessionAttach = { parsed, settingsManager };
 	if (parsed.spawnedBy && (parsed.session || parsed.resume || parsed.continue || parsed.fork || parsed.rebind)) {
 		console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming or forking a session."));
 	}
