@@ -194,19 +194,17 @@ describe("the cue names the handoff block the active preset defines (senpi#6977)
 	});
 
 	it("names the GPT handoff labels the prompts that render the block carry", () => {
-		// given: the three presets that render the GPT block
-		// then: each rendered prompt opens the block with the labels the cue names, so the cue
-		// cannot name labels the prompt does not define
+		// given: the three presets that render the GPT block, and the cue's own label list
+		// then: every label the cue names appears in each rendered prompt, so renaming a label
+		// in the cue without the prompt (or vice versa) fails here
+		const labels = GPT_HANDOFF_LABELS.split(" / ");
+		expect(labels).toEqual(["Outcome so far", "You need", "Now", "Next"]);
 		for (const id of ["gpt-5.5", "gpt-5.6", "gpt-6-astra"]) {
 			const prompt = resolvePreset(createModel(id), AUTO)?.prompt ?? "";
-			expect(prompt, id).toContain("[Outcome so far] toward");
-			expect(prompt, id).toContain("You need:");
-			expect(prompt, id).toContain("Now:");
-			expect(prompt, id).toContain("Next:");
+			for (const label of labels) expect(prompt, `${id}: ${label}`).toContain(label);
 		}
-		for (const cue of [GPT_HANDOFF_CUES["list-created"], GPT_HANDOFF_CUES["phase-closed"]]) {
+		for (const cue of Object.values(GPT_HANDOFF_CUES)) {
 			expect(cue).toContain(GPT_HANDOFF_LABELS);
 		}
-		expect(GPT_HANDOFF_CUES["all-closed"]).toContain("goes inside You need");
 	});
 });

@@ -79,8 +79,7 @@ export const GPT_HANDOFF_LABELS = "Outcome so far / You need / Now / Next";
 export const GPT_HANDOFF_CUES: Readonly<Record<HandoffMoment, string>> = {
 	"list-created": `Handoff due: the plan exists. Before your next tool call, write the ${GPT_HANDOFF_LABELS} handoff block.`,
 	"phase-closed": `Handoff due: a phase closed. Before your next tool call, write the ${GPT_HANDOFF_LABELS} handoff block.`,
-	"all-closed":
-		"Handoff due: every task is closed. Your final message is the Outcome so far / You need / Now / Next handoff block, with Now and Next saying no task remains; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside You need.",
+	"all-closed": `Handoff due: every task is closed. Your final message is the ${GPT_HANDOFF_LABELS} handoff block, with Now and Next saying no task remains; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside You need.`,
 };
 
 /**
