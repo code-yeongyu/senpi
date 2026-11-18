@@ -62,7 +62,10 @@ export function buildCompactionContext(input: {
 		: native && input.breakerFallback && input.appendOnlyTranscript !== true
 			? reduceContextMessages(admittedMessages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages
 			: admittedMessages;
-	const emergency = input.laneOwnsCompaction
+	// An append-only transcript already holds every message: dropping one diverges the sent stream and
+	// the lane re-sends the whole history as a cold seed (oh-my-openagent#14073). Compaction is its remedy.
+	const emergency =
+		input.laneOwnsCompaction || input.appendOnlyTranscript === true
 		? { messages: sourceMessages, needsAggressiveCompaction: false }
 		: hardLimitEmergencyPrune(
 				sourceMessages,
