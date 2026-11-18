@@ -137,6 +137,8 @@ describe("OpenAI 12-hour API cache and the ChatGPT subscription cache (#6290)", 
 	it.each([
 		["openai", "gpt-6-sol"],
 		["openai", "gpt-6.1-sol"],
+		["openai", "gpt-6.2-astra"],
+		["openai", "gpt-6.2-sol"],
 		["openai", "gpt-5.6-terra"],
 	] as const)("resolves long retention on API-key %s/%s to the 12-hour lifetime it buys", (provider, id) => {
 		const model = catalogModel(provider, id);
@@ -165,6 +167,7 @@ describe("OpenAI 12-hour API cache and the ChatGPT subscription cache (#6290)", 
 	it.each([
 		["chatgpt-subscription", "gpt-6-sol"],
 		["chatgpt-subscription", "gpt-6.1-sol"],
+		["chatgpt-subscription", "gpt-6.2-sol"],
 		["chatgpt-subscription", "gpt-5.5"],
 	] as const)("classifies the signed-in %s/%s cache as best-effort with no TTL", (provider, id) => {
 		const model = catalogModel(provider, id);

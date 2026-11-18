@@ -505,6 +505,8 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6-sol",
@@ -518,6 +520,8 @@ const CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6.1-terra",
@@ -535,17 +539,27 @@ const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 const OPENAI_MAX_CONTEXT_INPUT_CAP = 922000;
 // Flagship default context windows. OpenAI documents a 1,050,000-token window for every one of
 // these models; the project deliberately ships cost-tier prompt budgets (users widen through model
-// overrides): GPT-5.6 Sol keeps 650,000; GPT-6 Astra keeps 600,000; GPT-6 Sol and GPT-6.1 Sol
-// ship 400,000 (same price tier, developers.openai.com/api/docs/models/gpt-6.1-sol documents the
-// same 1,050,000 window and 922,000 input cap); GPT-6 Luna ships the full 922,000 input cap.
+// overrides): GPT-5.6 Sol keeps 650,000; GPT-6 Astra and GPT-6.2 Astra keep 600,000; GPT-6 Sol,
+// GPT-6.1 Sol and GPT-6.2 Sol ship 400,000 (same price tier; developers.openai.com/api/docs/models/
+// gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra document the same 1,050,000 window and 922,000 input
+// cap); GPT-6 Luna ships the full 922,000 input cap.
 const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 600000;
 const GPT_6_SOL_DEFAULT_CONTEXT_WINDOW = 400000;
 // Live Codex catalog, 2026-10-12T00:15Z: subscription default only; API budgets stay unchanged (#3150).
 // GPT-6.1 Terra ships with the same 500k on the subscription, as upstream pi's Codex list does (#4578).
 const CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW = 500000;
+// Subscription defaults that follow openai/codex models-manager/models.json `context_window`
+// (5916098d02): gpt-6.2-sol 500,000 and gpt-6.2-astra 272,000. API budgets keep the tier defaults.
+const CHATGPT_SUBSCRIPTION_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
+	["gpt-6.1-sol", CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW],
+	["gpt-6.2-sol", 500000],
+	["gpt-6.2-astra", 272000],
+]);
 const GPT_6_LUNA_DEFAULT_CONTEXT_WINDOW = OPENAI_MAX_CONTEXT_INPUT_CAP;
 const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
 	["gpt-5.6-sol", 650000],
+	["gpt-6.2-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
+	["gpt-6.2-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6.1-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
@@ -554,10 +568,14 @@ const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new
 const GPT_56_SOL_DEFAULT_CONTEXT_WINDOW = 650000;
 // Every GPT-6 tier id, in the order a prefixed or suffixed id is matched (gpt-6-astra-fast,
 // openai/gpt-6-sol, openai-gpt-6-luna, openai/gpt-6.1-sol). Venice drops the point-release dot
-// (openai-gpt-61-sol, as it does for openai-gpt-56-sol), so the dotless marker is listed too.
-// Bare "gpt-6" and "gpt-6.1" stay out so an unknown sibling is not stamped with a tier it
-// does not have.
+// (openai-gpt-61-sol, as it does for openai-gpt-56-sol), so the dotless markers are listed too.
+// Bare "gpt-6", "gpt-6.1" and "gpt-6.2" stay out so an unknown sibling is not stamped with a
+// tier it does not have.
 const GPT_6_FAMILY_DEFAULT_CONTEXT_WINDOWS: ReadonlyArray<readonly [marker: string, contextWindow: number]> = [
+	["gpt-6.2-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
+	["gpt-62-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
+	["gpt-6.2-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
+	["gpt-62-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6.1-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-61-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
@@ -565,9 +583,21 @@ const GPT_6_FAMILY_DEFAULT_CONTEXT_WINDOWS: ReadonlyArray<readonly [marker: stri
 	["gpt-6-luna", GPT_6_LUNA_DEFAULT_CONTEXT_WINDOW],
 ];
 
-/** GPT-6.1 Sol under either id spelling: `gpt-6.1-sol` or Venice's dotless `gpt-61-sol`. */
-function isGpt61SolId(modelId: string): boolean {
-	return modelId.includes("gpt-6.1-sol") || modelId.includes("gpt-61-sol");
+// GPT-6 tiers whose API rejects reasoning.effort "none" (GPT-6 Astra, GPT-6.1 Sol, and both GPT-6.2
+// models per developers.openai.com/api/docs/models/gpt-6.2-astra and gpt-6.2-sol), under the dotted
+// id and Venice's dotless spelling.
+const GPT_6_NO_NONE_EFFORT_MARKERS = [
+	"gpt-6-astra",
+	"gpt-6.1-sol",
+	"gpt-61-sol",
+	"gpt-6.2-astra",
+	"gpt-62-astra",
+	"gpt-6.2-sol",
+	"gpt-62-sol",
+];
+
+function rejectsNoneEffort(modelId: string): boolean {
+	return GPT_6_NO_NONE_EFFORT_MARKERS.some((marker) => modelId.includes(marker));
 }
 
 function gpt6FamilyDefaultContextWindow(modelId: string): number | undefined {
@@ -584,6 +614,8 @@ const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6-sol",
@@ -597,6 +629,8 @@ const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6-sol",
@@ -634,7 +668,10 @@ function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cos
 // GPT-6.1 Terra list price (models.dev, matches upstream pi). Only the subscription row reads it here;
 // the API row keeps its models.dev metadata.
 const CHATGPT_SUBSCRIPTION_GPT_61_TERRA_COST: ModelCost = { input: 1, output: 5, cacheRead: 0.05, cacheWrite: 1.25 };
+// GPT-6.2 Astra / Sol list prices (developers.openai.com/api/docs/models/gpt-6.2-astra, gpt-6.2-sol).
 const OPENAI_GPT_6_STANDARD_COSTS: Record<string, ModelCost> = {
+	"gpt-6.2-astra": { input: 8, output: 40, cacheRead: 0.4, cacheWrite: 10 },
+	"gpt-6.2-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
 	"gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
 	"gpt-6-sol": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 	"gpt-6-luna": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
@@ -667,6 +704,8 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 // OpenAI models with Priority processing support, per the OpenAI pricing page's
 // Priority table. `-fast` catalog variants are generated for exactly this set.
 const OPENAI_PRIORITY_TIER_MODEL_IDS = new Set([
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6-sol",
@@ -696,6 +735,8 @@ const OPENAI_PRIORITY_TIER_MODEL_IDS = new Set([
 // the Codex Responses API; older Codex-only SKUs (gpt-5.3-codex-spark) are
 // Priority-ineligible.
 const CHATGPT_SUBSCRIPTION_PRIORITY_TIER_MODEL_IDS = new Set([
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6-sol",
@@ -1385,10 +1426,15 @@ function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
 // prefix; a new top-level `reasoning.effort` reports `reasoning_effort_changed` and caches 0.
 // The direct API accepts the item on the same GPT-5.6+ family that prices cache writes
 // (measured 2026-09-24 on gpt-6-luna and gpt-5.6-luna). The Codex backend was verified on
-// gpt-6-astra; gpt-6.1-sol joins because openai/codex's models.json flags exactly these two ids
-// `supports_reasoning_effort_updates: true` (gpt-6-sol and gpt-6-luna are not flagged), so the
-// ChatGPT subscription lane stays limited to those ids.
-const CHATGPT_SUBSCRIPTION_CONFIGURATION_UPDATE_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6.1-sol"]);
+// gpt-6-astra; gpt-6.1-sol, gpt-6.2-astra and gpt-6.2-sol join because openai/codex's models.json
+// flags them `supports_reasoning_effort_updates: true` (gpt-6-sol and gpt-6-luna are not flagged),
+// so the ChatGPT subscription lane stays limited to those ids.
+const CHATGPT_SUBSCRIPTION_CONFIGURATION_UPDATE_MODEL_IDS = new Set([
+	"gpt-6-astra",
+	"gpt-6.1-sol",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
+]);
 
 function applyOpenAIConfigurationUpdateMetadata(model: Model<Api>): void {
 	const isOpenAI = model.provider === "openai" && model.api === "openai-responses" && model.cost.cacheWrite > 0;
@@ -1409,8 +1455,10 @@ function applyOpenAIConfigurationUpdateMetadata(model: Model<Api>): void {
 // first-party OpenAI catalogs carry the input cap, so the effective Astra budget
 // changed with the provider that routed the request.
 function applyGpt6ContextWindow(model: Model<Api>): void {
-	if (model.provider === "chatgpt-subscription" && model.id === "gpt-6.1-sol") {
-		model.contextWindow = CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW;
+	const subscriptionContextWindow =
+		model.provider === "chatgpt-subscription" ? CHATGPT_SUBSCRIPTION_CONTEXT_WINDOWS.get(model.id) : undefined;
+	if (subscriptionContextWindow !== undefined) {
+		model.contextWindow = subscriptionContextWindow;
 		return;
 	}
 	const contextWindow = gpt6FamilyDefaultContextWindow(model.id);
@@ -1425,10 +1473,10 @@ const GPT_6_THINKING_LEVEL_APIS = new Set<Api>([
 	"openai-completions",
 ]);
 
-// The documented GPT-6 ladder is low/medium/high/xhigh/max with no `minimal`; Astra and GPT-6.1 Sol
-// also omit `none` (GPT-6 guide, Limitations), so `off` stays whatever the provider rules set for
-// GPT-6 Sol and Luna ("none" on the direct OpenAI provider, absent elsewhere) and is forced off for
-// Astra and GPT-6.1 Sol.
+// The documented GPT-6 ladder is low/medium/high/xhigh/max with no `minimal`; Astra, GPT-6.1 Sol and
+// both GPT-6.2 models also omit `none` (GPT-6 guide, Limitations; GPT-6.2 model pages), so `off` stays
+// whatever the provider rules set for GPT-6 Sol and Luna ("none" on the direct OpenAI provider, absent
+// elsewhere) and is forced off for the rest.
 function applyGpt6ThinkingLevels(model: Model<Api>): void {
 	if (!isGpt6FamilyId(model.id) || !GPT_6_THINKING_LEVEL_APIS.has(model.api)) return;
 	mergeThinkingLevelMap(model, {
@@ -1439,7 +1487,7 @@ function applyGpt6ThinkingLevels(model: Model<Api>): void {
 		xhigh: "xhigh",
 		max: "max",
 	});
-	if (model.id.includes("gpt-6-astra") || isGpt61SolId(model.id)) {
+	if (rejectsNoneEffort(model.id)) {
 		mergeThinkingLevelMap(model, { off: null });
 	}
 }
@@ -1514,14 +1562,16 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		(model.id === "gpt-6-astra" ||
 			model.id === "gpt-6-sol" ||
 			model.id === "gpt-6-luna" ||
-			model.id === "gpt-6.1-sol") &&
+			model.id === "gpt-6.1-sol" ||
+			model.id === "gpt-6.2-astra" ||
+			model.id === "gpt-6.2-sol") &&
 		(model.api === "openai-responses" ||
 			model.api === "azure-openai-responses" ||
 			model.api === "openai-codex-responses")
 	) {
 		mergeThinkingLevelMap(model, {
-			// GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none".
-			off: model.id === "gpt-6-astra" || model.id === "gpt-6.1-sol" ? null : "none",
+			// GPT-6 Astra, GPT-6.1 Sol and GPT-6.2 Astra / Sol reject reasoning.effort "none".
+			off: rejectsNoneEffort(model.id) ? null : "none",
 			minimal: null,
 			low: "low",
 			medium: "medium",
@@ -3937,6 +3987,21 @@ async function generateModels() {
 
 	// Add missing gpt models
 	const missingOpenAiModels: Model<"openai-responses">[] = [
+		...([
+			["gpt-6.2-astra", "GPT-6.2 Astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
+			["gpt-6.2-sol", "GPT-6.2 Sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
+		] as const).map(([id, name, contextWindow]) => ({
+			id,
+			name,
+			api: "openai-responses" as const,
+			baseUrl: "https://api.openai.com/v1",
+			provider: "openai" as const,
+			reasoning: true,
+			input: ["text", "image"] as ("text" | "image")[],
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_6_STANDARD_COSTS[id]),
+			contextWindow,
+			maxTokens: 128000,
+		})),
 		{
 			id: "gpt-6-astra",
 			name: "GPT-6 Astra",
@@ -4227,6 +4292,22 @@ async function generateModels() {
 			maxTokens: CODEX_MAX_TOKENS,
 			thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
 		},
+		...([
+			["gpt-6.2-astra", "GPT-6.2 Astra"],
+			["gpt-6.2-sol", "GPT-6.2 Sol"],
+		] as const).map(([id, name]) => ({
+			id,
+			name,
+			api: "openai-codex-responses" as const,
+			provider: "chatgpt-subscription" as const,
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"] as ("text" | "image")[],
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_6_STANDARD_COSTS[id]),
+			// Stamped from CHATGPT_SUBSCRIPTION_CONTEXT_WINDOWS by applyGpt6ContextWindow.
+			contextWindow: CHATGPT_SUBSCRIPTION_CONTEXT_WINDOWS.get(id) ?? CODEX_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		})),
 		{
 			id: "gpt-6.1-sol",
 			name: "GPT-6.1 Sol",

@@ -687,7 +687,7 @@ function getServiceTierCostMultiplier(
 	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): number {
 	// This lane spends a ChatGPT plan's included usage, which OpenAI meters at 2.5x Standard for
-	// Fast and 8x for GPT-6 Astra / GPT-6.1 Sol Ultrafast (https://developers.openai.com/codex/pricing).
+	// Fast and 8x for Ultrafast on ULTRAFAST_DOCUMENTED_MODEL_IDS (https://developers.openai.com/codex/pricing).
 	// The 2x / 6x figures are the purchased-credit and API rates; the openai-responses lane keeps those.
 	switch (serviceTier) {
 		case "ultrafast":

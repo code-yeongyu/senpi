@@ -1236,7 +1236,7 @@ function getServiceTierCostMultiplier(
 ): number {
 	switch (serviceTier) {
 		case "ultrafast":
-			// OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at 6x Standard on every
+			// OpenAI prices Ultrafast on ULTRAFAST_DOCUMENTED_MODEL_IDS at 6x Standard on every
 			// token class and context tier. Any other model keeps its base rate.
 			return ULTRAFAST_DOCUMENTED_MODEL_IDS.has(model.upstreamModelId ?? model.id) ? 6 : 1;
 		case "flex":

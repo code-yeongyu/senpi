@@ -23,10 +23,22 @@ import type { Api, Model } from "../src/types.ts";
  * not the documented window): Luna ships the full 922,000 input cap, Sol and
  * 6.1 Sol ship 400,000, Astra keeps 600,000. The subscription 6.1 Sol default is
  * 500,000 per the live Codex catalog fetched 2026-10-12T00:15Z (issue #3150).
+ *
+ * GPT-6.2 Astra and GPT-6.2 Sol (developers.openai.com/api/docs/models/gpt-6.2-astra,
+ * gpt-6.2-sol) document the same window, input cap and output limit, reject `none`,
+ * and list Astra at 8 / 40 (cache read 0.4, write 10) and Sol at 2 / 10 (cache read 0.1,
+ * write 2.5). Their API budgets follow the Astra (600,000) and Sol (400,000) tiers; the
+ * subscription rows follow openai/codex models.json (Astra 272,000, Sol 500,000).
  */
+const ASTRA_CONTEXT_WINDOW = 600_000;
 const SOL_CONTEXT_WINDOW = 400_000;
 const SUBSCRIPTION_SOL_CONTEXT_WINDOW = 500_000;
 const LUNA_CONTEXT_WINDOW = 922_000;
+const SUBSCRIPTION_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
+	["gpt-6.1-sol", SUBSCRIPTION_SOL_CONTEXT_WINDOW],
+	["gpt-6.2-sol", SUBSCRIPTION_SOL_CONTEXT_WINDOW],
+	["gpt-6.2-astra", 272_000],
+]);
 
 const EXPECTED = {
 	"gpt-6-sol": {
@@ -43,6 +55,30 @@ const EXPECTED = {
 	},
 	"gpt-6.1-sol": {
 		name: "GPT-6.1 Sol",
+		contextWindow: SOL_CONTEXT_WINDOW,
+		supportsNone: false,
+		cost: {
+			input: 2,
+			output: 10,
+			cacheRead: 0.1,
+			cacheWrite: 2.5,
+			tiers: [{ inputTokensAbove: 272000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
+		},
+	},
+	"gpt-6.2-astra": {
+		name: "GPT-6.2 Astra",
+		contextWindow: ASTRA_CONTEXT_WINDOW,
+		supportsNone: false,
+		cost: {
+			input: 8,
+			output: 40,
+			cacheRead: 0.4,
+			cacheWrite: 10,
+			tiers: [{ inputTokensAbove: 272000, input: 16, output: 60, cacheRead: 0.8, cacheWrite: 20 }],
+		},
+	},
+	"gpt-6.2-sol": {
+		name: "GPT-6.2 Sol",
 		contextWindow: SOL_CONTEXT_WINDOW,
 		supportsNone: false,
 		cost: {
@@ -71,9 +107,7 @@ type FamilyId = keyof typeof EXPECTED;
 const FAMILY_IDS = Object.keys(EXPECTED) as FamilyId[];
 
 function expectedContextWindow(provider: string, id: FamilyId): number {
-	return provider === "chatgpt-subscription" && id === "gpt-6.1-sol"
-		? SUBSCRIPTION_SOL_CONTEXT_WINDOW
-		: EXPECTED[id].contextWindow;
+	return (provider === "chatgpt-subscription" && SUBSCRIPTION_CONTEXT_WINDOWS.get(id)) || EXPECTED[id].contextWindow;
 }
 
 for (const provider of ["openai", "chatgpt-subscription"] as const) {
@@ -97,7 +131,7 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 
 			it("exposes the documented reasoning efforts, with minimal absent and off only where none is documented", () => {
 				const model = getModel(provider, id)!;
-				// Sol and Luna accept `none`; Astra and 6.1 Sol do not; the GPT-6 ladder has no `minimal` anywhere.
+				// Sol and Luna accept `none`; Astra, 6.1 Sol and both 6.2 models do not; the GPT-6 ladder has no `minimal` anywhere.
 				expect(model.thinkingLevelMap).toMatchObject({
 					minimal: null,
 					low: "low",
@@ -178,7 +212,7 @@ function maplessModel(id: FamilyId, api: Api): Model<Api> {
 	};
 }
 
-describe("GPT-6 Sol/6.1 Sol/Luna effort inference without a thinking-level map", () => {
+describe("GPT-6 Sol/6.1 Sol/6.2/Luna effort inference without a thinking-level map", () => {
 	for (const id of FAMILY_IDS) {
 		for (const api of [
 			"openai-responses",
@@ -312,7 +346,7 @@ describe("which catalog entries carry a GPT-6 tier's window", () => {
 	});
 });
 
-describe("GPT-6 Sol/6.1 Sol/Luna series catalog context window", () => {
+describe("GPT-6 Sol/6.1 Sol/6.2/Luna series catalog context window", () => {
 	for (const id of FAMILY_IDS) {
 		it(`declares the route-specific default for every ${id} entry in every provider catalog`, () => {
 			const entries = collectFamilyEntries(id);
