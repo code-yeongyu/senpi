@@ -18,12 +18,12 @@ import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 const harnesses: Harness[] = [];
 
-function createModel(id: string): Model<Api> {
+function createModel(id: string, provider = "openai"): Model<Api> {
 	return {
 		id,
 		name: id,
 		api: "openai-responses",
-		provider: "openai",
+		provider,
 		baseUrl: "https://example.com/v1",
 		reasoning: true,
 		input: ["text", "image"],
@@ -167,7 +167,9 @@ describe("the cue names the handoff block the active preset defines (senpi#6977)
 	});
 
 	it("emits no cue under the gpt-6.2 preset, whose prompt defines no handoff block", async () => {
-		// given: a session on gpt-6.2, whose rewritten core renders no four-slot handoff block on any surface
+		// given: a session on gpt-6.2, whose prompt rewrite (settled with the rewrite lane) defines no
+		// handoff block on any surface; until that rewrite lands the prompt still carries the family
+		// block, and the interim state is no cue rather than a cue naming a block the rewrite removes
 		vi.stubEnv("SENPI_PROMPT_SURFACE", "terminal");
 
 		// when
@@ -178,18 +180,15 @@ describe("the cue names the handoff block the active preset defines (senpi#6977)
 		for (const text of texts) expect(text).not.toContain("Handoff due");
 	});
 
-	it("maps every preset to the cue kind its prompt implies", () => {
-		// given: the preset case table covers every preset family
-		const expected: Record<string, ReturnType<typeof presetHandoffCueKind>> = {
-			"gpt-5.5": "gpt-block",
-			"gpt-5.6": "gpt-block",
-			"gpt-6-astra": "gpt-block",
-			"gpt-6.2": "none",
-		};
-
-		// then: the GPT block presets, the blockless gpt-6.2, and everything else on the default cue
-		for (const { preset } of PROMPT_PRESET_MODEL_CASES) {
-			expect(presetHandoffCueKind(preset), preset).toBe(expected[preset] ?? "default");
+	it("maps every preset to the cue kind its rendered prompt implies", () => {
+		// given: the preset case table covers every preset family; the expectation is DERIVED from
+		// each case's rendered prompt (a prompt containing the GPT block line must be mapped gpt-block),
+		// so a preset that starts or stops rendering the block fails here until the table is set deliberately
+		for (const { providerID, modelID, preset } of PROMPT_PRESET_MODEL_CASES) {
+			const prompt = resolvePreset(createModel(modelID, providerID), AUTO)?.prompt ?? "";
+			const expected =
+				preset === "gpt-6.2" ? "none" : prompt.includes(GPT_HANDOFF_BLOCK_LINE) ? "gpt-block" : "default";
+			expect(presetHandoffCueKind(preset), preset).toBe(expected);
 		}
 		expect(presetHandoffCueKind(undefined)).toBe("default");
 	});
