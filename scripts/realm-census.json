@@ -4379,14 +4379,6 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#handedNotYetRecorded": {
-			"class": "per-copy-safe",
-			"reason": "page-budget reservations of the calls this copy runs, dropped once each result is in the session's entries; a split only loses a reservation between copies racing in one turn, and every recorded page is still counted from the entries"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#showHtmlPageTool": {
-			"class": "constant",
-			"reason": "schema or descriptor built once at load; never written after load"
-		},
 		"packages/coding-agent/src/core/extensions/builtin/imagegen/auth.ts#BUILTIN_PROVIDERS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
