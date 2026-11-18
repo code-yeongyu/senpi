@@ -70,6 +70,9 @@ import {
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
 export const UNLOAD_SESSION_CAPABILITY = "unload_session";
 
+/** `unload_session { deliveries: "refuse" }` and `pending.deliveries` on its `work_pending` refusal (senpi#7004). */
+export const UNLOAD_REFUSE_DELIVERIES_CAPABILITY = "unload_refuse_deliveries";
+
 /** `get_subscription_limits` and the `subscription_limits` host record (senpi#3370). */
 export const SUBSCRIPTION_LIMITS_CAPABILITY = "subscription_limits";
 
@@ -156,6 +159,7 @@ export function multiSessionHostCapabilities(options: {
 			MACHINE_OP_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
+			UNLOAD_REFUSE_DELIVERIES_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
 			MOVE_SESSION_CAPABILITY,
 			MOVE_SESSION_REVOKE_CAPABILITY,

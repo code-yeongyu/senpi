@@ -169,6 +169,13 @@ type RpcCommandBody =
 			clearQueue?: boolean;
 			children?: "refuse" | "detach";
 			force?: boolean;
+			/**
+			 * `"refuse"` (senpi#7004): a busy session holding admitted deliveries not yet written is refused
+			 * `work_pending` with their ids in `pending.deliveries`, before anything is interrupted. An idle session's are
+			 * handed back either way. Absent or `"hand_back"`: an interrupt hands them back (`dropped.deliveries`).
+			 * Capability `unload_refuse_deliveries`.
+			 */
+			deliveries?: "refuse" | "hand_back";
 	  }
 	| {
 			id?: string;

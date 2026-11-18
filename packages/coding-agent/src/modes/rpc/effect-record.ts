@@ -66,6 +66,8 @@ export const rpcEffectRecordSchema = z.object({
 		.optional(),
 	// Deliveries an interrupting unload handed back unwritten, so a replay names them as the live answer did.
 	dropped: z.object({ deliveries: z.array(z.string()) }).optional(),
+	// A refused unload's unwritten deliveries (senpi#7004), so a replay names them as the live refusal did.
+	pending: z.object({ deliveries: z.array(z.string()) }).optional(),
 	by: actorSchema,
 	acceptedAt: z.string(),
 	updatedAt: z.string(),
@@ -85,6 +87,8 @@ export interface EffectStatus {
 	readonly answer?: QueuedChangeAnswer;
 	/** An interrupting unload's handed-back deliveries (`unload_session` `dropped`). */
 	readonly dropped?: { readonly deliveries: readonly string[] };
+	/** A refused unload's admitted deliveries not yet written (`unload_session` `pending`). */
+	readonly pending?: { readonly deliveries: readonly string[] };
 	readonly by?: EffectActor;
 	readonly acceptedAt?: string;
 	readonly updatedAt?: string;
