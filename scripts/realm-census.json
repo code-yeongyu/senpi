@@ -7851,6 +7851,10 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/nearest-parent-config.ts#ACCOUNT_HOME_DIR": {
+			"class": "constant",
+			"reason": "account home resolved once at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/hand/hand-wakes.ts#HAND_WAKE_LIMITS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"

@@ -104,12 +104,11 @@ describe("nearest parent config discovery", () => {
 
 	it("stops at the account home when HOME is redirected away from it", () => {
 		const fakeHome = createTempDir();
-		// A checkout under the real account home with $HOME pointed elsewhere must not
-		// adopt the real account's config directory as project config (#6459).
-		const project = mkdtempSync(join(homedir(), "senpi-account-home-stop-"));
-		tempDirs.push(project);
-
-		expect(resolveAgentDir(project, fakeHome)).toBe(join(fakeHome, CONFIG_DIR_NAME, "agent"));
+		// Resolution starting inside the real account home with $HOME pointed elsewhere must
+		// not adopt the real account's config directory as project config (#6459). Using the
+		// account home itself as the starting cwd keeps the fixture inside tmpdir: nothing is
+		// ever created under the real home.
+		expect(resolveAgentDir(homedir(), fakeHome)).toBe(join(fakeHome, CONFIG_DIR_NAME, "agent"));
 	});
 
 	it("stops before exceeding the parent walk depth limit", () => {
