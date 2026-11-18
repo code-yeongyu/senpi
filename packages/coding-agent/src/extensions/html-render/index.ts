@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { attachHostTools } from "../../host-tools.ts";
-import { createShowHtmlPageTool, handRoutedHtmlPage, type PendingHandedPages } from "./tool.ts";
+import type { PendingHandedPages } from "./handed-pages.ts";
+import { createShowHtmlPageTool, handRoutedHtmlPage } from "./tool.ts";
 
 export default function htmlRenderExtension(pi: ExtensionAPI): void {
 	const pending: PendingHandedPages = new Map();

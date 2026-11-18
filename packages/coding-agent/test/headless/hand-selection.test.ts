@@ -172,7 +172,11 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const closing = {
 			agent: { toolHost: undefined },
 			isStreaming: false,
-			sessionManager: { getEntries: () => [], appendCustomEntry: () => "unused" },
+			promptSurface: "terminal" as const,
+			sessionManager: {
+				getEntries: () => [],
+				appendCustomEntry: () => "unused",
+			},
 			sessionId: "s-closing",
 		};
 		const registry = {
@@ -239,7 +243,11 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		selection.restore("durable-1", {
 			agent,
 			isStreaming: false,
-			sessionManager: { getEntries: () => entries, appendCustomEntry: () => "unused" },
+			promptSurface: "terminal" as const,
+			sessionManager: {
+				getEntries: () => entries,
+				appendCustomEntry: () => "unused",
+			},
 		});
 
 		expect(selection.selected("durable-1")).toBe("dev-b");
@@ -291,6 +299,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const session = {
 			agent: { toolHost: own as ToolHost | undefined },
 			isStreaming: false,
+			promptSurface: "terminal" as const,
 			sessionManager: { getEntries: () => [], appendCustomEntry: () => "e" },
 		};
 		selection.restore("s1", session);
@@ -323,6 +332,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const before = {
 			agent: { toolHost: oldHost as ToolHost | undefined },
 			isStreaming: false,
+			promptSurface: "terminal" as const,
 			sessionManager: manager,
 		};
 		selection.restore("s1", before);
@@ -332,6 +342,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const after = {
 			agent: { toolHost: newHost as ToolHost | undefined },
 			isStreaming: false,
+			promptSurface: "terminal" as const,
 			sessionManager: manager,
 		};
 		selection.restore("s1", after);
@@ -382,7 +393,11 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			selection.restore("s1", {
 				agent,
 				isStreaming: false,
-				sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
+				promptSurface: "terminal" as const,
+				sessionManager: {
+					getEntries: () => entries,
+					appendCustomEntry: () => "e",
+				},
 			}),
 		).not.toThrow();
 		const texts = await runProbe(agent.toolHost, "/");
@@ -398,6 +413,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			sessionId: "s-ending",
 			agent: { toolHost: undefined as ToolHost | undefined },
 			isStreaming: false,
+			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => entries,
 				appendCustomEntry: () => "e",
@@ -443,7 +459,11 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const session = {
 			agent: { toolHost: undefined as ToolHost | undefined },
 			isStreaming: false,
-			sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
+			promptSurface: "terminal" as const,
+			sessionManager: {
+				getEntries: () => entries,
+				appendCustomEntry: () => "e",
+			},
 		};
 		selection.restore("s-back", session);
 		expect(links).toBe(0);
@@ -483,7 +503,11 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			sessionId: "s-gated",
 			agent: { toolHost: undefined as ToolHost | undefined },
 			isStreaming: false,
-			sessionManager: { getEntries: () => [] as SessionEntry[], appendCustomEntry: () => "e" },
+			promptSurface: "terminal" as const,
+			sessionManager: {
+				getEntries: () => [] as SessionEntry[],
+				appendCustomEntry: () => "e",
+			},
 			dispose: () => {},
 		};
 		const options = headlessHostOptions({
@@ -512,7 +536,11 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const session = {
 			agent: { toolHost: own as ToolHost | undefined },
 			isStreaming: true,
-			sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
+			promptSurface: "terminal" as const,
+			sessionManager: {
+				getEntries: () => entries,
+				appendCustomEntry: () => "e",
+			},
 		};
 		selection.restore("s-busy", session);
 
@@ -534,6 +562,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const session = {
 			agent: { toolHost: own as ToolHost | undefined },
 			isStreaming: false,
+			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => [] as SessionEntry[],
 				appendCustomEntry: (_type: string, data?: unknown) => {

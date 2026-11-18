@@ -8,9 +8,8 @@ import htmlRenderExtension from "../../src/extensions/html-render/index.ts";
 import {
 	MAX_HANDED_PAGE_CHARACTERS,
 	MAX_HANDED_PAGES_CHARACTERS,
-	createShowHtmlPageTool,
-	writeHtmlPage,
-} from "../../src/extensions/html-render/tool.ts";
+} from "../../src/extensions/html-render/handed-pages.ts";
+import { createShowHtmlPageTool, writeHtmlPage } from "../../src/extensions/html-render/tool.ts";
 import { HOST_TOOL_ROUTE_CHANNEL } from "../../src/host-tools.ts";
 import type { ExtensionAPI, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";

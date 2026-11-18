@@ -5313,6 +5313,11 @@ export class AgentSession {
 		return !this._isAgentRunActive;
 	}
 
+	/** The surface this session's prompt is built for; what its host does with a result follows from it. */
+	get promptSurface(): PromptSurface {
+		return this._promptSurface ?? resolvePromptSurface(process.env);
+	}
+
 	/**
 	 * Rebuilds the prompt for another surface (a later `open_session.promptSurface`). The next
 	 * turn's `before_agent_start` hands presets the new surface through `systemPromptOptions`.

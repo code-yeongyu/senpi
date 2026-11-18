@@ -16,7 +16,7 @@ import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
-import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
+import type { DynamicSystemPromptPart, PromptSurface } from "../dynamic-prompt/build.ts";
 import {
 	createEventBus,
 	type EventBus,
@@ -750,6 +750,7 @@ export class ExtensionRunner {
 	private offloadFn: ExtensionContextActions["offload"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
 	private isModelIssuedToolCallFn: (toolCallId: string) => boolean = () => false;
+	private promptSurfaceOfFn: (toolCallId: string) => PromptSurface | undefined = () => undefined;
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
@@ -821,9 +822,12 @@ export class ExtensionRunner {
 		readonly loopWake?: LoopWakeRoute;
 		/** Backs `ExtensionToolContext.issuedByModel` on a runtime without a session (a hand's calls from the brain). */
 		readonly isModelIssuedToolCall?: (toolCallId: string) => boolean;
+		/** Backs `ExtensionToolContext.promptSurface` on a runtime without a session: the brain's, sent with the call. */
+		readonly promptSurfaceOf?: (toolCallId: string) => PromptSurface | undefined;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
 		if (facts.isModelIssuedToolCall !== undefined) this.isModelIssuedToolCallFn = facts.isModelIssuedToolCall;
+		if (facts.promptSurfaceOf !== undefined) this.promptSurfaceOfFn = facts.promptSurfaceOf;
 		this.loopHookCallFn = facts.loopHookCall;
 		const send = facts.loopHookSend;
 		const wake = facts.loopWake;
@@ -972,6 +976,7 @@ export class ExtensionRunner {
 		this.executeToolFn = contextActions.executeTool;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
 		this.isModelIssuedToolCallFn = contextActions.isModelIssuedToolCall ?? (() => false);
+		this.promptSurfaceOfFn = () => this.getSystemPromptOptionsFn().surface;
 		// Servers registered from now on reach the extension that connects them right away. Servers
 		// registered during loading are read on session_start.
 		this.runtime.mcpServers.setChangeListener(() => {
@@ -2087,6 +2092,11 @@ export class ExtensionRunner {
 		// createContext() returns a fresh object, so adding properties does not affect other contexts.
 		return Object.defineProperties(baseContext as ExtensionToolContext, {
 			issuedByModel: { value: runner.isModelIssuedToolCallFn(toolCallId) },
+			promptSurface: {
+				get() {
+					return runner.promptSurfaceOfFn(toolCallId);
+				},
+			},
 			tools: {
 				get() {
 					runner.assertActive();
