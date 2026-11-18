@@ -209,6 +209,13 @@ export const RPC_INBOUND_SAMPLES = {
 		content: "# Skill\n",
 		ifEtag: null,
 	},
+	read_user_skill_file: { type: "read_user_skill_file", skill: "sample-skill" },
+	write_user_skill_file: {
+		type: "write_user_skill_file",
+		skill: "sample-skill",
+		content: "# Skill\n",
+		ifEtag: null,
+	},
 	extension_request: { type: "extension_request", name: "rpc-inbound-sample" },
 	"eval_cells.list": { type: "eval_cells.list" },
 	"eval_cells.peek": { type: "eval_cells.peek", cellId: SAMPLE_ID },

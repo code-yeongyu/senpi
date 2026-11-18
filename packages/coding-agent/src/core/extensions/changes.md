@@ -1,3 +1,21 @@
+## 2026-11-17 - getAllTools() carries a tool's own row renderers (senpi#6903)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolInfo` picks `renderCall` and `renderResult` from the definition, beside `permissionParser`.
+
+### Why
+
+- A host that draws a tool's calls somewhere other than the tool's own row (codemode's nested `tool.<name>()` rows in an eval cell) had no way to reach the renderers, so those calls drew as raw fields (oh-my-openagent#12994).
+
+### Why an extension could not handle it
+
+- `ToolInfo` is the public shape `pi.getAllTools()` returns; codemode is an extension and reads tools only through it.
+
+### Expected merge conflict zones
+
+- LOW: the `ToolInfo` `Pick` list in `types.ts`.
+
 ## 2026-11-17 - ToolInfo.evalOnly (senpi#6886)
 
 ### What changed
