@@ -16,6 +16,7 @@ import {
 	isGlm52Model,
 	isGlm53Model,
 	isGpt6FamilyModel,
+	isGpt62Model,
 	isGrok45Model,
 	isGrok46Model,
 	isGrok47Model,
@@ -38,6 +39,10 @@ export function resolvePresetName(input: {
 	name?: string;
 }): ResolvedPresetName | undefined {
 	const model: ModelWithPromptPresetMetadata = { id: input.modelID, provider: input.providerID, name: input.name };
+	// The point release must resolve before the GPT-6 family signal, which accepts any point release.
+	if (isGpt62Model(model)) {
+		return "gpt-6.2";
+	}
 	if (isGpt6FamilyModel(model)) {
 		return "gpt-6-astra";
 	}
@@ -150,6 +155,7 @@ export type PromptPresetModelCase = {
 };
 
 export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
+	{ providerID: "openai", modelID: "gpt-6.2-sol", preset: "gpt-6.2" },
 	{ providerID: "openai", modelID: "gpt-6-astra", preset: "gpt-6-astra" },
 	{ providerID: "openai", modelID: "gpt-5.6", preset: "gpt-5.6" },
 	{ providerID: "openai", modelID: "gpt-5.5", preset: "gpt-5.5" },
@@ -188,6 +194,7 @@ export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
 // buildPreset, no model matcher), so it is intentionally absent here: a model-driven parity check
 // can only cover ids that resolve to a preset, and no real id auto-resolves to bare gpt-5.
 export const AUTO_RESOLVED_PRESET_NAMES: readonly ResolvedPresetName[] = [
+	"gpt-6.2",
 	"gpt-6-astra",
 	"gpt-5.6",
 	"gpt-5.5",
