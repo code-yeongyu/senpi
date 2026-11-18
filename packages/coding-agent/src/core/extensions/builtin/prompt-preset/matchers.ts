@@ -35,6 +35,17 @@ export function isGpt62Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGpt62Signal(model.id) || (model.name !== undefined && hasGpt62Signal(model.name));
 }
 
+// The goal extension's audit-free continuation prompt follows the Astra tier of any GPT-6 point
+// release (senpi#6975): gpt-6-astra, gpt-6-astra-fast, gpt-6.2-astra, gpt-6.2-astra-ultrafast,
+// Venice's dotless openai-gpt-62-astra, and an effort decorator after a colon. Sol and Luna stay
+// out - they do not share Astra's over-verification - and so do unknown Astra siblings (previews,
+// dated snapshots): an unknown sibling keeps the full prompt until it earns its own decision.
+export function hasGpt6AstraSignal(value: string): boolean {
+	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+|\d)*[._-]astra(?:[._-](?:fast|ultrafast))?(?:$|:)/.test(
+		normalizeModelId(value),
+	);
+}
+
 export function isGpt6FamilyModel(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGpt6FamilySignal(model.id) || (model.name !== undefined && hasGpt6FamilySignal(model.name));
 }

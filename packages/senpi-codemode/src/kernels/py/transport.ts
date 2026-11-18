@@ -11,6 +11,7 @@ import {
 } from "../../bridge/protocol.ts";
 import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
 import type { KernelPreludePlan } from "../shared/kernel-prelude-plan.ts";
+import { attestKernelChild } from "../shared/session-spawn-attestation.ts";
 import { readKernelCpuTime } from "../shared/process-cpu.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
@@ -141,6 +142,7 @@ export class PythonKernelTransport {
 			},
 		};
 		const child = (options.spawnProcess ?? defaultSpawn)(spawnOptions);
+		attestKernelChild(options.sessionEnv, child);
 		const transport = new PythonKernelTransport(options, child);
 		try {
 			await transport.#initialize();

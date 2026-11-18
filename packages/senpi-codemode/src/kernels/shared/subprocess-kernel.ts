@@ -25,6 +25,7 @@ import {
 	settlePendingRun,
 	timeoutResult,
 } from "./subprocess-run.ts";
+import { attestKernelChild } from "./session-spawn-attestation.ts";
 import { SubprocessStartupWatchdog } from "./subprocess-startup.ts";
 
 export type {
@@ -228,6 +229,7 @@ export class SubprocessKernel {
 					? applySessionEnvironment(globalThis.process.env, this.options.sessionEnv)
 					: undefined),
 		});
+		attestKernelChild(this.options.sessionEnv, child);
 		const process = new SubprocessProcess(child, {
 			onLine: (source, line) => this.handleLine(source, line),
 			onStderr: (source, data) => this.handleMessage(source, { type: "text", stream: "stderr", data }),

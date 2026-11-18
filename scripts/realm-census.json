@@ -4167,10 +4167,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts#GPT6_ASTRA_RECEIVER_IDS": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
 		"packages/coding-agent/src/core/extensions/builtin/goal/provider-retry.ts#ISO_INSTANT": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
@@ -4343,22 +4339,6 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/extensions/html-render/images.ts#ABSOLUTE_PATH": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/extensions/html-render/images.ts#IMAGE_EXTENSIONS": {
-			"class": "constant",
-			"reason": "value derived from constants at load; never written after load"
-		},
-		"packages/coding-agent/src/extensions/html-render/images.ts#IMAGE_MIME_TYPES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/extensions/html-render/images.ts#LOCAL_IMAGE_PATTERN": {
-			"class": "per-copy-safe",
-			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
-		},
 		"packages/coding-agent/src/extensions/html-render/images.ts#MAX_IMAGE_BYTES": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
@@ -4366,14 +4346,6 @@
 		"packages/coding-agent/src/extensions/html-render/images.ts#MAX_PAGE_BYTES": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/extensions/html-render/images.ts#RAW_TEXT_ELEMENTS": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
-		"packages/coding-agent/src/extensions/html-render/images.ts#TAG_START": {
-			"class": "per-copy-safe",
-			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
 		"packages/coding-agent/src/extensions/html-render/tool.ts#BASE64_IMAGE": {
 			"class": "per-copy-safe",
@@ -5295,6 +5267,14 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#GPT_BLOCK_HANDOFF_PRESETS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#NO_HANDOFF_BLOCK_PRESETS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#FULL_SHARED_SECTION_PRESETS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -5750,6 +5730,10 @@
 		"packages/coding-agent/src/core/extensions/builtin/todotools/native-todo-mirror.ts#STATUSES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts#GPT_HANDOFF_CUES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts#HANDOFF_CUES": {
 			"class": "constant",
@@ -6410,6 +6394,14 @@
 			"class": "per-copy-safe",
 			"reason": "per-process random or derived key material held by the copy that uses it; a split only means two copies use different keys for their own records"
 		},
+		"packages/coding-agent/src/core/kernel-process-identity.ts#darwinReader": {
+			"class": "per-copy-safe",
+			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
+		},
+		"packages/coding-agent/src/core/kernel-process-identity.ts#linuxBootId": {
+			"class": "per-copy-safe",
+			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
+		},
 		"packages/coding-agent/src/core/keybindings.ts#KEYBINDINGS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -7062,6 +7054,10 @@
 		"packages/coding-agent/src/core/session-sidecar-store.ts#snapshots": {
 			"class": "per-copy-safe",
 			"reason": "derived-value cache; a split only recomputes or misses"
+		},
+		"packages/coding-agent/src/core/session-spawn-attestation.ts#ownIdentity": {
+			"class": "per-copy-safe",
+			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
 		},
 		"packages/coding-agent/src/core/session-summary-cache.ts#cache": {
 			"class": "per-copy-safe",
@@ -7866,6 +7862,10 @@
 		"packages/coding-agent/src/migrations-state.ts#SCAN_MIGRATION_NAMES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/nearest-parent-config.ts#ACCOUNT_HOME_DIR": {
+			"class": "constant",
+			"reason": "account home resolved once at load; never written after load"
 		},
 		"packages/coding-agent/src/modes/hand/hand-wakes.ts#HAND_WAKE_LIMITS": {
 			"class": "constant",
@@ -11553,6 +11553,46 @@
 		"packages/tui/src/wsl-session.ts#WSL_ENV_MARKERS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#ABSOLUTE_PATH": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#CSS_URL": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#IMAGE_EXTENSIONS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#IMAGE_MIME_TYPES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#IMAGE_PATH": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#RAW_TEXT_ELEMENTS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#SCRIPT_PATH": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#TAG_START": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#UNQUOTED_URL": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#URL_ATTRIBUTES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
 		}
 	}
 }

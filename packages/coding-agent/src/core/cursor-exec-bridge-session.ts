@@ -16,7 +16,12 @@ type CursorBridgeAgent = Pick<
 
 export interface CursorExecBridgeSession {
 	getRegisteredTool(name: string): AgentTool | undefined;
-	preflightToolCall(toolCall: AgentToolCall, args: unknown): Promise<BeforeToolCallResult | undefined>;
+	/** `execBridge` marks the call as issued by the model through the exec channel until its result is emitted. */
+	preflightToolCall(
+		toolCall: AgentToolCall,
+		args: unknown,
+		options?: { execBridge?: boolean },
+	): Promise<BeforeToolCallResult | undefined>;
 	emitExecBridgeToolResult(
 		toolName: string,
 		toolCallId: string,
@@ -55,6 +60,7 @@ export function createSessionCursorExecBridge(
 					arguments: event.input as AgentToolCall["arguments"],
 				},
 				event.input,
+				{ execBridge: true },
 			),
 		emitEvent: async (event: AgentEvent, runSignal: AbortSignal) =>
 			await getAgent().emitExternalEvent(event, runSignal),

@@ -342,6 +342,14 @@ export {
 	readOwnFootprint,
 	readProcessFootprint,
 } from "./core/process-footprint.ts";
+// Which session spawned a process, attested by its spawner (senpi#6972)
+export {
+	attestSessionSpawn,
+	type PidSession,
+	resolvePidSession,
+	type SessionSpawnAttestation,
+	sessionSpawnsDir,
+} from "./core/session-spawn-attestation.ts";
 export {
 	findReservedKeywordRuns,
 	findReservedKeywordSpans,

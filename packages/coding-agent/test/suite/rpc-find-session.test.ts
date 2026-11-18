@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
+import { findSession } from "../../src/modes/rpc/find-session.ts";
 import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { declare, startHost } from "./rpc-delegated-host-support.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
@@ -160,5 +161,61 @@ describe("find_session finds a session file by its durable id (senpi#6429)", () 
 
 		expect(await find(host, ID)).toMatchObject({ success: true, data: { unknown: true } });
 		expect(existsSync(join(empty, "sessions"))).toBe(false);
+	});
+
+	it("#given a host that keeps no agent directory #then find_session is refused find_session_unsupported", async () => {
+		const answer = await findSession({ agentDir: undefined, hosted: () => [] }, { id: "fs", durableSessionId: ID });
+
+		expect(answer).toMatchObject({
+			id: "fs",
+			command: "find_session",
+			success: false,
+			errorCode: "find_session_unsupported",
+		});
+	});
+
+	it("#given a file whose first line does not end within the bytes a header may take #then it is not a candidate, even when those bytes alone read as a header", async () => {
+		const fixture = await devices();
+		await using host = createInProcessRig(fixture.agentA);
+		const dir = getDefaultSessionDir(fixture.repoA, fixture.agentA);
+		mkdirSync(dir, { recursive: true });
+		const file = join(dir, `2026-11-11T00-00-00-000Z_${ID}.jsonl`);
+		const header = JSON.stringify({ type: "session", version: 3, id: ID, cwd: dir });
+		// The first 64 KiB are a whole header followed by spaces; the line itself runs on past them.
+		writeFileSync(file, `${header}${" ".repeat(64 * 1024)}still the first line\n`);
+
+		const answer = await find(host, ID);
+
+		expect(answer).toMatchObject({ success: true, data: { unknown: true } });
+	});
+
+	it("#given a hosted session that names no file #then its file on disk still answers, and open stays false", async () => {
+		const fixture = await devices();
+		const dir = getDefaultSessionDir(fixture.repoA, fixture.agentA);
+		const file = writeSessionFile(dir, ID);
+
+		const answer = await findSession(
+			{ agentDir: fixture.agentA, hosted: () => [{ durableSessionId: ID, cwd: dir }] },
+			{ id: "fs", durableSessionId: ID },
+		);
+
+		expect(answer).toMatchObject({
+			success: true,
+			data: { found: { sessionPath: file, cwd: dir, open: false } },
+		});
+	});
+
+	it("#given a session file whose header names no folder #then the answer names the file with an empty cwd", async () => {
+		const fixture = await devices();
+		await using host = createInProcessRig(fixture.agentA);
+		const dir = getDefaultSessionDir(fixture.repoA, fixture.agentA);
+		mkdirSync(dir, { recursive: true });
+		const file = join(dir, `2026-11-11T00-00-00-000Z_${ID}.jsonl`);
+		writeFileSync(file, `${JSON.stringify({ type: "session", version: 3, id: ID })}\n`);
+
+		const answer = await find(host, ID);
+
+		expect(answer).toMatchObject({ success: true });
+		expect(answer.data).toEqual({ found: { sessionPath: file, cwd: "", open: false } });
 	});
 });
