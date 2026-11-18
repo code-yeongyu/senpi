@@ -1,4 +1,6 @@
 // Core session management
+export { attachHostTools, HOST_TOOL_ROUTE_CHANNEL, HOST_TOOL_ROUTE_UNAVAILABLE } from "./host-tools.ts";
+export { showHtmlPageTool, type ShowHtmlPageDetails, writeHtmlPage } from "./extensions/html-render/tool.ts";
 export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./core/extensions/secret-input.ts";
 export type { RpcSecretInputSettledEvent } from "./modes/rpc/rpc-types.ts";
 export type {

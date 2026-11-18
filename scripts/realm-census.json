@@ -4319,67 +4319,71 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#BOOTSTRAP_SCRIPT": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#BOOTSTRAP_SCRIPT": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#DARK_VARS": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#DARK_VARS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#HTML_RENDER_CONTENT_SECURITY_POLICY": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#HTML_RENDER_CONTENT_SECURITY_POLICY": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#LIGHT_VARS": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#LIGHT_VARS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#POLICY_META": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#POLICY_META": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#PREAMBLE": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#PREAMBLE": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#ABSOLUTE_PATH": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#ABSOLUTE_PATH": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#IMAGE_EXTENSIONS": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#IMAGE_EXTENSIONS": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#IMAGE_MIME_TYPES": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#IMAGE_MIME_TYPES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#LOCAL_IMAGE_PATTERN": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#LOCAL_IMAGE_PATTERN": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#MAX_IMAGE_BYTES": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#MAX_IMAGE_BYTES": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#MAX_PAGE_BYTES": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#MAX_PAGE_BYTES": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#RAW_TEXT_ELEMENTS": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#RAW_TEXT_ELEMENTS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#TAG_START": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#TAG_START": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#BASE64_IMAGE": {
+		"packages/coding-agent/src/extensions/html-render/tool.ts#BASE64_IMAGE": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#Params": {
+		"packages/coding-agent/src/extensions/html-render/tool.ts#Params": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/tool.ts#showHtmlPageTool": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
