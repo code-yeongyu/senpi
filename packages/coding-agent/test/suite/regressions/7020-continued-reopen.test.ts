@@ -9,6 +9,7 @@ import { afterEach, expect, it } from "vitest";
 import type { SessionStartEvent } from "../../../src/core/extensions/types.ts";
 import goalExtension from "../../../src/core/extensions/builtin/goal/index.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
+import { SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/session-control-types.ts";
 import { STOP_RESUME_CUSTOM_TYPE } from "../../../src/core/stop-resume-directive.ts";
 import { createHarness, type Harness } from "../harness.ts";
 import { firstTurnSettled, within } from "./7020-live-park-support.ts";
@@ -28,7 +29,10 @@ function answer(text: string): AssistantMessage {
 }
 
 /** A session file as a SIGKILL left it: the opening lifecycle record says `runActive`, then `run` wrote its start. */
-async function killedMidRun(run: (saved: SessionManager) => void): Promise<{ base: Harness; file: string }> {
+async function killedMidRun(
+	run: (saved: SessionManager) => void,
+	options: { cutTool?: boolean } = {},
+): Promise<{ base: Harness; file: string }> {
 	const base = await createHarness({ persistSession: true });
 	harnesses.push(base);
 	const saved = base.sessionManager;
@@ -52,11 +56,12 @@ async function killedMidRun(run: (saved: SessionManager) => void): Promise<{ bas
 		epochSealed: false,
 		runId: "killed-run",
 	});
-	saved.appendMessage({
-		...answer(""),
-		content: [{ type: "toolCall", id: "call-1", name: "bash", arguments: { command: "make deploy" } }],
-		stopReason: "toolUse",
-	});
+	if (options.cutTool !== false)
+		saved.appendMessage({
+			...answer(""),
+			content: [{ type: "toolCall", id: "call-1", name: "bash", arguments: { command: "make deploy" } }],
+			stopReason: "toolUse",
+		});
 	const file = saved.getSessionFile();
 	if (!file) throw new Error("the killed session has no file");
 	return { base, file };
@@ -97,15 +102,83 @@ it("keeps a person-started run that the restart cut held for that person", async
 	expect(h.session.holds.map((hold) => hold.key)).toEqual(["interrupted-run"]);
 });
 
-it("does not continue a run that was itself the continuation of a cut run", async () => {
-	const { base, file } = await killedMidRun((saved) => {
-		engineStarted(saved);
-		saved.appendCustomMessageEntry(STOP_RESUME_CUSTOM_TYPE, "resumed", false, { resumeCause: "interrupted" });
+// senpi#7079: a continuation the next restart cuts continues again when it made progress, and a crash loop stops.
+const restartContinued = (saved: SessionManager): void => {
+	saved.appendCustomMessageEntry(STOP_RESUME_CUSTOM_TYPE, "resumed", false, { resumeCause: "interrupted" });
+};
+const progressed = (saved: SessionManager): void => {
+	saved.appendMessage(answer("one step done"));
+};
+const peerDelivered = (saved: SessionManager): void => {
+	saved.appendCustomMessageEntry(SESSION_CONTROL_DELIVERY_TYPE, "[from lead] keep going", true, {
+		delivery_id: "lead-2",
+		source: "session_control",
+		deliverAs: "followUp",
 	});
+};
+const holdsOf = (h: Harness) => h.session.holds.map(({ key, data }) => ({ key, data }));
+
+async function expectHeld(run: (saved: SessionManager) => void, data: unknown, cutTool?: boolean): Promise<void> {
+	const { base, file } = await killedMidRun(run, { cutTool });
 	const { h } = await reopenContinued(base, file);
 	await h.session.waitForIdle();
 	expect(h.faux.state.callCount).toBe(0);
-	expect(h.session.holds.map((hold) => hold.key)).toEqual(["interrupted-run"]);
+	expect(holdsOf(h)).toEqual([{ key: "interrupted-run", data }]);
+}
+
+async function expectContinued(run: (saved: SessionManager) => void): Promise<void> {
+	const { base, file } = await killedMidRun(run);
+	const { h, turn } = await reopenContinued(base, file);
+	await within(turn, TURN_MS, "the continued run's turn");
+	expect(h.faux.state.callCount).toBe(1);
+	expect(h.session.holds).toEqual([]);
+}
+
+it("continues again a continuation the next restart cut after it made progress", async () => {
+	await expectContinued((saved) => {
+		engineStarted(saved);
+		restartContinued(saved);
+		progressed(saved);
+	});
+});
+
+it("holds a continuation the next restart cut before any progress, naming the repeated restart", async () => {
+	await expectHeld(
+		(saved) => {
+			engineStarted(saved);
+			restartContinued(saved);
+		},
+		{ reason: "repeated_restart_no_progress" },
+		false,
+	);
+});
+
+it("holds after three continuations without new input, and a peer delivery resets the count", async () => {
+	const continuedThrice = (saved: SessionManager): void => {
+		engineStarted(saved);
+		for (let i = 0; i < 3; i++) {
+			restartContinued(saved);
+			progressed(saved);
+		}
+	};
+	await expectHeld(continuedThrice, { reason: "repeated_restart_limit" });
+	await expectContinued((saved) => {
+		engineStarted(saved);
+		restartContinued(saved);
+		progressed(saved);
+		restartContinued(saved);
+		progressed(saved);
+		peerDelivered(saved);
+		restartContinued(saved);
+		progressed(saved);
+	});
+});
+
+it("keeps a continuation of a person-started run held for that person, whatever its progress", async () => {
+	await expectHeld((saved) => {
+		restartContinued(saved);
+		progressed(saved);
+	}, undefined);
 });
 
 // C6: a cold reopen suppresses a goal that ends on 8 continuations; a session the restart interrupted is not cold.
