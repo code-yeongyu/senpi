@@ -5,7 +5,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { INTERNAL_OBSERVER_HANDSHAKE_MS, SupervisorActivity } from "../../src/modes/rpc/host-lifecycle-activity.ts";
-import { INTERNAL_READINESS_PROBE_MS, waitForListener } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
+import { INTERNAL_READINESS_PROBE_MS, waitForListener } from "../../src/modes/rpc/host-lifecycle-readiness.ts";
 import { processAlive } from "../helpers/spawned-host-reaper.ts";
 import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 

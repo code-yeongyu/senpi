@@ -6,13 +6,14 @@
 import { lstat, mkdir, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import type { Duplex } from "node:stream";
 import type { HostAdmission } from "./host-admission.ts";
 import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
 import { listen as bindOwnedSocket } from "./host-socket-bind.ts";
+import { SpareHop } from "./host-spare-hop.ts";
 import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
 import { connectInternalConnection } from "./internal-channel.ts";
-import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { PublicRpcConnection } from "./rpc-public-auth.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import {
@@ -24,10 +25,13 @@ import {
 
 import {
 	authenticateSocket,
+	CHALLENGE_BUDGET_MS,
 	ensureSocketSecret,
 	resolveSocketTransportAddress,
+	type Schedule,
 	sendSocketHandshake,
 	socketSecretPath,
+	timerSchedule,
 } from "./socket-transport.ts";
 
 export interface PublicProxyOptions {
@@ -43,23 +47,41 @@ export interface PublicProxyOptions {
 	readonly onDetach: () => void;
 	/** A dropped unclassified admission breaks quiescence; a proven observing read does not. */
 	readonly onAdmit?: () => void;
+	/** Keep one authenticated engine hop ready for the next public client (`host-spare-hop.ts`, senpi#7055). */
+	readonly spareHop?: boolean;
+	/** The spare's refill and the challenge budget; tests fire them by hand. */
+	readonly timers?: Schedule;
 }
 
 export function createPublicProxy(options: PublicProxyOptions): Server {
-	const { internalSocket, internalSecret, publicSecret, clients } = options;
+	const { internalSocket, internalSecret, internalKey, publicSecret, clients } = options;
+	const schedule = options.timers ?? timerSchedule;
 	// Every client is refused while the host is unreachable; the supervisor says so once per outage, not once per client.
 	let refused = 0;
-	return createServer((client) => {
-		const auth = options.publicEndpoint ? new PublicRpcConnection(client, options.publicEndpoint) : undefined;
+	const connectHop = (): Socket => {
+		const socket = createConnection(resolveSocketTransportAddress(internalSocket, process.platform, internalSecret));
+		if (internalSecret) sendSocketHandshake(socket, internalSecret);
+		return socket;
+	};
+	const spare =
+		options.spareHop && internalKey
+			? new SpareHop(() => connectInternalConnection(connectHop(), internalKey), schedule)
+			: undefined;
+	options.admission.onStop(async () => spare?.dispose());
+	const server = createServer((client) => {
+		const auth = options.publicEndpoint
+			? new PublicRpcConnection(client, options.publicEndpoint, undefined, { ms: CHALLENGE_BUDGET_MS, schedule })
+			: undefined;
 		const accept = async (): Promise<void> => {
 			// Teardown is terminal even for an accept that raced socket shielding/server.close.
 			if (!clients.admit(client)) return;
 			client.pause();
-			// Draining peers can still probe and receive typed open refusals, without a child hop.
-			const internal = options.admission.stopping
-				? undefined
-				: createConnection(resolveSocketTransportAddress(internalSocket, process.platform, internalSecret));
-			if (internal && internalSecret) sendSocketHandshake(internal, internalSecret);
+			let internal: Duplex | undefined;
+			const ownHop = (): Promise<Duplex> => {
+				const socket = connectHop();
+				internal = socket;
+				return internalKey ? connectInternalConnection(socket, internalKey) : connected(socket);
+			};
 			// A readiness exchange can begin and end between ticks: the client is recorded the
 			// moment its first request line arrives, before a later tick can reuse the preceding
 			// idle window. An observing read (`status`) is never recorded (host-client-occupancy.ts).
@@ -74,11 +96,10 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 			client.once("close", detach);
 			client.once("error", detach);
 			try {
+				// Draining peers can still probe and receive typed open refusals, without a child hop.
+				internal = options.admission.stopping ? undefined : await spare?.take();
 				// Both hop kinds settle on the connection's real outcome, so a failure of either reaches the catch below.
-				const hop =
-					internal && options.internalKey
-						? await connectInternalConnection(internal, options.internalKey)
-						: internal && (await connected(internal));
+				const hop = internal ?? (options.admission.stopping ? undefined : await ownHop());
 				if (refused > 0) supervisorLog(`connections to the host succeed again after ${refused} failed`);
 				refused = 0;
 				if (client.destroyed) {
@@ -107,6 +128,8 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 		if (publicSecret) authenticateSocket(client, publicSecret, () => void accept());
 		else void accept();
 	});
+	server.once("close", () => spare?.dispose());
+	return server;
 }
 
 function connected(socket: Socket): Promise<Socket> {
@@ -134,103 +157,6 @@ export async function ensurePublicSocketSecret(publicSocket: string): Promise<Bu
 	} catch (cause) {
 		throw new Error(`senpi rpc host supervisor: cannot provision public socket secret ${secretPath}`, { cause });
 	}
-}
-
-/**
- * One sealed readiness probe: the internal handshake and the ready reply together, on one monotonic timer (senpi#3816
- * review). A child that accepts the hop and stays silent that long is not a working host, so readiness fails at once
- * instead of hanging the supervisor; a host that is not listening yet is retried until the overall deadline.
- */
-export const INTERNAL_READINESS_PROBE_MS = 10_000;
-
-export async function waitForListener(
-	socketPath: string,
-	timeoutMs: number,
-	secret?: Uint8Array,
-	internalKey?: Buffer,
-	/** A coordinated start retries a silent probe on a fresh connection; its launcher decides expiry (senpi#4602). */
-	options: { readonly retrySilent?: boolean } = {},
-): Promise<void> {
-	const deadline = performance.now() + timeoutMs;
-	while (performance.now() <= deadline) {
-		const probeMs = Math.max(1, Math.min(INTERNAL_READINESS_PROBE_MS, deadline - performance.now()));
-		const probe = await canConnect(socketPath, secret, internalKey, probeMs);
-		if (probe === "ready") return;
-		if (probe === "silent" && !options.retrySilent)
-			throw new Error(
-				`${socketPath}: host accepted the internal hop but did not answer within ${Math.round(probeMs)}ms`,
-			);
-		// A host that answered but could not prove the key will not start proving it: fail now, and say why.
-		if (probe !== "refused" && probe !== "silent") throw new Error(`${socketPath}: ${probe.unproven}`);
-		await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 50));
-	}
-	throw new Error(`${socketPath}: host did not start listening within ${timeoutMs}ms`);
-}
-
-async function canConnect(
-	socketPath: string,
-	secret: Uint8Array | undefined,
-	internalKey: Buffer | undefined,
-	probeMs: number,
-): Promise<"ready" | "refused" | "silent" | { readonly unproven: "host_identity_unproven" | "auth_failed" }> {
-	if (internalKey) {
-		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
-		let accepted = false;
-		let expired = false;
-		socket.once("connect", () => {
-			accepted = true;
-		});
-		// Destroying the socket ends the handshake or the ready wait, whichever is running, and drops the connection.
-		const timer = setTimeout(() => {
-			expired = true;
-			socket.destroy();
-		}, probeMs);
-		timer.unref();
-		const outcome = (ready: boolean) => (ready ? "ready" : accepted && expired ? "silent" : "refused");
-		try {
-			const stream = await connectInternalConnection(socket, internalKey);
-			return outcome(
-				await new Promise<boolean>((resolve) => {
-					const settle = (ready: boolean) => {
-						stream.destroy();
-						resolve(ready);
-					};
-					stream.once("error", () => settle(false));
-					stream.once("close", () => settle(false));
-					attachJsonlLineReader(
-						stream,
-						(line) => {
-							try {
-								const response = JSON.parse(line);
-								if (response.id === "internal-ready") settle(response.success === true);
-							} catch {
-								settle(false);
-							}
-						},
-						{ maxLineLength: MAX_RPC_LINE_CHARACTERS },
-					);
-					stream.write('{"id":"internal-ready","type":"get_protocol_info","observe":true}\n');
-				}),
-			);
-		} catch (cause) {
-			socket.destroy();
-			const reason = cause instanceof Error ? cause.message : "";
-			if (reason === "host_identity_unproven" || reason === "auth_failed") return { unproven: reason };
-			return outcome(false);
-		} finally {
-			clearTimeout(timer);
-		}
-	}
-	return new Promise((resolve) => {
-		const socket: Socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
-		if (secret) sendSocketHandshake(socket, secret);
-		const settle = (connected: boolean): void => {
-			socket.destroy();
-			resolve(connected ? "ready" : "refused");
-		};
-		socket.once("connect", () => settle(true));
-		socket.once("error", () => settle(false));
-	});
 }
 
 /** Test-only seams for `prepareSocketPath`'s stale-entry check. */

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlink
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
-import { waitForListener } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
+import { waitForListener } from "../../src/modes/rpc/host-lifecycle-readiness.ts";
 import { processExitEvent } from "../helpers/process-exit-event.ts";
 import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 

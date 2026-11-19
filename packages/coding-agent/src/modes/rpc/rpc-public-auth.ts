@@ -4,15 +4,17 @@ import { Duplex, PassThrough } from "node:stream";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
 import {
 	authRecord,
+	authRefusal,
+	challengeAnswer,
 	launchProofRecordRefusal,
-	RPC_AUTH_CAPABILITY,
 	RPC_AUTH_HEX,
+	RPC_HOST_OVERLOADED,
 	RPC_LAUNCH_PROOF_RECORD,
 	rpcAuthProof,
 	rpcProofMatches,
 } from "./rpc-auth-proof.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
-import { SOCKET_HANDSHAKE_TIMEOUT_MS } from "./socket-transport.ts";
+import { type ChallengeBudget, SOCKET_HANDSHAKE_TIMEOUT_MS } from "./socket-transport.ts";
 
 const PREAUTH_BYTES = 8 * 1024;
 
@@ -27,6 +29,7 @@ export class PublicRpcConnection {
 	private first = true;
 	private challenge: { readonly id: unknown; readonly client: string; readonly server: string } | undefined;
 	private protocolPending = false;
+	private cancelBudget: (() => void) | undefined;
 	/**
 	 * The admitted connection as one duplex for a router that reads and writes a single stream: it reads only
 	 * frames this filter released and writes through `response()`, so the challenge answer gains its proof.
@@ -41,15 +44,18 @@ export class PublicRpcConnection {
 	private readonly endpoint: RpcPublicEndpoint;
 	/** Enforcement: refuse an unauthenticated client. Off by default for one release of logged grace. */
 	private readonly requireToken: boolean;
+	private readonly budget: ChallengeBudget | undefined;
 
 	constructor(
 		socket: Socket,
 		endpoint: RpcPublicEndpoint,
 		requireToken = process.env.SENPI_RPC_REQUIRE_TOKEN === "1",
+		budget?: ChallengeBudget,
 	) {
 		this.socket = socket;
 		this.endpoint = endpoint;
 		this.requireToken = requireToken;
+		this.budget = budget;
 		socket.pause();
 		// Enforcing: a client that has not proven the key by the deadline is dropped. Grace: a silent or slow legacy client
 		// (a passive observer) is served as before, with its one deprecation line; a challenge in flight is left to
@@ -66,6 +72,7 @@ export class PublicRpcConnection {
 		socket.once("close", () => {
 			if (!this.active && !this.failed && !this.requireToken && !this.first) this.grace();
 			clearTimeout(this.timer);
+			this.cancelBudget?.();
 			detach();
 			this.raw.destroy();
 			this.input.end();
@@ -153,6 +160,8 @@ export class PublicRpcConnection {
 						return;
 					}
 					this.challenge = { id: request.id, client: nonce, server: randomBytes(32).toString("hex") };
+					const budget = this.budget;
+					if (budget) this.cancelBudget = budget.schedule(budget.ms, () => this.overloaded(request, budget.ms));
 				} else if (this.requireToken) {
 					// Wire contract frame 5: under enforcement any other first frame, a keyless get_protocol_info included.
 					this.refuse(request, "auth_required");
@@ -220,20 +229,21 @@ export class PublicRpcConnection {
 	}
 
 	private refuse(request: Readonly<Record<string, unknown>> | undefined, code: "auth_required" | "auth_failed"): void {
+		this.end(code, authRefusal(request, code));
+	}
+
+	/** The engine did not answer the challenge within the budget: the late answer is dropped, the hop closes with us. */
+	private overloaded(request: Readonly<Record<string, unknown>>, retryAfterMs: number): void {
+		if (this.failed || !this.protocolPending) return;
+		this.end(RPC_HOST_OVERLOADED, authRefusal(request, RPC_HOST_OVERLOADED, { retry_after_ms: retryAfterMs }));
+	}
+
+	private end(reason: string, refusal: Readonly<Record<string, unknown>>): void {
 		this.failed = true;
 		clearTimeout(this.timer);
-		this.logDrop(code);
-		this.socket.end(
-			serializeJsonLine({
-				id: request?.id,
-				type: "response",
-				command: request?.type ?? "parse",
-				success: false,
-				error: code,
-				errorCode: code,
-			}),
-			() => this.socket.destroy(),
-		);
+		this.cancelBudget?.();
+		this.logDrop(reason);
+		this.socket.end(serializeJsonLine(refusal), () => this.socket.destroy());
 	}
 
 	/**
@@ -250,31 +260,10 @@ export class PublicRpcConnection {
 			const record = authRecord(JSON.parse(line));
 			if (record?.type === "response" && record.command === "get_protocol_info" && record.success === true) {
 				this.protocolPending = false;
-				const data = authRecord(record.data) ?? {};
-				const capabilities = Array.isArray(data.capabilities) ? data.capabilities : [];
-				const c = this.challenge;
-				output += serializeJsonLine({
-					...record,
-					data: {
-						...data,
-						capabilities: [...new Set([...capabilities, RPC_AUTH_CAPABILITY])],
-						...(c && record.id === c.id
-							? {
-									auth: {
-										launch_id: this.endpoint.launchId,
-										server_nonce: c.server,
-										server_proof: rpcAuthProof(
-											this.endpoint.key,
-											"server",
-											this.endpoint.launchId,
-											c.client,
-											c.server,
-										),
-									},
-								}
-							: {}),
-					},
-				});
+				this.cancelBudget?.();
+				output += serializeJsonLine(
+					challengeAnswer(record, this.challenge, this.endpoint.key, this.endpoint.launchId),
+				);
 			} else if (this.active || !this.requireToken) output += `${line}\n`;
 		}
 		return output;
