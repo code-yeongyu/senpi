@@ -149,6 +149,7 @@ import {
 	twoSidedExtensions,
 } from "./two-sided-forwarding.ts";
 import { combinedToolCallSignal } from "./tool-call-signal.ts";
+import { toolResultHandlerTimeoutMs, waitForToolHook } from "./tool-hook-wait.ts";
 
 const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
 	"offload",
@@ -2542,9 +2543,24 @@ export class ExtensionRunner {
 				let endStatus: ExtensionToolHookLifecycleStatus = "completed";
 				let errorMessage: string | undefined;
 				try {
-					const handlerResult = (await handler(currentEvent, hookRun.context)) as
-						| ToolResultEventResult
-						| undefined;
+					const waited = await waitForToolHook({
+						run: () => handler(currentEvent, hookRun.context),
+						signal: hookRun.context.signal,
+						timeoutMs: toolResultHandlerTimeoutMs(ext.path),
+					});
+					if (waited.kind === "aborted") {
+						endStatus = "failed";
+						errorMessage = "interrupted";
+						continue;
+					}
+					if (waited.kind === "timed_out") {
+						endStatus = "failed";
+						errorMessage = `handler timed out after ${waited.elapsedMs}ms; the tool result continues without it`;
+						this.emitError({ extensionPath: ext.path, event: "tool_result", error: errorMessage });
+						continue;
+					}
+					if (waited.kind === "failed") throw waited.error;
+					const handlerResult = waited.value as ToolResultEventResult | undefined;
 					if (!handlerResult) continue;
 
 					if (handlerResult.content !== undefined) {
@@ -2634,7 +2650,19 @@ export class ExtensionRunner {
 				let endStatus: ExtensionToolHookLifecycleStatus = "completed";
 				let errorMessage: string | undefined;
 				try {
-					const handlerResult = await handler(event, hookRun.context);
+					// No deadline: a tool_call handler may hold an approval prompt open. The turn's abort still ends the wait,
+					// and the tool then does not run.
+					const waited = await waitForToolHook({
+						run: () => handler(event, hookRun.context),
+						signal: hookRun.context.signal,
+						timeoutMs: 0,
+					});
+					if (waited.kind === "aborted") {
+						endStatus = "blocked";
+						return { block: true, reason: "Operation aborted" };
+					}
+					if (waited.kind === "failed") throw waited.error;
+					const handlerResult = waited.kind === "settled" ? waited.value : undefined;
 
 					if (handlerResult) {
 						result = handlerResult as ToolCallEventResult;
