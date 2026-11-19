@@ -8033,7 +8033,12 @@ export class AgentSession {
 		);
 	}
 
-	/** A peer delivery that starts a turn on a session whose only holds are `unattended` releases them (senpi#6490). */
+	/**
+	 * A peer delivery the wake gate would hold, with no hold a peer cannot release, continues the session as a person's
+	 * input does (senpi#6490): an `unattended` hold, or the release barrier of an unattended Resume. `_engineTurnInput.begin()`
+	 * attends the session and releases what it holds, after which `holdsSource` is false; so the admission's `started`
+	 * (no `_peerDeliveryHolds()`) and this gate always agree, and anything else is answered `held`.
+	 */
 	private _peerDeliveryReleasesHold(
 		customType: string,
 		options: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" } | undefined,
@@ -8043,7 +8048,7 @@ export class AgentSession {
 			options?.triggerTurn === true &&
 			options.deliverAs !== "nextTurn" &&
 			!this.isStreaming &&
-			this._engineTurnHold.held &&
+			this._engineTurnHold.holdsSource(engineWakeSource(customType)) &&
 			this._peerDeliveryHolds().length === 0
 		);
 	}
