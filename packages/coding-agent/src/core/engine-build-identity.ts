@@ -87,3 +87,18 @@ export function compareEngineOrdinal(a: EngineBuildIdentity, b: EngineBuildIdent
 	if (a.scheme !== "epoch" || b.scheme !== "epoch" || a.ordinal[4] === b.ordinal[4]) return 0;
 	return a.ordinal[4] > b.ordinal[4] ? 1 : -1;
 }
+
+/** The identity a running host advertises (`engineVersion`, `engineOrdinal`): a non-zero epoch is an `epoch` build. */
+export function engineIdentityOf(text: string, ordinal: EngineOrdinal): EngineBuildIdentity {
+	return { text, ordinal, scheme: ordinal[4] > 0 ? "epoch" : "nodef" };
+}
+
+/**
+ * Why handing `running` over to `successor` would DOWNGRADE it (senpi#7018), or `undefined` when it would not:
+ * the successor is strictly older by `compareEngineOrdinal`. Equal and uncomparable builds are not older.
+ */
+export function olderEngineDetail(successor: EngineBuildIdentity, running: EngineBuildIdentity): string | undefined {
+	return compareEngineOrdinal(successor, running) < 0
+		? `the successor's engine ${successor.text} is older than the running host's ${running.text}`
+		: undefined;
+}

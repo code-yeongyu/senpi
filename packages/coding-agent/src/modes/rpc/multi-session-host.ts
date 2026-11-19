@@ -1,3 +1,4 @@
+import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { reportStartupMilestone } from "./host-startup-beacon.ts";
 import { createServer, type Server } from "node:net";
 import { rm } from "node:fs/promises";
@@ -434,6 +435,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 						instanceId: hostInstanceId(),
 						generation: hostGeneration(process.env),
 						runtimeBuildId,
+						engine: engineBuildIdentity(),
 					}),
 					perform: async (request) =>
 						performIdleHandover({
