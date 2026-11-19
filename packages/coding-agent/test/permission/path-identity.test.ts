@@ -49,6 +49,7 @@ import {
 	type PathIdentity,
 } from "../../src/core/extensions/builtin/permission-system/path-identity.ts";
 import { Wildcard } from "../../src/core/extensions/builtin/permission-system/wildcard.ts";
+import { confirmableFixtureRoot } from "./path-identity-fixtures.ts";
 
 const darwin = process.platform === "darwin";
 const linux = process.platform === "linux";
@@ -466,7 +467,7 @@ describe("alias detector: zero false negatives against native (design 5.4, 11.1.
 	let detector: ReturnType<typeof createDetector>;
 
 	beforeAll(() => {
-		b = fixtureRoot("alias-detector-");
+		b = confirmableFixtureRoot("alias-detector-");
 		snapshot = readMountTable();
 		detector = createDetector(snapshot);
 		mkdirSync(join(b, "real", "sub"), { recursive: true });
@@ -655,6 +656,13 @@ describe("alias detector: zero false negatives against native (design 5.4, 11.1.
 			["$TMPDIR", sample(tmpdir(), 2, 100)],
 			...(darwin ? [["/private/tmp", sample("/private/tmp", 1, 50)] as [string, string[]]] : []),
 		];
+		// A directory listing more than DETECTOR_MAX_ENTRIES names is alias by design (the budget row above); a busy
+		// host's /tmp can be one (senpi#7022), so that answer, checked against the directory itself, is not a false positive.
+		const overBudget = (reasons: readonly string[]): boolean => {
+			const [reason] = reasons;
+			if (reasons.length !== 1 || !reason?.startsWith("EBUDGET-entries@")) return false;
+			return readdirSync(reason.slice("EBUDGET-entries@".length)).length > DETECTOR_MAX_ENTRIES;
+		};
 		for (const [name, paths] of sets) {
 			const durations: number[] = [];
 			const falsePositives: string[] = [];
@@ -666,7 +674,8 @@ describe("alias detector: zero false negatives against native (design 5.4, 11.1.
 				const started = performance.now();
 				const verdict = detector(path);
 				durations.push(performance.now() - started);
-				if (!nativeAlias && verdict.alias) falsePositives.push(`${path} [${verdict.reasons.join(",")}]`);
+				if (!nativeAlias && verdict.alias && !overBudget(verdict.reasons))
+					falsePositives.push(`${path} [${verdict.reasons.join(",")}]`);
 			}
 			durations.sort((a, b) => a - b);
 			const p95 = durations[Math.floor(durations.length * 0.95)] ?? 0;
