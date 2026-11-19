@@ -63,7 +63,6 @@ describe("TerminalSession child oom_score_adj", () => {
 				expect(readOomScoreAdj(session.pid ?? 0)).toBe(TOOL_CHILD_OOM_SCORE_ADJ);
 				expect(readOomScoreAdj(process.pid)).toBe(hostValue);
 			},
-			10_000,
 		);
 	}
 });

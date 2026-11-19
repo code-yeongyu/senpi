@@ -8,7 +8,10 @@ import process from "node:process";
  */
 export const TOOL_CHILD_OOM_SCORE_ADJ = 1000;
 
-/** Marks `pid` as the preferred OOM victim on Linux; a no-op elsewhere or without a pid. Never throws. */
+/**
+ * Marks `pid` as the preferred OOM victim on Linux; a no-op elsewhere or without a pid. Never throws. Best effort:
+ * the write lands just after the spawn, so a process the child forked before it keeps the inherited value.
+ */
 export function preferAsOomVictim(pid: number | undefined): void {
 	if (process.platform !== "linux" || pid === undefined) return;
 	try {
