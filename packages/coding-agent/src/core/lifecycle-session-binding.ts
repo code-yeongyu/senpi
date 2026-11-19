@@ -256,9 +256,12 @@ export class LifecycleSessionBinding {
 		// dispose() may land while the facts are read; a disposed binding restores nothing.
 		if (this.disposed) return;
 		const entries = this.session.sessionManager.reduceHistory(lifecycleHistory);
-		const active = this.controller.obligations.active;
-		for (const record of active) {
+		// A run this process started (a restored monitor's wake that ran while the extensions bound, senpi#7033) is live:
+		// only work of a run from before the restart can have been interrupted by it.
+		const liveRun = this.controller.runStartedHere;
+		for (const record of this.controller.obligations.active) {
 			if (!record.ticketId) continue;
+			if (liveRun !== undefined && record.runId === liveRun) continue;
 			const ticketId = record.ticketId;
 			const entryId = this.session.sessionManager.reduceHistory(lifecycleDeliveryEntries).get(ticketId);
 			const transcript = entryId ? this.session.sessionManager.getEntry(entryId) : undefined;

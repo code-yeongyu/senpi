@@ -493,7 +493,7 @@ Configure compaction in `~/.senpi/agent/settings.json` or `<project-dir>/.senpi/
 
 [settings.md](settings.md#compaction) lists every `compaction` key with its type and default, including the switches for the behaviours under [Proactive compaction](#proactive-compaction).
 
-Disable proactive auto-compaction with `"enabled": false`. You can still compact manually with `/compact`, and a context the provider rejects as too large is still compacted once and retried automatically.
+Disable proactive auto-compaction with `"enabled": false`. You can still compact manually with `/compact`. A prompt that reaches the reserve limit is still compacted before it starts, and a context the provider rejects as too large is still compacted once and retried automatically.
 
 ### Per-model overrides
 

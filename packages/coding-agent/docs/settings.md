@@ -226,7 +226,7 @@ Context cuts, skipped files, and compacted or omitted skills share the "Context 
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `compaction.enabled` | boolean | `true` | Enable auto-compaction. `false` also stops idle compaction, but not background summaries: set `compaction.speculativeEnabled` to `false` as well |
+| `compaction.enabled` | boolean | `true` | Enable auto-compaction. `false` stops threshold and idle compaction. Compaction at the reserve limit and provider-overflow recovery stay on, and so do background summaries unless `compaction.speculativeEnabled` is also `false` |
 | `compaction.reserveTokens` | number | `16384` | Tokens reserved for LLM response |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens to keep (not summarized) |
 | `compaction.reserveScalingEnabled` | boolean | `true` | Raise the reserve on large windows to the larger of `reserveTokens` and 4% of the context window (at most 49152). `false` uses `reserveTokens` as written |
@@ -286,7 +286,7 @@ Global and project settings merge recursively **before** model lookup. A project
 
 `enabled` is not model-specific. The active model's token settings apply to manual compaction, automatic threshold checks (including between assistant turns), and overflow recovery. Switching models takes effect on the next check or compaction. Configure overrides in JSON; `/settings` retains the ordinary auto-compaction toggle.
 
-The boolean switches fall back to their default when the value is not a boolean. The numeric keys other than `reserveTokens` and `keepRecentTokens` fall back to their default when the value is not a finite number, and a negative value counts as `0`.
+The boolean switches fall back to their default when the value is not a boolean. The numeric keys other than `reserveTokens` and `keepRecentTokens` fall back to their default when the value is not a finite number, and a negative value counts as `0`. `summarizationMaxDurationMs` is the exception: zero or a negative value uses the adaptive default.
 
 See [compaction.md](compaction.md#proactive-compaction) for how each of these behaves, and the [compaction guide](compaction-guide.md#what-runs-by-default-and-what-it-costs) for what each one costs and when to turn it off.
 
