@@ -126,8 +126,9 @@ export async function listSessionFilesInDir(
 	files: readonly string[],
 	onLoaded: (info: SessionInfo | null) => void,
 	signal?: AbortSignal,
+	indexDir?: string,
 ): Promise<SessionInfo[]> {
-	const index = new SessionSummaryIndex(dir);
+	const index = new SessionSummaryIndex(dir, indexDir === undefined ? {} : { indexDir });
 	const sessions = await listSessionInfos(files, onLoaded, index, signal);
 	await index.persist(files);
 	return sessions;
@@ -138,6 +139,7 @@ export async function listSessionsFromDir(
 	dir: string,
 	onProgress?: SessionListProgress,
 	signal?: AbortSignal,
+	indexDir?: string,
 ): Promise<SessionInfo[]> {
 	signal?.throwIfAborted();
 	if (!existsSync(dir)) return [];
@@ -159,6 +161,7 @@ export async function listSessionsFromDir(
 				onProgress?.(loaded, files.length, publish ? sortSessionInfos([...partialSessions]) : undefined);
 			},
 			signal,
+			indexDir,
 		);
 	} catch {
 		signal?.throwIfAborted();

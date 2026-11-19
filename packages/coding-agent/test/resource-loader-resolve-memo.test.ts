@@ -201,7 +201,7 @@ describe("DefaultResourceLoader package resolution memo", () => {
 		};
 
 		it("loads a trusted project's resources, .agents/skills included, with no project settings file", async () => {
-			new ProjectTrustStore(agentDir).set(cwd, true);
+			await new ProjectTrustStore(agentDir).set(cwd, true);
 
 			const { resources, prompt } = await startUp();
 
@@ -210,7 +210,7 @@ describe("DefaultResourceLoader package resolution memo", () => {
 		});
 
 		it("loads none of an untrusted project's resources", async () => {
-			new ProjectTrustStore(agentDir).set(cwd, false);
+			await new ProjectTrustStore(agentDir).set(cwd, false);
 
 			const { resources, prompt } = await startUp();
 
@@ -222,7 +222,7 @@ describe("DefaultResourceLoader package resolution memo", () => {
 			const trusted = makeTrustLoader(true);
 			await trusted.reload();
 			expect(projectResources(trusted)).toEqual(ALL);
-			new ProjectTrustStore(agentDir).set(cwd, false);
+			await new ProjectTrustStore(agentDir).set(cwd, false);
 
 			const { resources, prompt } = await startUp();
 

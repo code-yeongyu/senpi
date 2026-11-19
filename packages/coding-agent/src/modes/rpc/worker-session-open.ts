@@ -114,7 +114,7 @@ export async function openWorkerSession(
 		profile: storedProfile,
 		...sessionIdentity(storedProfile),
 		cwd: profile.cwd,
-		attachments: 1,
+		attachments: options?.unattached ? 0 : 1,
 		retainOnDisconnect: options?.retainOnDisconnect === true,
 		lastCommandAt: host.now(),
 		lifecycleMutex: Promise.resolve(),

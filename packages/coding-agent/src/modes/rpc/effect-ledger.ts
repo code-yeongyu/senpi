@@ -218,6 +218,8 @@ export class EffectLedger {
 			readonly disposition?: string;
 			readonly outcome?: EffectOutcome;
 			readonly answer?: QueuedChangeAnswer;
+			readonly dropped?: RpcEffectRecord["dropped"];
+			readonly pending?: RpcEffectRecord["pending"];
 		} = {},
 	): EffectStatus {
 		const current = this.records.get(effectId);

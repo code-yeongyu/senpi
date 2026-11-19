@@ -1,6 +1,38 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6978": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/session-spawn-attestation.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/session-spawn-attestation.ts",
+				"legacyContracts/test/6972-kernel-spawn-attestation.test.ts/eval kernel spawn attestation (#6972) a Bun.$ command in a process kernel resolves to the calling session, even with a forged PI_SESSION_ID",
+				"legacyContracts/test/6972-kernel-spawn-attestation.test.ts/eval kernel spawn attestation (#6972) a child a worker kernel reports is attested to its session until it exits",
+				"legacyContracts/test/6972-kernel-spawn-attestation.test.ts/python kernel spawn attestation (#6972) a subprocess of the python kernel resolves to the calling session"
+			],
+			"reason": "senpi#6978 (e420af9aca, fixes #6972): kernels attest the processes they spawn to the calling session. The new kernel module kernels/shared/session-spawn-attestation.ts enters the extension and first-kernel import scopes; after the follow-up fix it carries only a type import of the host and a helper that calls the attester the extension injects, so no host runtime module enters either scope. The three contract rows are the new tests that pin the attestation from a Bun.$ command, a worker-reported child and a python subprocess. Main's codemode-gate went red on these as unreviewed additions after the merge; no existing cell changed.",
+			"changes": []
+		},
+		"senpi#6903": {
+			"additions": [
+				"legacyContracts/test/call-capture-details.test.ts/nested call details keeps a JSON copy of a tool result's details on the enriched summary",
+				"legacyContracts/test/call-capture-details.test.ts/nested call details drops details that are too large or not JSON",
+				"legacyContracts/test/eval-tool-call-capture.test.ts/nested call details are kept only for rows drawn by the tool read keeps details: false",
+				"legacyContracts/test/eval-tool-call-capture.test.ts/nested call details are kept only for rows drawn by the tool thread_list keeps details: true",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers draws the call with the tool's renderCall and the result with its renderResult",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers keeps the raw preview under the tool's call line when no details were captured",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers keeps a renderer's state across renders of one nested call, so its prefetch runs once",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers falls back to the generic row when the tool's renderer throws"
+			],
+			"reason": "senpi#6903 (d260c98fe0, 51e0f8dff7): a nested tool call of a registered tool that brings its own renderCall/renderResult is drawn by those renderers (raw preview kept when no details were captured, renderer state kept per nested call so a prefetch runs once, generic row when the renderer throws), and the capture keeps a bounded JSON copy of result.details only for tools whose rows the tool itself draws. Main's codemode-gate went red on these as unreviewed additions after the merge.",
+			"changes": []
+		},
+		"senpi#6906": {
+			"additions": [
+				"legacyContracts/test/eval-tool-call-capture.test.ts/eval tool-call capture capture: records a result-level isError: true as a failure and hands the kernel hasError"
+			],
+			"reason": "senpi#6906 (1e6a51d7d2, fixes #6904): a nested tool result with isError: true is recorded as a failed call (ok: false) and the kernel gets hasError. Main's codemode-gate went red on this as an unreviewed addition after the merge.",
+			"changes": []
+		},
 		"senpi#6887": {
 			"additions": [
 				"legacyContracts/test/eval-only-tools-prompt.test.ts/eval description names the session's eval-only tools lists every eval-only tool the session routes through eval",
@@ -7150,6 +7182,25 @@
 				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) takes the first registered kernel when none enforces"
 			],
 			"reason": "senpi#6422 (omo#12965): the cross-session cell authority of every codemode copy in a realm lives in one realm registry. src/kernels/shared/cell-authority-registry.ts joins the extension and first-kernel import scopes (invocation-authority.ts and permission-sessions.ts import it), together with the source entry of the helper package it imports (packages/realm-registry/src/index.ts: this package's tsconfig maps the helper to its source, as it maps the engine, so Bun resolves it without a build), and the new contracts pin the two-copy cases, the payload rules for a registry another version created, the answer rule for a cross-session invoker, and that a cell sees no engine registry key. No prompt, schema, helper or invariant cell moves; the baseline is unchanged.",
+			"changes": []
+		},
+		"senpi#7037": {
+			"additions": [
+				"legacyContracts/test/js-kernel-shell-class-pin.test.ts/issue #7034 the worker env pin covers Bun.$.Shell instances a new Bun.$.Shell() instance starts from the pinned view",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the worker-thread delta names exactly the dropped names and the origin it sets",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the Python interpreter spawns without the hand-off and with the origin and session values",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the process-isolated JS kernel child spawns without the hand-off",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off a worker JS kernel's cells and their children see no hand-off while the host keeps it",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off a inline JS kernel's cells and their children see no hand-off while the host keeps it"
+			],
+			"reason": "senpi#7037 (fixes #7034; re-lands #5653's reviewed core): contract tests that eval kernels and their children never inherit the RPC host's identity or launch-default client capabilities - the inline and worker JS kernels, the process-isolated JS child and the Python interpreter spawn without them while the host keeps them, the worker-thread delta names exactly the dropped names and the origin it sets, and a new Bun.$.Shell() in a pinning worker starts from the worker view. No prompt cell moves.",
+			"changes": []
+		},
+		"senpi#7032": {
+			"additions": [
+				"legacyContracts/test/eval-only-tools-prompt.test.ts/eval description names the session's eval-only tools names the eval-only tools within Claude Code's MCP description cap even when the description is longer"
+			],
+			"reason": "senpi#7032 (oh-my-openagent#14291): contract test that the eval description names the session's eval-only tools within Claude Code's 4096-char MCP description cap even when the rest of the description is longer, by putting that line right after the first sentence. It passed in main's CI measurement. No prompt cell moves (240/240 match the baseline).",
 			"changes": []
 		}
 	}

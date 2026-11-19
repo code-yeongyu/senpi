@@ -51,7 +51,7 @@ function createRuntimeFactory(): {
 } {
 	const states: FakeRuntimeState[] = [];
 	const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		const state: FakeRuntimeState = {
 			isStreaming: false,
 			isBashRunning: false,

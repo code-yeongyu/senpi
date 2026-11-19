@@ -41,7 +41,9 @@ import {
 // senpi#6344 adds two cwd-naming device_admin commands: park_session and claim_session.
 // senpi#6485 adds get_project_mcp_servers, set_project_mcp_servers, read_project_skill_file and write_project_skill_file (device_admin).
 // set_session_archived (drive) writes a session's archived flag; set_session_settled (drive) its Done flag.
-const DIGEST_ON_BASE = "e7513835c111bcbd7bfa9d342744d0bb0b5112cb9c84a2321e9741a76013d15e";
+// omo-desktop-app#7981 adds read_user_skill_file and write_user_skill_file (device_admin).
+// senpi#6429 adds one device_admin command to the table, find_session, which moves the digest.
+const DIGEST_ON_BASE = "27c8b985864be3f3a7d9605f4f8476e423613eb9fa2bba9b6820e0d0c1d3f9a6";
 const FORWARDABLE = [
 	"observe",
 	"drive",

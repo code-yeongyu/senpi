@@ -150,9 +150,12 @@ export async function evictIdleSession(
 		retained?.retainOnDisconnect === true &&
 		retained.sessionPath !== undefined
 	) {
-		await recordRetainedSession(host, retained, retained.sessionPath, false).catch((cause: unknown) => {
-			process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
-		});
+		// A drain park is live: the session was running here and the successor picks it up. An idle-sweep park is not.
+		await recordRetainedSession(host, retained, retained.sessionPath, false, reason === "handoff_parked").catch(
+			(cause: unknown) => {
+				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
+			},
+		);
 	}
 	const binding = host.bindings.get(sessionId);
 	binding?.cancelPendingExtensionUiRequests?.();

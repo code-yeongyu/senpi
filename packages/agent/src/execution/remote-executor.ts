@@ -24,6 +24,8 @@ export interface HandCall {
 	readonly signal: AbortSignal;
 	/** Asks the brain that owns this call (a model-backed tool's completion, S31); fails once the call has ended. */
 	readonly nested: NestedRequest;
+	/** The issuing session's prompt surface, when it sent one (see `RemoteInvoke.promptSurface`). */
+	readonly promptSurface?: string;
 }
 
 /**
@@ -189,6 +191,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 								arguments: call.arguments,
 								signal: controller.signal,
 								nested: planes.requestFor(call.executionId, lane, controller.signal),
+								...(call.promptSurface === undefined ? {} : { promptSurface: call.promptSurface }),
 							})
 						: scope.file === undefined
 							? fileRefusal("unsupported", "this hand serves no file channel")

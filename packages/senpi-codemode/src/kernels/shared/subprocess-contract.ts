@@ -1,12 +1,13 @@
 import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalKernelRunInput, EvalLanguage } from "../../tool/types.ts";
-import type { SessionEnvironment } from "../session-env.ts";
+import type { InheritedEnvironment, SessionEnvironment } from "../session-env.ts";
 import type { KernelLifecycle } from "./kernel-death.ts";
 import type { FootprintReader } from "./kernel-memory-host.ts";
 import type { SubprocessSpawn } from "./subprocess-process.ts";
 import type { SubprocessStartupOptions } from "./subprocess-startup.ts";
 import type { InvocationPermissions } from "./invocation-authority.ts";
+import type { AttestKernelSpawn } from "./session-spawn-attestation.ts";
 
 export type KernelRunInput = EvalKernelRunInput;
 
@@ -27,6 +28,10 @@ export interface SubprocessKernelOptions extends KernelLifecycle {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** Attests the interpreter process to the session it runs for (senpi#6972). */
+	readonly attestSpawn?: AttestKernelSpawn;
+	/** The host environment kernel children inherit, without the RPC host's supervisor hand-off (senpi#5635); defaults to process.env. */
+	readonly inheritedEnv?: InheritedEnvironment;
 	readonly sessionId: string;
 	readonly connection: BridgeConnectionConfig;
 	readonly spawn?: SubprocessSpawn;

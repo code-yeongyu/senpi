@@ -12,6 +12,117 @@
 
 ### Removed
 
+## [2026.11.19-3] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The eval tool description names the eval-only tools in its first lines, so a host that cuts long tool descriptions still shows them ([#7032](https://github.com/code-yeongyu/senpi/pull/7032))
+- Eval kernels (Python, Ruby, Julia, JavaScript in both isolation modes), their children and `%pip` installs no longer inherit the RPC host's identity or launch-default client capabilities, and a `new Bun.$.Shell()` in a cell starts from the kernel's env view ([#7037](https://github.com/code-yeongyu/senpi/pull/7037))
+
+### Removed
+
+## [2026.11.19-2] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-3] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-2] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+- Eval kernels attest the processes they run for a session: a python, ruby or julia kernel, or a process-isolated JavaScript kernel, is recorded for its session, so every command it starts (a `Bun.$` command included) resolves to that session; a worker-thread JavaScript kernel attests the `Bun.spawn` children it reports. A `Bun.$` command of a worker-thread kernel is not attested ([#6978](https://github.com/code-yeongyu/senpi/pull/6978))
+
+### Changed
+
+### Fixed
+
+- Eval kernel modules no longer load the senpi host package: the extension hands each kernel the session-bound spawn attestation, so a kernel module loads on its own again (a process-isolated JavaScript kernel resolving its runtime under plain Node, the compiled python host on Windows) ([#6996](https://github.com/code-yeongyu/senpi/pull/6996))
+
+### Removed
+
+## [2026.11.18] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.17-2] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A `tool.<name>()` call inside an eval cell is drawn with the tool's own call and result rows when the tool has them, instead of its raw arguments and result JSON ([#6903](https://github.com/code-yeongyu/senpi/pull/6903)).
+- A `tool.<name>()` call inside an eval cell whose result reports `isError: true` is shown and passed to the cell as a failure, not a success ([#6906](https://github.com/code-yeongyu/senpi/pull/6906)).
+
+### Removed
+
+## [2026.11.17] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+- Eval kernels and their children get the same withheld view of declared credentials as the bash tool ([#6828](https://github.com/code-yeongyu/senpi/pull/6828))
+
+### Changed
+
+### Fixed
+
+- `Bun.spawn` with `null` options or `env: null` inside an eval kernel keeps the pinned worker environment ([#6830](https://github.com/code-yeongyu/senpi/pull/6830))
+- The eval description names every eval-only tool, and the `tool_schema()` prelude entry documents its `{ tools: [...] }` result ([#6887](https://github.com/code-yeongyu/senpi/pull/6887))
+
+### Removed
+
 ## [2026.11.15-4] - 2026-11-15
 
 ### Breaking Changes

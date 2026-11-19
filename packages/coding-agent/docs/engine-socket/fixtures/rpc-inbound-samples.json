@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "e7513835c111bcbd7bfa9d342744d0bb0b5112cb9c84a2321e9741a76013d15e",
+	"methodClassesDigest": "27c8b985864be3f3a7d9605f4f8476e423613eb9fa2bba9b6820e0d0c1d3f9a6",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 134,
+	"methodCount": 137,
 	"methods": [
 		{
 			"method": "abort",
@@ -396,6 +396,16 @@
 				"type": "extension_ui_response",
 				"id": "00000000-0000-7000-8000-000000000000",
 				"cancelled": true
+			}
+		},
+		{
+			"method": "find_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "find_session",
+				"durableSessionId": "00000000-0000-7000-8000-000000000000"
 			}
 		},
 		{
@@ -879,6 +889,16 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "read_project_skill_file",
+				"skill": "sample-skill"
+			}
+		},
+		{
+			"method": "read_user_skill_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "read_user_skill_file",
 				"skill": "sample-skill"
 			}
 		},
@@ -1396,6 +1416,18 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "write_project_skill_file",
+				"skill": "sample-skill",
+				"content": "# Skill\n",
+				"ifEtag": null
+			}
+		},
+		{
+			"method": "write_user_skill_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "write_user_skill_file",
 				"skill": "sample-skill",
 				"content": "# Skill\n",
 				"ifEtag": null
