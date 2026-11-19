@@ -7941,7 +7941,10 @@ export class AgentSession {
 				} else {
 					this.agent.steer(appMessage);
 				}
-			} else if (options?.triggerTurn && this._stopEngineTurn(message.customType)) {
+			} else if (
+				options?.triggerTurn &&
+				this._stopEngineTurn(message.customType, releasedWake !== undefined || releasedByPeer)
+			) {
 				if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
@@ -8741,16 +8744,18 @@ export class AgentSession {
 	 * exceed the engine-wide bound is not started: the message is still recorded, and the stop is recorded (best
 	 * effort), emitted and shown, so a session file that refuses writes still pauses visibly (senpi#2967).
 	 */
-	private _stopEngineTurn(customType: string): boolean {
+	private _stopEngineTurn(customType: string, released = false): boolean {
 		if (isUserDirectedTurn(customType)) return false;
+		// The turn a Resume or a peer's message just released is the turn it was answered with (`started`): the resume
+		// window, which counts every engine turn since the last real input, the reopened lane's own history included,
+		// bounds the automatic turns after it, never that turn itself (senpi#7020).
+		const resumeWindow = this._engineResumeWindow && !released;
 		const stop = engineTurnStop(
 			this.sessionManager.reduceHistory(engineTurnHistory),
 			Date.now(),
 			{
 				...this.settingsManager.getEngineTurnSettings(),
-				maxPerResumeWindow: this._engineResumeWindow
-					? this.settingsManager.getEngineTurnSettings().maxPerResumeWindow
-					: 0,
+				maxPerResumeWindow: resumeWindow ? this.settingsManager.getEngineTurnSettings().maxPerResumeWindow : 0,
 			},
 			this._engineTurnStarts,
 		);
