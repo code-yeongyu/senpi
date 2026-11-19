@@ -94,19 +94,22 @@ export function admitInput(
 		whenIdle: whenIdle === "start" ? "start" : "queue",
 	});
 	const identity = clientMessageId === undefined ? {} : { clientMessageId };
-	const admitted = (disposition: "started" | "queued"): object => {
-		if (clientMessageId === undefined) return answered(id, command.type, { disposition });
+	const admitted = (disposition: TerminalInputReceipt["disposition"]): object => {
+		const holds = result.holds === undefined ? {} : { holds: [...result.holds] };
+		if (clientMessageId === undefined) return answered(id, command.type, { disposition, ...holds });
 		const receipt: TerminalInputReceipt = {
 			fingerprint,
 			disposition,
 			admission: { clientMessageId, durableSessionId: context.session.sessionId, disposition },
 		};
 		context.attachments.receipts.set(clientMessageId, receipt);
-		return answered(id, command.type, { disposition, clientMessageId, admission: receipt.admission });
+		return answered(id, command.type, { disposition, clientMessageId, admission: receipt.admission, ...holds });
 	};
 	switch (result.kind) {
 		case "started":
 			return admitted("started");
+		case "held":
+			return admitted("held");
 		case "steered":
 		case "queued":
 			return admitted("queued");
