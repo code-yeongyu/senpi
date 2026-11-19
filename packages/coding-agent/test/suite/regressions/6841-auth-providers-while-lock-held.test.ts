@@ -60,47 +60,43 @@ describe("senpi#6841 get_auth_providers while another process holds auth.json's 
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	it(
-		"answers within the lock budget while the lock is held, with the stored key and a busy store",
-		{ timeout: 120_000 },
-		async () => {
-			const authJson = join(tempDir, "auth.json");
-			writeFileSync(authJson, JSON.stringify({ openai: { type: "api_key", key: "sk-test-6841" } }));
-			const release = await holdLockFromAnotherProcess(authJson);
-			const harness = makeHarness(tempDir);
-			cleanup = harness.cleanup;
-			const storage = harness.runtimeHost.session.modelRegistry.authStorage;
-			const busyAtStart = storage.isCredentialStoreBusy();
-			const collected = makeSink();
-			const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
-			const read = async (id: string) => {
-				await handler.handleInputLine(JSON.stringify({ id, type: "get_auth_providers" }));
-				const data = (await collected.waitFor((message) => message.id === id, 10_000)).data as Rows;
-				const row = data.providers.find((provider) => provider.id === "openai" && provider.authType === "api_key");
-				return { status: row?.status, storeError: data.storeError ?? null, storeBusy: data.storeBusy ?? null };
-			};
+	it("answers within the lock budget while the lock is held, with the stored key and a busy store", async () => {
+		const authJson = join(tempDir, "auth.json");
+		writeFileSync(authJson, JSON.stringify({ openai: { type: "api_key", key: "sk-test-6841" } }));
+		const release = await holdLockFromAnotherProcess(authJson);
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		const storage = harness.runtimeHost.session.modelRegistry.authStorage;
+		const busyAtStart = storage.isCredentialStoreBusy();
+		const collected = makeSink();
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const read = async (id: string) => {
+			await handler.handleInputLine(JSON.stringify({ id, type: "get_auth_providers" }));
+			const data = (await collected.waitFor((message) => message.id === id, 10_000)).data as Rows;
+			const row = data.providers.find((provider) => provider.id === "openai" && provider.authType === "api_key");
+			return { status: row?.status, storeError: data.storeError ?? null, storeBusy: data.storeBusy ?? null };
+		};
 
-			const t0 = Date.now();
-			const whileHeld = await read("held");
-			const heldMs = Date.now() - t0;
-			await release();
-			const firstAfter = await read("after");
+		const t0 = Date.now();
+		const whileHeld = await read("held");
+		const heldMs = Date.now() - t0;
+		await release();
+		const firstAfter = await read("after");
 
-			expect(busyAtStart).toBe(true);
-			expect(heldMs).toBeLessThan(3_000);
-			expect(whileHeld).toEqual({
-				status: { configured: true, source: "stored" },
-				storeError: null,
-				storeBusy: true,
-			});
-			expect(firstAfter).toEqual({
-				status: { configured: true, source: "stored" },
-				storeError: null,
-				storeBusy: null,
-			});
-			await handler.dispose();
-		},
-	);
+		expect(busyAtStart).toBe(true);
+		expect(heldMs).toBeLessThan(3_000);
+		expect(whileHeld).toEqual({
+			status: { configured: true, source: "stored" },
+			storeError: null,
+			storeBusy: true,
+		});
+		expect(firstAfter).toEqual({
+			status: { configured: true, source: "stored" },
+			storeError: null,
+			storeBusy: null,
+		});
+		await handler.dispose();
+	});
 	// #6849 review L3: what the read without the lock may and may not do.
 	it("keeps the credentials as they were when auth.json does not parse while the lock is held", async () => {
 		const authJson = join(tempDir, "auth.json");
@@ -114,7 +110,7 @@ describe("senpi#6841 get_auth_providers while another process holds auth.json's 
 		} finally {
 			await release();
 		}
-	}, 120_000);
+	});
 
 	it("never writes auth.json back when it reads it without the lock", async () => {
 		const authJson = join(tempDir, "auth.json");
@@ -129,7 +125,7 @@ describe("senpi#6841 get_auth_providers while another process holds auth.json's 
 		} finally {
 			await release();
 		}
-	}, 120_000);
+	});
 	// #6849 review L1: a store that loaded but could not save its migrated copy re-reads too; it must
 	// wait once per request.
 	it("answers within the lock budget for a store with a load error while the lock is held", async () => {
@@ -156,5 +152,5 @@ describe("senpi#6841 get_auth_providers while another process holds auth.json's 
 			await release();
 			await handler.dispose();
 		}
-	}, 180_000);
+	});
 });
