@@ -244,6 +244,11 @@ describe("no-module-mock through the ratchet lint configuration", () => {
 			"an import()-destructured bun mock",
 			'const { mock } = await import("bun:test"); mock.module("./db", () => ({}));',
 		],
+		["a mock read directly off require", 'require("bun:test").mock.module("./db", () => ({}));'],
+		[
+			"a mock read directly off createRequire",
+			'import { createRequire } from "node:module"; createRequire(import.meta.url)("bun:test").mock.module("./db", () => ({}));',
+		],
 		["a const alias of mock", 'import { mock } from "bun:test"; const m = mock; m.module("./db", () => ({}));'],
 		["a bun:test vi.mock alias", 'import { vi } from "bun:test"; vi.mock("./db", () => ({}));'],
 		["vi.mock", 'vi.mock("./db");'],
