@@ -59,12 +59,20 @@ export class SteppedEngine {
 					const record: Wire = JSON.parse(line);
 					this.enqueue({ kind: "record", conn, type: record.type, id: record.id }, () => {
 						if (record.type === "launch_proven") return;
-						if (record.type === "set_caps" && Array.isArray(record.caps)) capabilities.splice(0, Infinity, ...record.caps);
+						if (record.type === "set_caps" && Array.isArray(record.caps))
+							capabilities.splice(0, Infinity, ...record.caps);
 						const data =
 							record.type === "get_protocol_info"
-								? { protocolVersion: 1, serverVersion: "fixture", capabilities: [...capabilities], connection: conn }
+								? {
+										protocolVersion: 1,
+										serverVersion: "fixture",
+										capabilities: [...capabilities],
+										connection: conn,
+									}
 								: {};
-						hop.write(`${JSON.stringify({ id: record.id, type: "response", command: record.type, success: true, data })}\n`);
+						hop.write(
+							`${JSON.stringify({ id: record.id, type: "response", command: record.type, success: true, data })}\n`,
+						);
 					});
 				});
 			});
@@ -187,7 +195,8 @@ export async function stepUntil(engine: SteppedEngine, done: Promise<unknown>): 
 		() => "done" as const,
 	);
 	const ran: Step[] = [];
-	while ((await Promise.race([engine.next().then(() => "step" as const), settled])) === "step") ran.push(await engine.step());
+	while ((await Promise.race([engine.next().then(() => "step" as const), settled])) === "step")
+		ran.push(await engine.step());
 	return ran;
 }
 
@@ -225,7 +234,11 @@ export async function authenticatedClient(s: SteppedSupervisor) {
 /** Fires the supervisor's armed refill and runs the engine turns that open the spare as connection `conn`. */
 export async function openSpare(s: SteppedSupervisor, conn: number): Promise<void> {
 	const armed = s.timers.pending();
-	if (armed.length !== 1 || armed[0] !== 0) throw new Error(`expected one armed refill, armed: ${JSON.stringify(armed)}`);
+	if (armed.length !== 1 || armed[0] !== 0)
+		throw new Error(`expected one armed refill, armed: ${JSON.stringify(armed)}`);
 	s.timers.fire(0);
-	await stepThrough(s.engine, (step) => step.kind === "record" && step.conn === conn && step.type === "get_protocol_info");
+	await stepThrough(
+		s.engine,
+		(step) => step.kind === "record" && step.conn === conn && step.type === "get_protocol_info",
+	);
 }

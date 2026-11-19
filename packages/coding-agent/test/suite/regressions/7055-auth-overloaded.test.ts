@@ -51,7 +51,12 @@ describe.skipIf(process.platform === "win32")("senpi#7055 bounded public authent
 	it("refuses a challenge the engine has not answered within the supervisor's budget, typed and at once", async () => {
 		const s = await supervisor();
 		const client = await peer(s);
-		const reply = client.request({ type: "get_protocol_info", id: "protocol", observe: true, auth: { client_nonce: "ab".repeat(32) } });
+		const reply = client.request({
+			type: "get_protocol_info",
+			id: "protocol",
+			observe: true,
+			auth: { client_nonce: "ab".repeat(32) },
+		});
 		await s.timers.whenArmed(1500);
 		s.timers.fire(1500);
 		expect(await reply).toEqual({
@@ -106,7 +111,12 @@ describe.skipIf(process.platform === "win32")("senpi#7055 client side of host_ov
 				const request: Wire = JSON.parse(line);
 				const answer =
 					connection === 1
-						? { success: false, error: "host_overloaded", errorCode: "host_overloaded", errorData: { retry_after_ms: retryAfterMs } }
+						? {
+								success: false,
+								error: "host_overloaded",
+								errorCode: "host_overloaded",
+								errorData: { retry_after_ms: retryAfterMs },
+							}
 						: { success: true, data: { protocolVersion: 1 } };
 				socket.write(`${JSON.stringify({ id: request.id, type: "response", command: request.type, ...answer })}\n`);
 			});
