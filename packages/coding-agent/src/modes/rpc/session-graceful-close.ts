@@ -13,8 +13,7 @@ const GRACEFUL_CLOSE_DEFAULT_WAIT_MS = 60_000;
 const GRACEFUL_CLOSE_MAX_WAIT_MS = 600_000;
 
 /** What `admit_external_message` refuses with (`session_closing`) while a graceful close drains. */
-const GRACEFUL_ADMISSION_CLOSED =
-	"session_closing: the session is closing on request and takes no new deliveries";
+const GRACEFUL_ADMISSION_CLOSED = "session_closing: the session is closing on request and takes no new deliveries";
 
 export interface GracefulDrainPort {
 	/** What still keeps the session from closing (a run, a prompt in preflight, bash, compaction, a request); empty when quiet. */
@@ -46,38 +45,44 @@ export function reopenAfterDrain(session: AgentSession): void {
 
 /**
  * Resolves `true` once `port.busy()` is empty, `false` when `waitMs` passes first. It wakes on every session event and
- * on the settling work, re-checking each time; nothing polls.
+ * on the settling work, re-checking each time; nothing polls. It subscribes once: `subscribe` replays standing events
+ * (a selected settings source, a resume slice) to the new listener at once, and a listener taken per pass would count
+ * that replay as a change and spin the host's loop until the deadline, so the turn it waits for could never stream.
  */
 export async function drainUntilQuiet(
-	session: AgentSession,
+	session: Pick<AgentSession, "subscribe" | "waitForIdle">,
 	port: GracefulDrainPort,
 	waitMs: number,
 ): Promise<boolean> {
 	const deadline = Date.now() + waitMs;
 	let settlingPending = true;
-	while (port.busy().length > 0) {
-		const left = deadline - Date.now();
-		if (left <= 0) return false;
-		const changed = Promise.withResolvers<void>();
-		const unsubscribe = session.subscribe(() => changed.resolve());
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const expired = new Promise<void>((resolve) => {
-			timer = setTimeout(resolve, left);
-		});
-		const waits: Promise<unknown>[] = [changed.promise.then(() => (settlingPending = true)), expired];
-		// Settled work stays settled: once it is, only a session event can change what keeps the session busy.
-		if (settlingPending)
-			waits.push(
-				Promise.allSettled([session.waitForIdle(), ...port.settling()]).then(() => (settlingPending = false)),
-			);
-		try {
-			await Promise.race(waits);
-		} finally {
-			clearTimeout(timer);
-			unsubscribe();
+	let changed = Promise.withResolvers<void>();
+	const unsubscribe = session.subscribe(() => changed.resolve());
+	try {
+		while (port.busy().length > 0) {
+			const left = deadline - Date.now();
+			if (left <= 0) return false;
+			changed = Promise.withResolvers<void>();
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const expired = new Promise<void>((resolve) => {
+				timer = setTimeout(resolve, left);
+			});
+			const waits: Promise<unknown>[] = [changed.promise.then(() => (settlingPending = true)), expired];
+			// Settled work stays settled: once it is, only a session event can change what keeps the session busy.
+			if (settlingPending)
+				waits.push(
+					Promise.allSettled([session.waitForIdle(), ...port.settling()]).then(() => (settlingPending = false)),
+				);
+			try {
+				await Promise.race(waits);
+			} finally {
+				clearTimeout(timer);
+			}
 		}
+		return true;
+	} finally {
+		unsubscribe();
 	}
-	return true;
 }
 
 export function drainFacts(session: AgentSession, drain: GracefulDrain): { turn: number; waited_ms: number } {
