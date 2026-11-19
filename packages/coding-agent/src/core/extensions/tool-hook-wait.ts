@@ -8,10 +8,10 @@
  */
 
 /** The builtin hooks extension runs user command hooks under their own configured timeout, so it gets no host deadline. */
-export const SELF_BOUNDED_TOOL_HOOK_PATH = "<builtin:hooks>";
+const SELF_BOUNDED_TOOL_HOOK_PATH = "<builtin:hooks>";
 
 /** Default deadline for one `tool_result` handler of an extension that does not bound itself. */
-export const DEFAULT_TOOL_RESULT_HANDLER_TIMEOUT_MS = 120_000;
+const DEFAULT_TOOL_RESULT_HANDLER_TIMEOUT_MS = 120_000;
 
 const TOOL_RESULT_HANDLER_TIMEOUT_ENV = "SENPI_TOOL_RESULT_HANDLER_TIMEOUT_MS";
 
