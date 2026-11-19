@@ -74,7 +74,8 @@ export const HOST_RECORD_SCHEMAS = {
 		auth: Opt(Type.Object({ client_nonce: Id })),
 		observe: OptBool,
 	}),
-	open_session: command("open_session", openProperties),
+	// `forkFrom` belongs to the open alone: a claimed park and a move's import open never fork (omo#13031).
+	open_session: command("open_session", { ...openProperties, forkFrom: OptPath }),
 	claim_session: command("claim_session", { ...openProperties, cwd: PathStr }),
 	park_session: command("park_session", { cwd: PathStr, kind: Opt(SessionKind), context: Opt(SessionContext) }),
 	close_session: command("close_session", { sessionId: Id }),

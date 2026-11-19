@@ -20,6 +20,26 @@ RPC mode enables headless operation of the coding agent via a JSON protocol over
 
 **Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
 
+## Forking a session on open
+
+`open_session` accepts `forkFrom` on a host that advertises the capability `open_session_fork` (omo#13031).
+It names the session to fork, either by its durable id, looked up in this host's own session folder as
+`find_session` does, or by an absolute session file path. The host writes a new session file with a new id
+(`durableSessionId` when the open gives one), the source's entries up to now, and `parentSession` naming the
+source. It then opens that file like any open by path, so the answer is the fork's: a new `sessionId` and
+`state.sessionId`, with the source's history. The source file is only read. Without `cwd`, the fork works in the
+folder the source records.
+
+A source the host cannot read is refused, and nothing is opened or left behind:
+
+- `fork_source_not_local`: no session file of this host carries that id. It may live on another device or in
+  another agent directory.
+- `fork_source_not_found`: no readable session file at that path, or two files carry that id.
+
+`errorData.forkFrom` repeats what was asked. `forkFrom` with `sessionPath` is `invalid_launch_profile`. An open
+that fails after the fork was written removes the fork's file. `claim_session` and a move's import open do not take
+`forkFrom`.
+
 ## Unattended opens and Resume
 
 `open_session` accepts optional `"attended": false` (other supplied values are
