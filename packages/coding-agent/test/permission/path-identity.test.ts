@@ -49,6 +49,7 @@ import {
 	type PathIdentity,
 } from "../../src/core/extensions/builtin/permission-system/path-identity.ts";
 import { Wildcard } from "../../src/core/extensions/builtin/permission-system/wildcard.ts";
+import { confirmableFixtureRoot } from "./path-identity-fixtures.ts";
 
 const darwin = process.platform === "darwin";
 const linux = process.platform === "linux";
@@ -466,7 +467,7 @@ describe("alias detector: zero false negatives against native (design 5.4, 11.1.
 	let detector: ReturnType<typeof createDetector>;
 
 	beforeAll(() => {
-		b = fixtureRoot("alias-detector-");
+		b = confirmableFixtureRoot("alias-detector-");
 		snapshot = readMountTable();
 		detector = createDetector(snapshot);
 		mkdirSync(join(b, "real", "sub"), { recursive: true });
@@ -655,24 +656,41 @@ describe("alias detector: zero false negatives against native (design 5.4, 11.1.
 			["$TMPDIR", sample(tmpdir(), 2, 100)],
 			...(darwin ? [["/private/tmp", sample("/private/tmp", 1, 50)] as [string, string[]]] : []),
 		];
+		// A directory listing more than DETECTOR_MAX_ENTRIES names is alias by design (the budget row above); a busy
+		// host's /tmp can be one (senpi#7022), so that answer, checked against the directory itself, is not a false positive.
+		const overBudget = (reasons: readonly string[]): boolean => {
+			const [reason] = reasons;
+			if (reasons.length !== 1 || !reason?.startsWith("EBUDGET-entries@")) return false;
+			return readdirSync(reason.slice("EBUDGET-entries@".length)).length > DETECTOR_MAX_ENTRIES;
+		};
 		for (const [name, paths] of sets) {
 			const durations: number[] = [];
 			const falsePositives: string[] = [];
+			const overWork: string[] = [];
 			for (const path of paths) {
 				let nativeAlias = true;
 				try {
 					nativeAlias = oracle(path) !== path;
 				} catch {}
-				const started = performance.now();
+				// CPU time, not wall time: time spent waiting for a core on a loaded host is not detector cost
+				// (senpi#7022: 107 ms wall p95 at load 47 on 14 cores).
+				const started = process.cpuUsage();
 				const verdict = detector(path);
-				durations.push(performance.now() - started);
-				if (!nativeAlias && verdict.alias) falsePositives.push(`${path} [${verdict.reasons.join(",")}]`);
+				const spent = process.cpuUsage(started);
+				durations.push((spent.user + spent.system) / 1000);
+				if (!nativeAlias && verdict.alias && !overBudget(verdict.reasons))
+					falsePositives.push(`${path} [${verdict.reasons.join(",")}]`);
+				// Load-independent work bound: at most one parent listing per component.
+				const components = path.split(sep).filter(Boolean).length;
+				if (verdict.readdirs > components) overWork.push(`${path} [${verdict.readdirs} > ${components}]`);
 			}
 			durations.sort((a, b) => a - b);
 			const p95 = durations[Math.floor(durations.length * 0.95)] ?? 0;
 			expect(falsePositives, `${name}: ${falsePositives.slice(0, 5).join("; ")}`).toEqual([]);
-			// 5.6 measured p95 <= 10 ms on an idle host and 14-24 ms on a loaded shared runner; 100 ms is about 4x the
-			// worst loaded measurement, so a real regression fails here (p95 is printed so a drift stays visible).
+			expect(overWork, `${name}: ${overWork.slice(0, 5).join("; ")}`).toEqual([]);
+			// 5.6 measured p95 <= 10 ms wall on an idle host and 14-24 ms on a loaded shared runner; CPU time is at most
+			// that (14 ms p95 for a 14.6k-entry /tmp), so 100 ms still fails a real regression (p95 is printed so a drift
+			// stays visible).
 			console.log(`detector ${name}: n=${durations.length} p95=${p95.toFixed(2)}ms`);
 			expect(p95, `${name} p95`).toBeLessThan(100);
 		}

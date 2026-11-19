@@ -1,3 +1,8 @@
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { DETECTOR_MAX_ENTRIES } from "../../src/core/extensions/builtin/permission-system/alias-detector.ts";
 import { type MountSnapshot, readMountTable } from "../../src/core/extensions/builtin/permission-system/mount-table.ts";
 import type { ResolverTransport } from "../../src/core/extensions/builtin/permission-system/path-identity-host.ts";
 import type {
@@ -6,6 +11,42 @@ import type {
 	ResolverWorkerMessage,
 } from "../../src/core/extensions/builtin/permission-system/path-identity-protocol.ts";
 import { createResolverService } from "../../src/core/extensions/builtin/permission-system/path-identity-worker.ts";
+
+/** The checkout's gitignored scratch directory, used when the temp directory is too full to confirm (senpi#7022). */
+const SCRATCH_PARENT = resolve(
+	dirname(fileURLToPath(import.meta.url)),
+	"../../../../node_modules/.cache/senpi-path-identity",
+);
+
+/** Whether every directory from the root down to `directory` lists fewer than DETECTOR_MAX_ENTRIES names. */
+function enumerableWithinBudget(directory: string): boolean {
+	try {
+		let current = realpathSync.native(directory);
+		for (;;) {
+			if (readdirSync(current).length >= DETECTOR_MAX_ENTRIES) return false;
+			const parent = dirname(current);
+			if (parent === current) return true;
+			current = parent;
+		}
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * A fresh fixture directory whose plain paths the alias detector can positively confirm. The detector answers alias
+ * for anything under a directory listing more than DETECTOR_MAX_ENTRIES names (5.6 budget), and a busy host's /tmp
+ * can be one (senpi#7022). Under `tmpdir()` (not realpath'd, so a symlinked TMPDIR stays a symlinked spelling) while
+ * its chain is within budget, else under the checkout's gitignored node_modules/.cache.
+ */
+export function confirmableFixtureRoot(prefix: string): string {
+	if (enumerableWithinBudget(tmpdir())) return mkdtempSync(join(tmpdir(), prefix));
+	mkdirSync(SCRATCH_PARENT, { recursive: true });
+	if (!enumerableWithinBudget(SCRATCH_PARENT)) {
+		throw new Error(`no fixture parent within the detector budget: ${tmpdir()} and ${SCRATCH_PARENT}`);
+	}
+	return mkdtempSync(join(realpathSync.native(SCRATCH_PARENT), prefix));
+}
 
 export interface FixtureTransportOptions {
 	/** Requests for which the worker never answers (a wedge), by request. */
