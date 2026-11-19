@@ -172,7 +172,12 @@ export type RpcReadResponse =
 			type: "response";
 			command: "get_auth_providers";
 			success: true;
-			data: { providers: RpcAuthProvider[]; storeError?: RpcAuthStoreError };
+			data: {
+				providers: RpcAuthProvider[];
+				storeError?: RpcAuthStoreError;
+				/** Another process holds auth.json's lock: rows come from the file read without it (#6841). */
+				storeBusy?: true;
+			};
 	  }
 	| {
 			id?: string;
