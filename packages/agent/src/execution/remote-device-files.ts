@@ -49,6 +49,17 @@ function valueOf(reply: HandReply): JsonValue {
 		case "unreachable":
 			throw new DeviceFileError("hand_unreachable", reply.reason);
 		case "closed":
+			// A sent operation may have run on the hand before it was lost: uncertain, like a hand restart, never retried
+			// as if it had not happened. One never sent had no effect, so the hand is simply unreachable.
+			if (reply.sent)
+				throw new DeviceFileError(
+					"interrupted",
+					"the hand link closed before the operation settled (hand_restarted)",
+					{
+						reason: "hand_restarted",
+						uncertain: true,
+					},
+				);
 			throw new DeviceFileError("hand_unreachable", "the hand link was closed");
 		case "epoch_refused":
 			throw new DeviceFileError("refused_by_policy", `epoch: ${reply.reason}`);

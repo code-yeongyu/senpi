@@ -235,7 +235,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:@project/pkg"] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, true);
+		await new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -257,7 +257,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:@project/pkg"] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, true);
+		await new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -394,7 +394,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:fake-package"], npmCommand: [originalExecPath, fakeNpmPath] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, true);
+		await new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -414,7 +414,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:@project/pkg"] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, false);
+		await new ProjectTrustStore(agentDir).set(projectDir, false);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {

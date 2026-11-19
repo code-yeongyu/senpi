@@ -1,5 +1,7 @@
 export const EVAL_PROMPT_TEMPLATE = `Run one step of code in a persistent kernel.
-
+{{#if evalOnlyTools}}
+Eval-only tools (absent from your direct tool list, reachable only here): {{evalOnlyTools}}. Call them inside a cell as \`tool.<name>(args)\`.
+{{/if}}
 <instruction>
 **One eval call = one cell = one logical step.** Top-level names persist per language across eval calls{{#if spawns}}, tool calls and \`task\` subagents{{else}} and tool calls{{/if}}: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
@@ -53,7 +55,7 @@ env(key?=None, value?=None) → str | None | dict
 {{/if}}tool.<name>(args) → { text, images?, details?, hasError? }
     Invoke any session tool; image results (e.g. \`tool.read\` on a png) arrive in \`images[i]\` as { mimeType, dataBase64 }.
 tool_schema(name?) → dict
-    Parameter schema of a tool (omit \`name\` to list tool names); a failed \`tool.<name>()\` call also returns the expected parameters.
+    { name, description, parameters } of a tool; omit \`name\` → { tools: [every tool name] }; a failed \`tool.<name>()\` call also returns the expected parameters.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
     Oneshot, stateless. \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → parsed structured output.
 {{#if spawns}}agent(prompt, agent?="{{spawnDefaultAgent}}", model?=None, label?=None, schema?=None, isolated?=None, apply?=None, merge?=None, handle?=False) → str | dict

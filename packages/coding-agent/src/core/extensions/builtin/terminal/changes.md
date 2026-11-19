@@ -1,3 +1,62 @@
+## 2026-11-15 - Terminal notices from a hand (senpi#6763, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts`: `bindNotifiers` builds the completion and monitor notifiers at load as well as at every `session_start`, so a hand (which never gets `session_start` for builtins) has them. They send through `pi.sendMessage`; `createTerminalExtension({ sendMessage })` (S14) is removed.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/notify.ts`: `TerminalNotifierDeps.loopRemote`; on a hand the session guards (mode, model) are the receiving loop's (agent-core's `deliverHandWake` applies them), so they are skipped here.
+
+### Why
+
+- A background command's exit notice and monitor events on a hand were dropped without a trace.
+
+### Why an extension could not handle it
+
+- The notifier guards live inside the terminal builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `session_start` notifier block of `extension.ts`.
+
+## 2026-11-14 - The monitor prompt names the `<device>/<session>` target (senpi#6674)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: the rpc `target` line of the diet section and of the full section name `<device>/<session>` for a session on another device, with one example.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor-schema.ts`: the `target` parameter description names the same form.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: `rpc-monitor-targets.ts` already parses `<device>/<session>`, but no prompt or schema text taught it, so an agent could not discover a cross-device watch (senpi#6674).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: this builtin owns the terminal prompt and the monitor tool schema (`tools/monitor-schema.ts`).
+
+### Expected merge conflict zones
+
+- LOW: the rpc `target` line in `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts` and the `target` description in `packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor-schema.ts`.
+
+## 2026-11-14 - Background sessions belong to the turn that started them
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension-state.ts`: every background session (`run_in_background` or auto-detached) is recorded with `ctx.registerRunBackgroundJob` as a `bash` job whose stop is the bundle's.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`: `stopForInterrupt(id, turnId)` tree-kills the session through `manager.stop` and fails typed when it lives on the tool child or is still running after the stop; `trackRunJob` holds the release, dropped at the session's exit or the bundle's teardown; the exit of a session an interrupt stopped carries `stoppedByInterrupt`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: `TerminalExitView.stoppedByInterrupt?: { turnId }`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/notify.ts`: such an exit's notice reads `was stopped when turn <id> was interrupted` and is sent `nextTurn` with no `triggerTurn`, so it reaches the next turn and starts none; the notifier's `sendMessage` dependency accepts `deliverAs: "nextTurn"`.
+
+### Why
+
+- Stopping the interrupted turn's background bash must not itself wake the session: its exit notice is what woke it before.
+
+### Why an extension could not handle it
+
+- This is the terminal builtin; the change is inside it.
+
+### Expected merge conflict zones
+
+- LOW: `onBackgroundStart` in `extension-state.ts`, `notifyBackgroundExit` and `teardown` in `session-bundle.ts`, `buildNotice`/`deliverCompletion` in `notify.ts`.
+
 ## 2026-11-08 - A still-running background session reports its age; auto-reap is opt-in (senpi#6201)
 
 ### What changed

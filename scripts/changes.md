@@ -1,3 +1,97 @@
+## 2026-11-16 - A CI-basis receipt waives the hosted CI wait, not a red hosted run (senpi#6859 follow-up)
+
+### What changed
+
+- `scripts/release-ci-evidence.mjs`: with `--ci-basis-receipt`, `secureCiEvidence` reads the pinned commit's "Check and test" runs once (no polling, no wait) and stops the release when that run concluded red; an unfinished, missing, superseded or unreadable run is waived as before.
+- `scripts/release-cli-args.mjs`: `--ci-basis-receipt` refuses a blank or space-padded id.
+
+### Why
+
+- Review of senpi#6861 (LOWs L1, L2): the receipt waives the wait for hosted CI; it must not override a hosted result that is already known to be red, and the CLI must refuse the same blank ids the workflow refuses.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the receipt branch at the end of `secureCiEvidence` and the receipt checks in `parseArgs`.
+
+## 2026-11-16 - release.mjs --ci-basis-receipt skips only the hosted CI wait (senpi#6859)
+
+### What changed
+
+- `scripts/release-cli-args.mjs`: new `--ci-basis-receipt <id>`; it needs `--sha` and refuses `--force-tests` and `--tested-sha`.
+- `scripts/release-ci-evidence.mjs`, `scripts/release.mjs`: with a receipt, `secureCiEvidence` logs `test gate: hosted CI wait waived by ci_basis_receipt <id> for the pinned commit <sha>` and returns instead of calling `awaitCiEvidence`. The catalog regeneration and its force_tests rule, the pinned-commit checks and the platform gate still run.
+
+### Why
+
+- The release workflow's receipt step (senpi#6859) needs a way to tell the release CLI that the hosted CI wait was waived for the pinned commit.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the option table of `parseArgs` and the tail of `secureCiEvidence`.
+
+## 2026-11-16 - The release refuses while a macOS/Windows job is red on main (senpi#6834)
+
+### What changed
+
+- `scripts/release.mjs`: after the test evidence (all three paths: CI evidence, `--force-tests`, `--tested-sha`), `assertPlatformsGreen` (`scripts/release-ci-evidence.mjs`) reads the latest settled main push run of each workflow with macOS/Windows legs (`scripts/ci-platform-red.mjs`) and refuses before the version commit when one has a failed macOS/Windows job or cannot be read. A dry run only reports it.
+
+### Why
+
+- Pull requests no longer run macOS/Windows (senpi#6834), so main is where those legs are tested; a release must not ship over a red one.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the line after the evidence block in `main()` of `release.mjs`.
+
+## 2026-11-13 - run-workspaces --alongside runs one workspace next to the others (senpi#6649)
+
+### What changed
+
+- `scripts/run-workspaces.mjs`: `--alongside <workspace>` runs that workspace in its own lane while the other selected workspaces run one at a time in path order in a second lane; refused together with `--parallel`; a selection that leaves the workspace out runs as before.
+- `scripts/run-workspaces-lanes.mjs` (new): the second lane starts only when `os.availableParallelism()` (or `RUN_WORKSPACES_PARALLELISM`) is at least 8, else the run stays sequential; both lanes share one signal fan-out and the second lane starts nothing after a signal.
+- `scripts/package-manager.mjs`: `createSignalFanout()` exposes `signalled()`.
+
+### Why
+
+- Lets the root `test` script use idle cores without oversubscribing small machines (senpi#6646).
+
+### Why an extension could not handle it
+
+- These are root orchestration scripts; no extension hook runs workspace scripts.
+
+### Expected merge conflict zones
+
+- LOW: the argument parser and the dispatch block in `runWorkspaces` in `run-workspaces.mjs`; the fan-out object in `createSignalFanout`.
+
+## 2026-11-15 - Entry-graph budget for the pi-agent-core read-folders subpath (senpi#6740)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: `./read-folders` of `packages/agent` is budgeted at 10 files and may not reach `packages/ai/`, the agent loop, the harness runtime or env.
+
+### Why
+
+- The subpath exists so a Worker bundle of the tools does not pull the AI package; the budget keeps it that way.
+
+### Why an extension could not handle it
+
+- Repository checks are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `packages/agent` block of `BUDGETS`.
+
 ## 2026-11-15 - runRelease spawns its live run from main without a dead option (senpi#6691 review)
 
 ### What changed

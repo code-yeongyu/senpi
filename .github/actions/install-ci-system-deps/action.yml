@@ -1,0 +1,28 @@
+name: Install CI system dependencies
+description: Install APT packages from a .deb set cached per runner image, falling back to a bounded mirror download (senpi#4552).
+inputs:
+  packages:
+    description: Space-separated APT package names.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: APT cache key
+      id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: bash "$GITHUB_WORKSPACE/scripts/install-ci-system-deps.sh" --cache-key $PACKAGES >> "$GITHUB_OUTPUT"
+
+    - name: Restore the cached .deb set
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/apt-debs
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Install
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        APT_DEB_CACHE_DIR: ${{ runner.temp }}/apt-debs
+      run: bash "$GITHUB_WORKSPACE/scripts/install-ci-system-deps.sh" $PACKAGES

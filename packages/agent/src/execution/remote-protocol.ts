@@ -96,6 +96,11 @@ export interface RemoteInvoke {
 	readonly name: string;
 	readonly arguments: unknown;
 	readonly sessionRef?: string;
+	/**
+	 * The prompt surface of the session that issued the call (`"terminal"`, `"app"`, `"chat"`), so a tool on the hand
+	 * reports what the session's host does with its result rather than what the hand's own environment says (senpi#6921).
+	 */
+	readonly promptSurface?: string;
 }
 
 export interface RemoteAbort {
@@ -226,7 +231,8 @@ export function decodeRemoteMessage(payload: Uint8Array): RemoteHandMessage {
 				typeof scope.root !== "string" ||
 				!isString(value.toolCallId) ||
 				!isString(value.name) ||
-				(value.sessionRef !== undefined && typeof value.sessionRef !== "string")
+				(value.sessionRef !== undefined && typeof value.sessionRef !== "string") ||
+				(value.promptSurface !== undefined && typeof value.promptSurface !== "string")
 			)
 				throw new RemoteProtocolError("malformed invoke");
 			return value as unknown as RemoteInvoke;

@@ -10,7 +10,7 @@ import type { AgentEndEvent } from "./extensions/types.ts";
 import { deliveryIdOf } from "./external-admission.ts";
 import { consumeLifecycleDelivery, lifecycleDeliveryEntries, messageTicket } from "./lifecycle-delivery.ts";
 import { readLifecycleGoal } from "./lifecycle-goal.ts";
-import { lifecycleHistory } from "./lifecycle-history.ts";
+import { lastRunEnd, lifecycleHistory } from "./lifecycle-history.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
 import { readLifecycleRuntimeFacts } from "./lifecycle-runtime-facts.ts";
@@ -55,7 +55,9 @@ export class LifecycleSessionBinding {
 		this.session = session;
 		this.host = host;
 		this.sessionId = session.sessionId;
+		const runEnd = session.sessionManager.reduceHistory(lastRunEnd);
 		this.controller = new SessionLifecycleController({
+			...(runEnd.ended && runEnd.runId !== undefined ? { endedRunId: runEnd.runId } : {}),
 			sessionId: session.sessionId,
 			spawnedBy: session.sessionManager.getHeader()?.spawnedBy,
 			entries: session.sessionManager

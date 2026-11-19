@@ -81,7 +81,7 @@ import type { BashResult } from "../bash-executor.ts";
 import type { BrowserEngine } from "../browser-engine.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
-import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
+import type { DynamicSystemPromptPart, PromptSurface } from "../dynamic-prompt/build.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
@@ -152,7 +152,11 @@ export type CompactionRejectionCause =
 	| "would-overflow"
 	| "circuit-breaker"
 	| "per-turn-cap"
-	| "stale-revision";
+	| "stale-revision"
+	// The summary request failed on a transient provider error after its bounded retries;
+	// it says nothing about the context, so the session does not latch admission on it and a
+	// later attempt can retry compaction.
+	| "transient-failure";
 
 // ============================================================================
 // UI Context
@@ -850,6 +854,18 @@ export interface ExtensionToolContext extends ExtensionContext {
 	 * errors come back as `isError: true`.
 	 */
 	executeTool(name: string, args: unknown, options?: ExecuteToolOptions): Promise<AgentToolCallOutcome>;
+	/**
+	 * Whether the model issued this call, through the agent loop or a provider's exec channel (Cursor), so its result
+	 * joins the transcript. On a hand (brain/hand split) a call the brain's agent loop dispatched counts too. False for a
+	 * call made through {@link executeTool} or `pi.executeTool()`.
+	 */
+	readonly issuedByModel: boolean;
+	/**
+	 * The prompt surface of the session the call belongs to (`"terminal"`, `"app"`, `"chat"`), which says what that
+	 * session's host does with a result. On a hand (brain/hand split) it is the brain session's, sent with the call.
+	 * Absent when the runtime knows none.
+	 */
+	readonly promptSurface?: PromptSurface;
 }
 
 /**
@@ -1245,6 +1261,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 */
 	runs?: ExtensionSide;
 	/**
+	 * The tool acts on the session that calls it (its entries, goal, tool search, wakeups or placement). A hand still
+	 * advertises it to a loop that runs elsewhere, marked with this flag in its `describe_tools` declaration
+	 * (senpi#6749), so that loop calls it with its session's state. Recorded only; nothing else reads it.
+	 */
+	sessionBound?: boolean;
+	/**
 	 * The file-backed body a `"child"`-placed tool runs on the session's tool child (senpi#3566). `path` is absolute or
 	 * relative to the registering extension file and must stay inside that extension's directory; `export` names a
 	 * function that receives `{ params, toolCallId }` and returns a structured-cloneable tool result. Without it a
@@ -1425,6 +1447,12 @@ export interface SessionStartEvent {
 	 * turns are held until real input or an explicit Resume (senpi#3853). Attaching releases nothing.
 	 */
 	attended?: boolean;
+	/**
+	 * `true` when a host reopened this session because it was live when the previous host ended (a crash, a clean
+	 * stop or a handoff, senpi#7020). Automatic turns continue as that host left them: only the holds the restart
+	 * itself caused are released.
+	 */
+	continued?: boolean;
 }
 
 /** Sources released by real input or an explicit Resume; goal handlers revalidate current state. */
@@ -1569,6 +1597,11 @@ export interface SessionShutdownEvent {
 	reason: "quit" | "reload" | "new" | "resume" | "fork";
 	/** Destination session file when shutting down due to session replacement. */
 	targetSessionFile?: string;
+	/**
+	 * The session was closed on request with a graceful close (oh-my-openagent#14313): stop the work it would
+	 * otherwise restore on a reopen (monitors, loops) and leave state that reads as cleanly stopped.
+	 */
+	closed?: true;
 	/**
 	 * Per-handler signal the host aborts when this handler exceeds
 	 * `sessionShutdownHandlerTimeoutMs`; teardown then continues without it.
@@ -3116,6 +3149,13 @@ export interface ExtensionAPI {
 		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): void;
 
+	/**
+	 * True on a hand whose agent loop runs on another machine (brain/hand split): `sendMessage` and `sendUserMessage`
+	 * from background work reach that loop as durable wakes, and the loop applies its own delivery guards (its mode, its
+	 * model). A notifier that waits for `session_start` before it notifies notifies here without one.
+	 */
+	isLoopRemote(): boolean;
+
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T, options?: AppendEntryOptions): void;
 
@@ -3528,6 +3568,8 @@ export type InlineExtension =
 			factory: ExtensionFactory;
 			/** Omit this extension from the startup Extensions list. */
 			hidden?: boolean;
+			/** Host-supplied default, controlled by enabledBuiltinExtensions/disabledBuiltinExtensions by name. */
+			host?: boolean;
 			/**
 			 * Leave this extension out when another extension registers a tool, command, or flag with a
 			 * name it registers during loading, instead of reporting a conflict. The CLI's built-in MCP,
@@ -3685,7 +3727,15 @@ export type GetActiveToolsHandler = () => string[];
 /** Tool info with normalized exposure metadata and source metadata. */
 export type ToolInfo = Pick<
 	ToolDefinition,
-	"name" | "label" | "description" | "parameters" | "promptGuidelines" | "kernelPrelude" | "permissionParser"
+	| "name"
+	| "label"
+	| "description"
+	| "parameters"
+	| "promptGuidelines"
+	| "kernelPrelude"
+	| "permissionParser"
+	| "renderCall"
+	| "renderResult"
 > & {
 	namespace?: ToolNamespace;
 	annotations?: ToolAnnotations;
@@ -3695,6 +3745,11 @@ export type ToolInfo = Pick<
 	searchKeywords: readonly string[];
 	searchGroup?: string;
 	allowLazyActivation: boolean;
+	/**
+	 * True while the session routes the tool through `eval` only (senpi#6886): it is withheld from the model's direct
+	 * tool list and reached as `tool.<name>(...)` inside a cell. Absent when nothing withholds it.
+	 */
+	evalOnly?: true;
 };
 
 export type GetAllToolsHandler = () => ToolInfo[];
@@ -3751,6 +3806,8 @@ export type PendingProviderRegistration =
  */
 export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
+	/** Backs `pi.isLoopRemote()`; a hand's runner with a wake route sets it (H3). */
+	isLoopRemote: () => boolean;
 	/** The device the session's tools run on, and the extension that registered it (registerDeviceMachine). */
 	deviceMachine: { readonly machine: ToolMachine; readonly extensionPath: string } | undefined;
 	/** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
@@ -3898,6 +3955,8 @@ export interface ExtensionContextActions {
 	) => Promise<AgentToolCallOutcome>;
 	/** Backs `ExtensionToolContext.tools`. */
 	getCallableTools?: () => readonly AgentTool[];
+	/** Backs `ExtensionToolContext.issuedByModel`. Without it, no call counts as issued by the model. */
+	isModelIssuedToolCall?: (toolCallId: string) => boolean;
 }
 
 export interface LoadedHookSources {

@@ -1,5 +1,41 @@
 # changes — senpi-monorepo root
 
+## 2026-11-13 - The root test script runs coding-agent alongside the other workspaces (senpi#6649)
+
+### What changed
+
+- `package.json`: root `test` is `npm run test:scripts && node scripts/run-workspaces.mjs --if-present --alongside packages/coding-agent test`; the new `test:serial` keeps the previous strictly sequential command (`... run-workspaces.mjs --if-present test`) as the reference run.
+
+### Why
+
+- A local whole-suite run took about 59 minutes on 8 cores, and the other workspaces' roughly 500 s ran while no coding-agent test ran. Running them next to coding-agent uses the cores coding-agent's own pool leaves idle (senpi#6646).
+
+### Why an extension could not handle it
+
+- The root `test` script is repository tooling, not runtime behavior; no extension hook runs the test suite.
+
+### Expected merge conflict zones
+
+- LOW: the `test` / `test:serial` lines of the root `package.json` `scripts` block.
+
+## 2026-11-15 - Vitest resolves the pi-agent-core read-folders subpath from source (senpi#6740)
+
+### What changed
+
+- `vitest.base.ts`: `agentReadFolders` source path and the `@earendil-works/pi-agent-core/read-folders` alias.
+
+### Why
+
+- The new subpath is imported by coding-agent source that tests load.
+
+### Why an extension could not handle it
+
+- Root test resolution is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the `workspaceSourcePaths` list and the alias list.
+
 ## 2026-11-13 - The hono and @hono/node-server overrides move past their npm audit advisories (senpi#6624)
 
 ### What changed

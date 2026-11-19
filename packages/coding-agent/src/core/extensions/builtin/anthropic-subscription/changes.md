@@ -1,3 +1,61 @@
+## 2026-11-19 - Claude Code receives senpi's MCP tool descriptions whole (senpi#7032)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/query-environment.ts`: `claudeCodeQueryEnvironment` adds `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH=16384` unless the host environment (new `hostEnvironment` parameter, default `process.env`) already sets it, and always returns a record.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/options.ts`: `queryOptions.env` is always that record.
+
+### Why
+
+- senpi's tools reach Claude Code as the `custom-tools` MCP server, and Claude Code 2.1.321 keeps only the first 4096 chars of an MCP tool description (16384 when loaded through its tool search). The ~8.1k eval description lost its eval-only tool list, so the model never learned the thread tools existed (oh-my-openagent#14291). 16384 is Claude Code's own ceiling for a loaded tool; a user-set value still wins.
+
+### Why an extension could not handle it
+
+- The Claude Code child environment is built inside this builtin provider extension; no other extension sees it.
+
+### Expected merge conflict zones
+
+- LOW: the body of `claudeCodeQueryEnvironment` and the `queryOptions.env` line in `buildAnthropicSubscriptionQueryOptions`.
+
+## 2026-11-15 - Re-check stale Claude rate-limit blocks once per person-started turn (senpi#6727)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/limit-recheck.ts`: derive a turn-local allowance from the session's admitted person-run identity. Every lookup checks that identity, so a fresh automated run cannot inherit an earlier person's set. Open only the selection view of rate-limit blocks lacking newer usage evidence; preserve model-specific blocks and retain the same attempt set across explicit retries.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/index.ts`, `stream.ts`, `session-stream.ts`, and `auth-lane.ts`: carry the allowance through main resident and one-shot requests; auxiliary requests and connection tests receive none.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: use normal account selection first. Only an `AllAccountsBlockedError` on a person-started turn allows selection from the temporary re-check view, so a healthy account serves without probing stale-blocked siblings. Spend each account's allowance before attempting it. Half-open requests do not retry the same account. Success uses the existing timestamp-guarded block cleanup, while a spent account receives its fresh reset through normal persistence.
+
+### Why
+
+- A blocked CLI account cannot run Claude Code to renew its own expired token, so usage polling can remain unreadable until a stale reset expires. A person can now ask once without making automated turns probe a spent account.
+
+### Why an extension could not handle it
+
+- The policy lives in this builtin extension. Its private selection and failover boundary must retain the stored block while allowing one request; a separate extension cannot enforce that attempt budget.
+
+### Expected merge conflict zones
+
+- LOW: the input lifecycle wiring in `index.ts`, private allowance plumbing in `stream.ts`, `session-stream.ts`, and `auth-lane.ts`, and selection and same-account retry handling in `failover.ts`.
+
+## 2026-11-15 - A locally refused account pool names its soonest retry to the session retry (senpi#6727)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts`: `withAuthGuidance` ends a pool refusal (`AllAccountsBlockedError` with no limited model) with `(retry-after-ms: <ms>)` until `rateLimitedUntil`, the moment the pool recovers on its own. A failure that left no account to try (`ClassifiedSdkError.poolState`) ends with the same marker. A pool that waits on a re-login, billing or an unknown block gets none, as before. The limited-model refusal keeps its marker.
+- `packages/coding-agent/test/suite/regressions/6727-pool-refusal-retry-waits-for-soonest.test.ts` (new).
+
+### Why
+
+- The session read the refusal as a 429 with no retry hint, so it retried at the backoff floor until its budget ran out (`Attempt 5/5`). Every retry was refused locally, and the turn could end seconds before a sibling account returned. With the marker the hint tiers apply: a soonest retry within `hintedWaitCapMs` is waited for in the turn, and one past `probeBackMaxMs` ends the turn at once, naming the wait.
+
+### Why an extension could not handle it
+
+- The refusal text is this extension's own wire output.
+
+### Expected merge conflict zones
+
+- LOW: the return statements of `withAuthGuidance` and `retryAfterMarker` in `stream-guidance.ts`.
+
 ## 2026-11-14 - Tool-result text never reaches Claude Code as a slash command (senpi#6667)
 
 ### What changed
