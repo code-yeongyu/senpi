@@ -1,17 +1,16 @@
 // senpi#6849 review L4: on Windows a rename over a file another process holds open fails with
 // EPERM until that handle closes. A credential write must wait that out within the lock budget.
-import * as fs from "fs";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("fs", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("fs")>();
-	return { ...actual, renameSync: vi.fn(actual.renameSync) };
-});
+import { AuthStorage, FileAuthStorageBackend } from "../../../src/core/auth-storage.ts";
 
-const { AuthStorage } = await import("../../../src/core/auth-storage.ts");
+// The held file is simulated at the backend's own write step: its first attempt fails the way a Windows
+// rename over an open handle does, later attempts write for real.
+type Writer = { writeAuthFile: (content: string) => void };
+const backendWriter = FileAuthStorageBackend.prototype as unknown as Writer;
 
 const heldOpen = () => Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
 
@@ -27,25 +26,22 @@ describe("senpi#6849 a credential write while another process holds auth.json op
 
 	afterEach(() => {
 		Object.defineProperty(process, "platform", { value: platform });
-		vi.mocked(fs.renameSync).mockReset();
+		vi.restoreAllMocks();
 		rmSync(dir, { recursive: true, force: true });
 	});
 
 	it("lands a credential update once the holder lets go of the file", async () => {
 		const authJson = join(dir, "auth.json");
 		writeFileSync(authJson, JSON.stringify({ openai: { type: "api_key", key: "sk-before" } }));
-		const actual = await vi.importActual<typeof import("fs")>("fs");
-		vi.mocked(fs.renameSync)
-			.mockImplementationOnce(() => {
-				throw heldOpen();
-			})
-			.mockImplementation(actual.renameSync);
+		const write = vi.spyOn(backendWriter, "writeAuthFile").mockImplementationOnce(() => {
+			throw heldOpen();
+		});
 		const storage = AuthStorage.create(authJson);
 
 		await storage.modify("openai", async () => ({ type: "api_key", key: "sk-after" }));
 
 		expect(JSON.parse(readFileSync(authJson, "utf8")).openai).toEqual({ type: "api_key", key: "sk-after" });
-		expect(vi.mocked(fs.renameSync).mock.calls.length).toBeGreaterThanOrEqual(2);
+		expect(write.mock.calls.length).toBeGreaterThanOrEqual(2);
 	});
 	// #6849 review L5: the lock can be lost while the write waits; nothing may be written after that.
 	it("writes nothing once the lock is lost during the wait", async () => {
@@ -67,13 +63,10 @@ describe("senpi#6849 a credential write while another process holds auth.json op
 			loseLock = () => onCompromised(new Error("lock compromised"));
 			return acquire.call(this, signal, onCompromised);
 		});
-		const actual = await vi.importActual<typeof import("fs")>("fs");
-		vi.mocked(fs.renameSync)
-			.mockImplementationOnce(() => {
-				loseLock();
-				throw heldOpen();
-			})
-			.mockImplementation(actual.renameSync);
+		vi.spyOn(backendWriter, "writeAuthFile").mockImplementationOnce(() => {
+			loseLock();
+			throw heldOpen();
+		});
 		const storage = AuthStorage.create(authJson);
 
 		await expect(storage.modify("openai", async () => ({ type: "api_key", key: "sk-after" }))).rejects.toThrow(
