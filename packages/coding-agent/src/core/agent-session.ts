@@ -426,6 +426,7 @@ import {
 import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { limitResetAt } from "./retry-fallback/limit-reset.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
+import { nextRetryWait, type RetryWait } from "./retry-wait.ts";
 import {
 	type RunBackgroundJob,
 	RunBackgroundJobs,
@@ -1754,6 +1755,7 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	private _retryWait: RetryWait | undefined = undefined;
 	/**
 	 * A manual switch landed while a run was live and no request has been prepared on
 	 * the pick since (senpi#6893). A failure arriving now came from a request built
@@ -3150,6 +3152,7 @@ export class AgentSession {
 
 	private _emit(event: AgentSessionEvent, captureSource: object = event): void {
 		this._recoveryIdentity?.observe(event);
+		this._retryWait = nextRetryWait(this._retryWait, event, Date.now());
 		const produced = event;
 		if (
 			event.type === "session_paused" ||
@@ -5367,6 +5370,10 @@ export class AgentSession {
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;
+	}
+
+	get retryWait(): RetryWait | undefined {
+		return this._retryWait;
 	}
 
 	/** Abort owner for the current turn boundary, used by internal renderers. */

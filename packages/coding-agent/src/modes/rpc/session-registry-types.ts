@@ -1,4 +1,5 @@
 /** The shapes the in-process session registry hands out: entries, launch profiles, rows and its typed error. */
+import type { RetryWait } from "../../core/retry-wait.ts";
 import type { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { AgentSessionLaunchProfile, AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type { EventLoopSlicer } from "../../core/event-loop-slicer.ts";
@@ -175,6 +176,8 @@ export interface RpcSessionRow {
 	settledBy?: ThreadSettledBy;
 	/** `running` while a turn is in flight (the `session_status` streaming state), else `idle`. */
 	activity: "running" | "idle";
+	/** senpi#7025: the auto-retry wait a running session sleeps through; absent when it is not waiting. */
+	waiting?: RetryWait;
 	/** The session's current model; absent while unknown (an opening session). */
 	model?: { provider: string; id: string };
 }
