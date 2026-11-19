@@ -42,3 +42,11 @@ describe("Review claim gate on review events", () => {
 		assert.doesNotMatch(gate.body, /cancel-in-progress/);
 	});
 });
+
+describe("Review claim shell steps", () => {
+	it("pass event values through env instead of expanding expressions into the script", () => {
+		const scripts = [...workflow.matchAll(/^(\s+)run: \|\n((?:\1  .*\n|\s*\n)*)/gm)].map((match) => match[2]);
+		assert.ok(scripts.length >= 4, "expected the four Workflow summary scripts");
+		for (const script of scripts) assert.doesNotMatch(script, /\$\{\{/);
+	});
+});

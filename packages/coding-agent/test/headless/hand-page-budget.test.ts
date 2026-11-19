@@ -8,8 +8,9 @@ import { join } from "node:path";
 import type { Agent, AgentEvent, ToolHost } from "@earendil-works/pi-agent-core";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MAX_HANDED_PAGE_CHARACTERS } from "../../src/core/extensions/builtin/html-render/handed-pages.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import { MAX_HANDED_PAGE_CHARACTERS } from "../../src/extensions/html-render/handed-pages.ts";
+import { builtInExtensions } from "../../src/extensions/index.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHandSelection, type HandRow } from "../../src/modes/headless/hand-selection.ts";
 import { cleanupHands, type HandDirs, handDirs, openLink, startHand, toolCall } from "../hand/remote-hand-fixture.ts";
@@ -59,8 +60,8 @@ function handPrepend(pi: ExtensionAPI): void {
 	);
 }
 
-/** A hand-side extension that makes the result look like an older hand's: no `details.resultText` (before senpi#6934). */
-function olderHand(pi: ExtensionAPI): void {
+/** A hand-side extension that drops `details.resultText`, as a hand on a version before senpi#6936 reports a page. */
+function handBeforeResultText(pi: ExtensionAPI): void {
 	pi.on("tool_result", (event) =>
 		event.toolName === "show_html_page"
 			? {
@@ -73,15 +74,16 @@ function olderHand(pi: ExtensionAPI): void {
 }
 
 /**
- * A brain session (surface "app", no html-render loaded) and the hand selection that links it to an in-process hand.
- * `endRun` delivers the `agent_end` a run of the session would; `listeners` counts who listens for it.
+ * A brain session (surface "app", no html-render loaded; the hand runs it) and the hand selection that links it to an
+ * in-process hand running the built-ins and `handExtensions`. `endRun` delivers the `agent_end` a run of the session
+ * would; `listeners` counts who listens for it.
  */
 function brainOnHand(dirs: HandDirs, handExtensions: ((pi: ExtensionAPI) => void)[] = [handNote]) {
 	const selection = createHandSelection({
 		list: () => [ROW],
 		link: () => {
 			const link = openLink();
-			startHand(link, dirs, handExtensions);
+			startHand(link, dirs, [...builtInExtensions, ...handExtensions]);
 			return { transport: link.brain, placement: "split-local" };
 		},
 	});
@@ -176,7 +178,6 @@ describe("senpi#6921: show_html_page on a hand, seen from the brain session", ()
 		expect(messages.map((message) => pageDetails(message.details).imagesInlined)).toEqual([true]);
 	});
 
-	// senpi#6932: the page's own text is the result's first text part, wherever it now points.
 	// senpi#6934: the page's own text is the part equal to the `details.resultText` the tool emitted.
 	it("replaces the page's own text when a hand-side handler put a note in front of it", async () => {
 		const dirs = await handDirs("page-prepend");
@@ -192,6 +193,24 @@ describe("senpi#6921: show_html_page on a hand, seen from the brain session", ()
 		expect(parts[3]?.[0]).toBe("HAND-FIRST prepended-3");
 		expect(parts[3]?.[1]).toContain("this session's pages already carry");
 		expect(Reflect.get(Object(messages[3]?.details), "resultText")).toBe(parts[3]?.[1]);
+	});
+
+	// senpi#6936 review: a hand on an older version emits no resultText; its page text is still the one replaced.
+	it("replaces the first text part of a hand result that names no resultText", async () => {
+		const dirs = await handDirs("page-older-hand");
+		const { selection, session } = brainOnHand(dirs, [handBeforeResultText, handNote]);
+		expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
+
+		const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "older", 4));
+
+		const parts = messages.map((message) => message.content.map((part) => (part.type === "text" ? part.text : "")));
+		expect(Reflect.get(Object(messages[2]?.details), "resultText")).toBeUndefined();
+		expect(parts[2]?.[0]).toMatch(/Local images were inlined\.$/);
+		expect(parts[3]).toHaveLength(2);
+		expect(parts[3]?.[0]).toContain("this session's pages already carry");
+		expect(parts[3]?.[0]).not.toContain("Local images were inlined.");
+		expect(parts[3]?.[1]).toBe("HAND-NOTE older-3");
+		expect(pageDetails(messages[3]?.details).imagesInlined).toBe(false);
 	});
 
 	// senpi#6934: a rewritten page text is no longer the tool's own, so nothing is replaced; the sentence is appended.
@@ -211,28 +230,21 @@ describe("senpi#6921: show_html_page on a hand, seen from the brain session", ()
 		expect(pageDetails(messages[3]?.details)).toMatchObject({ imagesInlined: false, html: calls[3]?.arguments.html });
 	});
 
-	// senpi#6937: an older hand sends no resultText; its page text is the part naming the saved copy, else the first text.
-	it.each([
-		["alone", [olderHand], (sentence: string) => [sentence]],
-		["with a note put in front", [olderHand, handPrepend], (sentence: string) => ["HAND-FIRST older-3", sentence]],
-	] as const)(
-		"replaces an older hand's page text (%s) instead of appending next to it",
-		async (_case, extensions, expected) => {
-			const dirs = await handDirs("page-older");
-			const { selection, session } = brainOnHand(dirs, [...extensions]);
-			expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
+	// senpi#6937: an older hand sends no resultText; its page text is the part naming the saved copy, not a note in front.
+	it("replaces an older hand's page text, not a note a hand-side handler put in front of it", async () => {
+		const dirs = await handDirs("page-older-front");
+		const { selection, session } = brainOnHand(dirs, [handBeforeResultText, handPrepend]);
+		expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
 
-			const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "older", 4));
+		const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "older", 4));
 
-			expect(Reflect.get(Object(messages[2]?.details), "resultText")).toBeUndefined();
-			const parts = messages.map((message) =>
-				message.content.map((part) => (part.type === "text" ? part.text : "")),
-			);
-			const sentence = parts[3]?.find((text) => text.includes("this session's pages already carry")) ?? "";
-			expect(parts[3]).toEqual(expected(sentence));
-			expect(pageDetails(messages[3]?.details).imagesInlined).toBe(false);
-		},
-	);
+		const parts = messages.map((message) => message.content.map((part) => (part.type === "text" ? part.text : "")));
+		expect(Reflect.get(Object(messages[2]?.details), "resultText")).toBeUndefined();
+		expect(parts[3]).toHaveLength(2);
+		expect(parts[3]?.[0]).toBe("HAND-FIRST older-3");
+		expect(parts[3]?.[1]).toContain("this session's pages already carry");
+		expect(pageDetails(messages[3]?.details).imagesInlined).toBe(false);
+	});
 
 	it("forgets the pages a session's link let through once the session is released", async () => {
 		const dirs = await handDirs("page-ledger");

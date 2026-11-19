@@ -180,7 +180,13 @@ import {
 	userTextEquals,
 } from "./edited-user-message.ts";
 import { ENGINE_PAUSED_ENTRY_TYPE, enginePauseSinceLastTurn, settledRepetitiveTurnPause } from "./engine-paused.ts";
-import { EngineTurnHold, engineTurnHoldHistory, engineWakeSource, type SessionHoldEvent } from "./engine-turn-hold.ts";
+import {
+	EngineTurnHold,
+	engineTurnHoldHistory,
+	engineWakeSource,
+	type HoldKind,
+	type SessionHoldEvent,
+} from "./engine-turn-hold.ts";
 import { EngineTurnInput } from "./engine-turn-input.ts";
 import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
@@ -295,9 +301,10 @@ import type {
 	SessionHoldRecord,
 	ToolChildJob,
 } from "./extensions/types.ts";
-import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
+import { normalizeToolExposure, RUNTIME_EXTENSION_PATH, SESSION_CONTROL_DELIVERY_TYPE } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission, type InputHold } from "./external-admission.ts";
+import { holdsKeepingPeerDelivery } from "./peer-delivery-hold.ts";
 import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf } from "./input-origin.ts";
@@ -1222,11 +1229,13 @@ export interface ResumeSessionRequest {
 	readonly mode?: "continue" | "release";
 	readonly message?: string;
 	readonly effectId?: string;
+	/** Resume nothing while a person's Stop or a parent's run hold is live: a resume a peer asks for (senpi#7016). */
+	readonly unlessStopped?: boolean;
 }
 
 export interface ResumeSessionAnswer {
 	readonly resumed: boolean;
-	readonly reason?: "stale" | "not_paused" | "resume_through_parent";
+	readonly reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped";
 	readonly parentSessionId?: string;
 	readonly pauseSeq: number;
 	readonly turnStarted: boolean;
@@ -1633,6 +1642,7 @@ export class AgentSession {
 	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
+		heldBy: () => this._peerDeliveryHolds(),
 		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
 		start: (message) =>
 			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
@@ -7856,6 +7866,9 @@ export class AgentSession {
 			return;
 		}
 		if (itemized !== undefined) this._persistWatchers.set(appMessage, itemized);
+		// senpi#6490: a peer's message continues an unattended session as a person's does, never a silent held notice.
+		const releasedByPeer = !releasedWake && this._peerDeliveryReleasesHold(message.customType, options);
+		if (releasedByPeer) this._engineTurnInput.begin();
 		if (
 			!releasedWake &&
 			this._wakeGateApplies(message.customType, options) &&
@@ -7921,7 +7934,13 @@ export class AgentSession {
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
 				const environmentContext = this._pendingEnvironmentContextMessage();
-				const messages: AgentMessage[] = environmentContext ? [environmentContext, appMessage] : [appMessage];
+				// The wakes a peer's message released ride ahead of it, as they ride ahead of a person's message.
+				const releasedWakes = releasedByPeer ? this._engineTurnInput.messages() : [];
+				const messages: AgentMessage[] = [
+					...(environmentContext ? [environmentContext] : []),
+					...releasedWakes,
+					appMessage,
+				];
 				const queueTriggerForLater = (): void => {
 					// A released wake stays in notice custody until final admission claims it.
 					if (releasedWake) return;
@@ -7981,7 +8000,13 @@ export class AgentSession {
 				if (releasedWake && !releasedWake()) return;
 				const inputOrigin = customTurnOrigin(message.customType);
 				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
-				await this._promptAgent(messages, { inputOrigin, deferredTurnClaim });
+				await this._promptAgent(messages, {
+					inputOrigin,
+					deferredTurnClaim,
+					...(releasedByPeer
+						? { onTurnAdmitted: () => this._engineTurnInput.admit(false, (wake) => this.agent.steer(wake)) }
+						: {}),
+				});
 			} else if (this.isStreaming) {
 				if (options?.ticket) this.workObligations.passive(options.ticket);
 				this._pendingCustomMessages.push(appMessage);
@@ -7992,7 +8017,42 @@ export class AgentSession {
 		} finally {
 			deferredTurnClaim?.resolve("finished-without-start");
 			finishSessionWork?.();
+			// A release no turn admitted gives the holds back; an admitted one settles here or when its run settles.
+			if (releasedByPeer)
+				this._settleInputRelease()?.catch((error: unknown) => {
+					this._sessionLogger.warn("input_release_settle_failed", {
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
 		}
+	}
+
+	/** The holds a peer delivery cannot release (senpi#6490); `externalAdmission` answers `held` with them. */
+	private _peerDeliveryHolds(): HoldKind[] {
+		return holdsKeepingPeerDelivery(
+			this._engineTurnHold.holds,
+			this._lifecycleBinding.controller.requiresHumanContinuation,
+		);
+	}
+
+	/**
+	 * A peer delivery the wake gate would hold, with no hold a peer cannot release, continues the session as a person's
+	 * input does (senpi#6490): an `unattended` hold, or the release barrier of an unattended Resume. `_engineTurnInput.begin()`
+	 * attends the session and releases what it holds, after which `holdsSource` is false; so the admission's `started`
+	 * (no `_peerDeliveryHolds()`) and this gate always agree, and anything else is answered `held`.
+	 */
+	private _peerDeliveryReleasesHold(
+		customType: string,
+		options: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" } | undefined,
+	): boolean {
+		return (
+			customType === SESSION_CONTROL_DELIVERY_TYPE &&
+			options?.triggerTurn === true &&
+			options.deliverAs !== "nextTurn" &&
+			!this.isStreaming &&
+			this._engineTurnHold.holdsSource(engineWakeSource(customType)) &&
+			this._peerDeliveryHolds().length === 0
+		);
 	}
 
 	/**
@@ -8090,6 +8150,8 @@ export class AgentSession {
 				parentSessionId: inherited.parentSessionId,
 				...idle,
 			});
+		if (request.unlessStopped === true && this.automaticInputHoldLive())
+			return answered({ resumed: false, reason: "stopped", ...idle });
 		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
@@ -8409,12 +8471,16 @@ export class AgentSession {
 		});
 	}
 
-	noteAutomaticInput(text: string): boolean {
-		const userHold = this._engineTurnHold.holds.some(
+	/** Whether the user's Stop or a parent's run hold is live: automatic connection input is then kept as a notice. */
+	automaticInputHoldLive(): boolean {
+		return this._engineTurnHold.holds.some(
 			(hold) =>
 				(hold.kind === "session_hold" && hold.key !== "interrupted-run") || hold.kind === "inherited_hold",
 		);
-		if (!userHold) return false;
+	}
+
+	noteAutomaticInput(text: string): boolean {
+		if (!this.automaticInputHoldLive()) return false;
 		const message: CustomMessage = {
 			role: "custom",
 			customType: "rpc-automatic-input",
@@ -9049,6 +9115,25 @@ export class AgentSession {
 		}
 		this._emitQueueUpdate();
 		return nextText === undefined ? "removed" : "edited";
+	}
+
+	/**
+	 * Takes every queued cross-session delivery out of the queues unwritten and settles it as `clearQueue` does (its
+	 * engine custody cancelled, a send waiting on it failed, its admission dropped), leaving user input queued. An
+	 * interrupt does this once the aborted work settled, so a delivery the aborted run left queued never pins the
+	 * session; its sender redelivers it (oh-my-openagent#14169).
+	 */
+	takeQueuedDeliveries(): void {
+		const removed = this.agent.peekQueuedMessages({ all: true }).filter((queued) => deliveryIdOf(queued) !== undefined);
+		for (const message of removed) this.agent.removeQueuedMessage(message);
+		const tickets = removed.flatMap((message) => {
+			const ticket = message.role === "custom" ? messageTicket(message) : undefined;
+			return ticket === undefined ? [] : [ticket];
+		});
+		this._releaseQueuedDeliveries(tickets, "cleared");
+		this._settleRemovedCarriers(removed);
+		this.externalAdmission.dropQueued();
+		this._emitQueueUpdate();
 	}
 
 	/**

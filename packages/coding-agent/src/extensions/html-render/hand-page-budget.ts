@@ -1,6 +1,6 @@
 import type { Agent, AgentEvent, AgentToolCall, ToolHost } from "@earendil-works/pi-agent-core";
 import type { JsonObject, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { PromptSurface } from "../../../dynamic-prompt/build.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
 import {
 	type HandedPageSession,
 	handedPageText,
@@ -33,6 +33,12 @@ interface PageDowngrade {
 	readonly details: JsonObject;
 }
 
+/** The part of a show_html_page result the budget reads and rewrites. */
+interface PageResult {
+	readonly content: ResultContent;
+	readonly details?: unknown;
+}
+
 // A hand's result details arrive JSON-decoded over the hand link, so an object there is a JSON object.
 const isJsonObject = (value: unknown): value is JsonObject =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
@@ -62,11 +68,7 @@ export function withHandPageBudget(
 		async execute(call, options) {
 			// One decision per call: the result's tool_execution_end, its message events and the returned message agree.
 			const decisions = new Map<string, PageDowngrade | undefined>();
-			const budgeted = (
-				toolCallId: string,
-				toolName: string,
-				result: { readonly content: ResultContent; readonly details?: unknown },
-			): PageOverride | undefined => {
+			const budgeted = (toolCallId: string, toolName: string, result: PageResult): PageOverride | undefined => {
 				if (toolName !== SHOW_HTML_PAGE_NAME) return undefined;
 				if (!decisions.has(toolCallId))
 					decisions.set(toolCallId, overBudget(call.calls, toolCallId, result.details, session, pending));
@@ -88,11 +90,7 @@ export function withHandPageBudget(
 
 function budgetedEvent(
 	event: AgentEvent,
-	budgeted: (
-		toolCallId: string,
-		toolName: string,
-		result: { readonly content: ResultContent; readonly details?: unknown },
-	) => PageOverride | undefined,
+	budgeted: (toolCallId: string, toolName: string, result: PageResult) => PageOverride | undefined,
 ): AgentEvent {
 	if (event.type === "tool_execution_end") {
 		const override = budgeted(event.toolCallId, event.toolName, event.result);
@@ -109,15 +107,19 @@ function budgetedEvent(
  * The page's own text is the text part equal to the one the tool emitted (`details.resultText`), wherever a hand-side
  * `tool_result` handler moved it; it alone is replaced, and every other part stays where it is. When no part equals it
  * (a handler rewrote it), nothing is replaced and the over-budget sentence is appended as its own part (senpi#6934).
+ * A hand on an older version emits no `resultText`; its page's own text is then found by `olderHandOwnText`, and a
+ * result with no text part gets the sentence first (senpi#6932).
  */
 function applied(downgrade: PageDowngrade, content: ResultContent): PageOverride {
+	const { ownText } = downgrade;
 	const own =
-		downgrade.ownText === undefined
+		ownText === undefined
 			? olderHandOwnText(downgrade, content)
-			: content.findIndex((part) => part.type === "text" && part.text === downgrade.ownText);
+			: content.findIndex((part) => part.type === "text" && part.text === ownText);
 	const text = { type: "text" as const, text: downgrade.text };
+	const unmatched = ownText === undefined ? [text, ...content] : [...content, text];
 	return {
-		content: own === -1 ? [...content, text] : content.map((part, index) => (index === own ? text : part)),
+		content: own === -1 ? unmatched : content.map((part, index) => (index === own ? text : part)),
 		details: downgrade.details,
 	};
 }

@@ -137,9 +137,9 @@ async function spawnReportingStall(
 	execCtx: SessionEnvSource | undefined,
 ) {
 	const thresholdMs = stallThresholdMs(request.timeoutMs === undefined ? undefined : request.timeoutMs / 1000);
+	const sessionId = (execCtx ?? ctx.getSessionContext?.())?.sessionManager?.getSessionId();
 	const watch = watchForStall(thresholdMs, (elapsedMs) => {
 		const logger = ctx.sessionLogger ?? (defaultSessionLogger ??= createSessionLogger(getAgentDir()));
-		const sessionId = (execCtx ?? ctx.getSessionContext?.())?.sessionManager?.getSessionId();
 		logger.warn("bash_spawn_stalled", {
 			toolCallId,
 			toolName: TERMINAL_BASH_TOOL,
@@ -149,7 +149,10 @@ async function spawnReportingStall(
 		});
 	});
 	try {
-		return await spawnCommandSession(sessionSpawnContext(ctx), request);
+		return await spawnCommandSession(
+			sessionSpawnContext(ctx),
+			sessionId === undefined ? request : { ...request, sessionId },
+		);
 	} finally {
 		watch.stop();
 	}

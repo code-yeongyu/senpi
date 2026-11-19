@@ -1,3 +1,21 @@
+## 2026-11-18 - CI installs APT packages from a .deb set cached per runner image (senpi#4552)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the five `Install system dependencies` steps use the new composite action `.github/actions/install-ci-system-deps` with their own package lists and keep the five-minute cap; linking `fdfind` to `fd` is its own `Link fd` step. The action computes a cache key from the runner image (`ImageOS`, `ImageVersion`), the architecture and the package list, restores that key with `actions/cache`, and runs `scripts/install-ci-system-deps.sh` with `APT_DEB_CACHE_DIR`, which keeps apt's package lists and downloaded .deb files there: a restored set installs with `apt-get --no-download install` (no mirror contact), a set that does not install is dropped after `dpkg --configure -a`, and a miss downloads into the cache directory. The mirror fallback now rewrites any regional `*.archive.ubuntu.com` host.
+
+### Why
+
+- On main runs 44193378988, 44198464791, 44201755928 and 44201998815 every failed `Test (coding-agent N/10)` job (13 jobs) exited 124 inside the APT step before a test ran. Hosted runners resolve through an EC2 region mirror that the Azure-only fallback did not rewrite, so the retry hit the same slow mirror; every shard also downloaded the same packages again.
+
+### Why an extension could not handle it
+
+- CI workflow configuration is repository infrastructure, not runtime behavior an extension can change.
+
+### Expected merge conflict zones
+
+- LOW: the `Install system dependencies` steps in `.github/workflows/ci.yml`.
+
 ## 2026-11-16 - A blank or space-padded CI-basis receipt is refused (senpi#6859 follow-up)
 
 ### What changed

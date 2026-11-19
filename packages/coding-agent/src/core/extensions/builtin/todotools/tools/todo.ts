@@ -8,6 +8,8 @@ import { type Static, Type } from "typebox";
 import { partialStrikethrough, strikeRevealCount } from "../../../../../modes/interactive/components/todo-strike.ts";
 import type { Theme } from "../../../../../modes/interactive/theme/theme.ts";
 import { resolvePromptSurface } from "../../../../dynamic-prompt/build.ts";
+import { resolveActivePresetName } from "../../prompt-preset/active-preset.ts";
+import { presetHandoffCueKind } from "../../prompt-preset/contract.ts";
 import type {
 	AgentToolResult,
 	ExtensionAPI,
@@ -360,8 +362,12 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 			if (completedTasks.length > 0) details.completedTasks = completedTasks;
 			// A chat surface posts replies to a conversation, which has no handoff block to cue (senpi#2398).
 			const surface = ctx.getSystemPromptOptions?.().surface ?? resolvePromptSurface(process.env);
+			// The cue must name the handoff block the session's prompt defines: the GPT block presets
+			// cue their outcome-first block, the rewritten gpt-6.2 core defines no block to cue, and every
+			// other core keeps the default Ask / For you cue (senpi#6977).
 			const cue = formatHandoffCue(
 				readOnly || surface === "chat" ? undefined : handoffMomentOf(previousPhases, applied.phases, createsList),
+				presetHandoffCueKind(resolveActivePresetName(ctx)),
 			);
 			const summary = `${formatSummary(applied.phases, [], readOnly, ask)}${cue}`;
 			const text = corrections.length > 0 ? `${corrections.join("\n")}\n\n${summary}` : summary;

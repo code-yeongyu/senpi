@@ -12,6 +12,68 @@
 
 ### Removed
 
+## [2026.11.19-2] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+- The hand protocol's `invoke` carries the issuing session's optional `promptSurface`. `createRemoteToolHost` sends it (option `promptSurface`), and a hand's `HandCall.promptSurface` exposes it ([#6925](https://github.com/code-yeongyu/senpi/pull/6925))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-3] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-2] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.17-2] - 2026-11-17
 
 ### Breaking Changes

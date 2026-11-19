@@ -14,7 +14,7 @@ import {
 	type Transport,
 } from "@earendil-works/pi-agent-core";
 import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
-import { withHandPageBudget } from "../../core/extensions/builtin/html-render/hand-page-budget.ts";
+import { withHandPageBudget } from "../../extensions/html-render/hand-page-budget.ts";
 import type { SessionManager } from "../../core/session-manager.ts";
 
 export interface HandRow {
@@ -130,17 +130,21 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 	) => {
 		const state = stateOf(durableSessionId, session);
 		state.remote?.close();
-		sessions.set(durableSessionId, { own: state.own, device, remote: remote?.host, linked: remote?.linked ?? false });
-		session.agent.toolHost = remote === undefined ? state.own : gate(durableSessionId, remote.host);
+		// The hand cannot see this session's transcript, so the session's page budget is applied here (senpi#6921). The
+		// budget is what the session keeps and closes, so it stops listening for the session's runs with the link (senpi#6932).
+		const host = remote === undefined ? undefined : withHandPageBudget(remote.host, session);
+		sessions.set(durableSessionId, { own: state.own, device, remote: host, linked: remote?.linked ?? false });
+		session.agent.toolHost = host === undefined ? state.own : gate(durableSessionId, host);
 		options.onChange?.(durableSessionId, device);
 	};
 
 	const unreachable = (): Remote => ({ host: unreachableHost(), linked: false });
 	const linkTo = (device: string, session: HandSession): Remote => {
 		try {
-			// The hand cannot see this session's transcript, so the session's page budget is applied here (senpi#6921).
-			const host = createRemoteToolHost({ ...directory.link(device), promptSurface: () => session.promptSurface });
-			return { host: withHandPageBudget(host, session), linked: true };
+			return {
+				host: createRemoteToolHost({ ...directory.link(device), promptSurface: () => session.promptSurface }),
+				linked: true,
+			};
 		} catch {
 			return unreachable();
 		}

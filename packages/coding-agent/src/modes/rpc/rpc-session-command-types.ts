@@ -66,6 +66,8 @@ export type RpcSessionCommand =
 			mode?: "continue" | "release";
 			message?: string;
 			effectId?: string;
+			/** Answer `stopped` and resume nothing while a person's Stop or a parent's run hold is live (senpi#7016). */
+			unlessStopped?: boolean;
 	  }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
@@ -340,7 +342,7 @@ export type RpcSessionCommand =
 	| {
 			id?: string;
 			type: "set_project_trust";
-			choice: "trust" | "trust_parent" | "do_not_trust";
+			choice: "trust" | "trust_parent" | "do_not_trust" | "no_inherit";
 			expectedCwd?: string;
 	  }
 	| { id?: string; type: "get_project_settings" }
