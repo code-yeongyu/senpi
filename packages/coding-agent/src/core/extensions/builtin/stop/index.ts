@@ -27,7 +27,7 @@ function itemText(item: SessionStopItem): string {
 }
 
 /** The stop's own report: what each owner stopped, then everything that could not be stopped and why. */
-export function formatStopReport(report: SessionStopReport): string {
+function formatStopReport(report: SessionStopReport): string {
 	const stopped = report.owners.filter((owner) => owner.stopped.length > 0);
 	const failed = report.owners.flatMap((owner) =>
 		owner.failed.map((item) => `- ${ownerName(owner.extensionPath)}: ${itemText(item)}: ${item.reason}`),
