@@ -7,6 +7,7 @@ import type { FootprintReader } from "./kernel-memory-host.ts";
 import type { SubprocessSpawn } from "./subprocess-process.ts";
 import type { SubprocessStartupOptions } from "./subprocess-startup.ts";
 import type { InvocationPermissions } from "./invocation-authority.ts";
+import type { AttestKernelSpawn } from "./session-spawn-attestation.ts";
 
 export type KernelRunInput = EvalKernelRunInput;
 
@@ -27,6 +28,8 @@ export interface SubprocessKernelOptions extends KernelLifecycle {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** Attests the interpreter process to the session it runs for (senpi#6972). */
+	readonly attestSpawn?: AttestKernelSpawn;
 	readonly sessionId: string;
 	readonly connection: BridgeConnectionConfig;
 	readonly spawn?: SubprocessSpawn;

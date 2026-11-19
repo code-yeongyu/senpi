@@ -214,12 +214,17 @@ type ResponseInputItem =
 export const CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL = "custom";
 
 /**
- * Models Ultrafast is documented for (OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at
+ * Models Ultrafast is documented for (OpenAI prices GPT-6 Astra, GPT-6.1 Sol and both GPT-6.2 tiers' Ultrafast at
  * 6x Standard on the API and 8x of a ChatGPT plan's included usage). One list, read by both
  * pricing adapters and the selection warning, so the next Ultrafast model needs a single edit
  * (senpi#2978).
  */
-export const ULTRAFAST_DOCUMENTED_MODEL_IDS: ReadonlySet<string> = new Set(["gpt-6-astra", "gpt-6.1-sol"]);
+export const ULTRAFAST_DOCUMENTED_MODEL_IDS: ReadonlySet<string> = new Set([
+	"gpt-6-astra",
+	"gpt-6.1-sol",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
+]);
 
 type ResponseFunctionTool = Extract<OpenAITool, { type: "function" }>;
 

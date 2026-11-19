@@ -36,7 +36,15 @@ export function takeQueuedInput(session: AgentSession): ReleaseDropped {
 	};
 }
 
-export async function abortAndSettle(port: ReleaseSettlePort, sessionId: string, session: AgentSession): Promise<void> {
+/**
+ * Aborts the work, waits (bounded) for it to settle, then hands back the deliveries it left unwritten: their ids, for
+ * the caller to report. Nothing is handed back while the session is still busy.
+ */
+export async function abortAndSettle(
+	port: ReleaseSettlePort,
+	sessionId: string,
+	session: AgentSession,
+): Promise<readonly string[]> {
 	session.abortBash();
 	// A prompt still in preflight, or an admitted delivery, may start its run after the abort below.
 	const stopStarts = session.subscribe((event) => {
@@ -59,4 +67,19 @@ export async function abortAndSettle(port: ReleaseSettlePort, sessionId: string,
 		clearTimeout(deadline);
 		stopStarts();
 	}
+	return session.isIdle ? handBackUnwrittenDeliveries(session) : [];
+}
+
+/**
+ * A delivery admitted while a run was busy waits in the runtime's follow-up queue, and one whose start the abort cut
+ * short is queued again under its engine ticket. When the run is aborted either stays there for a person's next turn
+ * and its admission stays pending, which refused every interrupting unload forever (oh-my-openagent#14169). Settled
+ * after an interrupt, every such delivery leaves the queue, its custody and the ledger unwritten, so its sender
+ * redelivers it to the next owner, as `takeQueuedInput` does for a release.
+ */
+function handBackUnwrittenDeliveries(session: AgentSession): readonly string[] {
+	const admittedBefore = session.externalAdmission.list().pending;
+	session.takeQueuedDeliveries();
+	const stillAdmitted = new Set(session.externalAdmission.list().pending);
+	return admittedBefore.filter((deliveryId) => !stillAdmitted.has(deliveryId));
 }

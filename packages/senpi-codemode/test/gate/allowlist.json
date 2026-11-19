@@ -1,6 +1,17 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6978": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/session-spawn-attestation.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/session-spawn-attestation.ts",
+				"legacyContracts/test/6972-kernel-spawn-attestation.test.ts/eval kernel spawn attestation (#6972) a Bun.$ command in a process kernel resolves to the calling session, even with a forged PI_SESSION_ID",
+				"legacyContracts/test/6972-kernel-spawn-attestation.test.ts/eval kernel spawn attestation (#6972) a child a worker kernel reports is attested to its session until it exits",
+				"legacyContracts/test/6972-kernel-spawn-attestation.test.ts/python kernel spawn attestation (#6972) a subprocess of the python kernel resolves to the calling session"
+			],
+			"reason": "senpi#6978 (e420af9aca, fixes #6972): kernels attest the processes they spawn to the calling session. The new kernel module kernels/shared/session-spawn-attestation.ts enters the extension and first-kernel import scopes; after the follow-up fix it carries only a type import of the host and a helper that calls the attester the extension injects, so no host runtime module enters either scope. The three contract rows are the new tests that pin the attestation from a Bun.$ command, a worker-reported child and a python subprocess. Main's codemode-gate went red on these as unreviewed additions after the merge; no existing cell changed.",
+			"changes": []
+		},
 		"senpi#6903": {
 			"additions": [
 				"legacyContracts/test/call-capture-details.test.ts/nested call details keeps a JSON copy of a tool result's details on the enriched summary",

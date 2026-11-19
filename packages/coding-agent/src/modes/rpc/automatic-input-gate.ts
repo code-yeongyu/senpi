@@ -18,13 +18,7 @@ export function holdAutomaticInput(session: AgentSession, command: InputCommand,
 	return session.noteAutomaticInput(command.message);
 }
 
-/**
- * Whether `holdAutomaticInput` would keep this connection's input as a notice right now, without storing anything:
- * the same user Stop / inherited hold `AgentSession.noteAutomaticInput` checks.
- */
+/** Whether `holdAutomaticInput` would keep this connection's input as a notice right now, without storing anything. */
 export function automaticInputWouldBeHeld(session: AgentSession, interactiveUser: boolean): boolean {
-	if (interactiveUser) return false;
-	return session.holds.some(
-		(hold) => (hold.kind === "session_hold" && hold.key !== "interrupted-run") || hold.kind === "inherited_hold",
-	);
+	return !interactiveUser && session.automaticInputHoldLive();
 }

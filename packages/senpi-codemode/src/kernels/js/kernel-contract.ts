@@ -3,6 +3,7 @@ import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalKernelRunInput } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
 import type { InvocationPermissions } from "../shared/invocation-authority.ts";
+import type { AttestKernelSpawn } from "../shared/session-spawn-attestation.ts";
 import type { JavaScriptInterruptBounds } from "./interrupt-bounds.ts";
 import type { CellDecision, CellOperation, CellRule } from "./permission-slots.mjs";
 
@@ -56,6 +57,8 @@ export interface JavaScriptKernelOptions {
 	 * wait on them. Absent, they stay zombies until the host's child reaper or process exit collects them.
 	 */
 	readonly collectOrphanedChildren?: (pids: readonly number[]) => Promise<unknown>;
+	/** Attests the kernel process and each child it reports to the session (senpi#6972); absent, none is recorded. */
+	readonly attestSpawn?: AttestKernelSpawn;
 	readonly parallelPoolWidth: number;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly workerEntryUrl?: URL;

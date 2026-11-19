@@ -8,6 +8,7 @@ import {
 	type RepositoryIdentity,
 	readRepositoryIdentity,
 } from "../repository-identity.ts";
+import { pathExists } from "../tools/path-utils.ts";
 
 export class MoveRefusedError extends Error {
 	readonly code = "move_repository_mismatch";
@@ -20,11 +21,39 @@ export class MoveRefusedError extends Error {
 	}
 }
 
+/**
+ * A folder that does not exist on this device. It has no repository identity either, but it is
+ * told apart from a mismatch: only this device can say which, and the client words the two differently.
+ */
+class MoveTargetMissingError extends Error {
+	readonly code = "workspace_missing";
+
+	constructor(targetCwd: string) {
+		super(
+			`${targetCwd} does not exist on this device. Clone the repository there, or pick a folder that holds it, then send the session again.`,
+		);
+		this.name = "MoveTargetMissingError";
+	}
+}
+
+/** What the folder is to the session's repository: a checkout of it, missing on this device, or anything else. */
+type CheckoutVerdict = "same" | "missing" | "other";
+
 /** `cwd` is resolved the way the import resolves it, so both steps read the identity of the same folder. */
-export async function isCheckoutOfRepository(
+export async function checkoutVerdict(
 	cwd: string,
 	repository: RepositoryIdentity | undefined,
 	read: (dir: string) => Promise<RepositoryIdentity | undefined> = readRepositoryIdentity,
-): Promise<boolean> {
-	return compareRepositoryIdentities(repository, await read(resolvePath(cwd))) === "same";
+): Promise<CheckoutVerdict> {
+	const folder = resolvePath(cwd);
+	if (compareRepositoryIdentities(repository, await read(folder)) === "same") return "same";
+	return (await pathExists(folder)) ? "other" : "missing";
 }
+
+/** The refusal for a folder that is not a checkout of the session's repository. */
+export const checkoutRefusal = (
+	verdict: Exclude<CheckoutVerdict, "same">,
+	targetCwd: string,
+	sourceCwd?: string,
+): MoveRefusedError | MoveTargetMissingError =>
+	verdict === "missing" ? new MoveTargetMissingError(targetCwd) : new MoveRefusedError(targetCwd, sourceCwd);

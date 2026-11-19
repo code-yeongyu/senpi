@@ -8,8 +8,9 @@ import { join } from "node:path";
 import type { Agent, AgentEvent, ToolHost } from "@earendil-works/pi-agent-core";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MAX_HANDED_PAGE_CHARACTERS } from "../../src/core/extensions/builtin/html-render/handed-pages.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import { MAX_HANDED_PAGE_CHARACTERS } from "../../src/extensions/html-render/handed-pages.ts";
+import { builtInExtensions } from "../../src/extensions/index.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHandSelection, type HandRow } from "../../src/modes/headless/hand-selection.ts";
 import { cleanupHands, type HandDirs, handDirs, openLink, startHand, toolCall } from "../hand/remote-hand-fixture.ts";
@@ -51,15 +52,16 @@ function handRewrite(pi: ExtensionAPI): void {
 }
 
 /**
- * A brain session (surface "app", no html-render loaded) and the hand selection that links it to an in-process hand.
- * `endRun` delivers the `agent_end` a run of the session would; `listeners` counts who listens for it.
+ * A brain session (surface "app", no html-render loaded; the hand runs it) and the hand selection that links it to an
+ * in-process hand running the built-ins and `handExtensions`. `endRun` delivers the `agent_end` a run of the session
+ * would; `listeners` counts who listens for it.
  */
 function brainOnHand(dirs: HandDirs, handExtensions: ((pi: ExtensionAPI) => void)[] = [handNote]) {
 	const selection = createHandSelection({
 		list: () => [ROW],
 		link: () => {
 			const link = openLink();
-			startHand(link, dirs, handExtensions);
+			startHand(link, dirs, [...builtInExtensions, ...handExtensions]);
 			return { transport: link.brain, placement: "split-local" };
 		},
 	});

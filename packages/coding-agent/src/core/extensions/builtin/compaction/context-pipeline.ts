@@ -62,15 +62,18 @@ export function buildCompactionContext(input: {
 		: native && input.breakerFallback && input.appendOnlyTranscript !== true
 			? reduceContextMessages(admittedMessages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages
 			: admittedMessages;
-	const emergency = input.laneOwnsCompaction
-		? { messages: sourceMessages, needsAggressiveCompaction: false }
-		: hardLimitEmergencyPrune(
-				sourceMessages,
-				managed && state.engaged
-					? Math.max(0, input.promptContextWindow - (input.contextOverheadTokens ?? 0))
-					: input.promptContextWindow,
-				input.emergencyPruneLatch,
-			);
+	// An append-only transcript already holds every message: dropping one diverges the sent stream and
+	// the lane re-sends the whole history as a cold seed (oh-my-openagent#14073). Compaction is its remedy.
+	const emergency =
+		input.appendOnlyTranscript === true
+			? { messages: sourceMessages, needsAggressiveCompaction: false }
+			: hardLimitEmergencyPrune(
+					sourceMessages,
+					managed && state.engaged
+						? Math.max(0, input.promptContextWindow - (input.contextOverheadTokens ?? 0))
+						: input.promptContextWindow,
+					input.emergencyPruneLatch,
+				);
 	// This is the ONE site that actually prunes, so the emergency_prune counter must be
 	// emitted here. Engagement shows up either as a rewritten message array or as
 	// needsAggressiveCompaction when nothing prunable remained.

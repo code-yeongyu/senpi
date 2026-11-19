@@ -1,5 +1,5 @@
-import { stat } from "fs/promises";
-import { basename, join } from "path";
+import { mkdir, stat } from "fs/promises";
+import { basename, dirname, join } from "path";
 import type { SessionSummary } from "./session-summary.ts";
 import type { SessionSummaryStore } from "./session-summary-cache.ts";
 import {
@@ -25,6 +25,8 @@ export const SESSION_SUMMARY_INDEX_MAX_BYTES = 256 * 1024 * 1024;
 
 export type SessionSummaryIndexOptions = {
 	readonly maxBytes?: number;
+	/** Keep the index file here instead of in the session directory (a store this engine only reads). */
+	readonly indexDir?: string;
 };
 
 type Recorded = {
@@ -102,7 +104,7 @@ export class SessionSummaryIndex implements SessionSummaryStore {
 	private readonly recorded: Recorded[] = [];
 
 	constructor(dir: string, options: SessionSummaryIndexOptions = {}) {
-		this.path = join(dir, SESSION_SUMMARY_INDEX_FILE);
+		this.path = join(options.indexDir ?? dir, SESSION_SUMMARY_INDEX_FILE);
 		this.maxBytes = options.maxBytes ?? SESSION_SUMMARY_INDEX_MAX_BYTES;
 	}
 
@@ -153,6 +155,7 @@ export class SessionSummaryIndex implements SessionSummaryStore {
 		const appendedBytes = appended.reduce((total, entry) => total + entry.lineBytes, 0);
 
 		try {
+			await mkdir(dirname(this.path), { recursive: true });
 			if (
 				(!loaded.usable && kept.length > 0) ||
 				(loaded.usable && loaded.entryBytes + appendedBytes > 2 * keptBytes)
