@@ -77,6 +77,7 @@ export function reopenParked(host: RouterContext, entry: HandoverParkedEntry): P
 		reply: false,
 		defaults: false,
 		contextOverlay: entry.contextOverlay,
+		unattached: true,
 		...(entry.live === true ? { continued: true } : {}),
 	});
 }
@@ -97,6 +98,8 @@ export async function open(
 		readonly park?: (opened: OpenRpcSession) => void;
 		/** A successor's reopen of a session that was live on its predecessor; never set from the wire. */
 		readonly continued?: boolean;
+		/** No connection asked for this open: it counts no attachment (the successor's restore). */
+		readonly unattached?: boolean;
 	},
 ): Promise<RpcResponse | undefined> {
 	const validated = validatedOpenProfile(host, command, options);
@@ -130,6 +133,8 @@ export async function open(
 				retainOnDisconnect: command.retain_on_disconnect === true,
 				attachOnly: command.expectedHostInstance !== undefined,
 				...(options?.park ? { speculative: true } : {}),
+				// The successor's restore has no requesting connection to own an attachment (senpi#7020).
+				...(options?.unattached === true ? { unattached: true } : {}),
 			},
 		);
 		timer.mark("registry_open");

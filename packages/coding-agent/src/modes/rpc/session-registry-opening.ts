@@ -72,7 +72,7 @@ export function buildOpeningEntry(input: {
 		sessionPath,
 		reservationKey: sessionPath,
 		cwd: storedProfile.cwd,
-		attachments: options?.speculative ? 0 : 1,
+		attachments: options?.speculative || options?.unattached ? 0 : 1,
 		retainOnDisconnect: options?.retainOnDisconnect === true,
 		lastCommandAt: input.now,
 		lifecycleMutex: Promise.resolve(),

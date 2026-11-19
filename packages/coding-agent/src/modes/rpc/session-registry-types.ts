@@ -151,6 +151,11 @@ export interface RpcSessionOpenOptions {
 	attachOnly?: boolean;
 	/** Keep the session alive when its last client disconnects (`open_session.retain_on_disconnect`). */
 	retainOnDisconnect?: boolean;
+	/**
+	 * No client asked for this open (a successor restoring its predecessor's sessions, senpi#7020): it counts no
+	 * attachment, since no connection could ever release one, and an attach it lands on is left as it is.
+	 */
+	unattached?: boolean;
 }
 
 /** One `list_sessions` row. `context` is published only to a listing that asked for workers. */
