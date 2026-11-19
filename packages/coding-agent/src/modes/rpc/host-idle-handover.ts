@@ -25,6 +25,7 @@
  * (`handover_in_progress`) until the pending operation ends.
  */
 import { type EngineBuildIdentity, olderEngineDetail } from "../../core/engine-build-identity.ts";
+import { installGoneReplaces } from "./host-install-rule.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 
 /**
@@ -95,6 +96,8 @@ export interface HostIdentityView {
 	readonly runtimeBuildId: string | undefined;
 	/** This host's own engine; a request for an older one is refused `older_engine` (senpi#7018). */
 	readonly engine?: EngineBuildIdentity;
+	/** Whether the runtime this host runs is still on disk; a request for its own build replaces it only when not (senpi#7086). */
+	readonly installPresent?: boolean;
 }
 
 export interface HostIdleHandoverOptions {
@@ -178,7 +181,7 @@ export class HostIdleHandover {
 				detail: `this host is ${self.instanceId} generation ${self.generation}`,
 			};
 		}
-		if (self.runtimeBuildId === request.targetRuntimeBuildId) {
+		if (self.runtimeBuildId === request.targetRuntimeBuildId && !installGoneReplaces(self.installPresent)) {
 			return { kind: "refused", reason: "already_current", detail: self.runtimeBuildId };
 		}
 		const downgrade = downgradeDetail(request, self.engine);

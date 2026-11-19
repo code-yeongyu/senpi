@@ -34,6 +34,7 @@ import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
 import { publishHostInstanceId } from "./host-identity-env.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
+import { runningInstallPath } from "./host-install.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { hostWatchdogBinding, internalHostTransport } from "./host-internal-transport.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
@@ -333,6 +334,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 		undefined,
 		{
 			...(runtimeBuildId === undefined ? {} : { runtimeBuildId }),
+			installPath: runningInstallPath(),
 			onSessionCountChange: (size) => trim.observe(size),
 		},
 	);
@@ -429,6 +431,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// them into its own registry (senpi#3282). Gate the reopen watch on not draining.
 			shouldReopenParked: () => !draining,
 			...(runtimeBuildId !== undefined && { runtimeBuildId }),
+			installPath: runningInstallPath(),
 			...(canHandOver && {
 				endpoint: {
 					agentDir: options.agentDir,

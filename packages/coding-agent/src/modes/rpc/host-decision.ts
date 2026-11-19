@@ -20,6 +20,7 @@
  * and says so instead.
  */
 import {
+	comparableEngines,
 	compareEngineOrdinal,
 	type EngineBuildIdentity,
 	engineIdentityOf,
@@ -31,6 +32,7 @@ import {
 	SESSION_KIND_CAPABILITY,
 } from "./custom-capability.ts";
 import { describeHostHolder, type HostHolder } from "./host-holder.ts";
+import { installGoneReplaces } from "./host-install-rule.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
 
@@ -113,7 +115,12 @@ export type HostDecision =
 			readonly upgradeable: boolean;
 			readonly warning?: HostDecisionWarning;
 	  }
-	| { readonly action: "handoff"; readonly reason: "newer_engine" | "profile"; readonly upgradeable: true };
+	| {
+			readonly action: "handoff";
+			/** `install_gone`: the host runs this client's engine from an install no longer on disk (senpi#7086). */
+			readonly reason: "newer_engine" | "profile" | "install_gone";
+			readonly upgradeable: true;
+	  };
 
 /** What a `never` policy can answer: it attaches, starts or refuses, and never touches a running host. */
 export type AttachOnlyDecision = Extract<HostDecision, { action: "start" | "reuse" | "refuse" }>;
@@ -232,7 +239,18 @@ export function decideHostAction(
 			upgradeable: true,
 		};
 	}
+	if (policy === "upgrade" && replacesGoneInstall(client, host)) {
+		return { action: "handoff", reason: "install_gone", upgradeable: true };
+	}
 	return { action: "reuse", reason: "compatible", upgradeable, ...(warning && { warning }) };
+}
+
+/** The same engine, serving from an install that is gone, and an extension set that covers the host's (senpi#7086). */
+function replacesGoneInstall(client: HostDecisionClient, host: HostProtocolInfo): boolean {
+	if (!installGoneReplaces(host.installPresent) || host.engineOrdinal === undefined) return false;
+	const running = engineIdentityOf(host.engineVersion ?? "", host.engineOrdinal);
+	if (!comparableEngines(client.identity, running) || compareEngineOrdinal(client.identity, running) !== 0) return false;
+	return covers(client.launchProfile, host.launch_profile);
 }
 
 /** A strictly newer build whose extensions cover everything the host loads - the only handoff candidate. */
