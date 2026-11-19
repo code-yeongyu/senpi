@@ -30,6 +30,7 @@ import {
 	upsertSlot,
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { readFile } from "fs/promises";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "path";
@@ -367,6 +368,35 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		}
 	}
 
+	/**
+	 * `writeAuthFile` for an async writer: on Windows a rename over a file another process holds open
+	 * fails with EPERM, EACCES or EBUSY until that handle closes, so wait it out between attempts,
+	 * within the async lock budget (#6849 review L4). Other errors, and every error elsewhere, throw.
+	 */
+	private async writeAuthFileWhenFree(content: string, checkLock: () => void, signal?: AbortSignal): Promise<void> {
+		const startedAt = Date.now();
+		for (let attempt = 0; ; attempt++) {
+			// Every attempt is made under the lock: one lost during a wait writes nothing (#6849 review L5).
+			checkLock();
+			try {
+				this.writeAuthFile(content);
+				return;
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code;
+				const held = process.platform === "win32" && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+				const waitedMs = Date.now() - startedAt;
+				if (!held || waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) throw error;
+				signal?.throwIfAborted();
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
+				);
+				await new Promise((resolve) => setTimeout(resolve, delayMs));
+			}
+		}
+	}
+
 	async withLockAsync<T>(
 		fn: (current: string | undefined) => Promise<LockResult<T>>,
 		options?: AuthOperationOptions,
@@ -397,7 +427,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			throwIfCompromised();
 			options?.signal?.throwIfAborted();
 			if (next !== undefined) {
-				this.writeAuthFile(next);
+				await this.writeAuthFileWhenFree(next, throwIfCompromised, options?.signal);
 			}
 			throwIfCompromised();
 			return result;
@@ -732,8 +762,9 @@ export class AuthStorage implements CredentialStore {
 
 	/**
 	 * True while the store has never loaded because every read found it locked, so the
-	 * in-memory credentials are an empty placeholder; `reload()` retries. A readable empty
-	 * store, or a busy read after a successful load, is not busy.
+	 * in-memory credentials are not the store's: empty, or auth.json as `readWhileBusy()` read it
+	 * without the lock; `reload()` retries. A readable empty store, or a busy read after a
+	 * successful load, is not busy.
 	 */
 	isCredentialStoreBusy(): boolean {
 		return this.dataFromBusyRead;
@@ -766,11 +797,32 @@ export class AuthStorage implements CredentialStore {
 
 	/**
 	 * Monotonic count of reads (sync or async) that found the store locked before it ever
-	 * loaded and answered with the empty placeholder. A change across an operation means
-	 * its credentials do not reflect the store.
+	 * loaded and answered from credentials that are not the store's (empty, or read without the
+	 * lock). A change across an operation means its credentials may not reflect the store.
 	 */
 	getBusyReadCount(): number {
 		return this.busyReads;
+	}
+
+	/**
+	 * While another process holds auth.json's lock and this store has never loaded, fills its credentials
+	 * from the file read without the lock, asynchronously and within the sync lock budget (#6841). Writes
+	 * replace the file by rename, so this sees a whole old or new store; it is never written back, and the
+	 * store stays busy, so the next read still takes the lock. A file that cannot be read in time, or does
+	 * not parse, leaves the credentials as they were. Like a locked read, the parse also refreshes the
+	 * store's notices and records a migration it had to skip.
+	 */
+	async readWhileBusy(): Promise<void> {
+		if (!this.dataFromBusyRead || this.dataLoaded || !this.authPath) return;
+		try {
+			const content = await readFile(this.authPath, {
+				encoding: "utf8",
+				signal: AbortSignal.timeout(FILE_STORAGE_SYNC_LOCK_BUDGET_MS),
+			});
+			if (this.dataFromBusyRead && !this.dataLoaded) this.data = this.parseStorageContent(content).data;
+		} catch {
+			// Unreadable, too slow or unparsable: keep what the store had.
+		}
 	}
 
 	private noteBusyFallback(error: unknown): void {
