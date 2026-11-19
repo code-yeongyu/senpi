@@ -36,43 +36,39 @@ function parkFor(agentDir: string, name: string, id: string): HandoverParkedEntr
 	return { sessionPath, durableSessionId: id, retainOnDisconnect: true, cwd: agentDir, parkedBy: "predecessor" };
 }
 
-it(
-	"reports the parks it has not reopened and a draining predecessor while it takes over, and nothing once done",
-	{ timeout: 30_000 },
-	async () => {
-		const agentDir = realpathSync(mkdtempSync(join(tmpdir(), "handover-marker-")));
-		dirs.push(agentDir);
-		const socket = join(agentDir, "host.sock");
-		const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
-		generationRecord(agentDir, socket, "predecessor", process.pid);
-		generationRecord(agentDir, socket, "successor", process.pid);
-		const first = parkFor(agentDir, "first", "70200000-0000-4000-8000-000000000001");
-		const second = parkFor(agentDir, "second", "70200000-0000-4000-8000-000000000002");
-		await recordHandoverParkedSession(daemonDir, first);
-		await recordHandoverParkedSession(daemonDir, second);
+it("reports the parks it has not reopened and a draining predecessor while it takes over, and nothing once done", async () => {
+	const agentDir = realpathSync(mkdtempSync(join(tmpdir(), "handover-marker-")));
+	dirs.push(agentDir);
+	const socket = join(agentDir, "host.sock");
+	const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
+	generationRecord(agentDir, socket, "predecessor", process.pid);
+	generationRecord(agentDir, socket, "successor", process.pid);
+	const first = parkFor(agentDir, "first", "70200000-0000-4000-8000-000000000001");
+	const second = parkFor(agentDir, "second", "70200000-0000-4000-8000-000000000002");
+	await recordHandoverParkedSession(daemonDir, first);
+	await recordHandoverParkedSession(daemonDir, second);
 
-		const seen: (InheritedHandover | undefined)[] = [];
-		let progress: InheritedHandover | undefined;
-		await reopenHandoverParkedSessions(
-			async (entry) => {
-				seen.push(progress);
-				if (entry.sessionPath === second.sessionPath) generationRecord(agentDir, socket, "predecessor", EXITED_PID);
+	const seen: (InheritedHandover | undefined)[] = [];
+	let progress: InheritedHandover | undefined;
+	await reopenHandoverParkedSessions(
+		async (entry) => {
+			seen.push(progress);
+			if (entry.sessionPath === second.sessionPath) generationRecord(agentDir, socket, "predecessor", EXITED_PID);
+		},
+		agentDir,
+		socket,
+		{
+			hostInstance: "successor",
+			onProgress: (state) => {
+				progress = state;
 			},
-			agentDir,
-			socket,
-			{
-				hostInstance: "successor",
-				onProgress: (state) => {
-					progress = state;
-				},
-			},
-		);
-		seen.push(progress);
+		},
+	);
+	seen.push(progress);
 
-		expect(seen[0]).toEqual({ pending: 2, predecessorDraining: true });
-		expect(seen.at(-1)).toBeUndefined();
-	},
-);
+	expect(seen[0]).toEqual({ pending: 2, predecessorDraining: true });
+	expect(seen.at(-1)).toBeUndefined();
+});
 
 it("list_sessions carries the takeover in progress as handover, and drops it once the takeover is done", async () => {
 	const router = new SessionCommandRouter(
