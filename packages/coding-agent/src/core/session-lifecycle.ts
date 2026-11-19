@@ -119,6 +119,15 @@ export class SessionLifecycleController {
 		return this.pendingHuman ? "human" : "automatic";
 	}
 
+	/**
+	 * The current run when this process started it, not the run the session file left current. `startRun` settles what the
+	 * previous run consumed, so this run's consumed custody is the only custody a run of this process holds.
+	 */
+	get runStartedHere(): string | undefined {
+		const runId = this.ledger.runId;
+		return runId === this.restoredRunId ? undefined : runId;
+	}
+
 	restoreComplete(): void {
 		this.ledger.releaseRestoreBarrier();
 		this.idleBoundaryPassed = true;
