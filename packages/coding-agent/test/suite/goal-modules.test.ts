@@ -187,7 +187,15 @@ describe("goal continuation prompt per receiving model", () => {
 	const goal = makeGoal({ objective: "Fix <bug> & ship", tokensUsed: 5, timeUsedSeconds: 12 });
 
 	it("drops the completion audit and usage lines for a GPT-6 Astra receiver while keeping the goal contract", () => {
-		for (const modelId of ["gpt-6-astra", "openai/gpt-6-astra-fast", "chatgpt-subscription/gpt-6-astra"]) {
+		// senpi#6975: the short form keys to the Astra family (any GPT-6 point release), not to two exact ids.
+		for (const modelId of [
+			"gpt-6-astra",
+			"openai/gpt-6-astra-fast",
+			"chatgpt-subscription/gpt-6-astra",
+			"gpt-6.2-astra",
+			"openai/gpt-6.2-astra-fast",
+			"chatgpt-subscription/gpt-6.2-astra",
+		]) {
 			const prompt = buildContinuationPrompt(goal, { modelId });
 			expect(prompt).toContain("<untrusted_objective>");
 			expect(prompt).toContain("Fix &lt;bug&gt; &amp; ship");
@@ -205,9 +213,12 @@ describe("goal continuation prompt per receiving model", () => {
 
 	it("renders every other receiver, and an unknown one, exactly as the unpinned prompt", () => {
 		const unpinned = buildContinuationPrompt(goal);
+		// senpi#6975: Sol and Luna of any release, and unknown Astra siblings, keep the audits.
 		for (const modelId of [
 			"gpt-6-sol",
 			"openai/gpt-6.1-sol",
+			"gpt-6.2-sol",
+			"gpt-6.2-sol-ultrafast",
 			"gpt-6-luna",
 			"claude-opus-5-5",
 			"kimi-k3",

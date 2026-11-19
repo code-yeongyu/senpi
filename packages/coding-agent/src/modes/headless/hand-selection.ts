@@ -14,7 +14,7 @@ import {
 	type Transport,
 } from "@earendil-works/pi-agent-core";
 import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
-import { withHandPageBudget } from "../../core/extensions/builtin/html-render/hand-page-budget.ts";
+import { withHandPageBudget } from "../../extensions/html-render/hand-page-budget.ts";
 import type { SessionManager } from "../../core/session-manager.ts";
 
 export interface HandRow {

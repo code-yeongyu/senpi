@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { inlineLocalImages } from "../../src/core/extensions/builtin/html-render/images.ts";
+import { inlineLocalImages } from "../../src/extensions/html-render/images.ts";
 
 // senpi#6915: show_html_page inlines the local images a page loads and refuses a page whose loaded image is
 // missing. Which paths count as loaded follows how a browser parses the page: only a loading context (src,

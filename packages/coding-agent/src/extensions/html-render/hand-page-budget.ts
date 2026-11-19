@@ -1,6 +1,6 @@
 import type { AgentEvent, AgentToolCall, ToolHost } from "@earendil-works/pi-agent-core";
 import type { JsonObject, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { PromptSurface } from "../../../dynamic-prompt/build.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
 import {
 	type HandedPageSession,
 	handedPageText,
@@ -30,6 +30,12 @@ interface PageDowngrade {
 	readonly details: JsonObject;
 }
 
+/** The part of a show_html_page result the budget reads and rewrites. */
+interface PageResult {
+	readonly content: ResultContent;
+	readonly details?: unknown;
+}
+
 // A hand's result details arrive JSON-decoded over the hand link, so an object there is a JSON object.
 const isJsonObject = (value: unknown): value is JsonObject =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
@@ -38,21 +44,17 @@ const isJsonObject = (value: unknown): value is JsonObject =>
  * A hand (brain/hand split) runs show_html_page without the session's transcript, so it holds a page to the per-page
  * cap alone. This wraps the brain's ToolHost for that hand and applies the session's page budget to each page the hand
  * hands back, before its result is emitted or recorded: a page over the budget is handed as written, its own text saying
- * so, and whatever the hand's `tool_result` handlers added stays (senpi#6921, senpi#6928). The wrapper holds the pages it
- * let through until they are recorded, so that ledger ends with the session's link to the hand, never with the host.
+ * so, and whatever the hand's `tool_result` handlers added stays (senpi#6921, senpi#6928).
  */
 export function withHandPageBudget(host: ToolHost, session: HandPageBudgetSession): ToolHost {
+	// A hand is installed only between runs, so this ledger never outlives the pages it holds by more than one run.
 	const pending: PendingHandedPages = new Map();
 	return {
 		...(host.deviceFiles === undefined ? {} : { deviceFiles: host.deviceFiles.bind(host) }),
 		async execute(call, options) {
 			// One decision per call: the result's tool_execution_end, its message events and the returned message agree.
 			const decisions = new Map<string, PageDowngrade | undefined>();
-			const budgeted = (
-				toolCallId: string,
-				toolName: string,
-				result: { readonly content: ResultContent; readonly details?: unknown },
-			): PageOverride | undefined => {
+			const budgeted = (toolCallId: string, toolName: string, result: PageResult): PageOverride | undefined => {
 				if (toolName !== SHOW_HTML_PAGE_NAME) return undefined;
 				if (!decisions.has(toolCallId))
 					decisions.set(toolCallId, overBudget(call.calls, toolCallId, result.details, session, pending));
@@ -74,11 +76,7 @@ export function withHandPageBudget(host: ToolHost, session: HandPageBudgetSessio
 
 function budgetedEvent(
 	event: AgentEvent,
-	budgeted: (
-		toolCallId: string,
-		toolName: string,
-		result: { readonly content: ResultContent; readonly details?: unknown },
-	) => PageOverride | undefined,
+	budgeted: (toolCallId: string, toolName: string, result: PageResult) => PageOverride | undefined,
 ): AgentEvent {
 	if (event.type === "tool_execution_end") {
 		const override = budgeted(event.toolCallId, event.toolName, event.result);

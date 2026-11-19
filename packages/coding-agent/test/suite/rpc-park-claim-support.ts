@@ -28,7 +28,7 @@ export async function parkClaimHost() {
 		createRuntime: async (options) => {
 			builds++;
 			await buildGate?.promise;
-			new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+			await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 			const h = await createHarness({
 				cwd: options.cwd,
 				sessionManager: options.sessionManager,

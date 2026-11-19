@@ -41,6 +41,7 @@ describe("multi-session RPC protocol info", () => {
 					"effect_ledger",
 					"subscription_limits",
 					"resolve_path",
+					"find_session", // senpi#6429: which session file carries a durable id, read-only.
 					"steer_when_idle",
 					"continue_from_leaf",
 					"eval_cells",
@@ -66,6 +67,7 @@ describe("multi-session RPC protocol info", () => {
 					"same_account_delegation_v1",
 					"machine_op_v1", // senpi#6752: the local relay host's device ops run in the engine.
 					"unload_session",
+					"unload_refuse_deliveries", // senpi#7004: an unload can refuse to drop a busy session's unwritten deliveries.
 					"move_session",
 					"move_session_revoke",
 					"move_session_copy",
@@ -89,6 +91,7 @@ describe("multi-session RPC protocol info", () => {
 					"prompt_surface",
 					"prompt_surface_chat",
 					"browser_engine",
+					"host_tools", // senpi#5045: sessions attach show_html_page through the SDK, so an app may serve it.
 					"session_env",
 					"retry_fallback_profile",
 					"permission_preset_accept_edits",
