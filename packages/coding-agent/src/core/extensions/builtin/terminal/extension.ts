@@ -179,9 +179,11 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	// A full stop (oh-my-openagent#14390): every session and watch ends, and the restore manifest is emptied so a
 	// reopen brings none of them back (the same record a graceful close leaves).
 	pi.on("session_stop", async () => {
+		const described = new Map(state.bundle?.backgroundSnapshot().map((entry) => [entry.id, entry.description]));
 		const { monitors, shells } = await stopAllTerminalWork(toolCtx);
 		await state.manifestWriter?.recordClosed();
-		return { stopped: [...monitors, ...shells], failed: [] };
+		const named = shells.map((shell) => ({ ...shell, label: described.get(shell.id) ?? shell.label }));
+		return { stopped: [...monitors, ...named], failed: [] };
 	});
 
 	pi.on("session_start", async (event, ctx) => {
