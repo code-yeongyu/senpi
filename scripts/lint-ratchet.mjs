@@ -85,6 +85,9 @@ const sorted = (counts) =>
 
 // The tracked JS/TS sources (never built bundles or vendored output), linted with only the ratcheted rules.
 const SOURCE = /\.(?:[cm]?[jt]s|tsx)$/;
+// oxlint never lints a minified file (it skips `*.min.*` sources by name), so the vendored export-html
+// bundles were never counted; they are excluded here instead of showing up as skipped.
+const MINIFIED = /\.min\.(?:[cm]?[jt]s|tsx)$/;
 const CONFIG = "scripts/lint-ratchet.oxlintrc.json";
 
 const run = (root, command, args) =>
@@ -97,7 +100,7 @@ export const lint = (root) => {
   if (listed.status !== 0) throw new Error(`git ls-files failed: ${listed.stderr}`);
   const files = listed.stdout
     .split("\0")
-    .filter((file) => SOURCE.test(file))
+    .filter((file) => SOURCE.test(file) && !MINIFIED.test(file))
     // A tracked path missing on disk (an unchecked-out submodule) is not linted either.
     .filter((file) => NodeFS.existsSync(NodePath.join(root, file)));
   const diagnostics = [];
