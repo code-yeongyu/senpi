@@ -84,6 +84,7 @@ const PROMPTING_SCHEMAS = {
 		mode: Opt(literals("continue", "release")),
 		message: OptStr,
 		effectId: OptId,
+		unlessStopped: OptBool,
 	}),
 	append_user_message: session("append_user_message", { content: Type.Unknown() }),
 	append_session_entry: session("append_session_entry", { entry: Type.Unknown() }),

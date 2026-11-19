@@ -87,6 +87,17 @@ A repeated `effectId` answers the recorded outcome with `replayed: true` and res
 reopen. A session with nothing held answers
 `not_paused`; a task child held only for its parent's run answers `resume_through_parent` with `parentSessionId`.
 
+`unlessStopped: true` is for a resume another session or a tool asks for, not a person (senpi#7016): while a person's
+Stop or a parent's run hold is live it answers `resumed: false, reason: "stopped"` and releases nothing, so only the
+person resumes their Stop. Otherwise it resumes exactly as the bare form does. This is the sanctioned remote resume of
+a session reopened after an interrupted run: open it (`open_session`), then send
+`{"type":"resume_session","sessionId":"...","expectedSeq":<pauseSeq from open_session.state>,"unlessStopped":true}`.
+
+A reopened session is held as interrupted only when its file shows a run that was still in flight: a run recorded
+active whose transcript does not end in an assistant answer that asks for no tool call (a tool call without its result,
+a tool result, or input after the answer). A run whose answer was written ends there, even when its process was killed
+(SIGKILL included) before the idle record cleared `runActive`, so it reopens without the interrupted-run hold.
+
 ```json
 {"type":"response","command":"resume_session","success":true,"data":{"resumed":true,"pauseSeq":3,"turnStarted":true,"deliveredNotices":2,"deliveredHeldInputs":1}}
 ```
