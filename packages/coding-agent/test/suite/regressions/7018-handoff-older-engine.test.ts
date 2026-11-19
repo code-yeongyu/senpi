@@ -76,7 +76,7 @@ function directHandoff(host: HandoverRig, options: { successorEngine: EngineBuil
 		...options,
 		_test: {
 			launch: supervisorLaunch,
-			readinessTimeoutMs: 60_000,
+			readinessTimeoutMs: 20_000,
 			afterSpawn: async () => {
 				spawned = true;
 			},
@@ -97,7 +97,7 @@ describe.skipIf(process.platform === "win32")("a handoff onto a newer engine", (
 		expect(result).toMatchObject({ action: "refuse", reason: "older_engine" });
 		expect(handoff.spawned()).toBe(false);
 		await expectServing(host, caller, sessionId);
-	}, 180_000);
+	});
 
 	it("refuses an idle handover to an older engine, and to a requester that does not state its engine", async () => {
 		const host = await rig("oe-idle");
@@ -114,7 +114,7 @@ describe.skipIf(process.platform === "win32")("a handoff onto a newer engine", (
 		expect(older).toMatchObject({ refused: "older_engine" });
 		expect(unstated).toMatchObject({ refused: "older_engine" });
 		await expectServing(host, caller, sessionId);
-	}, 180_000);
+	});
 
 	it("hands over to an older engine when the caller explicitly allows the downgrade", async () => {
 		const host = await rig("oe-allow");
@@ -124,7 +124,7 @@ describe.skipIf(process.platform === "win32")("a handoff onto a newer engine", (
 		expect(result).toMatchObject({ action: "handoff" });
 		if (result.action === "handoff") pids.push(result.pid);
 		expect((await probeHost({ socket: host.qa.socket }))?.instanceId).not.toBe(host.instanceId);
-	}, 180_000);
+	});
 
 	it("hands over to an idle-handover requester that allows the downgrade", async () => {
 		const host = await rig("oe-idle-allow");
@@ -138,18 +138,17 @@ describe.skipIf(process.platform === "win32")("a handoff onto a newer engine", (
 		);
 
 		expect(answer).toMatchObject({ state: "handover_completed" });
-	}, 180_000);
+	});
 
-	it("still upgrades: a newer or equal successor engine hands over", async () => {
-		const newer = await rig("oe-upgrade");
-		const equal = await rig("oe-equal");
+	it.each([
+		["a newer", NEWER],
+		["an equal", engineBuildIdentity()],
+	])("still hands over to %s successor engine", async (_label, successorEngine) => {
+		const host = await rig("oe-upgrade");
 
-		const upgraded = await directHandoff(newer, { successorEngine: NEWER }).result;
-		const same = await directHandoff(equal, { successorEngine: engineBuildIdentity() }).result;
+		const result = await directHandoff(host, { successorEngine }).result;
 
-		for (const result of [upgraded, same]) {
-			expect(result).toMatchObject({ action: "handoff" });
-			if (result.action === "handoff") pids.push(result.pid);
-		}
-	}, 240_000);
+		expect(result).toMatchObject({ action: "handoff" });
+		if (result.action === "handoff") pids.push(result.pid);
+	});
 });
