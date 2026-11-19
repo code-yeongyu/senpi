@@ -1862,6 +1862,10 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    reopen does: they wait as notices, its running turn is its last on this generation, and it parks once
    that turn settles. A person's input or `resume_session` releases the hold after the reopen. A session a
    client is still attached to keeps its automatic turns.
+   While the successor is still taking over (parks it has not reopened yet, or a predecessor that still runs),
+   its `list_sessions` answer carries `handover: { pending, predecessor_draining }` beside `sessions`: the
+   listing is not yet the endpoint's whole set, so a reader must not treat a missing session as gone. The field
+   is absent once the takeover is done (senpi#7020).
 
 Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 

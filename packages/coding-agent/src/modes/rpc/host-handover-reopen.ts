@@ -42,6 +42,17 @@ export interface ReopenHolder {
 	readonly hostInstance: string;
 	readonly hostSocket?: string;
 	readonly shouldReopen?: () => boolean;
+	/**
+	 * senpi#7020: what this host is still taking over after each pass (the parks not yet reopened, a predecessor still
+	 * draining), and `undefined` once nothing is, so `list_sessions` can say its answer is not the whole set yet.
+	 */
+	readonly onProgress?: (state: InheritedHandover | undefined) => void;
+}
+
+/** A takeover in progress: inherited parks not yet reopened, and whether a predecessor generation still runs. */
+export interface InheritedHandover {
+	readonly pending: number;
+	readonly predecessorDraining: boolean;
 }
 
 /**
@@ -77,6 +88,13 @@ export async function reopenHandoverParkedSessions(
 	const reopenAttempts = new Map<string, number>();
 	const heldPolls = new Map<string, number>();
 	const writerAlive = residentWriterProbe();
+	// What a listing reads meanwhile (senpi#7020): the parks still to reopen and whether a predecessor still runs.
+	const report = async (pending: number): Promise<void> => {
+		if (holder?.onProgress === undefined) return;
+		const predecessorDraining = await predecessorAlive(paths, holder.hostInstance);
+		holder.onProgress(pending > 0 || predecessorDraining ? { pending, predecessorDraining } : undefined);
+	};
+	const done = (): void => holder?.onProgress?.(undefined);
 	let emptyStreak = 0;
 	let sawAnyPark = false;
 	let waitedOnPredecessor = false;
@@ -86,14 +104,16 @@ export async function reopenHandoverParkedSessions(
 		// its successor: stop consuming the record and leave every entry for the next generation
 		// (senpi#3282). The watch returns, the record persists, and the successor's own watch reopens
 		// it by path with the same durable id.
-		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
+		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return done();
 		const parked = await inheritedParks(daemonDir, holder, writerAlive);
+		await report(parked.length);
 		for (const entry of parked) {
 			sawAnyPark = true;
 			await reopenOne(daemonDir, open, entry, reopenAttempts, heldPolls, holder);
 		}
 		const remaining = (await inheritedParks(daemonDir, holder, writerAlive)).length;
-		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
+		await report(remaining);
+		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return done();
 		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
 		const settled = (sawAnyPark && emptyStreak >= HANDOVER_PARKED_REOPEN_QUIET_STREAK) || Date.now() >= deadline;
 		if (!settled) {
@@ -112,7 +132,7 @@ export async function reopenHandoverParkedSessions(
 			finalPass = true;
 			continue;
 		}
-		return;
+		return done();
 	}
 }
 
