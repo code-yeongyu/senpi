@@ -28,6 +28,7 @@ import {
 	OBSERVE_READS_CAPABILITY,
 	SESSION_STATUS_CAPABILITY,
 	TUI_OBSERVER_CAPABILITY,
+	UNLOAD_GRACEFUL_CAPABILITY,
 } from "../rpc/custom-capability.ts";
 import { answerGetEntries } from "../rpc/get-entries-command.ts";
 import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
@@ -36,6 +37,7 @@ import { RPC_ERROR_INVALID_ARGUMENT } from "../rpc/rpc-error-types.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
 import { sessionUiAnswerLedger } from "../rpc/ui-answer-ledger.ts";
 import type { ControlAttachments } from "./session-control-attach.ts";
+import { closeTerminalGracefully } from "./session-control-close.ts";
 import type { ControlFeed } from "./session-control-feed.ts";
 import { runTuiRpcCommand, TUI_RPC_COMMANDS } from "./session-control-rpc-commands.ts";
 import { type ControlCommand, type ControlConnection, failure, success } from "./session-control-server.ts";
@@ -52,6 +54,8 @@ export interface TuiControlSurface extends TuiSessionControls {
 	pendingQuestion(requestId: string): Pick<QuestionRequest, "questions"> | undefined;
 	answerQuestion(requestId: string, response: QuestionResponse): boolean;
 	notice(line: string): void;
+	/** A graceful close ended the session (oh-my-openagent#14313): the terminal exits as a person's quit would. */
+	closeSession(): void;
 }
 
 export interface ControlCommandContext {
@@ -77,6 +81,7 @@ const TUI_CONTROL_COMMANDS = [
 	"subscribe",
 	"wake",
 	"extension_ui_response",
+	"unload_session",
 	...SESSION_CONTROL_COMMANDS,
 	...TUI_RPC_COMMANDS,
 ];
@@ -102,6 +107,7 @@ export async function runControlCommand(
 					ENTRIES_TAIL_CAPABILITY,
 					"snapshot_cursor",
 					"ui_answer_ledger",
+					UNLOAD_GRACEFUL_CAPABILITY,
 				],
 				mode: "tui",
 				endpoint_kind: "tui",
@@ -164,6 +170,8 @@ export async function runControlCommand(
 		}
 		case "extension_ui_response":
 			return answerQuestion(context, command);
+		case "unload_session":
+			return closeTerminalGracefully(context, connection, command);
 		default: {
 			const rpc = await runTuiRpcCommand(context, connection, command);
 			if (rpc !== undefined) return rpc;

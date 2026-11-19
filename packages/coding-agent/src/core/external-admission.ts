@@ -82,6 +82,11 @@ export class ExternalAdmission {
 		return this.turnEpochValue;
 	}
 
+	/** Why admission is closed (a release or a graceful close took the session); `undefined` while it admits. */
+	get closed(): string | undefined {
+		return this.closedReason;
+	}
+
 	get hasInputWork(): boolean {
 		return this.inputHolds.size > 0;
 	}

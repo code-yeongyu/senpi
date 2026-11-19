@@ -119,6 +119,7 @@ import { envValue } from "./brand.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
 import { isTurnRetryableFailure, TURN_RETRY_SUPPRESSION_PREFIX } from "./turn-retry-eligibility.ts";
 import { BridgedCallKeys } from "./session-call-keys.ts";
+import { CLOSING_HOLD_KEY, SESSION_CLOSED_ENTRY, type SessionClosedRecord } from "./session-closed.ts";
 import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
 import {
@@ -1796,6 +1797,7 @@ export class AgentSession {
 	private _userAbortGeneration = 0;
 	/** Set when clearQueue({ abortWillFollow: true }) drains queues immediately before abort(). */
 	private _hadClearedQueuedMessages = false;
+	private _closedOnRequest = false;
 	private _extensionEventSignal: AbortSignal | undefined = undefined;
 
 	// Bash execution state
@@ -8421,6 +8423,33 @@ export class AgentSession {
 	 */
 	holdAutomaticTurns(): void {
 		this._engineTurnHold.addHold("unattended");
+	}
+
+	/**
+	 * A graceful close drains the running turn (oh-my-openagent#14313): automatic turns (monitor, goal, loop wakes) wait
+	 * as notices meanwhile, so the running turn is the session's last. The close releases the hold again whether it
+	 * ends the session or gives up, so a reopen never replays it as a pause.
+	 */
+	holdForClose(): void {
+		this._engineTurnHold.addHold("unattended", { key: CLOSING_HOLD_KEY });
+	}
+
+	releaseCloseHold(): void {
+		this._engineTurnHold.release([CLOSING_HOLD_KEY], "session_close");
+	}
+
+	/** Set by `recordClosedOnRequest`: the teardown's `session_shutdown` then carries `closed: true`. */
+	get closedOnRequest(): boolean {
+		return this._closedOnRequest;
+	}
+
+	/**
+	 * A graceful close ended this session on request (oh-my-openagent#14313): its `session-closed` entry is the clean-stop
+	 * record, and the teardown tells extensions to stop the work they would otherwise restore on a reopen.
+	 */
+	recordClosedOnRequest(record: SessionClosedRecord): void {
+		this._closedOnRequest = true;
+		this._emitEntryAppended(this.sessionManager.appendCustomEntry(SESSION_CLOSED_ENTRY, record));
 	}
 
 	/** A parent's Stop reaching this child (senpi#3811): hold every automatic turn until the parent's run Resume. */
