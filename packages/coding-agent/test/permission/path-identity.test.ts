@@ -671,9 +671,12 @@ describe("alias detector: zero false negatives against native (design 5.4, 11.1.
 				try {
 					nativeAlias = oracle(path) !== path;
 				} catch {}
-				const started = performance.now();
+				// CPU time, not wall time: time spent waiting for a core on a loaded host is not detector cost
+				// (senpi#7022: 107 ms wall p95 at load 47 on 14 cores).
+				const started = process.cpuUsage();
 				const verdict = detector(path);
-				durations.push(performance.now() - started);
+				const spent = process.cpuUsage(started);
+				durations.push((spent.user + spent.system) / 1000);
 				if (!nativeAlias && verdict.alias && !overBudget(verdict.reasons))
 					falsePositives.push(`${path} [${verdict.reasons.join(",")}]`);
 			}
