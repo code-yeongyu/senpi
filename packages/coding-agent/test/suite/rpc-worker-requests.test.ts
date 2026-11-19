@@ -180,4 +180,4 @@ it("a message from the worker restarts the client's no-progress deadline", async
 		client.quarantine();
 		await client.exited;
 	}
-}, 60_000);
+});

@@ -175,4 +175,4 @@ it("an open naming a quarantined session is refused until its worker really exit
 		}
 		await host.dispose();
 	}
-}, 60_000);
+});
