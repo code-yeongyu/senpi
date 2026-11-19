@@ -3168,9 +3168,14 @@ holds the host this way while at least one remote viewer is attached, and releas
 held observer is occupancy everywhere occupancy is read: the idle-exit window, the empty-host exit, and the
 owner-death quiescence check. Hosts that predate the field ignore it and treat the read as a plain observing read.
 
-A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
-id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
-on every socket request. When a connection's first non-observing request names the host's own generation, the
+A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host keeps its generation
+id (`SENPI_RPC_HOST_INSTANCE_ID`) in its own environment (a socket host that named itself writes it there at start),
+and every child it starts for an agent (shells, eval kernels, the tool child) gets it as
+`SENPI_RPC_ORIGIN_HOST_INSTANCE` instead, so a nested host never adopts it as its own identity (senpi#7034). The
+host's other launch hand-off (daemon directory, generation, build id, watch binding, key sentinel and its
+launch-default `SENPI_RPC_CLIENT_CAPABILITIES`) never reaches those children. `RpcClient` sends whichever of the two
+ids it has as `"origin_host_instance"` on every socket request. When a connection's first non-observing request
+names the host's own generation, the
 connection neither holds the window open, nor blocks the owner-death grace, nor keeps an empty host alive. Without
 this, a task tree whose children open their own children on the shard they run in (omo's `p` shards are keyed by the
 root session) keeps that shard alive through its own connections after the owner and every outside client are gone.
