@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { before, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -94,31 +94,48 @@ it("counts a disable comment that names one of the senpi-testing rules", () => {
   assert.equal(countSuppressions("probe.ts", source), 2);
 });
 
-// The ratchet's own lint run, on a scratch repo whose .eslintignore lists a violating test: oxlint
-// honours that file unless told not to, which would drop the test's counts without any rise.
-let ignoredRepoCounts = {};
+// The ratchet's own lint run in a scratch git repo that reuses this repo's oxlint and plugin, with a
+// violating test beside a copy of the ratchet config (a config's ignorePatterns resolve in its own
+// directory). Listed in .eslintignore, the test is still counted; hidden by the config's
+// ignorePatterns, which --no-ignore does not reach, it is reported as skipped instead of as zero.
+let listedInEslintignore;
+let hiddenByIgnorePatterns;
 before(
   () => {
-    const dir = mkdtempSync(join(tmpdir(), "senpi-lint-ratchet-ignore-"));
+    const repo = fileURLToPath(new URL("../", import.meta.url));
+    const scratch = mkdtempSync(join(tmpdir(), "senpi-lint-ratchet-ignore-"));
     try {
-      const repo = fileURLToPath(new URL("../", import.meta.url));
-      for (const entry of ["node_modules", "scripts"]) symlinkSync(join(repo, entry), join(dir, entry), "dir");
-      const source = 'import { mock } from "bun:test";\nmock.module("./dep", () => ({}));\n';
-      for (const file of ["hidden.test.ts", "visible.test.ts"]) writeFileSync(join(dir, file), source);
-      writeFileSync(join(dir, ".eslintignore"), "hidden.test.ts\n");
+      const config = join(scratch, "scripts/lint-ratchet.oxlintrc.json");
+      const shipped = JSON.parse(readFileSync(join(repo, "scripts/lint-ratchet.oxlintrc.json"), "utf8"));
+      mkdirSync(dirname(config), { recursive: true });
+      for (const entry of ["node_modules", "scripts/oxlint"]) symlinkSync(join(repo, entry), join(scratch, entry), "dir");
+      writeFileSync(config, JSON.stringify(shipped));
+      writeFileSync(
+        join(scratch, "scripts/hidden.test.ts"),
+        'import { mock } from "bun:test";\nmock.module("./dep", () => ({}));\n',
+      );
+      writeFileSync(join(scratch, "clean.ts"), "export const clean = 1;\n");
+      writeFileSync(join(scratch, ".eslintignore"), "scripts/hidden.test.ts\n");
       for (const args of [["init", "-q"], ["add", "--", "."]])
-        assert.equal(spawnSync("git", args, { cwd: dir }).status, 0);
-      ignoredRepoCounts = lint(dir).counts;
+        assert.equal(spawnSync("git", args, { cwd: scratch }).status, 0);
+      listedInEslintignore = lint(scratch);
+      writeFileSync(config, JSON.stringify({ ...shipped, ignorePatterns: ["hidden.test.ts"] }));
+      hiddenByIgnorePatterns = lint(scratch);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(scratch, { recursive: true, force: true });
     }
   },
   { timeout: 60_000 },
 );
 
-it("still counts a file that an ignore file lists", () => {
-  assert.deepEqual(ignoredRepoCounts, {
-    "hidden.test.ts": { "senpi-testing/no-module-mock": 1 },
-    "visible.test.ts": { "senpi-testing/no-module-mock": 1 },
+it("still counts a violating file that .eslintignore lists", () => {
+  assert.deepEqual(listedInEslintignore, {
+    counts: { "scripts/hidden.test.ts": { "senpi-testing/no-module-mock": 1 } },
+    unparsed: [],
+    skipped: 0,
   });
+});
+
+it("reports a file hidden by the ratchet config's ignorePatterns as skipped, not as zero findings", () => {
+  assert.deepEqual(hiddenByIgnorePatterns, { counts: {}, unparsed: [], skipped: 1 });
 });
