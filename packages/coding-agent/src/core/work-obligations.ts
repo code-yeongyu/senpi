@@ -235,12 +235,15 @@ export class SessionWorkObligations implements WorkObligations {
 	/**
 	 * At restoration, a consumed delivery of any run other than the restored current one belongs to a run that ended:
 	 * its message is already in the conversation, so it settles as `idle()` would have (senpi#4848). The current run's
-	 * consumed custody stays for crash recovery and `startRun`. With no recorded run nothing proves the consuming run
-	 * ended, so crash recovery keeps all of it.
+	 * consumed custody stays for crash recovery and `startRun`, unless the transcript holds that run's end
+	 * (`currentRunEnded`, senpi#7016). With no recorded run nothing proves the consuming run ended, so crash recovery
+	 * keeps all of it.
 	 */
-	settleEndedRuns(currentRunId: string | undefined): void {
+	settleEndedRuns(currentRunId: string | undefined, currentRunEnded: boolean): void {
 		if (currentRunId === undefined) return;
-		const ended = this.active.filter((record) => record.state === "consumed" && record.runId !== currentRunId);
+		const ended = this.active.filter(
+			(record) => record.state === "consumed" && (record.runId !== currentRunId || currentRunEnded),
+		);
 		for (const record of ended) this.install({ ...record, state: "settled" });
 		if (ended.length > 0) this.store.changed();
 	}

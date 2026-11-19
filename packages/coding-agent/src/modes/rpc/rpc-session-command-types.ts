@@ -66,6 +66,8 @@ export type RpcSessionCommand =
 			mode?: "continue" | "release";
 			message?: string;
 			effectId?: string;
+			/** Answer `stopped` and resume nothing while a person's Stop or a parent's run hold is live (senpi#7016). */
+			unlessStopped?: boolean;
 	  }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }

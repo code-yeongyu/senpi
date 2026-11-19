@@ -1476,6 +1476,7 @@ export function createRpcConnectionHandler(
 					mode: command.mode,
 					message: command.message,
 					effectId: command.effectId,
+					unlessStopped: command.unlessStopped,
 				});
 				promptCalls.add(settled);
 				void settled.then(
