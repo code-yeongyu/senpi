@@ -1150,8 +1150,6 @@
       "packages/coding-agent/src/modes/rpc/rpc-public-key.ts": ["checkRpcKeyDirectory"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_EMPTY_TEXT, RPC_ERROR_HOST_MEMORY_PRESSURE, RPC_ERROR_HOST_STOPPING, RPC_ERROR_INVALID_SESSION_ID, RPC_ERROR_SESSION_BUSY_LIFECYCLE (+6 more)
       "packages/coding-agent/src/modes/rpc/rpc-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STREAMING"],
-      // pre-existing at origin main aceb1cc1d9: unused exports loadedRuntimeSource
-      "packages/coding-agent/src/modes/rpc/runtime-build-id.ts": ["loadedRuntimeSource"],
       // pre-existing at origin main aceb1cc1d9: unused exports SESSION_CONTEXT_PATCH_LIMITS, RESERVED_SESSION_CONTEXT_KEYS
       "packages/coding-agent/src/modes/rpc/session-context-patch.ts": ["RESERVED_SESSION_CONTEXT_KEYS", "SESSION_CONTEXT_PATCH_LIMITS"],
       // pre-existing at origin main aceb1cc1d9: unused exports RELEASE_SETTLE_MS
