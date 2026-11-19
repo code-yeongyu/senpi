@@ -434,7 +434,7 @@ import {
 	type RunBackgroundStopOutcome,
 } from "./run-background-jobs.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
-import { HOST_DRAIN_HOLD_KEY, restartRelease } from "./host-restart-continuation.ts";
+import { HOST_DRAIN_HOLD_KEY, restartHoldData, restartRelease } from "./host-restart-continuation.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { SecurityNoticeSnapshot } from "./security-notices.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
@@ -8678,6 +8678,12 @@ export class AgentSession {
 		return this._engineTurnHold.holds;
 	}
 
+	/** The interrupted-run hold; on a reopen after a restart it names why a cut continuation stays held (senpi#7079). */
+	private _addInterruptedRunHold(): void {
+		const data = restartHoldData(this._sessionStartEvent.continued === true, () => this.sessionManager.getBranch());
+		this._engineTurnHold.addHold("session_hold", { key: "interrupted-run", ...(data === undefined ? {} : { data }) });
+	}
+
 	/**
 	 * An automatic send that would start a turn while the previous run is interrupted waits for a person (senpi#4683):
 	 * it joins the interrupted-run hold as a notice that Resume or the next message delivers. Refused as a turn it was
@@ -8687,7 +8693,7 @@ export class AgentSession {
 		if (options?.triggerTurn !== true || this.isStreaming) return false;
 		if (!this._lifecycleBinding.controller.requiresHumanContinuation) return false;
 		if (this._engineTurnHold.getHold("interrupted-run") === undefined) {
-			this._engineTurnHold.addHold("session_hold", { key: "interrupted-run" });
+			this._addInterruptedRunHold();
 			this._extensionRunner
 				.getUIContext()
 				.notify(
@@ -12432,8 +12438,7 @@ export class AgentSession {
 			this._applyExtensionBindings(this._extensionRunner);
 			// Opening a session is not explicit Resume. Install the same hold used by Stop before
 			// session_start producers run, so automatic work waits quietly in notice custody.
-			if (this._lifecycleBinding.controller.requiresHumanContinuation)
-				this._engineTurnHold.addHold("session_hold", { key: "interrupted-run" });
+			if (this._lifecycleBinding.controller.requiresHumanContinuation) this._addInterruptedRunHold();
 			this._engineTurnHold.start();
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit({

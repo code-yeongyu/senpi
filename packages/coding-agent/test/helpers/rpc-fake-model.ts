@@ -12,6 +12,8 @@ export interface FakeModelRequest {
 	readonly text: string;
 	/** The newest text block of the request's last message. */
 	readonly latest: string;
+	/** The text of the tool results the request's last message carries. */
+	readonly latestToolResult: string;
 }
 
 export interface FakeModelServer {
@@ -144,6 +146,15 @@ function writeAnthropicToolUseSse(res: ServerResponse, model: string): void {
 	res.end();
 }
 
+function latestToolResultText(body: unknown): string {
+	const last = isRecord(body) && Array.isArray(body.messages) ? body.messages.at(-1) : undefined;
+	const content = isRecord(last) ? last.content : undefined;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((part: unknown) => (isRecord(part) && part.type === "tool_result" ? textFromContent(part.content) : ""))
+		.join("\n");
+}
+
 /** The newest text block: consecutive user messages may arrive merged into one message with several blocks. */
 function latestText(body: unknown): string {
 	const last = isRecord(body) && Array.isArray(body.messages) ? body.messages.at(-1) : undefined;
@@ -157,12 +168,14 @@ export async function startFakeModelServer(
 		multiDelta?: boolean;
 		/** Never answer a request whose newest text block contains this text (the turn stays open until close). */
 		holdOnLastMessage?: string;
+		/** Never answer a request this matches (the turn stays open until close or `releaseHeld`). */
+		holdWhen?: (request: FakeModelRequest) => boolean;
 	} = {},
 ): Promise<FakeModelServer> {
 	const requests: FakeModelRequest[] = [];
 	const waiters = new Set<(request: FakeModelRequest) => void>();
 	const held: Array<() => void> = [];
-	let holding = options.holdOnLastMessage !== undefined;
+	let holding = options.holdOnLastMessage !== undefined || options.holdWhen !== undefined;
 	const server = createServer((req, res) => {
 		const chunks: Buffer[] = [];
 		req.on("data", (chunk: Buffer) => {
@@ -179,14 +192,15 @@ export async function startFakeModelServer(
 				apiKeyHeader: typeof req.headers["x-api-key"] === "string" ? req.headers["x-api-key"] : undefined,
 				text,
 				latest: latestText(body),
+				latestToolResult: latestToolResultText(body),
 			};
 			requests.push(request);
 			for (const waiter of waiters) waiter(request);
 			if (req.url?.includes("/messages")) {
 				if (
 					holding &&
-					options.holdOnLastMessage !== undefined &&
-					latestText(body).includes(options.holdOnLastMessage)
+					((options.holdOnLastMessage !== undefined && latestText(body).includes(options.holdOnLastMessage)) ||
+						options.holdWhen?.(request) === true)
 				) {
 					held.push(() => {
 						if (!res.destroyed)
