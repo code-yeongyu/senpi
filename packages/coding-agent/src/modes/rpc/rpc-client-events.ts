@@ -9,6 +9,7 @@ import type {
 	RpcOpenQueuedEvent,
 	RpcSecretInputSettledEvent,
 	RpcSessionArchivedChangedEvent,
+	RpcSessionSettledChangedEvent,
 	RpcSessionParkedEvent,
 	RpcSessionReleasedEvent,
 	RpcSessionReplacedEvent,
@@ -37,6 +38,8 @@ export type RpcClientEvent =
 	| RpcSessionReleasedEvent
 	// `set_session_archived` (from any client) changed the session's archived flag.
 	| RpcSessionArchivedChangedEvent
+	// `set_session_settled` (from any client) changed the session's Done flag.
+	| RpcSessionSettledChangedEvent
 	// The host accepted an open_session and says where it is queued; the client also uses it to
 	// switch that open to its post-acknowledgement deadline (senpi#2209).
 	| RpcOpenQueuedEvent

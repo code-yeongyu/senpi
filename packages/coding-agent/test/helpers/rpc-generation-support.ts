@@ -42,7 +42,9 @@ export function generationScratch(label: string): GenerationScratch {
 		cwd: join(root, "w"),
 		socket: join(root, "rpc.sock"),
 	};
-	for (const dir of [scratch.agentDir, scratch.sessionDir, scratch.cwd]) mkdirSync(dir, { recursive: true });
+	// 0700 under any umask: a host refuses to publish its key into a group-writable agent dir (unsafe_key_record).
+	for (const dir of [scratch.agentDir, scratch.sessionDir, scratch.cwd])
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
 	return scratch;
 }
 

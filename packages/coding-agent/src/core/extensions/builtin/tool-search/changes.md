@@ -1,5 +1,25 @@
 # Tool Search Builtin Changes
 
+## 2026-11-17 - tool_search lists matching eval-only tools (senpi#6886)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/service.ts`: `searchEvalOnly(query, limit, options)` ranks the tools `getAllTools()` marks `evalOnly` in an index of their own, so catalog ranking is unchanged and no feeder can activate them.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/extension-document.ts` (new): `extensionDocument`, moved out of `service.ts` so both indexes build the same document.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/tool.ts`: matching eval-only tools get their own section with parameters and `call: tool.<name>({ ... }) inside eval`, and `details.evalOnly`; a tool the query names exactly keeps its redirect hint instead (senpi#1682). The description says eval-only matches are listed separately.
+
+### Why
+
+- tool_search never returned eval-only tools, so a model that could not see a tool a prompt named concluded it was not registered.
+
+### Why an extension could not handle it
+
+- tool_search is this builtin's tool.
+
+### Expected merge conflict zones
+
+- LOW: `execute` and `buildToolSearchResultText` in `tool.ts`; `search` in `service.ts`.
+
 ## 2026-10-07 - Tool-search context hook declares non-mutation (senpi#2525)
 
 ### What changed

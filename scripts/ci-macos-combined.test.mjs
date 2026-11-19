@@ -14,7 +14,7 @@ const suites = combined?.steps.filter((step) => step.id && /run-tests\.mjs|npm r
 test("CI allocates one macOS runner while retaining the other matrix legs", () => {
 	assert.ok(combined);
 	assert.equal(combined["runs-on"], "macos-latest");
-	// Pull requests run it only for platform-specific diffs (senpi#3957, ci-platform-scope.test.mjs).
+	// Pull requests run it only with the run-full-ci label (senpi#6834, ci-platform-scope.test.mjs).
 	assert.equal(combined.if, "needs.platform-scope.outputs.full == 'true'");
 	assert.deepEqual(Object.keys(jobs).filter((name) =>
 		JSON.stringify(jobs[name]["runs-on"]).includes("macos") ||

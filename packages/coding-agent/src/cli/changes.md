@@ -1,3 +1,58 @@
+## 2026-11-19 - `senpi host handoff --allow-downgrade` (senpi#7018)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command-args.ts`: `handoff` accepts `--allow-downgrade` (`ParsedHostArgs.allowDowngrade`, also set on the idle-handover terms).
+- `packages/coding-agent/src/cli/host-command.ts`: the handoff request carries it; the usage text names it and the `older_engine` refusal.
+
+### Why
+
+- A handoff onto a newer-engine host is now refused `older_engine`; the flag is the explicit way to downgrade on purpose.
+
+### Why an extension could not handle it
+
+- `senpi host` argument parsing runs before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `host-command-args.ts` flag loop and return literal; `host-command.ts` `USAGE` and `hostRequest`.
+
+## 2026-11-18 - A terminal that attaches to a host-held session applies its command line (senpi#6914)
+
+### What changed
+
+- `packages/coding-agent/src/cli/held-session-attach.ts` (new): `heldSessionAttachPlan(parsed, { autoResizeImages })` turns the command line of an attaching start into an `AttachStartup`. The first prompt carries the `@file` text and images before the first message, and the other messages follow. `--provider/--model` or `--model <provider>/<id>[:<thinking>]` becomes the model, and `--thinking` the level. A model pattern, or a model without a provider, refuses the start. So does every flag that configures the process running a session (`UNAPPLIED_FLAGS`: `--system-prompt`, `--append-system-prompt`, `--api-key`, `--models`, the tool flags, `--tool-runtime`, the extension, skill, prompt-template, theme and context-file flags, `--name`, `--offline`, `--approve`/`--no-approve`, `--verbose`, `--grok-neo`, `-` (stdin)), plus any unknown or extension flag. The refusal names each one, since the host already runs the session with its own configuration.
+
+### Why
+
+- senpi#6911 L1: the attach path of senpi#6909 dropped the prompts, `--model`, `--thinking`, `--use-theme` and `--tui-mode` without a word.
+
+### Why an extension could not handle it
+
+- Startup admission runs before any extension loads.
+
+### Expected merge conflict zones
+
+- None: new file.
+
+## 2026-11-17 - A session the machine's multi-session host holds opens attached there (senpi#6909)
+
+### What changed
+
+- `packages/coding-agent/src/cli/session-opening.ts`: `StartupAdmission` gains `{ attach: HostAttachTarget }`. An interactive start (`canAsk`) that may attach (`canAttach`) of a session whose holders are all one multi-session host with a published `host_socket` is admitted as an attach to that socket and the session's durable id, instead of being refused. Everything else keeps the senpi#5756 admission unchanged.
+
+### Why
+
+- The OmO desktop runs its sessions on such a host. Refusing them in a terminal meant a running app and a terminal could never share a session live in either direction.
+
+### Why an extension could not handle it
+
+- Startup admission runs before any extension loads, and decides whether the in-process runtime opens the file at all.
+
+### Expected merge conflict zones
+
+- LOW: `admitStartupSession` and the `StartupAdmission` type.
+
 ## 2026-11-07 - The headless project_trust context lives apart from the startup UI (senpi#6185)
 
 ### What changed

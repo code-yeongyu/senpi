@@ -87,6 +87,7 @@ export function evictionRegistry(entry: RpcSessionEntry, sessionId = "rpc-1"): R
 							context: entry.context,
 							tool_child: { state: "none" },
 							archived: false,
+							settled: false,
 							activity: "idle",
 						},
 					],

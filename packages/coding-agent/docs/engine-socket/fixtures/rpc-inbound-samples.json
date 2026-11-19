@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "affd43e6120fddc8d9267522fcbdc3688fde0ac4c2f61a827d9dc928445c6ad6",
+	"methodClassesDigest": "27c8b985864be3f3a7d9605f4f8476e423613eb9fa2bba9b6820e0d0c1d3f9a6",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 133,
+	"methodCount": 137,
 	"methods": [
 		{
 			"method": "abort",
@@ -396,6 +396,16 @@
 				"type": "extension_ui_response",
 				"id": "00000000-0000-7000-8000-000000000000",
 				"cancelled": true
+			}
+		},
+		{
+			"method": "find_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "find_session",
+				"durableSessionId": "00000000-0000-7000-8000-000000000000"
 			}
 		},
 		{
@@ -883,6 +893,16 @@
 			}
 		},
 		{
+			"method": "read_user_skill_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "read_user_skill_file",
+				"skill": "sample-skill"
+			}
+		},
+		{
 			"method": "reclaim_session",
 			"class": "connection_local",
 			"sampleClass": "connection_local",
@@ -1238,6 +1258,19 @@
 			}
 		},
 		{
+			"method": "set_session_settled",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_session_settled",
+				"settled": true,
+				"by": {
+					"kind": "user"
+				}
+			}
+		},
+		{
 			"method": "set_steering_mode",
 			"class": "device_admin",
 			"sampleClass": "device_admin",
@@ -1383,6 +1416,18 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "write_project_skill_file",
+				"skill": "sample-skill",
+				"content": "# Skill\n",
+				"ifEtag": null
+			}
+		},
+		{
+			"method": "write_user_skill_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "write_user_skill_file",
 				"skill": "sample-skill",
 				"content": "# Skill\n",
 				"ifEtag": null

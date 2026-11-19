@@ -1,4 +1,4 @@
-import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
+import type { KernelPreludeContribution, ToolDefinition } from "@code-yeongyu/senpi";
 import { type Static, Type } from "typebox";
 import { Check, Errors } from "typebox/value";
 import { virtualEvalSchema } from "./eval-virtual-schemas.ts";
@@ -14,8 +14,12 @@ export interface EvalSchemaToolInfo {
 	readonly name: string;
 	readonly description?: string | undefined;
 	readonly exposure?: string | undefined;
+	readonly evalOnly?: boolean | undefined;
 	readonly parameters?: unknown;
 	readonly kernelPrelude?: KernelPreludeContribution | undefined;
+	/** The tool's own row renderers: a nested `tool.<name>()` call in a cell is drawn with them when present. */
+	readonly renderCall?: ToolDefinition["renderCall"];
+	readonly renderResult?: ToolDefinition["renderResult"];
 }
 
 export interface RunEvalSchemaOptions {

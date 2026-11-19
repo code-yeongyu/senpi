@@ -16,6 +16,8 @@ type HostAgent = Pick<Agent, "batchStoreFactory" | "executionScope" | "getExecut
 export interface ExecuteToolHookResult {
 	readonly content?: AgentToolResult<unknown>["content"];
 	readonly details?: unknown;
+	/** The error flag after the hooks: the hook's, else the tool's (senpi#6904). */
+	readonly isError?: boolean;
 }
 
 export interface ExecuteToolHostSession {
