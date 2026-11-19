@@ -12,6 +12,29 @@
 
 ### Removed
 
+## [2026.11.19-4] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+- `resolveConfigValue` and `AuthStorage` are exported from the package root. `resolveConfigValue` accepts an optional observation that receives each resolved value with its provider, field and cwd, and `AuthStorage.refreshOAuthCredential` refreshes an expired OAuth credential through pi-ai's refresh lock, so it and request-time resolution in any process run one exchange ([#5865](https://github.com/code-yeongyu/senpi/pull/5865))
+- `unload_session { graceful: true, waitMs }` closes a session without interrupting it. New deliveries are refused `session_closing`, queued input is handed back unread, the running turn ends on its own (bounded), and monitors, loops and the goal stop cleanly. A reopen finds no interrupted run and no hold. A drain that outlives `waitMs` is answered typed, and the session stays open. A terminal's control endpoint takes it too and then exits by itself. Capability `unload_graceful` ([#7046](https://github.com/code-yeongyu/senpi/pull/7046))
+
+### Changed
+
+### Fixed
+
+- A `show_html_page` page from a hand on an older release that goes over the session's image budget gets its own text replaced again, instead of keeping "Local images were inlined." next to the over-budget sentence ([#6938](https://github.com/code-yeongyu/senpi/pull/6938))
+- `senpi host ensure` and `host handoff` no longer hand a newer host down to an older engine when the two builds advertise their engine ordinal in different vocabularies (a compiled omo through 5.1.78 advertised its omo version, `[5,1,78,0,0]`): only two senpi CalVer ordinals are ordered, an upgrade ensure keeps such a host and says so on stderr, and a handoff is refused `older_engine` unless the downgrade is allowed. A distribution compiled beside its own package.json can define `SENPI_ENGINE_VERSION` so its ordinal stays CalVer ([#7047](https://github.com/code-yeongyu/senpi/pull/7047))
+- A cleanly exited session no longer reopens under the interrupted-run hold when a restored monitor fires while it restores: the restore sweep skips the run that wake started ([#7053](https://github.com/code-yeongyu/senpi/pull/7053))
+- On Linux, every process a tool starts (bash commands, background terminal sessions, monitor watches) begins with `oom_score_adj` 1000, so when memory runs out the kernel kills the runaway tool command instead of the engine host and every session in it; the host keeps its own value ([#7056](https://github.com/code-yeongyu/senpi/pull/7056))
+- A retained session that was running when its RPC host was killed, stopped or handed off resumes by itself on the next host: wakes held during the drain are delivered, an active goal continues, and an engine-started run the restart cut continues once. On a long lane reopened dormant, an explicit `resume_session` and the first peer delivery start their turn even when the lane ran more than 8 engine turns since its last real input. A person's Stop, an unattended hold the session already had, and a run a person started stay held; sessions an idle sweep or an unload parked reopen dormant as before. A restored session lists `attachments: 0` until a client attaches, so `host session close` closes it ([#7020](https://github.com/code-yeongyu/senpi/issues/7020))
+- An extension's PostToolUse (`tool_result`) handler that never returns no longer wedges the session: the host stops waiting at a deadline (120 s by default, `SENPI_TOOL_RESULT_HANDLER_TIMEOUT_MS`), delivers the tool result without it and reports the extension. Esc and an RPC interrupt now end the wait on a PreToolUse or PostToolUse handler at once; an interrupted PreToolUse handler blocks its tool call ([oh-my-openagent#14354](https://github.com/code-yeongyu/oh-my-openagent/issues/14354))
+- After an abort cut a running tool, its PostToolUse (`tool_result`) handlers run to completion again; the new hook wait skipped them and reported the hook as failed ([#7073](https://github.com/code-yeongyu/senpi/pull/7073))
+
+### Removed
+
 ## [2026.11.19-3] - 2026-11-19
 
 ### Breaking Changes

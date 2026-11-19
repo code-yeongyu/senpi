@@ -1,3 +1,21 @@
+## 2026-11-05 - Root exports for the resolver and the credential store (custody CK18, senpi#5865)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `AuthStorage`, `resolveConfigValue`, `ConfigValueObserver` and `ConfigValueObservation` from the package root.
+
+### Why
+
+The device service resolves and refreshes credentials through the same resolver and store lock as the CLI (#5837); it needs them as public API.
+
+### Why an extension could not handle it
+
+The package root's export list is the public contract; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- LOW: the `auth-storage.ts` export line in `index.ts`.
+
 ## 2026-11-19 - Agent children never inherit the RPC host's identity (senpi#7034)
 
 ### What changed

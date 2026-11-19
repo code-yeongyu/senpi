@@ -1,3 +1,101 @@
+## 2026-11-19 - host-restart-continuation keeps its helpers private (senpi#7073)
+
+### What changed
+
+- `packages/coding-agent/src/core/host-restart-continuation.ts`: `INTERRUPTED_RUN_HOLD_KEY` and `engineStartedLastRun` are no longer exported; only `restartRelease` uses them.
+
+### Why
+
+- The dead-code check reported both as unused exports.
+
+### Why an extension could not handle it
+
+- Module-internal names of the session core.
+
+### Expected merge conflict zones
+
+- LOW: two declaration lines.
+
+## 2026-11-19 - A session that was live when its host ended resumes by itself on the next host (senpi#7020)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `holdAutomaticTurns()` adds its unattended hold under its own key `host-drain` (`HOST_DRAIN_HOLD_KEY`) instead of the generic `unattended`. After `bindExtensions` finishes restoring the lifecycle, a session whose `session_start` says `continued` releases the holds the restart caused, once (`_continueAfterHostRestart`, decision in the new `core/host-restart-continuation.ts`): when only those holds are left it resumes through the ordinary Resume path (`_resumeOnce`), so wakes held during a handoff drain are delivered, a goal resumes, and an engine-started run the restart cut continues with the interrupted-run directive; when another hold stays (a person's Stop, an unattended hold the session already had) it drops only `host-drain`. `abortForHostShutdown` records the run it cuts as interrupted. `_stopEngineTurn` exempts the turn a Resume or a hold-releasing peer delivery released from the resume-window limit: the window, which counts the reopened lane's own engine turns since its last real input, still bounds the automatic turns after it.
+- `packages/coding-agent/src/core/session-lifecycle.ts`: `cutByHostShutdown()` writes the cut run as interrupted; `continueAfterRestart()` lets the restart's continuation of an engine-started run through the interrupted-run gate until that run starts.
+- `packages/coding-agent/src/core/host-restart-continuation.ts` (new): `engineStartedLastRun` (the newest run's start on the branch is an `engine-turn-start`, not a user message or a user-directed custom message such as a Resume directive) and `restartRelease`.
+
+### Why
+
+- A host restart or handoff left every retained session silent: the reopen forced it unattended, the drain's hold was replayed as a real unattended hold, and a run the restart cut stayed held for a person. Orchestrator lanes stopped after every deploy of the host. A lane reopened unattended with more than 8 engine turns since its last real input was already over the resume window, so an explicit Resume released its hold and started nothing, and the first peer delivery was answered `started` and ran nothing.
+
+### Why an extension could not handle it
+
+- The hold ledger, the interrupted-run gate and the resume path are `AgentSession` internals; the reopen is the RPC host's.
+
+### Expected merge conflict zones
+
+- LOW: `holdAutomaticTurns`, one private method and one field near it, one call at the end of `bindExtensions`, three lines in `abortForHostShutdown`, and the `released` parameter of `_stopEngineTurn` with its call site.
+
+## 2026-11-19 - The restore sweep never marks a run this process started as interrupted (senpi#7033, senpi#7053)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-lifecycle.ts`: `runStartedHere` names the current run when this process started it (not the run the session file left current).
+- `packages/coding-agent/src/core/lifecycle-session-binding.ts`: `recover()` skips the custody that run consumed; custody of a run from before the restart is swept as before.
+
+### Why
+
+- senpi#7033. A restored monitor's wake that fires while the session binds its extensions starts a run without waiting for the restore. The sweep then recorded that live run INTERRUPTED (`host_restart`) and armed the interrupted-run hold, so a cleanly exited session reopened held and every peer delivery was held.
+
+### Why an extension could not handle it
+
+- The restore sweep and the run ledger are core lifecycle state; no extension sees which run consumed a delivery.
+
+### Expected merge conflict zones
+
+- LOW: the getter block after `nextRunOrigin` in `session-lifecycle.ts`; the custody loop at the top of `recover()` in `lifecycle-session-binding.ts`.
+
+## 2026-11-19 - A graceful close drains the turn and leaves a clean-stop record (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `holdForClose()` / `releaseCloseHold()` add and release the `unattended` engine-turn hold keyed `closing` (release cause `session_close`). `recordClosedOnRequest(record)` appends the `session-closed` custom entry and sets `closedOnRequest`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `dispose()` emits `session_shutdown { reason: "quit", closed: true }` when the session was closed on request.
+- `packages/coding-agent/src/core/session-closed.ts` (new): the `session-closed` entry type, its record shape and the `closing` hold key.
+- `packages/coding-agent/src/core/engine-turn-hold.ts`: `HoldReleaseCause` gains `session_close`.
+- `packages/coding-agent/src/core/external-admission.ts`: `closed` reads why admission is closed.
+
+### Why
+
+- oh-my-openagent#14313. A busy or terminal-hosted session could not be closed without stopping its turn, and a stop left work that a reopen restored and an interrupted run that held peer deliveries. The clean-stop record and the `closed` shutdown let extensions stop that work for good.
+
+### Why an extension could not handle it
+
+- The engine-turn hold, the shutdown event and the session runtime's dispose are core; no extension sees the close request.
+
+### Expected merge conflict zones
+
+- LOW: the `holdAutomaticTurns` neighbourhood and the private field list in `agent-session.ts`; the `session_shutdown` emit in `AgentSessionRuntime.dispose`.
+
+## 2026-11-05 - Public resolver observation and OAuth lock-and-refresh exports (custody CK18, senpi#5865)
+
+### What changed
+
+- `packages/coding-agent/src/core/resolve-config-value.ts`: `resolveConfigValue` takes an optional fourth argument `observation` (`{ observer, providerId, field, cwd }`) and calls the observer with each value that resolves (never with `undefined`). Without it, the function returns the same promise as before.
+- `packages/coding-agent/src/core/auth-storage.ts`: the locked OAuth refresh inside `getApiKey` moves into a public `AuthStorage.refreshOAuthCredential(providerId, oauth)`, which `getApiKey` now calls. It delegates to pi-ai's `refreshOAuthCredential`, the request-time refresh path, so it takes the same per-account refresh lock and re-checks the expiry once that lock is held: a CLI process and the device service exchange a refresh token once, never twice.
+
+### Why
+
+The device service seals credential values the CLI resolves and refreshes OAuth only through today's lock-and-refresh, so CLI processes and the device service produce exactly one refresh per expiry (#5837). No caller in this repo passes an observer, so existing behavior is unchanged.
+
+### Why an extension could not handle it
+
+The resolver and the store's refresh lock are internal to the CLI package; a separate process needs them as public API to reuse the same lock instead of racing it.
+
+### Expected merge conflict zones
+
+- LOW: the `resolveConfigValue` signature in `resolve-config-value.ts`; the OAuth branch of `AuthStorage.getApiKey` in `auth-storage.ts`.
+
 ## 2026-11-19 - Only submitted input holds an external admission (senpi#7043)
 
 ### What changed

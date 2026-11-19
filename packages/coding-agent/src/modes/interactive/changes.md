@@ -1,3 +1,23 @@
+## 2026-11-19 - A terminal closes its own session gracefully on request (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the control surface's `closeSession` runs the normal quit path after the close's answer is sent.
+- `packages/coding-agent/src/modes/interactive/session-control-close.ts` (new): `unload_session { graceful: true }` on the control endpoint. It refuses while the composer holds unsent text (before the fence and again after the drain), drains like a host, answers, and then asks the terminal to exit.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: lists `unload_session` and the `unload_graceful` capability, and routes the command.
+
+### Why
+
+- oh-my-openagent#14313: moving or closing a terminal-hosted session needed a kill or TERM, which reopened as an interrupted run.
+
+### Why an extension could not handle it
+
+- The control endpoint's command set and the terminal's quit path are the interactive mode's own.
+
+### Expected merge conflict zones
+
+- LOW: `sessionControlContext()` in `interactive-mode.ts`.
+
 ## 2026-11-19 - A peer delivery to an idle terminal starts its own turn and leaves the draft alone (senpi#7043)
 
 ### What changed
