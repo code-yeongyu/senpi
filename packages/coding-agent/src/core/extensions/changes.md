@@ -1,3 +1,77 @@
+## 2026-11-19 - tool_result handlers still run for a tool an abort cut (senpi#7073)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitToolResult()` hands the turn's abort signal to the hook wait only when it is not already aborted, so the `tool_result` handlers of a tool the abort cut run to completion as before; an abort that arrives during the wait still ends it.
+- `packages/coding-agent/src/core/extensions/tool-hook-wait.ts`: `SELF_BOUNDED_TOOL_HOOK_PATH` and `DEFAULT_TOOL_RESULT_HANDLER_TIMEOUT_MS` are module-private.
+
+### Why
+
+- senpi#7069 made the wait answer `aborted` at once for an already-aborted turn, which skipped the PostToolUse handlers after an abort mid-tool (fused equivalence case E09).
+
+### Why an extension could not handle it
+
+- The wait is the runner's own dispatch loop.
+
+### Expected merge conflict zones
+
+- LOW: the `waitForToolHook` call inside `emitToolResult()`.
+
+## 2026-11-19 - A tool hook handler cannot hold the tool loop (oh-my-openagent#14354)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/tool-hook-wait.ts` (new): `waitForToolHook()` waits on one handler until it settles, the turn's abort signal fires or a deadline passes; `toolResultHandlerTimeoutMs()` resolves the `tool_result` deadline (default 120 s, `SENPI_TOOL_RESULT_HANDLER_TIMEOUT_MS` overrides, 0 disables, the builtin hooks extension is exempt because its command hooks carry their own timeout).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitToolResult()` waits on each handler through `waitForToolHook()`: past the deadline the handler is abandoned, the tool result continues without it, the hook run ends `failed` and an extension error names the extension and the elapsed time; an abort of the turn ends the wait. `emitToolCall()` has no deadline, and an abort of the turn ends its wait and blocks the call as `Operation aborted`.
+
+### Why
+
+- A `tool_result` handler that never settled held the tool loop forever. The await had no deadline and ignored the turn's abort signal, so Esc and an RPC interrupt did nothing, and an in-process handler leaves no child to kill.
+
+### Why an extension could not handle it
+
+- The wait is the runner's own dispatch loop; an extension cannot bound another extension's handler.
+
+### Expected merge conflict zones
+
+- MEDIUM: the handler call inside the `emitToolResult()` and `emitToolCall()` loops in `runner.ts`, plus one import line.
+
+## 2026-11-19 - session_start says when a host restart continued the session (senpi#7020)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SessionStartEvent.continued?: boolean`, `true` when a host reopened the session because it was live when the previous host ended.
+
+### Why
+
+- A handler that suppresses work on a cold reopen (the goal extension's continuation-flood guard) must not suppress a session the restart merely interrupted.
+
+### Why an extension could not handle it
+
+- The event is emitted by the host's open; only the host knows why it reopened the session.
+
+### Expected merge conflict zones
+
+- LOW: one optional field on `SessionStartEvent`.
+
+## 2026-11-19 - `session_shutdown.closed` (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SessionShutdownEvent` gains `closed?: true`, set when a graceful close ended the session on request. The terminal builtin then records no monitor or background job to restore, loops end `stopped`, and an active goal is paused.
+
+### Why
+
+- oh-my-openagent#14313: a session closed on purpose must reopen with nothing restored and nothing held.
+
+### Why an extension could not handle it
+
+- The field is part of the public event contract that every extension's shutdown handler reads.
+
+### Expected merge conflict zones
+
+- LOW: the `SessionShutdownEvent` interface.
+
 ## 2026-11-18 - ExtensionToolContext.promptSurface (senpi#6925)
 
 ### What changed
