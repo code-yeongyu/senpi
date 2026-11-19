@@ -14,13 +14,13 @@ import { isDeepStrictEqual } from "node:util";
 import {
 	type EndpointReasoningEfforts,
 	type ModelThinkingLevel,
-	normalizeProviderId,
 	type ProviderHeaders,
 	parseEndpointReasoningEfforts,
 } from "@earendil-works/pi-ai";
 import { stripJsonComments } from "../utils/json.ts";
 import { stripBom } from "../utils/text.ts";
 import { ModelConfig } from "./model-config.ts";
+import { isRecord, type JsonRecord, ModelsDiscoveryError, readConfiguredProvider } from "./model-discovery-document.ts";
 import { type ListingUrl, listingUrl, redactUrlInMessage } from "./model-discovery-url.ts";
 import { uniqueBackupPath } from "./models-json-migration.ts";
 
@@ -63,9 +63,8 @@ export interface DiscoverProviderModelsOptions {
 	signal?: AbortSignal;
 }
 
-export class ModelsDiscoveryError extends Error {}
+export { ModelsDiscoveryError };
 
-type JsonRecord = Record<string, unknown>;
 interface ListedModel {
 	id: string;
 	reasoningEfforts: unknown;
@@ -73,43 +72,6 @@ interface ListedModel {
 
 const THINKING_LEVELS: readonly ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const OPENAI_COMPATIBLE_APIS = new Set(["openai-completions", "openai-responses"]);
-
-const isRecord = (value: unknown): value is JsonRecord =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-function readDocument(modelsPath: string): { content: string; document: JsonRecord } {
-	let content: string;
-	try {
-		content = readFileSync(modelsPath, "utf-8");
-	} catch (error) {
-		throw new ModelsDiscoveryError(`Cannot read ${modelsPath}: ${error instanceof Error ? error.message : error}`);
-	}
-	let document: unknown;
-	try {
-		document = JSON.parse(stripJsonComments(stripBom(content)));
-	} catch (error) {
-		throw new ModelsDiscoveryError(`Cannot parse ${modelsPath}: ${error instanceof Error ? error.message : error}`);
-	}
-	if (!isRecord(document)) throw new ModelsDiscoveryError(`${modelsPath} is not a JSON object`);
-	return { content, document };
-}
-
-interface ConfiguredProvider {
-	key: string;
-	providers: JsonRecord;
-	provider: JsonRecord;
-}
-
-function findProvider(document: JsonRecord, providerId: string, modelsPath: string): ConfiguredProvider {
-	const wanted = normalizeProviderId(providerId);
-	const providers = isRecord(document.providers) ? document.providers : {};
-	const key = Object.keys(providers).find((candidate) => normalizeProviderId(candidate) === wanted);
-	const provider = key === undefined ? undefined : providers[key];
-	if (key === undefined || !isRecord(provider)) {
-		throw new ModelsDiscoveryError(`Provider "${providerId}" is not defined in ${modelsPath}`);
-	}
-	return { key, providers, provider };
-}
 
 function providerListingUrl(provider: JsonRecord, providerId: string): ListingUrl {
 	if (typeof provider.api === "string" && !OPENAI_COMPATIBLE_APIS.has(provider.api)) {
@@ -212,8 +174,13 @@ function writeWithBackup(modelsPath: string, original: string, next: string): st
 
 /** Fetch the provider's model listing once and upsert it into models.json. */
 export async function discoverProviderModels(options: DiscoverProviderModelsOptions): Promise<ModelsDiscoveryReport> {
-	const { content, document } = readDocument(options.modelsPath);
-	const { key: providerKey, providers, provider } = findProvider(document, options.providerId, options.modelsPath);
+	const {
+		content,
+		document,
+		key: providerKey,
+		providers,
+		provider,
+	} = readConfiguredProvider(options.modelsPath, options.providerId);
 	const url = providerListingUrl(provider, options.providerId);
 	const listing = await fetchListing(url, options.auth, options.fetch ?? fetch, options.signal);
 
