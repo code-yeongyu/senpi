@@ -666,6 +666,7 @@ describe("alias detector: zero false negatives against native (design 5.4, 11.1.
 		for (const [name, paths] of sets) {
 			const durations: number[] = [];
 			const falsePositives: string[] = [];
+			const overWork: string[] = [];
 			for (const path of paths) {
 				let nativeAlias = true;
 				try {
@@ -679,12 +680,17 @@ describe("alias detector: zero false negatives against native (design 5.4, 11.1.
 				durations.push((spent.user + spent.system) / 1000);
 				if (!nativeAlias && verdict.alias && !overBudget(verdict.reasons))
 					falsePositives.push(`${path} [${verdict.reasons.join(",")}]`);
+				// Load-independent work bound: at most one parent listing per component.
+				const components = path.split(sep).filter(Boolean).length;
+				if (verdict.readdirs > components) overWork.push(`${path} [${verdict.readdirs} > ${components}]`);
 			}
 			durations.sort((a, b) => a - b);
 			const p95 = durations[Math.floor(durations.length * 0.95)] ?? 0;
 			expect(falsePositives, `${name}: ${falsePositives.slice(0, 5).join("; ")}`).toEqual([]);
-			// 5.6 measured p95 <= 10 ms on an idle host and 14-24 ms on a loaded shared runner; 100 ms is about 4x the
-			// worst loaded measurement, so a real regression fails here (p95 is printed so a drift stays visible).
+			expect(overWork, `${name}: ${overWork.slice(0, 5).join("; ")}`).toEqual([]);
+			// 5.6 measured p95 <= 10 ms wall on an idle host and 14-24 ms on a loaded shared runner; CPU time is at most
+			// that (14 ms p95 for a 14.6k-entry /tmp), so 100 ms still fails a real regression (p95 is printed so a drift
+			// stays visible).
 			console.log(`detector ${name}: n=${durations.length} p95=${p95.toFixed(2)}ms`);
 			expect(p95, `${name} p95`).toBeLessThan(100);
 		}
