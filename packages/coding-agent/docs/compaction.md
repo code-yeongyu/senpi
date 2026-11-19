@@ -26,17 +26,99 @@ Both use the same structured summary format and track file operations cumulative
 
 ### When It Triggers
 
-Auto-compaction triggers when:
+Auto-compaction has two triggers.
+
+**Threshold.** Before a prompt starts and when a run ends, senpi compares the context with a share of the model's context window:
+
+| Context window | Threshold |
+|----------------|-----------|
+| up to 16,000 tokens | 45% |
+| up to 32,000 tokens | 50% |
+| up to 64,000 tokens | 55% |
+| up to 128,000 tokens | 60% |
+| up to 512,000 tokens | 70% |
+| larger | 80% |
+
+After a compaction that freed more than half of the context, the next threshold is 5 points lower, and never below 40%. The threshold itself has no setting. [Proactive compaction](#proactive-compaction) describes the work senpi does around it.
+
+**Reserve.** Compaction also triggers when:
 
 ```
-contextTokens > contextWindow - reserveTokens
+contextTokens > contextWindow - reserve
 ```
 
-By default, `reserveTokens` is 16384 tokens (configurable in `~/.senpi/agent/settings.json` or `<project-dir>/.senpi/settings.json`). This leaves room for the LLM's response.
+`reserve` is `reserveTokens`, 16384 by default (configurable in `~/.senpi/agent/settings.json` or `<project-dir>/.senpi/settings.json`), raised on large windows as described under [Reserve scaling](#reserve-scaling). This leaves room for the LLM's response.
 
 During a multi-turn agent run, Pi checks this threshold after tools finish and their results are appended, before starting the next assistant response. If the threshold is crossed, Pi compacts inside the same agent run and resumes with the summary and retained messages. It skips this between-turn check when the completed tool batch terminates the run and no queued message requires another response. Pi also checks the threshold before a new user prompt and after a low-level agent run ends.
 
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
+
+### Proactive Compaction
+
+The behaviours below are all on by default. Each has a switch, listed with its default in [settings.md](settings.md#compaction). The [compaction guide](compaction-guide.md#what-runs-by-default-and-what-it-costs) says what each one costs and when to turn it off.
+
+#### Background summaries
+
+When the context comes within the lead of the threshold, senpi starts writing the summary in the background while the turn goes on. Once the threshold is reached, the finished summary is applied, so the session does not stop to write one.
+
+The lead is 12.5% of the threshold. `speculativeLeadTokens` replaces that figure. Either way the lead stays between 8192 and 32768 tokens.
+
+No background summary starts on a model that compacts through OpenAI's remote compaction route, or while automatic compaction is paused after repeated failures. With `speculativeEnabled: false` none starts at all, and a prompt that reaches the threshold waits while the summary is written.
+
+`enabled: false` does not stop background summaries. With threshold compaction off, such a summary is written and paid for but not applied at the threshold, so set `speculativeEnabled: false` together with `enabled: false`.
+
+`speculativeFraction` is read from settings but does not change this: the lead always decides the starting point.
+
+#### Idle compaction
+
+This runs in the TUI and in RPC mode, when a run ends without being aborted or retried.
+
+- Over the threshold, senpi writes the summary, or reuses a finished one that still fits, and applies it while the session is idle. If you send a prompt first, the apply is skipped.
+- Below the threshold with at least half of the context window used, senpi only prepares the summary. A prepared summary that still fits is kept. One that no longer fits is rebuilt once `speculativeCooldownMs` has passed since it finished. Models on OpenAI's remote compaction route skip this step.
+
+`idleCompactionEnabled: false` turns both off.
+
+#### Grace band
+
+If a prompt reaches the threshold while a background summary is still being written, the prompt starts anyway, as long as the context stays below the smaller of `threshold + lead` and `contextWindow - reserve`. Past that point, or with `graceBandEnabled: false`, the prompt waits for compaction.
+
+#### Budget reminder
+
+When the context is within twice the lead of the threshold, senpi adds one hidden note to the prompt:
+
+```
+[context budget] Approximately <n> tokens remain before automatic compaction. Wrap up verbose exploration, prefer concise summaries over full dumps, and front-load conclusions.
+```
+
+It is sent once between two compactions. `reminderEnabled: false` turns it off.
+
+#### Tool-result admission
+
+A tool result whose text is larger than the admission cap is sent to the model as its head and tail with a marker between them:
+
+```
+[tool result projected: kept <kept> of ~<total> tokens]
+```
+
+The cap is 5% of the context window, held between 8192 and 50000 tokens. Only the request is shortened: the session keeps the full result. `toolAdmissionEnabled: false` sends results whole.
+
+#### Reserve scaling
+
+The reserve used by the reserve trigger is the larger of `reserveTokens` and 4% of the context window, and the 4% share stops at 49152 tokens. A 200,000-token window keeps the default 16384. A 1,000,000-token window reserves 40000. `reserveScalingEnabled: false` uses `reserveTokens` as written.
+
+Automatic compaction also adjusts `keepRecentTokens` to the window. Above 409,600 tokens, a setting of 10000 or more is raised to 5% of the window, up to 60000. On every window it is capped at `contextWindow × (1 - threshold - 0.05)`, and never below 1024.
+
+#### Restoration
+
+After a compaction, the next prompt carries a hidden note that lists the files the session read, wrote or edited, with the operations, and the skills it loaded. It holds paths and names, not file contents, so the model knows what to open again.
+
+Entries still visible in the kept messages are left out, and an entry is listed only once. Written and edited files come first, then skills, then files that were only read. The note is limited by:
+
+- `restorationMaxItems` entries;
+- `restorationMaxTokensPerItem` tokens for one entry;
+- a total of the smallest of `restorationMaxTotalTokens`, `restorationContextRatio` of the context window, and the room left after the reserve.
+
+`restorationEnabled: false` turns the note off.
 
 ### How It Works
 
@@ -409,11 +491,7 @@ Configure compaction in `~/.senpi/agent/settings.json` or `<project-dir>/.senpi/
 }
 ```
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `enabled` | `true` | Enable proactive (threshold) auto-compaction; provider-overflow recovery stays armed |
-| `reserveTokens` | `16384` | Tokens to reserve for LLM response |
-| `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
+[settings.md](settings.md#compaction) lists every `compaction` key with its type and default, including the switches for the behaviours under [Proactive compaction](#proactive-compaction).
 
 Disable proactive auto-compaction with `"enabled": false`. You can still compact manually with `/compact`, and a context the provider rejects as too large is still compacted once and retried automatically.
 
