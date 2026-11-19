@@ -9,10 +9,20 @@ import { readProcessStartTime } from "../../utils/process-identity.ts";
 import type { HostStopSender } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";
 import { DEFAULT_HANDOFF_GRACE_MS, HANDOFF_GRACE_MS_ENV, parseIdleExitMs } from "./host-lifecycle-policy.ts";
-import { watchDrainRequest, writeDrainRequest, writeDrainWatch } from "./host-stop-intent.ts";
+import { supervisorDrainRelayFile, watchDrainRequest, writeDrainRequest, writeDrainWatch } from "./host-stop-intent.ts";
 import { type SupersessionPointer, watchForSupersession } from "./host-supersession.ts";
 import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
 import type { SocketFileIdentity } from "./socket-ownership.ts";
+
+/**
+ * How a drain reaches the host child: `file` is its drain-request file in the generation directory, `supervisorDir`
+ * the supervisor's own private directory, where the relay goes when the generation directory cannot take it.
+ */
+export interface SupervisorDrainRelay {
+	readonly file: string;
+	readonly sender: HostStopSender;
+	readonly supervisorDir?: string;
+}
 
 export class SupervisorDrain {
 	private draining = false;
@@ -20,7 +30,7 @@ export class SupervisorDrain {
 	private readonly child: ChildProcess;
 	private readonly shuttingDown: () => boolean;
 	private readonly beginStopping: () => void;
-	private readonly relay: { readonly file: string; readonly sender: HostStopSender } | undefined;
+	private readonly relay: SupervisorDrainRelay | undefined;
 
 	/**
 	 * `relay` is the child's drain-request file (host-stop-intent.ts): the one way to reach a child
@@ -30,7 +40,7 @@ export class SupervisorDrain {
 		child: ChildProcess,
 		shuttingDown: () => boolean,
 		beginStopping: () => void = () => {},
-		relay?: { readonly file: string; readonly sender: HostStopSender },
+		relay?: SupervisorDrainRelay,
 	) {
 		this.child = child;
 		this.shuttingDown = shuttingDown;
@@ -89,11 +99,7 @@ export class SupervisorDrain {
 	private requestChildDrain(): void {
 		const { child, relay } = this;
 		if (childGone(child)) return;
-		const relayed = relay
-			? writeDrainRequest(relay.file, { sender: relay.sender, reason: "supervisor_drain" }).catch((cause) => {
-					supervisorLog(`could not relay the drain to the host: ${errorMessage(cause)}`);
-				})
-			: Promise.resolve();
+		const relayed = relay ? relayDrain(relay) : Promise.resolve();
 		// win32 has no SIGUSR1; on POSIX it stays the immediate wake ahead of the next poll of the relay. It follows
 		// the relay it announces: a host ignores a SIGUSR1 that no relayed request backs (senpi#7044).
 		if (process.platform === "win32") return;
@@ -106,6 +112,25 @@ export class SupervisorDrain {
 			}
 		});
 	}
+}
+
+/**
+ * Writes the relay where the child reads it. The signal that follows only wakes the child to read a relay, so a
+ * generation directory that cannot take it (removed, read-only, full) must not strand the drain: the same request
+ * then goes into the supervisor's own directory, which the child reads on that wake. Only POSIX has the wake.
+ */
+async function relayDrain(relay: SupervisorDrainRelay): Promise<void> {
+	const request = { sender: relay.sender, reason: "supervisor_drain" };
+	try {
+		await writeDrainRequest(relay.file, request);
+		return;
+	} catch (cause) {
+		supervisorLog(`could not relay the drain to the host: ${errorMessage(cause)}`);
+	}
+	if (relay.supervisorDir === undefined || process.platform === "win32") return;
+	await writeDrainRequest(supervisorDrainRelayFile(relay.supervisorDir), request).catch((cause: unknown) => {
+		supervisorLog(`could not relay the drain through the supervisor's own directory either: ${errorMessage(cause)}`);
+	});
 }
 
 function childGone(child: ChildProcess): boolean {

@@ -199,7 +199,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		child,
 		() => state.shuttingDown,
 		() => admission.stop(),
-		{ file: generation.childDrainRequestFile, sender: supervisorSender(instanceId) },
+		{ file: generation.childDrainRequestFile, sender: supervisorSender(instanceId), supervisorDir: internal.dir },
 	);
 	const server = createPublicProxy({
 		internalSocket,

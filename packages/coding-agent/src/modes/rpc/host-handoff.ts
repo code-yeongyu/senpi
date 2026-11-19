@@ -21,7 +21,9 @@
  * admission over the connection it was granted on (`host-handoff-admission.ts`); it ignores
  * a bare SIGUSR1. A host from before the admission advertises `generation_handoff` instead,
  * cannot be asked, and is drained with SIGUSR1 as it always was; there this requester's own
- * engine check is the only guard, and it stays in front of an admitted handoff as well.
+ * engine check is the only guard, and it stays in front of an admitted handoff as well. Every
+ * refusal of this requester's own comes first: the host is asked only for a handoff that is
+ * then carried out, so it never admits (and logs) one the requester declines itself.
  *
  * Two guards make this safe rather than merely clever. SIGUSR1 has a DEFAULT DISPOSITION OF
  * TERMINATE, so a host that advertises neither capability is never signalled - it would die,
@@ -139,6 +141,9 @@ export type HandoffRefusal =
 	/** The running host gave no usable answer to the admission request; nothing was spawned. */
 	| "not_admitted";
 
+/** Asks the running host to admit this handoff: its admission, or its refusal as this handoff's result. */
+export type HandoffAdmit = () => Promise<HandoffAdmission | HandoffResult>;
+
 export type HandoffResult =
 	| {
 			readonly action: "handoff";
@@ -159,7 +164,7 @@ export type HandoffResult =
  * whether an upgrade is warranted (`decideHostAction`); this performs the one it asked for, except
  * a downgrade: a successor whose engine is older than the running host's, or cannot be ordered against
  * it, is refused unless the caller says `allowDowngrade` (senpi#7018), so no caller can hand a newer host
- * down by accident - and the running host refuses it first when it can be asked (senpi#7044).
+ * down by accident - and the running host, when it can be asked, refuses it as well (senpi#7044).
  */
 export async function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
 	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
@@ -186,9 +191,9 @@ export async function handoffHostLocked(requested: HandoffHostOptions): Promise<
 	if (!host) return { action: "refuse", reason: "no_host", upgradeable: false };
 	const support = handoffSupport(host);
 	if (support === undefined) return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
-	// The host that can be asked decides first; an unused admission ends with its connection below.
-	const admission = support === "admitted" ? await admittedByHost(options) : undefined;
-	if (admission !== undefined && "action" in admission) return admission;
+	// A host that can be asked is asked LAST, where the successor is about to be started (`startSuccessor`): every
+	// refusal of this requester's own runs first. An admission it granted ends with its connection below.
+	const admission = support === "admitted" ? heldAdmission(options) : undefined;
 	try {
 		const downgrade = downgradeRefusal(options, host);
 		if (downgrade) return downgrade;
@@ -198,11 +203,25 @@ export async function handoffHostLocked(requested: HandoffHostOptions): Promise<
 		await electPointer(paths);
 		const registered = await readHostRegistration(paths);
 		const owner = await provenOwner(registered, options.socket);
-		if (!owner) return await handoffUnregisteredHost(options, paths, host, admission);
-		return await startSuccessor({ options, paths, host, owner, ...(admission !== undefined && { admission }) });
+		const admit = admission?.admit;
+		if (!owner) return await handoffUnregisteredHost(options, paths, host, admit);
+		return await startSuccessor({ options, paths, host, owner, ...(admit !== undefined && { admit }) });
 	} finally {
 		admission?.close();
 	}
+}
+
+/** The admission of one handoff: asked for when the handoff reaches its spawn, and closed with the handoff. */
+function heldAdmission(options: HandoffHostOptions): { readonly admit: HandoffAdmit; close(): void } {
+	let granted: HandoffAdmission | undefined;
+	return {
+		admit: async () => {
+			const outcome = await admittedByHost(options);
+			if (!("action" in outcome)) granted = outcome;
+			return outcome;
+		},
+		close: () => granted?.close(),
+	};
 }
 
 /** The running host's own verdict on this handoff: the admission it granted, or its refusal as this handoff's. */

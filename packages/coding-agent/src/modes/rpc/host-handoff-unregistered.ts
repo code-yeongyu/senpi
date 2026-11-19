@@ -18,8 +18,7 @@
  */
 import type { HostDaemonPaths } from "./host-daemon-paths.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
-import type { HandoffHostOptions, HandoffResult } from "./host-handoff.ts";
-import type { HandoffAdmission } from "./host-handoff-admission-request.ts";
+import type { HandoffAdmit, HandoffHostOptions, HandoffResult } from "./host-handoff.ts";
 import { busyLegacyHostDetail, describeSessions, provenLegacyOwner } from "./host-legacy.ts";
 import { holdSessionCount } from "./host-probe.ts";
 import { startSuccessor } from "./host-successor.ts";
@@ -31,7 +30,7 @@ export async function handoffUnregisteredHost(
 	options: HandoffHostOptions,
 	paths: HostDaemonPaths,
 	host: HostProtocolInfo,
-	admission?: HandoffAdmission,
+	admit?: HandoffAdmit,
 ): Promise<HandoffResult> {
 	const counted = await holdSessionCount(options.socket, SESSION_COUNT_TIMEOUT_MS);
 	try {
@@ -59,7 +58,7 @@ export async function handoffUnregisteredHost(
 			host,
 			owner: legacy,
 			drainGate: async () => (await counted?.recount(SESSION_COUNT_TIMEOUT_MS)) === 0,
-			...(admission !== undefined && { admission }),
+			...(admit !== undefined && { admit }),
 		});
 		if (result.action === "handoff" && legacy === undefined) warnUnsignalledPredecessor(options.socket, host);
 		return result;

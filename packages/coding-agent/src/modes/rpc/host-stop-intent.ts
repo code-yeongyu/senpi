@@ -15,7 +15,9 @@
  * The drain REQUEST lives here too, as the other cross-writer record (senpi#3653): the signal-free way to ask one
  * named generation to drain, on every platform. `drain-request.json` is written by whoever asks (`host stop
  * --drain`, or the generation's own host for a handoff it admitted, senpi#7044) into the target generation's
- * directory and read by its supervisor; `host-drain-request.json` is the supervisor's relay to its host child. A generation advertises that it reads requests through
+ * directory and read by its supervisor; `host-drain-request.json` is the supervisor's relay to its host child, written
+ * into the supervisor's own private directory when the generation directory cannot take it. A generation advertises
+ * that it reads requests through
  * `drain-watch.json`, naming the supervisor pid that armed the watch; an asker trusts that marker only together
  * with an identity proof of that pid. Every request carries a fresh nonce and a watcher delivers each nonce once;
  * an unreadable file is never read as a request, and the reader never removes it. One module because both records
@@ -25,7 +27,7 @@
 import { randomUUID } from "node:crypto";
 import { type FSWatcher, watch } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { HostStopSender } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV, type HostGenerationPaths, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { generationPaths } from "./host-generation-paths.ts";
@@ -235,6 +237,14 @@ export async function readDrainRequest(file: string): Promise<HostDrainRequest |
 		at: raw.at,
 		nonce: raw.nonce,
 	};
+}
+
+/**
+ * Where the supervisor's relay goes when its generation directory cannot take it: `supervisorDir` is the private
+ * directory only that supervisor writes, which its host child is told at spawn.
+ */
+export function supervisorDrainRelayFile(supervisorDir: string): string {
+	return join(supervisorDir, "host-drain-request.json");
 }
 
 /** What a supervisor publishes once its watch is armed: the pid an asker must prove before asking. */

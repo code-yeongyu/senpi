@@ -38,7 +38,8 @@ host-handoff-admission.ts, host-handoff-admission-request.ts
                           The handoff ADMISSION (senpi#7044): the running host answers `admit_handoff` (older or
                           unordered successor engine refused) and drains only for `drain_for_handoff` presenting that
                           admission on the connection it was granted on; the request side holds that connection
-host-drain-channels.ts    Which drain requests a socket host honours: the supervisor's relay and an admitted handoff;
+host-drain-channels.ts    Which drain requests a socket host honours: the supervisor's relay (in the generation directory, or
+                          in the supervisor's own private directory when that write fails) and an admitted handoff;
                           a bare SIGUSR1 is ignored and logged
 host-daemon-paths.ts, host-daemon-state.ts, host-daemon-registration.ts
                           Per-socket daemon directory, pointer pidfile, generations (I3)

@@ -9,8 +9,9 @@
  * the rename landed; an exit instead means it refused to replace a path that changed underneath and
  * left both sockets alone. The predecessor is asked to drain only AFTER that proof and after the
  * successor is registered - whether it may be asked at all was decided in `host-handoff.ts`, which
- * proved the owner and either holds the predecessor's own admission (presented here, senpi#7044) or
- * checked that a predecessor from before the admission advertises it can survive the signal.
+ * proved the owner and either lets this module ask the predecessor for its own admission (asked for
+ * last, once nothing here refuses, and presented back for the drain, senpi#7044) or checked that a
+ * predecessor from before the admission advertises it can survive the signal.
  *
  * A REFUSED handoff leaves the endpoint as it found it: the successor is killed and, once it has
  * exited, its generation record and directory are released, and the boot `settings.json` it
@@ -33,8 +34,7 @@ import {
 	writeHostOwner,
 	writeHostSettings,
 } from "./host-daemon-state.ts";
-import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
-import type { HandoffAdmission } from "./host-handoff-admission-request.ts";
+import type { HandoffAdmit, HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
 import { keepOwnerPipe, OWNER_WATCH_FD } from "./host-lifecycle-launch.ts";
@@ -70,10 +70,10 @@ export async function startSuccessor(context: {
 	owner: { readonly pid: number } | undefined;
 	/** Asked once the successor owns the socket: the drain request is sent only when it answers true. */
 	drainGate?: () => Promise<boolean>;
-	/** The predecessor's own admission of this handoff; absent for a predecessor from before it, which is signalled. */
-	admission?: HandoffAdmission;
+	/** Asks the predecessor to admit this handoff; absent for a predecessor from before the admission, which is signalled. */
+	admit?: HandoffAdmit;
 }): Promise<HandoffResult> {
-	const { options, paths, host, owner, drainGate, admission } = context;
+	const { options, paths, host, owner, drainGate } = context;
 	const generation = (host.generation ?? 0) + 1;
 	// The successor's identity, chosen here so its generation directory holds its settings before it
 	// boots and the pointer can name it the instant it answers on the public socket.
@@ -84,6 +84,10 @@ export async function startSuccessor(context: {
 	}
 	const replaced = await statSocketIdentity(options.socket);
 	if (!replaced) return { action: "refuse", reason: "socket_replaced", upgradeable: true };
+	// Every refusal of this requester's own is behind it: the predecessor is asked only for a handoff that is now
+	// carried out, so it admits (and logs) none the requester declines itself. The caller closes what was granted.
+	const admission = await context.admit?.();
+	if (admission !== undefined && "action" in admission) return admission;
 	// A handoff replaces the ENGINE, not the operator's lifecycle policy: the successor inherits
 	// what the running generation was started with unless this caller states its own.
 	const running = await readHostSettings(paths);

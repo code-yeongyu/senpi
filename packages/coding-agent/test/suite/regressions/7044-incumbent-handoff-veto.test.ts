@@ -5,8 +5,8 @@
 // advertises the `generation_handoff` a pre-fix client consults before it spawns a successor, and ignores a bare
 // SIGUSR1. Every case asks a real supervised host over its public socket.
 import { watch } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type EngineBuildIdentity,
@@ -14,10 +14,9 @@ import {
 	engineBuildIdentityFrom,
 } from "../../../src/core/engine-build-identity.ts";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
-import { GENERATION_HANDOFF_CAPABILITY } from "../../../src/modes/rpc/host-decision.ts";
 import { handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
-import { signalGeneration } from "../../../src/modes/rpc/host-stop.ts";
+import { signalGeneration, stopHost } from "../../../src/modes/rpc/host-stop.ts";
 import {
 	generationEnv,
 	type JsonlPeer,
@@ -109,17 +108,6 @@ async function hostChildPid(host: HandoverRig): Promise<number> {
 	return pid;
 }
 
-/**
- * What a client from before this fix does on `host handoff`: it consults `generation_handoff` and nothing else, then
- * brings its own successor up and signals the predecessor. The signal stands for both here.
- */
-async function preFixHandoff(host: HandoverRig): Promise<"handoff_unsupported" | "signalled"> {
-	const running = await probeHost({ socket: host.qa.socket });
-	if (!running?.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) return "handoff_unsupported";
-	signalGeneration(host.firstPid, "SIGUSR1");
-	return "signalled";
-}
-
 describe.skipIf(process.platform === "win32")("a handoff the incumbent host did not admit", () => {
 	it.each([
 		["an older CalVer engine", wireEngine(OLDER), "older_engine"],
@@ -169,16 +157,45 @@ describe.skipIf(process.platform === "win32")("a handoff the incumbent host did 
 		expect((await probeHost({ socket: host.qa.socket }))?.instanceId).not.toBe(host.instanceId);
 	});
 
-	it("answers a requester from before the fix with handoff_unsupported: nothing it consults is advertised", async () => {
+	// Protocol contract: a client from before the fix consults `generation_handoff` alone before it spawns a successor
+	// or signals, so the advertised capability list is what keeps such a client attached instead.
+	it("pins the advertised capability list: handoff_admission, and not the generation_handoff an older client consults", async () => {
 		const host = await rig("iv-legacy");
-		const caller = await connect(host, peers);
-		const sessionId = openedSessionId(await caller.request({ id: "open", type: "open_session", cwd: host.qa.cwd }));
 
-		const outcome = await preFixHandoff(host);
+		const capabilities = (await probeHost({ socket: host.qa.socket }))?.capabilities;
 
-		expect(outcome).toBe("handoff_unsupported");
-		expect((await probeHost({ socket: host.qa.socket }))?.capabilities).toContain("handoff_admission");
-		await expectServing(host, caller, sessionId);
+		expect(capabilities).toContain("handoff_admission");
+		expect(capabilities).not.toContain("generation_handoff");
+	});
+
+	// senpi#7052 review L2: the admission was asked for before the requester's own refusals ran, so the host logged an
+	// admission for a handoff that never happened.
+	it("is not asked to admit a handoff that the requester's own checks refuse", async () => {
+		const host = await rig("iv-local");
+
+		const result = await handoffHost({
+			socket: host.qa.socket,
+			agentDir: join(host.qa.root, "another-agent-dir"),
+			hostArgs: [...host.buildB.hostArgs],
+			env: generationEnv(host.qa),
+			_test: { launch: supervisorLaunch, readinessTimeoutMs: 20_000 },
+		});
+
+		expect(result).toMatchObject({ action: "refuse", reason: "foreign_agent_dir" });
+		// The host writes its admission line before it answers and its log keeps the order: once the admission asked
+		// for here is on record, one granted to the refused handoff would stand in front of it.
+		const requester = await connect(host, peers);
+		const admitted = dataOf(
+			await ask(requester, {
+				id: "admit",
+				type: "admit_handoff",
+				successor_engine: wireEngine(engineBuildIdentity()),
+			}),
+		);
+		expect(admitted).toMatchObject({ admission_id: expect.any(String) });
+		const own = `admission ${String(admitted.admission_id)}`;
+		expect(await logLines(host, own, 1)).toHaveLength(1);
+		expect(await logLines(host, "handoff admitted", 1)).toEqual([expect.stringContaining(own)]);
 	});
 
 	it("keeps serving when its supervisor and its host are sent a bare SIGUSR1, and logs each ignored signal", async () => {
@@ -228,6 +245,27 @@ describe.skipIf(process.platform === "win32")("a handoff the incumbent host did 
 		const parked = client.waitFor((record) => record.type === "session_closed" && record.sessionId === sessionId);
 		expect(dataOf(await ask(requester, { id: "drain", ...admission }))).toMatchObject({ draining: true });
 
+		expect(await parked).toMatchObject({ reason: "handoff_parked" });
+		expect(await waitForPidGone(host.firstPid, 20_000)).toBe(true);
+	});
+
+	// senpi#7052 review L1: the supervisor's SIGUSR1 only wakes the host to read the relay, so a relay that could not be
+	// written left `stop --drain` with a supervisor that stopped admitting and a host that never drained.
+	it("still drains for stop --drain when its supervisor cannot write the relay into the generation directory", async () => {
+		const host = await rig("iv-relay");
+		const client = await connect(host, peers);
+		const sessionId = openedSessionId(await client.request({ id: "open", type: "open_session", cwd: host.qa.cwd }));
+		const paths = createHostDaemonPaths({ socket: host.qa.socket, agentDir: host.qa.agentDir });
+		// A directory where the relay belongs: the supervisor's rename onto it fails, and the host reads no request there.
+		await mkdir(generationPaths(paths, host.instanceId).childDrainRequestFile);
+		const relayFailed = logLines(host, "could not relay the drain", 1);
+		const parked = client.waitFor((record) => record.type === "session_closed" && record.sessionId === sessionId);
+
+		expect(await stopHost({ socket: host.qa.socket, agentDir: host.qa.agentDir, drain: true })).toMatchObject({
+			action: "drained",
+		});
+
+		expect(await relayFailed).toHaveLength(1);
 		expect(await parked).toMatchObject({ reason: "handoff_parked" });
 		expect(await waitForPidGone(host.firstPid, 20_000)).toBe(true);
 	});

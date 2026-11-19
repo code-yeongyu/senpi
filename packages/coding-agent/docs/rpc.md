@@ -1900,8 +1900,9 @@ These guards decide whether a handoff is attempted at all, and all of them fail 
   spawning anything when the successor is strictly older. When either ordinal is not senpi CalVer the successor
   cannot be proven not older (senpi#7040) and the refusal is `reason: "unordered_engine"`; `detail` names both
   engines either way. This is the REQUESTER's own check: the only one a host from before the admission gets,
-  and a second one behind the admission of a host that grants it. An `ensure` with the
-  upgrade policy keeps such a host and writes one `engine order uncomparable` line to stderr. `allowDowngrade` (`host handoff --allow-downgrade`)
+  and the first one in front of the admission of a host that grants it. An `ensure` with the
+  upgrade policy keeps such a host and writes one `engine order uncomparable` line to stderr; an ensure that
+  refuses the host for another reason keeps nothing and writes no such line. `allowDowngrade` (`host handoff --allow-downgrade`)
   is the caller's explicit consent and skips the check; it is sent to the host as `allow_downgrade`. A host that
   advertises no ordinal is not judged by the requester.
 - Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
@@ -1917,8 +1918,10 @@ answers on the public socket. Both are answered `success: true` whatever the ver
 `data` shape.
 
 - `{ "type": "admit_handoff", "successor_engine": { "text", "ordinal": [y, m, d, n, epoch] }, "allow_downgrade"?: true }`
-  is sent BEFORE a successor is spawned. The host compares `successor_engine` with its own engine, in senpi
-  CalVer only, by the rule above:
+  is sent BEFORE a successor is spawned, and only after every refusal of the requester's own (the engine check
+  above, another agent dir, an unprovable owner that holds sessions, a public socket path that is too long or was
+  replaced): the host admits, and logs, only a handoff that is then carried out. The host compares
+  `successor_engine` with its own engine, in senpi CalVer only, by the rule above:
   - a strictly older successor: `data: { "refused": "older_engine", "detail" }`;
   - a pair that cannot be ordered - an ordinal outside CalVer on either side, or no `successor_engine` at all:
     `data: { "refused": "unordered_engine", "detail" }`;
@@ -1999,7 +2002,9 @@ The request needs no signal and is the same on every platform:
    described under [Generation handoff](#generation-handoff-handoffhost-probehost-stophost): stop admitting, park each session as it
    settles, release its claims, exit once nothing is attached. It relays the drain to its host child through
    `generations/<instanceId>/host-drain-request.json`, which the child polls (on POSIX SIGUSR1 still follows as
-   an immediate wake).
+   an immediate wake). When that file cannot be written - the generation directory is gone, read-only or full -
+   a POSIX supervisor writes the same record into its own private directory, and the child reads it there on that
+   wake, so `host stop --drain` still drains. A SIGUSR1 with no relay behind it in either place stays ignored.
 
 A generation without the marker - one from before the request existed - is drained by SIGUSR1 as before, and only
 on POSIX, when the endpoint advertises the legacy `generation_handoff` AND answers as the named instance; otherwise
