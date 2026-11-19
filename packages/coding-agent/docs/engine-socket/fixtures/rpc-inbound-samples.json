@@ -1,6 +1,6 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "27c8b985864be3f3a7d9605f4f8476e423613eb9fa2bba9b6820e0d0c1d3f9a6",
+	"methodClassesDigest": "df0865f5652718f4f3ad2d27bcbcf136533b9bba72d28d75c0a2f08d2d9cb664",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
 	"methodCount": 137,
@@ -829,7 +829,7 @@
 		{
 			"method": "open_session",
 			"class": "dynamic",
-			"dynamicVersion": 2,
+			"dynamicVersion": 3,
 			"sampleClass": "thread",
 			"connectionLocal": false,
 			"sample": {

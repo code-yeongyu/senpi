@@ -311,7 +311,7 @@ export type RpcCommand = (
 			kind?: SessionKind;
 			context?: Record<string, string>;
 	  }
-	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd" | "forkFrom"> & {
 			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
 			type: "claim_session";
 			cwd: string;

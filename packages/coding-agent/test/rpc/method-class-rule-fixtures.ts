@@ -36,7 +36,7 @@ const IDLE_START_CASES: ReadonlyArray<RuleCase> = [
  */
 export const RULE_FIXTURES: Readonly<Record<string, ReadonlyArray<RuleCase>>> = {
 	"append_session_entry@1": APPEND_ENTRY_CASES.map(([name, value, expected]) => [name, { entry: value }, expected]),
-	"open_session@2": [
+	"open_session@3": [
 		["by id only", { sessionId: "s" }, "thread"],
 		["expected host instance", { expectedHostInstance: "h" }, "thread"],
 		["provider and model", { provider: "p", modelId: "m" }, "thread"],
@@ -48,6 +48,8 @@ export const RULE_FIXTURES: Readonly<Record<string, ReadonlyArray<RuleCase>>> = 
 		["an empty tool environment still names one", { env: {} }, "device_admin"],
 		["a null path still names one", { sessionPath: null }, "device_admin"],
 		["an explicitly undefined field is absent", { cwd: undefined, env: undefined }, "thread"],
+		["a fork by durable id", { forkFrom: "0199f0d4-1303-7000-8000-000000000001" }, "device_admin"],
+		["a fork by session file", { forkFrom: "/x/s.jsonl" }, "device_admin"],
 	],
 	"get_effect_status@1": [
 		["by session id", { sessionId: "s", effectId: "e" }, "observe"],

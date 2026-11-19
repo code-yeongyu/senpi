@@ -200,7 +200,8 @@ export const REVIEWED_FIELDS = {
 	extension_ui_progress: { fields: ["answers", "comment", "id", "sessionId", "type"] },
 	new_session: { version: 1, fields: ["admissionId", "id", "parentSession", "sessionId", "type"] },
 	open_session: {
-		version: 2,
+		// `forkFrom` (omo#13031) reads another session's file on this host: rule version 3 moves it to device_admin.
+		version: 3,
 		fields: [
 			"admissionId",
 			"attended",
@@ -211,6 +212,7 @@ export const REVIEWED_FIELDS = {
 			"durableSessionId",
 			"env",
 			"expectedHostInstance",
+			"forkFrom",
 			"id",
 			"kind",
 			"modelId",
