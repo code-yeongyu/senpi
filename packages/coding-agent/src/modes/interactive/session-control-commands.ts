@@ -17,12 +17,7 @@ import {
 	setSessionSettled,
 	settledFields,
 } from "../../core/session-settled.ts";
-import type {
-	AdmissionHoldReason,
-	QuestionRequest,
-	QuestionResponse,
-	SessionControlDrainResult,
-} from "../../core/extensions/types.ts";
+import type { QuestionRequest, QuestionResponse, SessionControlDrainResult } from "../../core/extensions/types.ts";
 import {
 	ENTRIES_TAIL_CAPABILITY,
 	OBSERVE_READS_CAPABILITY,
@@ -46,7 +41,10 @@ import {
 } from "./session-control-session-commands.ts";
 
 export interface TuiControlSurface extends TuiSessionControls {
-	draftHold(): AdmissionHoldReason | undefined;
+	/** Input the user submitted that the runtime has not taken yet: it holds admission, so no delivery overtakes it. */
+	submissionInFlight(): boolean;
+	/** Text or attachments in the composer: reported to clients, never a hold on a delivery (senpi#7043). */
+	hasDraft(): boolean;
 	blockingQuestion(): boolean;
 	pendingQuestionIds(): readonly string[];
 	pendingQuestion(requestId: string): Pick<QuestionRequest, "questions"> | undefined;
@@ -121,7 +119,7 @@ export async function runControlCommand(
 				turn_epoch: session.externalAdmission.turnEpoch,
 				blocking_question: context.surface.blockingQuestion(),
 				compacting: session.isCompacting,
-				editor_has_draft: context.surface.draftHold() !== undefined,
+				editor_has_draft: context.surface.submissionInFlight() || context.surface.hasDraft(),
 				state_version: context.feed.stateVersion,
 			});
 		case "get_messages":

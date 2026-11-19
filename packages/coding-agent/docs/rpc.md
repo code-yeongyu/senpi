@@ -3537,10 +3537,10 @@ registrant opens no socket and writes no registry directory.
     `attachments` counts the terminal plus each attached client; a subscriber, mirrored or not, is not one.
   - `steer`/`follow_up { message, whenIdle?, clientMessageId?, expected_turn_id? }` and
     `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
-    (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
+    (`admitExternalMessage`), so input the user submitted and the runtime has not taken yet holds them, with the host's `whenIdle` choice (`queue`, the
     default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
     steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started`,
-    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user's submitted input has not reached the runtime yet) and `turn_conflict` are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
     skills. Input sent with a `clientMessageId` is answered with an admission receipt,
@@ -3592,8 +3592,9 @@ registrant opens no socket and writes no registry directory.
   - `steered`: the session is mid-turn, the steer names the current `turn_epoch`, and it goes on the steering
     queue once.
   - `turn_conflict`: the epoch is stale, or a steer names none.
-  - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
-    submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
+  - `held_draft`: input the user submitted has not reached the runtime yet (a buffered submission, a command that
+    may still submit text). Nothing is enqueued; retry on the next wake. A draft still in the composer holds
+    nothing: an idle session starts the delivery's own turn and leaves the draft in place (senpi#7043).
   - `held` (with `holds`, the hold kinds): the session is idle under a hold a peer cannot release - a person's Stop,
     an interrupted run, a parent's run hold (senpi#6490). The delivery is kept as a held notice and starts once that
     hold is released; do not send it again. An `unattended` hold alone is released by the delivery (`started`).
