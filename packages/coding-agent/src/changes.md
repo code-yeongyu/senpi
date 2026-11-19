@@ -1,3 +1,21 @@
+## 2026-11-19 - Agent children never inherit the RPC host's identity (senpi#7034)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `childEnvironmentOf` (from `modes/rpc/host-identity-env.ts`) so `senpi-codemode` builds its kernel environments with the same helper through the public package API.
+
+### Why
+
+- An RPC host keeps its generation identity and launch defaults in its own `process.env`. Every agent-facing child built from that env handed them on, so a senpi started from a session's shell or eval cell adopted the parent host's identity (senpi#7034, design from senpi#5635/#5653).
+
+### Why an extension could not handle it
+
+- The child environments are built by core helpers (shell env, tool child, RPC client) before any extension can intervene, and the hand-off names are owned by the RPC host.
+
+### Expected merge conflict zones
+
+- LOW: the one export line; upstream has no RPC host hand-off.
+
 ## 2026-11-18 - The parent config walk stops at the account home (senpi#6459)
 
 ### What changed
