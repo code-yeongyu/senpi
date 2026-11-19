@@ -1598,6 +1598,11 @@ export interface SessionShutdownEvent {
 	/** Destination session file when shutting down due to session replacement. */
 	targetSessionFile?: string;
 	/**
+	 * The session was closed on request with a graceful close (oh-my-openagent#14313): stop the work it would
+	 * otherwise restore on a reopen (monitors, loops) and leave state that reads as cleanly stopped.
+	 */
+	closed?: true;
+	/**
 	 * Per-handler signal the host aborts when this handler exceeds
 	 * `sessionShutdownHandlerTimeoutMs`; teardown then continues without it.
 	 * Long shutdown work should observe it. Absent on hosts that predate the

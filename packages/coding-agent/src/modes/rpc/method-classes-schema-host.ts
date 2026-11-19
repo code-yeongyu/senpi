@@ -127,6 +127,8 @@ export const HOST_RECORD_SCHEMAS = {
 		children: Opt(literals("refuse", "detach")),
 		force: OptBool,
 		deliveries: Opt(Type.Literal("refuse")),
+		graceful: OptBool,
+		waitMs: Opt(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
 	}),
 	detach_connection: command("detach_connection", {}),
 	find_session: command("find_session", { durableSessionId: Id }),

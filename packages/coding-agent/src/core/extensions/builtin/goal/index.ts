@@ -417,7 +417,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("session_shutdown", async (_event, ctx) => {
+	pi.on("session_shutdown", async (event, ctx) => {
 		retireLifecycleCollector?.();
 		activeContext = undefined;
 		unsubscribeGoalStoreChanged();
@@ -425,6 +425,9 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			await accountCurrentAgentTurn(ctx, "active");
 		}
 		clearAgentGoalAccounting();
+		// A graceful close stops the goal cleanly (oh-my-openagent#14313): it reopens paused, never mid-continuation.
+		if (event.closed === true && (await readGoal(goalStoreRef(ctx)))?.status === "active")
+			await updateGoal(goalStoreRef(ctx), { status: "paused" }, "user");
 		goalTicker.stop();
 		monitorContinuation.dispose();
 	});

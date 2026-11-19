@@ -24,11 +24,12 @@ export interface ReleaseSettlePort {
 
 /**
  * Empties both queues. Queued deliveries leave the ledger unwritten, so their sender redelivers them to
- * the next owner; the user's queued text is returned in enqueue order for the caller to restore.
+ * the next owner; the user's queued text is returned in enqueue order for the caller to restore. A graceful close
+ * takes them without aborting anything afterwards (`abortWillFollow: false`).
  */
-export function takeQueuedInput(session: AgentSession): ReleaseDropped {
+export function takeQueuedInput(session: AgentSession, abortWillFollow = true): ReleaseDropped {
 	const admittedBefore = session.externalAdmission.list().pending;
-	const cleared = session.clearQueue({ abortWillFollow: true });
+	const cleared = session.clearQueue({ abortWillFollow });
 	const stillAdmitted = new Set(session.externalAdmission.list().pending);
 	return {
 		deliveries: admittedBefore.filter((deliveryId) => !stillAdmitted.has(deliveryId)),
