@@ -1,3 +1,48 @@
+## 2026-11-19 - A handoff never hands a newer-engine host down to an older engine (senpi#7018)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHostLocked` refuses `older_engine` (new `HandoffRefusal`, `upgradeable: false`) before it spawns anything, when the successor's engine is strictly older than the running host's advertised `engineOrdinal` by `compareEngineOrdinal`. The successor's engine is `successorEngine` (new option, default this process's build). `allowDowngrade` (new option) is the caller's explicit consent and skips the check. A host that advertises no ordinal is not judged.
+- `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: `IdleHandoverRequest` gains `targetEngine` and `allowDowngrade`, `HostIdentityView` gains `engine`. `begin` refuses `older_engine` after `already_current` when the requester's engine is older than the host's, or when the request states no engine (a CLI before this guard).
+- `packages/coding-agent/src/modes/rpc/host-handover-wire.ts`: `parseBeginHandover` reads `target_engine` (`{ text, ordinal }`) and `allow_downgrade`; `performIdleHandover` passes them to `handoffHost`.
+- `packages/coding-agent/src/modes/rpc/host-handover-request.ts`: the CLI sends its own engine as `target_engine`, and `allow_downgrade` when asked.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: the handoff request carries `allowDowngrade` into `handoffHost`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the idle handover's identity reports `engine: engineBuildIdentity()`.
+- `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`: the ordinal parse is exported as `parseEngineOrdinal` for the `target_engine` parse.
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `supersedes` builds the host's identity with the shared `engineIdentityOf`.
+
+### Why
+
+- On a device whose default host ran a newer engine (`2026.11.18-2`), an older desktop runtime (engine `2026.11.18`) asked for a handover, and the newer host performed it: every session moved to the older engine and lost `find_session`. `handoffHostLocked` was "forced by design" with no engine check, and `begin_handover` did not say which engine the successor runs. The newer host is the process that performs an idle handover, so judging the request there also protects against already-shipped older callers.
+
+### Why an extension could not handle it
+
+- The handoff and the idle handover run inside the RPC host and its CLI before any extension loads, and the decision to replace the endpoint's generation is not exposed to extensions.
+
+### Expected merge conflict zones
+
+- LOW: `host-handoff.ts` (`HandoffHostOptions`, `HandoffRefusal`, `handoffHostLocked`), `host-idle-handover.ts` (`begin`), `host-handover-wire.ts` (`parseBeginHandover`, `performIdleHandover`), `host-runner.ts` (`handoffOutcome`).
+
+## 2026-11-19 - resume_session accepts unlessStopped (senpi#7016)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `method-classes-schema-session.ts`, `pause-command-validation.ts`: `resume_session` accepts an optional boolean `unlessStopped`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: passes `unlessStopped` to `beginResume`.
+- `packages/coding-agent/src/modes/rpc/rpc-pause-response-types.ts`: the `resume_session` answer `reason` gains `stopped`.
+
+### Why
+
+- A session reopened after an interrupted run is continued remotely by `resume_session`; a caller that is not the person (another session's thread tool) sets `unlessStopped` so a person's Stop stays theirs to release.
+
+### Why an extension could not handle it
+
+- The RPC command schema, validation and dispatch are host-owned.
+
+### Expected merge conflict zones
+
+- LOW: the `resume_session` field lists in the four files.
+
 ## 2026-11-18 - unload_session can refuse to drop a busy session's unwritten deliveries (senpi#7004)
 
 ### What changed

@@ -1,3 +1,22 @@
+## 2026-11-19 - `senpi host handoff --allow-downgrade` (senpi#7018)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command-args.ts`: `handoff` accepts `--allow-downgrade` (`ParsedHostArgs.allowDowngrade`, also set on the idle-handover terms).
+- `packages/coding-agent/src/cli/host-command.ts`: the handoff request carries it; the usage text names it and the `older_engine` refusal.
+
+### Why
+
+- A handoff onto a newer-engine host is now refused `older_engine`; the flag is the explicit way to downgrade on purpose.
+
+### Why an extension could not handle it
+
+- `senpi host` argument parsing runs before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `host-command-args.ts` flag loop and return literal; `host-command.ts` `USAGE` and `hostRequest`.
+
 ## 2026-11-18 - A terminal that attaches to a host-held session applies its command line (senpi#6914)
 
 ### What changed

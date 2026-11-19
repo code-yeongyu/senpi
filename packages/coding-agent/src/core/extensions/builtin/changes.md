@@ -1,3 +1,23 @@
+## 2026-11-19 - The hand link's page ledger empties when a run ends; the page text is found structurally (senpi#6933)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`:
+  - `withHandPageBudget` takes the brain session's agent and empties its ledger of pages it let through on `agent_end`, as the extension's own ledger is emptied. Its new `close()` unsubscribes and closes the wrapped hand link; the hand selection keeps and closes the wrapper, so no listener outlives its link.
+  - An over-budget page replaces the result's first text part, the one text part show_html_page emits, instead of the part that names the saved copy.
+
+### Why
+
+- senpi#6932. Pages an aborted run reserved kept using the budget for the rest of the hand link's life. A page text that a hand-side handler rewrote stayed next to the over-budget sentence and could still claim "Local images were inlined.".
+
+### Why an extension could not handle it
+
+- The brain-side page budget is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `withHandPageBudget` and `applied` in `html-render/hand-page-budget.ts`; `install` in `modes/headless/hand-selection.ts`.
+
 ## 2026-11-18 - show_html_page on a hand: an over-budget page keeps the hand's additions (senpi#6931)
 
 ### What changed

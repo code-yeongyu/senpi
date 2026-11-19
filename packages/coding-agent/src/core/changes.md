@@ -1,3 +1,45 @@
+## 2026-11-19 - Engine identity helpers for the downgrade guard (senpi#7018)
+
+### What changed
+
+- `packages/coding-agent/src/core/engine-build-identity.ts`: `engineIdentityOf(text, ordinal)` (a host's advertised identity) and `olderEngineDetail(successor, running)` (why a handoff would downgrade, by `compareEngineOrdinal`; equal or uncomparable is not older).
+
+### Why
+
+- The handoff site and the idle handover judge a downgrade by one rule, the same ordering the ensure's upgrade decision uses; version strings are never compared.
+
+### Why an extension could not handle it
+
+- The engine identity is core runtime state the RPC host reads before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the end of `engine-build-identity.ts`.
+
+## 2026-11-19 - A session killed after its run ended reopens without the interrupted-run hold (senpi#7016)
+
+### What changed
+
+- `packages/coding-agent/src/core/lifecycle-history.ts`: new `lastRunEnd` history reducer. It names the latest run a `session-lifecycle` record opened (`runActive`, `runId`) and whether the transcript after that record ends in an assistant answer that asks for no tool call.
+- `packages/coding-agent/src/core/lifecycle-ledger.ts`: `LifecyclePersistence.endedRunId`. A restored run recorded active is interrupted only when its id is not `endedRunId`; a restored `interrupted: true` is kept as it was decided.
+- `packages/coding-agent/src/core/lifecycle-session-binding.ts`: passes `endedRunId` from `lastRunEnd` to the controller.
+- `packages/coding-agent/src/core/session-lifecycle.ts`: settles the restored run's consumed custody too when the transcript holds that run's end.
+- `packages/coding-agent/src/core/work-obligations.ts`: `settleEndedRuns(currentRunId, currentRunEnded)`.
+- `packages/coding-agent/src/core/agent-session.ts`: `ResumeSessionRequest.unlessStopped`. With it, `_resumeOnce` answers `resumed: false, reason: "stopped"` and releases nothing while a person's Stop or a parent's run hold is live.
+
+### Why
+
+- The agent loop writes a run's final answer before the idle record that clears `runActive`, and that record can land seconds later. A lane that had gone idle was killed for a move (SIGKILL, or a TERM whose graceful shutdown aborts the run but writes no idle record) and reopened by id. Its file still recorded the run as active, so it came back under the interrupted-run hold and every peer delivery, monitor wake and restore digest was held. A run is now interrupted only when its file shows work in flight: a tool call without its result, a tool result, or input after the last answer.
+- A run that really was interrupted needs a sanctioned remote continuation that cannot override a person's Stop: `resume_session` with `unlessStopped`.
+
+### Why an extension could not handle it
+
+- Interruption is decided while the lifecycle ledger and custody restore, before any extension binds, and it installs the engine's own hold. The resume guard sits in the engine's resume path.
+
+### Expected merge conflict zones
+
+- LOW: `lifecycle-ledger.ts` constructor `interrupted` line; `session-lifecycle.ts` constructor `settleEndedRuns` call; `agent-session.ts` `ResumeSessionRequest`/`ResumeSessionAnswer` and the head of `_resumeOnce`.
+
 ## 2026-11-19 - A peer delivery to a held session continues it, or is answered held (senpi#6490)
 
 ### What changed

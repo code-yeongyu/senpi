@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.19-2] - 2026-11-19
 
 ### Breaking Changes
 
@@ -9,6 +9,10 @@
 ### Changed
 
 ### Fixed
+
+- A run aborted on a hand no longer keeps using the session's image budget after it ends. An over-budget page from a hand replaces its own text even when a hand-side `tool_result` handler rewrote that text ([#6933](https://github.com/code-yeongyu/senpi/pull/6933))
+- A session whose process was killed after its last run had ended (idle, its answer written) now reopens without the interrupted-run hold, so peer messages and monitor wakes reach it again. `resume_session` accepts `unlessStopped: true`, a remote resume of an interrupted run that never releases a person's Stop ([#7019](https://github.com/code-yeongyu/senpi/pull/7019))
+- A host on a newer engine is no longer handed down to an older engine. `senpi host handoff` and the idle handover (`begin_handover`) refuse `older_engine`, including requests from older CLIs that do not state their engine; `--allow-downgrade` downgrades on purpose ([#7023](https://github.com/code-yeongyu/senpi/pull/7023))
 
 ### Removed
 
