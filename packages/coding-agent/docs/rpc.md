@@ -30,7 +30,11 @@ held. Attaching a client does not release the hold.
 
 Real prompt, steer, follow-up, or question input releases it. The user's message
 starts one turn with the latest coalesced non-goal context before that message;
-the goal revalidates and may continue afterwards.
+the goal revalidates and may continue afterwards. A message another session sent
+(`admit_external_message`, `pi.session.admitExternalMessage`) that would start a turn
+releases an `unattended` hold the same way and answers `started` (senpi#6490). It does
+not release a person's Stop, the hold after an interrupted run or a parent's run hold:
+those need the person, so the delivery is kept as a held notice and answers `held`.
 
 #### resume_session
 
@@ -3512,8 +3516,8 @@ registrant opens no socket and writes no registry directory.
     `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
     (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
     default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
-    steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started` or
-    `queued`; `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started`,
+    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
     skills. Input sent with a `clientMessageId` is answered with an admission receipt,
@@ -3567,6 +3571,9 @@ registrant opens no socket and writes no registry directory.
   - `turn_conflict`: the epoch is stale, or a steer names none.
   - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
     submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
+  - `held` (with `holds`, the hold kinds): the session is idle under a hold a peer cannot release - a person's Stop,
+    an interrupted run, a parent's run hold (senpi#6490). The delivery is kept as a held notice and starts once that
+    hold is released; do not send it again. An `unattended` hold alone is released by the delivery (`started`).
   - `already_admitted`: this process already holds or already wrote that `delivery_id`, or the session file refused
     its entry and it is not admissible again yet (see `failed` below).
 
@@ -6174,7 +6181,7 @@ Response:
 }
 ```
 
-`kind` is the admission outcome (`started`, `queued`, `steered`, `already_admitted`, `held_draft`, `turn_conflict`); `admitted` is `[]` when no drain is registered.
+`kind` is the admission outcome (`started`, `queued`, `steered`, `already_admitted`, `held_draft`, `held`, `turn_conflict`); `admitted` is `[]` when no drain is registered.
 
 #### admit_external_message
 
@@ -6198,7 +6205,7 @@ Response:
 - `whenIdle`: `start` (default) starts a turn on an idle session; `queue` holds it for the next turn.
 - `expectedTurnId` is `get_state.currentTurnId` (a string). A steer whose `expectedTurnId` is not the current turn, or a mid-turn steer that names none, answers `kind: "turn_conflict"` and admits nothing. The reply's `turnId` is the session's turn at admission, in the same form.
 - `chainCount` is a thread call's hop count, checked against `threads.chainCountLimit` before anything is admitted (refused with `chain_count_limit` / `invalid_chain_count`, as on `prompt`/`steer`/`follow_up`); the admitted hop is written as `details.chain_count`.
-- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`.
+- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). `held` (senpi#6490): the session is idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run hold); the delivery is kept as a held notice and starts once that hold is released, and `holds` lists the hold kinds, for example `{ "kind": "held", "turnId": "0", "holds": ["session_hold"] }`. An `unattended` hold alone is released by the delivery, which answers `started`. A caller that predates `held` must treat it as neither success nor a refusal to retry: the delivery is admitted and waits on that device for its person. The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`.
 - On a connection that speaks for a remote device (a delegated connection, or one whose `set_client_info` declared `remoteOrigin`), the engine stamps that device as `details.remote_origin` and writes `text` unchanged, so the model reads exactly what a delivery on a local connection carries and no device (senpi#6250). It keeps `text` as `details.display_text` when no `displayText` is given, and refuses a `command_line` sender (`sender_not_allowed`). A delegated connection that names no remote device is refused (`delegated_origin_unknown`), never admitted as a local delivery. A record that names `remote_origin` is refused on every connection. The turn that consumes the delivery takes the connection's origin, so a remote device's follow-up runs under the delegated approval-mode rule even inside a local turn.
 - Once `release_session` has closed the session's admission, the record answers `success: false` with the release's message: the delivery stays with its sender.
 

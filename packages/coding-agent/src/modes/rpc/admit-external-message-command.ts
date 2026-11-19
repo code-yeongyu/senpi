@@ -100,5 +100,6 @@ export function admitExternalMessage(
 			turnMark: deliveryTurnMark(command, peer),
 		},
 	);
-	return answer(result.kind, result.turn_epoch);
+	if (result.holds === undefined) return answer(result.kind, result.turn_epoch);
+	return { ok: true, data: { kind: result.kind, turnId: String(result.turn_epoch), holds: [...result.holds] } };
 }
