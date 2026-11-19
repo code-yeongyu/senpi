@@ -3176,14 +3176,14 @@ root session) keeps that shard alive through its own connections after the owner
 Turns still count as activity, so a dependent session mid-turn keeps the host open until the turn ends. Hosts that
 predate the field ignore it.
 
-An attached connection keeps the host open only while it HOLDS something there (oh-my-openagent#14272): a session it
-opened or attached to, an open still in flight, or a command the host is still handling. A client that stays
-connected after its last session closed - a parent that keeps its task-shard connection, a forwarder between remote
-viewers - no longer keeps a 0-session host alive: the window starts when its last session closes, and attaching (the
-first non-observing line) restarts it. The supervisor proxies bytes and cannot see sessions, so its observer
+An attached connection whose sessions on the host have ALL closed stops keeping it open (oh-my-openagent#14272): a
+parent that keeps its task-shard connection after its last session there closed no longer keeps a 0-session host
+alive, and the window starts when that session closes. A connection that never held a session still counts as
+before (an ensure's attach hold, a client about to open), as does any connection with an open or a command in flight;
+attaching (the first non-observing line) restarts the window. The supervisor proxies bytes and cannot see sessions, so its observer
 connection sends `{"type": "watch_host_occupancy", "observe": true}` (an observing read with no response) and the
 host answers on that connection with `{"type": "host_occupancy", "holders": <n>}`, the number of attached
-connections that hold something, at once and again on every change; the supervisor counts at most that many attached
+connections that still occupy it, at once and again on every change; the supervisor counts at most that many attached
 clients, plus held observers. Until the host has answered, and while the observer connection is unhealthy, every
 attached client counts, as before. While a supervisor watches, the host's own empty exit stays with the supervisor.
 The owner-death quiescence check still counts every attached client. The supervisor learns about turns through

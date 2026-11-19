@@ -33,12 +33,12 @@
  * as DEPENDENT: it neither holds the host nor blocks its exit. This lives here, not in a module of its
  * own, because the supervisor's import graph is a budget (`supervisor-import-graph.test.ts`).
  *
- * An attached connection holds the host only while it holds something THERE (oh-my-openagent#14272): a session, an
- * open in flight, or a command being handled. The supervisor proxies bytes and cannot see that, so its observer link
- * sends `watch_host_occupancy` (an observing read) and the host answers on that connection with `host_occupancy`
- * records carrying `holders`, the number of attached connections that hold something, now and on every change. A
- * client that stays connected after its last session closed (a parent that keeps its shard connection, a forwarder
- * between viewers) then no longer keeps a 0-session host alive past its idle window.
+ * An attached connection whose sessions on the host have ALL closed stops holding it (oh-my-openagent#14272), while
+ * one that never held a session (an ensure's attach hold, a client about to open) still counts, as does any open or
+ * command in flight. The supervisor proxies bytes and cannot see sessions, so its observer link sends
+ * `watch_host_occupancy` (an observing read) and the host answers on that connection with `host_occupancy` records
+ * carrying `holders`, the number of attached connections that still occupy it, now and on every change. A parent
+ * that keeps its shard connection after its last session closed then no longer keeps a 0-session host alive.
  */
 
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";

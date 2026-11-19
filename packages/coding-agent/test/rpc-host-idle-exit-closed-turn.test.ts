@@ -152,7 +152,7 @@ describe.skipIf(process.platform === "win32")("idle exit after a session closed 
 	}, 120_000);
 });
 
-// oh-my-openagent#14272: a client that stays connected while holding no session on the host is not occupancy.
+// oh-my-openagent#14272: a client whose sessions on the host have all closed stops counting, though it stays connected.
 describe.skipIf(process.platform === "win32")("idle exit under a connected client that holds no session", () => {
 	const sessionless = (record: WireRecord) =>
 		record.decision === "idle" && (record.activity as WireRecord).connections === 0;
@@ -175,20 +175,6 @@ describe.skipIf(process.platform === "win32")("idle exit under a connected clien
 		expect(await exited).toEqual([0, null]);
 		expect(stderr()).toContain("senpi rpc host supervisor: idle shutdown");
 		await client.waitForClose();
-	});
-
-	it("exits one idle window after a client that never opened a session sent a non-observing command", async ({
-		signal,
-	}) => {
-		const { client, message, advance, exited } = await clockHostWithHeldTurn("cmd", signal);
-		const idle = message("activity", sessionless);
-
-		await client.request({ id: "list", type: "list_sessions" });
-		await idle;
-
-		expect(await advance(IDLE_EXIT_MS - 1)).toMatchObject({ shuttingDown: false, decision: "idle" });
-		expect(await advance(IDLE_EXIT_MS)).toMatchObject({ shuttingDown: true, decision: "exit" });
-		expect(await exited).toEqual([0, null]);
 	});
 
 	it("stays up past the window while the connected client still holds an idle session", async ({ signal }) => {

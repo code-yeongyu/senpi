@@ -2,9 +2,10 @@ import { HOST_OCCUPANCY_RECORD } from "./host-observe-request.ts";
 
 /**
  * A socket host's answer to `watch_host_occupancy` (oh-my-openagent#14272): how many of its attached connections
- * hold something here - a session, an open in flight, or a command being handled - sent to every watcher at once
- * and again whenever the number changes. The supervisor's idle exit counts these instead of every attached client,
- * so a client that stays connected while it holds nothing does not keep a 0-session host alive.
+ * still occupy it, sent to every watcher at once and again whenever the number changes. A connection occupies the
+ * host while it holds a session, has an open or a command in flight, or has never held a session at all (an
+ * ensure's attach hold, a client that has not opened yet). One whose sessions have all closed stops counting, so a
+ * parent that keeps its shard connection after its last session does not keep a 0-session host alive.
  *
  * A watcher is the supervisor's observer link; while one is connected the host's own empty exit stays with the
  * supervisor (`watching`).
@@ -20,6 +21,8 @@ export interface HostOccupancyWatchPorts {
 export class HostOccupancyWatch {
 	private readonly watchers = new Set<string>();
 	private readonly inFlight = new Map<string, number>();
+	/** Connections that held a session here at least once: only these stop counting once they hold nothing. */
+	private readonly heldOnce = new Set<string>();
 	private reported: number | undefined;
 	private readonly ports: HostOccupancyWatchPorts;
 
@@ -44,6 +47,7 @@ export class HostOccupancyWatch {
 	}
 
 	end(connection: string): void {
+		if (this.ports.holdsSessions(connection)) this.heldOnce.add(connection);
 		const left = (this.inFlight.get(connection) ?? 0) - 1;
 		if (left > 0) this.inFlight.set(connection, left);
 		else this.inFlight.delete(connection);
@@ -53,6 +57,7 @@ export class HostOccupancyWatch {
 	forget(connection: string): void {
 		this.watchers.delete(connection);
 		this.inFlight.delete(connection);
+		this.heldOnce.delete(connection);
 		this.refresh();
 	}
 
@@ -68,7 +73,9 @@ export class HostOccupancyWatch {
 		let holders = 0;
 		for (const connection of this.ports.connections()) {
 			if (this.watchers.has(connection) || !this.ports.attached(connection)) continue;
-			if (this.inFlight.has(connection) || this.ports.holdsSessions(connection)) holders++;
+			const holding = this.ports.holdsSessions(connection);
+			if (holding) this.heldOnce.add(connection);
+			if (holding || this.inFlight.has(connection) || !this.heldOnce.has(connection)) holders++;
 		}
 		return holders;
 	}

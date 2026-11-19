@@ -11,8 +11,8 @@
  * probe of an ensure that is about to open a session.
  * An observer that takes a hold (`hold_host: true` on an observing read, senpi#5626) is HELD: it counts as
  * occupancy, and taking the hold resets the idle window, until it releases (`hold_host: false`) or leaves.
- * Where the host reports how many attached connections hold something on it (`occupancy(holders)`,
- * oh-my-openagent#14272), an attached client that holds nothing there no longer counts.
+ * Where the host reports how many attached connections still occupy it (`occupancy(holders)`,
+ * oh-my-openagent#14272), an attached client whose sessions there have all closed no longer counts.
  */
 import type { Duplex } from "node:stream";
 import { isObservingRequest, observingHoldChange, requestOriginHostInstance } from "./host-observe-request.ts";
@@ -41,8 +41,8 @@ export class ClientOccupancy {
 	}
 
 	/**
-	 * Occupancy when the host reported `sessionHolders` (the attached connections holding a session, an open or a
-	 * command there): held observers plus at most that many attached clients. Unreported, every attached client counts.
+	 * Occupancy when the host reported `sessionHolders` (its attached connections that still occupy it): held observers
+	 * plus at most that many attached clients. Unreported, every attached client counts.
 	 */
 	occupancy(sessionHolders: number | undefined): number {
 		const attached = sessionHolders === undefined ? this.attached.size : Math.min(this.attached.size, sessionHolders);
