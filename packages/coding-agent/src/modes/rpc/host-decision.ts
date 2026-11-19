@@ -249,7 +249,8 @@ export function decideHostAction(
 function replacesGoneInstall(client: HostDecisionClient, host: HostProtocolInfo): boolean {
 	if (!installGoneReplaces(host.installPresent) || host.engineOrdinal === undefined) return false;
 	const running = engineIdentityOf(host.engineVersion ?? "", host.engineOrdinal);
-	if (!comparableEngines(client.identity, running) || compareEngineOrdinal(client.identity, running) !== 0) return false;
+	if (!comparableEngines(client.identity, running) || compareEngineOrdinal(client.identity, running) !== 0)
+		return false;
 	return covers(client.launchProfile, host.launch_profile);
 }
 
