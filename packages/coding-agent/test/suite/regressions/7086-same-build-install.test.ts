@@ -122,5 +122,5 @@ describe.skipIf(process.platform === "win32")("host status of a real host (senpi
 		expect(status.binaryPath).toBe(loadedRuntimeSource().root);
 		expect(status.installPresent).toBe(true);
 		expect(status.engineVersion).toBe(engineBuildIdentity().text);
-	}, 180_000);
+	});
 });
