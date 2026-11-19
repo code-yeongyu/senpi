@@ -60,6 +60,19 @@ function handPrepend(pi: ExtensionAPI): void {
 	);
 }
 
+/** A hand-side extension that drops `details.resultText`, as a hand on a version before senpi#6936 reports a page. */
+function handBeforeResultText(pi: ExtensionAPI): void {
+	pi.on("tool_result", (event) =>
+		event.toolName === "show_html_page"
+			? {
+					details: Object.fromEntries(
+						Object.entries(Object(event.details)).filter(([key]) => key !== "resultText"),
+					),
+				}
+			: undefined,
+	);
+}
+
 /**
  * A brain session (surface "app", no html-render loaded; the hand runs it) and the hand selection that links it to an
  * in-process hand running the built-ins and `handExtensions`. `endRun` delivers the `agent_end` a run of the session
@@ -180,6 +193,24 @@ describe("senpi#6921: show_html_page on a hand, seen from the brain session", ()
 		expect(parts[3]?.[0]).toBe("HAND-FIRST prepended-3");
 		expect(parts[3]?.[1]).toContain("this session's pages already carry");
 		expect(Reflect.get(Object(messages[3]?.details), "resultText")).toBe(parts[3]?.[1]);
+	});
+
+	// senpi#6936 review: a hand on an older version emits no resultText; its page text is still the one replaced.
+	it("replaces the first text part of a hand result that names no resultText", async () => {
+		const dirs = await handDirs("page-older-hand");
+		const { selection, session } = brainOnHand(dirs, [handBeforeResultText, handNote]);
+		expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
+
+		const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "older", 4));
+
+		const parts = messages.map((message) => message.content.map((part) => (part.type === "text" ? part.text : "")));
+		expect(Reflect.get(Object(messages[2]?.details), "resultText")).toBeUndefined();
+		expect(parts[2]?.[0]).toMatch(/Local images were inlined\.$/);
+		expect(parts[3]).toHaveLength(2);
+		expect(parts[3]?.[0]).toContain("this session's pages already carry");
+		expect(parts[3]?.[0]).not.toContain("Local images were inlined.");
+		expect(parts[3]?.[1]).toBe("HAND-NOTE older-3");
+		expect(pageDetails(messages[3]?.details).imagesInlined).toBe(false);
 	});
 
 	// senpi#6934: a rewritten page text is no longer the tool's own, so nothing is replaced; the sentence is appended.
