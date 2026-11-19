@@ -234,7 +234,8 @@ export const REVIEWED_FIELDS = {
 	close_session: { fields: ["admissionId", "id", "sessionId", "type"] },
 	unload_session: {
 		// `deliveries` (senpi#7004) only chooses whether a busy session's unwritten deliveries refuse the unload: no path,
-		// credential or process, so the class stays `thread`.
+		// credential or process, so the class stays `thread`. `graceful` and `waitMs` (oh-my-openagent#14313) only choose to
+		// wait for the turn instead of refusing or interrupting it, bounded: the same session end, so still `thread`.
 		fields: [
 			"admissionId",
 			"children",
@@ -242,10 +243,12 @@ export const REVIEWED_FIELDS = {
 			"deliveries",
 			"effectId",
 			"force",
+			"graceful",
 			"id",
 			"interrupt",
 			"sessionId",
 			"type",
+			"waitMs",
 		],
 	},
 	set_session_context: { fields: ["admissionId", "id", "patch", "sessionId", "type"] },

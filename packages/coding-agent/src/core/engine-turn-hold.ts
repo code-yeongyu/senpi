@@ -4,7 +4,13 @@ import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
 export type HoldKind = "unattended" | "session_hold" | "run_fence" | "inherited_hold";
-export type HoldReleaseCause = "input" | "resume_session" | "run_resume" | "run_cancelled" | "node_cancelled";
+export type HoldReleaseCause =
+	| "input"
+	| "resume_session"
+	| "run_resume"
+	| "run_cancelled"
+	| "node_cancelled"
+	| "session_close";
 export interface SessionHold {
 	kind: HoldKind;
 	key: string;

@@ -1,3 +1,42 @@
+## 2026-11-19 - Only submitted input holds an external admission (senpi#7043)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `AdmissionHoldReason` is `"draft"` alone (input the user submitted that the runtime has not taken yet); `held_draft` is documented as that, never as a draft in the composer.
+- `packages/coding-agent/src/core/external-admission.ts`: `setEditorSource` documents that the source reports submitted-but-untaken input only.
+
+### Why
+
+- A draft in the composer holding admission made an idle terminal queue a peer delivery behind the person's prompt (senpi#7043).
+
+### Why an extension could not handle it
+
+- The admission gate is engine state that every gateway reads before admitting; an extension cannot change what the terminal reports to it.
+
+### Expected merge conflict zones
+
+- LOW: the `AdmissionHoldReason` alias and the `held_draft` line of the `ExternalAdmissionKind` doc comment.
+
+## 2026-11-19 - A session publishes the auto-retry wait it sleeps through (senpi#7025)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_emit` folds every event through `nextRetryWait` (`core/retry-wait.ts`) into `_retryWait`, exposed as the `retryWait` getter: set at `auto_retry_start` (until = now + delayMs, kind `rate_limit` for 429/rate/usage/quota errors, else `retry`), cleared at the retried request's `agent_start` and at `auto_retry_end`.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: `auto_retry_start` and `auto_retry_end` join the records whose `output` frame carries a replacement snapshot, so a worker-hosted session publishes the wait on its own `session_status` at the `retry` cause instead of one publish late.
+- `packages/coding-agent/src/modes/rpc/session-status-source.ts`: a `list_sessions` row publishes the wait through `redactedRetryWait` (`core/retry-wait.ts`), which drops the provider's error text; `get_state` and `session_status` keep it.
+
+### Why
+
+- A session sleeping in a retry backoff looked exactly like a session doing work to every `session_status` subscriber and in `list_sessions`, so a supervising session (same host or another device) could not tell a rate-limit wait from progress.
+
+### Why an extension could not handle it
+
+- The RPC host derives `session_status` from the live `AgentSession` runtime view; an extension cannot add a field to that derivation or to `list_sessions` rows, and only the session knows the planned delay at the moment it starts sleeping.
+
+### Expected merge conflict zones
+
+- LOW: one import, one field, one getter next to `retryAttempt`, and one line at the top of `_emit`; one condition in `session-worker.ts`'s replacement-snapshot list; one helper in `retry-wait.ts` and one call in `session-status-source.ts`.
+
 ## 2026-11-19 - Engine identity helpers for the downgrade guard (senpi#7018)
 
 ### What changed

@@ -16,6 +16,7 @@ import type { ConnectionOrigin, InputTurnMark } from "../../core/turn-origin.ts"
 import type { RpcAdmitExternalMessageCommand, RpcAdmitExternalMessageReply } from "./admit-external-message-wire.ts";
 import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";
 import type { RpcRemoteOrigin } from "./remote-origin.ts";
+import { RPC_ERROR_SESSION_CLOSING } from "./rpc-error-types.ts";
 
 /** The connection a delivery arrived on, as the host knows it. */
 export interface DeliveryPeer {
@@ -74,6 +75,9 @@ export function admitExternalMessage(
 			},
 		};
 	const admission = session.externalAdmission;
+	// A release or a graceful close ended admission (oh-my-openagent#14313): the sender keeps the delivery, typed.
+	if (admission.closed !== undefined)
+		return { ok: false, refusal: { message: admission.closed, errorCode: RPC_ERROR_SESSION_CLOSING } };
 	const answer = (kind: RpcAdmitExternalMessageReply["kind"], epoch: number): AdmitExternalMessageAnswer => ({
 		ok: true,
 		data: { kind, turnId: String(epoch) },

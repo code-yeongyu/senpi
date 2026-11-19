@@ -33,6 +33,7 @@ import { armHostDrainChannels } from "./host-drain-channels.ts";
 import { HandoffAnnouncement } from "./host-handoff-announcement.ts";
 import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
+import { publishHostInstanceId } from "./host-identity-env.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { hostWatchdogBinding, internalHostTransport } from "./host-internal-transport.ts";
@@ -237,8 +238,10 @@ export function createHostCore(
 				hostInstance: hostInstanceId(),
 				hostSocket: endpointSocket,
 				...(hooks.shouldReopenParked !== undefined ? { shouldReopen: hooks.shouldReopenParked } : {}),
+				onProgress: (state) => router.setInheritedHandover(state),
 			},
 		).catch((cause: unknown) => {
+			router.setInheritedHandover(undefined);
 			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
 		});
 	const gate = new HostCoreGate(registry, (command) => router.handle(command), {
@@ -368,6 +371,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 
 async function runSocketHost(options: MultiSessionHostOptions, socketPath: string): Promise<never> {
 	await prepareSocketPath(socketPath);
+	publishHostInstanceId(hostInstanceId());
 	const writer = new SessionEventWriter(() => {});
 	const connections = new Map<string, HostConnection>();
 	// The supervisor's rule for which clients hold a host open (host-client-occupancy.ts): a

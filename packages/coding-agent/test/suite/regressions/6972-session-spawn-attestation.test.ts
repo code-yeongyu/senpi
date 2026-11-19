@@ -76,7 +76,9 @@ describe.skipIf(!supported)("session spawn attestation (#6972)", () => {
 	});
 
 	it("does not believe a re-exec that rewrites PI_SESSION_ID", async () => {
-		const forger = start("read _go; exec env PI_SESSION_ID=session-b sh -c 'echo ready; exec sleep 30'", {
+		// The image that prints `ready` is the last one: it blocks instead of exec'ing on, so the /proc read below never
+		// lands inside an exec, where the kernel shows an empty environ (senpi#7049).
+		const forger = start("read _go; exec env PI_SESSION_ID=session-b sh -c 'echo ready; read _hold'", {
 			PATH: process.env.PATH,
 			PI_SESSION_ID: "session-a",
 		});

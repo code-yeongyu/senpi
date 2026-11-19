@@ -117,8 +117,9 @@ export function admitInput(
 			return answered(id, command.type, { disposition: "queued", duplicate: true, ...identity });
 		case "held_draft":
 			return refusal(id, command.type, "held_draft", {
-				reason: "the user is composing in this terminal, so nothing was delivered",
-				action: "retry after the draft is sent or cleared",
+				reason:
+					"input the user submitted in this terminal has not reached the runtime yet, so nothing was delivered",
+				action: "retry once that input was taken",
 			});
 		case "turn_conflict":
 			return refusal(id, command.type, "turn_conflict", {

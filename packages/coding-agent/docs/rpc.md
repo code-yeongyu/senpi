@@ -1869,6 +1869,10 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    reopen does: they wait as notices, its running turn is its last on this generation, and it parks once
    that turn settles. A person's input or `resume_session` releases the hold after the reopen. A session a
    client is still attached to keeps its automatic turns.
+   While the successor is still taking over (parks it has not reopened yet, or a predecessor that still runs),
+   its `list_sessions` answer carries `handover: { pending, predecessor_draining }` beside `sessions`: the
+   listing is not yet the endpoint's whole set, so a reader must not treat a missing session as gone. The field
+   is absent once the takeover is done (senpi#7020).
 
 These guards decide whether a handoff is attempted at all, and all of them fail closed:
 
@@ -3196,6 +3200,18 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 
 With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays (a refusal with its `pending.deliveries`). Capability: `unload_session`; `deliveries` and `pending.deliveries`: `unload_refuse_deliveries`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
 
+##### Graceful close (`graceful: true`)
+
+`unload_session { sessionId, graceful: true, waitMs?, force?, children?, effectId? }` closes a session without interrupting it (oh-my-openagent#14313). `graceful` and `interrupt` exclude each other. Capability: `unload_graceful`.
+
+1. The fence, in one step: automatic turns (monitor, goal and loop wakes) wait as notices under the engine-turn hold `closing`, `admit_external_message` refuses every new delivery with `errorCode: "session_closing"`, and the queued input leaves the session unread: admitted delivery ids in `dropped.deliveries` (their senders keep them), the user's queued text in `dropped.user_messages`.
+2. The drain: the running turn, its tool calls, bash, compaction, prompts in preflight and other requests end on their own. Nothing is aborted. The wait is bounded by `waitMs` (default 60 000 ms, at most 600 000 ms).
+3. The close: the `closing` hold is released, a `session-closed` custom entry (`{ graceful, turn, waited_ms, returned, stopped: { wake_sources }, at }`) is the clean-stop record, and the teardown's `session_shutdown` carries `closed: true`. The terminal builtin then records no monitor or background job to restore, loops end `stopped` and an active goal is paused. The run ended normally, so a reopen writes no `interrupted-run` entry and arms no hold.
+
+The answer is `outcome: "unloaded"` with `sessionPath`, `dropped` and `graceful: { turn, waited_ms, stopped }`. `turn_active` and `work_pending` are what a graceful close waits for, and `extension_work` is what it stops, so neither refuses it; every other reason refuses before anything is fenced. A drain that outlives `waitMs` answers `outcome: "refused"`, `reason: "turn_active"`, `timed_out: true`, `open: true`, `admission: "reopened"`, `turn` and `waited_ms`, plus `dropped`: the hold is released and admission reopened, so the session keeps running as before, minus the input already handed back. With `effectId` the effect is `done` only when the session closed, so its `updatedAt` is the close.
+
+A terminal's control endpoint takes the same record, `graceful: true` only (anything else is refused `unsupported`). It also refuses `composer_draft` while the composer holds unsent text or an attachment, before the fence and again after the drain, so a close never discards what a person typed. After the answer, the terminal exits by itself as a quit does, and its session file keeps the same clean-stop record.
+
 ### Multi-session host lifecycle (cold start + idle exit)
 
 The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
@@ -3241,9 +3257,14 @@ holds the host this way while at least one remote viewer is attached, and releas
 held observer is occupancy everywhere occupancy is read: the idle-exit window, the empty-host exit, and the
 owner-death quiescence check. Hosts that predate the field ignore it and treat the read as a plain observing read.
 
-A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
-id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
-on every socket request. When a connection's first non-observing request names the host's own generation, the
+A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host keeps its generation
+id (`SENPI_RPC_HOST_INSTANCE_ID`) in its own environment (a socket host that named itself writes it there at start),
+and every child it starts for an agent (shells, eval kernels, the tool child) gets it as
+`SENPI_RPC_ORIGIN_HOST_INSTANCE` instead, so a nested host never adopts it as its own identity (senpi#7034). The
+host's other launch hand-off (daemon directory, generation, build id, watch binding, key sentinel and its
+launch-default `SENPI_RPC_CLIENT_CAPABILITIES`) never reaches those children. `RpcClient` sends whichever of the two
+ids it has as `"origin_host_instance"` on every socket request. When a connection's first non-observing request
+names the host's own generation, the
 connection neither holds the window open, nor blocks the owner-death grace, nor keeps an empty host alive. Without
 this, a task tree whose children open their own children on the shard they run in (omo's `p` shards are keyed by the
 root session) keeps that shard alive through its own connections after the owner and every outside client are gone.
@@ -3610,10 +3631,10 @@ registrant opens no socket and writes no registry directory.
     `attachments` counts the terminal plus each attached client; a subscriber, mirrored or not, is not one.
   - `steer`/`follow_up { message, whenIdle?, clientMessageId?, expected_turn_id? }` and
     `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
-    (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
+    (`admitExternalMessage`), so input the user submitted and the runtime has not taken yet holds them, with the host's `whenIdle` choice (`queue`, the
     default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
     steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started`,
-    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user's submitted input has not reached the runtime yet) and `turn_conflict` are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
     skills. Input sent with a `clientMessageId` is answered with an admission receipt,
@@ -3665,8 +3686,9 @@ registrant opens no socket and writes no registry directory.
   - `steered`: the session is mid-turn, the steer names the current `turn_epoch`, and it goes on the steering
     queue once.
   - `turn_conflict`: the epoch is stale, or a steer names none.
-  - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
-    submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
+  - `held_draft`: input the user submitted has not reached the runtime yet (a buffered submission, a command that
+    may still submit text). Nothing is enqueued; retry on the next wake. A draft still in the composer holds
+    nothing: an idle session starts the delivery's own turn and leaves the draft in place (senpi#7043).
   - `held` (with `holds`, the hold kinds): the session is idle under a hold a peer cannot release - a person's Stop,
     an interrupted run, a parent's run hold (senpi#6490). The delivery is kept as a held notice and starts once that
     hold is released; do not send it again. An `unattended` hold alone is released by the delivery (`started`).

@@ -44,6 +44,7 @@ import {
 	SESSION_RELOCATION_CAPABILITY,
 	SESSION_STATUS_CAPABILITY,
 	TOOL_BARRIER_CAPABILITY,
+	UNLOAD_GRACEFUL_CAPABILITY,
 	WARM_CAPABILITY,
 	PARK_CLAIM_CAPABILITY,
 } from "./custom-capability.ts";
@@ -160,6 +161,7 @@ export function multiSessionHostCapabilities(options: {
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			UNLOAD_REFUSE_DELIVERIES_CAPABILITY,
+			UNLOAD_GRACEFUL_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
 			MOVE_SESSION_CAPABILITY,
 			MOVE_SESSION_REVOKE_CAPABILITY,

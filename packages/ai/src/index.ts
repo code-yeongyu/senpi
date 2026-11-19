@@ -68,6 +68,7 @@ export * from "./auth/context.ts";
 export * from "./auth/credential-store.ts";
 export * from "./auth/headers.ts";
 export * from "./auth/helpers.ts";
+export { type OAuthRefreshRequest, refreshOAuthCredential } from "./auth/oauth-refresh.ts";
 export * from "./auth/types.ts";
 export type {
 	OAuthAuthInfo,

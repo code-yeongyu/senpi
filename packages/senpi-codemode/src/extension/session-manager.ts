@@ -316,6 +316,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 					: {}),
 				...(resolveKernelToolsEnabled(this.#options.settings) ? {} : { kernelToolsEnabled: false }),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
+				...(this.#options.inheritedEnv ? { inheritedEnv: this.#options.inheritedEnv } : {}),
 				...(this.#options.killGuard === true
 					? { killGuard: { moduleUrl: KILL_GUARD_MODULE_URL, agentPid: process.pid } }
 					: {}),
@@ -342,6 +343,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			cwd: this.#options.cwd,
 			...(sessionEnv ? { sessionEnv } : {}),
 			...attestation,
+			...(this.#options.inheritedEnv ? { inheritedEnv: this.#options.inheritedEnv } : {}),
 			...(this.#options.killGuard === true ? { killGuard: { protectedPids: killGuardProtectedPids() } } : {}),
 			connection,
 			onMessage,
