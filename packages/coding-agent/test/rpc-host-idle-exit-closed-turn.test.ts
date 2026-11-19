@@ -175,7 +175,7 @@ describe.skipIf(process.platform === "win32")("idle exit under a connected clien
 		expect(await exited).toEqual([0, null]);
 		expect(stderr()).toContain("senpi rpc host supervisor: idle shutdown");
 		await client.waitForClose();
-	}, 120_000);
+	});
 
 	it("exits one idle window after a client that never opened a session sent a non-observing command", async ({
 		signal,
@@ -189,7 +189,7 @@ describe.skipIf(process.platform === "win32")("idle exit under a connected clien
 		expect(await advance(IDLE_EXIT_MS - 1)).toMatchObject({ shuttingDown: false, decision: "idle" });
 		expect(await advance(IDLE_EXIT_MS)).toMatchObject({ shuttingDown: true, decision: "exit" });
 		expect(await exited).toEqual([0, null]);
-	}, 120_000);
+	});
 
 	it("stays up past the window while the connected client still holds an idle session", async ({ signal }) => {
 		const { qa, client, advance } = await clockHostWithHeldTurn("hld", signal);
@@ -201,5 +201,5 @@ describe.skipIf(process.platform === "win32")("idle exit under a connected clien
 
 		expect(await advance(0)).toMatchObject({ shuttingDown: false, decision: "active" });
 		expect(await advance(IDLE_EXIT_MS * 10)).toMatchObject({ shuttingDown: false, decision: "active" });
-	}, 120_000);
+	});
 });
