@@ -1,4 +1,5 @@
 import { HOST_EXIT_ERROR, HOST_EXIT_REFUSED, HOST_EXIT_USAGE, type HostOutcome } from "./host-outcome.ts";
+import { RPC_HOST_OVERLOADED, RpcEndpointAuthError } from "./rpc-auth-proof.ts";
 import { isTransportGoneError, RpcCommandError } from "./rpc-client.ts";
 
 const USAGE_CODES = new Set([
@@ -35,6 +36,18 @@ export function mapError(error: unknown, socket: string): HostOutcome {
 				detail,
 				socket,
 				...(error.errorData !== undefined && { data: error.errorData }),
+			},
+		};
+	}
+	if (error instanceof RpcEndpointAuthError && error.code === RPC_HOST_OVERLOADED) {
+		return {
+			exitCode: HOST_EXIT_REFUSED,
+			payload: {
+				action: "refuse",
+				reason: RPC_HOST_OVERLOADED,
+				detail,
+				socket,
+				...(error.retryAfterMs !== undefined && { data: { retry_after_ms: error.retryAfterMs } }),
 			},
 		};
 	}
