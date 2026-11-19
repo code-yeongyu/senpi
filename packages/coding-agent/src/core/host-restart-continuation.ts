@@ -16,7 +16,7 @@ export const HOST_DRAIN_HOLD_KEY = "host-drain";
 const INTERRUPTED_RUN_HOLD_KEY = "interrupted-run";
 
 /** Consecutive continuations of a cut run without a person's input or a peer delivery in between (senpi#7079). */
-export const RESTART_CONTINUATION_LIMIT = 3;
+const RESTART_CONTINUATION_LIMIT = 3;
 
 /** Why a restart left an engine-started run held: it keeps being cut with no progress, or it reached the limit. */
 export type RestartHoldReason = "repeated_restart_no_progress" | "repeated_restart_limit";
@@ -45,7 +45,9 @@ function isProgress(entry: SessionEntry): boolean {
 function isNewInput(entry: SessionEntry): boolean {
 	if (entry.type === "message") return entry.message.role === "user";
 	if (entry.type !== "custom_message") return false;
-	return entry.customType === SESSION_CONTROL_DELIVERY_TYPE || resetsEngineTurnHistory(entry.customType, entry.details);
+	return (
+		entry.customType === SESSION_CONTROL_DELIVERY_TYPE || resetsEngineTurnHistory(entry.customType, entry.details)
+	);
 }
 
 /**
