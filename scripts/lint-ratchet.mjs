@@ -91,7 +91,7 @@ const run = (root, command, args) =>
   NodeChildProcess.spawnSync(command, args, { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
 
 // A diagnostic with no rule code is a parse error: that file's findings cannot be counted.
-const lint = (root) => {
+export const lint = (root) => {
   const listed = run(root, "git", ["ls-files", "-z"]);
   if (listed.status !== 0) throw new Error(`git ls-files failed: ${listed.stderr}`);
   const files = listed.stdout
@@ -102,7 +102,10 @@ const lint = (root) => {
   const diagnostics = [];
   // Batches keep each argv under the OS limit.
   for (let start = 0; start < files.length; start += 2000) {
+    // --no-ignore: a .eslintignore entry or a config's ignorePatterns must not hide a file and drop
+    // its counts silently. The ratchet's only exclusion is its own file filter above.
     const result = run(root, NodePath.join(root, "node_modules/.bin/oxlint"), [
+      "--no-ignore",
       "-c",
       CONFIG,
       "--format",
