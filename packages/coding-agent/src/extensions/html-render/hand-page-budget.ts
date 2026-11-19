@@ -1,5 +1,5 @@
 import type { AgentEvent, AgentToolCall, ToolHost } from "@earendil-works/pi-agent-core";
-import type { JsonObject, TextContent } from "@earendil-works/pi-ai";
+import type { JsonObject, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
 import {
 	type HandedPageSession,
@@ -15,10 +15,25 @@ export interface HandPageBudgetSession {
 	readonly promptSurface: PromptSurface;
 }
 
-/** What replaces a page result's content and details when the page is handed as written instead. */
+type ResultContent = ToolResultMessage["content"];
+
+/** A page result handed as written instead: its content with the page's own text replaced, and its details. */
 interface PageOverride {
-	readonly content: TextContent[];
+	readonly content: ResultContent;
 	readonly details: JsonObject;
+}
+
+/** What the page's result says without its content: the decision is made once per call, the content kept per copy. */
+interface PageDowngrade {
+	readonly text: string;
+	readonly path: string;
+	readonly details: JsonObject;
+}
+
+/** The part of a show_html_page result the budget reads and rewrites. */
+interface PageResult {
+	readonly content: ResultContent;
+	readonly details?: unknown;
 }
 
 // A hand's result details arrive JSON-decoded over the hand link, so an object there is a JSON object.
@@ -28,8 +43,8 @@ const isJsonObject = (value: unknown): value is JsonObject =>
 /**
  * A hand (brain/hand split) runs show_html_page without the session's transcript, so it holds a page to the per-page
  * cap alone. This wraps the brain's ToolHost for that hand and applies the session's page budget to each page the hand
- * hands back, before its result is emitted or recorded: a page over the budget is handed as written, with the result
- * text saying so, as a session that ran the tool itself would (senpi#6921).
+ * hands back, before its result is emitted or recorded: a page over the budget is handed as written, its own text saying
+ * so, and whatever the hand's `tool_result` handlers added stays (senpi#6921, senpi#6928).
  */
 export function withHandPageBudget(host: ToolHost, session: HandPageBudgetSession): ToolHost {
 	// A hand is installed only between runs, so this ledger never outlives the pages it holds by more than one run.
@@ -38,12 +53,13 @@ export function withHandPageBudget(host: ToolHost, session: HandPageBudgetSessio
 		...(host.deviceFiles === undefined ? {} : { deviceFiles: host.deviceFiles.bind(host) }),
 		async execute(call, options) {
 			// One decision per call: the result's tool_execution_end, its message events and the returned message agree.
-			const decisions = new Map<string, PageOverride | undefined>();
-			const budgeted = (toolCallId: string, toolName: string, details: unknown): PageOverride | undefined => {
+			const decisions = new Map<string, PageDowngrade | undefined>();
+			const budgeted = (toolCallId: string, toolName: string, result: PageResult): PageOverride | undefined => {
 				if (toolName !== SHOW_HTML_PAGE_NAME) return undefined;
 				if (!decisions.has(toolCallId))
-					decisions.set(toolCallId, overBudget(call.calls, toolCallId, details, session, pending));
-				return decisions.get(toolCallId);
+					decisions.set(toolCallId, overBudget(call.calls, toolCallId, result.details, session, pending));
+				const downgrade = decisions.get(toolCallId);
+				return downgrade === undefined ? undefined : applied(downgrade, result.content);
 			};
 			const emit = (event: AgentEvent) => options.emit(budgetedEvent(event, budgeted));
 			const outcome = await host.execute(call, { ...options, emit });
@@ -51,7 +67,7 @@ export function withHandPageBudget(host: ToolHost, session: HandPageBudgetSessio
 				...outcome,
 				messages: outcome.messages.map((message) => ({
 					...message,
-					...budgeted(message.toolCallId, message.toolName, message.details),
+					...budgeted(message.toolCallId, message.toolName, message),
 				})),
 			};
 		},
@@ -60,17 +76,30 @@ export function withHandPageBudget(host: ToolHost, session: HandPageBudgetSessio
 
 function budgetedEvent(
 	event: AgentEvent,
-	budgeted: (toolCallId: string, toolName: string, details: unknown) => PageOverride | undefined,
+	budgeted: (toolCallId: string, toolName: string, result: PageResult) => PageOverride | undefined,
 ): AgentEvent {
 	if (event.type === "tool_execution_end") {
-		const override = budgeted(event.toolCallId, event.toolName, event.result.details);
+		const override = budgeted(event.toolCallId, event.toolName, event.result);
 		return override === undefined ? event : { ...event, result: { ...event.result, ...override } };
 	}
 	if ((event.type === "message_start" || event.type === "message_end") && event.message.role === "toolResult") {
-		const override = budgeted(event.message.toolCallId, event.message.toolName, event.message.details);
+		const override = budgeted(event.message.toolCallId, event.message.toolName, event.message);
 		return override === undefined ? event : { ...event, message: { ...event.message, ...override } };
 	}
 	return event;
+}
+
+/**
+ * The page's own text is the text part that names its saved copy; it alone is replaced, and every other part (what a
+ * hand-side `tool_result` handler added) stays where it is. A result whose page text is gone gets the text first.
+ */
+function applied(downgrade: PageDowngrade, content: ResultContent): PageOverride {
+	const own = content.findIndex((part) => part.type === "text" && part.text.includes(downgrade.path));
+	const text = { type: "text" as const, text: downgrade.text };
+	return {
+		content: own === -1 ? [text, ...content] : content.map((part, index) => (index === own ? text : part)),
+		details: downgrade.details,
+	};
 }
 
 /** The page handed as written when the session's budget has no room for it; undefined when it keeps its images. */
@@ -80,7 +109,7 @@ function overBudget(
 	details: unknown,
 	session: HandPageBudgetSession,
 	pending: PendingHandedPages,
-): PageOverride | undefined {
+): PageDowngrade | undefined {
 	const written = calls.find((call) => call.id === toolCallId)?.arguments.html;
 	if (
 		!isJsonObject(details) ||
@@ -92,8 +121,8 @@ function overBudget(
 		return undefined;
 	const reservation = reserveHandedPage(session.sessionManager, pending, toolCallId, details.html.length);
 	if (reservation.inlined) return undefined;
-	const text: TextContent = {
-		type: "text",
+	return {
+		path: details.path,
 		text: handedPageText({
 			path: details.path,
 			shown: session.promptSurface === "app",
@@ -102,6 +131,6 @@ function overBudget(
 			alreadyHanded: reservation.alreadyHanded,
 			inlinedLength: details.html.length,
 		}),
+		details: { ...details, html: written, imagesInlined: false },
 	};
-	return { content: [text], details: { ...details, html: written, imagesInlined: false } };
 }
