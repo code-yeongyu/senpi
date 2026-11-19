@@ -230,6 +230,22 @@ describe("senpi#6921: show_html_page on a hand, seen from the brain session", ()
 		expect(pageDetails(messages[3]?.details)).toMatchObject({ imagesInlined: false, html: calls[3]?.arguments.html });
 	});
 
+	// senpi#6937: an older hand sends no resultText; its page text is the part naming the saved copy, not a note in front.
+	it("replaces an older hand's page text, not a note a hand-side handler put in front of it", async () => {
+		const dirs = await handDirs("page-older-front");
+		const { selection, session } = brainOnHand(dirs, [handBeforeResultText, handPrepend]);
+		expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
+
+		const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "older", 4));
+
+		const parts = messages.map((message) => message.content.map((part) => (part.type === "text" ? part.text : "")));
+		expect(Reflect.get(Object(messages[2]?.details), "resultText")).toBeUndefined();
+		expect(parts[3]).toHaveLength(2);
+		expect(parts[3]?.[0]).toBe("HAND-FIRST older-3");
+		expect(parts[3]?.[1]).toContain("this session's pages already carry");
+		expect(pageDetails(messages[3]?.details).imagesInlined).toBe(false);
+	});
+
 	it("forgets the pages a session's link let through once the session is released", async () => {
 		const dirs = await handDirs("page-ledger");
 		const { selection, session, listeners } = brainOnHand(dirs);
