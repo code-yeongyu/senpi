@@ -65,6 +65,8 @@ The lead is 12.5% of the threshold. `speculativeLeadTokens` replaces that figure
 
 No background summary starts on a model that compacts through OpenAI's remote compaction route, or while automatic compaction is paused after repeated failures. With `speculativeEnabled: false` none starts at all, and a prompt that reaches the threshold waits while the summary is written.
 
+`enabled: false` does not stop background summaries. With threshold compaction off, such a summary is written and paid for but not applied at the threshold, so set `speculativeEnabled: false` together with `enabled: false`.
+
 `speculativeFraction` is read from settings but does not change this: the lead always decides the starting point.
 
 #### Idle compaction

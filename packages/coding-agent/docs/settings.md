@@ -226,7 +226,7 @@ Context cuts, skipped files, and compacted or omitted skills share the "Context 
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `compaction.enabled` | boolean | `true` | Enable auto-compaction. `false` also stops warm summaries and idle compaction |
+| `compaction.enabled` | boolean | `true` | Enable auto-compaction. `false` also stops idle compaction, but not background summaries: set `compaction.speculativeEnabled` to `false` as well |
 | `compaction.reserveTokens` | number | `16384` | Tokens reserved for LLM response |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens to keep (not summarized) |
 | `compaction.reserveScalingEnabled` | boolean | `true` | Raise the reserve on large windows to the larger of `reserveTokens` and 4% of the context window (at most 49152). `false` uses `reserveTokens` as written |

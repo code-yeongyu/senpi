@@ -237,7 +237,7 @@ For technical details, see:
 
 ### "I want to disable auto-compaction"
 
-Set `compaction.enabled: false` in your settings. Use `/compact` manually when you want to compact. Threshold compaction stays off, but a context the provider rejects as too large is still compacted once and retried so the session does not stall. The RPC `set_auto_compaction` command and OmO Desktop's per-thread toggle change only that session; they do not write this setting.
+Set `compaction.enabled: false` in your settings, and `compaction.speculativeEnabled: false` with it so that no background summary is written (see [What Runs by Default and What It Costs](#what-runs-by-default-and-what-it-costs)). Use `/compact` manually when you want to compact. Threshold compaction stays off, but a context the provider rejects as too large is still compacted once and retried so the session does not stall. The RPC `set_auto_compaction` command and OmO Desktop's per-thread toggle change only that session; they do not write this setting.
 
 ### "How do I see what was compacted?"
 
