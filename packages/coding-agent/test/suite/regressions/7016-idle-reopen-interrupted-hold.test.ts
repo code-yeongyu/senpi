@@ -88,8 +88,15 @@ function idleOrHeld(h: Harness): Promise<"idle" | "held"> {
 	});
 }
 
+const answered = (saved: SessionManager): void => {
+	saved.appendMessage(answer("Done for now"));
+};
+const toolCallPending = (saved: SessionManager): void => {
+	saved.appendMessage(toolCallAnswer());
+};
+
 const ended: Array<[string, (saved: SessionManager) => void]> = [
-	["its answer was written", (saved) => saved.appendMessage(answer("Done for now"))],
+	["its answer was written", answered],
 	[
 		// The reported file: a peer delivery started the run and the TUI's exit aborted its model request.
 		"a peer delivery's request was aborted with nothing run",
@@ -137,7 +144,7 @@ it.each(ended)("a session killed after its run ended (%s) reopens without the in
 
 const inFlight: Array<[string, (saved: SessionManager) => void]> = [
 	["its model request was in flight", () => {}],
-	["a tool call had no result", (saved) => saved.appendMessage(toolCallAnswer())],
+	["a tool call had no result", toolCallPending],
 	[
 		"its tool had returned and the next request was in flight",
 		(saved) => {
@@ -165,9 +172,39 @@ it.each(inFlight)("a session killed while %s still reopens interrupted, and a pe
 	expect(h.faux.state.callCount).toBe(0);
 });
 
+function monitorWake(h: Harness): Promise<void> {
+	return h.session.sendCustomMessage(
+		{ customType: "senpi-monitor:event", content: "build finished", display: false },
+		{ triggerTurn: true },
+	);
+}
+
+// The reported lane had live monitors: their restored wakes were the first to reach the hold the reopen installed.
+it("a monitor wake on a reopened idle session waits only under the unattended hold, which a peer message releases", async () => {
+	const h = await reopened(answered);
+	await monitorWake(h);
+	expect(h.session.holds.map((hold) => hold.kind)).toEqual(["unattended"]);
+	expect(h.session.pausedNoticeCount).toBe(1);
+	const outcome = idleOrHeld(h);
+	expect(
+		h.session.externalAdmission.admit({ delivery_id: "move-3", text: "[from lead] continue", deliverAs: "followUp" }),
+	).toMatchObject({ kind: "started" });
+	expect(await outcome).toBe("idle");
+	expect(h.faux.state.callCount).toBe(1);
+	expect(h.session.paused).toBe(false);
+});
+
+it("a monitor wake on a session reopened mid-run is held for the person", async () => {
+	const h = await reopened(toolCallPending);
+	await monitorWake(h);
+	expect(h.session.holds.map((hold) => hold.key)).toContain("interrupted-run");
+	expect(h.session.pausedNoticeCount).toBe(1);
+	expect(h.faux.state.callCount).toBe(0);
+});
+
 /** The interrupted session reopened behind a real RPC connection, the transport the thread tools' host uses. */
 async function interruptedOverRpc() {
-	const { base, file } = await killedSessionFile((saved) => saved.appendMessage(toolCallAnswer()));
+	const { base, file } = await killedSessionFile(toolCallPending);
 	const fixture = await createIdentityHarness({
 		siblingOf: base,
 		sessionManager: SessionManager.open(file),

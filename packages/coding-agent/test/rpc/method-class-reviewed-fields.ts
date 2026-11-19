@@ -226,7 +226,9 @@ export const REVIEWED_FIELDS = {
 			"type",
 		],
 	},
-	resume_session: { fields: ["admissionId", "effectId", "expectedSeq", "id", "message", "mode", "sessionId", "type"] },
+	resume_session: {
+		fields: ["admissionId", "effectId", "expectedSeq", "id", "message", "mode", "sessionId", "type", "unlessStopped"],
+	},
 	fork: { fields: ["admissionId", "entryId", "id", "position", "sessionId", "type"] },
 	clone: { fields: ["admissionId", "id", "sessionId", "type"] },
 	close_session: { fields: ["admissionId", "id", "sessionId", "type"] },
