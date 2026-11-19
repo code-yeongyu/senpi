@@ -37,7 +37,7 @@ function refusedDraft(context: ControlCommandContext, command: ControlCommand, d
 	return success(command.id, COMMAND, {
 		outcome: "refused",
 		reason: "composer_draft",
-		detail: `the terminal's composer holds an unsent ${context.surface.draftHold() ?? "draft"}; closing would discard it`,
+		detail: "the terminal's composer holds an unsent draft; closing would discard it",
 		action: DRAFT_ACTION,
 		...(drain === undefined ? {} : { dropped: drain.dropped, open: true, admission: "reopened" }),
 	});
@@ -55,7 +55,7 @@ export async function closeTerminalGracefully(
 			reason: "unsupported",
 			detail: "a terminal's own session closes only with graceful: true, and its terminal then exits",
 		});
-	if (surface.draftHold() !== undefined) return refusedDraft(context, command);
+	if (surface.hasDraft()) return refusedDraft(context, command);
 	const drain = fenceForClose(session);
 	const waitMs = gracefulWaitMs(typeof command.waitMs === "number" ? command.waitMs : undefined);
 	const quiet = await drainUntilQuiet(session, { busy: () => terminalBusy(session), settling: () => [] }, waitMs);
@@ -74,7 +74,7 @@ export async function closeTerminalGracefully(
 		});
 	}
 	// The person may have started typing while the turn ended: their text is never discarded by a close.
-	if (surface.draftHold() !== undefined) {
+	if (surface.hasDraft()) {
 		reopenAfterDrain(session);
 		return refusedDraft(context, command, drain);
 	}

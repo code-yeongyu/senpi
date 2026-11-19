@@ -54,7 +54,7 @@ describe("unload_session on a terminal's control endpoint", () => {
 
 	it("refuses while the composer holds unsent text and changes nothing", async () => {
 		const fixture = await endpoint();
-		fixture.setDraft("draft");
+		fixture.setDraft(true);
 		expect(await controlData(fixture.socket, { type: "unload_session", graceful: true })).toMatchObject({
 			outcome: "refused",
 			reason: "composer_draft",

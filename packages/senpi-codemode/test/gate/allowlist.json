@@ -7183,6 +7183,18 @@
 			],
 			"reason": "senpi#6422 (omo#12965): the cross-session cell authority of every codemode copy in a realm lives in one realm registry. src/kernels/shared/cell-authority-registry.ts joins the extension and first-kernel import scopes (invocation-authority.ts and permission-sessions.ts import it), together with the source entry of the helper package it imports (packages/realm-registry/src/index.ts: this package's tsconfig maps the helper to its source, as it maps the engine, so Bun resolves it without a build), and the new contracts pin the two-copy cases, the payload rules for a registry another version created, the answer rule for a cross-session invoker, and that a cell sees no engine registry key. No prompt, schema, helper or invariant cell moves; the baseline is unchanged.",
 			"changes": []
+		},
+		"senpi#7037": {
+			"additions": [
+				"legacyContracts/test/js-kernel-shell-class-pin.test.ts/issue #7034 the worker env pin covers Bun.$.Shell instances a new Bun.$.Shell() instance starts from the pinned view",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the worker-thread delta names exactly the dropped names and the origin it sets",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the Python interpreter spawns without the hand-off and with the origin and session values",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the process-isolated JS kernel child spawns without the hand-off",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off a worker JS kernel's cells and their children see no hand-off while the host keeps it",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off a inline JS kernel's cells and their children see no hand-off while the host keeps it"
+			],
+			"reason": "senpi#7037 (fixes #7034; re-lands #5653's reviewed core): contract tests that eval kernels and their children never inherit the RPC host's identity or launch-default client capabilities - the inline and worker JS kernels, the process-isolated JS child and the Python interpreter spawn without them while the host keeps them, the worker-thread delta names exactly the dropped names and the origin it sets, and a new Bun.$.Shell() in a pinning worker starts from the worker view. No prompt cell moves.",
+			"changes": []
 		}
 	}
 }

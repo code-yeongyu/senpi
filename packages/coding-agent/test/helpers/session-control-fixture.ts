@@ -23,7 +23,7 @@ export interface EndpointFixture {
 	/** How many times a graceful close asked the terminal to exit. */
 	readonly closes: { count: number };
 	nextWake(reason: SessionControlWakeEvent["reason"], seenAtDrain?: () => boolean): Promise<SessionControlWakeEvent>;
-	setDraft(hold: "draft" | undefined): void;
+	setDraft(present: boolean): void;
 }
 
 export async function startEndpoint(
@@ -46,10 +46,11 @@ export async function startEndpoint(
 		seenAtDrain: () => boolean;
 		resolve: (event: SessionControlWakeEvent) => void;
 	}> = [];
-	let draft: "draft" | undefined;
+	let draft = false;
 	const closes = { count: 0 };
 	const surface: TuiControlSurface = {
-		draftHold: () => draft,
+		submissionInFlight: () => false,
+		hasDraft: () => draft,
 		blockingQuestion: () => false,
 		pendingQuestionIds: options.questions?.pendingQuestionIds ?? (() => []),
 		pendingQuestion: options.questions?.pendingQuestion ?? (() => undefined),
@@ -94,8 +95,8 @@ export async function startEndpoint(
 		closes,
 		nextWake: (reason, seenAtDrain = () => true) =>
 			new Promise((resolve) => waiters.push({ reason, seenAtDrain, resolve })),
-		setDraft: (hold) => {
-			draft = hold;
+		setDraft: (present) => {
+			draft = present;
 		},
 	};
 }
