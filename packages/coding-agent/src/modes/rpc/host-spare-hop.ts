@@ -19,7 +19,7 @@ import type { Schedule } from "./socket-transport.ts";
 
 const SPARE_PROBE_ID = "internal-spare";
 /** Refill delays after consecutive failures, after the first immediate attempt; the refill then gives up. */
-export const SPARE_RETRY_DELAYS_MS: readonly number[] = [250, 500, 1000, 2000];
+const SPARE_RETRY_DELAYS_MS: readonly number[] = [250, 500, 1000, 2000];
 
 interface ReadySpare {
 	readonly hop: Duplex;

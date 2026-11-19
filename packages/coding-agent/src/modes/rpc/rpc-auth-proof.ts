@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const RPC_AUTH_CAPABILITY = "socket_auth";
+const RPC_AUTH_CAPABILITY = "socket_auth";
 export const RPC_AUTH_HEX = /^[a-f0-9]{64}$/;
 export const RPC_LAUNCH_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 /**

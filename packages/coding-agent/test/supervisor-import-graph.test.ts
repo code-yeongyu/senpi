@@ -71,6 +71,12 @@ const INTERNAL_HOP_LEAVES = new Set(
 		// no new dependency. Measured: 63 modules with it (7 hop leaves before it), 5,369 source / 5,081 built bytes,
 		// 89 code lines; it imports only process-identity and process-start-identity, both already in the graph.
 		"host-supervisor-poll",
+		// senpi#7055: the one spare, already-authenticated hop a public client takes, so its challenge costs one engine turn
+		// instead of three (4,897 source / 3,563 built bytes, 108 code lines; only type imports). The readiness probe moved out
+		// of host-lifecycle-proxy.ts unchanged to keep that file within its size limit (4,304 / 4,585, 90; Node builtins,
+		// internal-channel, jsonl and socket-transport, all already in the graph; the proxy shrank from 12,996 to 10,152).
+		"host-spare-hop",
+		"host-lifecycle-readiness",
 	]
 		.map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`)
 		// One clock domain per platform for the recorded supervisor start (senpi#3816 delta review): /proc start ticks
