@@ -14,6 +14,25 @@ function providerSettingsWarnings(settingsManager: SettingsManager): string[] {
 	return warnings;
 }
 
+/** senpi#6673: the engine reads only `retry.fallbackChains`, so a top-level key was ignored without a word. */
+function misplacedSettingsWarnings(settingsManager: SettingsManager): string[] {
+	const warnings: string[] = [];
+	const scopes = [
+		["global", settingsManager.getGlobalSettings()],
+		["project", settingsManager.getProjectSettings()],
+	] as const;
+	for (const [scope, settings] of scopes) {
+		if (Object.hasOwn(settings, "fallbackChains")) {
+			warnings.push(`Ignored top-level "fallbackChains" in ${scope} settings: did you mean "retry.fallbackChains"?`);
+		}
+	}
+	return warnings;
+}
+
+function settingsWarnings(settingsManager: SettingsManager): string[] {
+	return [...providerSettingsWarnings(settingsManager), ...misplacedSettingsWarnings(settingsManager)];
+}
+
 export function collectSettingsDiagnostics(settingsManager: SettingsManager): AgentSessionRuntimeDiagnostic[] {
 	return [
 		...settingsManager.drainErrors().map(({ scope, path, error }) => ({
@@ -22,7 +41,7 @@ export function collectSettingsDiagnostics(settingsManager: SettingsManager): Ag
 				? `Invalid settings file ${path}: ${error.message}`
 				: `Invalid ${scope} settings: ${error.message}`,
 		})),
-		...providerSettingsWarnings(settingsManager).map((message) => ({ type: "warning" as const, message })),
+		...settingsWarnings(settingsManager).map((message) => ({ type: "warning" as const, message })),
 	];
 }
 
@@ -39,7 +58,7 @@ export function collectSettingsDiagnosticsWithContext(
 			type: "warning" as const,
 			message: `(${context}, ${scope} settings) ${error.message}`,
 		})),
-		...providerSettingsWarnings(settingsManager).map((message) => ({
+		...settingsWarnings(settingsManager).map((message) => ({
 			type: "warning" as const,
 			message: `(${context}) ${message}`,
 		})),
