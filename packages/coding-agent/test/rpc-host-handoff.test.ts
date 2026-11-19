@@ -280,7 +280,7 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 				retain_on_disconnect: true,
 			}),
 		);
-		const running = fake.waitForRequest((request) => request.latest.includes(armed), 20_000);
+		const running = fake.waitForRequest((request) => request.latest.includes(armed), 60_000);
 		// Answered once the turn it starts settles, so it is sent, not awaited: the model holds that turn open.
 		client.send({
 			id: "wake",
@@ -296,15 +296,16 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		client.destroy();
 
 		await handoff(qa, hostArgs);
-		await waitForFileText(sessionPath, '"kind":"unattended"', 20_000);
+		await waitForFileText(sessionPath, '"kind":"unattended"', 60_000);
 		const before = fake.requests.length;
 		const resumed = fake.waitForRequest(
 			(request, index) => index >= before && request.latest.includes("deploy finished"),
-			20_000,
+			60_000,
 		);
 		fake.releaseHeld();
 		await resumed;
-	});
+		// Two real generations and a drain, like every case in this file: the suite's 30 s default does not fit a loaded run.
+	}, 120_000);
 
 	it("aborts the handoff when an unmanaged server has taken the public socket", async () => {
 		const qa = await generation("stolen");

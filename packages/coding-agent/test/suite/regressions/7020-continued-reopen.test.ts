@@ -137,11 +137,15 @@ it("keeps an active goal continuing past a streak of 8 continuations", async () 
 	harnesses.push(b);
 	b.setResponses(Array.from({ length: 3 }, () => fauxAssistantMessage([fauxText("still working")])));
 	const before = b.faux.state.callCount;
+	const continuations = () =>
+		b.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "custom_message" && entry.customType === "goal-continuation").length;
+	const streak = continuations();
 	const turn = firstTurnSettled(b.session);
 	await b.session.bindExtensions({ mode: "rpc", shutdownHandler: () => {} });
 	await within(turn, TURN_MS, "the goal's continuation");
 	expect(b.faux.state.callCount - before).toBeGreaterThanOrEqual(1);
-	expect(
-		b.session.messages.filter((m) => m.role === "custom" && m.customType === "goal-continuation").length,
-	).toBeGreaterThan(8);
+	expect(streak).toBeGreaterThanOrEqual(8);
+	expect(continuations()).toBeGreaterThan(streak);
 });

@@ -17,6 +17,8 @@ import type { SessionWorkerClient } from "./session-worker-client.ts";
 /** The immutable flags selected when a routing session is opened. */
 export interface RpcSessionLaunchProfile extends AgentSessionLaunchProfile {
 	attended?: false;
+	/** Host-internal: a successor reopens a session that was live on its predecessor (senpi#7020). */
+	continued?: true;
 	sessionPath?: string;
 	/**
 	 * Durable session id chosen by the caller, applied ONLY when this open creates the session.
