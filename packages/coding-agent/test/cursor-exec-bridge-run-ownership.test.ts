@@ -100,6 +100,7 @@ describe("cursor exec bridge run ownership across runs", () => {
 			getRegisteredTool: (name) => (name === "read" ? tool : undefined),
 			preflightToolCall: async () => undefined,
 			emitExecBridgeToolResult: async () => undefined,
+			releaseExecBridgeToolCall: () => undefined,
 		};
 		const sessionRef = { current: session };
 
@@ -143,6 +144,7 @@ describe("cursor exec bridge run ownership across runs", () => {
 				getRegisteredTool: (name) => (name === "read" ? tool : undefined),
 				preflightToolCall: async () => undefined,
 				emitExecBridgeToolResult: async () => undefined,
+				releaseExecBridgeToolCall: () => undefined,
 			},
 		};
 		const emitExternalEvent = vi.fn();

@@ -4,6 +4,7 @@ import { KeybindingsManager } from "../../core/keybindings.ts";
 import type { RpcSessionState } from "../rpc/rpc-types.ts";
 import { AttachClient, AttachRefusedError, type AttachRecord } from "./attach-client.ts";
 import { AttachDialogs } from "./attach-dialogs.ts";
+import { type AttachStartup, applyAttachStartup } from "./attach-startup.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { RecordRenderer } from "./record-renderer.ts";
@@ -123,7 +124,7 @@ export class AttachedTui extends Container implements Focusable {
 		this.editor.focused = value;
 	}
 
-	async connect(address: string, ref: string): Promise<void> {
+	async connect(address: string, ref: string, startup?: AttachStartup): Promise<void> {
 		const path = address.startsWith("unix://") ? address.slice(7) : address;
 		if (!path || path.includes("://") || /^\\\\\.\\pipe\\/i.test(path))
 			throw new Error("--attach needs a local socket path or a named pipe's logical filesystem path");
@@ -180,6 +181,7 @@ export class AttachedTui extends Container implements Focusable {
 			const buffered = this.buffering ?? [];
 			this.buffering = undefined;
 			for (const record of buffered) this.record(record);
+			if (startup) await applyAttachStartup((command) => this.client.request(command), row.sessionId, startup);
 		} catch (error) {
 			// What failed is the cause: a release that also fails must not replace it (senpi#4271 review).
 			try {
@@ -283,6 +285,11 @@ export class AttachedTui extends Container implements Focusable {
 				this.streaming = false;
 				this.showStatus("Attached");
 				break;
+			case "model_changed":
+				// #6059: a switch another client of the session made (the desktop) shows here live.
+				if (this.state) this.state = { ...this.state, model: record.model, thinkingLevel: record.thinkingLevel };
+				this.showStatus(this.streaming ? "Running" : "Attached");
+				break;
 			default:
 				break;
 		}
@@ -298,8 +305,9 @@ export class AttachedTui extends Container implements Focusable {
 	}
 
 	private showStatus(value: string): void {
+		const model = this.state?.model ? ` - ${this.state.model.provider}/${this.state.model.id}` : "";
 		this.statusText.setText(
-			theme.fg("muted", `${value}${this.state?.sessionName ? ` - ${this.state.sessionName}` : ""}`),
+			theme.fg("muted", `${value}${this.state?.sessionName ? ` - ${this.state.sessionName}` : ""}${model}`),
 		);
 		this.ui.requestRender();
 	}

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { failedPlatformJobs, PLATFORM_RED_TITLE, PLATFORM_WORKFLOWS, releaseBlockers } from "./ci-platform-red.mjs";
+import { failedPlatformJobs, PLATFORM_RED_LABEL, PLATFORM_RED_TITLE, PLATFORM_WORKFLOWS, releaseBlockers } from "./ci-platform-red.mjs";
 
 const script = fileURLToPath(new URL("./ci-platform-red.mjs", import.meta.url));
 const workflow = parse(readFileSync(new URL("../.github/workflows/platform-red.yml", import.meta.url), "utf8"));
@@ -53,19 +53,38 @@ describe("releaseBlockers (senpi#6834)", () => {
 	});
 });
 
-// A stand-in `gh` that records every call and answers the few it is asked, so the reporter runs end to end.
-function fakeGh({ openIssues }) {
+// A stand-in `gh` that records every call and keeps the repository's issues in a state file, so the reporter runs end
+// to end. `race` is an issue another report opens while this one is creating its own.
+function fakeGh({ issues, race = null }) {
 	const dir = mkdtempSync(join(tmpdir(), "ci-platform-red-"));
 	roots.push(dir);
 	const calls = join(dir, "calls.jsonl");
+	const state = join(dir, "issues.json");
+	writeFileSync(state, JSON.stringify(issues));
 	writeFileSync(join(dir, "gh"), `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + "\\n");
+const issues = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, "utf8"));
+const save = () => fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(issues));
+const flag = (name) => args[args.indexOf(name) + 1];
 const path = args.find((arg) => arg.startsWith("repos/")) ?? "";
 if (path.includes("/jobs")) process.stdout.write(JSON.stringify([{ jobs: ${JSON.stringify(jobs)} }]));
 else if (path.includes("/pulls")) process.stdout.write(JSON.stringify([{ number: 6834 }]));
-else if (args[0] === "issue" && args[1] === "list") process.stdout.write(JSON.stringify(${JSON.stringify(openIssues)}));
+else if (args[0] === "issue" && args[1] === "list") {
+	if (args.includes("--search")) throw new Error("the search index lags; list by label");
+	process.stdout.write(JSON.stringify(issues.filter((issue) => issue.open && issue.labels.includes(flag("--label")))));
+} else if (args[0] === "issue" && args[1] === "create") {
+	const race = ${JSON.stringify(race)};
+	if (race) issues.push(race);
+	const number = Math.max(0, ...issues.map((issue) => issue.number)) + 1;
+	issues.push({ number, title: flag("--title"), labels: [flag("--label")], open: true });
+	save();
+	process.stdout.write("https://github.com/owner/repo/issues/" + number + "\\n");
+} else if (args[0] === "issue" && args[1] === "close") {
+	issues.find((issue) => issue.number === Number(args[2])).open = false;
+	save();
+}
 `);
 	chmodSync(join(dir, "gh"), 0o755);
 	const run = () => spawnSync(process.execPath, [script, "report"], {
@@ -82,32 +101,46 @@ else if (args[0] === "issue" && args[1] === "list") process.stdout.write(JSON.st
 		},
 	});
 	const recorded = () => readFileSync(calls, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-	return { run, recorded };
+	const open = () => JSON.parse(readFileSync(state, "utf8")).filter((issue) => issue.open && issue.title === PLATFORM_RED_TITLE).map((issue) => issue.number);
+	return { run, recorded, open };
 }
 
+const tracking = (number, open = true) => ({ number, title: PLATFORM_RED_TITLE, labels: [PLATFORM_RED_LABEL], open });
+const bodyOf = (args) => args[args.indexOf("--body") + 1];
+
 describe("ci-platform-red.mjs report (senpi#6834)", () => {
-	it("opens the one tracking issue, naming the merged PR, the run and each failed macOS/Windows job", () => {
-		const gh = fakeGh({ openIssues: [{ number: 9, title: "Some other issue" }] });
+	it("opens the one labelled tracking issue, naming the merged PR, the run and each failed macOS/Windows job", () => {
+		const gh = fakeGh({ issues: [{ number: 9, title: "Some other issue", labels: [PLATFORM_RED_LABEL], open: true }, tracking(5, false)] });
 		const result = gh.run();
 		assert.equal(result.status, 0, result.stderr);
 		const create = gh.recorded().find((args) => args[0] === "issue" && args[1] === "create");
 		assert.ok(create, JSON.stringify(gh.recorded()));
 		assert.equal(create[create.indexOf("--title") + 1], PLATFORM_RED_TITLE);
-		const body = create[create.indexOf("--body") + 1];
 		for (const text of ["#6834", "https://example.test/run/42", "macOS combined", "Read binary parity (windows-latest)", "b".repeat(40)]) {
-			assert.ok(body.includes(text), text);
+			assert.ok(bodyOf(create).includes(text), text);
 		}
-		assert.ok(!body.includes("Static checks"));
+		assert.ok(!bodyOf(create).includes("Static checks"));
+		assert.deepEqual(gh.open(), [10]);
 	});
 
-	it("comments on the open tracking issue instead of opening a second one", () => {
-		const gh = fakeGh({ openIssues: [{ number: 9, title: "Some other issue" }, { number: 77, title: PLATFORM_RED_TITLE }] });
+	it("comments on the oldest open tracking issue instead of opening another", () => {
+		const gh = fakeGh({ issues: [tracking(77), tracking(80)] });
 		assert.equal(gh.run().status, 0);
 		const calls = gh.recorded();
 		assert.ok(!calls.some((args) => args[0] === "issue" && args[1] === "create"));
 		const comment = calls.find((args) => args[0] === "issue" && args[1] === "comment");
 		assert.equal(comment?.[2], "77");
-		assert.ok(comment[comment.indexOf("--body") + 1].includes("#6834"));
+		assert.ok(bodyOf(comment).includes("#6834"));
+	});
+
+	it("loses a race to open the issue without losing its report: it comments on the winner and closes its own", () => {
+		const gh = fakeGh({ issues: [], race: tracking(1) });
+		const result = gh.run();
+		assert.equal(result.status, 0, result.stderr);
+		const comment = gh.recorded().find((args) => args[0] === "issue" && args[1] === "comment");
+		assert.equal(comment?.[2], "1");
+		assert.ok(bodyOf(comment).includes("macOS combined"));
+		assert.deepEqual(gh.open(), [1]);
 	});
 });
 
@@ -122,10 +155,8 @@ describe("platform-red.yml", () => {
 		assert.equal(report.permissions.issues, "write");
 	});
 
-	it("serialises only the red reports: a green completion can never replace a pending red one in a concurrency group", () => {
+	it("holds no concurrency group, so no pending report is ever replaced and dropped (review L1)", () => {
 		assert.equal(workflow.concurrency, undefined);
-		const [report] = Object.values(workflow.jobs);
-		assert.deepEqual(report.concurrency, { group: "platform-red-report", "cancel-in-progress": false });
-		assert.ok(report.if.includes("workflow_run.conclusion == 'failure'"));
+		for (const job of Object.values(workflow.jobs)) assert.equal(job.concurrency, undefined);
 	});
 });

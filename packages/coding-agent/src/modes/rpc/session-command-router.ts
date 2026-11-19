@@ -1,4 +1,5 @@
 import type { HandoverParkedEntry } from "./host-handover-parked.ts";
+import type { InheritedHandover } from "./host-handover-reopen.ts";
 import type { RpcCommand, RpcHostKernelMemory, RpcResponse } from "./rpc-types.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
 import { dispose, tearDownReleased } from "./session-router-close.ts";
@@ -29,6 +30,9 @@ export class SessionCommandRouter {
 	}
 	setMemoryPressure(pressure: boolean): void {
 		this.context.memoryPressure = pressure;
+	}
+	setInheritedHandover(state: InheritedHandover | undefined): void {
+		this.context.inheritedHandover = state;
 	}
 	sweepIdleSessions(): void {
 		sweepIdleSessions(this.context);

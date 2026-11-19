@@ -52,8 +52,9 @@ function withReleaseRepo(run) {
 		for (const part of FORCED_SUITE_PARTS) writeForcedSuiteResult(results, { testedSha: tested, part, exitCode: 0, files: 1, tests: 1 });
 
 		mkdirSync(bin);
-		// gh answers only the platform gate (senpi#6834) with an empty main history; any CI lookup fails.
-		const ghBody = 'if (String(process.argv[3]).includes("/actions/workflows/")) { process.stdout.write("{\\"workflow_runs\\":[]}"); process.exit(0); }\nprocess.exit(1);\n';
+		// gh answers only the platform gate (senpi#6834): an empty main history, or a red macOS leg on CI with
+		// FAKE_PLATFORM_RED=1; any CI lookup fails.
+		const ghBody = "const path = String(process.argv[3]);\nif (path.includes(\"/actions/workflows/\")) {\n\tconst red = process.env.FAKE_PLATFORM_RED === \"1\" && path.includes(\"/workflows/ci.yml/\");\n\tprocess.stdout.write(JSON.stringify({ workflow_runs: red ? [{ id: 99, conclusion: \"failure\", html_url: \"https://example.test/runs/99\", head_sha: \"f\".repeat(40) }] : [] }));\n\tprocess.exit(0);\n}\nif (path.includes(\"/actions/runs/99/jobs\")) {\n\tprocess.stdout.write(JSON.stringify([{ jobs: [{ name: \"macOS combined\", labels: [\"macos-latest\"], conclusion: \"failure\" }] }]));\n\tprocess.exit(0);\n}\nprocess.exit(1);\n";
 		for (const name of ["npm", "node", "bun", "gh"]) {
 			// The registry preflight (senpi#6636) asks npm view for every publish-set name; the fake knows them all.
 			const npmView = name === "npm" ? 'if (process.argv[2] === "view") process.stdout.write(JSON.stringify(process.argv[3]) + "\\n");\n' : "";
@@ -100,6 +101,15 @@ describe("release.mjs --tested-sha (senpi#6642)", () => {
 			const tagged = git(origin, "rev-parse", `v${VERSION}^{commit}`);
 			assert.equal(git(origin, "rev-parse", `${tagged}^`), tested, "the release commit sits directly on the tested commit");
 			execFileSync("git", ["merge-base", "--is-ancestor", tagged, "main"], { cwd: origin });
+		}));
+
+	it("refuses while a macOS/Windows job is red on main, before stamping or pushing (senpi#6834)", () =>
+		withReleaseRepo(({ base, tested, results, release, originRefs }) => {
+			const before = originRefs();
+			const run = release(["--sha", base, "--tested-sha", tested, "--shard-results", results], { FAKE_PLATFORM_RED: "1" });
+			assert.notEqual(run.status, 0);
+			assert.match(run.stderr, /ci\.yml: macOS combined failed/);
+			assert.equal(originRefs(), before);
 		}));
 
 	it("accepts the dispatched commit itself as the tested commit (no catalog change)", () =>

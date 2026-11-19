@@ -29,7 +29,7 @@ export function installShellCapture(options) {
 		// environment view mirrors the bash tool, which always spawns with an explicit env.
 		originalShell.env({ ...process.env });
 	}
-	bun.$ = capturedShell(originalShell, options, guard);
+	bun.$ = capturedShell(originalShell, options, guard, originalShell.escape, pinEnv);
 	bun.spawn = capturedSpawn(originalSpawn, options, pinEnv, guard);
 	if (originalSpawnSync !== null) bun.spawnSync = capturedSpawnSync(originalSpawnSync, pinEnv, guard);
 	const restoreChildProcessNotice = noticeChildProcessGroupSignals(options.emitText, options.isActive);
@@ -48,7 +48,7 @@ function isBunRuntime(bun) {
 	return bun !== null && typeof bun === "object" && typeof bun.$ === "function" && typeof bun.spawn === "function";
 }
 
-function capturedShell(originalShell, options, guard, escape = originalShell.escape) {
+function capturedShell(originalShell, options, guard, escape = originalShell.escape, pinEnv = false) {
 	const shell = (strings, ...expressions) => {
 		assertCellLive();
 		guard?.command(renderShellTemplate(strings, expressions, escape), "bun");
@@ -58,7 +58,8 @@ function capturedShell(originalShell, options, guard, escape = originalShell.esc
 		return captureShellPromise(promise, options);
 	};
 	copyShellKeys(shell, originalShell);
-	if (typeof originalShell.Shell === "function") shell.Shell = capturedShellClass(originalShell.Shell, options, guard, escape);
+	if (typeof originalShell.Shell === "function")
+		shell.Shell = capturedShellClass(originalShell.Shell, options, guard, escape, pinEnv);
 	for (const method of SHELL_CONFIG_METHODS) {
 		shell[method] = (...args) => {
 			originalShell[method](...args);
@@ -80,10 +81,13 @@ function copyShellKeys(target, source) {
 }
 
 // `new Bun.$.Shell()` builds an independent `$` with its own env and cwd; each instance is judged and captured
-// exactly like `Bun.$` itself, so it is no way around the kill guard.
-function capturedShellClass(OriginalShell, options, guard, escape) {
+// exactly like `Bun.$` itself, so it is no way around the kill guard. While pinning, an instance starts from the
+// worker's env view like the global `$` (senpi#5635); a later `.env()` on it still replaces that.
+function capturedShellClass(OriginalShell, options, guard, escape, pinEnv) {
 	return function Shell(...args) {
-		return capturedShell(new OriginalShell(...args), options, guard, escape);
+		const instance = new OriginalShell(...args);
+		if (pinEnv && typeof instance.env === "function") instance.env({ ...process.env });
+		return capturedShell(instance, options, guard, escape, pinEnv);
 	};
 }
 
@@ -172,12 +176,12 @@ function capturedSpawnSync(originalSpawnSync, pinEnv, guard) {
 		if (!pinEnv) return originalSpawnSync(...args);
 		const [first, second] = args;
 		if (Array.isArray(first)) {
-			const spawnOptions = second === undefined ? {} : second;
-			if (spawnOptions === null || typeof spawnOptions !== "object" || spawnOptions.env !== undefined)
+			const spawnOptions = second ?? {};
+			if (typeof spawnOptions !== "object" || spawnOptions.env != null)
 				return originalSpawnSync(...args);
 			return originalSpawnSync(first, { ...spawnOptions, env: { ...process.env } });
 		}
-		if (first !== null && typeof first === "object" && first.env === undefined)
+		if (first !== null && typeof first === "object" && first.env == null)
 			return originalSpawnSync({ ...first, env: { ...process.env } });
 		return originalSpawnSync(...args);
 	};
@@ -198,24 +202,24 @@ function capturedSpawn(originalSpawn, options, pinEnv, guard) {
 		if (!options.isActive()) {
 			if (!pinEnv) return originalSpawn(...args);
 			if (Array.isArray(first)) {
-				const spawnOptions = second === undefined ? {} : second;
-				return spawnOptions.env === undefined ? originalSpawn(first, { ...spawnOptions, env: { ...process.env } }) : originalSpawn(...args);
+				const spawnOptions = second ?? {};
+				return spawnOptions.env == null ? originalSpawn(first, { ...spawnOptions, env: { ...process.env } }) : originalSpawn(...args);
 			}
-			return first !== null && typeof first === "object" && first.env === undefined
+			return first !== null && typeof first === "object" && first.env == null
 				? originalSpawn({ ...first, env: { ...process.env } })
 				: originalSpawn(...args);
 		}
 		let child;
 		if (Array.isArray(first)) {
-			const spawnOptions = second === undefined ? {} : second;
-			const effective = pinEnv && spawnOptions.env === undefined ? { ...spawnOptions, env: { ...process.env } } : spawnOptions;
+			const spawnOptions = second ?? {};
+			const effective = pinEnv && spawnOptions.env == null ? { ...spawnOptions, env: { ...process.env } } : spawnOptions;
 			child = needsStderrCapture(effective)
 				? drainStderr(originalSpawn(first, { ...effective, stderr: "pipe" }), options.emitText)
 				: effective === spawnOptions
 					? originalSpawn(...args)
 					: originalSpawn(first, effective);
 		} else {
-			const effective = pinEnv && first !== null && typeof first === "object" && first.env === undefined ? { ...first, env: { ...process.env } } : first;
+			const effective = pinEnv && first !== null && typeof first === "object" && first.env == null ? { ...first, env: { ...process.env } } : first;
 			child = needsStderrCapture(effective)
 				? drainStderr(originalSpawn({ ...effective, stderr: "pipe" }), options.emitText)
 				: effective === first

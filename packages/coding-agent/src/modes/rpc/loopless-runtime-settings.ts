@@ -12,7 +12,7 @@ import { createProjectTrustContext } from "../../cli/project-trust.ts";
 import { isLocalPath, resolvePath } from "../../utils/paths.ts";
 import type { Args } from "../../cli/args.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
-import type { LooplessRuntimeProfile } from "./runtime-factory-loopless.ts";
+import type { LooplessRuntimeProfile } from "./loopless-runtime.ts";
 import { resolveToolSelection } from "../../core/runtime/active-tools.ts";
 
 export interface LooplessRuntimeSettings {

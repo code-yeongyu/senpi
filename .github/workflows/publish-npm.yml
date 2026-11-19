@@ -13,6 +13,17 @@ name: Release
         required: false
         type: string
         default: ''
+      # senpi#6859: waive the hosted "Check and test" wait with a CI-basis receipt for the pinned sha (see the release job).
+      ci_basis_receipt:
+        description: 'Waive the hosted "Check and test" wait for the pinned sha with this CI-basis receipt id (admin/maintain only; needs sha and ci_basis_head). Empty = wait for hosted CI.'
+        required: false
+        type: string
+        default: ''
+      ci_basis_head:
+        description: 'The commit the ci_basis_receipt covers; must equal the sha input exactly (40 hex).'
+        required: false
+        type: string
+        default: ''
       dry_run:
         description: 'Dry-run preview only (no publish or push)'
         required: false
@@ -97,6 +108,57 @@ jobs:
         run: |
           echo "::error::a release that is not a dry run must be dispatched on refs/heads/main, not ${DISPATCHED_REF}" >&2
           exit 1
+
+      # senpi#6859: a non-empty ci_basis_receipt waives the hosted "Check and test" wait in Run release only when this step
+      # accepts it: a pinned sha, ci_basis_head equal to it, an admin or maintain actor and well-formed inputs. Each refusal
+      # prints its own ::error:: and fails the job. It runs before Checkout, so it never depends on the checked-out tree. The
+      # role read needs only the metadata access every GITHUB_TOKEN has. An empty receipt skips the step: the wait stays.
+      - name: Accept or refuse the CI-basis receipt
+        if: inputs.ci_basis_receipt != ''
+        env:
+          CI_BASIS_RECEIPT: ${{ inputs.ci_basis_receipt }}
+          CI_BASIS_HEAD: ${{ inputs.ci_basis_head }}
+          RELEASE_SHA: ${{ inputs.sha }}
+          FORCE_TESTS: ${{ inputs.force_tests }}
+          PUBLISH_ONLY: ${{ inputs.publish-only }}
+          ACTOR: ${{ github.triggering_actor }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          export LC_ALL=C
+          refused=0
+          refuse() { echo "::error::$1" >&2; refused=1; }
+          [ "$FORCE_TESTS" != true ] || refuse "ci_basis_receipt waives the hosted CI wait, which a force_tests release does not have"
+          [ "$PUBLISH_ONLY" != true ] || refuse "ci_basis_receipt waives the hosted CI wait, which a publish-only run does not have"
+          [ -n "$CI_BASIS_RECEIPT" ] || refuse "ci_basis_receipt is empty"
+          case "$CI_BASIS_RECEIPT" in
+            [[:space:]]* | *[[:space:]]) refuse "ci_basis_receipt is blank or has leading or trailing whitespace" ;;
+          esac
+          [ "${#CI_BASIS_RECEIPT}" -le 200 ] || refuse "ci_basis_receipt is ${#CI_BASIS_RECEIPT} characters; at most 200 are allowed"
+          case "$CI_BASIS_RECEIPT" in
+            *[![:print:]]*) refuse "ci_basis_receipt must be printable ASCII with no newline or control character" ;;
+          esac
+          [ -n "$RELEASE_SHA" ] || refuse "ci_basis_receipt needs a pinned release commit: the sha input is empty"
+          if ! [[ "$CI_BASIS_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+            refuse "ci_basis_head must be a full 40-character lowercase hex commit sha"
+          elif [ -n "$RELEASE_SHA" ] && [ "$CI_BASIS_HEAD" != "$RELEASE_SHA" ]; then
+            refuse "ci_basis_head ${CI_BASIS_HEAD} is not the pinned release commit (the sha input)"
+          fi
+          if ! [[ "$ACTOR" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?$ ]]; then
+            refuse "the triggering actor is missing or not a GitHub login"
+          elif ! role="$(gh api "repos/${GH_REPO}/collaborators/${ACTOR}/permission" --jq .role_name)"; then
+            refuse "could not read the repository role of ${ACTOR}"
+          elif [ "$role" != admin ] && [ "$role" != maintain ]; then
+            refuse "${ACTOR} has the '${role}' role; only admin or maintain may waive the hosted CI wait"
+          fi
+          [ "$refused" = 0 ] || exit 1
+          {
+            echo "CI-basis receipt: ${CI_BASIS_RECEIPT}"
+            echo "CI-basis head: ${CI_BASIS_HEAD}"
+            echo "Actor: ${ACTOR}"
+            echo "hosted CI wait waived by ci_basis_receipt"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -268,6 +330,8 @@ jobs:
           GH_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.UPSTREAM_AUTOMATION_TOKEN || '' }}
           SENPI_SKIP_PM_VERIFY: '1'
           RELEASE_SHA: ${{ inputs.sha }}
+          # senpi#6859: set only after the Accept or refuse the CI-basis receipt step accepted it.
+          CI_BASIS_RECEIPT: ${{ inputs.ci_basis_receipt }}
           # force_tests (senpi#6642): prepare fixed the version before the suite ran, and its tested commit, the
           # commit it descends from and the matrix jobs' result files are what release.mjs --tested-sha verifies.
           RELEASE_VERSION: ${{ inputs.version || needs.prepare.outputs.version }}
@@ -300,6 +364,9 @@ jobs:
             ARGS+=(--sha "$TESTED_BASE_SHA" --tested-sha "$TESTED_SHA" --shard-results "$FORCED_SUITE_RESULTS")
           elif [ -n "$RELEASE_SHA" ]; then
             ARGS+=(--sha "$RELEASE_SHA")
+          fi
+          if [ -n "$CI_BASIS_RECEIPT" ]; then
+            ARGS+=(--ci-basis-receipt "$CI_BASIS_RECEIPT")
           fi
           npm run release -- "${ARGS[@]}"
 

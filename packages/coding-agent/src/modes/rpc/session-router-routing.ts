@@ -19,6 +19,7 @@ import { attachSession, reclaimSession, releaseAttachment } from "./session-atta
 import { attachmentGate } from "./session-attachment-gate.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { dispatchSessionBinding } from "./session-held.ts";
+import { findSession } from "./find-session.ts";
 import { routeMoveSession } from "./session-move-router.ts";
 import { releaseSession } from "./session-release.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
@@ -126,6 +127,13 @@ export async function dispatch(
 	if (command.type === "attach_session") return attachSession(host, command);
 	if (command.type === "release_attachment") return releaseAttachment(host, command);
 	if (command.type === "reclaim_session") return reclaimSession(host, command);
+	if (command.type === "find_session")
+		return findSession(
+			// The host's own directory when the registry carries none: a worker-runtime host runs its sessions in workers and
+			// still keeps the session files. Only this lookup reads it; `move_session` reads the registry's and stays refused.
+			{ agentDir: host.registry.agentDir ?? host.defaults.agentDir, hosted: () => host.registry.list() },
+			command,
+		);
 	if (command.type === "close_session") return close(host, command);
 	if (command.type === "release_session")
 		return releaseSession(
