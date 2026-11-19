@@ -10,10 +10,10 @@ import type { SessionEntry } from "./session-manager.ts";
 
 /** The hold a superseded host's drain puts on a session nobody is attached to (senpi#3114). */
 export const HOST_DRAIN_HOLD_KEY = "host-drain";
-export const INTERRUPTED_RUN_HOLD_KEY = "interrupted-run";
+const INTERRUPTED_RUN_HOLD_KEY = "interrupted-run";
 
 /** Whether the newest run on the branch was started by the engine, not by a person or a resume of a cut run. */
-export function engineStartedLastRun(branch: readonly SessionEntry[]): boolean {
+function engineStartedLastRun(branch: readonly SessionEntry[]): boolean {
 	for (let index = branch.length - 1; index >= 0; index--) {
 		const entry = branch[index];
 		if (entry === undefined) continue;

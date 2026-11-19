@@ -226,9 +226,24 @@ Context cuts, skipped files, and compacted or omitted skills share the "Context 
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `compaction.enabled` | boolean | `true` | Enable auto-compaction |
+| `compaction.enabled` | boolean | `true` | Enable auto-compaction. `false` also stops idle compaction, but not background summaries: set `compaction.speculativeEnabled` to `false` as well |
 | `compaction.reserveTokens` | number | `16384` | Tokens reserved for LLM response |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens to keep (not summarized) |
+| `compaction.reserveScalingEnabled` | boolean | `true` | Raise the reserve on large windows to the larger of `reserveTokens` and 4% of the context window (at most 49152). `false` uses `reserveTokens` as written |
+| `compaction.model` | string | - | `"provider/modelId"` that writes the summary instead of the session model. An unknown, malformed, spent or credential-less value falls back to the session model |
+| `compaction.speculativeEnabled` | boolean | `true` | Write the summary in the background shortly before the threshold, so compaction does not stop the turn to write it |
+| `compaction.speculativeLeadTokens` | number | 12.5% of the threshold | How many tokens before the threshold the background summary starts. Always held between 8192 and 32768 |
+| `compaction.speculativeCooldownMs` | number | `30000` | Minimum time after a background summary finishes before an idle session rebuilds one that no longer fits |
+| `compaction.speculativeFraction` | number | `0.75` | Read but without effect: the lead above always decides when the background summary starts |
+| `compaction.idleCompactionEnabled` | boolean | `true` | When a run ends in the TUI or RPC mode, compact or prepare a summary while nobody is waiting |
+| `compaction.graceBandEnabled` | boolean | `true` | Let a turn start past the threshold while a background summary is still being written, instead of waiting for it |
+| `compaction.reminderEnabled` | boolean | `true` | Tell the model once, shortly before the threshold, roughly how many tokens are left |
+| `compaction.toolAdmissionEnabled` | boolean | `true` | Send an oversized tool result to the model as a head and tail excerpt |
+| `compaction.restorationEnabled` | boolean | `true` | After a compaction, remind the model which files it touched and which skills it loaded |
+| `compaction.restorationMaxItems` | number | `10` | Most files and skills listed in that reminder |
+| `compaction.restorationMaxTokensPerItem` | number | `5000` | Longest single entry in that reminder, in tokens |
+| `compaction.restorationMaxTotalTokens` | number | `50000` | Largest reminder, in tokens |
+| `compaction.restorationContextRatio` | number | `0.15` | Largest reminder as a share of the context window. The smaller of this and `restorationMaxTotalTokens` applies |
 | `compaction.summarizationMaxDurationMs` | number | adaptive | Wall-clock budget for one summarization attempt: larger of 120s and 2ms per estimated input token, capped at 30min. Set a positive value to override |
 | `compaction.modelOverrides` | object | - | Per-model `reserveTokens` and `keepRecentTokens` overrides keyed by exact `"provider/modelId"` |
 
@@ -271,7 +286,9 @@ Global and project settings merge recursively **before** model lookup. A project
 
 `enabled` is not model-specific. The active model's token settings apply to manual compaction, automatic threshold checks (including between assistant turns), and overflow recovery. Switching models takes effect on the next check or compaction. Configure overrides in JSON; `/settings` retains the ordinary auto-compaction toggle.
 
-See [compaction.md](compaction.md) for trigger and summarization behavior.
+The boolean switches fall back to their default when the value is not a boolean. The numeric keys other than `reserveTokens` and `keepRecentTokens` fall back to their default when the value is not a finite number, and a negative value counts as `0`.
+
+See [compaction.md](compaction.md#proactive-compaction) for how each of these behaves, and the [compaction guide](compaction-guide.md#what-runs-by-default-and-what-it-costs) for what each one costs and when to turn it off.
 
 ### Branch Summary
 
@@ -288,12 +305,15 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 | `retry.maxRetries` | number | `5` | Maximum agent-level retry attempts |
 | `retry.baseDelayMs` | number | `2000` | Base delay for agent-level exponential backoff (2s, 4s, 8s) |
 | `retry.modelFallback` | boolean | `true` | Let eligible retry failures advance through configured per-model fallback chains |
-| `retry.fallbackChains` | `Record<string, string[]>` | `{}` | Ordered exact model-selector to fallback-selector chains |
+| `retry.fallbackChains` | `Record<string, string[]>` | shipped chains for Fable 5, 5.1, 5.2 and Opus 5.5 | Ordered exact model-selector to fallback-selector chains. Your keys are added to the shipped ones; see [Model fallback chains](#model-fallback-chains) |
 | `retry.fallbackRevertPolicy` | `"cooldown-expiry"` \| `"never"` | `"cooldown-expiry"` | Automatic primary-model restoration policy |
 | `retry.abortServerSideFallback` | boolean | `true` | Abort a turn when the provider substitutes a different model after a classifier decline |
 | `fallback.circuitCooldownMs` | number | `60000` | First circuit-breaker cooldown for a chain entry that failed out of its chain; doubles on each consecutive failure; `0` disables the breaker |
 | `fallback.circuitMaxCooldownMs` | number | `1800000` | Ceiling for the doubled circuit-breaker cooldown (30 minutes) |
 | `retry.maxAgentDelayMs` | number | `60000` | Hard ceiling on agent-level retry delay (60s), applied after the retry profile and jitter |
+| `retry.hintedWaitCapMs` | number | `300000` | Longest rate-limit wait served on the same model (5 minutes); see [Rate-limit waits](#rate-limit-waits) |
+| `retry.probeBackMaxMs` | number | `3600000` | Rate-limit wait from which the primary is no longer probed in the background (1 hour); see [Rate-limit waits](#rate-limit-waits) |
+| `retry.providers` | object | - | Per-provider retry budget, keyed by provider id; see [Per-provider retry budget](#per-provider-retry-budget) |
 | `retry.provider.timeoutMs` | number | `300000` | Provider/SDK request timeout and stream idle timeout in milliseconds |
 | `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables. Keep-alive bytes (SSE pings, comment keep-alives) received within the bound extend it |
 | `retry.provider.keepAliveTimeoutMs` | number | `900000` | Maximum time keep-alive bytes alone may hold a request without any response content; `0` disables the cap. Checked when the start or idle bound fires, so it has no effect when both are disabled |
@@ -330,6 +350,40 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 }
 ```
 
+#### Rate-limit waits
+
+When a provider answers a rate limit (429) with a wait time, two settings decide what Senpi does with it. For rate limits they take the place of `retry.provider.maxRetryDelayMs`, which covers the other failures that carry a wait:
+
+| Wait the provider asks for | What happens |
+|----------------------------|--------------|
+| Up to `retry.hintedWaitCapMs` | Senpi waits and retries the same model inside the turn. If the waits of one turn add up to more than the cap, the turn moves to the fallback chain |
+| Longer than that, below `retry.probeBackMaxMs` | The turn moves to the fallback chain at once, and Senpi probes the primary in the background, first at half the wait, so the session can return to it |
+| `retry.probeBackMaxMs` or longer | The turn moves to the fallback chain at once, with no background probe |
+
+A rate limit that carries no wait time moves to the fallback chain at once. When no fallback candidate can take over, it is retried on the same model with the normal backoff, waits in the middle row are served on the same model, shortened to `retry.hintedWaitCapMs`, and waits in the last row fail the turn with the time the limit lifts.
+
+A lower `retry.hintedWaitCapMs` leaves a rate-limited model sooner, which spends the fallback model's quota instead of your time. `retry.probeBackMaxMs` must be larger than `retry.hintedWaitCapMs`; otherwise both go back to their defaults. A provider whose own retry profile keeps rate limits on the retry budget does not use these tiers.
+
+#### Per-provider retry budget
+
+`retry.providers` changes the agent-level retry budget for one provider without touching the others:
+
+```json
+{
+  "retry": {
+    "providers": {
+      "anthropic": {
+        "turn": { "maxRetries": 8, "baseDelayMs": 1000 }
+      }
+    }
+  }
+}
+```
+
+`turn.enabled`, `turn.maxRetries` and `turn.baseDelayMs` take effect. They are applied after `retry.maxRetries` and `retry.baseDelayMs`, and they also apply to a provider that ships its own retry profile, which those two global keys leave alone. `retry.enabled: false` still turns every retry off.
+
+An entry is checked as a whole: a value of the wrong type drops the entry for that provider, and so does an entry with no recognized key. The validator also accepts `growthFactor`, `perAttemptCapMs`, `jitter` and `serverHintMaxDelayMs`, and a `providerRequest` block, but none of them changes a retry today.
+
 #### Model fallback chains
 
 `retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to that model vendor's own providers - for example `anthropic-subscription` and `anthropic` for Claude, `chatgpt-subscription` and `openai` for GPT, `google` and `google-vertex` for Gemini. A bare selector never expands onto a reseller, gateway, cloud re-host or custom provider that also serves the model; name one as `provider/model` to use it. A bare id from a vendor senpi does not know stays on the provider the session is already using. Within the vendor's providers, those holding an OAuth credential are preferred, then a fixed precedence order. Senpi ships bare default chains for `claude-fable-5-2`, `claude-fable-5-1` and `claude-fable-5` - `claude-opus-5-5`, then `claude-opus-5`, with no thinking level of their own, so those rungs inherit the session's thinking level (clamped to what the model supports) and a Fable fallback never leaves the Anthropic family - and for `claude-opus-5-5` - `claude-fable-5-2:medium`, then `kimi-k3.1-pro:max`, and nothing else: each of those rungs runs at its own level whatever level the Opus 5.5 session was on, and no Opus rung follows because a rate limit on one Opus model holds the whole Opus quota. The bare `kimi-k3.1-pro` rung reaches Kimi Code (which serves it as `k3.1-pro`) and Moonshot. A fallback keeps walking the chain it started on, so a session that stepped from Opus 5.5 to Fable 5.2 moves on to Kimi K3.1 Pro rather than to Fable's own chain. These chains apply whichever provider serves the model; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
@@ -354,7 +408,7 @@ A fallback entry with `:thinking-level` requests that level on the target model;
 
 #### Fallback behavior and diagnostics
 
-With `retry.enabled` and `retry.modelFallback` enabled, Senpi can switch from a transient or eligible hard provider failure to the next configured candidate. Transient failures (timeouts, overload, 429, 5xx, transport drops) first retry the same model on the existing exponential backoff; the chain engages only after `retry.maxRetries` attempts are spent, and each fallback candidate starts with a fresh retry budget. Hard failures (quota, auth, model-not-found) and classifier refusals still switch immediately. The switch continues the current turn without changing the existing conversation prefix, preserving prompt-cache inputs; fallback lifecycle events are never added to model context. Returning to a primary model happens only at a turn boundary, never while a response is streaming. Selector cooldowns are error-derived, and a provider retry-after hint always wins: quota and billing failures park a model for 30 minutes, rate limits for 30 seconds, overload for 45 seconds plus jitter, 5xx for 20 seconds, and timeout or connection/transport failures for 60 seconds; unmatched failures default to five minutes. A fully failing chain costs up to `1 + (chainLength + 1) * maxRetries` provider calls plus per-rung backoff before the turn fails; with `maxRetries: 0` every failure switches immediately, costing `1 + chainLength` calls.
+With `retry.enabled` and `retry.modelFallback` enabled, Senpi can switch from a transient or eligible hard provider failure to the next configured candidate. Transient failures (timeouts, overload, 5xx, transport drops) first retry the same model on the existing exponential backoff; the chain engages only after `retry.maxRetries` attempts are spent, and each fallback candidate starts with a fresh retry budget. Rate limits (429) follow [Rate-limit waits](#rate-limit-waits) instead. Hard failures (quota, auth, model-not-found) and classifier refusals still switch immediately. The switch continues the current turn without changing the existing conversation prefix, preserving prompt-cache inputs; fallback lifecycle events are never added to model context. Returning to a primary model happens only at a turn boundary, never while a response is streaming. Selector cooldowns are error-derived, and a provider retry-after hint always wins: quota and billing failures park a model for 30 minutes, rate limits for 30 seconds, overload for 45 seconds plus jitter, 5xx for 20 seconds, and timeout or connection/transport failures for 60 seconds; unmatched failures default to five minutes. A fully failing chain costs up to `1 + (chainLength + 1) * maxRetries` provider calls plus per-rung backoff before the turn fails; with `maxRetries: 0` every failure switches immediately, costing `1 + chainLength` calls.
 
 Billing-class failures — Anthropic's 400 *credit balance is too low*, OpenAI's 429 `insufficient_quota`, and other credit/quota exhaustion responses — never recover by retrying the same account, so a configured chain candidate receives a **pinned** fallback switch, exactly like a refusal-pinned fallback: it never auto-reverts and later turns keep running on the replacement model instead of returning to the exhausted account after the 30-minute billing cooldown.
 

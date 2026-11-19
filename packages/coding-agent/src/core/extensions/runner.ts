@@ -2542,10 +2542,13 @@ export class ExtensionRunner {
 				});
 				let endStatus: ExtensionToolHookLifecycleStatus = "completed";
 				let errorMessage: string | undefined;
+				const toolResultSignal = hookRun.context.signal;
 				try {
 					const waited = await waitForToolHook({
 						run: () => handler(currentEvent, hookRun.context),
-						signal: hookRun.context.signal,
+						// A turn that was already aborted still runs its tool_result handlers (they record the aborted
+						// result); only an abort that arrives during the wait ends it.
+						signal: toolResultSignal?.aborted ? undefined : toolResultSignal,
 						timeoutMs: toolResultHandlerTimeoutMs(ext.path),
 					});
 					if (waited.kind === "aborted") {
