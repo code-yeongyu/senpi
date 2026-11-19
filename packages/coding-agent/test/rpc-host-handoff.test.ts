@@ -1,6 +1,6 @@
-import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, stat, watch, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseJson, readFileOrUndefined } from "../src/modes/rpc/host-daemon-state.ts";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
@@ -20,12 +20,14 @@ import {
 	supervisorLaunch,
 	type WireRecord,
 } from "./helpers/rpc-generation-support.ts";
+import { type FakeModelServer, startFakeModelServer } from "./helpers/rpc-fake-model.ts";
 import { writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { processAlive, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
 
 const scratches: GenerationScratch[] = [];
 const peers: JsonlPeer[] = [];
 const models: HeldAnthropicModel[] = [];
+const fakeModels: FakeModelServer[] = [];
 const servers: Server[] = [];
 const intruderSockets: Socket[] = [];
 const supervisors = new Map<number, string | undefined>();
@@ -37,6 +39,7 @@ afterEach(async () => {
 		model.release();
 		await model.close();
 	}
+	for (const fake of fakeModels.splice(0)) await fake.close();
 	// Only processes launched in these private generation directories are owned by this test.
 	// Record their identity before stopping the supervisors; never discover targets by argv.
 	for (const qa of scratches) {
@@ -242,6 +245,67 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		expect(await waitForPidGone(firstPid(qa), 45_000)).toBe(true);
 	}, 120_000);
 
+	// senpi#7020: the drain holds the automatic turns of a session nobody is attached to, so its running turn is its
+	// last on the old generation; a monitor wake arriving after that turn waits as a notice. The successor reopens the
+	// session from its park record and it goes back to work by itself: the held wake reaches the model with no client.
+	it("resumes a drained retained session on the successor and delivers the wake held during the drain", async () => {
+		const armed = "arm-follow-up-wake";
+		const fake = await startFakeModelServer({ holdOnLastMessage: armed });
+		fakeModels.push(fake);
+		const qa = generationScratch("resume");
+		scratches.push(qa);
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		// A monitor that completes when the running turn ends: the wake the drain must hold for the successor.
+		const extension = join(qa.root, "follow-up-wake.ts");
+		await writeFile(
+			extension,
+			`export default function (pi) {
+	pi.on("agent_end", (event) => {
+		if (!JSON.stringify(event.messages).includes(${JSON.stringify(armed)})) return;
+		void pi.sendMessage({ customType: "senpi-monitor:event", content: "deploy finished", display: false }, { triggerTurn: true });
+	});
+}
+`,
+		);
+		const hostArgs = [...GENERATION_HOST_ARGS, "--extension", extension];
+		await generation("resume", fake.origin, hostArgs, qa);
+		const sessionPath = join(qa.sessionDir, "lane.jsonl");
+		const client = await peer(qa);
+		const sessionId = openedSessionId(
+			await client.request({
+				id: "open",
+				type: "open_session",
+				cwd: qa.cwd,
+				sessionPath,
+				retain_on_disconnect: true,
+			}),
+		);
+		const running = fake.waitForRequest((request) => request.latest.includes(armed), 20_000);
+		// Answered once the turn it starts settles, so it is sent, not awaited: the model holds that turn open.
+		client.send({
+			id: "wake",
+			type: "send_custom_message",
+			sessionId,
+			customType: "senpi-monitor:event",
+			content: `deploy started ${armed}`,
+			display: false,
+			triggerTurn: true,
+		});
+		await running;
+		// The client leaves while the engine's turn runs: the retained session is unattended from here on.
+		client.destroy();
+
+		await handoff(qa, hostArgs);
+		await waitForFileText(sessionPath, '"kind":"unattended"', 20_000);
+		const before = fake.requests.length;
+		const resumed = fake.waitForRequest(
+			(request, index) => index >= before && request.latest.includes("deploy finished"),
+			20_000,
+		);
+		fake.releaseHeld();
+		await resumed;
+	});
+
 	it("aborts the handoff when an unmanaged server has taken the public socket", async () => {
 		const qa = await generation("stolen");
 		let intruderInode: number | undefined;
@@ -273,16 +337,23 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 	}, 120_000);
 });
 
-async function generation(label: string, modelOrigin?: string): Promise<GenerationScratch> {
-	const qa = generationScratch(label);
-	scratches.push(qa);
-	writeRpcModelsJson(qa.agentDir, modelOrigin ?? "http://127.0.0.1:1");
+async function generation(
+	label: string,
+	modelOrigin?: string,
+	hostArgs: readonly string[] = GENERATION_HOST_ARGS,
+	prepared?: GenerationScratch,
+): Promise<GenerationScratch> {
+	const qa = prepared ?? generationScratch(label);
+	if (prepared === undefined) {
+		scratches.push(qa);
+		writeRpcModelsJson(qa.agentDir, modelOrigin ?? "http://127.0.0.1:1");
+	}
 	const ensured = await ensureHost({
 		socket: qa.socket,
 		agentDir: qa.agentDir,
 		// Long enough that only the drain under test can end this generation.
 		policy: { idleExitMs: 600_000 },
-		hostArgs: [...GENERATION_HOST_ARGS],
+		hostArgs: [...hostArgs],
 		env: generationEnv(qa),
 		_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
 	});
@@ -297,11 +368,14 @@ function firstPid(qa: GenerationScratch): number {
 	return pid;
 }
 
-async function handoff(qa: GenerationScratch): Promise<{ pid: number; generation: number; instanceId: string }> {
+async function handoff(
+	qa: GenerationScratch,
+	hostArgs: readonly string[] = GENERATION_HOST_ARGS,
+): Promise<{ pid: number; generation: number; instanceId: string }> {
 	const result = await handoffHost({
 		socket: qa.socket,
 		agentDir: qa.agentDir,
-		hostArgs: [...GENERATION_HOST_ARGS],
+		hostArgs: [...hostArgs],
 		env: generationEnv(qa),
 		_test: { launch: supervisorLaunch, readinessTimeoutMs: 60_000 },
 	});
@@ -347,4 +421,21 @@ async function stealSocket(socketPath: string): Promise<number> {
 	servers.push(intruder);
 	await new Promise<void>((resolve) => intruder.listen(socketPath, resolve));
 	return (await stat(socketPath)).ino;
+}
+
+/** Resolves once `path` contains `text`, watching its directory for writes; rejects after `timeoutMs`. */
+async function waitForFileText(path: string, text: string, timeoutMs: number): Promise<void> {
+	const contains = async () => (await readFile(path, "utf8").catch(() => "")).includes(text);
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const changes = watch(dirname(path), { signal: controller.signal });
+		if (await contains()) return;
+		for await (const _change of changes) if (await contains()) return;
+	} catch (cause) {
+		if (!controller.signal.aborted) throw cause;
+	} finally {
+		clearTimeout(timer);
+	}
+	throw new Error(`${path} did not contain ${text} within ${timeoutMs} ms`);
 }
