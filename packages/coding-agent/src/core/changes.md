@@ -1,3 +1,43 @@
+## 2026-11-19 - A peer delivery to a held session continues it, or is answered held (senpi#6490)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: a triggered `session_control_delivery` that the wake gate would hold (`holdsSource`), with no hold a peer cannot release, continues the session the way a person's message does (`_engineTurnInput.begin()`). This covers an `unattended` hold and the release barrier of an unattended Resume; in the barrier case the delivery attends the session and starts its own turn. The admission's `started` and the gate therefore always agree. One turn starts with the released wakes ahead of the delivery, and they are admitted with the turn (`onTurnAdmitted`). A release that no turn admits is given back through `_settleInputRelease()`. The external admission port's new `heldBy` reads `_peerDeliveryHolds()`.
+- `packages/coding-agent/src/core/peer-delivery-hold.ts` (new): `holdsKeepingPeerDelivery`. The holds a peer cannot release are a person's Stop, the hold after an interrupted run (recorded or still pending), and a parent's run hold. A run fence alone never keeps a delivery.
+- `packages/coding-agent/src/core/external-admission.ts`: an idle start answers `held` with `holds` when `heldBy()` names any hold. The delivery is kept as a held notice and starts once that hold is released.
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `ExternalAdmissionKind` gains `held`, and `ExternalAdmissionResult` gains the optional `holds`.
+
+### Why
+
+- Peer deliveries were classified as engine turns, so an `unattended` or interrupted-run hold kept each one as a notice while the admission answered `started`. Three unattended sessions held up to 16 sends each, every one answered `ok`, and a release train stalled for about 75 minutes. The unattended hold's notice and `docs/rpc.md` both say a message continues the session. A Stop, an interrupted run and a parent's run hold wait on a person, so the sender is told `held` instead.
+
+### Why an extension could not handle it
+
+- The hold gate and the admission answer both live in the session runtime's own delivery path (`_deliverCustomMessage`, `ExternalAdmission.admit`). An extension sees neither the hold decision nor the admission result before they are made.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `_deliverCustomMessage` (the release before the hold gate, the triggered-turn message list, the `finally` settle) and the `externalAdmission` port literal.
+- LOW: `external-admission.ts` idle start branch; `session-control-types.ts` admission kind union.
+
+## 2026-11-18 - AgentSession.promptSurface (senpi#6925)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: a public `promptSurface` getter returns the surface the session's prompt is built for. The hand selection sends it with each call to a hand.
+
+### Why
+
+- senpi#6921 L2. A hand reports the brain session's surface, so the brain must be able to read it.
+
+### Why an extension could not handle it
+
+- The surface is session state that no extension API exposes outside a tool call.
+
+### Expected merge conflict zones
+
+- LOW: next to `setPromptSurface` in `agent-session.ts`.
+
 ## 2026-11-17 - Cursor exec-frame calls are released on every end (senpi#6920)
 
 ### What changed

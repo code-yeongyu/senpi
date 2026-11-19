@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.19] - 2026-11-19
 
 ### Breaking Changes
 
@@ -9,6 +9,10 @@
 ### Changed
 
 ### Fixed
+
+- `show_html_page` calls that a hand runs for a headless session now count toward that session's image budget; a page over the budget is handed as written. The result now says the page was shown inline when the session is a desktop session, instead of following the hand's own environment ([#6925](https://github.com/code-yeongyu/senpi/pull/6925))
+- A `show_html_page` result from a hand that goes over the session's image budget keeps whatever the hand's `tool_result` handlers added; only the page's own text says it was handed as written ([#6931](https://github.com/code-yeongyu/senpi/pull/6931))
+- A message another session sends to an unattended session now continues it (one turn, with the held automatic wakes) instead of being held as a notice while the sender was told `started`. Under a person's Stop, an interrupted run or a parent's run hold, the delivery is kept for the person and the sender is answered `held` with the hold kinds ([#7014](https://github.com/code-yeongyu/senpi/pull/7014))
 
 ### Removed
 

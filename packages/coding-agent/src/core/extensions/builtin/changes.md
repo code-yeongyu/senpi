@@ -1,3 +1,42 @@
+## 2026-11-18 - show_html_page on a hand: an over-budget page keeps the hand's additions (senpi#6931)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`: `withHandPageBudget` no longer replaces the whole content of an over-budget page's result. Only the page's own text part (the one naming its saved copy, `details.path`) becomes the over-budget sentence; every part a hand-side `tool_result` handler added stays in place, and a result whose page text is gone gets the sentence first. The downgrade is still decided once per call and is now applied to each copy's own content (`tool_execution_end`, the message events, the returned message).
+
+### Why
+
+- senpi#6928 L1. The brain-side downgrade dropped what a hand's `tool_result` handlers added, while a session running the tool itself keeps that output. (L2, the pending-page ledger owned by its session instead of the host, already landed with senpi#6925.)
+
+### Why an extension could not handle it
+
+- The brain-side page budget is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `html-render/hand-page-budget.ts` (`budgeted`, `overBudget`).
+
+## 2026-11-18 - show_html_page on a hand: the brain's page budget and prompt surface (senpi#6925)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/handed-pages.ts` (new): the session page-budget accounting (`reserveHandedPage` over a `PendingHandedPages` ledger) and the result text (`handedPageText`, `overSessionBudgetText`) move here from `tool.ts`, together with the per-page and per-session limits.
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts` (new): `withHandPageBudget` wraps a brain's ToolHost for a hand, with its own pending-page ledger. It applies the brain session's page budget to each page the hand hands back, and hands an over-budget page as written, consistently in its `tool_execution_end`, its message events and the returned message.
+- `packages/coding-agent/src/extensions/html-render/tool.ts`: reads the prompt surface from `ctx.promptSurface` (on a hand, the brain session's), and uses `handed-pages.ts` for the limits, the budget reservation and the result text.
+- `packages/coding-agent/src/extensions/html-render/index.ts`: imports `PendingHandedPages` from `handed-pages.ts`.
+
+### Why
+
+- senpi#6921. A hand cannot see the brain's transcript, so its pages skipped the session budget. Its result text came from the hand's own environment, so a desktop session heard "not displayed" for a page it rendered.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own code, and builtins are never forwarded between brain and hand.
+
+### Expected merge conflict zones
+
+- LOW: `html-render/tool.ts` (`hostRendersPage`, the end of `execute`); the two new files.
+
 ## 2026-11-17 - show_html_page runs on a hand (senpi#6920)
 
 ### What changed

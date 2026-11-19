@@ -1,3 +1,22 @@
+## 2026-11-18 - ExtensionToolContext.promptSurface (senpi#6925)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionToolContext` gains the optional `promptSurface`: the prompt surface of the session the call belongs to. On a hand, that is the brain session's, sent with the call.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createToolContext` serves `promptSurface`. On a session it comes from `getSystemPromptOptions().surface`; on a runtime without a session, from the new `bindSessionlessFacts({ promptSurfaceOf })`.
+
+### Why
+
+- senpi#6921 L2. A tool on a hand must report what the brain session's host does with its result.
+
+### Why an extension could not handle it
+
+- Only the runtime that runs a call knows the surface of the session the call belongs to.
+
+### Expected merge conflict zones
+
+- LOW: the end of `ExtensionToolContext` in `types.ts`; the tool-context fields and `bindSessionlessFacts` in `runner.ts`.
+
 ## 2026-11-17 - ExtensionToolContext.issuedByModel on hands (senpi#6920)
 
 ### What changed
