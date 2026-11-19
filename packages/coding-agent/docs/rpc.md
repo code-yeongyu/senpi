@@ -1862,6 +1862,10 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    reopen does: they wait as notices, its running turn is its last on this generation, and it parks once
    that turn settles. A person's input or `resume_session` releases the hold after the reopen. A session a
    client is still attached to keeps its automatic turns.
+   While the successor is still taking over (parks it has not reopened yet, or a predecessor that still runs),
+   its `list_sessions` answer carries `handover: { pending, predecessor_draining }` beside `sessions`: the
+   listing is not yet the endpoint's whole set, so a reader must not treat a missing session as gone. The field
+   is absent once the takeover is done (senpi#7020).
 
 Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
@@ -2652,7 +2656,8 @@ A connection without an attachment receives `errorCode: "session_not_attached"` 
 ```
 
 - `status`: `opening`, `idle`, `running`, `waiting_input` (a question is pending), `compacting`, `unloaded` (the routing handle ended and the session reopens by `sessionPath`; `reason` is `idle`, `unload_session` or `handoff`), or `closed` (`reason` is the `session_closed.reason`). After an abort ends a run, `idle` carries `reason: "aborted"`.
-- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close`, `context`, `rename` (the session's name changed: `set_session_name` or a generated title), `archive` (`set_session_archived`) or `settle` (`set_session_settled`); `by` is `client`, `agent` or `host`.
+- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close`, `context`, `rename` (the session's name changed: `set_session_name` or a generated title), `archive` (`set_session_archived`), `settle` (`set_session_settled`) or `retry` (an auto-retry wait started or ended); `by` is `client`, `agent` or `host`.
+- `waiting: { kind, attempt, maxAttempts, delayMs, until, error? }` is present only while a `running` session sleeps in an auto-retry backoff: `kind` is `rate_limit` for a 429, rate, usage or quota limit and `retry` for any other transient error, `until` is the ISO time of the next attempt, `error` the provider error cut to 200 characters. It clears when the retried request starts or the retry ends. `get_state` carries it as `retryWait`. A `list_sessions` row carries the same `waiting` without `error`: a listing reaches every connection that can list sessions, so the provider's error text stays on `get_state` and on `session_status`.
 - `archived` is the session file's archived flag (`set_session_archived`); it is always present.
 - `settled` is the session file's Done flag (`set_session_settled`); it is always present. `settledBy` says how the session reached Done and is present only while `settled` is true and the flag was written with a `by`.
 - `context` is present only with `include_context`. `lastEffect: { effectId, kind, state }` names the session's most recent effect receipt (an input with a `clientMessageId`, an abort, a model or thinking-level switch) and is absent on hosts without the `effect_ledger` capability or before the session's first effect.
@@ -3167,9 +3172,14 @@ holds the host this way while at least one remote viewer is attached, and releas
 held observer is occupancy everywhere occupancy is read: the idle-exit window, the empty-host exit, and the
 owner-death quiescence check. Hosts that predate the field ignore it and treat the read as a plain observing read.
 
-A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
-id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
-on every socket request. When a connection's first non-observing request names the host's own generation, the
+A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host keeps its generation
+id (`SENPI_RPC_HOST_INSTANCE_ID`) in its own environment (a socket host that named itself writes it there at start),
+and every child it starts for an agent (shells, eval kernels, the tool child) gets it as
+`SENPI_RPC_ORIGIN_HOST_INSTANCE` instead, so a nested host never adopts it as its own identity (senpi#7034). The
+host's other launch hand-off (daemon directory, generation, build id, watch binding, key sentinel and its
+launch-default `SENPI_RPC_CLIENT_CAPABILITIES`) never reaches those children. `RpcClient` sends whichever of the two
+ids it has as `"origin_host_instance"` on every socket request. When a connection's first non-observing request
+names the host's own generation, the
 connection neither holds the window open, nor blocks the owner-death grace, nor keeps an empty host alive. Without
 this, a task tree whose children open their own children on the shard they run in (omo's `p` shards are keyed by the
 root session) keeps that shard alive through its own connections after the owner and every outside client are gone.
@@ -3536,10 +3546,10 @@ registrant opens no socket and writes no registry directory.
     `attachments` counts the terminal plus each attached client; a subscriber, mirrored or not, is not one.
   - `steer`/`follow_up { message, whenIdle?, clientMessageId?, expected_turn_id? }` and
     `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
-    (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
+    (`admitExternalMessage`), so input the user submitted and the runtime has not taken yet holds them, with the host's `whenIdle` choice (`queue`, the
     default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
     steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started`,
-    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user's submitted input has not reached the runtime yet) and `turn_conflict` are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
     skills. Input sent with a `clientMessageId` is answered with an admission receipt,
@@ -3591,8 +3601,9 @@ registrant opens no socket and writes no registry directory.
   - `steered`: the session is mid-turn, the steer names the current `turn_epoch`, and it goes on the steering
     queue once.
   - `turn_conflict`: the epoch is stale, or a steer names none.
-  - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
-    submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
+  - `held_draft`: input the user submitted has not reached the runtime yet (a buffered submission, a command that
+    may still submit text). Nothing is enqueued; retry on the next wake. A draft still in the composer holds
+    nothing: an idle session starts the delivery's own turn and leaves the draft in place (senpi#7043).
   - `held` (with `holds`, the hold kinds): the session is idle under a hold a peer cannot release - a person's Stop,
     an interrupted run, a parent's run hold (senpi#6490). The delivery is kept as a held notice and starts once that
     hold is released; do not send it again. An `unattended` hold alone is released by the delivery (`started`).

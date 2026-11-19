@@ -211,8 +211,9 @@ export const PROMPT_SURFACE_CHAT_CAPABILITY = "prompt_surface_chat";
  * Env var carrying client capabilities to a single-connection stdio RPC host
  * (comma-separated). A launcher may set it from a client handshake; a plain
  * stdio client leaves it unset and sees byte-identical default behavior.
+ * Owned by the host hand-off list, which keeps it out of agent children (senpi#7034).
  */
-export const RPC_CLIENT_CAPABILITIES_ENV = "SENPI_RPC_CLIENT_CAPABILITIES";
+export { RPC_CLIENT_CAPABILITIES_ENV } from "./host-identity-env.ts";
 
 /** Parse the comma-separated capabilities env value into a trimmed list. */
 export function parseClientCapabilities(value: string | undefined): string[] {

@@ -160,6 +160,11 @@ export type RpcHostCommandResponse =
 					tool_child?: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
 					presence?: RpcSessionPresence;
 				}>;
+				/**
+				 * senpi#7020: present while this host is still taking over a predecessor's sessions after a handoff, so
+				 * `sessions` is not yet the whole set: `pending` parks not yet reopened, and whether the predecessor still runs.
+				 */
+				handover?: { pending: number; predecessor_draining: boolean };
 			};
 	  }
 	| {

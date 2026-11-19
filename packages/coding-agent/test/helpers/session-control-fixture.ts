@@ -21,7 +21,7 @@ export interface EndpointFixture {
 	readonly notices: string[];
 	readonly wakes: SessionControlWakeEvent[];
 	nextWake(reason: SessionControlWakeEvent["reason"], seenAtDrain?: () => boolean): Promise<SessionControlWakeEvent>;
-	setDraft(hold: "draft" | undefined): void;
+	setDraft(present: boolean): void;
 }
 
 export async function startEndpoint(
@@ -44,9 +44,10 @@ export async function startEndpoint(
 		seenAtDrain: () => boolean;
 		resolve: (event: SessionControlWakeEvent) => void;
 	}> = [];
-	let draft: "draft" | undefined;
+	let draft = false;
 	const surface: TuiControlSurface = {
-		draftHold: () => draft,
+		submissionInFlight: () => false,
+		hasDraft: () => draft,
 		blockingQuestion: () => false,
 		pendingQuestionIds: options.questions?.pendingQuestionIds ?? (() => []),
 		pendingQuestion: options.questions?.pendingQuestion ?? (() => undefined),
@@ -87,8 +88,8 @@ export async function startEndpoint(
 		wakes,
 		nextWake: (reason, seenAtDrain = () => true) =>
 			new Promise((resolve) => waiters.push({ reason, seenAtDrain, resolve })),
-		setDraft: (hold) => {
-			draft = hold;
+		setDraft: (present) => {
+			draft = present;
 		},
 	};
 }

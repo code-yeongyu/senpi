@@ -19,7 +19,7 @@ import { Socket } from "node:net";
 import { brandEnvNames, envValue } from "../../core/brand.ts";
 import { recordHostCrash } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
-import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { HOST_INSTANCE_ID_ENV, HOST_WATCH_ENV_NAMES } from "./host-identity-env.ts";
 import { armLifetimeBinding, HOST_WATCH_LIFETIME_FIFO_ENV } from "./host-lifetime-binding.ts";
 import {
 	HOST_WATCH_BACKSTOP_INTERVAL_MS,
@@ -131,16 +131,8 @@ export function readHostWatchdogConfigFromBrandEnv(
 	});
 }
 
-const WATCH_ENV_SUFFIXES = [
-	"RPC_HOST_WATCH_FD",
-	"RPC_HOST_WATCH_PPID",
-	"RPC_HOST_WATCH_PSTART",
-	"RPC_HOST_WATCH_PSTART_TICKS",
-	"RPC_HOST_LIFETIME_FIFO",
-	"RPC_HOST_SCRATCH_DIR",
-	"RPC_HOST_PUBLIC_SOCKET",
-	"RPC_HOST_CLEANUP_PATHS",
-] as const;
+// Brand suffixes of the one hand-off list (host-identity-env.ts), so the two cannot drift (senpi#5635).
+const WATCH_ENV_SUFFIXES = HOST_WATCH_ENV_NAMES.map((name) => name.slice("SENPI_".length));
 
 /**
  * Reads the supervisor binding once and removes it from `env` (senpi#3815 review L4), so no tool, shell or nested host

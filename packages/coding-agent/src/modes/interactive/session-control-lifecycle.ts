@@ -114,9 +114,8 @@ export function activateControlEndpoint(parts: ActivationParts): ActiveControlEn
 }
 
 function editorHold(context: TuiControlContext): EditorHoldState {
-	const hold = context.surface.draftHold();
 	const revision = context.editorRevision();
-	return hold === undefined ? { revision } : { hold_reason: hold, revision };
+	return context.surface.submissionInFlight() ? { hold_reason: "draft", revision } : { revision };
 }
 
 async function sessionReferenced(

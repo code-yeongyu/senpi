@@ -28,6 +28,8 @@ interface PageOverride {
 /** What the page's result says without its content: the decision is made once per call, the content kept per copy. */
 interface PageDowngrade {
 	readonly text: string;
+	/** The page's own text part as the tool emitted it (`details.resultText`), when the result names it. */
+	readonly ownText: string | undefined;
 	readonly details: JsonObject;
 }
 
@@ -102,15 +104,19 @@ function budgetedEvent(
 }
 
 /**
- * The page's own text is the first text part of the result: show_html_page emits exactly one text part, first, and a
- * hand-side `tool_result` handler that rewrites it keeps it there. It alone is replaced, whatever it now says, and every
- * other part (what a handler added) stays where it is. A result with no text part gets the text first (senpi#6932).
+ * The page's own text is the text part equal to the one the tool emitted (`details.resultText`), wherever a hand-side
+ * `tool_result` handler moved it; it alone is replaced, and every other part stays where it is. When no part equals it
+ * (a handler rewrote it), nothing is replaced and the over-budget sentence is appended as its own part (senpi#6934).
+ * A hand on an older version emits no `resultText`; its page's own text is then the first text part, the one text part
+ * show_html_page emits, and a result with no text part gets the sentence first (senpi#6932).
  */
 function applied(downgrade: PageDowngrade, content: ResultContent): PageOverride {
-	const own = content.findIndex((part) => part.type === "text");
+	const { ownText } = downgrade;
+	const own = content.findIndex((part) => part.type === "text" && (ownText === undefined || part.text === ownText));
 	const text = { type: "text" as const, text: downgrade.text };
+	const unmatched = ownText === undefined ? [text, ...content] : [...content, text];
 	return {
-		content: own === -1 ? [text, ...content] : content.map((part, index) => (index === own ? text : part)),
+		content: own === -1 ? unmatched : content.map((part, index) => (index === own ? text : part)),
 		details: downgrade.details,
 	};
 }
@@ -134,15 +140,17 @@ function overBudget(
 		return undefined;
 	const reservation = reserveHandedPage(session.sessionManager, pending, toolCallId, details.html.length);
 	if (reservation.inlined) return undefined;
+	const text = handedPageText({
+		path: details.path,
+		shown: session.promptSurface === "app",
+		imagesInlined: false,
+		fitsPage: true,
+		alreadyHanded: reservation.alreadyHanded,
+		inlinedLength: details.html.length,
+	});
 	return {
-		text: handedPageText({
-			path: details.path,
-			shown: session.promptSurface === "app",
-			imagesInlined: false,
-			fitsPage: true,
-			alreadyHanded: reservation.alreadyHanded,
-			inlinedLength: details.html.length,
-		}),
-		details: { ...details, html: written, imagesInlined: false },
+		text,
+		ownText: typeof details.resultText === "string" ? details.resultText : undefined,
+		details: { ...details, html: written, imagesInlined: false, resultText: text },
 	};
 }
