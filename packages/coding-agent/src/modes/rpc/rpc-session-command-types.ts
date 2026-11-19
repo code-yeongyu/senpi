@@ -38,6 +38,8 @@ export type RpcSessionCommand =
 			 * that names a turn which is not running is refused `turn_conflict` (senpi#5776).
 			 */
 			expectedTurnId?: string;
+			/** The session leaf the caller decided this prompt at; a moved leaf is refused `stale_leaf` and nothing is sent (senpi#6922). */
+			expectedLeafId?: string;
 			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
 			toolBarrier?: ToolBarrierSpec;
 			/** A thread call from another session: the hop count of its chain (decision K8); refused `chain_count_limit` past the user's `threads.chainCountLimit`. */
@@ -64,6 +66,8 @@ export type RpcSessionCommand =
 			mode?: "continue" | "release";
 			message?: string;
 			effectId?: string;
+			/** Answer `stopped` and resume nothing while a person's Stop or a parent's run hold is live (senpi#7016). */
+			unlessStopped?: boolean;
 	  }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
@@ -338,7 +342,7 @@ export type RpcSessionCommand =
 	| {
 			id?: string;
 			type: "set_project_trust";
-			choice: "trust" | "trust_parent" | "do_not_trust";
+			choice: "trust" | "trust_parent" | "do_not_trust" | "no_inherit";
 			expectedCwd?: string;
 	  }
 	| { id?: string; type: "get_project_settings" }
@@ -370,6 +374,8 @@ export type RpcSessionCommand =
 			ifEtag: string | null;
 			expectedCwd?: string;
 	  }
+	| { id?: string; type: "read_user_skill_file"; skill: string }
+	| { id?: string; type: "write_user_skill_file"; skill: string; content: string; ifEtag: string | null }
 	| { id?: string; type: "extension_request"; name: string; data?: unknown }
 	| { id?: string; type: "eval_cells.list" }
 	| { id?: string; type: "eval_cells.peek"; cellId: string; tailBytes?: number }

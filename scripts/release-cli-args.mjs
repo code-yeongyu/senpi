@@ -79,6 +79,9 @@ export function parseArgs(argv) {
 	}
 	if (args.ciBasisReceipt !== null) {
 		// senpi#6859: the workflow accepted the receipt for one pinned commit; it waives only that commit's hosted CI wait.
+		if (args.ciBasisReceipt.trim() === "" || args.ciBasisReceipt !== args.ciBasisReceipt.trim()) {
+			fail("--ci-basis-receipt is blank or has leading or trailing whitespace");
+		}
 		if (args.sha === null) fail("--ci-basis-receipt needs --sha, the pinned commit the receipt covers");
 		if (args.forceTests || args.testedSha !== null) {
 			fail("--ci-basis-receipt waives the hosted CI wait, which --force-tests and --tested-sha releases do not have");

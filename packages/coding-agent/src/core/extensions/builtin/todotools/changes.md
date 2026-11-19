@@ -1,5 +1,45 @@
 # todotools Fork Tracker
 
+## 2026-11-18 - The GPT cue labels derive from one constant (senpi#6982 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: the all-closed GPT cue builds its label list from `GPT_HANDOFF_LABELS` instead of a hardcoded copy (byte-identical output).
+- `packages/coding-agent/test/suite/todo-handoff-cue.test.ts`: the drift test splits the label constant and asserts every label appears in each rendered GPT-block preset prompt, so a label renamed on either side fails.
+
+### Why
+
+- The #6982 round-3 review noted the hardcoded copy and the underived test as proof-claim gaps; this folds both.
+
+### Why an extension could not handle it
+
+- The cue text and its tests live inside the todotools builtin itself.
+
+### Expected merge conflict zones
+
+- LOW: one template string in `todo-format.ts`; one test block.
+
+## 2026-11-18 - The handoff cue names the block the active preset defines (senpi#6977)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: `formatHandoffCue` takes the cue kind; new `GPT_HANDOFF_CUES` and `GPT_HANDOFF_BLOCK_LINE` quote the outcome-first block the GPT presets render, with `"none"` emitting no cue at all.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the todo tool resolves the kind through `resolveActivePresetName(ctx)` and `presetHandoffCueKind`, the same preset seam todotools already uses for shared sections.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/state.ts`: re-exports the new cue constants.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: `presetHandoffCueKind(name)` maps each preset - gpt-5.5 / gpt-5.6 / gpt-6-astra render the GPT block, the rewritten gpt-6.2 core renders none, everything else keeps the default Ask / For you cue.
+
+### Why
+
+- The cue told every non-chat session to "write the Ask / For you / Now / Next block", but under the GPT presets the system prompt defines the outcome-first block instead (and the rewritten 6.2 core defines no handoff block at all), so the tool result and the prompt handed the model two competing templates.
+
+### Why an extension could not handle it
+
+- The cue text is emitted inside the todotools builtin itself; only the todo tool can append it, and only the preset contract knows which block the active prompt renders.
+
+### Expected merge conflict zones
+
+- LOW: `HANDOFF_CUES` / `formatHandoffCue` in `todo-format.ts`; the cue emission block in `tools/todo.ts`; one function and two Sets in `contract.ts`.
+
 ## 2026-11-03 - Full Todo Management section for the Opus and Fable presets (senpi#5665)
 
 ### What changed

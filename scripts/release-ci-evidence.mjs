@@ -93,6 +93,11 @@ function remoteMain() {
 	};
 }
 
+/** Why a release with a CI-basis receipt stops on a red hosted run; the dry run previews the same words. */
+function receiptRefusal(sha, reason) {
+	return `CI failed on ${sha.slice(0, 12)}: ${reason}; a ci_basis_receipt waives only the wait for hosted CI, not a red result`;
+}
+
 /**
  * The release's test evidence is CI's sharded run, never a second serial run of the suite here (senpi#2943).
  * A regenerated model catalog is committed on the release only and requires --force-tests (never pushed untested); the
@@ -113,7 +118,9 @@ export function secureCiEvidence(version, dryRun, forceTests, pinnedSha, ciBasis
 			forceTests
 				? "no CI wait (--force-tests runs the suite in this job)"
 				: ciBasisReceipt
-					? `no CI wait (hosted CI wait waived by ci_basis_receipt ${ciBasisReceipt})`
+					? plan.action === "stop"
+						? `the live run would refuse: ${receiptRefusal(sha, plan.reason)}`
+						: `no CI wait (hosted CI wait waived by ci_basis_receipt ${ciBasisReceipt})`
 					: 'wait for the release commit\'s green "Check and test"',
 		);
 		return;
@@ -143,6 +150,12 @@ export function secureCiEvidence(version, dryRun, forceTests, pinnedSha, ciBasis
 		return;
 	}
 	if (ciBasisReceipt) {
+		// The receipt waives the wait, not a known result: hosted CI is read once, and a red run still stops the release.
+		const plan = planCiEvidence({ sha: pinnedSha, checkRuns: lookupCiCheckRuns(pinnedSha) });
+		log(`test gate: ${plan.reason}`);
+		if (plan.action === "stop") {
+			throw new Error(receiptRefusal(pinnedSha, plan.reason));
+		}
 		log(`test gate: hosted CI wait waived by ci_basis_receipt ${ciBasisReceipt} for the pinned commit ${pinnedSha}`);
 		return;
 	}

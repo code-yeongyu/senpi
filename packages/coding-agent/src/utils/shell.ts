@@ -9,6 +9,7 @@ import { spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 import { withCredentialProxy } from "../core/credential-proxy/runtime.ts";
 import { withKillGuardRuntime } from "../core/kill-guard/runtime.ts";
+import { childEnvironmentOf } from "../modes/rpc/host-identity-env.ts";
 import { withBundledBunCommands } from "./bundled-bun.ts";
 
 /** Family of a resolved shell executable, used to pick invocation arguments. */
@@ -216,8 +217,9 @@ export function getUserShellEnv(): NodeJS.ProcessEnv {
 	const hasBinDir = pathEntries.includes(binDir);
 	const updatedPath = hasBinDir ? currentPath : [binDir, currentPath].filter(Boolean).join(delimiter);
 
+	// An RPC host's supervisor hand-off stays in the host; the shell gets the origin attribution instead (senpi#5635).
 	return withBundledBunCommands({
-		...process.env,
+		...childEnvironmentOf(process.env),
 		[pathKey]: updatedPath,
 	});
 }

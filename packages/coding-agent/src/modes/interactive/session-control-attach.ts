@@ -131,11 +131,12 @@ const NULL_CONNECTION = "tui-null";
 export interface TerminalInputReceipt {
 	/** What was sent: a retry with the same id and different content is a conflict, as on a host. */
 	readonly fingerprint: string;
-	readonly disposition: "started" | "queued";
+	/** `held`: kept as a held notice under a Stop or an interrupted run until the person releases it (senpi#6490). */
+	readonly disposition: "started" | "queued" | "held";
 	readonly admission: {
 		readonly clientMessageId: string;
 		readonly durableSessionId: string;
-		readonly disposition: "started" | "queued";
+		readonly disposition: "started" | "queued" | "held";
 	};
 }
 
