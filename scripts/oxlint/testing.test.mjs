@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const sleepCode = "senpi-testing(no-fixed-sleep)";
 const flakeCode = "senpi-testing(no-flake-masking)";
+const mockCode = "senpi-testing(no-module-mock)";
 
 // Exercise the ratchet configuration (the shipped config that enables these rules), not a
 // test-only visitor: losing its jsPlugins entry must fail too. The fixture tree symlinks the
@@ -225,6 +226,50 @@ describe("no-flake-masking through the ratchet lint configuration", () => {
 	]) {
 		it(`allows ${name}`, () => {
 			assert.deepEqual(findings(source, flakeCode), []);
+		});
+	}
+});
+
+describe("no-module-mock through the ratchet lint configuration", () => {
+	for (const [name, source] of [
+		["bun mock.module", 'import { mock } from "bun:test"; mock.module("./db", () => ({}));'],
+		["an aliased bun mock", 'import { mock as m } from "bun:test"; m.module("./db", () => ({}));'],
+		["a bun namespace import", 'import * as bun from "bun:test"; bun.mock.module("./db", () => ({}));'],
+		["a require-destructured bun mock", 'const { mock } = require("bun:test"); mock.module("./db", () => ({}));'],
+		[
+			"a createRequire-destructured bun mock",
+			'import { createRequire } from "node:module"; const { mock } = createRequire(import.meta.url)("bun:test"); mock.module("./db", () => ({}));',
+		],
+		[
+			"an import()-destructured bun mock",
+			'const { mock } = await import("bun:test"); mock.module("./db", () => ({}));',
+		],
+		["a const alias of mock", 'import { mock } from "bun:test"; const m = mock; m.module("./db", () => ({}));'],
+		["vi.mock", 'vi.mock("./db");'],
+		["vi.mock with a factory", 'import { vi } from "vitest"; vi.mock("./db", () => ({ query: vi.fn() }));'],
+		["vi.doMock", 'vi.doMock("./db");'],
+		["jest.mock", 'jest.mock("./db");'],
+		["jest.unstable_mockModule", 'import { jest } from "@jest/globals"; jest.unstable_mockModule("./db", () => ({}));'],
+	]) {
+		it(`reports ${name}`, () => {
+			const found = findings(source, mockCode);
+			assert.equal(found.length, 1);
+			assert.match(found[0].message, /Inject the dependency instead/);
+		});
+	}
+
+	for (const [name, source] of [
+		["a bun mock() function", 'import { mock } from "bun:test"; const fn = mock(() => 1);'],
+		["vi.fn", "const fn = vi.fn();"],
+		["vi.spyOn", "vi.spyOn(api, 'load');"],
+		["bun spyOn", 'import { spyOn } from "bun:test"; spyOn(api, "load");'],
+		["vi.mock with { spy: true }", 'vi.mock("./db", { spy: true });'],
+		["an unrelated .module( call", 'angular.module("app", []);'],
+		["a mock.module whose mock is not from a test framework", 'import { mock } from "./helpers"; mock.module("./db");'],
+		["a local vi that shadows the global", 'import { vi } from "./fake-vi"; vi.mock("./db");'],
+	]) {
+		it(`allows ${name}`, () => {
+			assert.deepEqual(findings(source, mockCode), []);
 		});
 	}
 });
