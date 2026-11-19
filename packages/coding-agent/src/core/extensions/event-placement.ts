@@ -29,6 +29,7 @@ export const EXTENSION_EVENT_PLACEMENT = {
 	session_extensions_removed: "runtime",
 	session_move_export: "loop",
 	session_move_import: "loop",
+	session_stop: "split",
 	session_before_tree: "loop",
 	session_tree: "loop",
 	context: "loop",
