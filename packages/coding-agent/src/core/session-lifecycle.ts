@@ -40,6 +40,8 @@ export class SessionLifecycleController {
 	private readonly options: SessionLifecycleOptions;
 	private idleBoundaryPassed = false;
 	private pendingHuman = false;
+	/** A host restart continues the engine-started run it cut short (senpi#7020); cleared when that run starts. */
+	private restartContinues = false;
 	private admittingHuman = false;
 	private runAdmitted = false;
 	private goal: Goal | null = null;
@@ -112,7 +114,7 @@ export class SessionLifecycleController {
 	}
 
 	get requiresHumanContinuation(): boolean {
-		return this.ledger.interrupted && !this.pendingHuman;
+		return this.ledger.interrupted && !this.pendingHuman && !this.restartContinues;
 	}
 
 	get nextRunOrigin(): "human" | "automatic" {
@@ -126,6 +128,17 @@ export class SessionLifecycleController {
 	get runStartedHere(): string | undefined {
 		const runId = this.ledger.runId;
 		return runId === this.restoredRunId ? undefined : runId;
+	}
+
+	/** The host's clean stop cut the running run short: record it interrupted, as a kill leaves it (senpi#7020). */
+	cutByHostShutdown(): void {
+		this.ledger.interrupted = true;
+		this.ledger.checkpoint();
+	}
+
+	/** The interrupted run was the engine's and a host restart cut it: its continuation needs no person (senpi#7020). */
+	continueAfterRestart(): void {
+		this.restartContinues = true;
 	}
 
 	restoreComplete(): void {
@@ -170,6 +183,7 @@ export class SessionLifecycleController {
 		this.ledger.interrupted = false;
 		this.ledger.startRun(origin ?? (this.pendingHuman ? "human" : "automatic"));
 		this.pendingHuman = false;
+		this.restartContinues = false;
 		if (previousRun) this.obligations.settleRun(previousRun);
 		this.recompute();
 		this.ledger.publishUnwritten();

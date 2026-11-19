@@ -23,6 +23,8 @@ export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
 /** Host protocol support; a session without codemode returns `eval_cells_unavailable`. */
 export const EVAL_CELLS_CAPABILITY = "eval_cells";
 export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
+/** `unload_session { graceful, waitMs }` on a host and on a terminal's control endpoint (oh-my-openagent#14313). */
+export const UNLOAD_GRACEFUL_CAPABILITY = "unload_graceful";
 /** Host capability: the `continue_from_leaf` command starts a turn with no new prompt (#1930). */
 export const CONTINUE_FROM_LEAF_CAPABILITY = "continue_from_leaf";
 /** HOST capability: the shared router guards foreign holders at every writing RPC admission. */

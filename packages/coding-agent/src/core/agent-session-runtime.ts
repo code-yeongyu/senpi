@@ -795,7 +795,7 @@ export class AgentSessionRuntime {
 		if (options.endActiveRun === true) await this.endActiveRunWithinQuitBudget(options.processExit === true);
 		await emitSessionShutdownEvent(
 			this.session.extensionRunner,
-			{ type: "session_shutdown", reason: "quit" },
+			{ type: "session_shutdown", reason: "quit", ...(this.session.closedOnRequest ? { closed: true } : {}) },
 			options,
 		);
 		this.beforeSessionInvalidate?.();

@@ -1447,6 +1447,12 @@ export interface SessionStartEvent {
 	 * turns are held until real input or an explicit Resume (senpi#3853). Attaching releases nothing.
 	 */
 	attended?: boolean;
+	/**
+	 * `true` when a host reopened this session because it was live when the previous host ended (a crash, a clean
+	 * stop or a handoff, senpi#7020). Automatic turns continue as that host left them: only the holds the restart
+	 * itself caused are released.
+	 */
+	continued?: boolean;
 }
 
 /** Sources released by real input or an explicit Resume; goal handlers revalidate current state. */
@@ -1591,6 +1597,11 @@ export interface SessionShutdownEvent {
 	reason: "quit" | "reload" | "new" | "resume" | "fork";
 	/** Destination session file when shutting down due to session replacement. */
 	targetSessionFile?: string;
+	/**
+	 * The session was closed on request with a graceful close (oh-my-openagent#14313): stop the work it would
+	 * otherwise restore on a reopen (monitors, loops) and leave state that reads as cleanly stopped.
+	 */
+	closed?: true;
 	/**
 	 * Per-handler signal the host aborts when this handler exceeds
 	 * `sessionShutdownHandlerTimeoutMs`; teardown then continues without it.
