@@ -2,7 +2,8 @@
 // engine (forced handoff and idle handover alike), moving every session to it and dropping find_session.
 // A handoff onto a newer host is refused `older_engine` and leaves the host, its generation and its sessions
 // untouched; an upgrade, an equal build and an explicit downgrade still hand off. The ordering itself is
-// pinned in test/suite/engine-build-identity.test.ts.
+// pinned in test/suite/engine-build-identity.test.ts. senpi#7040 (gate a3): a successor whose engine is stated as an
+// omo version ([5,1,78,0,0]) is not proven not older than a CalVer host, so it is refused the same way.
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -32,6 +33,8 @@ import {
 
 const OLDER: EngineBuildIdentity = engineBuildIdentityFrom({ version: "2000.1.1" });
 const NEWER: EngineBuildIdentity = engineBuildIdentityFrom({ version: "2999.1.1" });
+// senpi#7040: a compiled omo 5.1.78 states its omo version as its engine ([5,1,78,0,0]); it is never proven not older.
+const OMO_VERSION: EngineBuildIdentity = engineBuildIdentityFrom({ version: "5.1.78" });
 
 function wireEngine(identity: EngineBuildIdentity): { text: string; ordinal: readonly number[] } {
 	return { text: identity.text, ordinal: identity.ordinal };
@@ -86,12 +89,15 @@ function directHandoff(host: HandoverRig, options: { successorEngine: EngineBuil
 }
 
 describe.skipIf(process.platform === "win32")("a handoff onto a newer engine", () => {
-	it("refuses a newer host asked to hand over to an older engine, and keeps its sessions", async () => {
+	it.each([
+		["an older engine", OLDER],
+		["an engine stated as an omo version", OMO_VERSION],
+	])("refuses a newer host asked to hand over to %s, and keeps its sessions", async (_label, successorEngine) => {
 		const host = await rig("oe-direct");
 		const caller = await connect(host, peers);
 		const sessionId = openedSessionId(await caller.request({ id: "open", type: "open_session", cwd: host.qa.cwd }));
 
-		const handoff = directHandoff(host, { successorEngine: OLDER });
+		const handoff = directHandoff(host, { successorEngine });
 		const result = await handoff.result;
 
 		expect(result).toMatchObject({ action: "refuse", reason: "older_engine" });
@@ -99,7 +105,7 @@ describe.skipIf(process.platform === "win32")("a handoff onto a newer engine", (
 		await expectServing(host, caller, sessionId);
 	});
 
-	it("refuses an idle handover to an older engine, and to a requester that does not state its engine", async () => {
+	it("refuses an idle handover to an older engine, to one stated as an omo version, and to a requester that does not state its engine", async () => {
 		const host = await rig("oe-idle");
 		const caller = await connect(host, peers);
 		const sessionId = openedSessionId(await caller.request({ id: "open", type: "open_session", cwd: host.qa.cwd }));
@@ -110,9 +116,16 @@ describe.skipIf(process.platform === "win32")("a handoff onto a newer engine", (
 		const unstated = dataOf(
 			await caller.request(beginHandoverCommand(host, { operation_id: "op-2", target_engine: undefined }), 120_000),
 		);
+		const omoVersion = dataOf(
+			await caller.request(
+				beginHandoverCommand(host, { operation_id: "op-3", target_engine: wireEngine(OMO_VERSION) }),
+				120_000,
+			),
+		);
 
 		expect(older).toMatchObject({ refused: "older_engine" });
 		expect(unstated).toMatchObject({ refused: "older_engine" });
+		expect(omoVersion).toMatchObject({ refused: "older_engine" });
 		await expectServing(host, caller, sessionId);
 	});
 

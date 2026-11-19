@@ -1675,14 +1675,18 @@ parsing a version string:
   host?" signal: it changes whenever the process does, including after a replacement.
 - `generation` - which generation of its daemon directory this host is, handed to it at spawn time
   (`SENPI_RPC_HOST_GENERATION`). A host nobody ensured reports `0`.
-- `engineVersion` - the build string: the CalVer package version plus `+<buildEpoch>.<sha7>` when the binary
-  was compiled with build metadata. Informational, like `serverVersion`.
+- `engineVersion` - the build string: the engine's senpi CalVer version plus `+<buildEpoch>.<sha7>` when the binary
+  was compiled with build metadata. A distribution compiled beside its own package.json (whose version is then
+  `serverVersion`) defines `SENPI_ENGINE_VERSION` with the embedded senpi version, so this field and the ordinal
+  stay senpi CalVer. Informational, like `serverVersion`.
 - `engineOrdinal` - `[year, month, day, postRelease, buildEpoch]`, the ONLY ordering a client may use.
   `[y, m, d, n]` compares lexicographically, where `n` is the CalVer post-release increment (`2026.9.16-3`
   ships AFTER `2026.9.16`, the opposite of the semver reading of those strings). The build epoch breaks a tie
   only when BOTH sides carry one; otherwise the two builds are EQUAL, so a build whose age cannot be established
   never outranks one that can. Binaries built without git metadata report an epoch of `0`, which is exactly how a
-  client reads "this build has no age": a non-zero epoch is comparable, `0` is not.
+  client reads "this build has no age": a non-zero epoch is comparable, `0` is not. Only two senpi CalVer
+  ordinals (first part a year, 2000 or later) are ordered (senpi#7040): compiled omo builds through 5.1.78
+  advertised their omo version (`[5, 1, 78, 0, 0]`), and a pair with such an ordinal is uncomparable.
 - `launch_profile` - what the host was launched with: `core.session_runtime`, `core.multi_session` and
   `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
@@ -1886,9 +1890,11 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
 - The successor must not run an OLDER engine than the running host (senpi#7018). `handoffHost` compares the
   successor's engine (this process's build, or the requester's `target_engine` in an idle handover) with the
   host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
-  sides carry one; equal and uncomparable builds are not older; version strings are never compared) and refuses
-  `{ action: "refuse", reason: "older_engine", upgradeable: false }` before spawning anything when the
-  successor is strictly older; `detail` names both engines. `allowDowngrade` (`host handoff --allow-downgrade`)
+  sides carry one; equal builds and builds uncomparable only for a missing epoch are not older; version strings
+  are never compared) and refuses `{ action: "refuse", reason: "older_engine", upgradeable: false }` before
+  spawning anything when the successor is strictly older, or when either ordinal is not senpi CalVer and the
+  successor therefore cannot be proven not older (senpi#7040); `detail` names both engines. An `ensure` with the
+  upgrade policy keeps such a host and writes one `engine order uncomparable` line to stderr. `allowDowngrade` (`host handoff --allow-downgrade`)
   is the caller's explicit consent and skips the check. A host that advertises no ordinal is not judged.
 - Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
   dir's default `<dir>/rpc/rpc.sock` (or whose layout-2 record there proves no live owner), cannot be
