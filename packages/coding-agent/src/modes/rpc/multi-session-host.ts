@@ -467,7 +467,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		},
 		holdsSessions: (id) => router.holdsSessions(id),
 		send: (id, record) =>
-			void writer.enqueueControl(record, id).catch((cause) => hostLog(`host_occupancy to ${id} failed: ${errorMessage(cause)}`)),
+			void writer
+				.enqueueControl(record, id)
+				.catch((cause) => hostLog(`host_occupancy to ${id} failed: ${errorMessage(cause)}`)),
 	});
 	const presenter = await startMcpPresenterControl(writer, {
 		enforcement: options.mcpPresenterEnforcement,
