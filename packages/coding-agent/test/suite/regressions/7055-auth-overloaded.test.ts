@@ -33,14 +33,18 @@ async function supervisor(): Promise<SteppedSupervisor> {
 
 async function peer(s: SteppedSupervisor): Promise<Peer> {
 	const connected = await Peer.connect(s.publicPath);
-	cleanups.push(() => connected.socket.destroy());
+	cleanups.push(() => {
+		connected.socket.destroy();
+	});
 	return connected;
 }
 
 /** A first client to arm the refill, then the spare opened as engine connection 2. */
 async function withSpare(s: SteppedSupervisor): Promise<void> {
 	const first = await authenticatedClient(s);
-	cleanups.push(() => first.socket.destroy());
+	cleanups.push(() => {
+		first.socket.destroy();
+	});
 	await openSpare(s, 2);
 }
 

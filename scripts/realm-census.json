@@ -11609,6 +11609,14 @@
 		"packages/coding-agent/src/extensions/html-render/image-references.ts#URL_ATTRIBUTES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/host-spare-hop.ts#SPARE_RETRY_DELAYS_MS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/socket-transport.ts#CHALLENGE_BUDGET_MS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
 		}
 	}
 }
