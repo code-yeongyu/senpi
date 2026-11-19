@@ -14,7 +14,7 @@ export async function parkWithTaskStatus(agentDir: string, sessionPath: string, 
 		agentDir,
 		now: () => now,
 		createRuntime: async (options) => {
-			new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+			await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 			const h = await createHarness({ cwd: options.cwd, sessionManager: options.sessionManager });
 			harnesses.push(h);
 			return {

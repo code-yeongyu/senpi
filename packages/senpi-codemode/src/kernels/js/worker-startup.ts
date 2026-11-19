@@ -78,6 +78,7 @@ function spawnWorker(options: JavaScriptKernelOptions, permissions?: KernelPermi
 		return spawnProcessWorker(url, {
 			cwd: options.cwd,
 			parallelPoolWidth: options.parallelPoolWidth,
+			...(options.attestSpawn === undefined ? {} : { attestSpawn: options.attestSpawn }),
 			...(options.processCommandPath === undefined ? {} : { searchPath: options.processCommandPath }),
 			...(options.processExecPath === undefined ? {} : { execPath: options.processExecPath }),
 		});

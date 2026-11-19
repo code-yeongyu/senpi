@@ -7,23 +7,28 @@ import * as NodeURL from "node:url";
 
 import { parseSync } from "oxc-parser";
 
-// The three strictness rules every repo enforces. This repo still has hundreds of old sites, so
-// they ratchet: each file's count must match the baseline exactly. A rise fails, and so does a drop
-// until the baseline is lowered in the same change, so a removed site cannot come back. The old sites
-// are rewritten package by package later, each reviewed as a behaviour change.
+// The strictness rules every repo enforces, plus the landmines testing rules (ported from
+// interfere-inc/landmines, MIT; no-module-mock also covers bun mock.module). This repo still has
+// hundreds of old sites, so they ratchet: each file's count must match the baseline exactly. A rise fails, and so does a drop until the baseline
+// is lowered in the same change, so a removed site cannot come back. The old sites are rewritten
+// package by package later, each reviewed as a behaviour change.
 export const RATCHET_RULES = [
   "typescript/no-explicit-any",
   "typescript/ban-ts-comment",
   "typescript/no-non-null-assertion",
+  "senpi-testing/no-fixed-sleep",
+  "senpi-testing/no-flake-masking",
+  "senpi-testing/no-module-mock",
 ];
 
-// A disable comment hides a finding from the linter, so it is counted as a fourth value: one that
-// names one of the three rules, or a bare one that turns every rule off for its line or file.
+// A disable comment hides a finding from the linter, so it is counted as an extra value: one that
+// names one of the ratcheted rules, or a bare one that turns every rule off for its line or file.
 export const SUPPRESSION = "disable-directive";
 // A directive is a comment whose text starts with the directive word, as oxlint reads it. The
 // comments come from the parser's tokens, so a directive inside a string or template never counts.
 const DIRECTIVE = /^[\s*]*(?:oxlint|eslint)-disable(?:-next-line|-line)?(?:\s|$)([\s\S]*)$/;
-const NAMES_A_RULE = /\b(?:no-explicit-any|ban-ts-comment|no-non-null-assertion)\b/;
+const NAMES_A_RULE =
+  /\b(?:no-explicit-any|ban-ts-comment|no-non-null-assertion|no-fixed-sleep|no-flake-masking|no-module-mock)\b/;
 
 export const countSuppressions = (file, source) => {
   let count = 0;
@@ -78,7 +83,7 @@ const sorted = (counts) =>
       ]),
   );
 
-// The tracked JS/TS sources (never built bundles or vendored output), linted with only the three rules.
+// The tracked JS/TS sources (never built bundles or vendored output), linted with only the ratcheted rules.
 const SOURCE = /\.(?:[cm]?[jt]s|tsx)$/;
 const CONFIG = "scripts/lint-ratchet.oxlintrc.json";
 

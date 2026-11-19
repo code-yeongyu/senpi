@@ -30,7 +30,11 @@ held. Attaching a client does not release the hold.
 
 Real prompt, steer, follow-up, or question input releases it. The user's message
 starts one turn with the latest coalesced non-goal context before that message;
-the goal revalidates and may continue afterwards.
+the goal revalidates and may continue afterwards. A message another session sent
+(`admit_external_message`, `pi.session.admitExternalMessage`) that would start a turn
+releases an `unattended` hold the same way and answers `started` (senpi#6490). It does
+not release a person's Stop, the hold after an interrupted run or a parent's run hold:
+those need the person, so the delivery is kept as a held notice and answers `held`.
 
 #### resume_session
 
@@ -82,6 +86,17 @@ while the turn was admitted); held input and notices stay held until a turn that
 A repeated `effectId` answers the recorded outcome with `replayed: true` and resumes nothing again, also after a
 reopen. A session with nothing held answers
 `not_paused`; a task child held only for its parent's run answers `resume_through_parent` with `parentSessionId`.
+
+`unlessStopped: true` is for a resume another session or a tool asks for, not a person (senpi#7016): while a person's
+Stop or a parent's run hold is live it answers `resumed: false, reason: "stopped"` and releases nothing, so only the
+person resumes their Stop. Otherwise it resumes exactly as the bare form does. This is the sanctioned remote resume of
+a session reopened after an interrupted run: open it (`open_session`), then send
+`{"type":"resume_session","sessionId":"...","expectedSeq":<pauseSeq from open_session.state>,"unlessStopped":true}`.
+
+A reopened session is held as interrupted only when its file shows a run that was still in flight: a run recorded
+active whose transcript does not end in an assistant answer that asks for no tool call (a tool call without its result,
+a tool result, or input after the answer). A run whose answer was written ends there, even when its process was killed
+(SIGKILL included) before the idle record cleared `runActive`, so it reopens without the interrupted-run hold.
 
 ```json
 {"type":"response","command":"resume_session","success":true,"data":{"resumed":true,"pauseSeq":3,"turnStarted":true,"deliveredNotices":2,"deliveredHeldInputs":1}}
@@ -1864,6 +1879,13 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
   upgradeable: false }` when they differ; `detail` names both directories. A host from before the field is placed
   by the layout: when the socket is `<dir>/rpc/rpc.sock` and a layout-2 registration under `<dir>` proves a live
   owner, the host belongs to `<dir>`. With neither, the handoff proceeds as before. Nothing is signalled.
+- The successor must not run an OLDER engine than the running host (senpi#7018). `handoffHost` compares the
+  successor's engine (this process's build, or the requester's `target_engine` in an idle handover) with the
+  host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
+  sides carry one; equal and uncomparable builds are not older; version strings are never compared) and refuses
+  `{ action: "refuse", reason: "older_engine", upgradeable: false }` before spawning anything when the
+  successor is strictly older; `detail` names both engines. `allowDowngrade` (`host handoff --allow-downgrade`)
+  is the caller's explicit consent and skips the check. A host that advertises no ordinal is not judged.
 - Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
   dir's default `<dir>/rpc/rpc.sock` (or whose layout-2 record there proves no live owner), cannot be
   placed and stays replaceable through the idle path above. Every host built with the field avoids it.
@@ -1968,7 +1990,11 @@ owns the operation:
 1. a request naming another `agent_dir` than the host's own refuses `foreign_agent_dir` before anything else
    (a request without the field, from a CLI before it existed, is not checked); a request with an `operationId`
    it already holds answers with that operation when the terms match (and `operation_conflict` when they do
-   not); a new operation is checked first against the named generation (`stale_generation`);
+   not); a new operation is checked first against the named generation (`stale_generation`), then refuses
+   `older_engine` when its `target_engine` (`{ text, ordinal }`, the requesting CLI's own engine, which the
+   successor runs) is older than the host's engine by the generation handoff's rule. A request without
+   `target_engine` comes from a CLI before senpi#7018, whose engine predates the guard, and is refused
+   `older_engine` too. `allow_downgrade: true` (`--allow-downgrade`) skips the check;
 2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
    `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
    `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
@@ -2112,7 +2138,7 @@ senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
 senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force]
                       [--expected-generation <json>] [--socket <path>]
-senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
+senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>] [--allow-downgrade]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 senpi host gc         [--json] [--agent-dir <dir>]
@@ -2989,6 +3015,14 @@ also when the attach lands while one of them is still building the replacement. 
 `get_protocol_info` before sending the field; the capability is advertised only because the value reaches every
 consumer above. Any other value is refused with `invalid_launch_profile`.
 
+#### Host tools (`host_tools`)
+
+Every session on a host that advertises `host_tools` registers its host tools (today `show_html_page`) through the
+SDK's `attachHostTools`: the tool always serves on its own, and a host bridge may route its calls to an app that
+serves the same public name. The public SDK exports the writer such an app calls back (`writeHtmlPage`). An app
+offers its host tool attachment (and the credential that serves it) only to a session on a host that names this
+capability; any other host keeps the standalone tool.
+
 #### Caller env per session (`session_env`)
 
 `open_session.env: Record<string, string>` is the per-spawn caller env channel (senpi#4381): the small, explicit set
@@ -3073,20 +3107,20 @@ open --(turns)--> idle --unload_session / idle sweep--> unloaded (session_parked
                                                         close_session / release_session --> closed (session_closed, terminal for this handle)
 ```
 
-`unload_session { sessionId, effectId?, interrupt?, clearQueue?, children?: "refuse" | "detach", force? }` frees a session this host keeps loaded. The transcript stays on disk; queued input stays in the admission ledger and is restored on the reopen (input sent without a `clientMessageId` too) unless `clearQueue`; every attached client receives `session_parked { sessionId, sessionPath, reason: "unloaded" }` (the idle sweep's park says `reason: "idle"`); the session leaves `list_sessions`; `open_session { sessionPath }` reopens it.
+`unload_session { sessionId, effectId?, interrupt?, clearQueue?, children?: "refuse" | "detach", force?, deliveries?: "refuse" }` frees a session this host keeps loaded. The transcript stays on disk; queued input stays in the admission ledger and is restored on the reopen (input sent without a `clientMessageId` too) unless `clearQueue`; every attached client receives `session_parked { sessionId, sessionPath, reason: "unloaded" }` (the idle sweep's park says `reason: "idle"`); the session leaves `list_sessions`; `open_session { sessionPath }` reopens it.
 
 The answer is always `success: true` with `data.outcome`: `unloaded` (with `sessionPath`), or `refused` with `reason`, `detail` and `action`, changing nothing:
 
 | `reason` | When | Override |
 |---|---|---|
 | `turn_active` | an agent run, a prompt about to start, compaction, barrier-held work, and a run with any tool body executing even while a dialog is open (a running tool can open one, such as an MCP elicitation); never a run whose only work is an unanswered dialog with no tool body executing (a permission prompt before its call starts), which the unload aborts (the dialog is cancelled) and waits for, bounded, as with `interrupt: true` | `interrupt: true` aborts and waits (bounded) first |
-| `work_pending` | bash, an admitted delivery not yet written, another request for the session | `interrupt: true` |
+| `work_pending` | bash, an admitted delivery not yet written (its ids in `pending.deliveries`), another request for the session | `interrupt: true`; once the aborted work settles, a delivery still waiting in the runtime's queues leaves them and the ledger unwritten (its sender redelivers it), and every later answer lists its id in `dropped.deliveries`. With `deliveries: "refuse"` a busy session (any `turn_active` blocker) holding such deliveries is refused here, with or without `interrupt` and before anything is interrupted; a delivery admitted while an interrupt it did allow is settling, and an idle session's stranded deliveries, are still handed back and named in `dropped.deliveries` |
 | `extension_work` | extension-published work: background terminal jobs, non-persistent monitors, detached eval cells, a pending question; `detail` names the sources | `force: true` (that work is stopped; only persistent monitors come back on the reopen) |
 | `children_live` | child tasks still working, or worker sessions here whose `context` names this session as parent or root | `children: "detach"` leaves them running |
 | `attached` | other clients hold the session (none of the caller's own holds count) | `force: true`; they receive the park |
 | `host_draining`, `session_closing`, `unsupported` | the host is draining, the session is already closing, or it has no file / a worker isolate owns it | none |
 
-With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays. Capability: `unload_session`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
+With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays (a refusal with its `pending.deliveries`). Capability: `unload_session`; `deliveries` and `pending.deliveries`: `unload_refuse_deliveries`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
 
 ### Multi-session host lifecycle (cold start + idle exit)
 
@@ -3504,8 +3538,8 @@ registrant opens no socket and writes no registry directory.
     `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
     (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
     default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
-    steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started` or
-    `queued`; `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started`,
+    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
     skills. Input sent with a `clientMessageId` is answered with an admission receipt,
@@ -3559,6 +3593,9 @@ registrant opens no socket and writes no registry directory.
   - `turn_conflict`: the epoch is stale, or a steer names none.
   - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
     submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
+  - `held` (with `holds`, the hold kinds): the session is idle under a hold a peer cannot release - a person's Stop,
+    an interrupted run, a parent's run hold (senpi#6490). The delivery is kept as a held notice and starts once that
+    hold is released; do not send it again. An `unattended` hold alone is released by the delivery (`started`).
   - `already_admitted`: this process already holds or already wrote that `delivery_id`, or the session file refused
     its entry and it is not admissible again yet (see `failed` below).
 
@@ -3720,7 +3757,7 @@ A session moves only into a checkout of the same repository, and until senpi#643
 - `{"op":"identity","sessionPath":"…"}` on the SENDER answers what the session recorded: `{ repository: { rootCommits, originUrl? } }`, or `{}` when it recorded none. It is the value `export` writes into its bundle, read the same way (the file's last `repository-identity` entry wins). It reads only a session file of that host's own session folder (`<agentDir>/sessions/<folder>/<name>.jsonl`, decided on the resolved path, so a link out of that folder is refused without being opened) and scans at most 1 GiB of it. Every path it will not read answers one and the same refusal, `move_failed`, so the answer never says which paths exist. A larger file answers `move_failed` too, with its own detail.
 - `{"op":"identity","cwd":"…"}` on the RECEIVER answers that folder's own git identity: the read `import` already makes on the folder a caller names. It never refuses for what the folder is. A folder with no repository, one that is not there, one that is not a directory and one that cannot be read all answer `{}`, so it never says which folders exist. Only a malformed request is refused with `invalid_move_request`: a relative `cwd`, both fields at once, or neither.
 
-`prepare { moveId, cwd, repository }` then decides with the comparison the import makes. The same repository readies the move and the record keeps `cwd`; anything else answers `move_repository_mismatch` and readies nothing, so the sender never releases. A `cwd` with no `repository` is compared as "the session recorded none", which is a mismatch, exactly as that bundle's import would be. `repository` without `cwd`, a relative `cwd`, or a `repository` that is not `{ rootCommits: string[], originUrl?: string }` is refused `invalid_move_request`, and nothing is readied. The folder is kept and compared as resolved text: `.` and `..` segments and doubled or trailing slashes are normalised, but a symbolic link is not followed and letter case is not folded, so a path through a link, or in another case on a disk that ignores case, is another folder to the move. An `import` that spells the folder that other way is refused `move_fenced`: it writes no session file and no record, though it may leave an empty session folder for that other spelling, and the move stays ready for the spelling it was readied with; send `prepare` and `import` the same `cwd`.
+`prepare { moveId, cwd, repository }` then decides with the comparison the import makes. The same repository readies the move and the record keeps `cwd`; a `cwd` that does not exist on this host answers `workspace_missing`, anything else answers `move_repository_mismatch`, and neither readies anything, so the sender never releases. A `cwd` with no `repository` is compared as "the session recorded none", which is a mismatch, exactly as that bundle's import would be. `repository` without `cwd`, a relative `cwd`, or a `repository` that is not `{ rootCommits: string[], originUrl?: string }` is refused `invalid_move_request`, and nothing is readied. The folder is kept and compared as resolved text: `.` and `..` segments and doubled or trailing slashes are normalised, but a symbolic link is not followed and letter case is not folded, so a path through a link, or in another case on a disk that ignores case, is another folder to the move. An `import` that spells the folder that other way is refused `move_fenced`: it writes no session file and no record, though it may leave an empty session folder for that other spelling, and the move stays ready for the spelling it was readied with; send `prepare` and `import` the same `cwd`.
 
 A move readied for a folder lands only there: an `import` naming another `cwd` is refused `move_fenced`: it writes no session file and no record, though it may leave an empty session folder for that other `cwd`, and the move stays ready for the folder its `prepare` checked, so the right import still lands. A second `prepare` for the same folder answers the same record with the same `expires_at`; one for another folder is refused `move_fenced`; one naming no folder answers the record and leaves the folder as it is, so an older client's `prepare` changes nothing. A move readied with no folder takes the folder of the first `import` that receives it, and `cancel` is unchanged throughout.
 
@@ -3730,7 +3767,7 @@ A `prepare` with neither `cwd` nor `repository` behaves exactly as it always did
 
 The order is: the sender reads the session's repository (`identity`, alongside its `get_state`) and the receiver reads the target folder's; the receiver `prepare`s with both, which refuses a folder of another repository before anything is released; the sender releases the session with `release_session` reason `move` (usually with `interrupt: true`) and passes its `dropped.user_messages` to `export`; the transport carries `bundle_dir` to the receiver, which `import`s it; the sender asks `status` (on start, on reconnect, and when the session is opened) and `finish`es with the answer. `accepted` leaves the sender's copy read-only for good; `declined`, `failed`, or `accepted` with `revoked: true` makes it writable again with its queued input back. `receiving` changes nothing.
 
-Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, a bundle for a move the receiver never readied, or an `import` or `prepare` naming a folder other than the one the move was readied for), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository: from `prepare` before the release, and from `import`), `move_target_occupied`, `move_mismatch`, `move_already_moved` (a revoked answer for a sender already marked moved), `session_moved_away`, `session_held`, and `move_failed` for anything else. `move_failed` also refuses an `export` whose sealing `release_session` staged extension state that is no longer on disk: the session is never bundled without it, and `finish` with a `declined` answer takes it back.
+Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, a bundle for a move the receiver never readied, or an `import` or `prepare` naming a folder other than the one the move was readied for), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository: from `prepare` before the release, and from `import`), `workspace_missing` (`cwd` does not exist on this host, from the same two steps; an `import` declines the move `repository` exactly as for a mismatch, so only the code tells the two apart), `move_target_occupied`, `move_mismatch`, `move_already_moved` (a revoked answer for a sender already marked moved), `session_moved_away`, `session_held`, and `move_failed` for anything else. `move_failed` also refuses an `export` whose sealing `release_session` staged extension state that is no longer on disk: the session is never bundled without it, and `finish` with a `declined` answer takes it back.
 
 #### Moving without a bundle folder
 
@@ -6166,7 +6203,7 @@ Response:
 }
 ```
 
-`kind` is the admission outcome (`started`, `queued`, `steered`, `already_admitted`, `held_draft`, `turn_conflict`); `admitted` is `[]` when no drain is registered.
+`kind` is the admission outcome (`started`, `queued`, `steered`, `already_admitted`, `held_draft`, `held`, `turn_conflict`); `admitted` is `[]` when no drain is registered.
 
 #### admit_external_message
 
@@ -6190,7 +6227,7 @@ Response:
 - `whenIdle`: `start` (default) starts a turn on an idle session; `queue` holds it for the next turn.
 - `expectedTurnId` is `get_state.currentTurnId` (a string). A steer whose `expectedTurnId` is not the current turn, or a mid-turn steer that names none, answers `kind: "turn_conflict"` and admits nothing. The reply's `turnId` is the session's turn at admission, in the same form.
 - `chainCount` is a thread call's hop count, checked against `threads.chainCountLimit` before anything is admitted (refused with `chain_count_limit` / `invalid_chain_count`, as on `prompt`/`steer`/`follow_up`); the admitted hop is written as `details.chain_count`.
-- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`.
+- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). `held` (senpi#6490): the session is idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run hold); the delivery is kept as a held notice and starts once that hold is released, and `holds` lists the hold kinds, for example `{ "kind": "held", "turnId": "0", "holds": ["session_hold"] }`. An `unattended` hold alone is released by the delivery, which answers `started`. A caller that predates `held` must treat it as neither success nor a refusal to retry: the delivery is admitted and waits on that device for its person. The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`.
 - On a connection that speaks for a remote device (a delegated connection, or one whose `set_client_info` declared `remoteOrigin`), the engine stamps that device as `details.remote_origin` and writes `text` unchanged, so the model reads exactly what a delivery on a local connection carries and no device (senpi#6250). It keeps `text` as `details.display_text` when no `displayText` is given, and refuses a `command_line` sender (`sender_not_allowed`). A delegated connection that names no remote device is refused (`delegated_origin_unknown`), never admitted as a local delivery. A record that names `remote_origin` is refused on every connection. The turn that consumes the delivery takes the connection's origin, so a remote device's follow-up runs under the delegated approval-mode rule even inside a local turn.
 - Once `release_session` has closed the session's admission, the record answers `success: false` with the release's message: the delivery stays with its sender.
 
@@ -6220,6 +6257,34 @@ Response:
 `dropped` is non-empty only after `"interrupt": true` took queued input out of the session: redeliver the ids in `deliveries` to the next owner, and hand `user_messages` to the adopting client, which decides what to do with them (for example, resubmit them in order as queued prompts).
 
 Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `release_failed` (`errorData.detail`; the session stays hosted when its entry could not be written), `host_draining`, `session_closing` or `unknown_session`.
+
+#### find_session
+
+Which session file of this host carries a durable session id, for a client whose session is closed and unlisted.
+
+```json
+{"type":"find_session","durableSessionId":"0197…"}
+```
+
+Every other command that takes a durable id works on a session the host still has open: `list_sessions` lists what is open, `claim_session` consumes a ready park, `resume_session` is the pause and resume of a user Stop, and `open_session` needs the path. A client that binds a thread to a session on another machine keeps the routing key and the durable id, not the path, so when that session closes (a move given back after its release leaves the file writable and the session not open) the key names nothing and there is no path to reopen by. This answers that path.
+
+`data` is exactly one of:
+
+```json
+{"found":{"sessionPath":"/abs/sessions/--folder--/<file>.jsonl","cwd":"/abs/folder/the/header/names","open":false}}
+{"ambiguous":true}
+{"unknown":true}
+```
+
+`open` says an engine of this host holds that session now, so a client knows whether its next step is an `open_session` or an attach. `ambiguous` is the answer when two session files carry one durable id (a caller-minted id reused while the first was parked); it names neither, and the client picks by another means. `unknown` is the answer when no session file of this host carries it.
+
+The command is a read: it opens, claims, unloads, seals and rewrites nothing, and touches no move record. It reads only this host's own session folder (`<agentDir>/sessions/<folder>/`), never a path from the request, which carries the durable id alone. Of each session file only the first line, its header, is read.
+
+It needs the standing a path-naming `open_session` needs, so on a delegated connection it needs `device_admin`. A caller without that standing is refused before the lookup runs, and the refusal is the same for an id this host knows and one it does not, so it learns nothing either way.
+
+It is bounded: a host holding more than 20,000 session files answers `find_session_too_many` instead of a partial answer, and no file is read before that bound is decided. A `durableSessionId` that is missing, empty or not a string is `invalid_argument`. Every host this package starts keeps an agent directory, whichever runtime its sessions use, so all of them answer `find_session`, a host that runs its sessions in workers included. `find_session_unsupported` remains for a host built with no agent directory at all; no host this package starts answers it.
+
+After a `found`, open the session with `open_session { sessionPath, cwd }` and compare the answer's `state.sessionId` with the durable id before binding to it: the id is the proof, the path only a hint.
 
 #### detach_connection
 
@@ -6382,7 +6447,8 @@ the terminal: the device's `trust.json` and the project's own settings file.
 - `saved`: the nearest decision saved at or above the folder, or `null`.
 - `locked`: the engine was launched with `--approve` or `--no-approve`; that flag outranks every saved decision,
   so `set_project_trust` is refused.
-- `choices`: exactly the choices the terminal's `/trust` command offers.
+- `choices`: exactly the choices the terminal's `/trust` command offers. `set_project_trust` also takes
+  `no_inherit`, which is never listed here.
 
 #### set_project_trust
 
@@ -6395,7 +6461,17 @@ implied by `open_session` or by a permission preset; only this explicit request 
 ```
 
 `expectedCwd` is optional, as on every project write: see [The folder a project write is for](#the-folder-a-project-write-is-for). `choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
-does) or `do_not_trust`. The response carries the same `data` as `get_project_trust`, read after the change.
+does), `do_not_trust`, or `no_inherit`. The response carries the same `data` as `get_project_trust`, read after the change.
+
+`no_inherit` is for clients, not people, and `get_project_trust` never lists it: it saves an explicit `null` for the
+folder in `trust.json`, an entry that holds no decision. The folder then inherits no decision from a folder above it or,
+for a linked git worktree, from its main checkout, so it is decided as if nothing were saved: a Full access session
+trusts it, and a session that may ask asks; an answer the host process gave the folder before the entry was
+saved does not apply either. `saved` reads `null` afterwards. It never adds trust to the session it is
+sent in: a trust that came only from Full access stays, any other trust goes, unless a `project_trust` handler decides
+the folder is trusted (that handler is not overruled, so it never refuses `no_inherit`). An engine older than this
+answers `invalid_argument`, and reads such an entry as no entry at all, so the folder inherits there as before.
+A later `trust`, `trust_parent` or `do_not_trust` replaces the entry.
 Errors: `invalid_argument` for an unknown choice or an `expectedCwd` that is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder than the session's (nothing is saved or applied), `project_trust_locked` when the launch named the trust, and
 `project_trust_extension_decided` when a `project_trust` handler of an extension loaded before trust (never a
 project extension) decides the other way: such a handler decides before any saved choice when a session opens, so
@@ -6452,8 +6528,9 @@ commands read and write a file in the session's folder).
 
 #### read_project_file
 
-Reads one of the workspace's instruction files: `AGENTS.md` or `CLAUDE.md` at the session's folder or in any folder
-below it, or a file under `.omo/rules/`. Reading runs nothing, so it works while the project is untrusted.
+Reads one of the workspace's project files: `AGENTS.md` or `CLAUDE.md` at the session's folder or in any folder
+below it, a file under `.omo/rules/`, or the folder's OmO config `.omo/omo.jsonc` (per-agent and per-category model
+routing; at the folder itself only). Reading runs nothing, so it works while the project is untrusted.
 
 ```json
 {"type": "read_project_file", "path": "AGENTS.md"}
@@ -6478,8 +6555,9 @@ below it, or a file under `.omo/rules/`. Reading runs nothing, so it works while
 `path` is relative to the session's folder, `/`-separated and canonical: no empty, `.` or `..` segment, no `\\`, `:`
 or NUL, and never through `.git` or `node_modules`. A file that does not exist yet is a success with `exists: false`
 and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: compare it, never parse it.
-Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path }`) for any
-other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
+Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path, reason }`):
+`reason` is `not_listed` for any other path and `unsafe` when a folder on the way or the file itself is a symlink or
+not a regular file and folder (an engine before `.omo/omo.jsonc` was listed sends no `reason`), and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
 
 #### The folder a project write is for
@@ -6508,7 +6586,9 @@ writes to one file are applied one at a time. The response carries the same `dat
 after the write. The session reads its instruction files when they are next loaded (a new session or `reload`).
 Errors: `invalid_argument` when `content` is not a string, `ifEtag` is neither a string nor `null`, or `expectedCwd` is
 not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
-`project_not_trusted` while the project is untrusted, `project_file_not_allowed` as for `read_project_file`,
+`project_not_trusted` while the project is untrusted (read again when the write commits),
+`project_file_permission_denied` when this machine's own permission rules for an edit of that path refuse it (the same
+decision the write tool gets), `project_file_not_allowed` as for `read_project_file`,
 `project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB or a stored file over 512 KiB (its
 version cannot be checked without reading it), `project_file_conflict` when
 `ifEtag` is not the file's current version (`errorData: { currentEtag, exists }`; nothing is written; read again
