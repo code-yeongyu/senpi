@@ -1,3 +1,61 @@
+## 2026-11-19 - a restart continuation that made progress continues again; a crash loop stops (senpi#7080)
+
+### What changed
+
+- `packages/coding-agent/src/core/host-restart-continuation.ts`: the restart rule walks past continuations of a cut run (`session-resumed` with `resumeCause: "interrupted"`) to the run's own start. An engine-started run continues; a continuation that the next restart cut continues again only when it recorded progress (a completed model response or a tool result the restore did not write), and at most `RESTART_CONTINUATION_LIMIT` (3) times without a person's input or a peer delivery. `restartHoldData()` names why such a run stays held: `repeated_restart_no_progress` or `repeated_restart_limit`.
+- `packages/coding-agent/src/core/agent-session.ts`: both places that install the `interrupted-run` hold go through `_addInterruptedRunHold()`, which puts that reason in the hold's `data` on a reopen after a restart.
+
+### Why
+
+- senpi#7079: a resumed run that a second host kill cut stayed held for good, because its run start is the user-directed `session-resumed` message and the rule read it as a person's run. Long unattended lanes on a host killed twice stopped.
+
+### Why an extension could not handle it
+
+- The restart release and the interrupted-run hold are installed by the session core while it binds, before any extension can act on them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `restartRelease()` and the restart verdict in `host-restart-continuation.ts`.
+- LOW: the two `interrupted-run` hold installs in `agent-session.ts` (`_holdForInterruptedRun`, `bindExtensions`).
+
+## 2026-11-16 - A store another process holds still shows its stored sign-ins (senpi#6841)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `readWhileBusy()` fills a store that has never loaded because another process holds the lock from `auth.json` read without its lock, asynchronously and within the sync lock budget. The read is never written back, and the store stays busy (`isCredentialStoreBusy()`), so the next read still takes the lock. An unreadable, slow or unparsable file keeps the credentials as they were. An async write (`modify()`, `delete()`) waits out a Windows reader holding the file open (EPERM, EACCES or EBUSY on the rename) within the async lock budget.
+- `packages/coding-agent/src/core/model-registry.ts`: `retryBusyCredentialRead()` re-reads a busy store, or one that loaded with an error, at most once per synchronous pass. A guard set after a busy re-read is cleared on the next microtask.
+
+### Why
+
+- `packages/coding-agent/src/core/auth-storage.ts`: while another process held `auth.json`'s lock, every stored sign-in read as missing, so a host's provider list showed a connected account as not connected.
+- `packages/coding-agent/src/core/model-registry.ts`: each provider row re-read the busy store and waited out the 1 s sync lock budget, so one `get_auth_providers` call blocked for about 45 s. Measured with a second process holding the lock.
+
+### Why an extension could not handle it
+
+- The busy fallback and the re-read live inside the credential store and the model registry that every surface reads; an extension cannot change what they answer.
+
+### Expected merge conflict zones
+
+- LOW: `auth-storage.ts` `reload()` busy branch, and `model-registry.ts` `retryBusyCredentialRead()`.
+
+## 2026-11-14 - An interrupt stops the turn's background jobs at once
+
+### What changed
+
+- `packages/coding-agent/src/core/run-background-jobs.ts`: `RunBackgroundJobs.stop(turnId)` stops every job of the turn at once (`Promise.allSettled`) instead of one after another; `stopped` and `failed` still list the jobs in start order.
+
+### Why
+
+- A job that ignores TERM holds its stop for the whole TERM-then-KILL grace, so the `interrupt { background: "stop" }` answer waited one grace period per such job; now it waits one in total.
+
+### Why an extension could not handle it
+
+- `RunBackgroundJobs` is the session's own record of each turn's jobs; the RPC `interrupt` awaits it.
+
+### Expected merge conflict zones
+
+- LOW: `RunBackgroundJobs.stop` in `run-background-jobs.ts`.
+
 ## 2026-11-19 - host-restart-continuation keeps its helpers private (senpi#7073)
 
 ### What changed

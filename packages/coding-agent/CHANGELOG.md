@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.19-5] - 2026-11-19
 
 ### Breaking Changes
 
@@ -9,6 +9,11 @@
 ### Changed
 
 ### Fixed
+
+- `interrupt { background: "stop" }` stops the turn's background jobs at once, so jobs that ignore TERM no longer delay the answer one grace period each; a job the terminal no longer holds is reported as such instead of as still running; the terminal control endpoint refuses a `background` other than `"stop"` as the RPC host does.
+- A worker that keeps answering progress is no longer quarantined by the open deadline, a request sent after a quiet spell gets its full deadline, and an open naming a quarantined session answers a typed, retryable refusal until the old worker has exited ([#6815](https://github.com/code-yeongyu/senpi/pull/6815))
+- `get_auth_providers` answers within the lock budget while another process holds `auth.json`, keeps stored sign-ins configured and adds `storeBusy: true` ([#6849](https://github.com/code-yeongyu/senpi/pull/6849))
+- A session whose resumed run a second host kill cut resumes again when that run had made progress, instead of staying held until a person returns; a run cut again with no progress, or after three restart continuations without new input, stays held with a reason that names the repeated restart ([#7080](https://github.com/code-yeongyu/senpi/pull/7080))
 
 ### Removed
 
