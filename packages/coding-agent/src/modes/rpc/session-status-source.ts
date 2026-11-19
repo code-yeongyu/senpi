@@ -29,6 +29,7 @@ export function sessionRuntimeView(session: LiveSession, pendingQuestions?: numb
 		steering: typeof session.getSteeringMessages === "function" ? session.getSteeringMessages().length : 0,
 		followUp: typeof session.getFollowUpMessages === "function" ? session.getFollowUpMessages().length : 0,
 		pendingQuestions: pendingQuestions ?? sessionQuestionBridges.get(session)?.pendingQuestions()?.length ?? 0,
+		...(session.retryWait === undefined ? {} : { waiting: session.retryWait }),
 	};
 }
 
@@ -46,6 +47,7 @@ function runtimeView(entry: RpcSessionEntry): SessionStatusRuntimeView | undefin
 		steering: state.steering.length,
 		followUp: state.followUp.length,
 		pendingQuestions: state.pendingQuestions?.length ?? 0,
+		...(state.retryWait === undefined ? {} : { waiting: state.retryWait }),
 	};
 }
 
@@ -85,19 +87,21 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 
 /**
  * The `list_sessions` row fields, read from the same sources a `session_status` row is derived from. A row shows
- * only whether a turn runs and the model, so it reads those two and never the queue or question counts.
+ * only whether a turn runs, its retry wait and the model, so it reads those and never the queue or question counts.
  */
 export function sessionRowStatusFields(
 	entry: RpcSessionEntry,
-): Pick<RpcSessionRow, "archived" | "settled" | "settledBy" | "activity" | "model"> {
+): Pick<RpcSessionRow, "archived" | "settled" | "settledBy" | "activity" | "waiting" | "model"> {
 	const session = entry.runtime?.session;
 	const state = entry.worker?.snapshot?.state;
 	const streaming = session !== undefined ? session.isStreaming === true : state?.isStreaming === true;
 	const model = modelOf(session !== undefined ? session.model : (state?.model ?? undefined));
+	const waiting = streaming ? (session !== undefined ? session.retryWait : state?.retryWait) : undefined;
 	return {
 		archived: entryView(entry).archived === true,
 		...(settledOf(entry) ?? { settled: false }),
 		activity: streaming ? "running" : "idle",
+		...(waiting === undefined ? {} : { waiting }),
 		...(model !== undefined ? { model } : {}),
 	};
 }
