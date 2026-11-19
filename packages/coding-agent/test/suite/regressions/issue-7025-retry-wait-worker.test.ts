@@ -85,4 +85,4 @@ it("a worker session publishes the retry wait on its own status record and lists
 	expect(row?.waiting).not.toHaveProperty("error");
 
 	await prompted;
-}, 120_000);
+});
