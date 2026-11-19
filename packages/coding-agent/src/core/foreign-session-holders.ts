@@ -7,7 +7,7 @@ import { liveSessionHolders, type SessionHolder, type SessionHolderProbes } from
 import { parseEntryLine } from "./session-record.ts";
 
 /** Read only the header, asynchronously: checking admission must not load or mutate a transcript. */
-async function sessionIdFromFile(sessionFile: string): Promise<string | undefined> {
+export async function sessionIdFromFile(sessionFile: string): Promise<string | undefined> {
 	try {
 		// Admission must not consume a pipe: its reader belongs to the session runtime.
 		if (!(await stat(sessionFile)).isFile()) return undefined;
@@ -78,6 +78,22 @@ export function takeOverRefusal(holders: readonly SessionHolder[], retry = "then
 	if (holders.some((holder) => holder.unproven === true))
 		return `The other process could not be verified; quit it there, ${retry}.`;
 	return undefined;
+}
+
+/**
+ * The socket of the one multi-session host that holds the session, when every holder is a session of that host and
+ * the host published its public socket: a terminal can then attach to the live session there instead of opening a
+ * second writer or stopping the host (#6059: the OmO desktop's sessions run on such a host).
+ */
+export function hostAttachSocket(holders: readonly SessionHolder[]): string | undefined {
+	// An unverified holder may be a reused pid: refuse it clearly, as take-over does, rather than dial a dead host.
+	if (holders.some((holder) => holder.unproven === true)) return undefined;
+	const sockets = new Set(
+		holders.map((holder) => (holder.host_instance === undefined ? undefined : holder.host_socket)),
+	);
+	if (sockets.size !== 1) return undefined;
+	const [socket] = sockets;
+	return socket === undefined || socket === "" ? undefined : socket;
 }
 
 /**

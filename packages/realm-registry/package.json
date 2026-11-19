@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-realm-registry",
-	"version": "2026.11.15-4",
+	"version": "2026.11.19-2",
 	"description": "One pinned, versioned registry instance per JavaScript realm, shared by every copy of senpi's engine modules",
 	"type": "module",
 	"main": "./dist/index.js",

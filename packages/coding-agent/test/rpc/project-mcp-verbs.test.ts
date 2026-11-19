@@ -124,7 +124,7 @@ describe("set_project_mcp_servers: refusals", () => {
 	it("checks trust on every write: a 'do not trust' saved by another session refuses the next write", async () => {
 		const host = await startFolderHost();
 		const first = await trustedWithServer(host);
-		new ProjectTrustStore(host.agentDir).set(host.cwd, false);
+		await new ProjectTrustStore(host.agentDir).set(host.cwd, false);
 		expect(await set(host, { beta: SERVER }, first.etag)).toMatchObject({
 			success: false,
 			errorCode: "project_not_trusted",

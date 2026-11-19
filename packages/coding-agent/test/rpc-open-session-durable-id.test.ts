@@ -30,7 +30,7 @@ interface CapturedFactoryCall {
 
 function makeFactory(calls: CapturedFactoryCall[]): CreateAgentSessionRuntimeFactory {
 	return async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		calls.push({ cwd: options.cwd, sessionManager: options.sessionManager });
 		return {
 			session: {

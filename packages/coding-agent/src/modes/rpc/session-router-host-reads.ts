@@ -81,6 +81,17 @@ export function answerListSessions(
 		type: "response",
 		command: "list_sessions",
 		success: true,
-		data: { sessions },
+		data: {
+			sessions,
+			// senpi#7020: a successor still taking over its predecessor's sessions lists only part of them so far.
+			...(host.inheritedHandover === undefined
+				? {}
+				: {
+						handover: {
+							pending: host.inheritedHandover.pending,
+							predecessor_draining: host.inheritedHandover.predecessorDraining,
+						},
+					}),
+		},
 	};
 }

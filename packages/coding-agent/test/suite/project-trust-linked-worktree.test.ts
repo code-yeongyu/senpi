@@ -85,7 +85,7 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 	it("a worktree of a trusted main checkout is trusted, and so is a folder inside it", async () => {
 		const { main, worktree } = linkedWorktree();
 		mkdirSync(join(worktree, "packages", "app"), { recursive: true });
-		store.set(main, true);
+		await store.set(main, true);
 
 		expect(await getSavedProjectTrust(store, worktree)).toBe(true);
 		expect(await getSavedProjectTrust(store, join(worktree, "packages", "app"))).toBe(true);
@@ -93,26 +93,26 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 
 	it("a worktree of an untrusted main checkout is untrusted", async () => {
 		const { main, worktree } = linkedWorktree();
-		store.set(main, false);
+		await store.set(main, false);
 
 		expect(await getSavedProjectTrust(store, worktree)).toBe(false);
 	});
 
 	it("a main checkout under a trusted parent folder passes that trust on", async () => {
 		const { worktree } = linkedWorktree();
-		store.set(join(scratch, "projects"), true);
+		await store.set(join(scratch, "projects"), true);
 
 		expect(await getSavedProjectTrust(store, worktree)).toBe(true);
 	});
 
 	it("a decision saved for the worktree, or a folder above it, wins over the main checkout", async () => {
 		const { main, worktree } = linkedWorktree();
-		store.set(main, true);
-		store.set(worktree, false);
+		await store.set(main, true);
+		await store.set(worktree, false);
 		expect(await getSavedProjectTrust(store, worktree)).toBe(false);
 
-		store.set(worktree, null);
-		store.set(join(scratch, "workspaces"), false);
+		await store.set(worktree, null);
+		await store.set(join(scratch, "workspaces"), false);
 		expect(await getSavedProjectTrust(store, worktree)).toBe(false);
 	});
 
@@ -124,7 +124,7 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 
 	it("a worktree whose admin directory does not point back at it inherits nothing", async () => {
 		const { main, worktree, admin } = linkedWorktree();
-		store.set(main, true);
+		await store.set(main, true);
 		expect(await getSavedProjectTrust(store, worktree)).toBe(true);
 		writeFileSync(join(admin, "gitdir"), `${join(scratch, "elsewhere", ".git")}\n`);
 
@@ -133,7 +133,7 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 
 	it("a submodule-style gitdir without a commondir inherits nothing", async () => {
 		const { main, worktree, admin } = linkedWorktree();
-		store.set(main, true);
+		await store.set(main, true);
 		expect(await getSavedProjectTrust(store, worktree)).toBe(true);
 		rmSync(join(admin, "commondir"));
 
@@ -149,14 +149,14 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 		writeFileSync(join(admin, "commondir"), "../..\n");
 		writeFileSync(join(admin, "gitdir"), `${join(worktree, ".git")}\n`);
 		writeFileSync(join(worktree, ".git"), `gitdir: ${admin}\n`);
-		store.set(commonDir, true);
+		await store.set(commonDir, true);
 
 		expect(await getSavedProjectTrust(store, worktree)).toBeNull();
 	});
 
 	it("a main checkout whose .git is not the common dir is not trusted through it", async () => {
 		const { main, worktree } = linkedWorktree();
-		store.set(main, true);
+		await store.set(main, true);
 		expect(await getSavedProjectTrust(store, worktree)).toBe(true);
 		rmSync(join(main, ".git"), { recursive: true });
 		writeFileSync(join(main, ".git"), "gitdir: /somewhere/else\n");
@@ -171,7 +171,7 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 		"a folder outside the repository whose own admin dir names a trusted repository's .git through %s commondir is not trusted",
 		async (_label, absolute) => {
 			const { main, worktree } = linkedWorktree();
-			store.set(main, true);
+			await store.set(main, true);
 			expect(await getSavedProjectTrust(store, worktree)).toBe(true);
 			const outside = join(scratch, "downloads", "archive");
 			const admin = join(scratch, "downloads", "admin", "wt");
@@ -205,7 +205,7 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 		writeFileSync(join(admin, "gitdir"), `${relative(admin, join(worktree, ".git"))}\n`);
 		const linkedAdmin = join(scratch, "projects", "repo", ".git", "worktrees", "wt");
 		writeFileSync(join(worktree, ".git"), `gitdir: ${relative(worktree, linkedAdmin)}\n`);
-		store.set(main, true);
+		await store.set(main, true);
 
 		expect(await getSavedProjectTrust(store, worktree)).toBe(true);
 	});
@@ -221,7 +221,7 @@ describe("a linked git worktree inherits its main checkout's project trust", () 
 		).resolves.toBe(false);
 		expect(untrusted.prompts).toHaveLength(1);
 
-		store.set(main, true);
+		await store.set(main, true);
 		const trusted = promptSpy();
 		await expect(
 			resolveProjectTrusted({ cwd: worktree, trustStore: store, projectTrustContext: trusted.context }),
@@ -236,11 +236,11 @@ describe("an explicit no-decision entry (set_project_trust no_inherit) inherits 
 	it("leaves a worktree undecided although its main checkout and a folder above it are trusted", async () => {
 		const { main, worktree } = linkedWorktree();
 		mkdirSync(join(worktree, "packages", "app"), { recursive: true });
-		store.set(main, true);
-		store.set(join(scratch, "workspaces"), true);
+		await store.set(main, true);
+		await store.set(join(scratch, "workspaces"), true);
 		expect(await getSavedProjectTrust(store, worktree)).toBe(true);
 
-		store.setMany([{ path: worktree, decision: "no_inherit" }]);
+		await store.setMany([{ path: worktree, decision: "no_inherit" }]);
 
 		expect(await getSavedProjectTrust(store, worktree)).toBeNull();
 		expect(await getSavedProjectTrust(store, join(worktree, "packages", "app"))).toBeNull();
@@ -255,44 +255,48 @@ describe("an explicit no-decision entry (set_project_trust no_inherit) inherits 
 // write by another process must change it even when the file ends with the same bytes and modification time.
 describe("the trust store revision", () => {
 	// #6823 review round 5 L1: the generation is bumped before `trust.json` is written, so a failed bump saves nothing
-	// and `setMany` throws; a save that reports failure never took effect.
-	it("saves nothing and throws when the generation cannot be bumped", () => {
+	// and `setMany` rejects; a save that reports failure never took effect.
+	it("saves nothing and rejects when the generation cannot be bumped", async () => {
 		const cwd = join(scratch, "projects", "app");
 		mkdirSync(cwd, { recursive: true });
 		const trustFile = join(scratch, "agent", "trust.json");
-		store.set(cwd, true);
+		await store.set(cwd, true);
 		const content = readFileSync(trustFile, "utf8");
 		rmSync(`${trustFile}.generation`, { force: true });
 		mkdirSync(`${trustFile}.generation`);
-		expect(() => store.set(cwd, false)).toThrow();
+		await expect(store.set(cwd, false)).rejects.toThrow();
 		expect(readFileSync(trustFile, "utf8")).toBe(content);
 	});
 
-	it("changes when another process writes through the store, even back to the same content and modification time", () => {
+	it("changes when another process writes through the store, even back to the same content and modification time", async () => {
 		const cwd = join(scratch, "projects", "app");
 		mkdirSync(cwd, { recursive: true });
 		const agentDir = join(scratch, "agent");
 		const trustFile = join(agentDir, "trust.json");
-		store.set(cwd, true);
+		await store.set(cwd, true);
 		const content = readFileSync(trustFile, "utf8");
 		utimesSync(trustFile, 1_700_000_000, 1_700_000_000);
-		const revision = store.revision();
+		const revision = await store.revision();
 		const trustManager = new URL("../../src/core/trust-manager.ts", import.meta.url).href;
+		// The workspace package from source, as vitest's alias resolves it, so the child needs no built dist.
+		const realmRegistry = new URL("../../../realm-registry/src/index.ts", import.meta.url).href;
 		execFileSync(
 			process.execPath,
 			[
 				"--input-type=module",
 				"-e",
-				`const { ProjectTrustStore } = await import(${JSON.stringify(trustManager)});
+				`const { registerHooks } = await import("node:module");
+registerHooks({ resolve: (specifier, context, next) => next(specifier === "@earendil-works/pi-realm-registry" ? ${JSON.stringify(realmRegistry)} : specifier, context) });
+const { ProjectTrustStore } = await import(${JSON.stringify(trustManager)});
 const other = new ProjectTrustStore(${JSON.stringify(agentDir)});
-other.set(${JSON.stringify(cwd)}, false);
-other.set(${JSON.stringify(cwd)}, true);`,
+await other.set(${JSON.stringify(cwd)}, false);
+await other.set(${JSON.stringify(cwd)}, true);`,
 			],
 			{ stdio: "pipe" },
 		);
 		utimesSync(trustFile, 1_700_000_000, 1_700_000_000);
 		expect(readFileSync(trustFile, "utf8")).toBe(content);
 		expect(statSync(trustFile).mtimeMs).toBe(1_700_000_000_000);
-		expect(store.revision()).not.toBe(revision);
+		expect(await store.revision()).not.toBe(revision);
 	});
 });

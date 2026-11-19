@@ -183,7 +183,7 @@ export async function hasPython3(): Promise<boolean> {
 }
 
 export async function liveKernel(
-	options: Pick<PythonKernelStartOptions, "onMessage" | "sessionEnv"> = {},
+	options: Pick<PythonKernelStartOptions, "onMessage" | "sessionEnv" | "attestSpawn"> = {},
 ): Promise<PythonKernel> {
 	const detector = createInterpreterDetector();
 	const detected = await detector.detect("py");

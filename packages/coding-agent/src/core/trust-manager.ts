@@ -1,9 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { linkedWorktreeMainCheckoutDir } from "./linked-worktree-checkout.ts";
+import { fsErrorCode } from "./tools/fs-error-code.ts";
+import { holdTrustStoreLockInRealm, inTrustStoreWriteTurn, trustStoreLockHeldInRealm } from "./trust-store-writers.ts";
 
 export { hasTrustRequiringProjectResources, projectAgentsSkillDirs } from "./trust-requiring-resources.ts";
 
@@ -195,13 +198,36 @@ function acquireTrustLockSync(path: string): () => void {
 	throw new Error("Failed to acquire trust store lock");
 }
 
+function absentAsUndefined(error: unknown): undefined {
+	if (fsErrorCode(error) === "ENOENT") return undefined;
+	throw error;
+}
+
 function withTrustFileLock<T>(path: string, fn: () => T): T {
+	if (trustStoreLockHeldInRealm(path)) return fn();
 	const release = acquireTrustLockSync(path);
 	try {
 		return fn();
 	} finally {
 		release();
 	}
+}
+
+/**
+ * Runs `write` holding the store lock across its awaits, after every earlier write of this realm. The lock is taken
+ * and recorded as this realm's in one synchronous step, so a synchronous reader of the realm never meets it unrecorded.
+ */
+function withTrustFileWriteLock(path: string, write: () => Promise<void>): Promise<void> {
+	return inTrustStoreWriteTurn(path, async () => {
+		const release = acquireTrustLockSync(path);
+		const releaseHold = holdTrustStoreLockInRealm(path);
+		try {
+			await write();
+		} finally {
+			releaseHold();
+			release();
+		}
+	});
 }
 
 export class ProjectTrustStore {
@@ -221,14 +247,15 @@ export class ProjectTrustStore {
 	 * directory, another program editing `trust.json`) changes it only when it changes the file's modification
 	 * time or size.
 	 */
-	revision(): string {
-		const stat = statSync(this.trustPath, { bigint: true, throwIfNoEntry: false });
-		return `${this.readGeneration()}:${stat === undefined ? "absent" : `${stat.mtimeNs}:${stat.size}`}`;
+	async revision(): Promise<string> {
+		const stats = await stat(this.trustPath, { bigint: true }).catch(absentAsUndefined);
+		return `${await this.readGeneration()}:${stats === undefined ? "absent" : `${stats.mtimeNs}:${stats.size}`}`;
 	}
 
-	private readGeneration(): number {
-		if (!existsSync(this.generationPath)) return 0;
-		const generation = Number.parseInt(readFileSync(this.generationPath, "utf-8"), 10);
+	private async readGeneration(): Promise<number> {
+		const text = await readFile(this.generationPath, "utf-8").catch(absentAsUndefined);
+		if (text === undefined) return 0;
+		const generation = Number.parseInt(text, 10);
 		return Number.isSafeInteger(generation) && generation >= 0 ? generation : 0;
 	}
 
@@ -249,12 +276,12 @@ export class ProjectTrustStore {
 		});
 	}
 
-	set(cwd: string, decision: ProjectTrustDecision): void {
-		this.setMany([{ path: cwd, decision }]);
+	async set(cwd: string, decision: ProjectTrustDecision): Promise<void> {
+		await this.setMany([{ path: cwd, decision }]);
 	}
 
-	setMany(decisions: ProjectTrustUpdate[]): void {
-		withTrustFileLock(this.trustPath, () => {
+	async setMany(decisions: ProjectTrustUpdate[]): Promise<void> {
+		await withTrustFileWriteLock(this.trustPath, async () => {
 			const data = readTrustFile(this.trustPath);
 			for (const { path, decision } of decisions) {
 				const key = normalizeCwd(path);
@@ -266,8 +293,8 @@ export class ProjectTrustStore {
 			}
 			// Bumped first and replaced whole: a failed bump saves nothing, and a reader never sees a half-written count.
 			const nextGeneration = `${this.generationPath}.next`;
-			writeFileSync(nextGeneration, `${this.readGeneration() + 1}\n`, "utf-8");
-			renameSync(nextGeneration, this.generationPath);
+			await writeFile(nextGeneration, `${(await this.readGeneration()) + 1}\n`, "utf-8");
+			await rename(nextGeneration, this.generationPath);
 			writeTrustFile(this.trustPath, data);
 		});
 	}

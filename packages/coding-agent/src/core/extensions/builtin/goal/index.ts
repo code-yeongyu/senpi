@@ -264,9 +264,16 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	// A Stop that lands while no turn runs emits no `session_abort`, so the goal pauses and resumes with the session here.
-	pi.on("session_hold_changed", async (event, ctx) => {
-		if (event.change === "paused") await pauseGoalWithHeldSession(ctx);
-		else await resumeGoalWithReleasedSession(ctx);
+	// Edges are applied one at a time against the hold as it is now: an input that admits no turn (a slash command)
+	// releases the Stop and takes it back within milliseconds, and handling those two edges concurrently let the resume
+	// write land after the pause read, leaving the goal running under a live Stop (senpi#6897).
+	let holdChange: Promise<void> = Promise.resolve();
+	pi.on("session_hold_changed", (_event, ctx) => {
+		const applied = holdChange.then(() =>
+			stopHoldLive(ctx) ? pauseGoalWithHeldSession(ctx).then(() => {}) : resumeGoalWithReleasedSession(ctx),
+		);
+		holdChange = applied.catch(() => {});
+		return applied;
 	});
 
 	pi.on("held_wakes_released", async (event, ctx) => {

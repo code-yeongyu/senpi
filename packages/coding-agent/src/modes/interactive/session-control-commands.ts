@@ -11,12 +11,13 @@ import { VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { isSessionArchived, setSessionArchived } from "../../core/session-archived.ts";
-import type {
-	AdmissionHoldReason,
-	QuestionRequest,
-	QuestionResponse,
-	SessionControlDrainResult,
-} from "../../core/extensions/types.ts";
+import {
+	parseSessionSettled,
+	readSessionSettled,
+	setSessionSettled,
+	settledFields,
+} from "../../core/session-settled.ts";
+import type { QuestionRequest, QuestionResponse, SessionControlDrainResult } from "../../core/extensions/types.ts";
 import {
 	ENTRIES_TAIL_CAPABILITY,
 	OBSERVE_READS_CAPABILITY,
@@ -26,6 +27,7 @@ import {
 import { answerGetEntries } from "../rpc/get-entries-command.ts";
 import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
 import { describeRpcMethodClasses } from "../rpc/method-classes.ts";
+import { RPC_ERROR_INVALID_ARGUMENT } from "../rpc/rpc-error-types.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
 import { sessionUiAnswerLedger } from "../rpc/ui-answer-ledger.ts";
 import type { ControlAttachments } from "./session-control-attach.ts";
@@ -39,7 +41,10 @@ import {
 } from "./session-control-session-commands.ts";
 
 export interface TuiControlSurface extends TuiSessionControls {
-	draftHold(): AdmissionHoldReason | undefined;
+	/** Input the user submitted that the runtime has not taken yet: it holds admission, so no delivery overtakes it. */
+	submissionInFlight(): boolean;
+	/** Text or attachments in the composer: reported to clients, never a hold on a delivery (senpi#7043). */
+	hasDraft(): boolean;
 	blockingQuestion(): boolean;
 	pendingQuestionIds(): readonly string[];
 	pendingQuestion(requestId: string): Pick<QuestionRequest, "questions"> | undefined;
@@ -66,6 +71,7 @@ const TUI_CONTROL_COMMANDS = [
 	"get_entries",
 	"set_session_name",
 	"set_session_archived",
+	"set_session_settled",
 	"subscribe",
 	"wake",
 	"extension_ui_response",
@@ -113,7 +119,7 @@ export async function runControlCommand(
 				turn_epoch: session.externalAdmission.turnEpoch,
 				blocking_question: context.surface.blockingQuestion(),
 				compacting: session.isCompacting,
-				editor_has_draft: context.surface.draftHold() !== undefined,
+				editor_has_draft: context.surface.submissionInFlight() || context.surface.hasDraft(),
 				state_version: context.feed.stateVersion,
 			});
 		case "get_messages":
@@ -131,6 +137,15 @@ export async function runControlCommand(
 			const { attachments } = context;
 			setSessionArchived(session.sessionManager, command.archived);
 			const change = { type: "session_archived_changed", archived: command.archived };
+			attachments.run(connection, () => attachments.writer.enqueue(attachments.handle, change));
+			return success(id, type);
+		}
+		case "set_session_settled": {
+			const parsed = parseSessionSettled({ settled: command.settled, by: command.by });
+			if (!parsed.ok) return { ...failure(id, type, parsed.error), errorCode: RPC_ERROR_INVALID_ARGUMENT };
+			const { attachments } = context;
+			setSessionSettled(session.sessionManager, parsed.value);
+			const change = { type: "session_settled_changed", ...settledFields(parsed.value) };
 			attachments.run(connection, () => attachments.writer.enqueue(attachments.handle, change));
 			return success(id, type);
 		}
@@ -173,6 +188,7 @@ function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
 		// A release here never ends the terminal's own session.
 		retain_on_disconnect: true,
 		archived: isSessionArchived(manager),
+		...settledFields(readSessionSettled(manager)),
 		activity: session.isStreaming ? "running" : "idle",
 		...(session.model !== undefined ? { model: { provider: session.model.provider, id: session.model.id } } : {}),
 	};

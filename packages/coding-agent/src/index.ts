@@ -1,4 +1,6 @@
 // Core session management
+export { attachHostTools, HOST_TOOL_ROUTE_CHANNEL, HOST_TOOL_ROUTE_UNAVAILABLE } from "./host-tools.ts";
+export { showHtmlPageTool, type ShowHtmlPageDetails, writeHtmlPage } from "./extensions/html-render/tool.ts";
 export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./core/extensions/secret-input.ts";
 export type { RpcSecretInputSettledEvent } from "./modes/rpc/rpc-types.ts";
 export type {
@@ -91,6 +93,7 @@ export {
 	type KillGuardRuntime,
 	releaseKillGuardRuntime,
 } from "./core/kill-guard/runtime.ts";
+export { CREDENTIAL_PLACEHOLDER, withCredentialProxy } from "./core/credential-proxy/runtime.ts";
 // Job widgets: hosts register background jobs and their widget-author model route
 export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {
@@ -339,6 +342,14 @@ export {
 	readOwnFootprint,
 	readProcessFootprint,
 } from "./core/process-footprint.ts";
+// Which session spawned a process, attested by its spawner (senpi#6972)
+export {
+	attestSessionSpawn,
+	type PidSession,
+	resolvePidSession,
+	type SessionSpawnAttestation,
+	sessionSpawnsDir,
+} from "./core/session-spawn-attestation.ts";
 export {
 	findReservedKeywordRuns,
 	findReservedKeywordSpans,
@@ -699,6 +710,7 @@ export {
 // Exact-pid collection of children whose owning thread is gone (#1962)
 export { collectOrphanedChildren } from "./modes/rpc/child-reaper.ts";
 // Shell utilities
+export { childEnvironmentOf } from "./modes/rpc/host-identity-env.ts";
 export { withBundledBunCommands } from "./utils/bundled-bun.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";

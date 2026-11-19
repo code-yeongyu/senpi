@@ -41,6 +41,8 @@ export interface RemoteToolHostOptions {
 	 * Without it, nothing about epochs is sent (a session that never moves).
 	 */
 	readonly epoch?: number;
+	/** The session's prompt surface, read for each batch and sent with every call of it (senpi#6921). */
+	readonly promptSurface?: () => string | undefined;
 }
 
 function errorResult(text: string): RemoteToolResult {
@@ -113,6 +115,7 @@ export function createRemoteToolHost(
 		async execute(call: ToolHostCall, hostOptions: ToolHostOptions): Promise<ToolHostResult> {
 			const { emit, signal } = hostOptions;
 			const batchId = mintId();
+			const promptSurface = options.promptSurface?.();
 			const invokeOf = (raw: AgentToolCall, index: number): RemoteInvoke => ({
 				kind: "invoke",
 				executionId: mintId(),
@@ -123,6 +126,7 @@ export function createRemoteToolHost(
 				name: raw.name,
 				arguments: raw.arguments,
 				...(options.sessionRef === undefined ? {} : { sessionRef: options.sessionRef }),
+				...(promptSurface === undefined ? {} : { promptSurface }),
 			});
 			const finish = async (raw: AgentToolCall, result: RemoteToolResult): Promise<RemoteToolResult> => {
 				await emit({

@@ -22,39 +22,23 @@ env:
   SENPI_TEST_TEMP_GUARD: "1"
 
 jobs:
-  # Hosted macOS and Windows runners are scarce, so a pull request runs the jobs that need one only when its diff
-  # touches platform-specific paths (scripts/ci-platform-scope.mjs, senpi#3957). A push to main and the run-full-ci
-  # label (ci-full-label.yml) always run the full set.
+  # Hosted macOS and Windows runners are scarce, so a pull request runs the jobs that need one only with the
+  # run-full-ci label (ci-full-label.yml); its diff never turns them on (scripts/ci-platform-scope.mjs, senpi#6834).
+  # A push to main always runs the full set, and platform-red.yml files an issue when a macOS/Windows job fails there.
   platform-scope:
     name: Platform scope
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       full: ${{ steps.classify.outputs.full }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: |
-            scripts/ci-platform-scope.mjs
-            .github/workflows/ci.yml
+          sparse-checkout: scripts/ci-platform-scope.mjs
           sparse-checkout-cone-mode: false
-
-      - name: List the pull request's changed files
-        if: github.event_name == 'pull_request'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed-files"; then
-            echo "CHANGED_FILES=$RUNNER_TEMP/changed-files" >> "$GITHUB_ENV"
-          else
-            echo "::warning::could not list the changed files; running the full macOS/Windows set"
-          fi
 
       - name: Classify
         id: classify
@@ -62,7 +46,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-        run: node scripts/ci-platform-scope.mjs classify --event "$EVENT_NAME" --labels "$PR_LABELS" --changed "${CHANGED_FILES:-}" --workflow .github/workflows/ci.yml
+        run: node scripts/ci-platform-scope.mjs classify --event "$EVENT_NAME" --labels "$PR_LABELS"
 
   codemode-gate:
     name: codemode-gate
@@ -187,10 +171,12 @@ jobs:
 
       - name: Install system dependencies
         timeout-minutes: 5
-        run: |
-          bash scripts/install-ci-system-deps.sh \
-            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+        uses: ./.github/actions/install-ci-system-deps
+        with:
+          packages: libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+
+      - name: Link fd
+        run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -339,10 +325,12 @@ jobs:
 
       - name: Install system dependencies
         timeout-minutes: 5
-        run: |
-          bash scripts/install-ci-system-deps.sh \
-            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+        uses: ./.github/actions/install-ci-system-deps
+        with:
+          packages: libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+
+      - name: Link fd
+        run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -501,7 +489,9 @@ jobs:
 
       - name: Install system dependencies
         timeout-minutes: 5
-        run: bash scripts/install-ci-system-deps.sh ripgrep
+        uses: ./.github/actions/install-ci-system-deps
+        with:
+          packages: ripgrep
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -1483,10 +1473,12 @@ jobs:
 
       - name: Install system dependencies
         timeout-minutes: 5
-        run: |
-          bash scripts/install-ci-system-deps.sh \
-            fd-find ripgrep
-          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+        uses: ./.github/actions/install-ci-system-deps
+        with:
+          packages: fd-find ripgrep
+
+      - name: Link fd
+        run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -1545,10 +1537,12 @@ jobs:
 
       - name: Install system dependencies
         timeout-minutes: 5
-        run: |
-          bash scripts/install-ci-system-deps.sh \
-            fd-find ripgrep
-          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+        uses: ./.github/actions/install-ci-system-deps
+        with:
+          packages: fd-find ripgrep
+
+      - name: Link fd
+        run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts

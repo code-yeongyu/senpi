@@ -169,6 +169,13 @@ type RpcCommandBody =
 			clearQueue?: boolean;
 			children?: "refuse" | "detach";
 			force?: boolean;
+			/**
+			 * `"refuse"` (senpi#7004): a busy session holding admitted deliveries not yet written is refused
+			 * `work_pending` with their ids in `pending.deliveries`, with or without `interrupt`, and nothing is
+			 * interrupted. An idle session's are handed back either way. Absent: an interrupt hands them back
+			 * (`dropped.deliveries`). Capability `unload_refuse_deliveries`.
+			 */
+			deliveries?: "refuse";
 	  }
 	| {
 			id?: string;
@@ -184,6 +191,16 @@ type RpcCommandBody =
 			type: "get_subscription_limits";
 			/** An observing read, as on `get_protocol_info`. */
 			observe?: boolean;
+	  }
+	| {
+			id?: string;
+			/**
+			 * Which session FILE of this host carries `durableSessionId`, for a client whose session is closed and
+			 * unlisted so its routing key names nothing (senpi#6429). A read: it opens, claims and changes nothing.
+			 * Capability `find_session`.
+			 */
+			type: "find_session";
+			durableSessionId: string;
 	  }
 	| {
 			id?: string;

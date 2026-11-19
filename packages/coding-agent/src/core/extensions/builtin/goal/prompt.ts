@@ -1,8 +1,9 @@
+import { hasGpt6AstraSignal } from "../prompt-preset/matchers.ts";
 import type { Goal } from "./types.ts";
 
-// The GPT-6 Astra ids whose continuation prompt drops the audits. Sol and Luna share Astra's
-// preset but not the over-verification the audits amplify, so they keep the full prompt.
-const GPT6_ASTRA_RECEIVER_IDS: ReadonlySet<string> = new Set(["gpt-6-astra", "gpt-6-astra-fast"]);
+// The continuation prompt drops the audits for the Astra tier of any GPT-6 point release (the
+// matchers own the id grammar). Sol and Luna share Astra's preset but not the over-verification
+// the audits amplify, so they keep the full prompt.
 
 export interface ContinuationPromptOptions {
 	/** `ctx.model?.id` of the session that receives the prompt; a provider prefix is tolerated. */
@@ -10,9 +11,7 @@ export interface ContinuationPromptOptions {
 }
 
 export function isGpt6AstraReceiver(modelId: string | undefined): boolean {
-	if (modelId === undefined) return false;
-	const bare = modelId.slice(modelId.lastIndexOf("/") + 1).toLowerCase();
-	return GPT6_ASTRA_RECEIVER_IDS.has(bare);
+	return modelId !== undefined && hasGpt6AstraSignal(modelId);
 }
 
 export function buildContinuationPrompt(goal: Goal, options: ContinuationPromptOptions = {}): string {

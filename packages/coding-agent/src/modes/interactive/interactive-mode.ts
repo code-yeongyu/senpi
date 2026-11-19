@@ -1864,7 +1864,7 @@ export class InteractiveMode {
 		// submit accepted earlier painted its echo above the history that startup appended afterwards.
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
-		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
+		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.hasComposerDraft());
 		adoptDefaultEditorActions(this.defaultEditor, this.editor);
 		const parkedSubmission = this.startupParkedSubmission;
 		this.startupParkedSubmission = undefined;
@@ -4254,7 +4254,8 @@ export class InteractiveMode {
 			session: this.session,
 			agentDir: this.session.agentDir,
 			surface: {
-				draftHold: () => (this.sessionControlHost.submissionInFlight() ? "draft" : this.composerHold()),
+				submissionInFlight: () => this.sessionControlHost.submissionInFlight(),
+				hasDraft: () => this.hasComposerDraft(),
 				blockingQuestion: () => this.askUserQuestion !== undefined,
 				pendingQuestionIds: () => [...this.pendingQuestions.keys()],
 				pendingQuestion: (requestId) => this.pendingQuestions.get(requestId)?.request,
@@ -4273,10 +4274,9 @@ export class InteractiveMode {
 		};
 	}
 
-	/** What the user is composing, if anything: a held external delivery waits for it. */
-	private composerHold(): "attachment" | "draft" | undefined {
-		if (this.pendingImages.size > 0) return "attachment";
-		return this.editor.getText().trim() === "" ? undefined : "draft";
+	/** Whether the user is composing (non-blank text or pending images); a delivery never waits for it (senpi#7043). */
+	private hasComposerDraft(): boolean {
+		return this.pendingImages.size > 0 || this.editor.getText().trim() !== "";
 	}
 
 	/** Only the visible surface ticks; extension deadlines remain authoritative. */
@@ -8549,7 +8549,7 @@ export class InteractiveMode {
 		}
 	}
 
-	private maybeSaveImplicitProjectTrustAfterReload(): boolean {
+	private async maybeSaveImplicitProjectTrustAfterReload(): Promise<boolean> {
 		const cwd = this.sessionManager.getCwd();
 		if (this.autoTrustOnReloadCwd !== cwd) {
 			return false;
@@ -8564,7 +8564,7 @@ export class InteractiveMode {
 				this.autoTrustOnReloadCwd = undefined;
 				return false;
 			}
-			trustStore.set(cwd, true);
+			await trustStore.set(cwd, true);
 			this.autoTrustOnReloadCwd = undefined;
 			return true;
 		} catch (error) {
@@ -8585,10 +8585,16 @@ export class InteractiveMode {
 				savedDecision,
 				projectTrusted: this.settingsManager.isProjectTrusted(),
 				onSelect: (selection) => {
-					trustStore.setMany(selection.updates);
 					done();
-					this.showStatus(
-						`Saved trust decision: ${selection.trusted ? "trusted" : "untrusted"}. Restart ${APP_NAME} for this to take effect.`,
+					trustStore.setMany(selection.updates).then(
+						() =>
+							this.showStatus(
+								`Saved trust decision: ${selection.trusted ? "trusted" : "untrusted"}. Restart ${APP_NAME} for this to take effect.`,
+							),
+						(error: unknown) =>
+							this.showWarning(
+								`Could not save trust decision: ${error instanceof Error ? error.message : String(error)}`,
+							),
 					);
 				},
 				onCancel: () => {
@@ -9880,7 +9886,7 @@ export class InteractiveMode {
 				force: false,
 				showDiagnosticsWhenQuiet: true,
 			});
-			const savedImplicitProjectTrust = this.maybeSaveImplicitProjectTrustAfterReload();
+			const savedImplicitProjectTrust = await this.maybeSaveImplicitProjectTrustAfterReload();
 			const modelsJsonError = this.session.modelRuntime.getError();
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);

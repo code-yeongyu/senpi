@@ -47,6 +47,7 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 		busy: false,
 		streaming: false,
 		archived: false,
+		settled: false,
 		...activity,
 	});
 	vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (

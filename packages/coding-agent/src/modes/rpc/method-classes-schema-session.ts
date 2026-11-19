@@ -22,6 +22,7 @@ import {
 	Strings,
 	session,
 	ThinkingLevel,
+	ThreadSettledBy,
 } from "./method-classes-schema-fields.ts";
 import { DELIVERY_RECORD_SCHEMAS } from "./method-classes-schema-delivery.ts";
 
@@ -64,6 +65,7 @@ const PROMPTING_SCHEMAS = {
 		clientMessageId: OptId,
 		clientTurnId: OptId,
 		expectedTurnId: OptId,
+		expectedLeafId: OptId,
 		toolBarrier: Opt(Type.Object({ id: Id, deadlineMs: Num })),
 		chainCount: Opt(ChainCount),
 	}),
@@ -82,6 +84,7 @@ const PROMPTING_SCHEMAS = {
 		mode: Opt(literals("continue", "release")),
 		message: OptStr,
 		effectId: OptId,
+		unlessStopped: OptBool,
 	}),
 	append_user_message: session("append_user_message", { content: Type.Unknown() }),
 	append_session_entry: session("append_session_entry", { entry: Type.Unknown() }),
@@ -221,6 +224,7 @@ const BASH_AND_TREE_SCHEMAS = {
 	get_last_assistant_text: session("get_last_assistant_text", {}),
 	set_session_name: session("set_session_name", { name: Str }),
 	set_session_archived: session("set_session_archived", { archived: Bool }),
+	set_session_settled: session("set_session_settled", { settled: Bool, by: Opt(ThreadSettledBy) }),
 	record_user_activity: session("record_user_activity", { kind: Type.Literal("draft") }),
 	import_jsonl: session("import_jsonl", { inputPath: PathStr, cwdOverride: OptPath }),
 	get_messages: session("get_messages", {}),
@@ -256,6 +260,12 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 		content: Str,
 		ifEtag: Type.Union([Id, Type.Null()]),
 		expectedCwd: OptStr,
+	}),
+	read_user_skill_file: session("read_user_skill_file", { skill: Id }),
+	write_user_skill_file: session("write_user_skill_file", {
+		skill: Id,
+		content: Str,
+		ifEtag: Type.Union([Id, Type.Null()]),
 	}),
 	extension_request: session("extension_request", { name: Id, data: Opt(Type.Unknown()) }),
 	"eval_cells.list": session("eval_cells.list", {}),

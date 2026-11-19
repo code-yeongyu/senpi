@@ -28,6 +28,12 @@
  * left registered, and gc never judges the endpoint halfway through.
  */
 import { getAgentDir } from "../../config.ts";
+import {
+	type EngineBuildIdentity,
+	engineBuildIdentity,
+	engineIdentityOf,
+	olderEngineDetail,
+} from "../../core/engine-build-identity.ts";
 import type { Duplex } from "node:stream";
 import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
@@ -38,6 +44,7 @@ import { handoffUnregisteredHost } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { electPointer } from "./host-pointer-election.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
+import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
 import { startupEnvelope } from "./host-startup-policy.ts";
 import { startSuccessor } from "./host-successor.ts";
@@ -58,6 +65,14 @@ export interface HandoffHostOptions {
 	readonly hostArgs?: readonly string[];
 	/** Environment for the successor; a `null` value removes an inherited variable. */
 	readonly env?: Readonly<Record<string, string | null>>;
+	/**
+	 * The engine the successor runs. Defaults to THIS process's build; a running host performing an idle handover
+	 * passes the engine the requesting CLI stated. A successor strictly older than the running host is refused
+	 * `older_engine` unless `allowDowngrade` (senpi#7018).
+	 */
+	readonly successorEngine?: EngineBuildIdentity;
+	/** The caller's explicit consent to hand a newer host down to an older engine. */
+	readonly allowDowngrade?: boolean;
 	/** The runtimeBuildId the successor must compute; set on its environment, never inherited by later daemons. */
 	readonly expectedRuntimeBuildId?: string;
 	readonly policy?: HostLifecyclePolicyInput;
@@ -106,7 +121,9 @@ export type HandoffRefusal =
 	/** `<public>.next-<gen>` would exceed the platform's socket path limit. */
 	| "socket_path_too_long"
 	/** The successor never answered on the public socket; it was stopped and nothing was replaced. */
-	| "successor_unavailable";
+	| "successor_unavailable"
+	/** The successor's engine is older than the running host's and the caller did not allow a downgrade. */
+	| "older_engine";
 
 export type HandoffResult =
 	| {
@@ -125,7 +142,9 @@ export type HandoffResult =
 
 /**
  * Hands the socket to a new generation of this build. Forced by design: the caller decides
- * whether an upgrade is warranted (`decideHostAction`); this performs the one it asked for.
+ * whether an upgrade is warranted (`decideHostAction`); this performs the one it asked for, except
+ * a downgrade: a successor whose engine is older than the running host's is refused unless the caller
+ * says `allowDowngrade` (senpi#7018), so no caller can hand a newer host down by accident.
  */
 export async function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
 	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
@@ -153,6 +172,8 @@ export async function handoffHostLocked(requested: HandoffHostOptions): Promise<
 	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
 		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
 	}
+	const downgrade = downgradeRefusal(options, host);
+	if (downgrade) return downgrade;
 	const foreign = await foreignAgentDirRefusal(options.socket, options.agentDir, host);
 	if (foreign) return foreign;
 	// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
@@ -161,6 +182,13 @@ export async function handoffHostLocked(requested: HandoffHostOptions): Promise<
 	const owner = await provenOwner(registered, options.socket);
 	if (!owner) return handoffUnregisteredHost(options, paths, host);
 	return startSuccessor({ options, paths, host, owner });
+}
+
+function downgradeRefusal(options: HandoffHostOptions, host: HostProtocolInfo): HandoffResult | undefined {
+	if (options.allowDowngrade === true || host.engineOrdinal === undefined) return undefined;
+	const running = engineIdentityOf(host.engineVersion ?? "", host.engineOrdinal);
+	const detail = olderEngineDetail(options.successorEngine ?? engineBuildIdentity(), running);
+	return detail === undefined ? undefined : { action: "refuse", reason: "older_engine", upgradeable: false, detail };
 }
 
 function handoffUnsupported(options: HandoffHostOptions): boolean {

@@ -1,3 +1,113 @@
+## 2026-11-18 - `/trust` and the reload trust save await the asynchronous trust store (#6823 re-land)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `/trust` selector saves through the now asynchronous `ProjectTrustStore.setMany` and shows "Saved trust decision" once the save lands, or a warning when it fails; the save after `/reload` (`maybeSaveImplicitProjectTrustAfterReload`) awaits it.
+
+### Why
+
+- `ProjectTrustStore` writes are asynchronous so the RPC session path keeps no new synchronous fs calls (#6954).
+
+### Why an extension could not handle it
+
+- The `/trust` selector and reload belong to the interactive core.
+
+### Expected merge conflict zones
+
+- LOW: `showTrustSelector`, `maybeSaveImplicitProjectTrustAfterReload`.
+
+## 2026-11-17 - A terminal's session-control endpoint refuses expectedLeafId by name (senpi#6922)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`: `expectedLeafId` is in `UNSERVED_INPUT_FIELDS`, so a `prompt` carrying it is refused with `unsupported_field` instead of being admitted with the guard silently dropped.
+
+### Why
+
+- That endpoint delivers through the session's external admission, which queues the text and starts the turn later, at a leaf an admission-time check never sees; refusing by name keeps the guard's promise honest.
+
+### Why an extension could not handle it
+
+- The terminal control endpoint's field allow-list is fixed in core before any extension sees the input.
+
+### Expected merge conflict zones
+
+- LOW: `UNSERVED_INPUT_FIELDS`.
+
+## 2026-11-18 - The attached TUI applies a start's model, thinking and prompts (senpi#6914)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/attach-startup.ts` (new): `applyAttachStartup(request, sessionId, startup)` sends `set_model` with `scope: "session"` (only this session's model, as a local `--model`; the device's saved default stays), then `set_thinking_level`, then each prompt as `prompt` with `streamingBehavior: "followUp"`. A host refusal rejects, so the prompts never run on a model the session refused.
+- `packages/coding-agent/src/modes/interactive/attach.ts`: `connect(address, ref, startup?)` applies the startup once the history is shown.
+- `packages/coding-agent/src/modes/interactive/run-attached-tui.ts`: takes `startup` and passes it to `connect`.
+
+### Why
+
+- senpi#6911 L1: a terminal start's command line becomes the attached session's own commands.
+
+### Why an extension could not handle it
+
+- The attached TUI loads no extensions.
+
+### Expected merge conflict zones
+
+- LOW: the end of `connect()` in `attach.ts`; the options of `runAttachedTui`.
+
+## 2026-11-17 - The attached TUI shows the session's model live (senpi#6909)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/attach.ts`: the status line names the session's model from `get_state`, and a `model_changed` record updates it, so a switch another client of the session makes shows at once.
+
+### Why
+
+- With a terminal attached to a session the desktop also drives, a model switch in either must show in the other.
+
+### Why an extension could not handle it
+
+- The attached TUI loads no extensions.
+
+### Expected merge conflict zones
+
+- LOW: `record()` and `showStatus()` in `attach.ts`.
+
+## 2026-11-15 - Terminal control endpoint lists the settled flag (senpi#6768)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`, `session-control-attach.ts`: the terminal's control endpoint accepts `set_session_settled`, and its session row and status carry `settled` / `settledBy`.
+
+### Why
+
+- A terminal session is listed like a host session.
+
+### Why an extension could not handle it
+
+- The control endpoint is host code.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files.
+
+## 2026-11-14 - Terminal control endpoint lists archived, activity and model (senpi#6677)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`, `session-control-attach.ts`: the terminal's control endpoint accepts `set_session_archived` and its session row carries the three fields.
+
+### Why
+
+- A terminal session is listed like a host session.
+
+### Why an extension could not handle it
+
+- The control endpoint is host code.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files.
+
 ## 2026-11-14 - The terminal control endpoint's `interrupt` takes `background: "stop"`
 
 ### What changed

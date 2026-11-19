@@ -1,3 +1,768 @@
+## 2026-11-19 - Engine identity helpers for the downgrade guard (senpi#7018)
+
+### What changed
+
+- `packages/coding-agent/src/core/engine-build-identity.ts`: `engineIdentityOf(text, ordinal)` (a host's advertised identity) and `olderEngineDetail(successor, running)` (why a handoff would downgrade, by `compareEngineOrdinal`; equal or uncomparable is not older).
+
+### Why
+
+- The handoff site and the idle handover judge a downgrade by one rule, the same ordering the ensure's upgrade decision uses; version strings are never compared.
+
+### Why an extension could not handle it
+
+- The engine identity is core runtime state the RPC host reads before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the end of `engine-build-identity.ts`.
+
+## 2026-11-19 - A session killed after its run ended reopens without the interrupted-run hold (senpi#7016)
+
+### What changed
+
+- `packages/coding-agent/src/core/lifecycle-history.ts`: new `lastRunEnd` history reducer. It names the latest run a `session-lifecycle` record opened (`runActive`, `runId`) and whether the transcript after that record ends in an assistant answer that asks for no tool call.
+- `packages/coding-agent/src/core/lifecycle-ledger.ts`: `LifecyclePersistence.endedRunId`. A restored run recorded active is interrupted only when its id is not `endedRunId`; a restored `interrupted: true` is kept as it was decided.
+- `packages/coding-agent/src/core/lifecycle-session-binding.ts`: passes `endedRunId` from `lastRunEnd` to the controller.
+- `packages/coding-agent/src/core/session-lifecycle.ts`: settles the restored run's consumed custody too when the transcript holds that run's end.
+- `packages/coding-agent/src/core/work-obligations.ts`: `settleEndedRuns(currentRunId, currentRunEnded)`.
+- `packages/coding-agent/src/core/agent-session.ts`: `ResumeSessionRequest.unlessStopped`. With it, `_resumeOnce` answers `resumed: false, reason: "stopped"` and releases nothing while a person's Stop or a parent's run hold is live.
+
+### Why
+
+- The agent loop writes a run's final answer before the idle record that clears `runActive`, and that record can land seconds later. A lane that had gone idle was killed for a move (SIGKILL, or a TERM whose graceful shutdown aborts the run but writes no idle record) and reopened by id. Its file still recorded the run as active, so it came back under the interrupted-run hold and every peer delivery, monitor wake and restore digest was held. A run is now interrupted only when its file shows work in flight: a tool call without its result, a tool result, or input after the last answer.
+- A run that really was interrupted needs a sanctioned remote continuation that cannot override a person's Stop: `resume_session` with `unlessStopped`.
+
+### Why an extension could not handle it
+
+- Interruption is decided while the lifecycle ledger and custody restore, before any extension binds, and it installs the engine's own hold. The resume guard sits in the engine's resume path.
+
+### Expected merge conflict zones
+
+- LOW: `lifecycle-ledger.ts` constructor `interrupted` line; `session-lifecycle.ts` constructor `settleEndedRuns` call; `agent-session.ts` `ResumeSessionRequest`/`ResumeSessionAnswer` and the head of `_resumeOnce`.
+
+## 2026-11-19 - A peer delivery to a held session continues it, or is answered held (senpi#6490)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: a triggered `session_control_delivery` that the wake gate would hold (`holdsSource`), with no hold a peer cannot release, continues the session the way a person's message does (`_engineTurnInput.begin()`). This covers an `unattended` hold and the release barrier of an unattended Resume; in the barrier case the delivery attends the session and starts its own turn. The admission's `started` and the gate therefore always agree. One turn starts with the released wakes ahead of the delivery, and they are admitted with the turn (`onTurnAdmitted`). A release that no turn admits is given back through `_settleInputRelease()`. The external admission port's new `heldBy` reads `_peerDeliveryHolds()`.
+- `packages/coding-agent/src/core/peer-delivery-hold.ts` (new): `holdsKeepingPeerDelivery`. The holds a peer cannot release are a person's Stop, the hold after an interrupted run (recorded or still pending), and a parent's run hold. A run fence alone never keeps a delivery.
+- `packages/coding-agent/src/core/external-admission.ts`: an idle start answers `held` with `holds` when `heldBy()` names any hold. The delivery is kept as a held notice and starts once that hold is released.
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `ExternalAdmissionKind` gains `held`, and `ExternalAdmissionResult` gains the optional `holds`.
+
+### Why
+
+- Peer deliveries were classified as engine turns, so an `unattended` or interrupted-run hold kept each one as a notice while the admission answered `started`. Three unattended sessions held up to 16 sends each, every one answered `ok`, and a release train stalled for about 75 minutes. The unattended hold's notice and `docs/rpc.md` both say a message continues the session. A Stop, an interrupted run and a parent's run hold wait on a person, so the sender is told `held` instead.
+
+### Why an extension could not handle it
+
+- The hold gate and the admission answer both live in the session runtime's own delivery path (`_deliverCustomMessage`, `ExternalAdmission.admit`). An extension sees neither the hold decision nor the admission result before they are made.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `_deliverCustomMessage` (the release before the hold gate, the triggered-turn message list, the `finally` settle) and the `externalAdmission` port literal.
+- LOW: `external-admission.ts` idle start branch; `session-control-types.ts` admission kind union.
+
+## 2026-11-18 - AgentSession.promptSurface (senpi#6925)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: a public `promptSurface` getter returns the surface the session's prompt is built for. The hand selection sends it with each call to a hand.
+
+### Why
+
+- senpi#6921 L2. A hand reports the brain session's surface, so the brain must be able to read it.
+
+### Why an extension could not handle it
+
+- The surface is session state that no extension API exposes outside a tool call.
+
+### Expected merge conflict zones
+
+- LOW: next to `setPromptSurface` in `agent-session.ts`.
+
+## 2026-11-17 - Cursor exec-frame calls are released on every end (senpi#6920)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session preflight only marks an exec-bridge call (`execBridge`). The new `releaseExecBridgeToolCall` drops it, and the session no longer drops it on a preflight block or throw or in `emitExecBridgeToolResult`.
+- `packages/coding-agent/src/core/cursor-exec-bridge.ts`: `executeTool` reports the end of every call that reached the prepared pipeline from one `finally` (`settleToolCall`). That includes a block after a passing preflight (`NO_ACTIVE_RUN`) and an executor abort, which skip `afterToolCall`.
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts`: wires `settleToolCall` to the session's `releaseExecBridgeToolCall`.
+
+### Why
+
+- senpi#6919 L1. A call blocked after its preflight passed kept its id in `_execBridgeToolCalls` for the life of the session.
+
+### Why an extension could not handle it
+
+- The bridge's call lifecycle and the session's origin set are core state.
+
+### Expected merge conflict zones
+
+- LOW: the head of `preflightToolCall`, `releaseExecBridgeToolCall` and `emitExecBridgeToolResult` in `agent-session.ts`; the `host.execute` call in `cursor-exec-bridge.ts`.
+
+## 2026-11-18 - `takeQueuedDeliveries`: hand back queued deliveries without touching user input (#6971)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `takeQueuedDeliveries()` removes every queued `session_control_delivery` carrier from the agent queues, ticketed or not. It settles each one as `clearQueue` does: engine custody cancelled (a producer's retired), a send waiting on it failed, admissions dropped. Queued user input stays.
+
+### Why
+
+- An interrupting unload or release must hand back the deliveries an aborted run left queued, including one whose start the abort cut short (queued again under its engine ticket). `clearQueue` would also drop the user's queued input, which an unload keeps for the reopen (oh-my-openagent#14169).
+
+### Why an extension could not handle it
+
+- The agent queues, the custody ledger and the carriers' persist watchers are private to `AgentSession`.
+
+### Expected merge conflict zones
+
+- `AgentSession.clearQueue` and its neighbours.
+
+## 2026-11-18 - Re-land: the explicit no-decision trust entry, with asynchronous trust store writes (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`, `packages/coding-agent/src/core/linked-worktree-checkout.ts`: #6823 again, as its fragment (`changes/unreleased/6823.md`) describes: an explicit `null` in `trust.json` is an entry that holds no decision and stops inheritance, `ProjectTrustUpdate.decision` takes `"no_inherit"`, and every write through the store bumps the generation under the store lock before it writes `trust.json`. What differs from #6823: `ProjectTrustStore.setMany` and `set` are asynchronous and return a promise; the generation is read, written and renamed with `node:fs/promises`; `revision()` is asynchronous and reads the generation and `trust.json`'s modification time and size with `node:fs/promises`. Reads (`get`, `getEntry`, `getNearestEntry`) stay synchronous.
+- `packages/coding-agent/src/core/trust-store-writers.ts`: new. A realm registry (`@code-yeongyu/senpi/trust-store-writers/v1`, shared by every engine copy) in which trust store writes take turns per file and record which of them holds the store lock. `setMany` takes the lock synchronously, as before, and records it in the same synchronous step (#6958 review M1: recording it only after an asynchronous acquisition left a window where the lock existed unrecorded), then holds it across the asynchronous generation bump. A synchronous reader of the realm whose write holds the lock reads without taking it: waiting would spin on a lock only the blocked event loop can release, and the writer replaces `trust.json` in one synchronous call, so the reader never sees half of it. Engine copies older than the registry do not consult it; their synchronous reads and writes wait out the lock's 200 ms budget while such a write holds it.
+- `packages/coding-agent/src/core/project-trust.ts`: `resolveProjectTrusted` awaits the saves it makes (a remembered `project_trust` handler answer, the prompt's choice).
+
+### Why
+
+- #6823 was reverted (#6954) because it added five synchronous fs calls on the RPC session path (`existsSync` and `readFileSync` in `readGeneration`, `renameSync` and `writeFileSync` in `setMany`, `statSync` in `revision`), which the frozen, shrink-only baseline of `test/suite/no-sync-in-session-path.test.ts` forbids. Those calls are asynchronous now; the baseline is unchanged.
+- senpi#6951: a test now pins that a failed generation bump rejects and leaves `trust.json` byte-identical, and that the lock is released afterwards.
+
+### Why an extension could not handle it
+
+- The trust store, its lock and its inheritance rule are core.
+
+### Expected merge conflict zones
+
+- LOW: `ProjectTrustStore.revision`/`setMany`/`set`, `withTrustFileLock`, the saves in `resolveProjectTrusted`.
+
+## 2026-11-17 - The session reports which tool calls the model issued (senpi#6917)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session binds `isModelIssuedToolCall` for the extension runner. It is true for an agent-loop call while its issuer is recorded (`_toolCallIssuers`). It is also true for a Cursor exec-frame call from its preflight, which the bridge now calls with `{ execBridge: true }`, to its result (`emitExecBridgeToolResult`) or its block (`_execBridgeToolCalls`).
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts`: passes `{ execBridge: true }` to the session preflight.
+
+### Why
+
+- senpi#6917 review M1. A Cursor exec-frame call is issued by the model, and its result joins the transcript, but it runs while the issuing message is still streaming. A tool needs the session to tell it so.
+
+### Why an extension could not handle it
+
+- The call's origin is session state; no extension hook sees it.
+
+### Expected merge conflict zones
+
+- LOW: `preflightToolCall`'s options and the head of its body, `emitExecBridgeToolResult`, the `_execBridgeToolCalls` field, and the extension context actions in `agent-session.ts`.
+
+## 2026-10-30 - Host-supplied extension defaults retain settings control (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` composes explicitly supplied `host` factories with the session's default factories, outside the unconditional engine catalog.
+
+### Why
+
+- Moving a presentation tool to its host must preserve `enabledBuiltinExtensions`, `disabledBuiltinExtensions`, and explicit `builtin:<name>` loading.
+
+### Why an extension could not handle it
+
+- Default selection happens before extension factories run or settings are bound to the extension runtime.
+
+### Expected merge conflict zones
+
+- Factory classification in the `DefaultResourceLoader` constructor.
+
+## 2026-11-18 - GPT-6.2 in the provider defaults, recommended models and high-reasoning warning (senpi#6962, senpi#6942)
+
+### What changed
+
+- `model-resolver.ts`: `openai` and `chatgpt-subscription` default to `gpt-6.2-sol`.
+- `extensions/builtin/recommended-models/index.ts`: `gpt-6.2-astra` (xhigh) and `gpt-6.2-sol` (medium) are added ahead of `gpt-6-astra` and `gpt-6.1-sol` on the subscription, API and OpenCode lanes. GitHub Copilot does not serve 6.2.
+- `high-reasoning-warning.ts`: the pattern covers GPT-6.x Astra.
+
+### Why
+
+- These defaults moved the same way for GPT-6.1 Sol in #2390.
+
+### Why an extension could not handle it
+
+- The defaults table and the warning are core; the recommended list is this builtin's data.
+
+### Expected merge conflict zones
+
+- LOW: the default table rows, the recommendation list, the warning regex.
+
+## 2026-11-18 - AgentSession names the automatic-input hold check once (senpi#6957)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: new `automaticInputHoldLive()` (the user's Stop or a parent's run hold is live); `noteAutomaticInput` uses it instead of its inline check.
+
+### Why
+
+- The RPC `prompt` leaf guard (senpi#6922) predicts whether this hold would keep a prompt as a notice. It needs the same predicate the hold uses, not a copy that can drift.
+
+### Why an extension could not handle it
+
+- The hold state lives in the session's engine turn hold, which extensions do not own.
+
+### Expected merge conflict zones
+
+- LOW: `noteAutomaticInput` in `agent-session.ts`.
+
+## 2026-11-18 - Revert: the explicit no-decision trust entry (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts` and `linked-worktree-checkout.ts` return to their state before #6823: an explicit `null` in `trust.json` no longer stops inheritance, and `ProjectTrustUpdate.decision` no longer takes `"no_inherit"`.
+
+### Why
+
+- #6823 added five synchronous fs calls on the RPC session path (`existsSync` and `readFileSync` in `readGeneration`, `renameSync` and `writeFileSync` in `setMany`, `statSync` in `revision`), which breaks the frozen, shrink-only no-sync baseline (`test/suite/no-sync-in-session-path.test.ts`). It merged on a runner exit code while its filed receipt was red. It re-lands with those calls asynchronous.
+
+### Why an extension could not handle it
+
+- This reverts core code that #6823 changed.
+
+### Expected merge conflict zones
+
+- LOW: the same lines #6823 touched.
+
+## 2026-11-18 - Session lists include stores registered in the shared session index (senpi#6941, omo-desktop-app#8097)
+
+### What changed
+
+- `packages/coding-agent/src/core/shared-session-stores.ts` (new, fork-only): reads `<agentDir>/session-stores/*.json` (`{ "version": 1, "root": "<absolute path>" }`, one file per store, written by its owner) and returns each registered root's session directories. Entries of another version, malformed, relative or missing roots contribute nothing. `isSharedSessionStoreDir` tells whether a session dir sits in a registered store; `sharedStoreSummaryDir` places a store's listing summary cache under `<agentDir>/cache/session-store-summaries/`, never in the store.
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionManager.list` in the default per-folder layout also lists registered-store sessions whose cwd matches the folder (same `sessionCwdMatcher`), deduplicated by path and session id. `SessionManager.listAll` with the default root walks the registered store directories after the project directories and lists a store's copy of one of this agent dir's sessions once, as the original. New `getHomeSessionDir()` / `adoptHomeSessionDir()`: a session opened from a store keeps this folder's own session dir as home for listing, `/new`, branches and imports; `newSession` and branch creation write there. An explicit custom session dir is unchanged.
+- `packages/coding-agent/src/core/session-discovery.ts`, `session-summary-index.ts`: an optional index dir, so a store's summaries are cached outside the store.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `switchSession` (`/resume`) adopts the home session dir after opening the picked file; `newSession`, fork-to-new and import use `getHomeSessionDir()` instead of the open file's directory.
+
+### Why
+
+- The OmO desktop keeps its sessions in its own store, so a running terminal's `/resume` never listed sessions created in the app (omo-desktop-app#8097). Nothing is cached between listings, so a session the app creates shows in the next list of an already running process. Resuming such a session must not make the app's store the terminal's session folder (review M1), and listing must not write into a store the terminal does not own (review L2).
+
+### Why an extension could not handle it
+
+- Session directory enumeration and the session dir a manager creates new files in live inside core `SessionManager` and `AgentSessionRuntime`, before any extension or selector hook sees a session.
+
+### Expected merge conflict zones
+
+- LOW: the import block, `newSession`, `getSessionDir` neighbours, the tail of `SessionManager.list()` and the directory collection in `SessionManager.listAll()` in `session-manager.ts`; the `sessionDir` lines of `switchSession`, `newSession`, fork and import in `agent-session-runtime.ts`.
+
+## 2026-11-18 - hostAttachSocket refuses an unproven holder (senpi#6914)
+
+### What changed
+
+- `packages/coding-agent/src/core/foreign-session-holders.ts`: `hostAttachSocket` returns nothing when any holder is `unproven`, so the "could not be verified" refusal applies, as it does for take-over.
+
+### Why
+
+- senpi#6911 L3: a stale or reused-pid host record led to a failed dial (exit 1) where the clear refusal used to be.
+
+### Why an extension could not handle it
+
+- Holder records are core session ownership.
+
+### Expected merge conflict zones
+
+- LOW: `hostAttachSocket`.
+
+## 2026-11-17 - hostAttachSocket names the one host that holds a session (senpi#6909)
+
+### What changed
+
+- `packages/coding-agent/src/core/foreign-session-holders.ts`: `hostAttachSocket(holders)` returns the public socket when every holder is a session of one multi-session host that published it; `sessionIdFromFile` is exported for the admission.
+
+### Why
+
+- Startup attaches to that host instead of refusing a session it holds.
+
+### Why an extension could not handle it
+
+- Holder records are core session ownership.
+
+### Expected merge conflict zones
+
+- LOW: next to `takeOverRefusal`.
+
+## 2026-11-17 - selectLocalGrant: the bounded local grant select with caller-named choices (senpi#6901)
+
+### What changed
+
+- `packages/coding-agent/src/core/mcp-grant-presentations.ts`: `selectLocalGrant(select, title, [grant, decline], signal?)` is the bounded select `selectMcpGrant` ran, returning the answer (or nothing on abort, timeout or a disconnected presentation). `selectMcpGrant` keeps its contract on top of it.
+
+### Why
+
+- `write_user_skill_file` asks the same local-only presentation with its own choices.
+
+### Why an extension could not handle it
+
+- The grant presentation registry is core engine state the RPC host fills.
+
+### Expected merge conflict zones
+
+- LOW: `selectMcpGrant` in `mcp-grant-presentations.ts`.
+
+## 2026-11-16 - An explicit no-decision trust entry stops inheritance (desktop pull request worktrees)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: an explicit `null` saved for a folder in `trust.json` is now an entry that holds no decision. The nearest-entry walk stops there, so neither a folder above it nor, for a linked git worktree, the main checkout decides for it (`getSavedProjectTrust` returns `null`). `ProjectTrustUpdate.decision` takes `"no_inherit"`, which `setMany` saves as that `null`; a `null` update still removes the folder's entry. `ProjectTrustStore.getNearestEntry` returns the nearest entry including the no-decision one; `getEntry` and `get` report it as no decision. `getProjectTrustNoInheritOption(cwd)` is the option that saves it; `/trust` never offers it. `getSavedProjectTrustState` reports what is saved as a decision, `"no_inherit"` for the explicit no-decision entry, or `null` for nothing saved; `getSavedProjectTrust` keeps returning the decision alone, with both undecided values as `null`. `ProjectTrustStore.revision()` changes on every write made through the store by an engine with this change, in any process: each write first bumps a generation file (`trust.json.generation`, replaced whole) under the store lock. An older engine sharing the agent directory is seen only through `trust.json`'s modification time and size.
+- `packages/coding-agent/src/core/linked-worktree-checkout.ts`: `linkedWorktreeMainCheckoutDir` and its file helpers moved here unchanged from `trust-manager.ts` (the file was at the size ceiling).
+
+### Why
+
+- The desktop app: a pull-request worktree of another repository took the base checkout's trust through linked-worktree inheritance. Saving "do not trust" for it also overrides Full access; an entry that only withholds inheritance leaves the folder decided as if nothing were saved, so Full access still trusts it.
+- Compatibility: `readTrustFile` has accepted `null` since trust gating was added, and no earlier writer saved one (a `null` update deleted the key). Older readers skip the entry and keep walking, so there the folder inherits as before.
+
+### Why an extension could not handle it
+
+- The trust store and its inheritance rule are core; a `project_trust` handler cannot change what a saved decision means for other readers.
+
+### Expected merge conflict zones
+
+- LOW: `findNearestTrustEntry`, `ProjectTrustStore.getEntry`/`setMany`, `getSavedProjectTrust`.
+
+## 2026-11-18 - The manual-switch handoff is tied to request preparation (senpi#6893)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_manualSwitchAwaitingRequest` replaces the selector-name match of #6894. `_installAgentRequestProjection`'s `prepareRequest` clears it at entry, so a failure while it is set came from a request built before the switch, for physical and virtual picks alike. `_handOffRetryToManualModel` resets the retry budget when the switch lands after the wait and before the continuation.
+
+### Why
+
+- A virtual pick's responses name physical models, so the name match never cleared and its own first failure got an immediate extra retry; a switch after the wait kept the old model's spent budget.
+
+### Why an extension could not handle it
+
+- The retry loop's budget and the request projection are private `AgentSession` state.
+
+### Expected merge conflict zones
+
+- LOW: `_installAgentRequestProjection`, `_handOffRetryToManualModel`.
+
+## 2026-11-17 - executeTool keeps a rewritten result's error flag (senpi#6906, senpi#6904)
+
+### What changed
+
+- `packages/coding-agent/src/core/execute-tool-on-host.ts`: `ExecuteToolHookResult` carries `isError`, the flag `_emitAfterToolCallHooks` already computes (the hook's, else the tool's).
+- `packages/coding-agent/src/core/agent-session.ts`: `executeTool` keeps that `isError` when a `tool_result` hook rewrites the result's content or details.
+
+### Why
+
+- The rewrite rebuilt the result from `content`, `details` and `terminate` only, so a failed call came back to an extension caller (codemode's nested `tool.<name>()` calls) without its error flag (senpi#6904).
+
+### Why an extension could not handle it
+
+- `pi.executeTool` builds the returned result in core; an extension only receives it.
+
+### Expected merge conflict zones
+
+- LOW: the returned object at the end of `executeTool` in `agent-session.ts`; the `ExecuteToolHookResult` interface.
+
+## 2026-11-17 - Resume accepts the newest announced pause seq (senpi#6900)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resumeOnce` answers `stale` only when `expectedSeq` is older than the newest hold that paused the session, or newer than the current seq (`EngineTurnHold.isCurrentPauseSeq`). Before, it required `expectedSeq` to equal the current seq exactly.
+
+### Why
+
+- A run fence raises `pauseSeq` without pausing the session or emitting an event, so after a Stop that fenced its runs, every Resume that quoted the announced seq was refused as `stale` (senpi#6900, desktop QA D7).
+
+### Why an extension could not handle it
+
+- The stale check sits inside `resume_session` admission in the session core; extensions never see a refused Resume.
+
+### Expected merge conflict zones
+
+- LOW: the `expectedSeq` guard in `_resumeOnce`.
+
+## 2026-11-17 - The tool projection carries a tool's row renderers (senpi#6903)
+
+### What changed
+
+- `packages/coding-agent/src/core/tool-info.ts`: `toolInfoOf` projects `renderCall` and `renderResult` when the definition has them; a tool without them projects neither key.
+
+### Why
+
+- So `getAllTools()` hands them to hosts that draw the tool's calls elsewhere (oh-my-openagent#12994).
+
+### Why an extension could not handle it
+
+- The projection is core's; extensions only read its output.
+
+### Expected merge conflict zones
+
+- LOW: the object literal in `toolInfoOf`.
+
+## 2026-11-17 - A manual model change takes over a live retry loop (senpi#6893)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_setModel` and the favorite cycle hand a live retry loop to the picked model (`_handOffRetryToManualModel`). A pending backoff is aborted with the `MANUAL_MODEL_SWITCH_HANDOFF` reason, and the sleep's catch continues at once on the picked model at attempt 1 (a fresh `auto_retry_start { delayMs: 0 }`) instead of ending with "Retry cancelled". `_setModel` no longer calls `abortRetry()` when a fallback is active.
+- `_manualSwitchSelector` records the picked model while a run is live. A failure from any other model (`_isFailureFromAbandonedModel`) came from the request in flight at the switch: `_willRetryAfterAgentEnd` retries it, `_handleRetryableError` continues on the picked model at attempt 1 with no fallback walk and no delay, and the agent_end health note charges the model that failed, not the picked one. The selector clears when the picked model answers, the retry takes it, or a user message starts a turn.
+
+### Why
+
+- After a rate limit and a fallback, a model picked from the client ended the run ("Retry cancelled") or kept the old model's backoff and spent budget; a failure from the request still in flight was charged to the picked model (cooldown, circuit, fallback walk from it).
+
+### Why an extension could not handle it
+
+- The retry loop, its backoff signal and the fallback bookkeeping are private `AgentSession` state.
+
+### Expected merge conflict zones
+
+- LOW: `_setModel`, the end of `_cycleFavoriteModel`, the sleep catch and the first branch of `_handleRetryableError`, the agent_end health note.
+
+## 2026-11-17 - getAllTools() marks the session's eval-only tools (senpi#6886)
+
+### What changed
+
+- `packages/coding-agent/src/core/tool-info.ts`: `toolInfosOf(definitions, evalOnly)` replaces the per-entry `toolInfoOf` export; a tool in the given set is projected with `evalOnly: true`.
+- `packages/coding-agent/src/core/runtime/active-tools.ts`: `registeredEvalOnlyToolNames(armed, toolRegistry)`, the registered tools the armed eval-only routing withholds (empty while unarmed).
+- `packages/coding-agent/src/core/agent-session.ts`: `getAllTools()` projects through `toolInfosOf` with that set, so extensions see which tools a cell alone can reach.
+
+### Why
+
+- tool_search and the eval description need the session's actual eval-only routing (declared `exposure: "eval"`, the fixed by-name set, or an SDK override); only the session knows it.
+
+### Why an extension could not handle it
+
+- The armed eval-only set is session state; extensions read tools only through `pi.getAllTools()`.
+
+### Expected merge conflict zones
+
+- LOW: `getAllTools()` in `agent-session.ts`; the import of `tool-info.ts`.
+
+## 2026-11-16 - Required compaction failures stay on their original model (#6833, omo#13785)
+
+### What changed
+
+- `agent-session.ts`: the hard-error fallback predicate excludes the existing required-compaction error identity.
+- A public AgentSession regression rejects compaction after an oversized synthetic tool result and verifies the original model, the terminal error, and zero provider fallback calls.
+
+### Why
+
+- A local compaction rejection cannot be repaired by switching providers. Treating it as a provider failure caused an unexpected model hop and another attempt against the same blocked context.
+
+### Why an extension could not handle it
+
+- AgentSession owns the hard-error fallback classification and required-compaction admission state.
+
+### Expected merge conflict zones
+
+- LOW: the hard-error fallback predicate in `agent-session.ts`.
+
+## 2026-11-16 - Credential injection proxy and `credentialProxy` setting (senpi#6828)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-proxy/declarations.ts`: parses `credentialProxy.credentials[]` (`env`, `origin`, `header`, `scheme`, `baseUrlEnv`, `pathPrefixes`). `origin` must be https (plain http only for a loopback host) with no credentials, query or fragment; the header may not be a hop or framing header. Every `env` name found is withheld even when its entry is rejected.
+- `packages/coding-agent/src/core/credential-proxy/proxy.ts`: a loopback HTTP proxy on `127.0.0.1:0` gated by a 32-byte random capability in the path. It forwards only to the declared origin (origin-form requests only), refuses dot segments and encoded separators, enforces `pathPrefixes`, replaces any client copy of the header, does not follow redirects, streams the response, and answers a failed upstream with a fixed text that never includes the value. It rejects when it cannot listen.
+- `packages/coding-agent/src/core/credential-proxy/runtime.ts`: the process-wide holds (a realm registry, like the kill guard's runtime) and `withCredentialProxy()`. Withholding is set before the proxy starts and stays when it fails to start (fail closed).
+- `packages/coding-agent/src/core/settings-manager.ts`: the `credentialProxy` settings field (read from global settings only).
+- Review L3: a path segment starting with `..` or `.;` is refused (servers that strip path parameters normalise `..;x` to `..`).
+- Not covered, stated in `docs/security.md`: the proxy runs in the engine process as the same OS user, so a same-user process can still read the engine's startup environment (`/proc/<pid>/environ`, `ps eww`) or memory (review L1).
+
+### Why
+
+- senpi#6820: values reach agent children only through a broker; a project's settings must not be able to send a user credential to a host of its choosing.
+
+### Why an extension could not handle it
+
+- `getShellEnv()` and the codemode kernels both need the same process-wide withholding, which lives with the shell environment in core.
+
+### Expected merge conflict zones
+
+- LOW: new fork-only directory; one field line in the `Settings` interface of `settings-manager.ts`.
+
+## 2026-11-16 - A consumed delivery's own custody is never a background wait before its run settles (senpi#6814 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/work-obligations.ts`: `isConsumedBy(record, runId)` is true for an engine delivery's own custody (`delivery:` key) that the given run consumed. Correction to the senpi#6814 entry: `endDelivery` recomputes only when the delivery ends with its custody still open and not consumed; a consumed custody stays the run's own work until `settleRun`, so ending its delivery publishes nothing.
+- `packages/coding-agent/src/core/session-lifecycle.ts`: while a run is active, a delivery custody that run consumed is left out of `waits.background`. A restored consumed custody (no active run, crash recovery) is unchanged.
+
+### Why
+
+- senpi#6814 review: after a delivery ended and before `settleRun`, any other publish (for example a wake source changing as the session goes idle) wrote a lifecycle record whose `waitingOn.background` named the delivery's own consumed custody.
+
+### Why an extension could not handle it
+
+- Work custody and the lifecycle derivation are engine state. Extensions read the published lifecycle; they cannot change how it is derived.
+
+### Expected merge conflict zones
+
+- LOW: `SessionWorkObligations.isDeliveryInFlight` neighborhood; the background-wait filter of `SessionLifecycleController.evaluate`.
+
+## 2026-11-15 - A delivery's own custody is never a background wait while its turn start is in flight (senpi#6810)
+
+### What changed
+
+- `packages/coding-agent/src/core/work-obligations.ts`: `isDeliveryInFlight(record)` is true for an engine delivery's own custody (`delivery:` key) from the moment its send opens it (tracked in-process until `queue`) until its delivery ends (`delivering`). `endDelivery` recomputes when a delivery ends with its custody still open.
+- `packages/coding-agent/src/core/session-lifecycle.ts`: custody in flight is left out of `waits.background` and counts as the session running, including in the no-wake stall check. Every other background custody is unchanged.
+
+### Why
+
+- senpi#6810 (reported downstream in code-yeongyu/oh-my-openagent#13716): a session starting a turn for a delivery published `waiting_background`, and `waitingOn.background` named the delivery's own custody. During a cold-wake start that stalled after `before_agent_start`, the lifecycle reported 12 min 54 s of background work that was only the delivery itself.
+
+### Why an extension could not handle it
+
+- Work custody and the lifecycle derivation are engine state. Extensions read the published lifecycle; they cannot change how it is derived.
+
+### Expected merge conflict zones
+
+- LOW: `SessionWorkObligations.open` / `queue` / `endDelivery` / `close`; the background-wait, `noWake` and `running` lines of `SessionLifecycleController.evaluate`.
+
+## 2026-11-15 - session_settled entry reader (senpi#6768)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-settled.ts`: reads and writes the `session_settled` custom entry (`data: { settled, by?, at, sessionId }`); the newest entry naming the session wins, and absent means not settled. It parses `by` the way the desktop's schema decodes it (strings trimmed, extra fields dropped).
+- `packages/coding-agent/src/core/session-archived.ts`: `sessionMarkerData`, the "custom entry written for this session id" read that the archived and settled flags now share.
+- `packages/coding-agent/src/core/session-manager.ts`: `getSettled()`, kept on every append, on index rebuilds and from the full history a trimmed reopen reads, beside the archived flag (`_noteSessionFlags`).
+
+### Why
+
+- Done must survive a close and a reopen and read the same on every surface, without materializing an idle session's trimmed history; a fork or clone is a new thread and starts not settled.
+
+### Why an extension could not handle it
+
+- The RPC host's listing reads it for every row, and only the session manager sees every append and index rebuild.
+
+### Expected merge conflict zones
+
+- LOW: new fork-only file.
+- MEDIUM: `session-manager.ts` next to the archived-flag bookkeeping in `_retainLoadedTail`, `_buildIndex`, `_resetToNewSession` and `_commitEntry`.
+
+## 2026-11-15 - A hand's late effects become wakes; the brain-side delivery moves to agent-core (senpi#5778, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/core/execution/hand-wake-route.ts` (new): `loopWakeRoute` turns `sendMessage`, `sendUserMessage`, `appendEntry` and `ui.notify` from a hand runtime's late work into wakes (`message`, `user_message`, `entry`, `notice`) carrying exactly the session call's arguments, plus the loop session id when a loop-hook call started the work. `lateLoopRoute` is a loop-hook call's late route (the wake route, or a reported drop on a runtime without one).
+- `packages/coding-agent/src/core/execution/wake-delivery.ts` (removed): S14's terminal-only `terminalWakeSender` / `deliverTerminalWake`; the brain-side parse and delivery now live in agent-core (`execution/wake-delivery.ts`).
+- `packages/coding-agent/src/core/hand/hook-contract.ts`: no longer parses `droppedLate` from a hand's loop-hook reply.
+- `packages/coding-agent/src/core/egress/wire.ts`: `HookModelRequestReply.droppedLate` is removed; a hand never sends it now (late effects go to the loop as wakes).
+
+### Why
+
+- Every late effect of a hand's work must reach the loop as a local session would see it (senpi#5778), not only terminal notices, and the hosted brain must import the delivery from the package it already uses.
+
+### Why an extension could not handle it
+
+- The wake payload is the contract between the hand runtime and the hosted brain, below any one extension; `packages/coding-agent/src/core/hand/hook-contract.ts` and `packages/coding-agent/src/core/egress/wire.ts` are that contract's hook-reply side.
+
+### Expected merge conflict zones
+
+- LOW: `HookModelRequestReply` in `packages/coding-agent/src/core/egress/wire.ts`; `loopHookRequestHooks` in `packages/coding-agent/src/core/hand/hook-contract.ts`.
+
+## 2026-11-15 - One active-tool rule for a session and a hand (senpi#6749)
+
+### What changed
+
+- `packages/coding-agent/src/core/runtime/active-tools.ts` (new): `resolveToolSelection`, `requestedActiveToolNames`, `directActiveToolNames`, `resolveEvalOnlyToolNames`, `armedEvalOnlyToolNames`, `toolExposureOf` and `isActivatedOnRegistration`, moved unchanged in behavior out of `AgentSession` and `createAgentSession`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_refreshToolRegistry`, `setActiveToolsByName`, `_resolveEvalOnlyToolNames` and `_isEvalOnlyPolicyArmed` call those functions; `_getToolExposure`, `_isActivatedOnRegistration` and the module's `EVAL_ONLY_TOOL_NAMES` are gone.
+- `packages/coding-agent/src/core/sdk.ts`: the tool flags and `defaultTools` resolve through `resolveToolSelection`.
+
+### Why
+
+- A hand answering `describe_tools` must report the active set a local session would choose; sharing the session's own rules is the only way the two cannot drift.
+
+### Why an extension could not handle it
+
+- The active-set and eval-only rules are session internals; no extension can read or reuse them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `setActiveToolsByName` and the end of `_refreshToolRegistry` in `agent-session.ts`; the tool-option block of `createAgentSession` in `sdk.ts`.
+
+## 2026-11-14 - session_archived entry reader (senpi#6677)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-archived.ts`: reads the newest `session_archived` custom entry of a session (absent means not archived). Each entry names the session id it was written for (`data: { archived, sessionId }`) and counts only for that id.
+- `packages/coding-agent/src/core/session-manager.ts`: `isArchived()`, a flag kept on every append, on index rebuilds and from the full history a trimmed reopen reads, like the usage totals.
+- Review M1: reading the flag no longer calls `getEntries()`, which materialized the whole history of an idle trimmed session (undoing senpi#3519's release) for every `list_sessions` row, status publish, terminal control row and worker snapshot.
+- Review L2: a fork or clone (`createBranchedSession`, `forkFrom`, `move_session` `op: "copy"`) gets a new id, so the entries it copies name the source and it starts unarchived; the source keeps its flag.
+
+### Why
+
+- The archived flag lives in the session file so every surface reads one truth.
+- A listing must not reload the history an idle session released; a fork is a new thread and should not appear archived because its source was.
+
+### Why an extension could not handle it
+
+- The RPC host's listing reads it for every session row, and only the session manager sees every append and index rebuild.
+
+### Expected merge conflict zones
+
+- LOW: new fork-only file.
+- MEDIUM: `session-manager.ts` next to the usage-totals bookkeeping in `_retainLoadedTail`, `_buildIndex`, `_resetToNewSession` and `_commitEntry`.
+
+## 2026-11-12 - A move's import hashes every staged sidecar too (senpi#6571's review)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/import.ts`: the staging step hashes every staged copy of the session file and of each sidecar once all of them are in place, before the moved-in entry is written, and refuses one that is not the listed bytes. A comment at that entry says what its `bundle_sha256` is: the hash of the session's bytes as staged from the bundle.
+
+### Why
+
+- Sidecars were the one kind of staged file not hashed after staging, and they land with the session. A sidecar replaced after the bundle was verified landed with the replaced bytes and the move was recorded `accepted`.
+
+### Why an extension could not handle it
+
+- It is the session move's own import.
+
+### Expected merge conflict zones
+
+- HIGH: the staging function in `import.ts`, which senpi#6445 moves to `import-staging.ts`; this check goes with it, before the moved-in entry.
+
+## 2026-11-12 - A move's import refuses two files staged under one name, and hashes the session file it staged (senpi#6575, senpi#6564's review)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/staged-layout.ts`: `stagedTwice` answers why two different files of a bundle cannot both be staged: a sidecar listed under the session file's own name, or one under the staging's payload folder beside a payload of that path. A file listed twice is one file and is not refused.
+- `packages/coding-agent/src/core/session-move/import.ts`: `importMovedSession` refuses such a bundle with the bundle's verification, before anything is staged, and the move is settled `failed` / `bundle_invalid`. The staging step hashes the session file it staged and refuses when that is not the listed session's hash, before the moved-in entry is written.
+- `packages/coding-agent/src/core/session-move/name-folding.ts`: the sweep of old probe files leaves in place one it cannot remove, instead of failing the probe.
+
+### Why
+
+- A sidecar listed under the session file's own name was written over the staged session file. When its bytes were a session file, that session landed in place of the listed one, and its moved-in entry recorded the listed session's hash (senpi#6575).
+- A probe file another user owns made every import into that folder fail.
+
+### Why an extension could not handle it
+
+- It is the session move's own import.
+
+### Expected merge conflict zones
+
+- HIGH: the staging function in `import.ts`, which senpi#6445 moves to `import-staging.ts`; the hash check goes with it, before the moved-in entry.
+- LOW: the `try` around `verifyBundle` in `importMovedSession`.
+
+## 2026-11-12 - The names-that-fold check also asks about the names a staged move writes, and the probe sweeps its stale files (senpi#6523's review)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/staged-layout.ts` (new): the names a staged move writes inside its staging folder (`stagedName`, `stagedNames`, `STAGED_PAYLOADS`).
+- `packages/coding-agent/src/core/session-move/import.ts`: the check is given the bundle's paths and the staged names; the staging uses `stagedName` and `STAGED_PAYLOADS` from that module.
+- `packages/coding-agent/src/core/session-move/name-folding.ts`: `refuseNamesThatFold` takes a list of layouts and compares names within each; `probeNameFolding` removes probe files in the folder that were not modified for an hour before it writes its own.
+- `packages/coding-agent/src/core/session-move/inline-bundle.ts`: passes its one layout.
+
+### Why
+
+- A clash that exists only among the staged names (a sidecar named as the session file in another letter case) was not seen, and a probe stopped between its write and its remove left a dotfile.
+
+### Why an extension could not handle it
+
+- It is the session move's own import.
+
+### Expected merge conflict zones
+
+- LOW: the call of `refuseNamesThatFold` and `stage` in `import.ts`; `probeNameFolding` in `name-folding.ts`.
+
+## 2026-11-12 - The read of a move's landed file also says who may write it (senpi#6473)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/landed-file.ts`: `LandedFile` carries `ownership`, the verdict of `sessionOwnership` over the entries `readLanding` already read.
+
+### Why
+
+- See the RPC entry above. The answer and the write refusal are one rule over one read, so they cannot disagree.
+
+### Why an extension could not handle it
+
+- The ownership rule and the landed-file read are core.
+
+### Expected merge conflict zones
+
+- LOW: `LandedFile` and `readLanding` in `landed-file.ts`.
+
+## 2026-11-12 - A bundle with two paths that are one name is refused only where the file system folds them (senpi#6472)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/name-folding.ts` (new): `probeNameFolding` asks a folder's file system whether it folds letter case and Unicode form; `oneNameUnder` finds two paths that are one name, or a file where another path needs a folder, under a given folding; `refuseNamesThatFold` refuses such a list after asking the folder, and asks only for a list that holds such a pair.
+- `packages/coding-agent/src/core/session-move/inline-bundle.ts`: an inline bundle's sent paths are checked against the staging folder's file system.
+- `packages/coding-agent/src/core/session-move/import.ts`: every import checks the manifest's listed paths against the session folder's file system, before the move is touched.
+
+### Why
+
+- Case variants of one path passed the exact-string list checks and failed later on a file system that ignores case, after the move had begun receiving. Refusing them on every host would break bundles that move today between hosts that keep the names apart.
+
+### Why an extension could not handle it
+
+- It is the engine's own import path.
+
+### Expected merge conflict zones
+
+- LOW: `withStagedInlineBundle` in `inline-bundle.ts`, the pre-receive block of `importMovedSession` in `import.ts`.
+
+## 2026-11-12 - One function answers a move's status (review of senpi#6451)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/import.ts`: `answerMoveStatus` is removed; it had no caller outside tests, which now ask `answerMoveStatusAndLanding` and read its `answer`.
+
+### Why
+
+- An export with no production caller, kept alive by three test files.
+
+### Why an extension could not handle it
+
+- It is a core export.
+
+### Expected merge conflict zones
+
+- LOW: the doc comment of `answerMoveStatusAndLanding` in `import.ts`; the three test files that asked `answerMoveStatus` (`session-move-commit-lost-lock`, `session-move-import-file-authority`, `session-move-review`).
+
+## 2026-11-12 - Move bundles: a depth cap, and the rest of the inline import's review findings (senpi#6469, senpi#6267)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/bundle.ts`: `MAX_BUNDLE_PATH_SEGMENTS` (32) and `nestsTooDeep`; every path a manifest lists is checked when the manifest is read. `MovePathTooDeepError` is the sender's refusal, `readKeptBundle` reads only the format, the move id and the queued input from the bundle a sender kept, and `shown` (how an error shows a path) moved here from `inline-bundle.ts`.
+- `packages/coding-agent/src/core/session-move/export.ts`: `assertMoveFits` refuses a session whose resident blobs or staged extension state would sit in the bundle deeper than the cap: before the export's own seal, and for a session that is already sealed before a bundle is written.
+- `packages/coding-agent/src/core/session-move/finish.ts`: the kept bundle is read through `readKeptBundle`, with no check of the paths it lists.
+- `packages/coding-agent/src/core/session-move/inline-bundle.ts`: takes `shown` from `bundle.ts`; how deep a sent path may be stays the manifest's rule, since every sent path is listed there or refused as unlisted.
+- `packages/coding-agent/src/core/session-move/import.ts`: a landed file answers a re-import only for the folder it landed for; the landed file is confirmed in the move's record first, so the `move_fenced` refusal of another folder carries the accepted record and with it where the move landed.
+
+### Why
+
+- A path's length was capped, its depth was not: one accepted request could make hundreds of thousands of folders.
+- A cap applied only where a bundle is read would seal a session with deeper state, have the receiver refuse its bundle before any answer was recorded, and have the sender's `finish` refuse the bundle it kept: sealed, not landed, and not taken back. The sender therefore refuses before the seal, and reads its own kept bundle without the rule.
+- A re-import into the same `sessionDir` with another `cwd` skipped the repository check and its `open` ran the session in the unchecked folder.
+
+### Why an extension could not handle it
+
+- It is the engine's own import path.
+
+### Expected merge conflict zones
+
+- LOW: `parseFile` in `bundle.ts`, `staysInBundle` in `inline-bundle.ts`, `confirmLanded` in `import.ts`, `writeMoveBundle` in `export.ts`, `settleMove` and `requeueDroppedInput` in `finish.ts`.
+
+## 2026-11-11 - A session header past the bounded scan still decides the open's folder (senpi#6427)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-header-cwd.ts`: when the bounded scan ends without a header, the file is loaded whole and its header decides, as `SessionManager.open` does for the same case.
+
+### Why
+
+- The scan's `undefined` was read as "this file names no folder", so the open passed the host's folder as an override and a session whose header lies past the bound ran in the host's folder: the defect #6427 closes, left in one corner.
+
+### Why an extension could not handle it
+
+- It is the engine's own open path.
+
+### Expected merge conflict zones
+
+- LOW: the scan loop in `session-header-cwd.ts`.
+
 ## 2026-11-16 - Accurate transient-failure rejection text and latch rationale (senpi#6772)
 
 ### What changed

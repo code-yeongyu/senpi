@@ -180,7 +180,13 @@ import {
 	userTextEquals,
 } from "./edited-user-message.ts";
 import { ENGINE_PAUSED_ENTRY_TYPE, enginePauseSinceLastTurn, settledRepetitiveTurnPause } from "./engine-paused.ts";
-import { EngineTurnHold, engineTurnHoldHistory, engineWakeSource, type SessionHoldEvent } from "./engine-turn-hold.ts";
+import {
+	EngineTurnHold,
+	engineTurnHoldHistory,
+	engineWakeSource,
+	type HoldKind,
+	type SessionHoldEvent,
+} from "./engine-turn-hold.ts";
 import { EngineTurnInput } from "./engine-turn-input.ts";
 import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
@@ -251,6 +257,7 @@ import {
 	type ContextUsage,
 	ExecuteToolError,
 	type ExecuteToolOptions,
+	type ToolCallEventResult,
 	type ExtensionCommandContextActions,
 	type ExtensionContext,
 	type ExtensionErrorListener,
@@ -275,7 +282,6 @@ import {
 	type ToolExecutionEndEvent,
 	type ToolExecutionStartEvent,
 	type ToolExecutionUpdateEvent,
-	type ToolExposure,
 	type ToolInfo,
 	type TreePreparation,
 	type TurnStartEvent,
@@ -295,9 +301,10 @@ import type {
 	SessionHoldRecord,
 	ToolChildJob,
 } from "./extensions/types.ts";
-import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
+import { normalizeToolExposure, RUNTIME_EXTENSION_PATH, SESSION_CONTROL_DELIVERY_TYPE } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission, type InputHold } from "./external-admission.ts";
+import { holdsKeepingPeerDelivery } from "./peer-delivery-hold.ts";
 import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf } from "./input-origin.ts";
@@ -419,6 +426,7 @@ import {
 import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { limitResetAt } from "./retry-fallback/limit-reset.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
+import { nextRetryWait, type RetryWait } from "./retry-wait.ts";
 import {
 	type RunBackgroundJob,
 	RunBackgroundJobs,
@@ -477,8 +485,16 @@ import {
 	isBuiltinExtensionPath,
 	type ToolDefinitionEntry,
 } from "./runtime/bootstrap.ts";
+import {
+	armedEvalOnlyToolNames,
+	directActiveToolNames,
+	registeredEvalOnlyToolNames,
+	requestedActiveToolNames,
+	resolveEvalOnlyToolNames,
+	toolExposureOf,
+} from "./runtime/active-tools.ts";
 import type { SourceInfo } from "./source-info.ts";
-import { toolInfoOf } from "./tool-info.ts";
+import { toolInfosOf } from "./tool-info.ts";
 import {
 	PendingQueueLedger,
 	type PendingQueueSnapshot,
@@ -529,9 +545,6 @@ import {
 } from "./virtual-models.ts";
 import { CustodyViolation, DeliveryTicketRefused, ENGINE_DELIVERY_KEY_PREFIX } from "./work-obligations.ts";
 
-/** Externally registered tools routed through eval in addition to declared eval exposure. */
-const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["workflow", "monitor"]);
-
 /** Sample eval-cell call for an eval-only tool, using the argument name that tool actually takes. */
 function evalHelperCall(name: string): string {
 	if (name === "bash" || name === "powershell") return `tool.${name}({ command: "..." })`;
@@ -552,6 +565,8 @@ const OVERFLOW_RECOVERY_RUNGS = 2;
 const OVERFLOW_RECOVERY_EXHAUSTED_MESSAGE =
 	"Context overflow recovery failed after two compact-and-retry attempts. Try reducing context or switching to a larger-context model.";
 const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
+/** Abort reason for a retry backoff a manual model change cuts short (senpi#6893). */
+const MANUAL_MODEL_SWITCH_HANDOFF = "manual-model-switch-handoff";
 
 // ============================================================================
 // Skill Invocation Formatting and Parsing (see ./skill-invocation.ts)
@@ -1215,11 +1230,13 @@ export interface ResumeSessionRequest {
 	readonly mode?: "continue" | "release";
 	readonly message?: string;
 	readonly effectId?: string;
+	/** Resume nothing while a person's Stop or a parent's run hold is live: a resume a peer asks for (senpi#7016). */
+	readonly unlessStopped?: boolean;
 }
 
 export interface ResumeSessionAnswer {
 	readonly resumed: boolean;
-	readonly reason?: "stale" | "not_paused" | "resume_through_parent";
+	readonly reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped";
 	readonly parentSessionId?: string;
 	readonly pauseSeq: number;
 	readonly turnStarted: boolean;
@@ -1626,6 +1643,7 @@ export class AgentSession {
 	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
+		heldBy: () => this._peerDeliveryHolds(),
 		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
 		start: (message) =>
 			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
@@ -1737,6 +1755,14 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	private _retryWait: RetryWait | undefined = undefined;
+	/**
+	 * A manual switch landed while a run was live and no request has been prepared on
+	 * the pick since (senpi#6893). A failure arriving now came from a request built
+	 * before the switch, so it is not charged to the pick. Request preparation clears
+	 * it, which holds for virtual picks too, whose responses name physical models.
+	 */
+	private _manualSwitchAwaitingRequest = false;
 	private readonly _requestShapeRecovery = new RequestShapeRecovery();
 	/**
 	 * Failed response that the next request repeats, set by auto-retry and overflow recovery. The
@@ -1871,6 +1897,8 @@ export class AgentSession {
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
 	/** The issuing assistant message of each model-issued call while it runs, for its nested calls (senpi#5234). */
 	private readonly _toolCallIssuers = new Map<string, AssistantMessage>();
+	/** Calls a provider's exec channel (the Cursor bridge) runs for the model, from their preflight to their result. */
+	private readonly _execBridgeToolCalls = new Set<string>();
 	private readonly _toolBarrier = new ToolBarrier((spec) => this._emit({ type: "tool_barrier_expired", ...spec }));
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
@@ -2507,8 +2535,11 @@ export class AgentSession {
 	async preflightToolCall(
 		toolCall: AgentToolCall,
 		args: unknown,
-		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal } = {},
-	) {
+		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal; execBridge?: boolean } = {},
+	): Promise<ToolCallEventResult | undefined> {
+		// The model issued this call through the exec channel: it counts as model-issued until the bridge releases it when
+		// the call ends, however it ends (senpi#6915, senpi#6919).
+		if (options.execBridge) this._execBridgeToolCalls.add(toolCall.id);
 		// Neither wait below has a deadline of its own: one that never settles is logged once, never cut short (senpi#6189).
 		// The call's own `timeout` bounds its execution, not this phase, which includes a human permission decision.
 		const thresholdMs = STALL_WARNING_MS;
@@ -2617,7 +2648,7 @@ export class AgentSession {
 	 */
 	private _getCallableTools(active: ReadonlySet<string> = new Set(this.getActiveToolNames())): AgentTool[] {
 		return [...this._toolRegistry.values()].filter((tool) => {
-			const exposure = this._getToolExposure(tool.name);
+			const exposure = toolExposureOf(this._toolDefinitions, tool.name);
 			return exposure === "search" || exposure === "eval" || (exposure === "direct" && active.has(tool.name));
 		});
 	}
@@ -2681,6 +2712,8 @@ export class AgentSession {
 	private _installAgentRequestProjection(): void {
 		const previousPrepareRequest = this.agent.prepareRequest;
 		this.agent.prepareRequest = async (request, signal) => {
+			// This request is built from the current selection, so it is the pick's own (senpi#6893).
+			this._manualSwitchAwaitingRequest = false;
 			const failed = this._failedResponse;
 			this._failedResponse = undefined;
 			const previous = (await previousPrepareRequest?.(request, signal)) ?? undefined;
@@ -3119,6 +3152,7 @@ export class AgentSession {
 
 	private _emit(event: AgentSessionEvent, captureSource: object = event): void {
 		this._recoveryIdentity?.observe(event);
+		this._retryWait = nextRetryWait(this._retryWait, event, Date.now());
 		const produced = event;
 		if (
 			event.type === "session_paused" ||
@@ -4110,6 +4144,12 @@ export class AgentSession {
 		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 
 		const retryableError = this._isRetryableError(lastAssistant);
+		if (
+			(retryableError || this._isHardErrorFallbackEligible(lastAssistant)) &&
+			this._manualSwitchAwaitingRequest
+		) {
+			return true;
+		}
 		// The retry handler answers an account limit only with the fallback walk, and that walk skips
 		// every rung on the spent provider. Announcing a retry it will not start leaves an RPC client
 		// waiting for a terminal agent_end until the account resets (omo#9711).
@@ -4389,11 +4429,16 @@ export class AgentSession {
 				(isHealthExhaustionFailure(msg.errorMessage) || usageLimitScope(msg.errorMessage) === "account") &&
 				this.model
 			) {
+				// The failure is the model's that produced it, not a model the user picked after it was sent (senpi#6893).
+				const abandoned = this._manualSwitchAwaitingRequest;
+				const failedModel = abandoned ? this.modelRegistry.find(msg.provider, msg.model) : this.model;
 				// Keep the provider's retry-after: without it this re-note replaced a stated reset with a guess (senpi#5568).
-				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, {
-					errorMessage: msg.errorMessage,
-					retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
-				});
+				if (failedModel) {
+					this._retryFallback.noteHealthFailure(failedModel, abandoned ? undefined : this.thinkingLevel, {
+						errorMessage: msg.errorMessage,
+						retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
+					});
+				}
 			}
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
 			const retryAfterRequiredCompaction =
@@ -5281,6 +5326,11 @@ export class AgentSession {
 		return !this._isAgentRunActive;
 	}
 
+	/** The surface this session's prompt is built for; what its host does with a result follows from it. */
+	get promptSurface(): PromptSurface {
+		return this._promptSurface ?? resolvePromptSurface(process.env);
+	}
+
 	/**
 	 * Rebuilds the prompt for another surface (a later `open_session.promptSurface`). The next
 	 * turn's `before_agent_start` hands presets the new surface through `systemPromptOptions`.
@@ -5320,6 +5370,10 @@ export class AgentSession {
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;
+	}
+
+	get retryWait(): RetryWait | undefined {
+		return this._retryWait;
 	}
 
 	/** Abort owner for the current turn boundary, used by internal renderers. */
@@ -5431,7 +5485,13 @@ export class AgentSession {
 	 * Get all configured tools with normalized exposure metadata and source metadata.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolDefinitions.values(), toolInfoOf);
+		return toolInfosOf(
+			this._toolDefinitions,
+			registeredEvalOnlyToolNames(
+				armedEvalOnlyToolNames(this._evalOnlyToolNames, this._toolRegistry),
+				this._toolRegistry,
+			),
+		);
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
@@ -5542,10 +5602,13 @@ export class AgentSession {
 			return result as AgentToolResult<TDetails>;
 		}
 
+		// The rewrite keeps the error flag (the hook's, else the tool's), so a caller sees a failure as one (senpi#6904).
+		const isError = hook.isError ?? result.isError;
 		return {
 			content: hook.content ?? result.content,
 			details: (hook.details ?? result.details) as TDetails,
 			terminate: result.terminate,
+			...(isError === undefined ? {} : { isError }),
 		};
 	}
 
@@ -5581,15 +5644,12 @@ export class AgentSession {
 	}
 
 	private _isEvalOnlyPolicyArmed(): boolean {
-		return this._evalOnlyToolNames !== undefined && this._toolRegistry.has("eval");
+		return armedEvalOnlyToolNames(this._evalOnlyToolNames, this._toolRegistry) !== undefined;
 	}
 
 	/** Resolve fixed and declared eval-only tools, unless an SDK embedder supplied an override. */
 	private _resolveEvalOnlyToolNames(): ReadonlySet<string> {
-		const declaredEvalNames = [...this._toolDefinitions.values()]
-			.filter(({ definition }) => normalizeToolExposure(definition).exposure === "eval")
-			.map(({ definition }) => definition.name);
-		return this._evalOnlyToolNamesOverride ?? new Set([...EVAL_ONLY_TOOL_NAMES, ...declaredEvalNames]);
+		return resolveEvalOnlyToolNames(this._toolDefinitions, this._evalOnlyToolNamesOverride);
 	}
 
 	/**
@@ -5601,7 +5661,7 @@ export class AgentSession {
 	 */
 	private _publishEvalOnlyToolHints(): void {
 		const armed = this._isEvalOnlyPolicyArmed() ? (this._evalOnlyToolNames ?? new Set<string>()) : undefined;
-		const registered = armed ? new Set([...armed].filter((name) => this._toolRegistry.has(name))) : undefined;
+		const registered = armed ? registeredEvalOnlyToolNames(armed, this._toolRegistry) : undefined;
 		for (const name of this._publishedEvalOnlyHintNames) {
 			if (registered?.has(name)) continue;
 			delete this.agent.removedToolHints[name];
@@ -5631,6 +5691,11 @@ export class AgentSession {
 		return this._toolRegistry.get(name);
 	}
 
+	/** The exec-frame call `toolCallId` ended, whether it ran, was blocked or was aborted: it is no longer model-issued. */
+	releaseExecBridgeToolCall(toolCallId: string): void {
+		this._execBridgeToolCalls.delete(toolCallId);
+	}
+
 	/** Cursor exec already ran the tool; still emit tool_result so plan-touch trackers see .omo/plans writes. */
 	async emitExecBridgeToolResult(
 		toolName: string,
@@ -5653,29 +5718,21 @@ export class AgentSession {
 	}
 
 	setActiveToolsByName(toolNames: string[]): void {
-		const tools: AgentTool[] = [];
-		const validToolNames: string[] = [];
-		const policyArmed = this._isEvalOnlyPolicyArmed();
+		const armed = armedEvalOnlyToolNames(this._evalOnlyToolNames, this._toolRegistry);
 		this._publishEvalOnlyToolHints();
-		const policyNames = this._evalOnlyToolNames;
-		let filteredToolNames = toolNames;
-		if (policyArmed && policyNames) {
-			for (const name of toolNames) {
-				if (policyNames.has(name)) this._withheldEvalOnlyToolNames.add(name);
-			}
-			filteredToolNames = toolNames.filter((name) => !policyNames.has(name));
+		const { active: validToolNames, withheld } = directActiveToolNames(
+			toolNames,
+			{ definitions: this._toolDefinitions, toolRegistry: this._toolRegistry },
+			armed,
+		);
+		if (armed) {
+			for (const name of withheld) this._withheldEvalOnlyToolNames.add(name);
 		} else {
 			this._withheldEvalOnlyToolNames.clear();
 		}
 		// Remember the unfiltered request so a later disarm can restore withheld eval-only tools.
 		this._requestedActiveToolNames = [...new Set([...toolNames, ...this._withheldEvalOnlyToolNames])];
-		for (const name of filteredToolNames) {
-			const tool = this._toolRegistry.get(name);
-			if (tool && this._getToolExposure(name) !== "hidden") {
-				tools.push(tool);
-				validToolNames.push(name);
-			}
-		}
+		const tools = validToolNames.flatMap((name) => this._toolRegistry.get(name) ?? []);
 		const activeToolNamesChanged =
 			validToolNames.length !== this.agent.state.tools.length ||
 			validToolNames.some((name, index) => name !== this.agent.state.tools[index]?.name);
@@ -5950,7 +6007,7 @@ export class AgentSession {
 		};
 		const evalOnlyArmed = this._isEvalOnlyPolicyArmed();
 		const armed = evalOnlyArmed ? (this._evalOnlyToolNames ?? new Set<string>()) : new Set<string>();
-		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));
+		const registered = registeredEvalOnlyToolNames(armed, this._toolRegistry);
 		// The eval-only paragraph below states the grep rule for this render, so the grep snippet that
 		// renders the eval-only grep guideline stays out of it (senpi#5335).
 		const { grep: _grepSnippet, ...snippetsWithoutGrep } = toolSnippets;
@@ -7816,6 +7873,9 @@ export class AgentSession {
 			return;
 		}
 		if (itemized !== undefined) this._persistWatchers.set(appMessage, itemized);
+		// senpi#6490: a peer's message continues an unattended session as a person's does, never a silent held notice.
+		const releasedByPeer = !releasedWake && this._peerDeliveryReleasesHold(message.customType, options);
+		if (releasedByPeer) this._engineTurnInput.begin();
 		if (
 			!releasedWake &&
 			this._wakeGateApplies(message.customType, options) &&
@@ -7881,7 +7941,13 @@ export class AgentSession {
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
 				const environmentContext = this._pendingEnvironmentContextMessage();
-				const messages: AgentMessage[] = environmentContext ? [environmentContext, appMessage] : [appMessage];
+				// The wakes a peer's message released ride ahead of it, as they ride ahead of a person's message.
+				const releasedWakes = releasedByPeer ? this._engineTurnInput.messages() : [];
+				const messages: AgentMessage[] = [
+					...(environmentContext ? [environmentContext] : []),
+					...releasedWakes,
+					appMessage,
+				];
 				const queueTriggerForLater = (): void => {
 					// A released wake stays in notice custody until final admission claims it.
 					if (releasedWake) return;
@@ -7941,7 +8007,13 @@ export class AgentSession {
 				if (releasedWake && !releasedWake()) return;
 				const inputOrigin = customTurnOrigin(message.customType);
 				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
-				await this._promptAgent(messages, { inputOrigin, deferredTurnClaim });
+				await this._promptAgent(messages, {
+					inputOrigin,
+					deferredTurnClaim,
+					...(releasedByPeer
+						? { onTurnAdmitted: () => this._engineTurnInput.admit(false, (wake) => this.agent.steer(wake)) }
+						: {}),
+				});
 			} else if (this.isStreaming) {
 				if (options?.ticket) this.workObligations.passive(options.ticket);
 				this._pendingCustomMessages.push(appMessage);
@@ -7952,7 +8024,42 @@ export class AgentSession {
 		} finally {
 			deferredTurnClaim?.resolve("finished-without-start");
 			finishSessionWork?.();
+			// A release no turn admitted gives the holds back; an admitted one settles here or when its run settles.
+			if (releasedByPeer)
+				this._settleInputRelease()?.catch((error: unknown) => {
+					this._sessionLogger.warn("input_release_settle_failed", {
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
 		}
+	}
+
+	/** The holds a peer delivery cannot release (senpi#6490); `externalAdmission` answers `held` with them. */
+	private _peerDeliveryHolds(): HoldKind[] {
+		return holdsKeepingPeerDelivery(
+			this._engineTurnHold.holds,
+			this._lifecycleBinding.controller.requiresHumanContinuation,
+		);
+	}
+
+	/**
+	 * A peer delivery the wake gate would hold, with no hold a peer cannot release, continues the session as a person's
+	 * input does (senpi#6490): an `unattended` hold, or the release barrier of an unattended Resume. `_engineTurnInput.begin()`
+	 * attends the session and releases what it holds, after which `holdsSource` is false; so the admission's `started`
+	 * (no `_peerDeliveryHolds()`) and this gate always agree, and anything else is answered `held`.
+	 */
+	private _peerDeliveryReleasesHold(
+		customType: string,
+		options: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" } | undefined,
+	): boolean {
+		return (
+			customType === SESSION_CONTROL_DELIVERY_TYPE &&
+			options?.triggerTurn === true &&
+			options.deliverAs !== "nextTurn" &&
+			!this.isStreaming &&
+			this._engineTurnHold.holdsSource(engineWakeSource(customType)) &&
+			this._peerDeliveryHolds().length === 0
+		);
 	}
 
 	/**
@@ -8050,7 +8157,9 @@ export class AgentSession {
 				parentSessionId: inherited.parentSessionId,
 				...idle,
 			});
-		if (request.expectedSeq !== undefined && request.expectedSeq !== pauseSeq)
+		if (request.unlessStopped === true && this.automaticInputHoldLive())
+			return answered({ resumed: false, reason: "stopped", ...idle });
+		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
@@ -8369,12 +8478,16 @@ export class AgentSession {
 		});
 	}
 
-	noteAutomaticInput(text: string): boolean {
-		const userHold = this._engineTurnHold.holds.some(
+	/** Whether the user's Stop or a parent's run hold is live: automatic connection input is then kept as a notice. */
+	automaticInputHoldLive(): boolean {
+		return this._engineTurnHold.holds.some(
 			(hold) =>
 				(hold.kind === "session_hold" && hold.key !== "interrupted-run") || hold.kind === "inherited_hold",
 		);
-		if (!userHold) return false;
+	}
+
+	noteAutomaticInput(text: string): boolean {
+		if (!this.automaticInputHoldLive()) return false;
 		const message: CustomMessage = {
 			role: "custom",
 			customType: "rpc-automatic-input",
@@ -9012,6 +9125,25 @@ export class AgentSession {
 	}
 
 	/**
+	 * Takes every queued cross-session delivery out of the queues unwritten and settles it as `clearQueue` does (its
+	 * engine custody cancelled, a send waiting on it failed, its admission dropped), leaving user input queued. An
+	 * interrupt does this once the aborted work settled, so a delivery the aborted run left queued never pins the
+	 * session; its sender redelivers it (oh-my-openagent#14169).
+	 */
+	takeQueuedDeliveries(): void {
+		const removed = this.agent.peekQueuedMessages({ all: true }).filter((queued) => deliveryIdOf(queued) !== undefined);
+		for (const message of removed) this.agent.removeQueuedMessage(message);
+		const tickets = removed.flatMap((message) => {
+			const ticket = message.role === "custom" ? messageTicket(message) : undefined;
+			return ticket === undefined ? [] : [ticket];
+		});
+		this._releaseQueuedDeliveries(tickets, "cleared");
+		this._settleRemovedCarriers(removed);
+		this.externalAdmission.dropQueued();
+		this._emitQueueUpdate();
+	}
+
+	/**
 	 * Clear all queued messages and return them. The non-enumerable `ordered`
 	 * view preserves legacy object equality and native queue semantics.
 	 * @param options.abortWillFollow Mark a non-empty drain so an immediately following abort can emit session_abort.
@@ -9634,16 +9766,15 @@ export class AgentSession {
 			return undefined;
 		}
 
-		// A manual model change abandons any active fallback window; if a fallback
-		// retry sleep is still pending, cancel it so no surprise continuation fires.
-		const hadActiveFallback = this._retryFallback.activeState !== undefined;
+		// A manual model change abandons any active fallback window, and a live retry
+		// loop continues on the picked model rather than ending (senpi#6893).
 		this._probeBackScheduler.cancel("manual-model-change");
 		this._retryFallback.clearForManualModelChange(model);
-		if (hadActiveFallback && this._retryAbortController) {
-			this.abortRetry();
-		}
+		// Re-picking the model already in force changes nothing the retry depends on:
+		// its backoff, retry-after and budget stay.
+		const previousModel = this.model;
 
-		return await this._switchActiveModel(model, {
+		const systemPromptChange = await this._switchActiveModel(model, {
 			persistDefault: updateGlobalDefaults,
 			appendSessionEntry: true,
 			emitModelSelect: true,
@@ -9651,6 +9782,30 @@ export class AgentSession {
 			invalidateCompaction: true,
 			origin,
 		});
+		const modelChanged = previousModel === undefined || !modelsAreEqual(previousModel, model);
+		if (modelChanged && this.model && modelsAreEqual(this.model, model)) this._handOffRetryToManualModel();
+		return systemPromptChange;
+	}
+
+	/**
+	 * A manual model change takes over a live retry loop (senpi#6893): a pending
+	 * backoff is cut so the turn continues at once on the picked model with a fresh
+	 * budget, and a failure still to come from a request already in flight is not
+	 * charged to the picked model. An explicit abort still cancels the retry.
+	 */
+	private _handOffRetryToManualModel(): void {
+		const live = this.isStreaming || this._retryPromise !== undefined;
+		this._manualSwitchAwaitingRequest = live;
+		if (!live) return;
+		if (this._retryAbortController) {
+			this._retryAbortController.abort(MANUAL_MODEL_SWITCH_HANDOFF);
+			return;
+		}
+		// No wait left to cut (the switch landed after it): the next request, on the pick, starts a fresh budget.
+		if (this._retryAttempt > 0) {
+			this._retryAttempt = 1;
+			this._resetHintTierState();
+		}
 	}
 
 	private async _maybeRestoreFallbackPrimary(boundary: "turn" | "continuation" = "turn"): Promise<void> {
@@ -10023,6 +10178,7 @@ export class AgentSession {
 			// has to supersede a held switch itself - otherwise cycling onto a model that
 			// fits leaves an older hold to reclaim the session on the next message.
 			this._clearPendingModelSwitch();
+			if (modelIdentityChanged) this._handOffRetryToManualModel();
 			// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
 			this._emit({
 				type: "model_changed",
@@ -12678,6 +12834,8 @@ export class AgentSession {
 					),
 				executeTool: (callerId, name, args, options) => this._executeNestedToolCall(callerId, name, args, options),
 				getCallableTools: () => this._getCallableTools(),
+				isModelIssuedToolCall: (toolCallId) =>
+					this._toolCallIssuers.has(toolCallId) || this._execBridgeToolCalls.has(toolCallId),
 			},
 			{
 				registerProvider: (name, config, extensionPath) => {
@@ -12755,7 +12913,6 @@ export class AgentSession {
 			createToolContext: (signal) => this._createToolContext(signal),
 			dispatcher: this._toolDispatcher,
 		});
-		const { isAllowedTool } = registry;
 		const definitionRegistry = registry.definitions;
 		this._toolDefinitions = definitionRegistry;
 		this._toolPromptSnippets = new Map(
@@ -12783,51 +12940,20 @@ export class AgentSession {
 				)
 				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
 		);
-		const wrappedExtensionTools = registry.extensionTools;
 		this._toolRegistry = registry.toolRegistry;
 		this._evalOnlyToolNames = this._resolveEvalOnlyToolNames();
 		this._publishEvalOnlyToolHints();
-		const isDirectlyExposed = (name: string): boolean => this._isActivatedOnRegistration(name);
-
-		const nextActiveToolNames = (
-			options?.activeToolNames
-				? [...options.activeToolNames]
-				: [...(this._requestedActiveToolNames ?? previousActiveToolNames)]
-		).filter((name) => {
-			if (!isAllowedTool(name)) return false;
-			const previousRegistrationIds = options?.previousActiveToolRegistrationIds;
-			if (!previousRegistrationIds) return true;
-			const current = this._toolDefinitions.get(name);
-			return (
-				current !== undefined &&
-				previousRegistrationIds.get(name) === deriveExtensionRegistrationId(current.sourceInfo, name)
-			);
-		});
-		// Newly added tools had no previous registration to match, so they skip the identity check.
-		for (const name of options?.addedToolNames ?? []) {
-			if (isAllowedTool(name)) nextActiveToolNames.push(name);
-		}
-
-		if (allowedToolNames) {
-			for (const toolName of this._toolRegistry.keys()) {
-				// Naming a tool activates it even when it is not active by default; a hidden tool never is.
-				if (allowedToolNames.has(toolName) && this._getToolExposure(toolName) !== "hidden") {
-					nextActiveToolNames.push(toolName);
-				}
-			}
-		} else if (options?.includeAllExtensionTools) {
-			for (const tool of wrappedExtensionTools) {
-				if (isDirectlyExposed(tool.name)) nextActiveToolNames.push(tool.name);
-			}
-		} else if (!options?.activeToolNames) {
-			for (const toolName of this._toolRegistry.keys()) {
-				if (!previousRegistryNames.has(toolName) && isDirectlyExposed(toolName)) {
-					nextActiveToolNames.push(toolName);
-				}
-			}
-		}
-
-		this.setActiveToolsByName([...new Set(nextActiveToolNames)]);
+		this.setActiveToolsByName(
+			requestedActiveToolNames(registry, {
+				requested: options?.activeToolNames ?? this._requestedActiveToolNames ?? previousActiveToolNames,
+				explicit: options?.activeToolNames !== undefined,
+				includeAllExtensionTools: options?.includeAllExtensionTools,
+				previousRegistrationIds: options?.previousActiveToolRegistrationIds,
+				addedToolNames: options?.addedToolNames,
+				previousRegistryNames,
+				allowedToolNames,
+			}),
+		);
 	}
 
 	/**
@@ -12853,26 +12979,6 @@ export class AgentSession {
 		this._emit({ type: "tool_barrier_waiting", id: wait.id, toolCallId: toolCall.id, toolName: toolCall.name });
 		await wait.done;
 		return true;
-	}
-
-	/** Normalized exposure of a registered tool (C-EX-1); a name without a definition is `direct`. */
-	private _getToolExposure(name: string): ToolExposure {
-		const entry = this._toolDefinitions.get(name);
-		return entry ? normalizeToolExposure(entry.definition).exposure : "direct";
-	}
-
-	/**
-	 * Whether registering the tool activates it: `direct`, `eval` and `model-only` tools, unless the
-	 * definition sets `defaultActive: false`. `search` tools activate lazily; `hidden` tools never do.
-	 */
-	private _isActivatedOnRegistration(name: string): boolean {
-		const entry = this._toolDefinitions.get(name);
-		if (!entry) return false;
-		const exposure = normalizeToolExposure(entry.definition).exposure;
-		return (
-			(exposure === "direct" || exposure === "eval" || exposure === "model-only") &&
-			entry.definition.defaultActive !== false
-		);
 	}
 
 	private _buildRuntime(options: {
@@ -13209,6 +13315,7 @@ export class AgentSession {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			!this._isLocalFailure(message) &&
+			!this._isRequiredCompactionError(message) &&
 			!isModelConfigFailure(message) &&
 			!this._isClaudeSdkAuthMissError(message) &&
 			!this._isClaudeSdkSameModelRemintError(message) &&
@@ -13418,6 +13525,9 @@ export class AgentSession {
 		const isRefusal = isClassifierRefusal(message);
 		const hardErrorFallback = options.hardErrorFallback === true;
 		const sameModelRemint = options.sameModelRemint === true;
+		// The user switched models while this request was in flight: its failure is the
+		// old model's, so the picked model starts fresh without a fallback walk (senpi#6893).
+		const abandonedModelFailure = this._manualSwitchAwaitingRequest;
 		let switchedFallback = false;
 		let sameModelNativeRecovery = false;
 		let is429TierRouted = false;
@@ -13441,7 +13551,11 @@ export class AgentSession {
 				throw error;
 			}
 		};
-		if (usageLimitScope(errorMessage) === "account") {
+		if (abandonedModelFailure) {
+			this._manualSwitchAwaitingRequest = false;
+			this._retryAttempt = 1;
+			this._resetHintTierState();
+		} else if (usageLimitScope(errorMessage) === "account") {
 			switchedFallback = await tryFallback(isBillingErrorMessage(errorMessage) ? "billing" : "transient", {
 				errorMessage,
 				retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
@@ -13744,7 +13858,8 @@ export class AgentSession {
 			}
 		}
 
-		const providerDelayMs = isRefusal || hardErrorFallback ? undefined : this._getProviderRetryDelayMs(errorMessage);
+		const providerDelayMs =
+			isRefusal || hardErrorFallback || abandonedModelFailure ? undefined : this._getProviderRetryDelayMs(errorMessage);
 		const maxRetryDelayMs = this.settingsManager.getProviderRetrySettings().maxRetryDelayMs;
 		// Profile ceiling null (Kimi) bypasses the over-ceiling error path entirely.
 		const profileCeiling =
@@ -13799,7 +13914,7 @@ export class AgentSession {
 			this._retryRandom(),
 		);
 		const plannedDelayMs =
-			switchedFallback || sameModelNativeRecovery
+			switchedFallback || sameModelNativeRecovery || abandonedModelFailure
 				? 0
 				: is429TierRouted
 					? (hintTierDelayMs ?? providerDelayMs ?? localExponentialMs)
@@ -13827,16 +13942,17 @@ export class AgentSession {
 		const delayMs = Math.min(plannedDelayMs, agentCeilingMs ?? Number.MAX_SAFE_INTEGER);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
+		const retryErrorText =
+			usageLimitScope(errorMessage) === "account"
+				? new AccountUsageLimitError(message.provider, errorMessage).message
+				: errorMessage;
 
 		this._emit({
 			type: "auto_retry_start",
 			attempt: this._retryAttempt,
 			maxAttempts: retryProfile.turn.maxRetries,
 			delayMs,
-			errorMessage:
-				usageLimitScope(errorMessage) === "account"
-					? new AccountUsageLimitError(message.provider, errorMessage).message
-					: errorMessage,
+			errorMessage: retryErrorText,
 		});
 
 		// Remove error message from agent state (keep in session for history)
@@ -13847,23 +13963,38 @@ export class AgentSession {
 		}
 
 		// Wait with exponential backoff (abortable)
+		const retrySignal = this._retryAbortController.signal;
 		try {
-			await sleep(delayMs, this._retryAbortController.signal);
+			await sleep(delayMs, retrySignal);
 		} catch {
-			// Aborted during sleep - emit end event so UI can clean up
-			const attempt = this._retryAttempt;
-			this._retryAttempt = 0;
-			this._resetHintTierState();
-			this._retryAbortController = undefined;
-			await this._emitAgentSettled();
-			this._emit({
-				type: "auto_retry_end",
-				success: false,
-				attempt,
-				finalError: "Retry cancelled",
-			});
-			this._resolveRetry();
-			return "cancelled";
+			if (retrySignal.reason === MANUAL_MODEL_SWITCH_HANDOFF) {
+				// A manual model change cut the backoff: continue now on the picked model with a fresh budget.
+				this._manualSwitchAwaitingRequest = false;
+				this._retryAttempt = 1;
+				this._resetHintTierState();
+				this._emit({
+					type: "auto_retry_start",
+					attempt: this._retryAttempt,
+					maxAttempts: this._resolveRetryProfile().turn.maxRetries,
+					delayMs: 0,
+					errorMessage: retryErrorText,
+				});
+			} else {
+				// Aborted during sleep - emit end event so UI can clean up
+				const attempt = this._retryAttempt;
+				this._retryAttempt = 0;
+				this._resetHintTierState();
+				this._retryAbortController = undefined;
+				await this._emitAgentSettled();
+				this._emit({
+					type: "auto_retry_end",
+					success: false,
+					attempt,
+					finalError: "Retry cancelled",
+				});
+				this._resolveRetry();
+				return "cancelled";
+			}
 		}
 		this._retryAbortController = undefined;
 
