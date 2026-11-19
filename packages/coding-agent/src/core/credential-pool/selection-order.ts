@@ -27,9 +27,12 @@ export function parseAccountStrategy(value: unknown, field: string): AccountStra
 
 function freshLimits(limits: AccountLimits | undefined, now: number): AccountLimits | undefined {
 	if (limits === undefined) return undefined;
-	const reportedAt = Date.parse(limits.reportedAt);
-	if (!Number.isFinite(reportedAt) || now - reportedAt > WEEKLY_TIE_MAX_READING_AGE_MS) {
-		return undefined;
+	for (const window of limits.windows) {
+		if (window.resetsAt !== undefined && Date.parse(window.resetsAt) <= now) continue;
+		const reportedAt = Date.parse(limits.windowReportedAt?.[window.id] ?? limits.reportedAt);
+		if (!Number.isFinite(reportedAt) || now - reportedAt > WEEKLY_TIE_MAX_READING_AGE_MS) {
+			return undefined;
+		}
 	}
 	return limits;
 }

@@ -7,7 +7,8 @@ import {
 } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { loadAnthropicSubscriptionProviderSettings } from "../../../src/core/extensions/builtin/anthropic-subscription/settings.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../../../src/core/settings-manager.ts";
-import { subscriptionLimits } from "../../../src/core/subscription-limits/limit-store.ts";
+import { SubscriptionLimitStore, subscriptionLimits } from "../../../src/core/subscription-limits/limit-store.ts";
+import { claudeWindowsFromSdkEvent } from "../../../src/core/subscription-limits/limit-windows.ts";
 import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const NOW = Date.parse("2026-11-18T00:00:00.000Z");
@@ -166,6 +167,51 @@ describe("Claude weekly reset tie-break", () => {
 			weekly(second.name, 45, 2, { shortUsedPercent: 60 }),
 		]);
 		expect(selectAccount(accounts, { sessionId: key, now: NOW, weeklyResetTieBreak: true }).name).toBe(first.name);
+	});
+
+	it("does not refresh stale weekly readings when only the five-hour window updates", () => {
+		const store = new SubscriptionLimitStore();
+		const recordCompleteReading = (account: string, weeklyResetHours: number) => {
+			store.record(
+				"anthropic-subscription",
+				account,
+				weekly(account, 40, weeklyResetHours, { shortUsedPercent: 10, shortResetHours: 3 }).windows,
+				new Date(NOW),
+			);
+		};
+		recordCompleteReading(first.name, 48);
+		recordCompleteReading(second.name, 12);
+		vi.mocked(subscriptionLimits.snapshot).mockImplementation(() => store.snapshot());
+
+		expect(
+			selectAccount(accounts, { sessionId: key, now: NOW + 60_000, weeklyResetTieBreak: true }).name,
+			"control: a fresh tied weekly reading prefers the earlier reset",
+		).toBe(second.name);
+		expect(
+			selectAccount(accounts, { sessionId: key, now: NOW + 60 * 60_000, weeklyResetTieBreak: true }).name,
+			"guard: the hour-old weekly reading keeps the affinity order",
+		).toBe(first.name);
+
+		vi.setSystemTime(NOW + 60 * 60_000);
+		for (const account of [first.name, second.name]) {
+			store.record(
+				"anthropic-subscription",
+				account,
+				claudeWindowsFromSdkEvent({
+					type: "rate_limit_event",
+					rate_limit_info: {
+						rateLimitType: "five_hour",
+						utilization: 0.12,
+						resetsAt: Math.floor((NOW + 3 * 60 * 60_000) / 1000),
+					},
+				}),
+			);
+		}
+
+		expect(
+			selectAccount(accounts, { sessionId: key, now: NOW + 61 * 60_000, weeklyResetTieBreak: true }).name,
+			"the weekly readings are still 61 minutes old",
+		).toBe(first.name);
 	});
 
 	it("preserves order for stale, expired, missing, near-limit, resident, pinned, ordered, and blocked cases", () => {
