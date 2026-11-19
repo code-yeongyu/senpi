@@ -303,14 +303,18 @@ export function resolveRootObjectSchema(schema: Record<string, unknown>): Record
 	return mergeRootObjectUnion(structuredClone(schema)) ?? schema;
 }
 
-/** Bedrock Converse rejects root combiners, including allOf, even with an object type (#1947). */
-export function normalizeToolParametersForBedrock(schema: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Merge every root combiner into one object schema, for wires that accept only a plain object root:
+ * Bedrock Converse rejects root combiners, including allOf, even with an object type (#1947), and
+ * OpenAI Responses rejects root oneOf/anyOf/allOf with invalid_function_parameters (#7092).
+ */
+export function normalizeToolParametersForObjectRoot(schema: Record<string, unknown>): Record<string, unknown> {
 	let normalized = structuredClone(schema);
 	for (const combiner of COMBINER_KEYS) {
 		const branches = normalized[combiner];
 		if (Array.isArray(branches)) {
 			normalized[combiner] = branches.map((branch) =>
-				isJsonObject(branch) ? normalizeToolParametersForBedrock(branch) : branch,
+				isJsonObject(branch) ? normalizeToolParametersForObjectRoot(branch) : branch,
 			);
 		}
 		normalized = mergeRootObjectUnion(normalized, combiner) ?? normalized;

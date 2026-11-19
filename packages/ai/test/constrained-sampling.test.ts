@@ -188,10 +188,7 @@ describe("constrained tool sampling", () => {
 
 			expect(() => makeStrictJsonSchema(parameters)).toThrow(error);
 			expect(resolveJsonSchemaStrictSampling(tool, true)).toBeUndefined();
-			expect(convertResponsesTools([tool], { supportsStrictMode: true })[0]).toMatchObject({
-				strict: false,
-				parameters,
-			});
+			expect(convertResponsesTools([tool], { supportsStrictMode: true })[0]).toMatchObject({ strict: false });
 
 			tool.constrainedSampling = { type: "json_schema", strict: "require" };
 			expect(() => resolveJsonSchemaStrictSampling(tool, true)).toThrow(error);
