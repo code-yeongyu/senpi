@@ -1,3 +1,66 @@
+## 2026-11-19 - the protocol-info test expects the unload_graceful capability (senpi#7077)
+
+### What changed
+
+- `packages/coding-agent/test/suite/rpc-multi-session-protocol-info.test.ts`: the pinned capability list of "advertises multi-session capability before any session is opened" names `unload_graceful` right after `unload_refuse_deliveries`, where `host-capabilities.ts` emits it.
+
+### Why
+
+- senpi#7046 added the `unload_graceful` host capability and left this test's pinned list as it was, so the forced suite of the 2026.11.19-4 release run failed on one deep-equal (coding-agent shard 10/10).
+
+### Why an extension could not handle it
+
+- The list is asserted by a core test of the host's own `get_protocol_info` answer; no extension surface reaches it.
+
+### Expected merge conflict zones
+
+- LOW: the capability list in this test grows by one line per new host capability.
+
+## 2026-11-19 - The park record says whether the session was live (senpi#7020)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: `HandoverParkedEntry.live?: true`, validated by `isEntry` (older readers ignore it).
+- `packages/coding-agent/src/modes/rpc/session-router-residency.ts`: `recordRetainedSession` takes `live` (default: `resident`); every resident stamp is live.
+- `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts`, `session-router-close.ts`: a handoff drain park and a clean-stop park are live; an idle-sweep park is not; an unload rewrites the entry without it.
+- `packages/coding-agent/src/modes/rpc/session-registry-types.ts`, `session-registry-opening.ts`, `session-registry-attach.ts`, `worker-session-open.ts`, `worker-session-registry.ts`: `RpcSessionOpenOptions.unattached`: an open no connection asked for starts at 0 attachments, and when it lands on an already-open session it adds none. `reopenParked` sets it.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `session-registry-types.ts`, `session-registry-opening.ts`: `reopenParked` opens a live entry with the host-internal launch-profile flag `continued` (never read from the wire), which reaches `session_start` as `continued`, instead of `attended: false`; an entry without `live` reopens unattended as before.
+
+### Why
+
+- The successor could not tell a session that was working when its host went away from one that had been idle-parked, so it held all of them.
+- Every restored session counted one attachment no connection owned and nothing could release: listings showed `attachments: 1` with no client, `host session close` answered `closed: false`, and the next handoff's drain never held the session's automatic turns.
+
+### Why an extension could not handle it
+
+- The park record and the successor's reopen are the RPC host's.
+
+### Expected merge conflict zones
+
+- LOW: one field and one validation line in the park record; one parameter in `recordRetainedSession`; the `reopenParked` body.
+
+## 2026-11-19 - `unload_session { graceful, waitMs }` (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-graceful-close.ts` (new): the fence (hold, closed admission, queued input taken), the event-driven bounded drain, the reopen after an expired drain, and the clean-stop record.
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: `graceful` waits for `turn_active`/`work_pending` instead of refusing or interrupting, and stops `extension_work` cleanly. An expired drain is refused `turn_active` with `timed_out`, `open`, `admission: "reopened"`, `turn` and `waited_ms`. `graceful` with `interrupt` is refused `unsupported`.
+- `packages/coding-agent/src/modes/rpc/admit-external-message-command.ts`: closed admission is refused typed `session_closing`.
+- `packages/coding-agent/src/modes/rpc/session-release-interrupt.ts`: `takeQueuedInput` takes `abortWillFollow`.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `rpc-effect-answer-types.ts`, `rpc-input-validation.ts`, `method-classes-schema-host.ts`, `custom-capability.ts`, `host-capabilities.ts`: the fields, the answer, the validation, the schema and the `unload_graceful` capability.
+
+### Why
+
+- oh-my-openagent#14313.
+
+### Why an extension could not handle it
+
+- `unload_session` is the host's own command.
+
+### Expected merge conflict zones
+
+- LOW: `unloadSession`/`claimAndUnload` in `session-unload.ts`; the unload capability lines in `host-capabilities.ts`.
+
 ## 2026-11-19 - Agent children never inherit the RPC host's identity (senpi#7034)
 
 ### What changed
