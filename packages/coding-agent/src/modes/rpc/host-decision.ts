@@ -21,6 +21,7 @@
 import {
 	compareEngineOrdinal,
 	type EngineBuildIdentity,
+	engineIdentityOf,
 	type EngineOrdinal,
 } from "../../core/engine-build-identity.ts";
 import {
@@ -236,12 +237,8 @@ export function decideHostAction(
 /** A strictly newer build whose extensions cover everything the host loads - the only handoff candidate. */
 function supersedes(client: HostDecisionClient, host: HostProtocolInfo): boolean {
 	if (host.engineOrdinal === undefined) return false;
-	const hostIdentity: EngineBuildIdentity = {
-		text: host.engineVersion ?? "",
-		ordinal: host.engineOrdinal,
-		scheme: host.engineOrdinal[4] > 0 ? "epoch" : "nodef",
-	};
-	if (compareEngineOrdinal(client.identity, hostIdentity) <= 0) return false;
+	if (compareEngineOrdinal(client.identity, engineIdentityOf(host.engineVersion ?? "", host.engineOrdinal)) <= 0)
+		return false;
 	return covers(client.launchProfile, host.launch_profile);
 }
 

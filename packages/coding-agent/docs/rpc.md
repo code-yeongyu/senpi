@@ -1879,6 +1879,13 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
   upgradeable: false }` when they differ; `detail` names both directories. A host from before the field is placed
   by the layout: when the socket is `<dir>/rpc/rpc.sock` and a layout-2 registration under `<dir>` proves a live
   owner, the host belongs to `<dir>`. With neither, the handoff proceeds as before. Nothing is signalled.
+- The successor must not run an OLDER engine than the running host (senpi#7018). `handoffHost` compares the
+  successor's engine (this process's build, or the requester's `target_engine` in an idle handover) with the
+  host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
+  sides carry one; equal and uncomparable builds are not older; version strings are never compared) and refuses
+  `{ action: "refuse", reason: "older_engine", upgradeable: false }` before spawning anything when the
+  successor is strictly older; `detail` names both engines. `allowDowngrade` (`host handoff --allow-downgrade`)
+  is the caller's explicit consent and skips the check. A host that advertises no ordinal is not judged.
 - Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
   dir's default `<dir>/rpc/rpc.sock` (or whose layout-2 record there proves no live owner), cannot be
   placed and stays replaceable through the idle path above. Every host built with the field avoids it.
@@ -1983,7 +1990,11 @@ owns the operation:
 1. a request naming another `agent_dir` than the host's own refuses `foreign_agent_dir` before anything else
    (a request without the field, from a CLI before it existed, is not checked); a request with an `operationId`
    it already holds answers with that operation when the terms match (and `operation_conflict` when they do
-   not); a new operation is checked first against the named generation (`stale_generation`);
+   not); a new operation is checked first against the named generation (`stale_generation`), then refuses
+   `older_engine` when its `target_engine` (`{ text, ordinal }`, the requesting CLI's own engine, which the
+   successor runs) is older than the host's engine by the generation handoff's rule. A request without
+   `target_engine` comes from a CLI before senpi#7018, whose engine predates the guard, and is refused
+   `older_engine` too. `allow_downgrade: true` (`--allow-downgrade`) skips the check;
 2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
    `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
    `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
@@ -2127,7 +2138,7 @@ senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
 senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force]
                       [--expected-generation <json>] [--socket <path>]
-senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
+senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>] [--allow-downgrade]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 senpi host gc         [--json] [--agent-dir <dir>]
