@@ -47,6 +47,8 @@ The `publish-npm` job dispatches `publish-npm.yml` in publish-only mode (passing
 
 The release finishes in whichever half ends last. Build Binaries' `finalize-release` job runs after the smoke and staging, and the publish run's `finalize-github-release` job runs after its `release` job. Both run `scripts/release-finalize.mjs`. The first to see both halves done does one of three things: publishes the draft, opens the smoke rollback issue, or runs the draft cleanup. The other job only logs `-> wait`. So a Build Binaries run can end green while npm is still publishing: watch the publish run too, and look for a failure in either run's finalize job.
 
+Do not dispatch `publish-npm.yml` by hand while the pipeline's own dispatched run is still alive: the second run fails with npm `E409 Cannot publish over previously staged version` (seen on v2026.11.19-5, a manual dispatch 11 seconds after the pipeline's). Dispatch by hand only to recover after that run has failed.
+
 Never consider the release done before the GitHub Release is non-draft and npm shows the version. If the publish run fails, recover with `gh workflow run publish-npm.yml -f version=<v> -f publish-only=true -f build_run_id=<Build Binaries run id>` (the id lets it finish the GitHub Release; without it, publish the draft by hand after `npm view` shows the version), never by rerunning `release.mjs`.
 
 ## Gate disambiguation
