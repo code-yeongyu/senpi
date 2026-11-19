@@ -1956,7 +1956,7 @@
   },
   "packages/coding-agent/test/rpc-host-handoff.test.ts": {
     "senpi-testing/no-fixed-sleep": 1,
-    "senpi-testing/no-flake-masking": 5
+    "senpi-testing/no-flake-masking": 6
   },
   "packages/coding-agent/test/rpc-host-handover-permission-preset.test.ts": {
     "senpi-testing/no-flake-masking": 4

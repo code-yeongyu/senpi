@@ -20,6 +20,8 @@ export interface EndpointFixture {
 	readonly socket: string;
 	readonly notices: string[];
 	readonly wakes: SessionControlWakeEvent[];
+	/** How many times a graceful close asked the terminal to exit. */
+	readonly closes: { count: number };
 	nextWake(reason: SessionControlWakeEvent["reason"], seenAtDrain?: () => boolean): Promise<SessionControlWakeEvent>;
 	setDraft(present: boolean): void;
 }
@@ -45,6 +47,7 @@ export async function startEndpoint(
 		resolve: (event: SessionControlWakeEvent) => void;
 	}> = [];
 	let draft = false;
+	const closes = { count: 0 };
 	const surface: TuiControlSurface = {
 		submissionInFlight: () => false,
 		hasDraft: () => draft,
@@ -57,6 +60,9 @@ export async function startEndpoint(
 		selectThinkingLevel: (level, remember) =>
 			remember ? harness.session.setThinkingLevel(level) : harness.session.setSessionThinkingLevel(level),
 		interruptTurn: () => harness.session.abort(),
+		closeSession: () => {
+			closes.count += 1;
+		},
 	};
 	const drain: SessionControlDrain = async (event) => {
 		wakes.push(event);
@@ -86,6 +92,7 @@ export async function startEndpoint(
 		socket: outcome.endpoint.socket,
 		notices,
 		wakes,
+		closes,
 		nextWake: (reason, seenAtDrain = () => true) =>
 			new Promise((resolve) => waiters.push({ reason, seenAtDrain, resolve })),
 		setDraft: (present) => {

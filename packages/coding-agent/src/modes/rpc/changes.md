@@ -1,3 +1,28 @@
+## 2026-11-19 - Agent children never inherit the RPC host's identity (senpi#7034)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-identity-env.ts`: owns the hand-off list (`HOST_WATCH_ENV_NAMES`, `HOST_HANDOFF_ENV_NAMES`, now also `SENPI_RPC_CLIENT_CAPABILITIES` as `RPC_CLIENT_CAPABILITIES_ENV`), `isHostHandoffEnvName`, `childEnvironmentOf`, the origin name `SENPI_RPC_ORIGIN_HOST_INSTANCE`, `presentInstanceId` and `publishHostInstanceId`. The module stays import-free.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: re-exports `RPC_CLIENT_CAPABILITIES_ENV` from the owner module.
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts`: the watch-name suffixes derive from `HOST_WATCH_ENV_NAMES`.
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: `TRANSIENT_ENV_NAMES` spreads the owner list plus the origin name, and `daemonEnvIsAllowed` also refuses any `isHostHandoffEnvName`.
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: `originHostInstance()` reads the host's own instance id, else the origin.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `runSocketHost` publishes a self-chosen instance id into its env so its children's origin matches what its occupancy compares.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the stdio child's base env is `childEnvironmentOf(process.env)`.
+- `packages/coding-agent/src/modes/rpc/tool-child/client.ts`: the tool child's resolved env goes through `childEnvironmentOf`.
+
+### Why
+
+- A session's shell tool and eval cells showed `SENPI_RPC_HOST_GENERATION`, `_INSTANCE_ID`, `_DAEMON_DIR` and `SENPI_RPC_CLIENT_CAPABILITIES`; a senpi or test harness started from there took the outer host's identity unless the caller scrubbed the env by hand (senpi#7034, senpi#6889).
+
+### Why an extension could not handle it
+
+- The names are written by the host's ensure and supervisor and read by the RPC client; the child environments are built in core before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the touched lines only; upstream has no RPC host hand-off.
+
 ## 2026-11-19 - A handoff never hands a newer-engine host down to an older engine (senpi#7018)
 
 ### What changed

@@ -68,13 +68,17 @@ function openPhysicalWithBarrier(
 /**
  * The successor's reopen of a handoff-parked session: the same open as an `open_session`, with no
  * requesting connection and nothing to reply to (senpi#3368). Resolves `undefined` on success and
- * the failure response otherwise, exactly as an open does.
+ * the failure response otherwise, exactly as an open does. A session that was live when its host ended
+ * continues as that host left it (senpi#7020); any other park reopens unattended, holding automatic turns.
  */
 export function reopenParked(host: RouterContext, entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
-	return open(host, { ...parkedOpenCommand(entry), attended: false }, undefined, {
+	const command = parkedOpenCommand(entry);
+	return open(host, entry.live === true ? command : { ...command, attended: false }, undefined, {
 		reply: false,
 		defaults: false,
 		contextOverlay: entry.contextOverlay,
+		unattached: true,
+		...(entry.live === true ? { continued: true } : {}),
 	});
 }
 
@@ -92,6 +96,10 @@ export async function open(
 		readonly replyAs?: OpenReplyAs;
 		/** An invisible speculative open, published only when its ledger hands it to a caller. */
 		readonly park?: (opened: OpenRpcSession) => void;
+		/** A successor's reopen of a session that was live on its predecessor; never set from the wire. */
+		readonly continued?: boolean;
+		/** No connection asked for this open: it counts no attachment (the successor's restore). */
+		readonly unattached?: boolean;
 	},
 ): Promise<RpcResponse | undefined> {
 	const validated = validatedOpenProfile(host, command, options);
@@ -104,7 +112,11 @@ export async function open(
 	try {
 		// An open that names no folder resumes a session file where its header says, not where this host runs
 		// (senpi#6427). Inside the try: a file it cannot read refuses the open, and that refusal is this open's answer.
-		const profile = { ...validated, cwd: await openSessionFolder(command, validated.cwd) };
+		const profile = {
+			...validated,
+			cwd: await openSessionFolder(command, validated.cwd),
+			...(options?.continued === true ? { continued: true as const } : {}),
+		};
 		// A folder that exists but is a file (or a socket) is refused, typed, before anything is opened or created. A missing
 		// folder, or one this host cannot stat, keeps today's answer from the registry.
 		if ((await stat(profile.cwd).catch(() => undefined))?.isDirectory() === false)
@@ -121,6 +133,8 @@ export async function open(
 				retainOnDisconnect: command.retain_on_disconnect === true,
 				attachOnly: command.expectedHostInstance !== undefined,
 				...(options?.park ? { speculative: true } : {}),
+				// The successor's restore has no requesting connection to own an attachment (senpi#7020).
+				...(options?.unattached === true ? { unattached: true } : {}),
 			},
 		);
 		timer.mark("registry_open");

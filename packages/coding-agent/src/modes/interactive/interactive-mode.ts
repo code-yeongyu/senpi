@@ -4270,6 +4270,8 @@ export class InteractiveMode {
 				interruptTurn: async () => {
 					await this.abortAndFireQueuedMessages();
 				},
+				// After the close's answer is on its way: the quit path disposes the endpoint that sends it.
+				closeSession: () => setImmediate(() => void this.shutdown()),
 			},
 		};
 	}

@@ -14,12 +14,20 @@
  * `nodef` with a zero epoch instead of failing, and an uncomparable pair is
  * then EQUAL, so a build whose age cannot be established never wins a
  * generation handoff.
+ *
+ * The ordinal is ALWAYS written in senpi CalVer (senpi#7040). A distribution that compiles this
+ * engine beside its own package.json (the compiled omo binary reads `{ name: "omo", version:
+ * "5.1.78" }` as `VERSION`) defines `SENPI_ENGINE_VERSION` with the embedded engine's CalVer; without
+ * it such a build advertised `[5, 1, 78, 0, 0]`. An ordinal that is not CalVer names no position in
+ * the release order, so `compareEngineOrdinal` never orders it and `olderEngineDetail` refuses it.
  */
 import { VERSION } from "../config.ts";
 
 /** Compile-time defines; absent outside a `--define`d build, hence the `typeof` guards below. */
 declare const SENPI_BUILD_EPOCH: number | undefined;
 declare const SENPI_BUILD_SHA7: string | undefined;
+/** The embedded senpi's own CalVer, defined by a distribution whose package.json carries its brand version. */
+declare const SENPI_ENGINE_VERSION: string | undefined;
 
 /** `epoch`: the epoch was defined at build time and may break a version tie. `nodef`: it was not. */
 export type EngineOrdinalScheme = "epoch" | "nodef";
@@ -64,7 +72,7 @@ export function engineBuildIdentityFrom(build: EngineBuildInput): EngineBuildIde
 }
 
 const BUILT: EngineBuildIdentity = engineBuildIdentityFrom({
-	version: VERSION,
+	version: typeof SENPI_ENGINE_VERSION === "string" && SENPI_ENGINE_VERSION !== "" ? SENPI_ENGINE_VERSION : VERSION,
 	epoch: typeof SENPI_BUILD_EPOCH === "number" ? SENPI_BUILD_EPOCH : 0,
 	sha7: typeof SENPI_BUILD_SHA7 === "string" ? SENPI_BUILD_SHA7 : "",
 });
@@ -74,13 +82,24 @@ export function engineBuildIdentity(): EngineBuildIdentity {
 	return BUILT;
 }
 
+/** No senpi release predates 2000, so a CalVer ordinal's first part is a year at or after it. */
+const FIRST_CALVER_YEAR = 2000;
+
+/** Whether both ordinals are senpi CalVer, the only vocabulary two builds are ordered in (senpi#7040). */
+export function comparableEngines(a: EngineBuildIdentity, b: EngineBuildIdentity): boolean {
+	return a.ordinal[0] >= FIRST_CALVER_YEAR && b.ordinal[0] >= FIRST_CALVER_YEAR;
+}
+
 /**
  * Orders two builds: `-1` when `a` is older, `1` when newer, `0` when they are equal
  * OR uncomparable. `[y, m, d, n]` is compared lexicographically; the build epoch breaks
  * a tie ONLY when BOTH sides carry one, so a build of unknown age can never outrank a
  * known one - the caller's handoff rule is "strictly greater", and 0 attaches instead.
+ * A pair with an ordinal outside senpi CalVer (an omo version, an unparseable version) is
+ * uncomparable: `[2026, 11, 18]` is not newer than an omo `[5, 1, 78]` that runs a later engine.
  */
 export function compareEngineOrdinal(a: EngineBuildIdentity, b: EngineBuildIdentity): -1 | 0 | 1 {
+	if (!comparableEngines(a, b)) return 0;
 	for (let index = 0; index < 4; index++) {
 		if (a.ordinal[index] !== b.ordinal[index]) return a.ordinal[index] > b.ordinal[index] ? 1 : -1;
 	}
@@ -95,9 +114,14 @@ export function engineIdentityOf(text: string, ordinal: EngineOrdinal): EngineBu
 
 /**
  * Why handing `running` over to `successor` would DOWNGRADE it (senpi#7018), or `undefined` when it would not:
- * the successor is strictly older by `compareEngineOrdinal`. Equal and uncomparable builds are not older.
+ * the successor is strictly older by `compareEngineOrdinal`. Equal builds, and builds uncomparable only for a
+ * missing build epoch, are not older. A pair outside senpi CalVer cannot be proven not older, so it is refused
+ * (senpi#7040): the running host keeps its engine, and an explicit downgrade is the only way past it.
  */
 export function olderEngineDetail(successor: EngineBuildIdentity, running: EngineBuildIdentity): string | undefined {
+	if (!comparableEngines(successor, running)) {
+		return `the successor's engine ${successor.text} [${successor.ordinal.join(",")}] cannot be ordered against the running host's ${running.text} [${running.ordinal.join(",")}]: only two senpi CalVer engine ordinals are comparable`;
+	}
 	return compareEngineOrdinal(successor, running) < 0
 		? `the successor's engine ${successor.text} is older than the running host's ${running.text}`
 		: undefined;
