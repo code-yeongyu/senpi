@@ -9,11 +9,11 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import type { SessionClosedRecord } from "../../core/session-closed.ts";
 import { type ReleaseDropped, takeQueuedInput } from "./session-release-interrupt.ts";
 
-export const GRACEFUL_CLOSE_DEFAULT_WAIT_MS = 60_000;
-export const GRACEFUL_CLOSE_MAX_WAIT_MS = 600_000;
+const GRACEFUL_CLOSE_DEFAULT_WAIT_MS = 60_000;
+const GRACEFUL_CLOSE_MAX_WAIT_MS = 600_000;
 
 /** What `admit_external_message` refuses with (`session_closing`) while a graceful close drains. */
-export const GRACEFUL_ADMISSION_CLOSED =
+const GRACEFUL_ADMISSION_CLOSED =
 	"session_closing: the session is closing on request and takes no new deliveries";
 
 export interface GracefulDrainPort {
