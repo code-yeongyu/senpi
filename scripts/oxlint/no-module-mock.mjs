@@ -2,19 +2,22 @@
 // Module-mock half of no-test-doubles from interfere-inc/landmines 0.1.0 (MIT, Copyright (c) 2026
 // Interfere, Inc.), packages/landmines/src/rules/no-test-doubles.ts: vi.mock, vi.doMock and jest.mock
 // keep upstream's detection, including its `{ spy: true }` observation exception. Upstream does not
-// know bun:test, so bun's mock.module is added here. Per-file counts are pinned in the lint ratchet.
+// know bun:test, so bun's mock.module and its vi.mock alias are added here. Per-file counts are pinned
+// in the lint ratchet.
 
-// Where each mocking object comes from, and the methods on it that replace a whole module.
-const frameworks = [
-	{ module: "bun:test", exports: ["mock"], globals: [], methods: ["module"] },
-	{ module: "vitest", exports: ["vi", "vitest"], globals: ["vi", "vitest"], methods: ["mock", "doMock"] },
-	{
-		module: "@jest/globals",
-		exports: ["jest"],
-		globals: ["jest"],
-		methods: ["mock", "doMock", "unstable_mockModule"],
-	},
+// Each mocking object (a module's export, also a global when the runner injects it) and the methods on
+// it that replace a whole module. bun:test's `vi.mock` is an alias of `mock.module`.
+const mockers = [
+	{ module: "bun:test", name: "mock", global: false, methods: ["module"] },
+	{ module: "bun:test", name: "vi", global: false, methods: ["mock"] },
+	{ module: "vitest", name: "vi", global: true, methods: ["mock", "doMock"] },
+	{ module: "vitest", name: "vitest", global: true, methods: ["mock", "doMock"] },
+	{ module: "@jest/globals", name: "jest", global: true, methods: ["mock", "doMock", "unstable_mockModule"] },
 ];
+
+const mockerOf = (module, name) => mockers.find((mocker) => mocker.module === module && mocker.name === name);
+
+const testModules = new Set(mockers.map((mocker) => mocker.module));
 
 const isNode = (value) => typeof value === "object" && value !== null && typeof Reflect.get(value, "type") === "string";
 
@@ -61,7 +64,8 @@ const identifier = (node) => {
 
 // A require function: `require` itself, or one made inline by `createRequire(import.meta.url)`.
 const isRequire = (initial) => {
-	const node = unwrap(initial);
+	const node = initial === undefined ? undefined : unwrap(initial);
+	if (node === undefined) return false;
 	if (identifier(node) === "require") return true;
 	return node.type === "CallExpression" && identifier(child(node, "callee")) === "createRequire";
 };
@@ -73,8 +77,6 @@ const loadedModule = (initial) => {
 	if (node.type !== "CallExpression" || !isRequire(child(node, "callee"))) return null;
 	return nameOf(nodes(node, "arguments")[0]);
 };
-
-const frameworkOf = (module) => frameworks.find((framework) => framework.module === module);
 
 // upstream: `vi.mock(path, { spy: true })` keeps the real module and only observes it.
 const observes = (call) => {
@@ -115,24 +117,27 @@ const noModuleMock = {
 			const node = unwrap(initial);
 			if (node.type === "Identifier") {
 				const name = String(node["name"]);
-				const bound = objects.get(name);
-				if (bound !== undefined || imported.has(name)) return bound;
-				return frameworks.find((framework) => framework.globals.includes(name));
+				if (objects.has(name) || imported.has(name)) return objects.get(name);
+				return mockers.find((mocker) => mocker.global && mocker.name === name);
 			}
 			if (node.type !== "MemberExpression") return undefined;
-			const framework = namespaces.get(identifier(child(node, "object")) ?? "");
-			return framework !== undefined && framework.exports.includes(propertyName(node) ?? "") ? framework : undefined;
+			return mockerOf(namespaces.get(identifier(child(node, "object")) ?? "") ?? null, propertyName(node));
 		};
 
-		const namespaceOf = (node) => frameworkOf(loadedModule(node)) ?? namespaces.get(identifier(node) ?? "");
+		const loadedTestModule = (node) => {
+			const module = loadedModule(node);
+			return module !== null && testModules.has(module) ? module : null;
+		};
 
-		const bindExports = (pattern, framework) => {
+		const namespaceOf = (node) => loadedTestModule(node) ?? namespaces.get(identifier(node) ?? "") ?? null;
+
+		const bindExports = (pattern, module) => {
 			for (const property of nodes(pattern, "properties")) {
-				const exported = property.type === "Property" ? nameOf(child(property, "key")) : null;
-				if (exported === null || !framework.exports.includes(exported)) continue;
+				const mocker = property.type === "Property" ? mockerOf(module, nameOf(child(property, "key"))) : undefined;
+				if (mocker === undefined) continue;
 				const value = child(property, "value");
 				const local = value?.type === "AssignmentPattern" ? child(value, "left") : value;
-				if (local?.type === "Identifier") objects.set(String(local["name"]), framework);
+				if (local?.type === "Identifier") objects.set(String(local["name"]), mocker);
 			}
 		};
 
@@ -145,31 +150,31 @@ const noModuleMock = {
 			if (id.type === "Identifier") {
 				const name = String(id["name"]);
 				const object = objectOf(init);
-				const namespace = frameworkOf(loadedModule(init));
+				const module = loadedTestModule(init);
 				if (object !== undefined) objects.set(name, object);
-				else if (namespace !== undefined) namespaces.set(name, namespace);
+				else if (module !== null) namespaces.set(name, module);
 			} else if (id.type === "ObjectPattern") {
-				const framework = namespaceOf(init);
-				if (framework !== undefined) bindExports(id, framework);
+				const module = namespaceOf(init);
+				if (module !== null) bindExports(id, module);
 			}
 			return objects.size + namespaces.size > before;
 		};
 
 		return {
 			ImportDeclaration: (node) => {
-				const framework = node["importKind"] === "type" ? undefined : frameworkOf(nameOf(child(node, "source")));
+				const source = nameOf(child(node, "source"));
+				const module = node["importKind"] !== "type" && source !== null && testModules.has(source) ? source : null;
 				for (const specifier of nodes(node, "specifiers")) {
 					const local = nameOf(child(specifier, "local"));
 					if (local === null) continue;
 					imported.add(local);
-					if (framework === undefined) continue;
-					if (specifier.type === "ImportNamespaceSpecifier") namespaces.set(local, framework);
-					else if (
-						specifier.type === "ImportSpecifier" &&
-						specifier["importKind"] !== "type" &&
-						framework.exports.includes(nameOf(child(specifier, "imported")) ?? "")
-					)
-						objects.set(local, framework);
+					if (module === null) continue;
+					if (specifier.type === "ImportNamespaceSpecifier") namespaces.set(local, module);
+					const mocker =
+						specifier.type === "ImportSpecifier" && specifier["importKind"] !== "type"
+							? mockerOf(module, nameOf(child(specifier, "imported")))
+							: undefined;
+					if (mocker !== undefined) objects.set(local, mocker);
 				}
 			},
 			VariableDeclarator: (node) => {
@@ -184,10 +189,10 @@ const noModuleMock = {
 				while (bound) bound = declarators.map(bind).includes(true);
 				for (const call of calls) {
 					const callee = unwrap(child(call, "callee"));
-					const framework = objectOf(child(callee, "object"));
+					const mocker = objectOf(child(callee, "object"));
 					const method = propertyName(callee) ?? "";
-					if (framework === undefined || !framework.methods.includes(method)) continue;
-					if (framework.module !== "bun:test" && method !== "unstable_mockModule" && observes(call)) continue;
+					if (mocker === undefined || !mocker.methods.includes(method)) continue;
+					if (mocker.module === "vitest" && observes(call)) continue;
 					context.report({ node: call, messageId: "module" });
 				}
 			},
