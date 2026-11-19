@@ -46,3 +46,17 @@ export function nextRetryWait(
 	if (event.type === "agent_start" || event.type === "auto_retry_end") return undefined;
 	return previous;
 }
+
+/**
+ * The wait as a listing publishes it: the typed kind and its timing, never the provider's error text, which
+ * stays on `get_state` and on `session_status`.
+ */
+export function redactedRetryWait(wait: RetryWait): RetryWait {
+	return {
+		kind: wait.kind,
+		attempt: wait.attempt,
+		maxAttempts: wait.maxAttempts,
+		delayMs: wait.delayMs,
+		until: wait.until,
+	};
+}

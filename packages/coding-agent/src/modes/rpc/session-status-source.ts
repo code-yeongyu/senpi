@@ -5,6 +5,7 @@
  * and file before the registry's own metadata sync runs.
  */
 import { isSessionArchived } from "../../core/session-archived.ts";
+import { redactedRetryWait } from "../../core/retry-wait.ts";
 import { readSessionSettled, type SettledFields, settledFields } from "../../core/session-settled.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
@@ -88,6 +89,8 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 /**
  * The `list_sessions` row fields, read from the same sources a `session_status` row is derived from. A row shows
  * only whether a turn runs, its retry wait and the model, so it reads those and never the queue or question counts.
+ * The wait is redacted: a listing reaches every connection that can list sessions, so it carries the typed kind
+ * and its timing but never the provider's error text, which stays on `get_state` and on `session_status`.
  */
 export function sessionRowStatusFields(
 	entry: RpcSessionEntry,
@@ -96,7 +99,8 @@ export function sessionRowStatusFields(
 	const state = entry.worker?.snapshot?.state;
 	const streaming = session !== undefined ? session.isStreaming === true : state?.isStreaming === true;
 	const model = modelOf(session !== undefined ? session.model : (state?.model ?? undefined));
-	const waiting = streaming ? (session !== undefined ? session.retryWait : state?.retryWait) : undefined;
+	const wait = streaming ? (session !== undefined ? session.retryWait : state?.retryWait) : undefined;
+	const waiting = wait === undefined ? undefined : redactedRetryWait(wait);
 	return {
 		archived: entryView(entry).archived === true,
 		...(settledOf(entry) ?? { settled: false }),
