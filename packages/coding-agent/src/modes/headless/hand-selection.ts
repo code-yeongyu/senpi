@@ -41,7 +41,7 @@ export const HAND_SELECTION_ENTRY = "hand_selection";
 export type HandRefusal = "hand_not_listed" | "hand_unreachable" | "session_busy";
 
 export interface HandSession {
-	readonly agent: Pick<Agent, "toolHost">;
+	readonly agent: Pick<Agent, "toolHost" | "subscribe">;
 	/** A run copies its ToolHost when it starts, so the choice changes only between runs. */
 	readonly isStreaming: boolean;
 	readonly sessionManager: Pick<SessionManager, "appendCustomEntry" | "getEntries">;
@@ -130,10 +130,11 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 	) => {
 		const state = stateOf(durableSessionId, session);
 		state.remote?.close();
-		sessions.set(durableSessionId, { own: state.own, device, remote: remote?.host, linked: remote?.linked ?? false });
-		// The hand cannot see this session's transcript, so the session's page budget is applied here (senpi#6921).
-		session.agent.toolHost =
-			remote === undefined ? state.own : gate(durableSessionId, withHandPageBudget(remote.host, session));
+		// The hand cannot see this session's transcript, so the session's page budget is applied here (senpi#6921). The
+		// budget is what the session keeps and closes, so it stops listening for the session's runs with the link (senpi#6932).
+		const host = remote === undefined ? undefined : withHandPageBudget(remote.host, session);
+		sessions.set(durableSessionId, { own: state.own, device, remote: host, linked: remote?.linked ?? false });
+		session.agent.toolHost = host === undefined ? state.own : gate(durableSessionId, host);
 		options.onChange?.(durableSessionId, device);
 	};
 

@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentToolCall, ToolHost } from "@earendil-works/pi-agent-core";
+import type { Agent, AgentEvent, AgentToolCall, ToolHost } from "@earendil-works/pi-agent-core";
 import type { JsonObject, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
 import {
@@ -11,6 +11,8 @@ import {
 
 /** The brain session whose transcript a hand's pages join. */
 export interface HandPageBudgetSession {
+	/** Its runs: when one ends, every page it handed is recorded or never will be. */
+	readonly agent: Pick<Agent, "subscribe">;
 	readonly sessionManager: HandedPageSession;
 	readonly promptSurface: PromptSurface;
 }
@@ -26,7 +28,6 @@ interface PageOverride {
 /** What the page's result says without its content: the decision is made once per call, the content kept per copy. */
 interface PageDowngrade {
 	readonly text: string;
-	readonly path: string;
 	readonly details: JsonObject;
 }
 
@@ -44,13 +45,24 @@ const isJsonObject = (value: unknown): value is JsonObject =>
  * A hand (brain/hand split) runs show_html_page without the session's transcript, so it holds a page to the per-page
  * cap alone. This wraps the brain's ToolHost for that hand and applies the session's page budget to each page the hand
  * hands back, before its result is emitted or recorded: a page over the budget is handed as written, its own text saying
- * so, and whatever the hand's `tool_result` handlers added stays (senpi#6921, senpi#6928).
+ * so, and whatever the hand's `tool_result` handlers added stays (senpi#6921, senpi#6928). The wrapper holds the pages it
+ * let through until they are recorded; it empties that ledger when a run of the session ends, as the extension does with
+ * its own, and `close` ends it with the session's link to the hand (senpi#6932).
  */
-export function withHandPageBudget(host: ToolHost, session: HandPageBudgetSession): ToolHost {
-	// A hand is installed only between runs, so this ledger never outlives the pages it holds by more than one run.
+export function withHandPageBudget(
+	host: ToolHost & { close(): void },
+	session: HandPageBudgetSession,
+): ToolHost & { close(): void } {
 	const pending: PendingHandedPages = new Map();
+	const unsubscribe = session.agent.subscribe((event) => {
+		if (event.type === "agent_end") pending.clear();
+	});
 	return {
 		...(host.deviceFiles === undefined ? {} : { deviceFiles: host.deviceFiles.bind(host) }),
+		close() {
+			unsubscribe();
+			host.close();
+		},
 		async execute(call, options) {
 			// One decision per call: the result's tool_execution_end, its message events and the returned message agree.
 			const decisions = new Map<string, PageDowngrade | undefined>();
@@ -90,11 +102,12 @@ function budgetedEvent(
 }
 
 /**
- * The page's own text is the text part that names its saved copy; it alone is replaced, and every other part (what a
- * hand-side `tool_result` handler added) stays where it is. A result whose page text is gone gets the text first.
+ * The page's own text is the first text part of the result: show_html_page emits exactly one text part, first, and a
+ * hand-side `tool_result` handler that rewrites it keeps it there. It alone is replaced, whatever it now says, and every
+ * other part (what a handler added) stays where it is. A result with no text part gets the text first (senpi#6932).
  */
 function applied(downgrade: PageDowngrade, content: ResultContent): PageOverride {
-	const own = content.findIndex((part) => part.type === "text" && part.text.includes(downgrade.path));
+	const own = content.findIndex((part) => part.type === "text");
 	const text = { type: "text" as const, text: downgrade.text };
 	return {
 		content: own === -1 ? [text, ...content] : content.map((part, index) => (index === own ? text : part)),
@@ -122,7 +135,6 @@ function overBudget(
 	const reservation = reserveHandedPage(session.sessionManager, pending, toolCallId, details.html.length);
 	if (reservation.inlined) return undefined;
 	return {
-		path: details.path,
 		text: handedPageText({
 			path: details.path,
 			shown: session.promptSurface === "app",
