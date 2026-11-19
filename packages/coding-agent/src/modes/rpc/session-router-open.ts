@@ -111,7 +111,7 @@ export async function open(
 	const command = forked?.command ?? requested;
 	const validated = forked === undefined ? asked : validatedOpenProfile(host, command, options);
 	if ("type" in validated) {
-		forked?.discard();
+		await forked?.discard();
 		return validated;
 	}
 	let opened: OpenRpcSession | undefined;
@@ -284,7 +284,7 @@ export async function open(
 			if (!opened.attached || !compactUpdatesEnabled()) host.writer.forgetSession(opened.sessionId);
 		}
 		// A fork that could not be opened leaves no file behind: the caller gets the refusal, never an orphan copy.
-		forked?.discard();
+		await forked?.discard();
 		if (cause instanceof CompactAdmissionError) throw cause;
 		return error(command.id, "open_session", code(cause), detail(cause));
 	}

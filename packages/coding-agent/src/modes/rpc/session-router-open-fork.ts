@@ -9,7 +9,7 @@
  * carries is `fork_source_not_local` (it may live on another device or agent dir), and a path with no readable session
  * file, or an id two files carry, is `fork_source_not_found`. A fork never falls back to a plain new session.
  */
-import { existsSync, rmSync } from "node:fs";
+import { rm, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { readHeaderCwd } from "../../core/session-header-cwd.ts";
 import { getDefaultSessionDir, SessionManager } from "../../core/session-manager.ts";
@@ -27,7 +27,7 @@ type OpenSessionCommand = Extract<RpcCommand, { type: "open_session" }>;
 /** The open a fork becomes: the same command, now naming the fork's file and folder. `discard` removes that file. */
 export interface ForkedOpen {
 	readonly command: OpenSessionCommand;
-	discard(): void;
+	discard(): Promise<void>;
 }
 
 interface ForkSource {
@@ -41,7 +41,8 @@ async function forkSource(
 	agentDir: string | undefined,
 ): Promise<ForkSource | { readonly refused: string; readonly detail?: string }> {
 	if (isAbsolute(forkFrom)) {
-		if (!existsSync(forkFrom)) return { refused: FORK_SOURCE_NOT_FOUND, detail: "no session file at this path" };
+		if ((await stat(forkFrom).catch(() => undefined))?.isFile() !== true)
+			return { refused: FORK_SOURCE_NOT_FOUND, detail: "no session file at this path" };
 		return { path: forkFrom, cwd: await readHeaderCwd(forkFrom) };
 	}
 	if (agentDir === undefined) return { refused: FORK_SOURCE_NOT_LOCAL, detail: "this host keeps no session folder" };
@@ -101,6 +102,6 @@ export async function forkForOpen(
 	const { forkFrom: _forkFrom, ...open } = command;
 	return {
 		command: { ...open, sessionPath: file, cwd },
-		discard: () => rmSync(file, { force: true }),
+		discard: () => rm(file, { force: true }),
 	};
 }
