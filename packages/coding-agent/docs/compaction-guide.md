@@ -136,7 +136,7 @@ Configure compaction in `~/.senpi/agent/settings.json` (global) or `.senpi/setti
 
 [settings.md](settings.md#compaction) lists every `compaction` key with its type and default. The three you are most likely to change:
 
-- `compaction.enabled`: `false` leaves threshold compaction to you. A provider-rejected context overflow still runs the one-shot compact-and-retry recovery.
+- `compaction.enabled`: `false` leaves threshold compaction to you. Two safety nets stay on: a prompt that would not fit inside the reserve is still compacted first, and a provider-rejected context overflow still runs the one-shot compact-and-retry recovery.
 - `compaction.reserveTokens`: tokens held back for the LLM's response. Lower values allow more context but risk truncation.
 - `compaction.keepRecentTokens`: how much recent conversation stays unsummarized. Higher values preserve more detail, but each compaction frees less, so the next one comes sooner.
 
