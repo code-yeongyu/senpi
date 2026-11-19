@@ -96,7 +96,10 @@ export class SessionLifecycleController {
 				this.ownTask = report;
 		}
 		// Before crash recovery reads consumed custody as an interrupted run (senpi#4848).
-		this.obligations.settleEndedRuns(this.ledger.runId);
+		this.obligations.settleEndedRuns(
+			this.ledger.runId,
+			this.ledger.runId !== undefined && this.ledger.runId === options.endedRunId,
+		);
 	}
 
 	get snapshot(): SessionLifecycle {

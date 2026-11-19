@@ -25,6 +25,8 @@ export function validatePauseCommand(value: Command): string | undefined {
 			return 'mode must be "continue" or "release".';
 		if (value.message !== undefined && typeof value.message !== "string") return "message must be a string.";
 		if (value.effectId !== undefined && !nonEmpty(value.effectId)) return "effectId must be 1-256 characters.";
+		if (value.unlessStopped !== undefined && typeof value.unlessStopped !== "boolean")
+			return "unlessStopped must be a boolean.";
 	}
 	if (value.type === "hold_input") {
 		if (!nonEmpty(value.inputId) || !seq(value.revision) || typeof value.text !== "string")

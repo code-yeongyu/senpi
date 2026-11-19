@@ -1229,11 +1229,13 @@ export interface ResumeSessionRequest {
 	readonly mode?: "continue" | "release";
 	readonly message?: string;
 	readonly effectId?: string;
+	/** Resume nothing while a person's Stop or a parent's run hold is live: a resume a peer asks for (senpi#7016). */
+	readonly unlessStopped?: boolean;
 }
 
 export interface ResumeSessionAnswer {
 	readonly resumed: boolean;
-	readonly reason?: "stale" | "not_paused" | "resume_through_parent";
+	readonly reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped";
 	readonly parentSessionId?: string;
 	readonly pauseSeq: number;
 	readonly turnStarted: boolean;
@@ -8148,6 +8150,8 @@ export class AgentSession {
 				parentSessionId: inherited.parentSessionId,
 				...idle,
 			});
+		if (request.unlessStopped === true && this.automaticInputHoldLive())
+			return answered({ resumed: false, reason: "stopped", ...idle });
 		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
