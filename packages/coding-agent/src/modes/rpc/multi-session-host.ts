@@ -237,8 +237,10 @@ export function createHostCore(
 				hostInstance: hostInstanceId(),
 				hostSocket: endpointSocket,
 				...(hooks.shouldReopenParked !== undefined ? { shouldReopen: hooks.shouldReopenParked } : {}),
+				onProgress: (state) => router.setInheritedHandover(state),
 			},
 		).catch((cause: unknown) => {
+			router.setInheritedHandover(undefined);
 			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
 		});
 	const gate = new HostCoreGate(registry, (command) => router.handle(command), {
