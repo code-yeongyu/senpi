@@ -62,7 +62,11 @@ export async function forkForOpen(
 	const forkFrom = command.forkFrom;
 	if (forkFrom === undefined) return undefined;
 	if (forkFrom.trim() === "")
-		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: forkFrom must be a non-empty string`);
+		return error(
+			command.id,
+			"open_session",
+			`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: forkFrom must be a non-empty string`,
+		);
 	if (command.sessionPath !== undefined)
 		return error(
 			command.id,

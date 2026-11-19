@@ -116,7 +116,11 @@ describe.each<[string, { readonly workers?: boolean }]>([
 
 		const refused = await peer.send({ type: "open_session", forkFrom: missing });
 
-		expect(refused).toMatchObject({ success: false, error: "fork_source_not_found", errorData: { forkFrom: missing } });
+		expect(refused).toMatchObject({
+			success: false,
+			error: "fork_source_not_found",
+			errorData: { forkFrom: missing },
+		});
 		expect(await listedPaths()).toEqual(listed);
 	});
 
