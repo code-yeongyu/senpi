@@ -14,6 +14,7 @@
     "typescript/ban-ts-comment": "error",
     "typescript/no-non-null-assertion": "error",
     "senpi-testing/no-fixed-sleep": "error",
-    "senpi-testing/no-flake-masking": "error"
+    "senpi-testing/no-flake-masking": "error",
+    "senpi-testing/no-module-mock": "error"
   }
 }

@@ -156,6 +156,9 @@
   "packages/agent/test/agent.test.ts": {
     "senpi-testing/no-fixed-sleep": 6
   },
+  "packages/agent/test/execution/hand-conformance-vacuity.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/agent/test/harness/compaction.test.ts": {
     "typescript/no-non-null-assertion": 4
   },
@@ -173,6 +176,9 @@
   },
   "packages/agent/test/harness/jsonl-v3-stream.test.ts": {
     "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/test/harness/nodejs-env-listdir-race.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/agent/test/harness/nodejs-env.test.ts": {
     "senpi-testing/no-fixed-sleep": 2,
@@ -374,14 +380,29 @@
   "packages/ai/test/anthropic-adjacent-user-tool-result-coalesce.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/ai/test/anthropic-auth-token.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/anthropic-claude-oauth-token-refused.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/anthropic-eager-tool-input-e2e.test.ts": {
     "senpi-testing/no-flake-masking": 2
+  },
+  "packages/ai/test/anthropic-federation.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/anthropic-long-cache-retention-e2e.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/ai/test/anthropic-on-payload-headers.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/anthropic-opus-4-8-smoke.test.ts": {
     "senpi-testing/no-flake-masking": 2
+  },
+  "packages/ai/test/anthropic-root-union-tool-schema.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/anthropic-thinking-binding-e2e.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -389,23 +410,55 @@
   "packages/ai/test/anthropic-thinking-disable.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
+  "packages/ai/test/anthropic-tool-choice-compat.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/anthropic-tool-reference-native-search.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
   "packages/ai/test/assistant-message-frame.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/ai/test/azure-openai-base-url.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/bai-live.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
+  "packages/ai/test/bai-routing.test.ts": {
+    "senpi-testing/no-module-mock": 3
+  },
+  "packages/ai/test/bedrock-cache-write-1h-cost.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/bedrock-convert-messages.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-explicit-any": 4,
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/bedrock-credentials.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/bedrock-custom-headers.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/bedrock-endpoint-resolution.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/bedrock-error-metadata.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/bedrock-models.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/ai/test/bedrock-producer-capture.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/bedrock-raw-stop-reason.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/bedrock-redacted-reasoning.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-explicit-any": 2,
     "typescript/no-non-null-assertion": 5
   },
@@ -416,6 +469,9 @@
   "packages/ai/test/cache-retention.test.ts": {
     "typescript/no-explicit-any": 17,
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/cli-installation-id.test.ts": {
+    "senpi-testing/no-module-mock": 3
   },
   "packages/ai/test/context-overflow.test.ts": {
     "senpi-testing/no-flake-masking": 36,
@@ -450,13 +506,30 @@
     "typescript/no-non-null-assertion": 2
   },
   "packages/ai/test/github-copilot-anthropic.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 2
   },
   "packages/ai/test/glm-5.3-thinking.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 4
+  },
+  "packages/ai/test/google-interleave-capture.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/google-producer-capture.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/google-raw-stop-reason.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/google-thinking-disable.test.ts": {
     "senpi-testing/no-flake-masking": 18
+  },
+  "packages/ai/test/google-vertex-api-key-resolution.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/google.provider-native.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/gpt-6-astra-catalog.test.ts": {
     "typescript/no-non-null-assertion": 2
@@ -470,11 +543,17 @@
   "packages/ai/test/images-models.test.ts": {
     "typescript/no-non-null-assertion": 8
   },
+  "packages/ai/test/images-registry-builtins.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/ai/test/images.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
   "packages/ai/test/interleaved-thinking.test.ts": {
     "senpi-testing/no-flake-masking": 4
+  },
+  "packages/ai/test/live-api-gates.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/max-thinking.test.ts": {
     "typescript/no-non-null-assertion": 3
@@ -482,23 +561,73 @@
   "packages/ai/test/message-types.test.ts": {
     "typescript/no-explicit-any": 1
   },
+  "packages/ai/test/model-switch-replay-policy-table.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/model-types.test.ts": {
     "typescript/no-non-null-assertion": 7
   },
   "packages/ai/test/models-runtime.test.ts": {
     "senpi-testing/no-fixed-sleep": 4
   },
+  "packages/ai/test/oauth-no-anthropic-flow.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-completions-cache-control-format.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-completions-cache-creation-usage.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/openai-completions-empty-tools.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 11
   },
+  "packages/ai/test/openai-completions-prompt-cache.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-completions-provider-stream-event.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-completions-raw-stop-reason.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-completions-reasoning-details.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-completions-response-model.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-completions-retry.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-completions-thinking-token-budget.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-completions-thought-signature-replay.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/openai-completions-tool-choice.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 54
+  },
+  "packages/ai/test/openai-completions-vllm-priority.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/openai-config-update.test.ts": {
     "typescript/no-explicit-any": 6
   },
   "packages/ai/test/openai-fast-models.test.ts": {
     "typescript/no-non-null-assertion": 48
+  },
+  "packages/ai/test/openai-images-2-5.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-images-output-options.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openai-images.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/openai-responses-cache-affinity-e2e.test.ts": {
     "senpi-testing/no-flake-masking": 1,
@@ -511,7 +640,11 @@
     "senpi-testing/no-flake-masking": 3,
     "typescript/no-explicit-any": 11
   },
+  "packages/ai/test/openai-responses-terminal-event.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/openai-responses-tool-choice.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 1
   },
   "packages/ai/test/openai-responses-tool-result-images.test.ts": {
@@ -520,6 +653,12 @@
   "packages/ai/test/openrouter-cache-write-repro.test.ts": {
     "senpi-testing/no-flake-masking": 2,
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/openrouter-images-cache-creation-usage.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/openrouter-images.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/openrouter-oauth.test.ts": {
     "typescript/no-non-null-assertion": 1
@@ -530,12 +669,24 @@
   "packages/ai/test/pi-messages.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/ai/test/producer-capture.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/provider-error-body-passthrough.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/ai/test/provider-error-body-regression.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/ai/test/provider-scope-two-copies.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
   "packages/ai/test/providers.test.ts": {
     "senpi-testing/no-fixed-sleep": 1,
     "typescript/no-non-null-assertion": 7
+  },
+  "packages/ai/test/qwen-token-plan-models.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/responseid.test.ts": {
     "senpi-testing/no-flake-masking": 22,
@@ -560,6 +711,9 @@
     "typescript/no-explicit-any": 2,
     "typescript/no-non-null-assertion": 1
   },
+  "packages/ai/test/tool-call-middleware/anthropic-xml-stream-resource.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/ai/test/tool-call-middleware/context-transformer.test.ts": {
     "typescript/no-explicit-any": 1
   },
@@ -571,6 +725,12 @@
   },
   "packages/ai/test/tool-call-middleware/invoke-recovery-native-lifecycle-cases.ts": {
     "typescript/no-non-null-assertion": 3
+  },
+  "packages/ai/test/tool-call-middleware/invoke-recovery-resource-edge.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/ai/test/tool-call-middleware/invoke-recovery-resource.test.ts": {
+    "senpi-testing/no-module-mock": 2
   },
   "packages/ai/test/tool-call-middleware/invoke-recovery-snapshot-cancel-cases.ts": {
     "typescript/no-non-null-assertion": 4
@@ -594,6 +754,9 @@
   },
   "packages/ai/test/unicode-surrogate.test.ts": {
     "senpi-testing/no-flake-masking": 188
+  },
+  "packages/ai/test/xai-completions.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/ai/test/xai-responses.test.ts": {
     "typescript/no-non-null-assertion": 2
@@ -1028,6 +1191,9 @@
   "packages/coding-agent/src/modes/rpc/session-event-writer-lanes.ts": {
     "typescript/no-non-null-assertion": 1
   },
+  "packages/coding-agent/src/modes/rpc/tool-child/channel-root-sweep.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/src/modes/rpc/tool-child/client-start.test.ts": {
     "senpi-testing/no-flake-masking": 6
   },
@@ -1081,7 +1247,8 @@
     "senpi-testing/no-flake-masking": 3
   },
   "packages/coding-agent/src/modes/rpc/tool-child/socket-root-proof.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/src/modes/rpc/tool-child/teardown-recording.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -1097,6 +1264,12 @@
   },
   "packages/coding-agent/src/utils/image-resize-core.ts": {
     "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/4765-cursor-baseurl-notice.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/account-dir-fallback.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/agent-session-auto-compaction-queue.test.ts": {
     "typescript/no-non-null-assertion": 9
@@ -1137,11 +1310,17 @@
   "packages/coding-agent/test/anthropic-subscription-affinity.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/coding-agent/test/anthropic-subscription-availability.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/anthropic-subscription-claude-cli-auth-windows.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
   "packages/coding-agent/test/anthropic-subscription-claude-cli-real-linux.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/anthropic-subscription-connection-check.test.ts": {
+    "senpi-testing/no-module-mock": 2
   },
   "packages/coding-agent/test/anthropic-subscription-credential-refresh.test.ts": {
     "typescript/no-non-null-assertion": 2
@@ -1169,6 +1348,9 @@
   "packages/coding-agent/test/anthropic-subscription-unconfirmed-binding.test.ts": {
     "typescript/no-non-null-assertion": 10
   },
+  "packages/coding-agent/test/auth-lock-cpu-spin.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/auth-storage.test.ts": {
     "senpi-testing/no-fixed-sleep": 9
   },
@@ -1176,7 +1358,11 @@
     "senpi-testing/no-flake-masking": 4
   },
   "packages/coding-agent/test/bounded-realpath.test.ts": {
-    "senpi-testing/no-flake-masking": 3
+    "senpi-testing/no-flake-masking": 3,
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/branch-summarization.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/branded-format-resume-command.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -1203,16 +1389,32 @@
     "typescript/no-non-null-assertion": 9
   },
   "packages/coding-agent/test/clipboard-image-bmp-conversion.test.ts": {
+    "senpi-testing/no-module-mock": 2,
     "typescript/no-non-null-assertion": 2
   },
+  "packages/coding-agent/test/clipboard-image-native-errors.test.ts": {
+    "senpi-testing/no-module-mock": 3
+  },
+  "packages/coding-agent/test/clipboard-image.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/coding-agent/test/clipboard-paste-file-paths.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/clipboard.test.ts": {
+    "senpi-testing/no-module-mock": 3,
     "typescript/no-non-null-assertion": 4
   },
   "packages/coding-agent/test/compaction-extensions-example.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-explicit-any": 3,
     "typescript/no-non-null-assertion": 1
   },
+  "packages/coding-agent/test/compaction-summary-reasoning.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/compaction.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 4
   },
   "packages/coding-agent/test/compaction/cache-replay-cli.test.ts": {
@@ -1223,6 +1425,9 @@
   },
   "packages/coding-agent/test/compaction/context-reduction-cache-replay.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/compaction/emergency-prune-trim.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/compaction/fixtures/estimate-cache-key-bun.ts": {
     "typescript/no-non-null-assertion": 1
@@ -1258,6 +1463,12 @@
   "packages/coding-agent/test/compaction/warm-summary-reuse.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/compile-cache-invocation.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/config-reload-watch-engine.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/config-value-migration.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
@@ -1274,11 +1485,20 @@
   "packages/coding-agent/test/cursor-cli-oauth/transport.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/default-global-extension-fast-path.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/default-tools-setting.test.ts": {
     "typescript/no-non-null-assertion": 4
   },
+  "packages/coding-agent/test/diff-intraline-no-diffwords.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/edit-tool-legacy-input.test.ts": {
     "typescript/no-non-null-assertion": 9
+  },
+  "packages/coding-agent/test/execute-tool.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/execution/hooks-on-executor.test.ts": {
     "senpi-testing/no-flake-masking": 3
@@ -1307,11 +1527,20 @@
   "packages/coding-agent/test/extensions-input-event.test.ts": {
     "typescript/no-explicit-any": 7
   },
+  "packages/coding-agent/test/extensions-loader.test.ts": {
+    "senpi-testing/no-module-mock": 5
+  },
   "packages/coding-agent/test/extensions-runner.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
   "packages/coding-agent/test/extensions/bun-native-importer.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/extensions/extension-module-cache.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/extensions/loader-importer-lifecycle.test.ts": {
+    "senpi-testing/no-module-mock": 3
   },
   "packages/coding-agent/test/extensions/pi-engine.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -1320,16 +1549,30 @@
     "typescript/no-explicit-any": 1
   },
   "packages/coding-agent/test/filesystem-policy-canonicalize.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/filesystem-policy.test.ts": {
     "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/first-time-setup-fork.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/first-time-setup.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/fixtures/rpc-classic-harness.ts": {
     "typescript/no-explicit-any": 2
   },
   "packages/coding-agent/test/footer-data-provider-watch-fallback.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 3
+  },
+  "packages/coding-agent/test/footer-data-provider.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/footer-token-format.test.ts": {
+    "senpi-testing/no-module-mock": 2
   },
   "packages/coding-agent/test/git-merge-and-resolve-extension.test.ts": {
     "typescript/no-non-null-assertion": 1
@@ -1346,6 +1589,9 @@
   },
   "packages/coding-agent/test/hand/describe-tools.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/hand/hand-lifecycle-hooks.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/hand/loopless-worker-isolate.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -1372,7 +1618,8 @@
     "senpi-testing/no-flake-masking": 1
   },
   "packages/coding-agent/test/helpers/fixture-ready-missed-event.test.ts": {
-    "senpi-testing/no-flake-masking": 2
+    "senpi-testing/no-flake-masking": 2,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/helpers/fixture-ready.test.ts": {
     "senpi-testing/no-flake-masking": 7
@@ -1389,6 +1636,9 @@
   "packages/coding-agent/test/image-processing.test.ts": {
     "typescript/no-non-null-assertion": 22
   },
+  "packages/coding-agent/test/image-resize-callers.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/input-transform-streaming-example.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
@@ -1401,7 +1651,17 @@
     "typescript/no-explicit-any": 8
   },
   "packages/coding-agent/test/interactive-mode-clipboard-paste.test.ts": {
+    "senpi-testing/no-module-mock": 3,
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/interactive-mode-exit-command.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/interactive-mode-image-submission.test.ts": {
+    "senpi-testing/no-module-mock": 3
+  },
+  "packages/coding-agent/test/interactive-mode-startup-input.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/interactive-mode-status.test.ts": {
     "typescript/no-explicit-any": 77
@@ -1409,11 +1669,20 @@
   "packages/coding-agent/test/interactive-mode-tree-navigation.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/coding-agent/test/interactive-session-control-submission-order.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/interactive-tui.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/interactive-w3.test.ts": {
     "typescript/no-non-null-assertion": 4
   },
   "packages/coding-agent/test/jev-router-example.test.ts": {
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/list-models-fast-path.test.ts": {
+    "senpi-testing/no-module-mock": 4
   },
   "packages/coding-agent/test/manual-qa/4213-skill-loading.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -1425,17 +1694,30 @@
     "typescript/no-explicit-any": 3
   },
   "packages/coding-agent/test/manual-qa/persistent-monitor-restart.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-explicit-any": 5
   },
   "packages/coding-agent/test/manual-qa/unload-session-memory.test.ts": {
     "senpi-testing/no-fixed-sleep": 1,
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/mcp/3858-reference-trust.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/mcp/4013-dispose-inflight-connect.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/mcp/catalog-cache-merge.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/mcp/idle.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
   "packages/coding-agent/test/mcp/list-changed-non-shared-catalog.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/mcp/modern-mrtr-lifecycle.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/mcp/oauth-race.test.ts": {
     "senpi-testing/no-flake-masking": 2
@@ -1446,11 +1728,20 @@
   "packages/coding-agent/test/mcp/presenter-rpc.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/mcp/presenter-secret-sealed-worker.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/mcp/startup-race-single-registration.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
   "packages/coding-agent/test/mcp/token-store.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/micro-runtime-lock-loss-tool.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/coding-agent/test/micro-runtime-lock-loss.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/model-registry.test.ts": {
     "typescript/no-explicit-any": 1,
@@ -1519,6 +1810,9 @@
   "packages/coding-agent/test/package-manager.test.ts": {
     "typescript/no-explicit-any": 85
   },
+  "packages/coding-agent/test/permission/4351-case-sensitive-links.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/permission/approved-cross-session-live.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
@@ -1540,6 +1834,9 @@
   "packages/coding-agent/test/permission/full-access-settings-live.test.ts": {
     "senpi-testing/no-flake-masking": 5
   },
+  "packages/coding-agent/test/permission/monitor-parser-parent.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/permission/path-identity-host.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
@@ -1555,6 +1852,12 @@
   "packages/coding-agent/test/permission/tool-scope-allow-always.test.ts": {
     "senpi-testing/no-flake-masking": 5
   },
+  "packages/coding-agent/test/print-mode-fallback-notice.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/print-mode.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/process-teardown.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
@@ -1564,11 +1867,23 @@
   "packages/coding-agent/test/provider-rename-coexistence.test.ts": {
     "typescript/no-non-null-assertion": 3
   },
+  "packages/coding-agent/test/pty-bash-streaming.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/pty-runtime-onoutput.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/pty-runtime-screen-errors.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/read-summary-parity.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
   "packages/coding-agent/test/recovered-toolcall-session-roundtrip.test.ts": {
     "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/restore-sandbox-env.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/reverse-bridge.test.ts": {
     "senpi-testing/no-flake-masking": 7
@@ -1580,6 +1895,7 @@
     "senpi-testing/no-flake-masking": 1
   },
   "packages/coding-agent/test/rpc-classic-compat.test.ts": {
+    "senpi-testing/no-module-mock": 3,
     "typescript/no-non-null-assertion": 3
   },
   "packages/coding-agent/test/rpc-client-provider-model-args.test.ts": {
@@ -1589,6 +1905,7 @@
     "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/test/rpc-get-media.test.ts": {
+    "senpi-testing/no-module-mock": 3,
     "typescript/no-non-null-assertion": 2
   },
   "packages/coding-agent/test/rpc-handoff-activity.test.ts": {
@@ -1601,7 +1918,8 @@
     "senpi-testing/no-flake-masking": 8
   },
   "packages/coding-agent/test/rpc-host-endpoint-identity-no-link.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/rpc-host-endpoint-identity.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -1702,6 +2020,9 @@
   "packages/coding-agent/test/rpc-host-supersession-announce.test.ts": {
     "senpi-testing/no-flake-masking": 7
   },
+  "packages/coding-agent/test/rpc-host-teardown-order.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/rpc-host-zero-session-trim-real.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
@@ -1714,7 +2035,11 @@
   "packages/coding-agent/test/rpc-multi-session-events.test.ts": {
     "typescript/no-non-null-assertion": 21
   },
+  "packages/coding-agent/test/rpc-multi-session-input.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/rpc-multi-session-isolation.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 4
   },
   "packages/coding-agent/test/rpc-open-bypath-record-clear.test.ts": {
@@ -1724,6 +2049,7 @@
     "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/test/rpc-prompt-response-semantics.test.ts": {
+    "senpi-testing/no-module-mock": 3,
     "typescript/no-explicit-any": 1,
     "typescript/no-non-null-assertion": 1
   },
@@ -1767,14 +2093,23 @@
   "packages/coding-agent/test/sdk-session-manager.test.ts": {
     "typescript/no-non-null-assertion": 8
   },
+  "packages/coding-agent/test/session-event-writer-socket-fanout.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/session-id-readonly.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/test/session-import/jsonl-import-sqlite.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
+  "packages/coding-agent/test/session-info-format.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/session-info-modified-timestamp.test.ts": {
     "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/session-manager-header-write.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/session-manager/2537-reduce-history.test.ts": {
     "typescript/no-non-null-assertion": 1
@@ -1785,10 +2120,17 @@
   "packages/coding-agent/test/session-manager/3519-reopen-keeps-compaction-window.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/coding-agent/test/session-manager/append-failure-partial-write.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/session-manager/atomic-rewrite.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/session-manager/build-context.test.ts": {
     "typescript/no-explicit-any": 21
   },
   "packages/coding-agent/test/session-manager/compacted-session-reopen.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 7
   },
   "packages/coding-agent/test/session-manager/custom-session-id.test.ts": {
@@ -1813,6 +2155,9 @@
   "packages/coding-agent/test/session-manager/session-open-state.test.ts": {
     "typescript/no-non-null-assertion": 3
   },
+  "packages/coding-agent/test/session-manager/torn-tail-recovery.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/session-manager/tree-traversal.test.ts": {
     "typescript/no-explicit-any": 4,
     "typescript/no-non-null-assertion": 12
@@ -1829,8 +2174,17 @@
   "packages/coding-agent/test/session-selector-rename.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
+  "packages/coding-agent/test/settings-lock-cpu-spin.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/settings-lock-free-reads.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/settings-save-under-held-lock.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/settings-storage-lock.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/socket-event-fanout.test.ts": {
     "senpi-testing/no-fixed-sleep": 5
@@ -1843,6 +2197,9 @@
   },
   "packages/coding-agent/test/streaming-reveal.test.ts": {
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/6820-credential-proxy-fail-closed.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts": {
     "senpi-testing/no-fixed-sleep": 1
@@ -1865,6 +2222,9 @@
   },
   "packages/coding-agent/test/suite/agent-session-runtime.test.ts": {
     "typescript/no-non-null-assertion": 15
+  },
+  "packages/coding-agent/test/suite/agent-session-tool-result-images.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/ask-user-answer-chip.test.ts": {
     "typescript/no-non-null-assertion": 4
@@ -1897,11 +2257,20 @@
   "packages/coding-agent/test/suite/background-event-burst.test.ts": {
     "typescript/no-non-null-assertion": 3
   },
+  "packages/coding-agent/test/suite/bash-eval-only.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/bash-redaction-integration.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/builtin-slash-command-dispatch.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/cache-keepalive.test.ts": {
     "typescript/no-explicit-any": 5
+  },
+  "packages/coding-agent/test/suite/eval-only-prompt-contributions.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/extension-child-process-default-path.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -1913,6 +2282,7 @@
     "typescript/no-non-null-assertion": 10
   },
   "packages/coding-agent/test/suite/extension-runner-herdr.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 2
   },
   "packages/coding-agent/test/suite/fast-mode-persistence.test.ts": {
@@ -1920,6 +2290,9 @@
   },
   "packages/coding-agent/test/suite/fragment-record-fixtures.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/glob-eval-only.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/goal-continuation-context-exclusion.test.ts": {
     "typescript/no-non-null-assertion": 1
@@ -1933,6 +2306,9 @@
   "packages/coding-agent/test/suite/goal-extension.test.ts": {
     "typescript/no-explicit-any": 3
   },
+  "packages/coding-agent/test/suite/goal-store.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/goal-todo-owed-backstop.test.ts": {
     "senpi-testing/no-flake-masking": 16
   },
@@ -1945,6 +2321,9 @@
   "packages/coding-agent/test/suite/gpt-apply-patch-extension.test.ts": {
     "typescript/no-non-null-assertion": 3
   },
+  "packages/coding-agent/test/suite/grep-eval-only.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/handoff-hint.test.ts": {
     "typescript/no-explicit-any": 6,
     "typescript/no-non-null-assertion": 4
@@ -1952,11 +2331,19 @@
   "packages/coding-agent/test/suite/herdr-reporter.test.ts": {
     "typescript/no-non-null-assertion": 11
   },
+  "packages/coding-agent/test/suite/herdr-resume-argv.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/hooks-trust-storage-aba.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/hooks-trust-storage-errors.test.ts": {
-    "senpi-testing/no-flake-masking": 2
+    "senpi-testing/no-flake-masking": 2,
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/coding-agent/test/suite/hooks-trust-storage-release-errors.test.ts": {
+    "senpi-testing/no-module-mock": 2
   },
   "packages/coding-agent/test/suite/hooks-trust.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -1976,6 +2363,9 @@
   "packages/coding-agent/test/suite/host-cli-stop.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
+  "packages/coding-agent/test/suite/host-cli-support.test.ts": {
+    "senpi-testing/no-module-mock": 3
+  },
   "packages/coding-agent/test/suite/host-cli-win32.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
@@ -1991,6 +2381,9 @@
   "packages/coding-agent/test/suite/host-session-cli.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/host-session-command.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/host-session-park.test.ts": {
     "senpi-testing/no-flake-masking": 3
   },
@@ -2003,8 +2396,20 @@
   "packages/coding-agent/test/suite/host-startup-wire.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/host-stop-generation-identity.test.ts": {
+    "senpi-testing/no-module-mock": 5
+  },
+  "packages/coding-agent/test/suite/host-stop-generation.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/huge-transcript-render.test.ts": {
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/imagegen-eval-only.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/interactive-mode-scoped-settings.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/internal-role-bootstrap.test.ts": {
     "senpi-testing/no-flake-masking": 2
@@ -2024,8 +2429,27 @@
   "packages/coding-agent/test/suite/loop-status.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/coding-agent/test/suite/loop-store.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/moved-path-guard-deadlines.test.ts": {
-    "senpi-testing/no-fixed-sleep": 1
+    "senpi-testing/no-fixed-sleep": 1,
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/moved-path-guard-home-alias.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/coding-agent/test/suite/moved-path-guard-io.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/moved-path-guard-log.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/moved-path-guard-step-timeouts.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/coding-agent/test/suite/moved-path-guard-trust-race.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/moved-path-worker-open.test.ts": {
     "senpi-testing/no-flake-masking": 5
@@ -2042,20 +2466,42 @@
   "packages/coding-agent/test/suite/process-identity.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/prompt-presets-gemini-4-argon.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/prompt-presets-generation.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/prompt-presets-shared-sections.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/suite/reasoning-commands.test.ts": {
     "typescript/no-non-null-assertion": 3
   },
   "packages/coding-agent/test/suite/regressions/0000-multi-session-theme-init.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/regressions/0000-rules-find-project-root-cross-drive.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/coding-agent/test/suite/regressions/0000-rules-finder-cross-drive-project-scope.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/suite/regressions/10304-anthropic-subscription-retry-cached-prefix.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/1089-webfetch-bun-body-discard.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/11437-skill-scan-per-open.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/1290-rpc-host-ensure-startup-error.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
   "packages/coding-agent/test/suite/regressions/1370-rpc-internal-socket-mkdir.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/1432-anthropic-subscription-failover-reattach.test.ts": {
     "senpi-testing/no-flake-masking": 1,
@@ -2063,6 +2509,9 @@
   },
   "packages/coding-agent/test/suite/regressions/1432-anthropic-subscription-observation-emit-once.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/1437-thinking-command-dispatch.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/1472-anthropic-subscription-resident-eval-summary.test.ts": {
     "typescript/no-non-null-assertion": 3
@@ -2086,17 +2535,26 @@
   "packages/coding-agent/test/suite/regressions/1850-pathless-session-reservation.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/regressions/1852-embedded-skill-read.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/1891-prefixed-gpt-patch-tools.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/test/suite/regressions/1893-superseded-generation-drain.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/regressions/1930-rpc-continue-from-leaf.test.ts": {
+    "senpi-testing/no-module-mock": 3
+  },
   "packages/coding-agent/test/suite/regressions/1971-queued-input-dequeue-edit.test.ts": {
     "typescript/no-non-null-assertion": 5
   },
   "packages/coding-agent/test/suite/regressions/2023-queued-slash-command-followup.test.ts": {
     "senpi-testing/no-fixed-sleep": 1
+  },
+  "packages/coding-agent/test/suite/regressions/2249-bare-skill-namespace-submit.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/2285-drain-dir-removed-host.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2117,6 +2575,7 @@
     "senpi-testing/no-flake-masking": 5
   },
   "packages/coding-agent/test/suite/regressions/2441-bedrock-ambient-compaction.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-explicit-any": 1
   },
   "packages/coding-agent/test/suite/regressions/2480-anthropic-subscription-cold-seed-overflow-ladder.test.ts": {
@@ -2148,7 +2607,11 @@
     "senpi-testing/no-flake-masking": 6
   },
   "packages/coding-agent/test/suite/regressions/2729-close-before-reservation-removal.test.ts": {
-    "senpi-testing/no-flake-masking": 3
+    "senpi-testing/no-flake-masking": 3,
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/2729-close-bounded-when-claim-removal-hangs.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/2746-anthropic-subscription-single-compaction-owner.test.ts": {
     "senpi-testing/no-flake-masking": 5
@@ -2158,6 +2621,9 @@
   },
   "packages/coding-agent/test/suite/regressions/2835-tools-allowlist-filters-extension-tools.test.ts": {
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/2848-sdk-boundary-cwd.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/2860-replaced-session-context.test.ts": {
     "typescript/no-non-null-assertion": 2
@@ -2177,6 +2643,9 @@
   },
   "packages/coding-agent/test/suite/regressions/3044-rpc-owner-lifetime.test.ts": {
     "senpi-testing/no-flake-masking": 6
+  },
+  "packages/coding-agent/test/suite/regressions/3067-recovery-keeps-original.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/308-skill-composition.test.ts": {
     "typescript/no-non-null-assertion": 19
@@ -2202,6 +2671,9 @@
   "packages/coding-agent/test/suite/regressions/3272-rpc-host-self-client.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
+  "packages/coding-agent/test/suite/regressions/3285-state-file-windows-rename.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/3370-subscription-limits-review.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
@@ -2209,7 +2681,8 @@
     "senpi-testing/no-flake-masking": 1
   },
   "packages/coding-agent/test/suite/regressions/3392-owner-record-adoption.test.ts": {
-    "senpi-testing/no-flake-masking": 2
+    "senpi-testing/no-flake-masking": 2,
+    "senpi-testing/no-module-mock": 2
   },
   "packages/coding-agent/test/suite/regressions/3408-subscription-requested-window.test.ts": {
     "senpi-testing/no-flake-masking": 5
@@ -2226,11 +2699,27 @@
   "packages/coding-agent/test/suite/regressions/3483-print-prompt-sizes-cli.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
+  "packages/coding-agent/test/suite/regressions/3483-print-prompt-sizes.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/3483-review-accounting.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/3485-failed-entry-build-releases-path.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/3524-share-modes.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/suite/regressions/3534-get-entries-pages.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/coding-agent/test/suite/regressions/3560-cli-idle-handover-agent-dir-check.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/3560-foreign-agent-dir-handoff.test.ts": {
-    "senpi-testing/no-flake-masking": 3
+    "senpi-testing/no-flake-masking": 3,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/3560-foreign-agent-dir-idle-handover.test.ts": {
     "senpi-testing/no-flake-masking": 2
@@ -2256,6 +2745,15 @@
   "packages/coding-agent/test/suite/regressions/3711-quit-process-exit.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/regressions/3796-grants-store.test.ts": {
+    "senpi-testing/no-module-mock": 3
+  },
+  "packages/coding-agent/test/suite/regressions/3796-skill-read-swap.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/coding-agent/test/suite/regressions/3816-idle-supervisor-poll-spawns.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/3853-engine-turn-window.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
@@ -2264,6 +2762,9 @@
   },
   "packages/coding-agent/test/suite/regressions/3853-unattended-reopen-goal.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/3858-reference-files.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/3863-queued-person-input.test.ts": {
     "typescript/no-non-null-assertion": 1
@@ -2277,8 +2778,17 @@
   "packages/coding-agent/test/suite/regressions/3864-lifecycle-freshness.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
+  "packages/coding-agent/test/suite/regressions/4047-resume-skill-read-window.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/4084-exhaustion-primary-failure.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/4085-goal-outlasts-limited-accounts.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/4213-linear-skill-loading.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/4219-subscription-auto-memory.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2419,7 +2929,8 @@
     "senpi-testing/no-flake-masking": 2
   },
   "packages/coding-agent/test/suite/regressions/4272-event-lease-encoding-cost.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/4272-event-lease-ruling81.test.ts": {
     "senpi-testing/no-flake-masking": 5
@@ -2435,6 +2946,9 @@
   },
   "packages/coding-agent/test/suite/regressions/4272-generation-replacement.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/4272-generation-reservations.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/4272-generation-socket.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2490,8 +3004,20 @@
   "packages/coding-agent/test/suite/regressions/4272-recovery-components.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/regressions/4272-recovery-cursors.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/4272-recovery-death-proof.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/4272-recovery-gate-wiring.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/4272-recovery-golden-nodes.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/4272-recovery-golden-pages.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/4272-recovery-page-wire.test.ts": {
     "senpi-testing/no-flake-masking": 3
@@ -2505,6 +3031,9 @@
   "packages/coding-agent/test/suite/regressions/4272-recovery-token.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
+  "packages/coding-agent/test/suite/regressions/4272-root-owner-spawn-failure.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/4272-rpc-client-admission-errors.test.ts": {
     "senpi-testing/no-flake-masking": 5
   },
@@ -2512,7 +3041,14 @@
     "senpi-testing/no-flake-masking": 2
   },
   "packages/coding-agent/test/suite/regressions/4272-session-generations.test.ts": {
-    "senpi-testing/no-flake-masking": 3
+    "senpi-testing/no-flake-masking": 3,
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/4272-structured-capture-boundary.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/4272-structured-lane-google-index.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/4272-structured-page-io.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2547,11 +3083,17 @@
   "packages/coding-agent/test/suite/regressions/4272-terminated-worker-channel.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/regressions/4272-transcript-identity.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/4272-unknown-admission.test.ts": {
     "senpi-testing/no-flake-masking": 4
   },
   "packages/coding-agent/test/suite/regressions/4272-worker-acceptance-cut.test.ts": {
     "senpi-testing/no-flake-masking": 2
+  },
+  "packages/coding-agent/test/suite/regressions/4272-worker-commit-modes.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/4272-worker-correlation-order.test.ts": {
     "senpi-testing/no-flake-masking": 2
@@ -2580,11 +3122,17 @@
   "packages/coding-agent/test/suite/regressions/4272-zero-retention-construction-paths.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
+  "packages/coding-agent/test/suite/regressions/4295-session-recovered-notice.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/4304-anthropic-subscription-cache-holder-affinity.test.ts": {
     "senpi-testing/no-flake-masking": 3
   },
   "packages/coding-agent/test/suite/regressions/4410-resume-signed-out-provider-keeps-model.test.ts": {
     "senpi-testing/no-flake-masking": 3
+  },
+  "packages/coding-agent/test/suite/regressions/4436-test-provider-account.test.ts": {
+    "senpi-testing/no-module-mock": 3
   },
   "packages/coding-agent/test/suite/regressions/4559-round-cache-bound.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2597,6 +3145,9 @@
   },
   "packages/coding-agent/test/suite/regressions/470-eval-bridge-event-queue-deadlock.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/477-recursive-watch-main-thread-stall.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/494-anthropic-subscription-installed-sdk-hook-stop.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2658,6 +3209,9 @@
   "packages/coding-agent/test/suite/regressions/5374-old-session-reused-id.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/regressions/5433-extension-oauth-prompt-input.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/5475-remote-dialog-origin.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
@@ -2670,8 +3224,14 @@
   "packages/coding-agent/test/suite/regressions/5702-rpc-reply-any-depth.test.ts": {
     "senpi-testing/no-flake-masking": 4
   },
+  "packages/coding-agent/test/suite/regressions/5728-entry-points-reach-prepared.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/suite/regressions/5728-socket-host-reaches-prepared.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/5731-startup-submit-replays.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/5778-hand-late-results.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2684,6 +3244,9 @@
   },
   "packages/coding-agent/test/suite/regressions/5840-headless-entry.test.ts": {
     "senpi-testing/no-flake-masking": 2
+  },
+  "packages/coding-agent/test/suite/regressions/5868-rpc-unknown-command-id.test.ts": {
+    "senpi-testing/no-module-mock": 3
   },
   "packages/coding-agent/test/suite/regressions/5898-hand-entry-session-start.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2699,6 +3262,9 @@
   },
   "packages/coding-agent/test/suite/regressions/6157-agent-lifecycle-no-legacy-turn-id.test.ts": {
     "senpi-testing/no-flake-masking": 2
+  },
+  "packages/coding-agent/test/suite/regressions/6189-event-queue-ledger-rejection.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/6199-open-waits-for-warm.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2721,6 +3287,9 @@
   "packages/coding-agent/test/suite/regressions/6411-anthropic-subscription-switch-during-admission.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/regressions/6596-taskkill-enoent.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/6647-compaction-retries-transient-stream-drop.test.ts": {
     "senpi-testing/no-fixed-sleep": 1,
     "typescript/no-non-null-assertion": 1
@@ -2729,10 +3298,14 @@
     "senpi-testing/no-flake-masking": 1
   },
   "packages/coding-agent/test/suite/regressions/6911-held-attach-command-line.test.ts": {
-    "senpi-testing/no-flake-masking": 5
+    "senpi-testing/no-flake-masking": 5,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/6988-late-park-after-quiet-streak.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/6990-ps-spawn-failure.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/7027-credential-refresh-hang.test.ts": {
     "typescript/no-non-null-assertion": 1
@@ -2749,11 +3322,23 @@
   "packages/coding-agent/test/suite/regressions/7975-anthropic-subscription-cold-seed-overflow.test.ts": {
     "senpi-testing/no-flake-masking": 4
   },
+  "packages/coding-agent/test/suite/regressions/8237-node-sea-extension-loading.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/8261-subagent-project-trust.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/8724-in-memory-fork-active-tool.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/test/suite/regressions/8964-extension-provider-streaming.test.ts": {
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/9068-user-bash-fail-closed.test.ts": {
+    "senpi-testing/no-module-mock": 4
+  },
+  "packages/coding-agent/test/suite/regressions/9540-extension-loader-lazy.test.ts": {
+    "senpi-testing/no-module-mock": 3
   },
   "packages/coding-agent/test/suite/regressions/970-abort-releases-stuck-tool.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2764,11 +3349,26 @@
   "packages/coding-agent/test/suite/regressions/auto-compaction-input-toctou.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
+  "packages/coding-agent/test/suite/regressions/bash-spill-final-update.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/coding-agent/test/suite/regressions/bash-spill-storage-error.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/suite/regressions/compaction-generation-stale-revision.test.ts": {
     "typescript/no-non-null-assertion": 3
   },
   "packages/coding-agent/test/suite/regressions/desktop-4199-endpoint-reservation-race.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/desktop-4199-socket-secret-serialized-repair.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/desktop-4199-socket-secret-staging-cleanup.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/desktop-4199-start-host-keeps-socket-secret.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/goal-created-turn-continuation.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2779,8 +3379,17 @@
   "packages/coding-agent/test/suite/regressions/inspector-vm-import-crash.test.ts": {
     "senpi-testing/no-flake-masking": 6
   },
+  "packages/coding-agent/test/suite/regressions/issue-10775-extension-discovery-order.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/issue-1139-goal-unattended-backstop.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/issue-1329-print-settled-trigger.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/issue-1507-watchdog-ppid-no-spawn.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/issue-1698-monitor-bounds.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2793,7 +3402,8 @@
     "typescript/no-non-null-assertion": 3
   },
   "packages/coding-agent/test/suite/regressions/issue-1961-public-endpoint-absent.test.ts": {
-    "senpi-testing/no-flake-masking": 2
+    "senpi-testing/no-flake-masking": 2,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/issue-2561-memory-report.test.ts": {
     "senpi-testing/no-flake-masking": 6
@@ -2803,6 +3413,9 @@
   },
   "packages/coding-agent/test/suite/regressions/issue-2842-attach-preset-during-rebuild.test.ts": {
     "senpi-testing/no-flake-masking": 5
+  },
+  "packages/coding-agent/test/suite/regressions/issue-2871-closed-scope-late-reply.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/issue-2906-open-session-unresolvable-model.test.ts": {
     "senpi-testing/no-flake-masking": 2
@@ -2818,6 +3431,15 @@
   },
   "packages/coding-agent/test/suite/regressions/issue-2951-worker-held.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/regressions/issue-2990-moved-session-continue-scan.test.ts": {
+    "senpi-testing/no-module-mock": 3
+  },
+  "packages/coding-agent/test/suite/regressions/issue-2990-moved-session-list-cost.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/issue-3140-clipboard-activity.test.ts": {
+    "senpi-testing/no-module-mock": 2
   },
   "packages/coding-agent/test/suite/regressions/issue-3255-holder-attach.test.ts": {
     "senpi-testing/no-flake-masking": 5
@@ -2843,8 +3465,17 @@
   "packages/coding-agent/test/suite/regressions/issue-447-goal-continuation.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/coding-agent/test/suite/regressions/issue-4701-claude-capture-dispose.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/suite/regressions/issue-5192-secret-frame-bounds.test.ts": {
     "senpi-testing/no-flake-masking": 2
+  },
+  "packages/coding-agent/test/suite/regressions/issue-5280-ensure-non-socket-endpoint.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/issue-5618-move-lock-dir-vanishes.test.ts": {
+    "senpi-testing/no-module-mock": 2
   },
   "packages/coding-agent/test/suite/regressions/issue-6282-startup-fillers-lost-before-entry.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2862,10 +3493,12 @@
     "senpi-testing/no-fixed-sleep": 1
   },
   "packages/coding-agent/test/suite/regressions/issue-omo-594-host-status-zero-spawn.test.ts": {
-    "senpi-testing/no-flake-masking": 2
+    "senpi-testing/no-flake-masking": 2,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/legacy-pi-project-trust.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 2
   },
   "packages/coding-agent/test/suite/regressions/model-config-controls.test.ts": {
     "typescript/no-non-null-assertion": 1
@@ -2876,17 +3509,29 @@
   "packages/coding-agent/test/suite/regressions/model-selector-favorites-search.test.ts": {
     "typescript/no-non-null-assertion": 4
   },
+  "packages/coding-agent/test/suite/regressions/non-recursive-watch-main-thread-stall.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/omo-10280-goal-no-progress-guard.test.ts": {
     "senpi-testing/no-flake-masking": 8
   },
   "packages/coding-agent/test/suite/regressions/omo-11419-agent-settled-publish.test.ts": {
     "senpi-testing/no-flake-masking": 6
   },
+  "packages/coding-agent/test/suite/regressions/omo-12965-dispose-awaits-fallback-log.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/omo-14169-unload-stranded-delivery.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/regressions/picker-argument-hints.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/post-compaction-queued-input-resume.test.ts": {
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/quit-stderr-guard-drain.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/regressions/remote-permission-delegated-children.test.ts": {
     "senpi-testing/no-flake-masking": 3
@@ -2924,13 +3569,29 @@
   "packages/coding-agent/test/suite/regressions/session-append-refused-rpc.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/regressions/session-rebind-concurrent-header-read.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/shared-host-join-removed.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/stale-fast-mode-after-model-switch.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
   "packages/coding-agent/test/suite/regressions/todo-39-auto-permission-headless.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
+  "packages/coding-agent/test/suite/regressions/uncaught-crash-debug-log.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/unknown-command-tui-feedback.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/usage-poll-claude-cli-credential-no-follow.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/regressions/warp-wsl-clipboard-keybinding.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/test/suite/retry-fallback-engine.test.ts": {
@@ -2966,8 +3627,17 @@
   "packages/coding-agent/test/suite/rpc-close-backpressure.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/rpc-close-ordering.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/rpc-compact-content-spool-dir.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/rpc-credential-probe-nonblocking.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/rpc-daemon-directory-modes.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/rpc-delegated-connection-launch-proof.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -2986,6 +3656,9 @@
   },
   "packages/coding-agent/test/suite/rpc-docs-parity.test.ts": {
     "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/rpc-edit-assistant-message.test.ts": {
+    "senpi-testing/no-module-mock": 3
   },
   "packages/coding-agent/test/suite/rpc-edit-user-message.test.ts": {
     "typescript/no-non-null-assertion": 4
@@ -3024,7 +3697,8 @@
     "senpi-testing/no-flake-masking": 2
   },
   "packages/coding-agent/test/suite/rpc-host-lifecycle-tui-refusal.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/rpc-host-named-drain-superseded.test.ts": {
     "senpi-testing/no-flake-masking": 3
@@ -3065,6 +3739,9 @@
   "packages/coding-agent/test/suite/rpc-internal-silent-child.test.ts": {
     "senpi-testing/no-flake-masking": 4
   },
+  "packages/coding-agent/test/suite/rpc-internal-watchdog.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/suite/rpc-loop-lag-watchdog.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
@@ -3076,6 +3753,9 @@
   },
   "packages/coding-agent/test/suite/rpc-open-session-caller-env.test.ts": {
     "senpi-testing/no-flake-masking": 8
+  },
+  "packages/coding-agent/test/suite/rpc-open-session-folder-probe.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/rpc-open-session-prompt-surface.test.ts": {
     "senpi-testing/no-flake-masking": 6
@@ -3089,11 +3769,20 @@
   "packages/coding-agent/test/suite/rpc-pending-inputs.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
+  "packages/coding-agent/test/suite/rpc-public-auth-client.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/rpc-public-auth-host.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/rpc-public-auth-key-root.test.ts": {
+    "senpi-testing/no-module-mock": 3
+  },
   "packages/coding-agent/test/suite/rpc-public-auth-nested.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/coding-agent/test/suite/rpc-public-auth-records.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/rpc-queued-input-edit.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -3104,11 +3793,15 @@
   "packages/coding-agent/test/suite/rpc-reclaim-session.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/suite/rpc-release-attachment-worker.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/rpc-replace-abort-cause.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
   "packages/coding-agent/test/suite/rpc-retain-on-disconnect.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/rpc-session-archived-worker.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -3165,10 +3858,14 @@
     "senpi-testing/no-flake-masking": 3
   },
   "packages/coding-agent/test/suite/rpc-worker-capacity.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/rpc-worker-durable-session-id.test.ts": {
     "senpi-testing/no-flake-masking": 3
+  },
+  "packages/coding-agent/test/suite/rpc-worker-grant-answer.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/rpc-worker-isolation.test.ts": {
     "senpi-testing/no-flake-masking": 3
@@ -3213,6 +3910,36 @@
   "packages/coding-agent/test/suite/service-tier-model-config.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/coding-agent/test/suite/session-move-commit-lost-lock.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/session-move-commit-record-swap.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/session-move-import-landed-fence.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/session-move-import-overlap.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/session-move-lock-key-order.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/session-move-manifest-paths.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/session-move-prepare-lost-lock.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/session-rename-command.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/session-rename-editor.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/session-sidecar-store.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/session-tool-child.test.ts": {
     "senpi-testing/no-flake-masking": 3
   },
@@ -3222,17 +3949,44 @@
   "packages/coding-agent/test/suite/settings-terminal-mouse.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/coding-agent/test/suite/terminal-background-auto-reap.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/terminal-bash-auto-detach.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/terminal-durable-command.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/terminal-extension.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-non-null-assertion": 7
   },
+  "packages/coding-agent/test/suite/terminal-lazy-persistence.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/terminal-monitor-parent-resolution.test.ts": {
-    "senpi-testing/no-flake-masking": 4
+    "senpi-testing/no-flake-masking": 4,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/terminal-monitor-telemetry-capture.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
   "packages/coding-agent/test/suite/terminal-monitor.test.ts": {
-    "senpi-testing/no-flake-masking": 20
+    "senpi-testing/no-flake-masking": 20,
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/terminal-output-redaction.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/terminal-restore-digest.test.ts": {
+    "senpi-testing/no-module-mock": 3
+  },
+  "packages/coding-agent/test/suite/terminal-restore-session.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/coding-agent/test/suite/terminal-rpc-monitor-watch-lifecycle.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/suite/terminal-tool-child-ownership.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -3255,8 +4009,21 @@
   "packages/coding-agent/test/suite/tool-dispatcher-seam.test.ts": {
     "typescript/no-explicit-any": 4
   },
+  "packages/coding-agent/test/suite/tui-endpoint-deferred-gc.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/tui-endpoint-fresh-generation.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/tui-endpoint-inbox-arm.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/coding-agent/test/suite/tui-endpoint-reach.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/tui-endpoint-registration-order.test.ts": {
+    "senpi-testing/no-module-mock": 3
   },
   "packages/coding-agent/test/suite/ultrafast-service-tier.test.ts": {
     "typescript/no-non-null-assertion": 1
@@ -3270,6 +4037,12 @@
   },
   "packages/coding-agent/test/suite/virtual-models.test.ts": {
     "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/suite/webfetch-explicit-article.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/workflow-eval-only.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/system-prompt-updates.test.ts": {
     "typescript/no-non-null-assertion": 3
@@ -3305,6 +4078,7 @@
     "senpi-testing/no-flake-masking": 5
   },
   "packages/coding-agent/test/tool-execution-component.test.ts": {
+    "senpi-testing/no-module-mock": 1,
     "typescript/no-explicit-any": 1,
     "typescript/no-non-null-assertion": 5
   },
@@ -3317,6 +4091,9 @@
   "packages/coding-agent/test/tools-core/worker-bundle.test.ts": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/coding-agent/test/tools-manager.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/tools.test.ts": {
     "senpi-testing/no-fixed-sleep": 1,
     "typescript/no-explicit-any": 4,
@@ -3325,11 +4102,17 @@
   "packages/coding-agent/test/tree-selector.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
+  "packages/coding-agent/test/trust-manager.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/coding-agent/test/tui-vertical-jitter-lifecycle.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/test/tui-vertical-jitter.test.ts": {
     "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/test/upstream-sync-interactive.test.ts": {
+    "senpi-testing/no-module-mock": 2
   },
   "packages/coding-agent/test/utilities.ts": {
     "typescript/no-non-null-assertion": 1
@@ -3377,14 +4160,21 @@
   "packages/pty/test/session-pid.test.ts": {
     "senpi-testing/no-flake-masking": 3
   },
+  "packages/senpi-codemode/scripts/gate-timers.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/senpi-codemode/src/extension/skill-contribution.ts": {
     "typescript/no-non-null-assertion": 2
   },
   "packages/senpi-codemode/src/kernels/js/rejection-reports.js": {
     "senpi-testing/no-flake-masking": 1
   },
+  "packages/senpi-codemode/test/bench/accounting.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
   "packages/senpi-codemode/test/bench/block-spike.test.ts": {
-    "senpi-testing/no-flake-masking": 3
+    "senpi-testing/no-flake-masking": 3,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/senpi-codemode/test/bench/crash.test.ts": {
     "senpi-testing/no-flake-masking": 2
@@ -3395,11 +4185,21 @@
   "packages/senpi-codemode/test/bench/rescore.test.ts": {
     "senpi-testing/no-flake-masking": 8
   },
+  "packages/senpi-codemode/test/bench/run-retry.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
   "packages/senpi-codemode/test/bench/run.test.ts": {
-    "senpi-testing/no-flake-masking": 7
+    "senpi-testing/no-flake-masking": 7,
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/senpi-codemode/test/bench/session-postresult.test.ts": {
+    "senpi-testing/no-module-mock": 5
   },
   "packages/senpi-codemode/test/bench/settle-process.test.ts": {
     "senpi-testing/no-flake-masking": 1
+  },
+  "packages/senpi-codemode/test/environments/install-lock-races.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/senpi-codemode/test/environments/js-import-resolution-e2e.test.ts": {
     "senpi-testing/no-flake-masking": 5
@@ -3428,6 +4228,9 @@
   "packages/senpi-codemode/test/environments/py-environment.test.ts": {
     "senpi-testing/no-fixed-sleep": 1,
     "senpi-testing/no-flake-masking": 2
+  },
+  "packages/senpi-codemode/test/environments/py-installer-cleanup.test.ts": {
+    "senpi-testing/no-module-mock": 1
   },
   "packages/senpi-codemode/test/eval-list-and-reset.test.ts": {
     "senpi-testing/no-flake-masking": 1
@@ -3527,7 +4330,8 @@
     "senpi-testing/no-flake-masking": 7
   },
   "packages/senpi-codemode/test/js-rewrite-imports-host-cost.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/senpi-codemode/test/kernel-death-recovery.test.ts": {
     "senpi-testing/no-flake-masking": 4
@@ -3563,16 +4367,19 @@
     "senpi-testing/no-flake-masking": 2
   },
   "packages/senpi-codemode/test/py-kernel-lost-globals-notice.test.ts": {
-    "senpi-testing/no-flake-masking": 3
+    "senpi-testing/no-flake-masking": 3,
+    "senpi-testing/no-module-mock": 2
   },
   "packages/senpi-codemode/test/py-kernel-permission-path-identity.test.ts": {
     "senpi-testing/no-flake-masking": 5
   },
   "packages/senpi-codemode/test/py-kernel-pipe-error-death.test.ts": {
-    "senpi-testing/no-flake-masking": 3
+    "senpi-testing/no-flake-masking": 3,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/senpi-codemode/test/py-kernel-retirement-recovery.test.ts": {
-    "senpi-testing/no-flake-masking": 1
+    "senpi-testing/no-flake-masking": 1,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/senpi-codemode/test/py-kernel-tools-bridge.test.ts": {
     "senpi-testing/no-flake-masking": 10
@@ -3587,11 +4394,27 @@
     "senpi-testing/no-flake-masking": 14
   },
   "packages/senpi-codemode/test/sandbox/vendored-host-consumer-failure.test.ts": {
-    "senpi-testing/no-flake-masking": 2
+    "senpi-testing/no-flake-masking": 2,
+    "senpi-testing/no-module-mock": 1
   },
   "packages/senpi-codemode/test/sandbox/vendored-host-options.test.ts": {
     "senpi-testing/no-fixed-sleep": 4,
     "senpi-testing/no-flake-masking": 12
+  },
+  "packages/senpi-codemode/test/session-manager-cwd-lifecycle.test.ts": {
+    "senpi-testing/no-module-mock": 3
+  },
+  "packages/senpi-codemode/test/session-manager-idle-park.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/senpi-codemode/test/session-manager-kernel-tools.test.ts": {
+    "senpi-testing/no-module-mock": 1
+  },
+  "packages/senpi-codemode/test/session-manager-lifecycle.test.ts": {
+    "senpi-testing/no-module-mock": 2
+  },
+  "packages/senpi-codemode/test/session-manager-warm-cwd.test.ts": {
+    "senpi-testing/no-module-mock": 3
   },
   "packages/senpi-codemode/test/settings-take-effect.test.ts": {
     "senpi-testing/no-flake-masking": 4
