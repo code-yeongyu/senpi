@@ -7,7 +7,7 @@ import process from "node:process";
  * long-lived host that ran it. Unprivileged processes may raise their children's value. This mirrors pi-pty's
  * terminal-session helper; exec.ts sits on the CLI startup graph, which must not load pi-pty (see pty.lazy.ts).
  */
-export const EXEC_CHILD_OOM_SCORE_ADJ = 1000;
+const EXEC_CHILD_OOM_SCORE_ADJ = 1000;
 
 /**
  * Marks `pid` as the preferred OOM victim on Linux; a no-op elsewhere. Best effort and never throws: the write lands
