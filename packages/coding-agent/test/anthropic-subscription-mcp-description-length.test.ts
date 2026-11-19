@@ -25,7 +25,11 @@ describe("Claude Code MCP tool description length on the subscription lane", () 
 		for (const senpiOwnsCompaction of [true, false]) {
 			// given a host that never set the cap
 			// when the lane builds the Claude Code environment
-			const value = claudeCodeQueryEnvironment(model, senpiOwnsCompaction, {}).CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH;
+			const value = claudeCodeQueryEnvironment(
+				model,
+				senpiOwnsCompaction,
+				{},
+			).CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH;
 
 			// then a full tool description fits instead of being cut at the default cap
 			expect(Number(value)).toBeGreaterThan(CLAUDE_CODE_DEFAULT_MCP_DESCRIPTION_CAP);
