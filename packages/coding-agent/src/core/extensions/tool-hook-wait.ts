@@ -8,7 +8,7 @@
  */
 
 /** The builtin hooks extension runs user command hooks under their own configured timeout, so it gets no host deadline. */
-export const SELF_BOUNDED_TOOL_HOOK_PATHS: ReadonlySet<string> = new Set(["<builtin:hooks>"]);
+export const SELF_BOUNDED_TOOL_HOOK_PATH = "<builtin:hooks>";
 
 /** Default deadline for one `tool_result` handler of an extension that does not bound itself. */
 export const DEFAULT_TOOL_RESULT_HANDLER_TIMEOUT_MS = 120_000;
@@ -20,7 +20,7 @@ export function toolResultHandlerTimeoutMs(
 	extensionPath: string,
 	env: Readonly<Record<string, string | undefined>> = process.env,
 ): number {
-	if (SELF_BOUNDED_TOOL_HOOK_PATHS.has(extensionPath)) return 0;
+	if (extensionPath === SELF_BOUNDED_TOOL_HOOK_PATH) return 0;
 	const raw = env[TOOL_RESULT_HANDLER_TIMEOUT_ENV];
 	if (raw === undefined || raw.trim() === "") return DEFAULT_TOOL_RESULT_HANDLER_TIMEOUT_MS;
 	const parsed = Number(raw);
