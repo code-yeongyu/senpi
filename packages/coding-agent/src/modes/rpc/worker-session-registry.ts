@@ -233,6 +233,8 @@ export class WorkerSessionRegistry {
 			await entry.worker.setPermissionPreset(permissionPreset);
 		}
 		const result = this.openResult(owner, entry);
+		// A restore that finds the session already open adds no attachment (senpi#7020).
+		if (options?.unattached === true) return { ...result, attached: true };
 		entry.attachments++;
 		this.claims.get(owner)?.setAttached(true);
 		// Retention is a property of the live session: any attach may ask for it, and

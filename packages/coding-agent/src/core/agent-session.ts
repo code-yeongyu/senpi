@@ -433,6 +433,7 @@ import {
 	type RunBackgroundStopOutcome,
 } from "./run-background-jobs.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
+import { HOST_DRAIN_HOLD_KEY, restartRelease } from "./host-restart-continuation.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { SecurityNoticeSnapshot } from "./security-notices.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
@@ -1560,6 +1561,8 @@ export class AgentSession {
 	private _pendingCustomTurnHeaders = 0;
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
 	private _engineResumeWindow: boolean;
+	/** The one continuation a host restart owes this session has been made (senpi#7020). */
+	private _restartContinued = false;
 	private readonly _engineTurnHold: EngineTurnHold;
 	private _lifecycleBinding: LifecycleSessionBinding;
 	/** Itemized batches waiting for the entry their one message is written to (senpi#3811). */
@@ -5400,6 +5403,8 @@ export class AgentSession {
 		if (this._abortCause === undefined) this._abortCause = { kind: "host_shutdown" };
 		await this._abortActiveAgentAndRetry("system");
 		if (!this.isIdle) await this._waitForIdleAfterAbort();
+		// The next host reads the cut run as interrupted, exactly as a kill leaves it (senpi#7020).
+		this._lifecycleBinding.controller.cutByHostShutdown();
 	}
 
 	/** Adapter for the deadline owner interface: end the turn through the normal system abort. */
@@ -7936,7 +7941,10 @@ export class AgentSession {
 				} else {
 					this.agent.steer(appMessage);
 				}
-			} else if (options?.triggerTurn && this._stopEngineTurn(message.customType)) {
+			} else if (
+				options?.triggerTurn &&
+				this._stopEngineTurn(message.customType, releasedWake !== undefined || releasedByPeer)
+			) {
 				if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
@@ -8420,7 +8428,30 @@ export class AgentSession {
 	 * host and it parks when that turn settles. A person's input or resume_session releases the hold.
 	 */
 	holdAutomaticTurns(): void {
-		this._engineTurnHold.addHold("unattended");
+		// Its own key (senpi#7020): the successor releases exactly this hold, never an unattended hold the session had.
+		this._engineTurnHold.addHold("unattended", { key: HOST_DRAIN_HOLD_KEY });
+	}
+
+	/**
+	 * A session reopened because it was live when its previous host ended continues as that host left it (senpi#7020):
+	 * it releases the holds the restart caused, through the ordinary Resume when they are the only ones, so the wakes
+	 * held during a drain are delivered, a goal resumes and an engine-started run the restart cut continues once.
+	 */
+	private _continueAfterHostRestart(): void {
+		if (this._sessionStartEvent.continued !== true || this._restartContinued) return;
+		this._restartContinued = true;
+		const release = restartRelease(this._engineTurnHold.holds, () => this.sessionManager.getBranch());
+		if (release === undefined) return;
+		if ("release" in release) {
+			this._engineTurnHold.release([...release.release], "resume_session");
+			return;
+		}
+		if (release.interruptedRun) this._lifecycleBinding.controller.continueAfterRestart();
+		void this._resumeOnce({})
+			.then(({ settled }) => settled)
+			.catch((error: unknown) =>
+				this._sessionLogger.warn("host_restart_resume_failed", { error: String(error) }),
+			);
 	}
 
 	/** A parent's Stop reaching this child (senpi#3811): hold every automatic turn until the parent's run Resume. */
@@ -8713,16 +8744,18 @@ export class AgentSession {
 	 * exceed the engine-wide bound is not started: the message is still recorded, and the stop is recorded (best
 	 * effort), emitted and shown, so a session file that refuses writes still pauses visibly (senpi#2967).
 	 */
-	private _stopEngineTurn(customType: string): boolean {
+	private _stopEngineTurn(customType: string, released = false): boolean {
 		if (isUserDirectedTurn(customType)) return false;
+		// The turn a Resume or a peer's message just released is the turn it was answered with (`started`): the resume
+		// window, which counts every engine turn since the last real input, the reopened lane's own history included,
+		// bounds the automatic turns after it, never that turn itself (senpi#7020).
+		const resumeWindow = this._engineResumeWindow && !released;
 		const stop = engineTurnStop(
 			this.sessionManager.reduceHistory(engineTurnHistory),
 			Date.now(),
 			{
 				...this.settingsManager.getEngineTurnSettings(),
-				maxPerResumeWindow: this._engineResumeWindow
-					? this.settingsManager.getEngineTurnSettings().maxPerResumeWindow
-					: 0,
+				maxPerResumeWindow: resumeWindow ? this.settingsManager.getEngineTurnSettings().maxPerResumeWindow : 0,
 			},
 			this._engineTurnStarts,
 		);
@@ -12395,6 +12428,7 @@ export class AgentSession {
 		await Promise.all(bindingPromptReadiness);
 		if (this._lifecycleBinding.isRestored) await this._lifecycleBinding.refreshFacts();
 		else await this._lifecycleBinding.restore();
+		this._continueAfterHostRestart();
 	}
 
 	private _beginSessionStartSettlement(): () => void {

@@ -73,6 +73,12 @@ export interface HandoverParkedEntry {
 	 * entry only once that writer process is gone, so it never opens a session its live predecessor still holds.
 	 */
 	readonly residentWriter?: ResidentWriter;
+	/**
+	 * The session was loaded when the host that wrote this entry ended (senpi#7020): resident, parked by a handoff
+	 * drain, or parked by a clean stop. A successor reopens a live session as that host left it, releasing only the hold
+	 * the restart caused; an entry without it (an idle-sweep park, an unload, an older host) reopens dormant.
+	 */
+	readonly live?: true;
 }
 
 const recordDir = (daemonDir: string): string => join(daemonDir, "handover-parked");
@@ -98,6 +104,7 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		(record.cwd === undefined || typeof record.cwd === "string") &&
 		(record.parkedBy === undefined || typeof record.parkedBy === "string") &&
 		(record.residentWriter === undefined || isResidentWriter(record.residentWriter)) &&
+		(record.live === undefined || record.live === true) &&
 		(record.thinkingLevel === undefined || typeof record.thinkingLevel === "string") &&
 		(record.permissionPreset === undefined ||
 			(typeof record.permissionPreset === "string" &&
