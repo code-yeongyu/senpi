@@ -147,12 +147,17 @@ describe("senpi#6907: a session's handed pages together stay under the RPC line 
 		const { record, show, entries } = session(tempDir);
 		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
 		const inlinedPerBudget = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize);
-		const outcomes: { inlined: boolean; text: string; inlinedLength: number }[] = [];
+		const outcomes: { inlined: boolean; text: string; resultText: unknown; inlinedLength: number }[] = [];
 		for (let index = 0; index < 8; index++) {
 			const { html, inlinedLength } = pageInlinedTo(tempDir, `page-${index}`, pageSize);
 			const { result, text } = await show(`call-${index}`, html);
 			record(`call-${index}`, result);
-			outcomes.push({ inlined: result.details.imagesInlined, text, inlinedLength });
+			outcomes.push({
+				inlined: result.details.imagesInlined,
+				text,
+				resultText: result.details.resultText,
+				inlinedLength,
+			});
 		}
 		const handedBeforeRefusal = outcomes
 			.slice(0, inlinedPerBudget)
@@ -164,6 +169,8 @@ describe("senpi#6907: a session's handed pages together stay under the RPC line 
 		expect(outcomes[inlinedPerBudget]?.text).toContain(
 			`this session's pages already carry ${handedBeforeRefusal} of the ${MAX_HANDED_PAGES_CHARACTERS} characters`,
 		);
+		// senpi#6934: the details name the text the result carries, the over-budget one included.
+		expect(outcomes.map((outcome) => outcome.resultText)).toEqual(outcomes.map((outcome) => outcome.text));
 		const getMessages = JSON.stringify({
 			type: "response",
 			command: "get_messages",
