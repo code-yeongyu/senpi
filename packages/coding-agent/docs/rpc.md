@@ -1675,14 +1675,18 @@ parsing a version string:
   host?" signal: it changes whenever the process does, including after a replacement.
 - `generation` - which generation of its daemon directory this host is, handed to it at spawn time
   (`SENPI_RPC_HOST_GENERATION`). A host nobody ensured reports `0`.
-- `engineVersion` - the build string: the CalVer package version plus `+<buildEpoch>.<sha7>` when the binary
-  was compiled with build metadata. Informational, like `serverVersion`.
+- `engineVersion` - the build string: the engine's senpi CalVer version plus `+<buildEpoch>.<sha7>` when the binary
+  was compiled with build metadata. A distribution compiled beside its own package.json (whose version is then
+  `serverVersion`) defines `SENPI_ENGINE_VERSION` with the embedded senpi version, so this field and the ordinal
+  stay senpi CalVer. Informational, like `serverVersion`.
 - `engineOrdinal` - `[year, month, day, postRelease, buildEpoch]`, the ONLY ordering a client may use.
   `[y, m, d, n]` compares lexicographically, where `n` is the CalVer post-release increment (`2026.9.16-3`
   ships AFTER `2026.9.16`, the opposite of the semver reading of those strings). The build epoch breaks a tie
   only when BOTH sides carry one; otherwise the two builds are EQUAL, so a build whose age cannot be established
   never outranks one that can. Binaries built without git metadata report an epoch of `0`, which is exactly how a
-  client reads "this build has no age": a non-zero epoch is comparable, `0` is not.
+  client reads "this build has no age": a non-zero epoch is comparable, `0` is not. Only two senpi CalVer
+  ordinals (first part a year, 2000 or later) are ordered (senpi#7040): compiled omo builds through 5.1.78
+  advertised their omo version (`[5, 1, 78, 0, 0]`), and a pair with such an ordinal is uncomparable.
 - `launch_profile` - what the host was launched with: `core.session_runtime`, `core.multi_session` and
   `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
@@ -1886,9 +1890,11 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
 - The successor must not run an OLDER engine than the running host (senpi#7018). `handoffHost` compares the
   successor's engine (this process's build, or the requester's `target_engine` in an idle handover) with the
   host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
-  sides carry one; equal and uncomparable builds are not older; version strings are never compared) and refuses
-  `{ action: "refuse", reason: "older_engine", upgradeable: false }` before spawning anything when the
-  successor is strictly older; `detail` names both engines. `allowDowngrade` (`host handoff --allow-downgrade`)
+  sides carry one; equal builds and builds uncomparable only for a missing epoch are not older; version strings
+  are never compared) and refuses `{ action: "refuse", reason: "older_engine", upgradeable: false }` before
+  spawning anything when the successor is strictly older, or when either ordinal is not senpi CalVer and the
+  successor therefore cannot be proven not older (senpi#7040); `detail` names both engines. An `ensure` with the
+  upgrade policy keeps such a host and writes one `engine order uncomparable` line to stderr. `allowDowngrade` (`host handoff --allow-downgrade`)
   is the caller's explicit consent and skips the check. A host that advertises no ordinal is not judged.
 - Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
   dir's default `<dir>/rpc/rpc.sock` (or whose layout-2 record there proves no live owner), cannot be
@@ -3126,6 +3132,18 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 | `host_draining`, `session_closing`, `unsupported` | the host is draining, the session is already closing, or it has no file / a worker isolate owns it | none |
 
 With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays (a refusal with its `pending.deliveries`). Capability: `unload_session`; `deliveries` and `pending.deliveries`: `unload_refuse_deliveries`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
+
+##### Graceful close (`graceful: true`)
+
+`unload_session { sessionId, graceful: true, waitMs?, force?, children?, effectId? }` closes a session without interrupting it (oh-my-openagent#14313). `graceful` and `interrupt` exclude each other. Capability: `unload_graceful`.
+
+1. The fence, in one step: automatic turns (monitor, goal and loop wakes) wait as notices under the engine-turn hold `closing`, `admit_external_message` refuses every new delivery with `errorCode: "session_closing"`, and the queued input leaves the session unread: admitted delivery ids in `dropped.deliveries` (their senders keep them), the user's queued text in `dropped.user_messages`.
+2. The drain: the running turn, its tool calls, bash, compaction, prompts in preflight and other requests end on their own. Nothing is aborted. The wait is bounded by `waitMs` (default 60 000 ms, at most 600 000 ms).
+3. The close: the `closing` hold is released, a `session-closed` custom entry (`{ graceful, turn, waited_ms, returned, stopped: { wake_sources }, at }`) is the clean-stop record, and the teardown's `session_shutdown` carries `closed: true`. The terminal builtin then records no monitor or background job to restore, loops end `stopped` and an active goal is paused. The run ended normally, so a reopen writes no `interrupted-run` entry and arms no hold.
+
+The answer is `outcome: "unloaded"` with `sessionPath`, `dropped` and `graceful: { turn, waited_ms, stopped }`. `turn_active` and `work_pending` are what a graceful close waits for, and `extension_work` is what it stops, so neither refuses it; every other reason refuses before anything is fenced. A drain that outlives `waitMs` answers `outcome: "refused"`, `reason: "turn_active"`, `timed_out: true`, `open: true`, `admission: "reopened"`, `turn` and `waited_ms`, plus `dropped`: the hold is released and admission reopened, so the session keeps running as before, minus the input already handed back. With `effectId` the effect is `done` only when the session closed, so its `updatedAt` is the close.
+
+A terminal's control endpoint takes the same record, `graceful: true` only (anything else is refused `unsupported`). It also refuses `composer_draft` while the composer holds unsent text or an attachment, before the fence and again after the drain, so a close never discards what a person typed. After the answer, the terminal exits by itself as a quit does, and its session file keeps the same clean-stop record.
 
 ### Multi-session host lifecycle (cold start + idle exit)
 

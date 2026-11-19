@@ -56,6 +56,7 @@ describe("TUI session control endpoint", () => {
 				"entries_tail",
 				"snapshot_cursor",
 				"ui_answer_ledger",
+				"unload_graceful",
 			],
 			mode: "tui",
 			endpoint_kind: "tui",

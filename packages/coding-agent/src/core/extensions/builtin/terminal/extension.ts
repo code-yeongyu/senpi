@@ -288,7 +288,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const inheritedLease = state.lease === null;
-		if (sessionKey !== undefined) await stopPersistence(state, sessionKey);
+		if (sessionKey !== undefined) await stopPersistence(state, sessionKey, event.closed === true);
 		if (inheritedLease && sessionKey !== undefined) {
 			const dir = terminalStateDir(ctx) ?? terminalStateDir(state.ctx);
 			// A reload generation inherits the pre-reload lease without re-acquiring it;

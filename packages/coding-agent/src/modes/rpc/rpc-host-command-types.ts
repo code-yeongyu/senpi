@@ -176,6 +176,15 @@ type RpcCommandBody =
 			 * (`dropped.deliveries`). Capability `unload_refuse_deliveries`.
 			 */
 			deliveries?: "refuse";
+			/**
+			 * oh-my-openagent#14313: close without interrupting. New deliveries are refused `session_closing` at once,
+			 * queued input is handed back (`dropped`), the running turn ends on its own within `waitMs` (default 60 s,
+			 * at most 600 s), and monitors, loops and the goal stop cleanly instead of coming back on a reopen. A drain
+			 * that outlives `waitMs` is refused `turn_active` with `timed_out` and leaves the session open. Capability
+			 * `unload_graceful`; a terminal's control endpoint takes it too, and its terminal then exits.
+			 */
+			graceful?: boolean;
+			waitMs?: number;
 	  }
 	| {
 			id?: string;

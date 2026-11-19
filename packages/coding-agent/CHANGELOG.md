@@ -12,6 +12,26 @@
 
 ### Removed
 
+## [2026.11.19-3] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+- `session_status` and `list_sessions` rows carry `waiting: { kind, attempt, maxAttempts, delayMs, until, error? }` while a running session sleeps in an auto-retry backoff, with the new status cause `retry`; `get_state` carries it as `retryWait`. A `list_sessions` row omits `error`, which stays on `get_state` and on `session_status` ([#7027](https://github.com/code-yeongyu/senpi/pull/7027))
+
+### Changed
+
+### Fixed
+
+- When a `show_html_page` page from a hand goes over the session's image budget, its own text is now found by the exact text the tool emitted (new `details.resultText`). A note that a hand-side `tool_result` handler put before or after it stays in place. A page text a handler rewrote is left as is, and the over-budget sentence is appended after it ([#6936](https://github.com/code-yeongyu/senpi/pull/6936))
+- On the Claude subscription lane, Claude Code no longer cuts senpi's tool descriptions at 4096 chars: the lane sets `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` unless you already set it ([#7032](https://github.com/code-yeongyu/senpi/pull/7032))
+- Processes a session starts through its shell tool, eval cells, the tool child or an `RpcClient` stdio child no longer inherit the RPC host's identity (`SENPI_RPC_HOST_GENERATION`, `_INSTANCE_ID`, `_DAEMON_DIR`, build id, watch binding, key sentinel) or its launch-default `SENPI_RPC_CLIENT_CAPABILITIES`; they get the host id as the read-only `SENPI_RPC_ORIGIN_HOST_INSTANCE`, so a senpi started there is still attributed to that host as a dependent client. `PI_SESSION_*` and socket routing variables are unchanged ([#7037](https://github.com/code-yeongyu/senpi/pull/7037))
+- After a generation handoff, a successor still taking over its predecessor's sessions answers `list_sessions` with `handover: { pending, predecessor_draining }` beside `sessions`, so a reader no longer mistakes the partial listing for sessions that are gone. The field is absent once the takeover is done ([#7041](https://github.com/code-yeongyu/senpi/pull/7041))
+- A message from another session to an idle terminal starts its own turn even while a draft sits in the composer; the sender is answered `started` and the draft stays in the composer untouched. Only input the person already submitted still holds a delivery ([#7045](https://github.com/code-yeongyu/senpi/pull/7045))
+
+### Removed
+
 ## [2026.11.19-2] - 2026-11-19
 
 ### Breaking Changes

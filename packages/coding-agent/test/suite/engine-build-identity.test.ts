@@ -162,3 +162,22 @@ describe("olderEngineDetail", () => {
 		expect(olderEngineDetail(built, source)).toBeUndefined();
 	});
 });
+
+// senpi#7040: compiled omo builds through 5.1.78 advertised their omo version as the ordinal ([5,1,78,0,0]) while
+// every other build advertises senpi CalVer, so [2026,11,18] read as newer than a later engine. Only two CalVer
+// ordinals name positions in one release order; a pair with any other ordinal is never ordered and never handed off.
+describe("ordinals outside senpi CalVer", () => {
+	const omoVersion = identity("5.1.78");
+	const calver = identity("2026.11.18");
+
+	it("orders no pair with a non-CalVer side, in either direction", () => {
+		expect(compareEngineOrdinal(calver, omoVersion)).toBe(0);
+		expect(compareEngineOrdinal(omoVersion, calver)).toBe(0);
+		expect(compareEngineOrdinal(identity("5.1.79"), omoVersion)).toBe(0);
+	});
+
+	it("refuses a handoff across vocabularies in either direction", () => {
+		expect(olderEngineDetail(calver, omoVersion)).toContain("5.1.78");
+		expect(olderEngineDetail(omoVersion, calver)).toContain("5.1.78");
+	});
+});

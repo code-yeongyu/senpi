@@ -1,5 +1,23 @@
 # changes
 
+## 2026-11-19 - Agent children never inherit the RPC host's identity (senpi#7034)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getUserShellEnv()` (the base of `getShellEnv()`) spreads `childEnvironmentOf(process.env)` instead of `process.env`, so the bash tool, PTY terminal, monitors and `!` commands never carry the host's hand-off and carry the origin attribution instead.
+
+### Why
+
+- Every process a session started through its shell inherited the RPC host's identity and launch-default client capabilities (senpi#7034).
+
+### Why an extension could not handle it
+
+- `getShellEnv()` is the environment the built-in shell tools spawn with, before any extension can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the `return` of `getUserShellEnv()` and its new import.
+
 ## 2026-11-16 - Agent shells never receive a declared credential (senpi#6828)
 
 ### What changed

@@ -12,6 +12,21 @@
 
 ### Removed
 
+## [2026.11.19-3] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The eval tool description names the eval-only tools in its first lines, so a host that cuts long tool descriptions still shows them ([#7032](https://github.com/code-yeongyu/senpi/pull/7032))
+- Eval kernels (Python, Ruby, Julia, JavaScript in both isolation modes), their children and `%pip` installs no longer inherit the RPC host's identity or launch-default client capabilities, and a `new Bun.$.Shell()` in a cell starts from the kernel's env view ([#7037](https://github.com/code-yeongyu/senpi/pull/7037))
+
+### Removed
+
 ## [2026.11.19-2] - 2026-11-19
 
 ### Breaking Changes

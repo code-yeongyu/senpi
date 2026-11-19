@@ -7195,6 +7195,13 @@
 			],
 			"reason": "senpi#7037 (fixes #7034; re-lands #5653's reviewed core): contract tests that eval kernels and their children never inherit the RPC host's identity or launch-default client capabilities - the inline and worker JS kernels, the process-isolated JS child and the Python interpreter spawn without them while the host keeps them, the worker-thread delta names exactly the dropped names and the origin it sets, and a new Bun.$.Shell() in a pinning worker starts from the worker view. No prompt cell moves.",
 			"changes": []
+		},
+		"senpi#7032": {
+			"additions": [
+				"legacyContracts/test/eval-only-tools-prompt.test.ts/eval description names the session's eval-only tools names the eval-only tools within Claude Code's MCP description cap even when the description is longer"
+			],
+			"reason": "senpi#7032 (oh-my-openagent#14291): contract test that the eval description names the session's eval-only tools within Claude Code's 4096-char MCP description cap even when the rest of the description is longer, by putting that line right after the first sentence. It passed in main's CI measurement. No prompt cell moves (240/240 match the baseline).",
+			"changes": []
 		}
 	}
 }

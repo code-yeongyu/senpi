@@ -85,6 +85,7 @@ export function resolveQuarantineAgentDir(env: Record<string, string | undefined
 		`senpi-vitest-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
 		"agent",
 	);
-	mkdirSync(quarantineDir, { recursive: true });
+	// 0700 under any umask: an RPC host or client refuses a key record in a group-writable agent dir (unsafe_key_record).
+	mkdirSync(quarantineDir, { recursive: true, mode: 0o700 });
 	return quarantineDir;
 }

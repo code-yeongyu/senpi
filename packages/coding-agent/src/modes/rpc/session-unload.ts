@@ -35,6 +35,15 @@ import type { EffectActor } from "./effect-record.ts";
 import type { RpcCommand, RpcResponse, RpcUnloadAnswer, UnloadRefusalReason } from "./rpc-types.ts";
 import { sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
+import {
+	drainFacts,
+	drainUntilQuiet,
+	fenceForClose,
+	type GracefulDrain,
+	gracefulWaitMs,
+	recordGracefulClose,
+	reopenAfterDrain,
+} from "./session-graceful-close.ts";
 import { abortAndSettle, type ReleaseSettlePort } from "./session-release-interrupt.ts";
 
 export type UnloadSessionCommand = Extract<RpcCommand, { type: "unload_session" }>;
@@ -75,6 +84,8 @@ const ACTIONS = {
 		"the session's work would still read these deliveries: wait for it, or unload with interrupt: true and without deliveries to hand them back to their senders",
 	children_live: 'wait for the child tasks, or unload with children: "detach" to leave them running',
 	attached: "ask the other clients to detach, or unload with force: true (they receive session_parked)",
+	graceful_expired:
+		"the session is still open and admitting again: retry with a longer waitMs, or unload with interrupt: true to stop the turn",
 } as const;
 
 export async function unloadSession(port: SessionUnloadPort, command: UnloadSessionCommand): Promise<RpcResponse> {
@@ -82,6 +93,15 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 		return answer(
 			command,
 			refused({ reason: "host_draining", detail: "this host is draining and parks every session itself" }),
+		);
+	if (command.graceful === true && command.interrupt === true)
+		return answer(
+			command,
+			refused({
+				reason: "unsupported",
+				detail: "graceful and interrupt exclude each other",
+				action: "send one of them",
+			}),
 		);
 	const first = loaded(port, command.sessionId);
 	if ("reason" in first) return answer(command, refused(first));
@@ -104,6 +124,7 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 			});
 	}
 	const blocked = blockers(port, command, first.session, first.durableSessionId);
+	if (command.graceful === true) return closeGracefully(port, command, first, blocked);
 	// senpi#7004: a busy session's unread deliveries are what its work would still read. With `deliveries: "refuse"` they
 	// decide the answer before anything else, with or without `interrupt`: the caller learns their ids, nothing stops.
 	const unread = blocked.find((refusal) => refusal.deliveries !== undefined);
@@ -122,22 +143,72 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 	return claimAndUnload(port, command, handedBack);
 }
 
+/**
+ * `graceful` (oh-my-openagent#14313): the turn and the work an interrupt would stop end on their own, bounded by
+ * `waitMs`, behind the fence `fenceForClose` raises; published extension work is stopped cleanly by the teardown. A
+ * drain that outlives the bound is refused `turn_active` with `timed_out`, and the session stays open and admitting.
+ */
+async function closeGracefully(
+	port: SessionUnloadPort,
+	command: UnloadSessionCommand,
+	first: { session: AgentSession; durableSessionId: string },
+	blocked: readonly Refusal[],
+): Promise<RpcResponse> {
+	const standing = blocked.find((refusal) => !interruptible(refusal));
+	if (standing !== undefined) return fail(command, first.session, standing);
+	const drain = fenceForClose(first.session);
+	const busy = () =>
+		blockers(port, command, first.session, first.durableSessionId)
+			.filter(interruptible)
+			.map((refusal) => refusal.detail);
+	const settling = () => [port.otherRequestsSettled(command.sessionId), ...port.pendingPrompts(command.sessionId)];
+	if (await drainUntilQuiet(first.session, { busy, settling }, gracefulWaitMs(command.waitMs)))
+		return claimAndUnload(port, command, drain.dropped.deliveries, drain);
+	reopenAfterDrain(first.session);
+	const facts = drainFacts(first.session, drain);
+	const expired: Refusal = {
+		reason: "turn_active",
+		detail: `still working after ${facts.waited_ms} ms: ${busy().join(", ")}`,
+		action: ACTIONS.graceful_expired,
+	};
+	return fail(command, first.session, expired, droppedOf(drain.dropped.deliveries, drain), {
+		timed_out: true,
+		open: true,
+		admission: "reopened",
+		...facts,
+	});
+}
+
+function droppedOf(
+	handedBack: readonly string[],
+	drain: GracefulDrain | undefined,
+): { readonly dropped?: { deliveries: string[]; user_messages?: string[] } } {
+	if (drain !== undefined)
+		return { dropped: { deliveries: [...handedBack], user_messages: [...drain.dropped.user_messages] } };
+	return handedBack.length === 0 ? {} : { dropped: { deliveries: [...handedBack] } };
+}
+
 /** The final check and the unload, without an await between them and the close claim. */
 async function claimAndUnload(
 	port: SessionUnloadPort,
 	command: UnloadSessionCommand,
 	handedBack: readonly string[],
+	drain?: GracefulDrain,
 ): Promise<RpcResponse> {
 	// Deliveries the interrupt handed back are gone from this runtime whatever the answer: every answer names them.
-	const dropped = handedBack.length === 0 ? {} : { dropped: { deliveries: [...handedBack] } };
+	const dropped = droppedOf(handedBack, drain);
 	const ready = loaded(port, command.sessionId);
 	if ("reason" in ready) return answer(command, { ...refused(ready), ...dropped });
 	const stillBlocked = blockers(port, command, ready.session, ready.durableSessionId);
-	if (stillBlocked.length > 0) return fail(command, ready.session, stillBlocked[0] as Refusal, dropped);
+	if (stillBlocked.length > 0) {
+		if (drain !== undefined) reopenAfterDrain(ready.session);
+		return fail(command, ready.session, stillBlocked[0] as Refusal, dropped);
+	}
 	if (command.clearQueue === true) {
 		ClientAdmissions.clearQueuedFor(ready.session);
 		ready.session.clearQueue();
 	}
+	const closed = drain === undefined ? undefined : recordGracefulClose(ready.session, drain);
 	const effect =
 		command.effectId === undefined
 			? undefined
@@ -157,6 +228,9 @@ async function claimAndUnload(
 		outcome: "unloaded",
 		sessionPath: ready.sessionPath,
 		...dropped,
+		...(closed === undefined
+			? {}
+			: { graceful: { turn: closed.turn, waited_ms: closed.waited_ms, stopped: closed.stopped } }),
 		...(effect === undefined ? {} : effectAnswer(effect, command.sessionId)),
 	});
 }
@@ -213,7 +287,8 @@ function blockers(
 	const sources = session.activeWakeSources;
 	const childSources = sources.filter((source) => CHILD_TASK_SOURCE.test(source));
 	const otherSources = sources.filter((source) => !CHILD_TASK_SOURCE.test(source));
-	if (otherSources.length > 0 && command.force !== true)
+	// A graceful close stops this work cleanly in its teardown: monitors and loops are not restored on a reopen.
+	if (otherSources.length > 0 && command.force !== true && command.graceful !== true)
 		found.push({
 			reason: "extension_work",
 			detail: `work published by ${otherSources.join(", ")}`,
@@ -259,9 +334,10 @@ function fail(
 	command: UnloadSessionCommand,
 	session: AgentSession,
 	refusal: Refusal,
-	dropped: { readonly dropped?: { deliveries: string[] } } = {},
+	dropped: { readonly dropped?: { deliveries: string[]; user_messages?: string[] } } = {},
+	expiry: Pick<RpcUnloadAnswer, "timed_out" | "open" | "admission" | "turn" | "waited_ms"> = {},
 ): RpcResponse {
-	if (command.effectId === undefined) return answer(command, { ...refused(refusal), ...dropped });
+	if (command.effectId === undefined) return answer(command, { ...refused(refusal), ...dropped, ...expiry });
 	const status = EffectLedger.forSession(session).transition(command.effectId, "failed", {
 		...dropped,
 		...pendingOf(refusal),
@@ -272,7 +348,7 @@ function fail(
 			...(refusal.action === undefined ? {} : { action: refusal.action }),
 		},
 	});
-	return answer(command, { ...refused(refusal), ...dropped, ...effectAnswer(status, command.sessionId) });
+	return answer(command, { ...refused(refusal), ...dropped, ...expiry, ...effectAnswer(status, command.sessionId) });
 }
 
 function refusalFields(
