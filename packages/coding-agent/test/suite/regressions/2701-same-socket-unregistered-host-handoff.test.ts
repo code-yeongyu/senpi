@@ -73,17 +73,14 @@ describe.skipIf(process.platform === "win32")("an unregistered host on the clien
 		const replaced = expectHandoff(result);
 		expect(replaced.pid).not.toBe(old.pid);
 		expect(await waitForPidGone(old.pid, 60_000)).toBe(true);
-		// The proven old host is drained, and by one of two paths only. The handoff sends it one SIGUSR1 after
-		// recounting zero sessions over the held connection - unless the old host already noticed that the
-		// successor took the socket (its supersession poll) and began draining itself, which closes that
-		// connection, so the recount gets no answer and nothing is sent. Either way it drains; it is never
-		// sent anything but a drain, and never more than one.
-		const sent = signals.sentTo(old.pid);
-		expect(sent.filter((signal) => signal !== "SIGUSR1")).toEqual([]);
-		expect(sent.length).toBeLessThanOrEqual(1);
-		if (sent.length === 0) {
-			expect(await readFile(stderrLog(old), "utf8")).toContain("another generation owns the public socket");
-		}
+		// The proven old host is drained, and by one of two paths only. It admits its own handoffs (senpi#7044),
+		// so after recounting zero sessions over the held connection the handoff shows it the admission it
+		// granted - unless the old host already noticed that the successor took the socket (its supersession
+		// poll) and began draining itself. Either way it drains, and it is never signalled.
+		expect(signals.sentTo(old.pid)).toEqual([]);
+		expect(await readFile(stderrLog(old), "utf8")).toMatch(
+			/drain requested \(admitted_handoff\)|another generation owns the public socket/,
+		);
 		expect((await probeHost({ socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(replaced.instanceId);
 		// The upgraded client's next ensure attaches to the successor instead of being turned away.
 		const attached = await ensureOn(old.qa, old.socket);

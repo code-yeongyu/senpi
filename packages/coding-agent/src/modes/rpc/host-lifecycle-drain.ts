@@ -1,5 +1,5 @@
 /**
- * HOW a supervisor leaves without ending work: the handoff drain (SIGUSR1 to its child, a soft grace
+ * HOW a supervisor leaves without ending work: the handoff drain (relayed to its child, a soft grace
  * that never kills busy sessions), the watch that turns a lost public entry into a drain, and the win32
  * identity watchdog that notices a child gone without an exit event. Split out of `host-lifecycle.ts`,
  * which keeps the supervisor's orchestration (senpi#2566). Nothing here sends a terminating signal.
@@ -88,20 +88,28 @@ export class SupervisorDrain {
 
 	private requestChildDrain(): void {
 		const { child, relay } = this;
-		if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
-		if (relay) {
-			void writeDrainRequest(relay.file, { sender: relay.sender, reason: "supervisor_drain" }).catch((cause) => {
-				supervisorLog(`could not relay the drain to the host: ${errorMessage(cause)}`);
-			});
-		}
-		// win32 has no SIGUSR1; on POSIX it stays the immediate wake ahead of the next poll of the relay.
+		if (childGone(child)) return;
+		const relayed = relay
+			? writeDrainRequest(relay.file, { sender: relay.sender, reason: "supervisor_drain" }).catch((cause) => {
+					supervisorLog(`could not relay the drain to the host: ${errorMessage(cause)}`);
+				})
+			: Promise.resolve();
+		// win32 has no SIGUSR1; on POSIX it stays the immediate wake ahead of the next poll of the relay. It follows
+		// the relay it announces: a host ignores a SIGUSR1 that no relayed request backs (senpi#7044).
 		if (process.platform === "win32") return;
-		try {
-			process.kill(child.pid, "SIGUSR1");
-		} catch (cause) {
-			supervisorLog(`could not ask the host to drain: ${errorMessage(cause)}`);
-		}
+		void relayed.then(() => {
+			if (child.pid === undefined || childGone(child)) return;
+			try {
+				process.kill(child.pid, "SIGUSR1");
+			} catch (cause) {
+				supervisorLog(`could not ask the host to drain: ${errorMessage(cause)}`);
+			}
+		});
 	}
+}
+
+function childGone(child: ChildProcess): boolean {
+	return child.pid === undefined || child.exitCode !== null || child.signalCode !== null;
 }
 
 /**

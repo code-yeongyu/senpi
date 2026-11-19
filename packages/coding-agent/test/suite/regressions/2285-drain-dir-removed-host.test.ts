@@ -2,7 +2,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
-import { signalGeneration } from "../../../src/modes/rpc/host-stop.ts";
+import { stopHost } from "../../../src/modes/rpc/host-stop.ts";
 import {
 	GENERATION_HOST_ARGS,
 	generationEnv,
@@ -72,7 +72,9 @@ describe.skipIf(process.platform === "win32")("handoff drain with a deleted sess
 
 			const goneClosed = child.waitFor((e) => e.type === "session_closed" && e.sessionId === gone, 20_000);
 			const keptClosed = parent.waitFor((e) => e.type === "session_closed" && e.sessionId === kept, 20_000);
-			expect(signalGeneration(host.pid, "SIGUSR1")).toBe(true);
+			expect(await stopHost({ socket: qa.socket, agentDir: qa.agentDir, drain: true })).toMatchObject({
+				action: "drained",
+			});
 
 			const goneRecord = await goneClosed;
 			expect(goneRecord).toMatchObject({ reason: "session_dir_removed" });

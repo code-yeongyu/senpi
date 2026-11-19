@@ -1785,7 +1785,7 @@ string takes no part in it.
 | a required capability is missing | `refuse` (`fallback` under policy `fallback`) | `capability` |
 | policy `fallback` and the host runs a different engine build | `fallback` | `engine_mismatch` |
 | compatible, on win32 | `reuse`, `upgradeable: false` | `win32_attach_only` |
-| compatible, host does not advertise `generation_handoff` | `reuse`, `upgradeable: false` | `handoff_unsupported` |
+| compatible, host advertises neither `handoff_admission` nor the legacy `generation_handoff` | `reuse`, `upgradeable: false` | `handoff_unsupported` |
 | compatible, policy `upgrade`, this build's ordinal is STRICTLY greater and its extensions cover the host's | `handoff` | `newer_engine` (`profile` when both are the same release and only the extensions grew) |
 | compatible, anything else | `reuse` | `compatible` |
 
@@ -1855,23 +1855,32 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    taken over by anything else aborts the handoff: nothing is renamed, nothing is unlinked, and the
    running host keeps serving.
 3. `handoffHost` then registers the successor (its own `generations/<instanceId>/host.pid`, the pointer
-   moved onto it, and `settings.json { socket, generation }`) and sends
-   the predecessor SIGUSR1 = DRAIN: stop accepting, announce `host_superseded` to every connection,
+   moved onto it, and `settings.json { socket, generation }`) and asks
+   the predecessor to DRAIN: stop accepting, announce `host_superseded` to every connection,
    park attached and unattached sessions as their turns and requests settle, then exit independently of
    connection occupancy. Clients see `session_closed { reason: "handoff_parked", sessionPath }` before
-   their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
-   ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
+   their connection closes and reopen with `open_session { sessionPath }` on the successor. The request
+   is the predecessor's own admission, shown back to it (`drain_for_handoff`, see
+   [The host admits the handoff](#the-host-admits-the-handoff)); a predecessor from before the admission
+   is sent SIGUSR1 instead. Losing ownership of the public socket triggers the same sequence even if the
+   request never arrives.
    A session with no attachment cannot be reached on the drained generation any more, so each drain pass
    holds its automatic turns (goal continuation, monitor and codemode wakes), exactly as an unattended
    reopen does: they wait as notices, its running turn is its last on this generation, and it parks once
    that turn settles. A person's input or `resume_session` releases the hold after the reopen. A session a
    client is still attached to keeps its automatic turns.
 
-Three guards decide whether a handoff is attempted at all, and all of them fail closed:
+These guards decide whether a handoff is attempted at all, and all of them fail closed:
 
-- The running host must advertise `generation_handoff`. SIGUSR1 TERMINATES a process that installed no
-  handler for it, so a host from before the drain existed is never signalled - `handoffHost` answers
-  `{ action: "refuse", reason: "handoff_unsupported" }` and `decideHostAction` reports `upgradeable: false`.
+- The running host must advertise that it can be handed off: `handoff_admission` (it decides the handoff
+  itself, below), or the legacy `generation_handoff` of a host from before the admission, which drains on a
+  bare SIGUSR1. SIGUSR1 TERMINATES a process that installed no handler for it, so a host that advertises
+  neither is never signalled - `handoffHost` answers `{ action: "refuse", reason: "handoff_unsupported" }`
+  and `decideHostAction` reports `upgradeable: false`.
+- A host that advertises `handoff_admission` must ADMIT the handoff before anything is spawned (senpi#7044,
+  [The host admits the handoff](#the-host-admits-the-handoff)). Its refusal is the handoff's:
+  `{ action: "refuse", reason: "older_engine" | "unordered_engine", upgradeable: false, detail }`. A host that
+  gives no usable answer is refused `not_admitted`.
 - The registration must prove which process serves the socket (pid + start time, and the record's `socket`
   must be this endpoint) before that process is signalled. Without such a registration a handoff never
   signals a stranger (I1): it refuses while that host holds a session, and replaces an idle one without
@@ -1888,13 +1897,56 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
   host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
   sides carry one; equal builds and builds uncomparable only for a missing epoch are not older; version strings
   are never compared) and refuses `{ action: "refuse", reason: "older_engine", upgradeable: false }` before
-  spawning anything when the successor is strictly older, or when either ordinal is not senpi CalVer and the
-  successor therefore cannot be proven not older (senpi#7040); `detail` names both engines. An `ensure` with the
+  spawning anything when the successor is strictly older. When either ordinal is not senpi CalVer the successor
+  cannot be proven not older (senpi#7040) and the refusal is `reason: "unordered_engine"`; `detail` names both
+  engines either way. This is the REQUESTER's own check: the only one a host from before the admission gets,
+  and a second one behind the admission of a host that grants it. An `ensure` with the
   upgrade policy keeps such a host and writes one `engine order uncomparable` line to stderr. `allowDowngrade` (`host handoff --allow-downgrade`)
-  is the caller's explicit consent and skips the check. A host that advertises no ordinal is not judged.
+  is the caller's explicit consent and skips the check; it is sent to the host as `allow_downgrade`. A host that
+  advertises no ordinal is not judged by the requester.
 - Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
   dir's default `<dir>/rpc/rpc.sock` (or whose layout-2 record there proves no live owner), cannot be
   placed and stays replaceable through the idle path above. Every host built with the field avoids it.
+
+#### The host admits the handoff
+
+Until senpi#7044 the engine check above ran only in the requester, so a client released before it replaced a
+newer host with a plain `host handoff`: it brought its own successor up, renamed it over the public socket and
+sent SIGUSR1, and the running host drained without a say. The running host now decides, with two records it
+answers on the public socket. Both are answered `success: true` whatever the verdict, so a client reads one
+`data` shape.
+
+- `{ "type": "admit_handoff", "successor_engine": { "text", "ordinal": [y, m, d, n, epoch] }, "allow_downgrade"?: true }`
+  is sent BEFORE a successor is spawned. The host compares `successor_engine` with its own engine, in senpi
+  CalVer only, by the rule above:
+  - a strictly older successor: `data: { "refused": "older_engine", "detail" }`;
+  - a pair that cannot be ordered - an ordinal outside CalVer on either side, or no `successor_engine` at all:
+    `data: { "refused": "unordered_engine", "detail" }`;
+  - `allow_downgrade: true`: admitted whatever the engines, and the host log gets one line naming both;
+  - an equal or newer successor: admitted.
+
+  An admission is `data: { "admission_id", "expires_in_ms" }`. A refusal changes nothing: the host keeps its pid,
+  its generation and every session. A host that cannot drain answers `{ "refused": "handoff_unsupported" }`, and
+  a malformed request `{ "refused": "invalid_request", "detail" }`.
+- `{ "type": "drain_for_handoff", "admission_id" }` is the drain request, sent once the successor owns the public
+  socket. `data: { "draining": true }` means the drain started; anything else is
+  `data: { "refused": "unknown_admission", "detail" }` and the host keeps serving.
+
+An admission is bound to the CONNECTION it was granted on: the drain must arrive on that connection, presenting
+that `admission_id`. That connection still reaches the host that admitted after the public path moved to the
+successor, and the admission ends with it, so a requester that gave up or died leaves nothing behind. One drain
+uses the admission up, a later `admit_handoff` on the same connection replaces it, and it expires after
+`expires_in_ms` (300 s, longer than the 180 s a successor has to become ready).
+
+A host that answers these records advertises `handoff_admission` and does NOT advertise `generation_handoff`.
+That is what covers a client from before the admission: it consults `generation_handoff` alone before it hands
+off, upgrades or signals, so against such a host it answers `handoff_unsupported` (`host handoff`) or attaches
+(`host ensure`), and never spawns a successor. The host also IGNORES a bare SIGUSR1, on its supervisor and on
+the host process alike, and writes one `ignored SIGUSR1` line to its log for each: a signal names no admission.
+A drain still reaches it through the channels that say who asks - `drain_for_handoff`, the drain request of
+`host stop --drain`, and its own notice that it lost the public socket. A client that ignores the capability and
+binds over the public path anyway is outside what a host can refuse: nobody can reach that host by path any
+more, so it drains as a superseded generation does.
 
 On win32 a named pipe cannot be renamed: `handoffHost` refuses with `upgrade_unsupported` and
 `decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` - which
@@ -1907,9 +1959,9 @@ handoff ATTACHES to the running host - an upgrade that cannot happen never becom
 `ensureHost` also takes `hostArgs` (CLI arguments forwarded through the supervisor to the host process) and
 `env` (a `null` value removes an inherited variable) as public options.
 
-A generation also drains WITHOUT being asked. The SIGUSR1 above can fail to arrive - an owner whose
-registration cannot be proven is never signalled, a client that binds its own entry over the public path
-sends nothing at all, and a wedged process can miss the signal it was sent - and the superseded generation
+A generation also drains WITHOUT being asked. The drain request above can fail to arrive - an owner whose
+registration cannot be proven is never asked, a client that binds its own entry over the public path
+sends nothing at all, and a wedged process can miss the request it was sent - and the superseded generation
 then holds its retained sessions and their path claims for as long as it lives, while no client can reach it
 by path. So every generation checks, once a second, whether the public path still holds the entry it bound;
 the moment it does not, it applies the same drain to itself: park each retained session with no attachment,
@@ -1950,8 +2002,9 @@ The request needs no signal and is the same on every platform:
    an immediate wake).
 
 A generation without the marker - one from before the request existed - is drained by SIGUSR1 as before, and only
-on POSIX, when the endpoint advertises `generation_handoff` AND answers as the named instance; otherwise the
-answer is `drain_unsupported`. The answer is `{ action: "drained", pid, instanceId }`; with `waitMs` it also
+on POSIX, when the endpoint advertises the legacy `generation_handoff` AND answers as the named instance; otherwise
+the answer is `drain_unsupported`. A host that advertises `handoff_admission` ignores a bare SIGUSR1 and is never
+signalled; it is always asked through its drain request. The answer is `{ action: "drained", pid, instanceId }`; with `waitMs` it also
 carries `exited`, `true` once the generation's process is gone (or its pid names another process) within the
 bound, `false` otherwise - an identity that cannot be read is not an exit. A client that did not wait learns the
 same from `host status --json`: the drained generation leaves `generations` when it exits.
@@ -1998,7 +2051,8 @@ owns the operation:
    it already holds answers with that operation when the terms match (and `operation_conflict` when they do
    not); a new operation is checked first against the named generation (`stale_generation`), then refuses
    `older_engine` when its `target_engine` (`{ text, ordinal }`, the requesting CLI's own engine, which the
-   successor runs) is older than the host's engine by the generation handoff's rule. A request without
+   successor runs) is older than the host's engine by the generation handoff's rule, and `unordered_engine`
+   when the two cannot be ordered (an ordinal outside senpi CalVer). A request without
    `target_engine` comes from a CLI before senpi#7018, whose engine predates the guard, and is refused
    `older_engine` too. `allow_downgrade: true` (`--allow-downgrade`) skips the check;
 2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
@@ -2070,17 +2124,23 @@ stamps as `socket`, or, when unstamped, the agent directory's default socket `<a
 pid and start time must match the live process, so a recycled pid proves nothing:
 
 - `stopHost({ drain: true })` (`host stop --drain`) accepts it when that endpoint is the target socket and
-  the host advertises `generation_handoff`, and sends the drain. A hard stop still needs a layout-2 owner.
+  the host advertises `generation_handoff`, and sends the drain (SIGUSR1). A host that advertises
+  `handoff_admission` ignores the signal, so it is asked through the drain request of the generation its
+  endpoint answers as, when that generation's `drain-watch.json` names the proven pid; without one the answer
+  is `drain_unsupported`. A hard stop still needs a layout-2 owner.
 - An ensure on ANY endpoint of the agent directory drains a live legacy host and waits for it to exit when
-  its endpoint answers with `generation_handoff` and `list_sessions` (workers included) lists no session.
-  Otherwise it refuses `legacy_host`, and the CLI refusal carries `detail`: the pid, its endpoint, how many
-  sessions it holds and the `host stop --drain --socket <endpoint>` that retires it.
+  its endpoint says it can be drained and `list_sessions` (workers included) lists no session: a host that
+  advertises `generation_handoff` is sent SIGUSR1, and one that advertises `handoff_admission` is asked
+  `admit_handoff` for this build's engine and shown the admission back. Otherwise it refuses `legacy_host`,
+  and the CLI refusal carries `detail`: the pid, its endpoint, how many sessions it holds and the
+  `host stop --drain --socket <endpoint>` that retires it, or the reason the host does not admit this build.
 - A handoff (`host handoff`, and an ensure's upgrade) on an endpoint no layout-2 record proves counts the
   running host's sessions over a connection it keeps open. With any session, or no answer, it refuses:
   `legacy_host` with the same `detail` when a flat record proves the process, `unknown_owner` with the
-  session count otherwise. With none, the successor takes the socket; a proven legacy process is sent the
-  drain only if a recount over that held connection still lists no session, and a host no record proves
-  is never signalled - it drains itself once another generation owns the public entry, and the handoff
+  session count otherwise. With none, the successor takes the socket; a proven legacy process is asked to
+  drain (SIGUSR1, or its own admission shown back when it grants one) only if a recount over that held
+  connection still lists no session, and a host no record proves is never asked - it drains itself once
+  another generation owns the public entry, and the handoff
   writes one stderr warning naming the socket, that host's instance and its engine.
 
 `ensureHost` fails with a typed `HostDaemonStateError` naming the directory it could not create or write,
@@ -2339,7 +2399,9 @@ which prints the bare socket path).
   names a generation other than the current one, and `--wait-ms <n>` waits for it to exit and adds `exited` to
   the answer; both need `--drain`.
 - `handoff` forces a generation handoff from THIS binary. A host that cannot drain and a platform that
-  cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`. The handoff runs inside the
+  cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`. A host that refuses the
+  successor's engine answers exit 3 `{ reason: "older_engine" | "unordered_engine", detail }` and keeps its pid
+  and sessions; `--allow-downgrade` is sent to it as the operator's override. The handoff runs inside the
   endpoint's ensure lock (the one `ensure` and `gc` take), so an `ensure` arriving while the successor comes up
   waits and then attaches to the successor, and `gc` reports the endpoint `locked` rather than judging it
   halfway. An `ensure`, a `handoff` and a `stop --expected-generation` wait for the lock as long as one

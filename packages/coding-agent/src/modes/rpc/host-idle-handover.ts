@@ -24,7 +24,11 @@
  * the pending operation and is answered with ITS id; another target is refused
  * (`handover_in_progress`) until the pending operation ends.
  */
-import { type EngineBuildIdentity, olderEngineDetail } from "../../core/engine-build-identity.ts";
+import {
+	type EngineBuildIdentity,
+	type EngineSuccessionRefusal,
+	engineSuccessionRefusal,
+} from "../../core/engine-build-identity.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 
 /**
@@ -93,7 +97,7 @@ export interface HostIdentityView {
 	readonly instanceId: string;
 	readonly generation: number;
 	readonly runtimeBuildId: string | undefined;
-	/** This host's own engine; a request for an older one is refused `older_engine` (senpi#7018). */
+	/** This host's own engine; a request for an older one is refused `older_engine` (senpi#7018), an unordered one `unordered_engine`. */
 	readonly engine?: EngineBuildIdentity;
 }
 
@@ -181,8 +185,8 @@ export class HostIdleHandover {
 		if (self.runtimeBuildId === request.targetRuntimeBuildId) {
 			return { kind: "refused", reason: "already_current", detail: self.runtimeBuildId };
 		}
-		const downgrade = downgradeDetail(request, self.engine);
-		if (downgrade !== undefined) return { kind: "refused", reason: "older_engine", detail: downgrade };
+		const downgrade = downgradeRefusal(request, self.engine);
+		if (downgrade !== undefined) return { kind: "refused", ...downgrade };
 		const operation: Operation = {
 			request,
 			view: {
@@ -253,12 +257,18 @@ function sameTerms(a: IdleHandoverRequest, b: IdleHandoverRequest): boolean {
 	);
 }
 
-function downgradeDetail(request: IdleHandoverRequest, engine: EngineBuildIdentity | undefined): string | undefined {
+function downgradeRefusal(
+	request: IdleHandoverRequest,
+	engine: EngineBuildIdentity | undefined,
+): EngineSuccessionRefusal | undefined {
 	if (request.allowDowngrade === true || engine === undefined) return undefined;
 	if (request.targetEngine === undefined) {
-		return `the requesting CLI did not state its engine, so it predates the downgrade guard and is older than this host's ${engine.text}`;
+		return {
+			reason: "older_engine",
+			detail: `the requesting CLI did not state its engine, so it predates the downgrade guard and is older than this host's ${engine.text}`,
+		};
 	}
-	return olderEngineDetail(request.targetEngine, engine);
+	return engineSuccessionRefusal(request.targetEngine, engine);
 }
 
 function answer(operation: Operation): HandoverAnswer {

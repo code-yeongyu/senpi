@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { writeHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { writeHostSettings } from "../../../src/modes/rpc/host-daemon-state.ts";
 import * as hostEnsure from "../../../src/modes/rpc/host-ensure.ts";
@@ -13,6 +13,7 @@ import * as hostProbe from "../../../src/modes/rpc/host-probe.ts";
 import { observeProtocolInfo } from "../../../src/modes/rpc/host-probe.ts";
 import { runHostSessionRequest } from "../../../src/modes/rpc/host-session-runner.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
+import { writeDrainRequest } from "../../../src/modes/rpc/host-stop-intent.ts";
 import * as ownershipLock from "../../../src/modes/rpc/ownership-safe-lock.ts";
 import { RpcClient, RpcCommandError } from "../../../src/modes/rpc/rpc-client.ts";
 import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
@@ -343,7 +344,11 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 
 	it("advertises stopping and refuses new peers as soon as a drain is requested", async () => {
 		const r = await rig();
-		r.supervisor.kill("SIGUSR1");
+		const paths = createHostDaemonPaths({ socket: r.qa.socket, agentDir: r.qa.agentDir });
+		await writeDrainRequest(generationPaths(paths, "stopping-generation").drainRequestFile, {
+			sender: { pid: process.pid, kind: "stop" },
+			reason: "operator_drain",
+		});
 		await r.wait("child-draining");
 		const client = await r.client();
 		await expect(client.openSession({ cwd: r.qa.cwd })).rejects.toMatchObject({ errorCode: "host_stopping" });

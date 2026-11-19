@@ -7,6 +7,7 @@
 import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { expect } from "vitest";
 import { engineBuildIdentity } from "../../src/core/engine-build-identity.ts";
 import { daemonEnvironment } from "../../src/modes/rpc/host-daemon-env.ts";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
@@ -19,6 +20,7 @@ import {
 	generationEnv,
 	generationScratch,
 	JsonlPeer,
+	processAlive,
 	reapProcessesUnder,
 	supervisorLaunch,
 	type WireRecord,
@@ -111,6 +113,15 @@ export async function connect(rig: HandoverRig, peers: JsonlPeer[]): Promise<Jso
 	const peer = await JsonlPeer.connect(rig.qa.socket);
 	peers.push(peer);
 	return peer;
+}
+
+/** The host still serves the same generation from the same process, and the session opened on it still answers. */
+export async function expectServing(rig: HandoverRig, caller: JsonlPeer, sessionId: string): Promise<void> {
+	const after = await probeHost({ socket: rig.qa.socket });
+	expect(after?.instanceId).toBe(rig.instanceId);
+	expect(after?.generation).toBe(rig.generation);
+	expect(processAlive(rig.firstPid)).toBe(true);
+	expect(await caller.request({ id: "state", type: "get_state", sessionId })).toMatchObject({ success: true });
 }
 
 export function dataOf(response: WireRecord): WireRecord {

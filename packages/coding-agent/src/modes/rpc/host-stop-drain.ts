@@ -9,10 +9,12 @@
  *
  * - the drain REQUEST file (host-stop-intent.ts), used whenever the generation advertises it reads
  *   one AND that advertisement names the very pid just proven. It needs no signal, so it is the only
- *   channel a win32 generation has, and the one every current generation is asked through;
- * - SIGUSR1, kept for a generation from before the request existed, and only where the signal has a
- *   handler: POSIX, a host that advertises the handoff capability, and the generation that host
- *   actually is. A named generation the endpoint does not answer as is never signalled.
+ *   channel a win32 generation has, and the one every current generation is asked through - also one
+ *   that only a flat record proves, found through the instance its endpoint answers as;
+ * - SIGUSR1, kept for a generation from before the request existed, and only where the signal drains:
+ *   POSIX, a host that advertises the legacy `generation_handoff`, and the generation that host actually
+ *   is. A named generation the endpoint does not answer as is never signalled, and neither is a host that
+ *   admits its own handoffs (senpi#7044): it ignores a bare SIGUSR1 and is always asked through its request.
  *
  * Anything else is refused (`drain_unsupported`) rather than sent a signal whose default disposition
  * would terminate it. `waitMs` turns the request into "drained and gone": the answer then says whether
@@ -32,7 +34,7 @@ import {
 	readGenerationRegistration,
 	readHostRegistration,
 } from "./host-daemon-registration.ts";
-import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { handoffSupport } from "./host-decision.ts";
 import { provenLegacyOwner } from "./host-legacy.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { readDrainWatch, writeDrainRequest } from "./host-stop-intent.ts";
@@ -64,37 +66,44 @@ export async function drainHost(paths: HostDaemonPaths, options: DrainHostOption
 	const registered =
 		named === undefined ? await readHostRegistration(paths) : await readGenerationRegistration(paths, named);
 	const owner = await provenOwner(registered, options.socket);
-	if (owner !== undefined) {
-		const generation = generationPaths(paths, owner.instanceId);
-		const watch = await readDrainWatch(generation.drainWatchFile);
-		if (watch?.pid === owner.pid) {
-			await writeDrainRequest(generation.drainRequestFile, {
-				sender: { pid: process.pid, kind: "stop" },
-				reason: "operator_drain",
-			}).catch((cause: unknown) => {
-				// The generation ended and released its directory between the ownership check and this write: it is
-				// already drained, and the exit check below reports it.
-				if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
-			});
-			return drained({ ...owner }, options.waitMs);
-		}
+	if (owner !== undefined && (await askThroughRequest(paths, owner.instanceId, owner.pid))) {
+		return drained({ ...owner }, options.waitMs);
 	}
 	if (named !== undefined && owner === undefined) return { action: "refuse", reason: "unknown_owner" };
 	const pid = owner?.pid ?? (await provenLegacyOwner(paths, options.socket))?.pid;
 	if (pid === undefined) return { action: "refuse", reason: "unknown_owner" };
 	const host = await probeProtocolInfo(options.socket, options.timeoutMs ?? 10_000);
-	// SIGUSR1 terminates a process that installed no handler for it: only a POSIX host that advertises
-	// the drain, and that is the generation being asked, is signalled.
-	const answersAsTarget = named === undefined || host?.instanceId === named;
-	if (
-		!host?.capabilities.includes(GENERATION_HANDOFF_CAPABILITY) ||
-		!answersAsTarget ||
-		process.platform === "win32"
-	) {
+	// A generation only a flat record proves has no registration to name it: the endpoint's own answer does.
+	const answering = host?.instanceId;
+	if (owner === undefined && answering !== undefined && isGenerationId(answering)) {
+		if (await askThroughRequest(paths, answering, pid)) {
+			return drained({ pid, processStartTime: undefined }, options.waitMs);
+		}
+	}
+	// SIGUSR1 terminates a process that installed no handler for it, and a host that admits its own handoffs
+	// ignores it: only a POSIX host that advertises the legacy drain, and that is the generation being asked,
+	// is signalled.
+	const answersAsTarget = named === undefined || answering === named;
+	if (host === undefined || handoffSupport(host) !== "legacy" || !answersAsTarget || process.platform === "win32") {
 		return { action: "refuse", reason: "drain_unsupported" };
 	}
 	signalDrain(pid);
 	return drained(owner ?? { pid, processStartTime: undefined }, options.waitMs);
+}
+
+/** Writes the drain request of the generation `instanceId` when its watch names the proven `pid`; false otherwise. */
+async function askThroughRequest(paths: HostDaemonPaths, instanceId: string, pid: number): Promise<boolean> {
+	const generation = generationPaths(paths, instanceId);
+	if ((await readDrainWatch(generation.drainWatchFile))?.pid !== pid) return false;
+	await writeDrainRequest(generation.drainRequestFile, {
+		sender: { pid: process.pid, kind: "stop" },
+		reason: "operator_drain",
+	}).catch((cause: unknown) => {
+		// The generation ended and released its directory between the ownership check and this write: it is
+		// already drained, and the caller's exit check reports it.
+		if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) throw cause;
+	});
+	return true;
 }
 
 async function drained(

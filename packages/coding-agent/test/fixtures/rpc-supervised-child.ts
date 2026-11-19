@@ -10,7 +10,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "../../src/modes/rpc/host-identity-env.ts";
 import { internalHostTransport } from "../../src/modes/rpc/host-internal-transport.ts";
-import { hostChildDrainRequestFile, watchDrainRequest } from "../../src/modes/rpc/host-stop-intent.ts";
+import { hostChildGeneration, watchDrainRequest } from "../../src/modes/rpc/host-stop-intent.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "../../src/modes/rpc/host-watchdog.ts";
 import { LoopLagWatchdog } from "../../src/modes/rpc/loop-lag-watchdog.ts";
 import { admitInternalConnection } from "../helpers/sealed-internal-admit.ts";
@@ -67,5 +67,5 @@ process.on("SIGTERM", () => process.exit(0));
 // A drain SIGNAL is ignored, so a suite can tell which channel reached the host: the fixture has no
 // sessions to park, and leaves at once only when its supervisor's signal-free relay asks (#3653).
 process.on("SIGUSR1", () => {});
-const drainRequestFile = hostChildDrainRequestFile();
+const drainRequestFile = hostChildGeneration()?.childDrainRequestFile;
 if (drainRequestFile !== undefined) watchDrainRequest(drainRequestFile, () => process.exit(0), { pollMs: 100 });

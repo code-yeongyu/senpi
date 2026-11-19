@@ -5,8 +5,10 @@
 //
 // The legacy host here is a REAL supervisor + host. It is started through the production ensure,
 // then made legacy the way the incident's machine had it: its layout-2 pointer is gone and the flat
-// record `{ pid, processStartTime }` is the only thing naming it. It still advertises
-// `generation_handoff`, so SIGUSR1 drains it - exactly what the old engine did when drained by hand.
+// record `{ pid, processStartTime }` is the only thing naming it. This build's host decides its own
+// handoffs (senpi#7044) and ignores SIGUSR1, so the flat record licenses ASKING it: `stop --drain` writes
+// the drain request its supervisor reads, and an ensure requests the admission a handoff would. A host from
+// before the admission is signalled instead (test/suite/regressions/3054-legacy-drain-deadline.test.ts).
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";

@@ -19,7 +19,7 @@
  * engine beside its own package.json (the compiled omo binary reads `{ name: "omo", version:
  * "5.1.78" }` as `VERSION`) defines `SENPI_ENGINE_VERSION` with the embedded engine's CalVer; without
  * it such a build advertised `[5, 1, 78, 0, 0]`. An ordinal that is not CalVer names no position in
- * the release order, so `compareEngineOrdinal` never orders it and `olderEngineDetail` refuses it.
+ * the release order, so `compareEngineOrdinal` never orders it and `engineSuccessionRefusal` refuses it.
  */
 import { VERSION } from "../config.ts";
 
@@ -112,17 +112,31 @@ export function engineIdentityOf(text: string, ordinal: EngineOrdinal): EngineBu
 	return { text, ordinal, scheme: ordinal[4] > 0 ? "epoch" : "nodef" };
 }
 
+/** Why a running host is not handed over to a successor engine; both ends of a handoff answer with `reason`. */
+export interface EngineSuccessionRefusal {
+	readonly reason: "older_engine" | "unordered_engine";
+	readonly detail: string;
+}
+
 /**
- * Why handing `running` over to `successor` would DOWNGRADE it (senpi#7018), or `undefined` when it would not:
- * the successor is strictly older by `compareEngineOrdinal`. Equal builds, and builds uncomparable only for a
- * missing build epoch, are not older. A pair outside senpi CalVer cannot be proven not older, so it is refused
- * (senpi#7040): the running host keeps its engine, and an explicit downgrade is the only way past it.
+ * Why handing `running` over to `successor` is refused, or `undefined` when it is not. `older_engine` (senpi#7018):
+ * the successor is strictly older by `compareEngineOrdinal`; equal builds, and builds uncomparable only for a missing
+ * build epoch, are not older. `unordered_engine` (senpi#7040, senpi#7044): a pair outside senpi CalVer cannot be
+ * proven not older, so the running host keeps its engine. An explicit downgrade is the only way past either.
  */
-export function olderEngineDetail(successor: EngineBuildIdentity, running: EngineBuildIdentity): string | undefined {
+export function engineSuccessionRefusal(
+	successor: EngineBuildIdentity,
+	running: EngineBuildIdentity,
+): EngineSuccessionRefusal | undefined {
 	if (!comparableEngines(successor, running)) {
-		return `the successor's engine ${successor.text} [${successor.ordinal.join(",")}] cannot be ordered against the running host's ${running.text} [${running.ordinal.join(",")}]: only two senpi CalVer engine ordinals are comparable`;
+		return {
+			reason: "unordered_engine",
+			detail: `the successor's engine ${successor.text} [${successor.ordinal.join(",")}] cannot be ordered against the running host's ${running.text} [${running.ordinal.join(",")}]: only two senpi CalVer engine ordinals are comparable`,
+		};
 	}
-	return compareEngineOrdinal(successor, running) < 0
-		? `the successor's engine ${successor.text} is older than the running host's ${running.text}`
-		: undefined;
+	if (compareEngineOrdinal(successor, running) >= 0) return undefined;
+	return {
+		reason: "older_engine",
+		detail: `the successor's engine ${successor.text} is older than the running host's ${running.text}`,
+	};
 }

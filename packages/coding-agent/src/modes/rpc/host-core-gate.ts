@@ -1,10 +1,18 @@
 /**
  * What stands between a parsed command and the session router on a multi-session host: the
  * conditional idle handover's own request (`begin_handover`), the admission gate it closes on new
- * work, the per-session in-flight count the idle judgement reads, and the runtime identity
+ * work, the handoff admission this host grants or refuses (`admit_handoff`, `drain_for_handoff`,
+ * senpi#7044), the per-session in-flight count the idle judgement reads, and the runtime identity
  * `get_protocol_info` reports. A host without hooks routes every command exactly as before.
  */
 
+import {
+	ADMIT_HANDOFF_COMMAND,
+	DRAIN_FOR_HANDOFF_COMMAND,
+	type HandoffAdmissionHooks,
+	handoffUnsupportedAnswer,
+	HostHandoffAdmissions,
+} from "./host-handoff-admission.ts";
 import { agentDirMismatch } from "./host-handoff-agent-dir.ts";
 import {
 	BEGIN_HANDOVER_COMMAND,
@@ -23,6 +31,8 @@ export interface HostCoreHooks {
 	readonly runtimeBuildId?: string;
 	/** Present on a host that can hand over at its next idle point (a POSIX socket host). */
 	readonly handover?: Omit<HostIdleHandoverOptions, "isIdle">;
+	/** Present on a host that drains into a successor: it admits or refuses each handoff itself (senpi#7044). */
+	readonly handoffAdmission?: HandoffAdmissionHooks;
 	/** This host's agent dir and public socket: a `begin_handover` naming another agent dir is refused (#3560). */
 	readonly endpoint?: { readonly agentDir: string; readonly socket: string };
 	/** Called with the in-process registry's session count after every open and close. */
@@ -48,6 +58,7 @@ export interface MachineWorkGate {
 
 export class HostCoreGate {
 	readonly handover: HostIdleHandover | undefined;
+	private readonly handoffAdmissions: HostHandoffAdmissions | undefined;
 	private readonly runtimeBuildId: string | undefined;
 	private readonly endpoint: HostCoreHooks["endpoint"];
 	private readonly inFlight = new Map<string | undefined, number>();
@@ -62,6 +73,8 @@ export class HostCoreGate {
 		this.route = route;
 		this.runtimeBuildId = hooks.runtimeBuildId;
 		this.endpoint = hooks.endpoint;
+		this.handoffAdmissions =
+			hooks.handoffAdmission === undefined ? undefined : new HostHandoffAdmissions(hooks.handoffAdmission);
 		this.handover =
 			hooks.handover === undefined
 				? undefined
@@ -73,9 +86,21 @@ export class HostCoreGate {
 					});
 	}
 
-	/** Answers a `begin_handover` record through `deliver` and returns true, or returns false for anything else. */
-	async intercept(parsed: unknown, deliver: (answer: object) => Promise<void>): Promise<boolean> {
-		if (!isRecord(parsed) || parsed.type !== BEGIN_HANDOVER_COMMAND) return false;
+	/**
+	 * Answers a host-level record (`begin_handover`, `admit_handoff`, `drain_for_handoff`) through `deliver` and
+	 * returns true, or returns false for anything else. `connection` is what a handoff admission is bound to.
+	 */
+	async intercept(
+		parsed: unknown,
+		deliver: (answer: object) => Promise<void>,
+		connection: string | undefined,
+	): Promise<boolean> {
+		if (!isRecord(parsed)) return false;
+		if (parsed.type === ADMIT_HANDOFF_COMMAND || parsed.type === DRAIN_FOR_HANDOFF_COMMAND) {
+			await this.answerHandoffAdmission(parsed, deliver, connection);
+			return true;
+		}
+		if (parsed.type !== BEGIN_HANDOVER_COMMAND) return false;
 		const answering = this.answerBegin(parsed).then(deliver);
 		this.answering.add(answering);
 		try {
@@ -103,6 +128,22 @@ export class HostCoreGate {
 				? await this.handover.begin(request)
 				: { kind: "refused", reason: "foreign_agent_dir", detail },
 		);
+	}
+
+	private async answerHandoffAdmission(
+		record: Readonly<Record<string, unknown>>,
+		deliver: (answer: object) => Promise<void>,
+		connection: string | undefined,
+	): Promise<void> {
+		const admissions = this.handoffAdmissions;
+		if (admissions === undefined || connection === undefined) return deliver(handoffUnsupportedAnswer(record));
+		if (record.type === ADMIT_HANDOFF_COMMAND) return deliver(admissions.admit(record, connection));
+		return admissions.drain(record, connection, deliver);
+	}
+
+	/** A connection that ended takes the handoff admission it was granted with it. */
+	connectionClosed(connection: string): void {
+		this.handoffAdmissions?.release(connection);
 	}
 
 	/**

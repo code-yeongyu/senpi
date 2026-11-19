@@ -17,7 +17,7 @@ import {
 	type EngineBuildIdentity,
 	engineBuildIdentity,
 	engineBuildIdentityFrom,
-	olderEngineDetail,
+	engineSuccessionRefusal,
 } from "../../src/core/engine-build-identity.ts";
 
 const EPOCH = 1_758_000_000;
@@ -134,32 +134,33 @@ describe("engineBuildIdentity", () => {
 });
 
 // senpi#7018: a handoff is refused when the successor is OLDER than the running host by this order.
-describe("olderEngineDetail", () => {
+describe("engineSuccessionRefusal", () => {
 	it("ranks a -N post-release above the release, whatever the build epochs say", () => {
 		// The observed shape: a bundled runtime whose banner reads 5.1.77 runs engine 2026.11.18,
 		// the host it would replace (5.1.78) runs engine 2026.11.18-2.
 		const host = identity("2026.11.18-2", EPOCH);
 		const bundled = identity("2026.11.18", EPOCH + 500_000);
 
-		expect(olderEngineDetail(bundled, host)).toContain("2026.11.18-2");
-		expect(olderEngineDetail(host, bundled)).toBeUndefined();
+		expect(engineSuccessionRefusal(bundled, host)).toMatchObject({ reason: "older_engine" });
+		expect(engineSuccessionRefusal(bundled, host)?.detail).toContain("2026.11.18-2");
+		expect(engineSuccessionRefusal(host, bundled)).toBeUndefined();
 	});
 
 	it("ranks a same-day build with a later epoch as newer", () => {
 		const earlier = identity("2026.11.18", EPOCH);
 		const later = identity("2026.11.18", EPOCH + 100);
 
-		expect(olderEngineDetail(earlier, later)).toBeDefined();
-		expect(olderEngineDetail(later, earlier)).toBeUndefined();
+		expect(engineSuccessionRefusal(earlier, later)).toMatchObject({ reason: "older_engine" });
+		expect(engineSuccessionRefusal(later, earlier)).toBeUndefined();
 	});
 
 	it("treats an equal or uncomparable pair as not older", () => {
 		const built = identity("2026.11.18", EPOCH);
 		const source = identity("2026.11.18");
 
-		expect(olderEngineDetail(built, built)).toBeUndefined();
-		expect(olderEngineDetail(source, built)).toBeUndefined();
-		expect(olderEngineDetail(built, source)).toBeUndefined();
+		expect(engineSuccessionRefusal(built, built)).toBeUndefined();
+		expect(engineSuccessionRefusal(source, built)).toBeUndefined();
+		expect(engineSuccessionRefusal(built, source)).toBeUndefined();
 	});
 });
 
@@ -176,8 +177,10 @@ describe("ordinals outside senpi CalVer", () => {
 		expect(compareEngineOrdinal(identity("5.1.79"), omoVersion)).toBe(0);
 	});
 
-	it("refuses a handoff across vocabularies in either direction", () => {
-		expect(olderEngineDetail(calver, omoVersion)).toContain("5.1.78");
-		expect(olderEngineDetail(omoVersion, calver)).toContain("5.1.78");
+	// senpi#7044: the pair is refused under its own reason, so a client can tell "older" from "cannot be ordered".
+	it("refuses a handoff across vocabularies in either direction as unordered, naming the engine", () => {
+		expect(engineSuccessionRefusal(calver, omoVersion)).toMatchObject({ reason: "unordered_engine" });
+		expect(engineSuccessionRefusal(omoVersion, calver)).toMatchObject({ reason: "unordered_engine" });
+		expect(engineSuccessionRefusal(omoVersion, calver)?.detail).toContain("5.1.78");
 	});
 });

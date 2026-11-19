@@ -7,11 +7,10 @@
  * because "nobody is there" is a legitimate answer that callers act on; a malformed answer is
  * dropped for the same reason.
  */
-import type { Socket } from "node:net";
 import { type HostAttachHold, holdAttachment } from "./host-attach-hold.ts";
 import { type HostProtocolInfo, parseHostProtocolInfo } from "./host-decision.ts";
 import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
-import { connectAndAsk, isRecord, PROBE_REQUEST_ID, readAnswer, requestOnSocket } from "./host-socket-request.ts";
+import { askOnSocket, connectAndAsk, isRecord, PROBE_REQUEST_ID, requestOnSocket } from "./host-socket-request.ts";
 import type { RpcKeyOptions } from "./rpc-auth-client.ts";
 
 export { requestOnSocket };
@@ -143,41 +142,16 @@ export async function holdSessionCount(
 	let asked = 0;
 	return {
 		sessions,
-		recount: (recountTimeoutMs) => askAgain(kept, `${PROBE_REQUEST_ID}-recount-${++asked}`, recountTimeoutMs),
+		recount: async (recountTimeoutMs) =>
+			sessionCountOf(
+				await askOnSocket(
+					kept,
+					{ id: `${PROBE_REQUEST_ID}-recount-${++asked}`, type: "list_sessions", include_workers: true },
+					recountTimeoutMs,
+				),
+			),
 		close: () => kept.destroy(),
 	};
-}
-
-function askAgain(socket: Socket, id: string, timeoutMs: number): Promise<number | undefined> {
-	return new Promise((resolveCount) => {
-		let buffer = "";
-		const finish = (count: number | undefined): void => {
-			clearTimeout(timeout);
-			socket.off("data", onData);
-			socket.off("close", onClose);
-			resolveCount(count);
-		};
-		const onClose = (): void => finish(undefined);
-		const onData = (chunk: Buffer): void => {
-			buffer += chunk.toString("utf8");
-			for (let newline = buffer.indexOf("\n"); newline !== -1; newline = buffer.indexOf("\n")) {
-				const answer = readAnswer(buffer.slice(0, newline), id);
-				buffer = buffer.slice(newline + 1);
-				if (answer !== undefined) {
-					finish(sessionCountOf(answer));
-					return;
-				}
-			}
-		};
-		const timeout = setTimeout(() => finish(undefined), timeoutMs);
-		if (socket.destroyed) {
-			finish(undefined);
-			return;
-		}
-		socket.on("data", onData);
-		socket.once("close", onClose);
-		socket.write(`${JSON.stringify({ id, type: "list_sessions", include_workers: true })}\n`);
-	});
 }
 
 function sessionCountOf(reply: unknown): number | undefined {
