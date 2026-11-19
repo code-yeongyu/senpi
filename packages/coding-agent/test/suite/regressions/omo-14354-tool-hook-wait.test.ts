@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { toolResultHandlerTimeoutMs, waitForToolHook } from "../../../src/core/extensions/tool-hook-wait.ts";
-import type { Harness } from "../harness.ts";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type } from "typebox";
+import { createHarness, type Harness } from "../harness.ts";
 import { hookEnds, probeTurnHarness, withinRealTime } from "./omo-14354-tool-hook-support.ts";
 
 /**
@@ -70,31 +72,49 @@ describe("oh-my-openagent#14354: a tool hook handler cannot hold the tool loop",
 	});
 
 	it("still runs the tool_result handlers of a tool the abort cut, as before", async () => {
-		const gate = Promise.withResolvers<void>();
+		const { fauxAssistantMessage, fauxToolCall } = await import("@earendil-works/pi-ai");
+		const running = Promise.withResolvers<void>();
+		const heldTool: AgentTool = {
+			name: "held",
+			label: "Held",
+			description: "Returns when its call is aborted.",
+			parameters: Type.Object({}),
+			execute: (_toolCallId, _params, signal) =>
+				new Promise((resolve) => {
+					running.resolve();
+					signal?.addEventListener(
+						"abort",
+						() => resolve({ content: [{ type: "text", text: "cut" }], details: {} }),
+						{
+							once: true,
+						},
+					);
+				}),
+		};
 		let resultHandlerRan = false;
-		const turn = await probeTurnHarness([
-			{
-				path: "<gate>",
-				factory: (pi) => {
-					pi.on("tool_call", () => undefined);
-					pi.on("tool_result", () => {
-						resultHandlerRan = true;
-						return undefined;
-					});
-					pi.on("tool_execution_start", () => gate.resolve());
+		harness = await createHarness({
+			tools: [heldTool],
+			extensionFactories: [
+				{
+					path: "<observer>",
+					factory: (pi) =>
+						void pi.on("tool_result", () => {
+							resultHandlerRan = true;
+							return undefined;
+						}),
 				},
-			},
+			],
+		});
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("held", {}, { id: "call_held" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("never", { stopReason: "stop" }),
 		]);
-		harness = turn.harness;
-		const prompting = turn.harness.session.prompt("go");
-		await withinRealTime(gate.promise, "the tool to start");
-		await turn.harness.session.abort();
+		const prompting = harness.session.prompt("go");
+		await withinRealTime(running.promise, "the held tool to start");
+		await harness.session.abort();
 		await withinRealTime(prompting, "the aborted turn");
-		const ends = hookEnds(turn.harness).filter((end) => end.includes("PostToolUse"));
-		if (ends.length > 0) {
-			expect(resultHandlerRan).toBe(true);
-			expect(ends).toEqual(["<gate>:PostToolUse:completed"]);
-		}
+		expect(resultHandlerRan).toBe(true);
+		expect(hookEnds(harness)).toEqual(["<observer>:PostToolUse:completed"]);
 	});
 
 	it("ends the wait on a tool_call handler when the turn is aborted, and the tool does not run", async () => {
