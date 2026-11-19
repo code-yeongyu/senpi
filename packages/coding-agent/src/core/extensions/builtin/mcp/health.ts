@@ -6,6 +6,7 @@ import {
 	isRetriableMcpError,
 	SessionExpiredError,
 } from "./errors.ts";
+import { probeMcpHealth, UnsupportedMcpHealthVersionError } from "./health-probe.ts";
 import { isMcpNeedsAuthError } from "./needs-auth.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import { McpMrtrError } from "./modern/errors.ts";
@@ -113,9 +114,10 @@ function healthStateFor(connection: ServerConnection): McpHealthState {
 
 async function pingOrRenew(connection: ServerConnection, health: McpHealthState): Promise<void> {
 	try {
-		await connection.client.ping({ timeout: MCP_PING_TIMEOUT_MS });
+		await probeMcpHealth(connection.client, MCP_PING_TIMEOUT_MS);
 		health.lastSuccessfulPingAtMs = Date.now();
 	} catch (error) {
+		if (error instanceof UnsupportedMcpHealthVersionError) throw error;
 		connection.markDegraded(error instanceof Error ? error : new Error(String(error)));
 		await renewConnection(connection, health);
 	}

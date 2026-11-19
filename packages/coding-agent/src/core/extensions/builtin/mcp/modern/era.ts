@@ -18,7 +18,7 @@ export interface ProbeOptions {
 	readonly supportedVersions: readonly string[];
 }
 export type ProbeRequest = ModernRequest;
-const discoverySchema = z
+export const discoverySchema = z
 	.object({
 		resultType: z.literal("complete"),
 		supportedVersions: z.array(z.string()),

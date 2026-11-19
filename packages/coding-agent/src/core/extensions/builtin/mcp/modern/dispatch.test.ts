@@ -3,9 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { McpServerConfig } from "../config-schema.ts";
+import { AuthError } from "../errors.ts";
+import { probeMcpHealth } from "../health-probe.ts";
 import { createMcpLogger } from "../log.ts";
 import { connectMcpTransport, createMcpTransport, shutdownMcpTransport } from "../transport.ts";
 import { materializeMcpTransport } from "../transport-sdk.ts";
+import { createMcpRequestClient } from "./client.ts";
+import { McpMrtrError } from "./errors.ts";
 import { MODERN_PROTOCOL_VERSION } from "./wire.ts";
 
 const config: McpServerConfig = {
@@ -31,6 +35,76 @@ const discovery = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("dual-era factory dispatch", () => {
+	it("rejects an unknown future health protocol instead of guessing", async () => {
+		const client = await createMcpRequestClient({ version: "2027-01-01" }, undefined);
+		try {
+			await expect(probeMcpHealth(client, 2_000)).rejects.toThrow("2027-01-01");
+		} finally {
+			await client.close();
+		}
+	});
+
+	it.each(["transport", "auth"])("surfaces a modern health probe %s failure", async (failure) => {
+		let discovered = false;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (_url: string | URL, init?: RequestInit) => {
+				const request = JSON.parse(String(init?.body));
+				if (!discovered) {
+					discovered = true;
+					return Response.json({ jsonrpc: "2.0", id: request.id, result: discovery });
+				}
+				if (failure === "auth") return new Response(null, { status: 401 });
+				throw new TypeError("connection lost");
+			}),
+		);
+		const root = await mkdtemp(join(tmpdir(), "mcp-health-failure-"));
+		const connection = createMcpTransport({
+			config,
+			logger: createMcpLogger("modern", { logDir: root }),
+			serverName: "modern",
+		});
+		try {
+			await connectMcpTransport(connection);
+			await expect(probeMcpHealth(connection.client, 2_000)).rejects.toBeInstanceOf(
+				failure === "auth" ? AuthError : McpMrtrError,
+			);
+		} finally {
+			await shutdownMcpTransport(connection);
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects discovery that no longer advertises the negotiated version", async () => {
+		let requests = 0;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (_url: string | URL, init?: RequestInit) => {
+				const request = JSON.parse(String(init?.body));
+				requests++;
+				return Response.json({
+					jsonrpc: "2.0",
+					id: request.id,
+					result: { ...discovery, supportedVersions: requests === 1 ? [MODERN_PROTOCOL_VERSION] : ["2027-01-01"] },
+				});
+			}),
+		);
+		const root = await mkdtemp(join(tmpdir(), "mcp-health-version-"));
+		const connection = createMcpTransport({
+			config,
+			logger: createMcpLogger("modern", { logDir: root }),
+			serverName: "modern",
+		});
+		try {
+			await connectMcpTransport(connection);
+			await expect(probeMcpHealth(connection.client, 2_000)).rejects.toBeInstanceOf(McpMrtrError);
+			expect(requests).toBe(2);
+		} finally {
+			await shutdownMcpTransport(connection);
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("discovers a modern server once, connects without legacy traffic, and logs its real version", async () => {
 		const methods: string[] = [];
 		vi.stubGlobal(
@@ -45,6 +119,9 @@ describe("dual-era factory dispatch", () => {
 				expect(headers.get("Mcp-Method")).toBe(request.method);
 				expect(headers.has("Mcp-Session-Id")).toBe(false);
 				expect(headers.has("Mcp-Name")).toBe(false);
+				if (request.method === "ping") {
+					return Response.json({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Not found" } });
+				}
 				return Response.json({
 					jsonrpc: "2.0",
 					id: request.id,
@@ -70,7 +147,9 @@ describe("dual-era factory dispatch", () => {
 			await connectMcpTransport(connection);
 			expect(connection.client.getInstructions()).toBe("Modern instructions");
 			expect((await connection.client.listTools()).tools).toEqual([]);
-			expect(methods).toEqual(["server/discover", "tools/list"]);
+			// senpi#6617: health checks must use a supported modern method.
+			await probeMcpHealth(connection.client, 2_000);
+			expect(methods).toEqual(["server/discover", "tools/list", "server/discover"]);
 			expect(logger.getRingBuffer().filter((line) => line.includes("era=modern version=2026-07-28"))).toHaveLength(
 				1,
 			);
@@ -78,7 +157,7 @@ describe("dual-era factory dispatch", () => {
 			await shutdownMcpTransport(connection);
 			await rm(root, { recursive: true, force: true });
 		}
-		expect(methods).toEqual(["server/discover", "tools/list"]);
+		expect(methods).toEqual(["server/discover", "tools/list", "server/discover"]);
 	});
 
 	// senpi#4402: the real SDK must negotiate an advertised legacy version after the probe selects legacy.

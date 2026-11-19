@@ -1,5 +1,6 @@
 import type { McpServerConfig } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
+import { probeMcpHealth, UnsupportedMcpHealthVersionError } from "./health-probe.ts";
 import type { McpLogger } from "./log.ts";
 import { safeInterval, safeTimer } from "./wrap.ts";
 
@@ -121,7 +122,7 @@ function startKeepAliveTimer(state: McpLifecycleState): void {
 async function keepAlivePingOrRecover(state: McpLifecycleState): Promise<void> {
 	try {
 		if (state.connection.state === "connected") {
-			await state.connection.client.ping({ timeout: 2_000 });
+			await probeMcpHealth(state.connection.client, 2_000);
 			return;
 		}
 		if (state.connection.state === "idle" || state.connection.state === "connecting") {
@@ -130,6 +131,7 @@ async function keepAlivePingOrRecover(state: McpLifecycleState): Promise<void> {
 		}
 		await state.connection.renew();
 	} catch (error) {
+		if (error instanceof UnsupportedMcpHealthVersionError) throw error;
 		const normalized = error instanceof Error ? error : new Error(String(error));
 		state.connection.markDegraded(normalized);
 	}
