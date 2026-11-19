@@ -107,18 +107,32 @@ function budgetedEvent(
  * The page's own text is the text part equal to the one the tool emitted (`details.resultText`), wherever a hand-side
  * `tool_result` handler moved it; it alone is replaced, and every other part stays where it is. When no part equals it
  * (a handler rewrote it), nothing is replaced and the over-budget sentence is appended as its own part (senpi#6934).
- * A hand on an older version emits no `resultText`; its page's own text is then the first text part, the one text part
- * show_html_page emits, and a result with no text part gets the sentence first (senpi#6932).
+ * A hand on an older version emits no `resultText`; its page's own text is then found by `olderHandOwnText`, and a
+ * result with no text part gets the sentence first (senpi#6932).
  */
 function applied(downgrade: PageDowngrade, content: ResultContent): PageOverride {
 	const { ownText } = downgrade;
-	const own = content.findIndex((part) => part.type === "text" && (ownText === undefined || part.text === ownText));
+	const own =
+		ownText === undefined
+			? olderHandOwnText(downgrade, content)
+			: content.findIndex((part) => part.type === "text" && part.text === ownText);
 	const text = { type: "text" as const, text: downgrade.text };
 	const unmatched = ownText === undefined ? [text, ...content] : [...content, text];
 	return {
 		content: own === -1 ? unmatched : content.map((part, index) => (index === own ? text : part)),
 		details: downgrade.details,
 	};
+}
+
+/**
+ * A hand on a release from before senpi#6934 sends no `details.resultText`. Its page text is then the first text part
+ * that names the page's saved copy, else the first text part, as the brain read it before the marker (senpi#6937).
+ */
+function olderHandOwnText(downgrade: PageDowngrade, content: ResultContent): number {
+	const path = downgrade.details.path;
+	const named =
+		typeof path === "string" ? content.findIndex((part) => part.type === "text" && part.text.includes(path)) : -1;
+	return named === -1 ? content.findIndex((part) => part.type === "text") : named;
 }
 
 /** The page handed as written when the session's budget has no room for it; undefined when it keeps its images. */
