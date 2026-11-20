@@ -16,6 +16,7 @@ import {
 	socketSecretPath,
 } from "../../../../modes/rpc/socket-transport.ts";
 import { socketNeedsHandshake } from "../../../../modes/rpc/tui-socket.ts";
+import type { subscriptionFor } from "./rpc-monitor-targets.ts";
 
 export type RpcRecord = Readonly<Record<string, unknown>>;
 
@@ -36,7 +37,7 @@ const SUBSCRIBE_ID = "monitor-subscribe";
 
 export async function openRpcObserver(
 	socketPath: string,
-	subscription: RpcRecord,
+	subscription: ReturnType<typeof subscriptionFor>,
 	handlers: RpcObserverHandlers,
 	options: RpcKeyOptions = {},
 ): Promise<RpcObserver> {
@@ -47,6 +48,13 @@ export async function openRpcObserver(
 	const socket: Socket =
 		authenticated?.socket ?? createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 	const answer = Promise.withResolvers<RpcRecord>();
+	const selector = subscription.sessions;
+	const ids = typeof selector === "object" ? selector.ids : undefined;
+	const routes = new Set<string>();
+	const selects = (value: unknown) => typeof value === "string" && ids?.includes(value) === true;
+	const matchesIdentity = (row: RpcRecord) =>
+		selects(row.sessionId) || selects(row.durableSessionId) || selects(row.sessionPath);
+	let admitted = false;
 	let ended = false;
 	const end = (reason: string): void => {
 		if (ended) return;
@@ -71,12 +79,42 @@ export async function openRpcObserver(
 				return;
 			}
 			if (record.type === "response" && record.id === SUBSCRIBE_ID) {
-				if (record.success === true) answer.resolve(record);
-				else {
+				if (record.success === true) {
+					// Install the endpoint-local routes before decoding the next line, even in the same read.
+					const data = record.data as RpcRecord | undefined;
+					if (ids && Array.isArray(data?.snapshot)) {
+						const snapshot = data.snapshot.filter((row: RpcRecord) => {
+							if (typeof row?.sessionId !== "string") return false;
+							if (!matchesIdentity(row)) return false;
+							routes.add(row.sessionId);
+							return true;
+						});
+						admitted = snapshot.length > 0;
+						answer.resolve({ ...record, data: { ...data, snapshot } });
+					} else answer.resolve(record);
+				} else {
 					answer.reject(new Error(`rpc monitor: ${socketPath} refused the subscription: ${String(record.error)}`));
 					socket.destroy();
 				}
 				return;
+			}
+			if (ids) {
+				const route = record.sessionId;
+				if (!admitted || typeof route !== "string") return;
+				// A matching session may reopen under a new handle on this endpoint.
+				if (record.type === "session_status") {
+					if (matchesIdentity(record)) routes.add(route);
+					else routes.delete(route);
+				}
+				if (
+					record.type === "session_replaced" &&
+					!selects(route) &&
+					!selects(record.durableSessionId) &&
+					!selects(record.sessionFile)
+				)
+					routes.delete(route);
+				if (!routes.has(route)) return;
+				if (record.type === "session_closed" || record.type === "session_parked") routes.delete(route);
 			}
 			handlers.record(record);
 		},

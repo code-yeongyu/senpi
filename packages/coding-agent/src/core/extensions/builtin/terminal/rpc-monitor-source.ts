@@ -116,7 +116,7 @@ export class RpcMonitorSource {
 		this.#records.set(id, record);
 		this.#host.changed();
 		const rows = await watch.start().catch((error: unknown) => {
-			// Only a remote open rejects: the watch never ran, so it leaves without a summary or an ended event.
+			// A refused watch leaves without a summary or an ended event.
 			watch.stop();
 			clearTimeout(record.deadline);
 			this.#records.delete(id);

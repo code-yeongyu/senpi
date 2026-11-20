@@ -68,6 +68,10 @@ export class RpcMonitorWatch {
 		const { target } = this.#options;
 		if (target.kind === "remote") return this.#startRemote(target.device, target.session);
 		const rows = await this.#join();
+		if (target.kind === "id" && rows.length === 0) {
+			this.stop();
+			throw new Error("no matching local session");
+		}
 		this.#rescan = setInterval(() => void this.#join(), RPC_RESCAN_MS);
 		this.#rescan.unref?.();
 		return rows;
@@ -178,7 +182,6 @@ export class RpcMonitorWatch {
 		}
 		const data = answer?.data as Record<string, unknown> | undefined;
 		if (data === undefined) return [];
-		this.#hosts.set(socket, { instanceId: String(data.hostInstanceId), generation: String(data.hostGeneration) });
 		const snapshot = (Array.isArray(data.snapshot) ? data.snapshot : []) as RpcRecord[];
 		const matched = snapshot.filter((row) => matchesTask(target, row));
 		for (const row of matched) this.#taskSessions.add(sessionKey(socket, row));
@@ -188,6 +191,7 @@ export class RpcMonitorWatch {
 			this.#observers.delete(socket);
 			return [];
 		}
+		this.#hosts.set(socket, { instanceId: String(data.hostInstanceId), generation: String(data.hostGeneration) });
 		const rows = this.#renderer.seed(socket, matched);
 		this.#options.checkpoint?.(this.checkpoint());
 		return rows;

@@ -62,3 +62,25 @@ it.each(["route", "durable", "fixture.jsonl"])("only delivers the session select
 		watch.stop();
 	}
 });
+
+it("follows a durable identity to its new route without following the replaced session", async () => {
+	const { watch, lines, socket } = fixture("durable", [
+		{ sessionId: "route", durableSessionId: "durable", status: "idle" },
+	]);
+	try {
+		await watch.start();
+		lines.length = 0;
+		for (const record of [
+			{ type: "session_replaced", sessionId: "route", durableSessionId: "different" },
+			{ type: "agent_start", sessionId: "route" },
+			{ type: "session_status", sessionId: "next", durableSessionId: "durable", status: "idle" },
+			{ type: "agent_idle", sessionId: "next" },
+		])
+			socket.emit("data", Buffer.from(`${JSON.stringify(record)}\n`));
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("(next) status");
+		expect(lines[1]).toMatch(/ agent_idle$/);
+	} finally {
+		watch.stop();
+	}
+});

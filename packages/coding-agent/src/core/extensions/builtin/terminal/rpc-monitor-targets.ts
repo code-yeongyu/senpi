@@ -61,7 +61,7 @@ export function defaultEvents(target: RpcTarget): readonly string[] {
 }
 
 /** The `subscribe_sessions` frame (without id/type) for one endpoint. */
-export function subscriptionFor(target: RpcTarget, events: RpcEvents): RpcRecord {
+export function subscriptionFor(target: RpcTarget, events: RpcEvents) {
 	const sessions =
 		target.kind === "children" ? { childrenOf: target.parent } : target.kind === "id" ? { ids: [target.id] } : "all";
 	const content = events === "all" ? "all" : events.filter((kind) => !STATUS_KINDS.has(kind));
