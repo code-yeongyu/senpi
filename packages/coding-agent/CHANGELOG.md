@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.20] - 2026-11-20
 
 ### Breaking Changes
 
@@ -8,7 +8,13 @@
 
 ### Changed
 
+- DeepSeek V4.1 Flash gets a new system prompt, written as a sibling of the GPT-6.2 one: the model works out why you asked before it acts, says what it understood in one opener, plans after it has read, keeps its todo list current, reads what you name in full, and reports as things happen. It no longer opens a session with a forced todo list (`todo.firstTurnPlan` defaults to `off` under this preset; a value you set still wins) ([#7109](https://github.com/code-yeongyu/senpi/pull/7109))
+- GPT models no longer open a session with a forced todo list: `todo.firstTurnPlan` defaults to `off` under a GPT prompt preset, and a value you set still wins ([#7110](https://github.com/code-yeongyu/senpi/pull/7110))
+- The GPT-6.2 prompt (Astra and Sol, every speed tier) now has the model work out why you asked before it acts, say what it understood in one opener, plan after it has read, keep its todo list current, read what you name in full, and report as things happen ([#7110](https://github.com/code-yeongyu/senpi/pull/7110))
+
 ### Fixed
+
+- A host no longer stays up past its idle window because a client stays connected after its last session there closed: an attached connection whose sessions on the host have all closed stops counting toward idle exit (one that never opened a session, such as an ensure's attach hold, still counts), as the host reports it on the observer link (`watch_host_occupancy` / `host_occupancy`), so an omo `p-*` task shard with 0 sessions idle-exits while its owner lives ([#7039](https://github.com/code-yeongyu/senpi/pull/7039), oh-my-openagent#14272)
 
 ### Removed
 
