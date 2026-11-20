@@ -37,13 +37,16 @@ task in phase order that is not Now.
 admitted `session_control_delivery` (not a preview, not a `?`/`!` question, not an ask-user
 answer frame, no earlier prompt or delivery request on the branch (answer frames do not count,
 senpi#2419), `todo` active, not `print`/`json`, not another extension-triggered turn,
-`todo.firstTurnPlan` not `off`). `before_agent_start` then adds the hidden
+`todo.firstTurnPlan` not `off`; unset, it is `off` under a GPT prompt preset and `force` elsewhere,
+`presetFirstTurnPlanDefault` in `../prompt-preset/contract.ts`, senpi#7101). `before_agent_start` then adds the hidden
 `senpi.todo-first-turn` reminder; under `force`, `before_provider_request` names `todo` in
 `tool_choice` on that run's requests until the first assistant `message_end` (or
 `agent_end` / abort / session change), only where the resolved compat allows a forced
 choice and the model has not refused one earlier in the process (senpi#2218), the payload declares `todo` with no `tool_choice` of its own, and Anthropic thinking
 is off. The decomposition mandate's single home is `TASK_MANAGEMENT_SECTION`; do not restate
-it in `TODO_TOOL_DESCRIPTION`, the tool guidelines, or a preset.
+it in `TODO_TOOL_DESCRIPTION` or the tool guidelines. A preset whose core states the todo rules itself
+is listed in `presetOwnsTodoRules` (`../prompt-preset/contract.ts`, today `gpt-6.2`), and `index.ts` appends
+no `Task_Management` block after it: the rule keeps one home either way.
 
 ## CONVENTIONS
 
