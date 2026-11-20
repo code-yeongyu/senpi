@@ -31,12 +31,6 @@ export interface DeepseekV41FlashRule {
 	readonly surfaces?: readonly PromptSurface[];
 }
 
-const TERMINAL: readonly PromptSurface[] = ["terminal"];
-const APP: readonly PromptSurface[] = ["app"];
-const TERMINAL_AND_APP: readonly PromptSurface[] = ["terminal", "app"];
-const CHAT: readonly PromptSurface[] = ["chat"];
-const APP_AND_CHAT: readonly PromptSurface[] = ["app", "chat"];
-
 function finalAnswer(unverified: string): string {
 	return `Treat the final answer as the user's first look at your work. It stands alone, without the earlier updates or the shorthand you built up while working. Lead with the outcome, then give whichever of these apply: what changed and where, the checks you ran and their results, the assumptions and decisions you made without the user's guidance, every obstacle that blocked or narrowed the work, the problems you noticed outside the goal that the user would want to know about, and ${unverified}.`;
 }
@@ -51,14 +45,14 @@ export const DEEPSEEK_V41_FLASH_RULES = [
 	{
 		id: "opening-line",
 		section: "Intent Gate",
-		surfaces: TERMINAL,
+		surfaces: ["terminal"],
 		directive:
 			"Tell the user what you understood in one or two sentences, then start working:\n\nI read this as [what you take the user to want], so that [what it is for].\n\nSay it once per request: at once when the request stands on its own, and after that first look when its meaning depends on what it points at. Name any assumption your reading rests on.",
 	},
 	{
 		id: "opening-line-in-app",
 		section: "Intent Gate",
-		surfaces: APP,
+		surfaces: ["app"],
 		directive:
 			"Tell the user in one or two plain sentences what you take them to want and what it is for, then start working. Say it once per request: at once when the request stands on its own, and after that first look when its meaning depends on what it points at. Name any assumption your reading rests on.",
 	},
@@ -220,24 +214,24 @@ export const DEEPSEEK_V41_FLASH_RULES = [
 	{
 		id: "proactive-updates",
 		section: "Reporting",
-		surfaces: TERMINAL_AND_APP,
+		surfaces: ["terminal", "app"],
 		directive:
 			"Report as things happen: an item closes with a result, a finding changes the picture, you decide something the user did not decide for you, an obstacle changes the route. Say what it means for what they asked, with the concrete detail such as the file or the cause. An update does not end the turn: while work remains that you can do now, the next tool call goes in the same response.",
 	},
-	{ id: "chat-replies", section: "Reporting", surfaces: CHAT, directive: CHAT_REPLY_RULE },
+	{ id: "chat-replies", section: "Reporting", surfaces: ["chat"], directive: CHAT_REPLY_RULE },
 	{
 		id: "final-answer",
 		section: "Reporting",
-		surfaces: TERMINAL,
+		surfaces: ["terminal"],
 		directive: finalAnswer("anything left unverified"),
 	},
 	{
 		id: "final-answer-in-app",
 		section: "Reporting",
-		surfaces: APP_AND_CHAT,
+		surfaces: ["app", "chat"],
 		directive: finalAnswer(GPT_APP_UNVERIFIED_SLOT),
 	},
-	{ id: "app-feedback", section: "Reporting", surfaces: APP_AND_CHAT, directive: GPT_APP_UNRUN_CHECK_RULE },
+	{ id: "app-feedback", section: "Reporting", surfaces: ["app", "chat"], directive: GPT_APP_UNRUN_CHECK_RULE },
 	{
 		id: "no-suppression",
 		section: "Limits",
