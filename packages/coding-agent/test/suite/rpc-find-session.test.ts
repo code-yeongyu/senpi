@@ -4,7 +4,7 @@
  * a path from the request, opens and claims nothing, is bounded, and needs what an `open_session` of that path needs,
  * so a caller without that standing cannot tell a known id from an unknown one.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
@@ -83,6 +83,42 @@ describe("find_session finds a session file by its durable id (senpi#6429)", () 
 			success: true,
 			data: { found: { sessionPath: file, cwd: join(fixture.agentA, "sessions"), open: false } },
 		});
+	});
+
+	// senpi#7021 review: the root scan adds only session files that carry the id.
+	it("#given files directly in the sessions root that are not a session or carry another id #when find_session names a durable id #then the answer is unknown", async () => {
+		const fixture = await devices();
+		await using host = createInProcessRig(fixture.agentA);
+		const root = join(fixture.agentA, "sessions");
+		writeSessionFile(root, OTHER_ID);
+		writeFileSync(join(root, `2026-11-11T02-00-00-000Z_${ID}.jsonl`), "not a session header\n");
+
+		expect(await find(host, ID)).toMatchObject({ success: true, data: { unknown: true } });
+	});
+
+	// senpi#7136
+	it("#given the file senpi named for the id and a file under another name whose header carries the same id #when find_session names it #then the named file answers and the other file is not read", async () => {
+		const fixture = await devices();
+		await using host = createInProcessRig(fixture.agentA);
+		const file = writeSessionFile(getDefaultSessionDir(fixture.repoA, fixture.agentA), ID);
+		const other = getDefaultSessionDir(fixture.repoB, fixture.agentA);
+		renameSync(writeSessionFile(other, ID, "2026-11-11T01-00-00-000Z"), join(other, "copy.jsonl"));
+
+		expect(await find(host, ID)).toMatchObject({
+			success: true,
+			data: { found: { sessionPath: file, open: false } },
+		});
+	});
+
+	// senpi#7136
+	it("#given a session file under a caller-chosen name that does not carry the id #when find_session names its durable id #then every header is read and the file answers", async () => {
+		const fixture = await devices();
+		await using host = createInProcessRig(fixture.agentA);
+		const dir = getDefaultSessionDir(fixture.repoA, fixture.agentA);
+		const file = join(dir, "chosen.jsonl");
+		renameSync(writeSessionFile(dir, ID), file);
+
+		expect(await find(host, ID)).toMatchObject({ success: true, data: { found: { sessionPath: file, cwd: dir } } });
 	});
 
 	it("#given two session files that carry one durable id #then the answer is ambiguous and names neither", async () => {
