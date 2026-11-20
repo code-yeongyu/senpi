@@ -4,6 +4,9 @@
  */
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
@@ -91,7 +94,12 @@ describe("where a generation's supervisor is placed", () => {
 		command: "/usr/bin/bun",
 		args: ["host-lifecycle.ts", "--socket", "/s/rpc.sock", "--owner-fd", "3"],
 	};
-	const linux = { platform: "linux" as const, userManager: true, systemdRun: "/usr/bin/systemd-run" };
+	const linux = {
+		platform: "linux" as const,
+		userManager: true,
+		systemdRun: "/usr/bin/systemd-run",
+		scopeAccepted: true,
+	};
 
 	it("starts the supervisor in its own collected scope, execing the same argv, when the user manager answers", () => {
 		const placement = decideHostUnitPlacement("0b0e", linux);
@@ -118,6 +126,7 @@ describe("where a generation's supervisor is placed", () => {
 		[{ ...linux, platform: "darwin" as const }, "not_linux"],
 		[{ ...linux, userManager: false }, "no_user_manager"],
 		[{ ...linux, systemdRun: undefined }, "no_systemd_run"],
+		[{ ...linux, scopeAccepted: false }, "scope_refused"],
 	])("keeps today's spawn without a usable manager (%o)", (probe, reason) => {
 		const placement = decideHostUnitPlacement("0b0e", probe);
 		expect(placement).toEqual({ kind: "caller_unit", reason });
@@ -129,13 +138,40 @@ describe("where a generation's supervisor is placed", () => {
 			platform: "linux",
 			userManager: false,
 			systemdRun: undefined,
+			scopeAccepted: false,
 		});
 		expect(await probeHostUnitPlacement({ PATH: "/usr/bin", XDG_RUNTIME_DIR: "/run/user/1" }, "darwin")).toEqual({
 			platform: "darwin",
 			userManager: false,
 			systemdRun: undefined,
+			scopeAccepted: false,
 		});
 	});
+
+	it.skipIf(process.platform === "win32")(
+		"keeps today's spawn when the manager answers but systemd-run refuses the transient scope",
+		async () => {
+			const bin = realpathSync(await mkdtemp(join(tmpdir(), "s7099-bin-")));
+			try {
+				await writeFile(join(bin, "systemctl"), "#!/bin/sh\necho running\n", { mode: 0o755 });
+				await writeFile(
+					join(bin, "systemd-run"),
+					"#!/bin/sh\necho 'Failed to start transient scope unit: Access denied' >&2\nexit 1\n",
+					{ mode: 0o755 },
+				);
+
+				const placement = decideHostUnitPlacement(
+					"0b0e",
+					await probeHostUnitPlacement({ PATH: bin, XDG_RUNTIME_DIR: bin }, "linux"),
+				);
+
+				expect(placement).toEqual({ kind: "caller_unit", reason: "scope_refused" });
+				expect(placedLaunch(launch, placement)).toBe(launch);
+			} finally {
+				await rm(bin, { recursive: true, force: true });
+			}
+		},
+	);
 
 	it("names the unit a generation's cgroup belongs to and whether it is its own", () => {
 		const terminal = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/term-4c3d.service\n";

@@ -7,9 +7,10 @@
  * `systemd-run --user --scope`, which moves itself into a new scope named for the generation and then EXECS the
  * supervisor argv in place: the spawned pid is the supervisor itself, every inherited descriptor (the owner pipe at
  * 3, the presenter channel at 4, the startup pipe, private fds) survives, and `--collect` unloads the scope once the
- * generation exits. No live process is ever moved between cgroups. Without a reachable manager (containers, CI
- * without systemd, macOS) the spawn is unchanged, and `host ensure` / `host status` name the unit the host's
- * lifetime is tied to instead (`readHostUnit`).
+ * generation exits. No live process is ever moved between cgroups. The probe creates one throwaway scope first: a
+ * manager that answers but refuses transient scopes (no cgroup delegation, bus policy) keeps the spawn unchanged
+ * instead of failing the start. Without a reachable manager (containers, CI without systemd, macOS) the spawn is
+ * unchanged too, and `host ensure` / `host status` name the unit the host's lifetime is tied to (`readHostUnit`).
  */
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
@@ -34,16 +35,22 @@ export interface HostUnitProbe {
 	readonly userManager: boolean;
 	/** `systemd-run` resolved on this environment's PATH. */
 	readonly systemdRun: string | undefined;
+	/** Whether that `systemd-run` could start a transient user scope just now. */
+	readonly scopeAccepted: boolean;
 }
 
 export type HostUnitPlacement =
 	| { readonly kind: "own_unit"; readonly unit: string; readonly systemdRun: string }
-	| { readonly kind: "caller_unit"; readonly reason: "not_linux" | "no_user_manager" | "no_systemd_run" };
+	| {
+			readonly kind: "caller_unit";
+			readonly reason: "not_linux" | "no_user_manager" | "no_systemd_run" | "scope_refused";
+	  };
 
 export function decideHostUnitPlacement(instanceId: string, probe: HostUnitProbe): HostUnitPlacement {
 	if (probe.platform !== "linux") return { kind: "caller_unit", reason: "not_linux" };
 	if (!probe.userManager) return { kind: "caller_unit", reason: "no_user_manager" };
 	if (probe.systemdRun === undefined) return { kind: "caller_unit", reason: "no_systemd_run" };
+	if (!probe.scopeAccepted) return { kind: "caller_unit", reason: "scope_refused" };
 	return { kind: "own_unit", unit: hostUnitName(instanceId), systemdRun: probe.systemdRun };
 }
 
@@ -74,9 +81,11 @@ export async function probeHostUnitPlacement(
 	env: NodeJS.ProcessEnv,
 	platform: NodeJS.Platform = process.platform,
 ): Promise<HostUnitProbe> {
-	if (platform !== "linux" || !env.XDG_RUNTIME_DIR) return { platform, userManager: false, systemdRun: undefined };
+	if (platform !== "linux" || !env.XDG_RUNTIME_DIR)
+		return { platform, userManager: false, systemdRun: undefined, scopeAccepted: false };
 	const [userManager, systemdRun] = await Promise.all([userManagerAnswers(env), onPath("systemd-run", env.PATH)]);
-	return { platform, userManager, systemdRun };
+	const scopeAccepted = userManager && systemdRun !== undefined && (await scopeStarts(systemdRun, env));
+	return { platform, userManager, systemdRun, scopeAccepted };
 }
 
 /** The launch a generation is spawned with: in its own scope where the user manager answers, else unchanged. */
@@ -88,11 +97,27 @@ export async function placeHostLaunch(
 	return placedLaunch(launch, decideHostUnitPlacement(instanceId, await probeHostUnitPlacement(env)));
 }
 
+function probeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	return { PATH: env.PATH ?? "", XDG_RUNTIME_DIR: env.XDG_RUNTIME_DIR ?? "" };
+}
+
+/** The real placement's own command with `true` as the payload: a refused scope shows here, not at the spawn. */
+function scopeStarts(systemdRun: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+	return new Promise((resolve) => {
+		const child = spawn(systemdRun, ["--user", "--scope", "--collect", "--quiet", "--", "true"], {
+			env: probeEnv(env),
+			stdio: "ignore",
+			timeout: MANAGER_PROBE_TIMEOUT_MS,
+		});
+		child.once("error", () => resolve(false));
+		child.once("close", (code) => resolve(code === 0));
+	});
+}
+
 function userManagerAnswers(env: NodeJS.ProcessEnv): Promise<boolean> {
 	return new Promise((resolve) => {
-		const probeEnv = { PATH: env.PATH ?? "", XDG_RUNTIME_DIR: env.XDG_RUNTIME_DIR ?? "" };
 		const child = spawn("systemctl", ["--user", "is-system-running"], {
-			env: probeEnv,
+			env: probeEnv(env),
 			stdio: ["ignore", "pipe", "ignore"],
 			timeout: MANAGER_PROBE_TIMEOUT_MS,
 		});
