@@ -12,6 +12,12 @@ export class RouteDisconnected extends Error {
 		this.sent = sent;
 	}
 }
+/** A bounded request whose deadline passed before the predecessor answered it. */
+export class RouteTimedOut extends Error {
+	constructor() {
+		super("predecessor_request_timeout");
+	}
+}
 export interface RouteEndpoint {
 	socket: string;
 	launchId: string;
@@ -64,16 +70,20 @@ export class PredecessorPeer {
 		}
 		return new PredecessorPeer(socket, data.generation, onRecord, onEnd);
 	}
-	async request(command: RouteRecord): Promise<RouteRecord> {
+	/** `timeoutMs` bounds the answer; without it the request lasts as long as the connection does. */
+	async request(command: RouteRecord, timeoutMs?: number): Promise<RouteRecord> {
 		if (this.socket.destroyed) throw new RouteDisconnected(false);
 		const id = typeof command.id === "string" ? command.id : randomUUID();
 		if (this.pending.has(id)) throw new Error("duplicate_request_id");
 		const pending = Promise.withResolvers<RouteRecord>();
 		this.pending.set(id, pending);
+		const timer =
+			timeoutMs === undefined ? undefined : setTimeout(() => pending.reject(new RouteTimedOut()), timeoutMs);
 		try {
 			this.socket.write(serializeJsonLine({ ...command, id }));
 			return await pending.promise;
 		} finally {
+			clearTimeout(timer);
 			this.pending.delete(id);
 		}
 	}

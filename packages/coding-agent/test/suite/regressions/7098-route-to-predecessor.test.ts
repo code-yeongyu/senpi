@@ -122,6 +122,11 @@ it.skipIf(process.platform === "win32").each(["park", "exit"] as const)(
 				expect(signalGeneration(pid, "SIGKILL")).toBe(true);
 				await observer.waitForClose();
 				model.release();
+				// A read is safe to replay, so it waits for the switch; a mutation sent before the successor saw the
+				// route break is refused rather than replayed (predecessor_delivery_outcome_unknown).
+				expect(await client.request({ type: "get_state", id: "switched", sessionId })).toMatchObject({
+					success: true,
+				});
 			} else {
 				model.release();
 				await client.waitFor((r) => r.type === "message_end" && r.sessionId === sessionId);

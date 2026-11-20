@@ -11609,6 +11609,22 @@
 		"packages/coding-agent/src/extensions/html-render/image-references.ts#URL_ATTRIBUTES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-discovery.ts#PREDECESSOR_DISCOVERY_TIMEOUT_MS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-discovery.ts#GONE_CODES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-routes.ts#ROUTE_GONE_ERRORS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-wire.ts#ROW_STATES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		}
 	}
 }
