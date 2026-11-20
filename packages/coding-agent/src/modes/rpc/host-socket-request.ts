@@ -6,7 +6,7 @@
  */
 import { createConnection, type Socket } from "node:net";
 import { connectAuthenticatedRpcSocket, type RpcKeyOptions } from "./rpc-auth-client.ts";
-import { RpcEndpointAuthError } from "./rpc-auth-proof.ts";
+import { RPC_HOST_OVERLOADED, RpcEndpointAuthError } from "./rpc-auth-proof.ts";
 import {
 	readSocketSecret,
 	resolveSocketTransportAddress,
@@ -61,7 +61,8 @@ export async function connectAndAsk(
 				timeoutMs,
 			);
 		} catch (cause) {
-			if (cause instanceof RpcEndpointAuthError) throw cause;
+			// An overloaded host is a live host that did not answer in time: the probe outcome it always was (senpi#7055).
+			if (cause instanceof RpcEndpointAuthError && cause.code !== RPC_HOST_OVERLOADED) throw cause;
 			return {
 				connected: cause instanceof Error && "rpcSocketConnected" in cause && cause.rpcSocketConnected === true,
 				answer: undefined,

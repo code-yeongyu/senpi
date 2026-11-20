@@ -210,6 +210,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		admission,
 		onDetach: () => activity.refresh(),
 		onAdmit: () => owner.activity(),
+		spareHop: true,
 	});
 	server.once("error", (cause) => {
 		if (!state.shuttingDown) void shutdown(`public socket listener failed: ${errorMessage(cause)}`, 1);

@@ -11,6 +11,26 @@ export const SOCKET_SECRET_SUFFIX = ".secret";
 export const SOCKET_SECRET_FILE_ENV = "SENPI_RPC_SOCKET_SECRET_FILE";
 export const SOCKET_HANDSHAKE_TIMEOUT_MS = 2_000;
 
+/** Arms a timer and returns its cancel; injected so tests fire supervisor timers by explicit steps. */
+export type Schedule = (ms: number, fire: () => void) => () => void;
+
+export const timerSchedule: Schedule = (ms, fire) => {
+	const timer = setTimeout(fire, ms);
+	return () => clearTimeout(timer);
+};
+
+/**
+ * The supervisor's bound on its engine answering a client's challenge (senpi#7055). The supervisor's loop stays idle
+ * while the engine's is busy, so this fires on time and the client hears a typed `host_overloaded` before its own
+ * handshake deadline, never a silent timeout.
+ */
+export const CHALLENGE_BUDGET_MS = SOCKET_HANDSHAKE_TIMEOUT_MS - 500;
+
+export interface ChallengeBudget {
+	readonly ms: number;
+	readonly schedule: Schedule;
+}
+
 export function socketSecretPath(logicalPath: string): string {
 	if (logicalPath.toLowerCase().startsWith("\\\\.\\pipe\\")) {
 		throw new Error(

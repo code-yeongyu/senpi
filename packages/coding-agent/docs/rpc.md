@@ -1458,6 +1458,23 @@ The raw key never crosses the socket. A wrong server proof closes the client wit
 back. A host's `auth_failed` triggers one fresh connection and credential lookup, not an
 unauthenticated retry.
 
+A supervised host answers the challenge within a bounded time whatever its sessions are doing, or
+refuses it (senpi#7055). The supervisor keeps one spare connection to its engine that is already
+authenticated, so a challenge needs one engine turn rather than three. When the engine has not answered
+a challenge within 1.5 seconds (below the client's 2-second handshake budget), the supervisor answers
+it and closes the connection:
+
+```json
+{"id":"rpc-auth-protocol","type":"response","command":"get_protocol_info","success":false,"error":"host_overloaded","errorCode":"host_overloaded","errorData":{"retry_after_ms":1500}}
+```
+
+The shipped client turns this into a retryable `RpcEndpointAuthError` with code `host_overloaded` and
+`retryAfterMs`. It reconnects after `retry_after_ms` when that still fits the caller's deadline;
+otherwise it throws. `senpi host session` reports it as `{action:"refuse", reason:"host_overloaded",
+data:{retry_after_ms}}` with the refused exit code, and host probes (`ensure`, `status`) treat it like a
+host that is live but did not answer in time. Back off for `retry_after_ms` rather than reconnecting at
+once: every new handshake adds work for the engine.
+
 This release serves clients that never prove the key, with one stderr deprecation line per
 connection and no limit beyond the normal JSONL ones, whatever the first frame (a long prompt or
 an image included) and whether or not the client first received a challenge it could not answer.
@@ -1469,7 +1486,7 @@ later frame executes. Under enforcement, pre-authentication input is limited to 
 
 The host never drops an unauthenticated connection silently. Each drop writes one stderr line,
 `senpi rpc host: dropped an unauthenticated connection on <endpoint>: <reason>`, where the reason
-is `auth_required`, `auth_failed`, `pre-auth budget exceeded`, `pre-auth deadline`,
+is `auth_required`, `auth_failed`, `host_overloaded`, `pre-auth budget exceeded`, `pre-auth deadline`,
 `first frame over the line limit` or `key publication failed`. The line carries no frame
 content, nonce or key material.
 

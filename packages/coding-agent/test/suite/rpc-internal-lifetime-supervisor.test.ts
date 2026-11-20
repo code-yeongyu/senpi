@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { waitForListener } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
+import { waitForListener } from "../../src/modes/rpc/host-lifecycle-readiness.ts";
 import { processExitEvent } from "../helpers/process-exit-event.ts";
 import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 

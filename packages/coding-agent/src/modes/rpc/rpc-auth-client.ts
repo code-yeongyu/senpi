@@ -7,6 +7,7 @@ import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import {
 	authRecord,
 	RPC_AUTH_HEX,
+	RPC_HOST_OVERLOADED,
 	RPC_LAUNCH_ID,
 	RpcEndpointAuthError,
 	rpcAuthProof,
@@ -69,6 +70,12 @@ export async function connectAuthenticatedRpcSocket(
 		} catch (cause) {
 			socket.destroy();
 			if (attempt === 0 && cause instanceof RpcEndpointAuthError && cause.code === "auth_failed") continue;
+			// An overloaded host names when to come back; a retry that still fits the caller's deadline is taken.
+			const retryAfterMs = cause instanceof RpcEndpointAuthError ? cause.retryAfterMs : undefined;
+			if (retryAfterMs !== undefined && Date.now() + retryAfterMs < deadline) {
+				await new Promise<void>((resolve) => setTimeout(resolve, retryAfterMs));
+				continue;
+			}
 			// The socket's own failure (ENOENT, ECONNREFUSED) is how callers tell an unreachable endpoint apart.
 			const failure = !(cause instanceof RpcEndpointAuthError) && earlyError !== undefined ? earlyError : cause;
 			if (failure instanceof Error) Object.assign(failure, { rpcSocketConnected: connected });
@@ -120,7 +127,9 @@ async function authenticate(
 				reject(
 					code === "auth_failed" || code === "auth_required"
 						? new RpcEndpointAuthError(code, `${path}; set SENPI_RPC_KEY_ROOT to the host's agent dir (${root})`)
-						: new Error(`RPC authentication probe refused on ${path}: ${String(response.error)}`),
+						: code === RPC_HOST_OVERLOADED
+							? new RpcEndpointAuthError(code, path, { retryAfterMs: retryAfter(response.errorData) })
+							: new Error(`RPC authentication probe refused on ${path}: ${String(response.error)}`),
 				);
 			}
 		},
@@ -179,4 +188,9 @@ async function authenticate(
 		socket.off("error", onError);
 		socket.off("close", onClose);
 	}
+}
+
+function retryAfter(errorData: unknown): number | undefined {
+	const value = authRecord(errorData)?.retry_after_ms;
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
