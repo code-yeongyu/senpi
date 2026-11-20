@@ -82,16 +82,6 @@ This runs in the TUI and in RPC mode, when a run ends without being aborted or r
 
 If a prompt reaches the threshold while a background summary is still being written, the prompt starts anyway, as long as the context stays below the smaller of `threshold + lead` and `contextWindow - reserve`. Past that point, or with `graceBandEnabled: false`, the prompt waits for compaction.
 
-#### Budget reminder
-
-When the context is within twice the lead of the threshold, senpi adds one hidden note to the prompt:
-
-```
-[context budget] Approximately <n> tokens remain before automatic compaction. Wrap up verbose exploration, prefer concise summaries over full dumps, and front-load conclusions.
-```
-
-It is sent once between two compactions. `reminderEnabled: false` turns it off.
-
 #### Tool-result admission
 
 A tool result whose text is larger than the admission cap is sent to the model as its head and tail with a marker between them:
