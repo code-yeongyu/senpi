@@ -25,7 +25,7 @@ function managerAnswers(state: string): boolean {
 }
 
 /** One generation, one scope: the instance id makes the name unique per generation. */
-export function hostUnitName(instanceId: string): string {
+function hostUnitName(instanceId: string): string {
 	return `${HOST_UNIT_PREFIX}${instanceId}.scope`;
 }
 
@@ -176,7 +176,7 @@ export async function hostUnitPayload(
 }
 
 /** `null` off Linux or when the process's cgroup cannot be read. */
-export async function readHostUnit(pid: number, instanceId: string | undefined): Promise<HostUnit | null> {
+async function readHostUnit(pid: number, instanceId: string | undefined): Promise<HostUnit | null> {
 	if (process.platform !== "linux") return null;
 	const table = await readFile(`/proc/${pid}/cgroup`, "utf8").catch(() => undefined);
 	return table === undefined ? null : hostUnitFromCgroupTable(table, instanceId);

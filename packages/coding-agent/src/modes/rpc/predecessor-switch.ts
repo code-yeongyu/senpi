@@ -14,7 +14,7 @@ const SWITCH_RETRY_MS = 250;
 /** Answered to a command whose switch has not finished within the close grace window: retry it. */
 export const SWITCH_PENDING = "generation_switch_pending";
 
-export class RouteSwitchFailed extends Error {}
+class RouteSwitchFailed extends Error {}
 
 export type SwitchOutcome =
 	| { readonly kind: "switched" }
