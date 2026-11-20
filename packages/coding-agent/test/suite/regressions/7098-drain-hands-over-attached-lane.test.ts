@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +17,7 @@ afterEach(async () => {
 });
 
 it("an attached session mid-turn parks at its turn boundary and the drained generation exits", async () => {
-	const dir = await mkdtemp(join(tmpdir(), "senpi-7098-"));
+	const dir = realpathSync(await mkdtemp(join(tmpdir(), "senpi-7098-")));
 	scratchDirs.push(dir);
 	const exited = Promise.withResolvers<void>();
 	const rig = createInProcessRig(dir, { onEmptyExit: () => exited.resolve() });
