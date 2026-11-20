@@ -1,9 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { copyContextProvenance } from "@earendil-works/pi-ai";
 import { markTransientMessage } from "../../../compaction/estimate-cache-key.ts";
 import { type CompactionPreparation, estimateTokens } from "../../../compaction/index.ts";
 import { inheritSessionContextEntryId } from "../../../session-manager.ts";
-import type { BeforeAgentStartEventResult } from "../../types.ts";
 import { type IdleCompactionDecision, shouldWarmAtIdle } from "./idle.ts";
 import * as policy from "./policy.ts";
 import { isWarmResultStale, isWithinGraceBand, resolveSpeculationLeadTokens } from "./speculation-lead.ts";
@@ -42,46 +40,6 @@ export function shouldDeferGraceBand(input: {
 		input.graceBandEnabled !== false &&
 		isWithinGraceBand(input.tokens, input.thresholdTokens, input.leadTokens, input.contextWindow, input.reserveTokens)
 	);
-}
-
-export function injectTokenBudgetReminder(messages: AgentMessage[], reminder?: string): AgentMessage[] {
-	if (!reminder) return messages;
-	for (let index = messages.length - 1; index >= 0; index--) {
-		const message = messages[index];
-		if (message?.role !== "user") continue;
-		const content =
-			typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
-		const firstPart = content[0];
-		if (firstPart?.type === "text" && firstPart.text === reminder) return messages;
-		const reminded = copyContextProvenance(
-			message,
-			inheritSessionContextEntryId(
-				{ ...message, content: [{ type: "text" as const, text: reminder }, ...content] },
-				message,
-			),
-		);
-		return messages.map((candidate, candidateIndex) => (candidateIndex === index ? reminded : candidate));
-	}
-	return messages;
-}
-
-export function resolveBeforeAgentStartMessage(input: {
-	message?: BeforeAgentStartEventResult["message"];
-	reminder?: string;
-	reminderEnabled?: boolean;
-	reminderEpoch?: string;
-}): BeforeAgentStartEventResult["message"] | undefined {
-	if (!input.reminder || input.reminderEnabled === false) return input.message;
-	const details = input.message?.details;
-	return {
-		...(input.message ?? { customType: "compaction-token-budget", display: false }),
-		content: input.message ? `${input.message.content}\n\n${input.reminder}` : input.reminder,
-		placement: "before-prompt",
-		details: {
-			...(typeof details === "object" && details !== null ? details : {}),
-			tokenBudgetReminderEpoch: input.reminderEpoch,
-		},
-	};
 }
 
 export type IdleWarmAction = "none" | "start" | "replace" | "reuse" | "regenerate";

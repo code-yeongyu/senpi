@@ -5,7 +5,7 @@ import { reduceContextWithFrontier } from "./context-reduction-frontier.ts";
 import { type ContextReductionState, createContextReductionState } from "./context-reduction-state.ts";
 import { markOpenAiRemoteReplayBoundary } from "./openai-remote.ts";
 import { isOpenAiRemoteCompactionModel } from "./openai-remote-model.ts";
-import { admitContextToolResults, injectTokenBudgetReminder } from "./orchestration.ts";
+import { admitContextToolResults } from "./orchestration.ts";
 import { estimateTotalTokens } from "./overflow-retry.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
 import { type EmergencyPruneLatch, hardLimitEmergencyPrune } from "./speculative.ts";
@@ -37,7 +37,6 @@ export function buildCompactionContext(input: {
 	emergencyPruneLatch: EmergencyPruneLatch;
 	/** Emits the compaction log event for a real emergency prune at its one true site. */
 	logEmergencyPrune?: (fields: { route: string; tokensBefore: number; tokens: number }) => void;
-	reminder?: string;
 }) {
 	if (input.laneOwnsCompaction) {
 		return repairOrphanedToolResults(convertToLlm(input.event.messages));
@@ -88,17 +87,14 @@ export function buildCompactionContext(input: {
 		model: input.ctx.model,
 		branchEntries: input.ctx.sessionManager.getBranch(),
 	});
-	const reminded = injectTokenBudgetReminder(marked, input.reminder);
-	const outgoing = repairOrphanedToolResults(convertToLlm(reminded));
+	const outgoing = repairOrphanedToolResults(convertToLlm(marked));
 	const overhead = input.contextOverheadTokens ?? 0;
 	const beforePrune = estimateTotalTokens(sourceMessages) + overhead;
 	const afterPrune = estimateTotalTokens(outgoing) + overhead;
 	if (
 		managed &&
 		(state.engaged || emergency.messages !== sourceMessages) &&
-		(emergency.needsAggressiveCompaction ||
-			afterPrune > input.promptContextWindow ||
-			(afterPrune < beforePrune && input.emergencyPruneLatch.engaged))
+		(emergency.needsAggressiveCompaction || (afterPrune < beforePrune && input.emergencyPruneLatch.engaged))
 	)
 		state.compactionRequired = true;
 	return outgoing;

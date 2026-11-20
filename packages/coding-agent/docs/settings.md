@@ -237,7 +237,6 @@ Context cuts, skipped files, and compacted or omitted skills share the "Context 
 | `compaction.speculativeFraction` | number | `0.75` | Read but without effect: the lead above always decides when the background summary starts |
 | `compaction.idleCompactionEnabled` | boolean | `true` | When a run ends in the TUI or RPC mode, compact or prepare a summary while nobody is waiting |
 | `compaction.graceBandEnabled` | boolean | `true` | Let a turn start past the threshold while a background summary is still being written, instead of waiting for it |
-| `compaction.reminderEnabled` | boolean | `true` | Tell the model once, shortly before the threshold, roughly how many tokens are left |
 | `compaction.toolAdmissionEnabled` | boolean | `true` | Send an oversized tool result to the model as a head and tail excerpt |
 | `compaction.restorationEnabled` | boolean | `true` | After a compaction, remind the model which files it touched and which skills it loaded |
 | `compaction.restorationMaxItems` | number | `10` | Most files and skills listed in that reminder |

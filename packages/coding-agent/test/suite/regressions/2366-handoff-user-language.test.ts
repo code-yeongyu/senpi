@@ -4,6 +4,7 @@ import {
 	buildHandoffSection,
 	FULL_HANDOFF_LANGUAGE_RULE,
 	HANDOFF_LANGUAGE_RULE,
+	REPLY_LANGUAGE_RULE,
 } from "../../../src/core/dynamic-prompt/handoff.ts";
 import { presetSharedSections } from "../../../src/core/extensions/builtin/prompt-preset/contract.ts";
 import { resolvePreset } from "../../../src/core/extensions/builtin/prompt-preset/presets.ts";
@@ -32,12 +33,16 @@ const CLAUDE_MODEL_IDS = [
 	"claude-fable-5-1",
 	"claude-opus-5",
 	"claude-opus-5-5",
+	"claude-fable-5-2",
 	"claude-sonnet-5-5",
 	"claude-opus-4-5",
 	"claude-opus-4-6",
 	"claude-opus-4-7",
 	"claude-opus-4-8",
 ];
+
+// senpi#7113: these cores state the reply language in their Style section, and their Handoff block keeps only the labels.
+const STYLE_LANGUAGE_PRESETS = new Set(["claude-opus-5-5", "claude-fable-5-2"]);
 
 describe("senpi#2366 handoff user-language rule", () => {
 	it.each(CLAUDE_MODEL_IDS)("renders the shared language rule exactly once in the %s preset", (modelId) => {
@@ -46,8 +51,14 @@ describe("senpi#2366 handoff user-language rule", () => {
 
 		// then
 		expect(preset?.name).toMatch(/^claude-/);
-		const rule = presetSharedSections(preset?.name) === "full" ? FULL_HANDOFF_LANGUAGE_RULE : HANDOFF_LANGUAGE_RULE;
-		expect(occurrences(preset?.prompt ?? "", rule)).toBe(1);
+		const handoffRule =
+			presetSharedSections(preset?.name) === "full" ? FULL_HANDOFF_LANGUAGE_RULE : HANDOFF_LANGUAGE_RULE;
+		if (STYLE_LANGUAGE_PRESETS.has(preset?.name ?? "")) {
+			expect(occurrences(preset?.prompt ?? "", REPLY_LANGUAGE_RULE.terminal)).toBe(1);
+			expect(occurrences(preset?.prompt ?? "", handoffRule)).toBe(0);
+		} else {
+			expect(occurrences(preset?.prompt ?? "", handoffRule)).toBe(1);
+		}
 	});
 
 	it("keeps the handoff template labels the ttsr repetitive-turns detector parses", () => {
