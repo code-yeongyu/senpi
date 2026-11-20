@@ -21,9 +21,6 @@ export interface SpawnRequest {
 /** Inside the PTY: no echo while it waits for the go-line, then the real command keeps the PTY's pid and group. */
 const PTY_GO_SHIM = 'stty -echo 2>/dev/null; IFS= read -r _go || exit 127; stty echo 2>/dev/null; exec "$0" "$@"';
 
-/** Where a session-spawn record can be written (`readKernelProcessIdentity`), and so where a command waits for it. */
-const ATTESTING_PLATFORM = process.platform === "linux" || process.platform === "darwin";
-
 /**
  * Resolve the configured shell (honoring `SENPI_GIT_BASH_PATH` + shell kind) and spawn a
  * terminal session that runs `command` through it. For stdin-transport shells (legacy WSL
@@ -43,7 +40,10 @@ export async function spawnCommandSession(
 	const useStdin = shell.commandTransport === "stdin";
 	const args = useStdin ? [...shell.args] : [...shell.args, request.command];
 
-	const gated = ctx.launchBarrier !== undefined || (request.sessionId !== undefined && ATTESTING_PLATFORM);
+	// A session-spawn record can be written only where `readKernelProcessIdentity` reads a pid, so only there does the
+	// command wait for one.
+	const attesting = process.platform === "linux" || process.platform === "darwin";
+	const gated = ctx.launchBarrier !== undefined || (request.sessionId !== undefined && attesting);
 	const goLine = gated ? `~senpi-go-${randomBytes(8).toString("hex")}` : undefined;
 	const created = await ctx.manager.create(shell.shell, {
 		command: gated ? "/bin/sh" : shell.shell,
