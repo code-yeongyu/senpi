@@ -1540,6 +1540,8 @@ export class AgentSession {
 	/** senpi#3709: reset moments the failed requests of this run named, and whether its fallback ladder ran out. */
 	private _runLimitResets: number[] = [];
 	private _runLimitFailure = false;
+	/** Back-offs spent waiting for a rate-limited or overloaded provider to take queued input (omo#14428). */
+	private _queuedDrainBackoffAttempt = 0;
 	private _runFallbackExhausted = false;
 	private _promptsInFlight = 0;
 	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
@@ -4401,6 +4403,7 @@ export class AgentSession {
 		let launchedContinuation = false;
 		let retryContinuationBlocked = false;
 		let retryExhaustionAllowsQueuedContinuation = false;
+		let retryableFailureAwaitingDrain: AssistantMessage | undefined;
 		let allowsPostCompactionUsageExemptContinuation = false;
 		let releasedExemptionAllowsQueuedContinuation = false;
 		const userAbortSuppressedQueuedContinuation =
@@ -4415,6 +4418,7 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
+			if (msg.stopReason !== "error") this._queuedDrainBackoffAttempt = 0;
 			if (msg.stopReason === "error") {
 				const resetAt = limitResetAt(msg, this._fallbackWallNow());
 				if (resetAt !== undefined) this._runLimitResets.push(resetAt);
@@ -4536,6 +4540,19 @@ export class AgentSession {
 				retryOwnedDeferredQueue &&
 				retryOutcome === "not-handled" &&
 				(msg.stopReason === "error" || msg.stopReason === "aborted");
+			// A provider that is only rate limited or overloaded answers again later: the input queued behind this run
+			// waits that out instead of parking until unrelated input arrives (omo#14428). A provider timeout keeps its
+			// own policy: input stays parked until that provider proves responsive.
+			if (
+				!userAbortSuppressedQueuedContinuation &&
+				retryOutcome === "not-handled" &&
+				retryableError &&
+				!isProviderTimeoutError(msg) &&
+				msg.stopReason === "error" &&
+				this.settingsManager.getRetrySettings().enabled
+			) {
+				retryableFailureAwaitingDrain = msg;
+			}
 
 			if (retryOutcome === "not-handled" && msg.errorCause?.type === "model_config") {
 				this._modelConfigErrors.report(msg, this.sessionManager.getSessionId());
@@ -4631,6 +4648,17 @@ export class AgentSession {
 				this._requiredCompactionAdmissionError = undefined;
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
+			}
+			if (
+				!launchedContinuation &&
+				!retryContinuationBlocked &&
+				retryableFailureAwaitingDrain &&
+				this.agent.hasQueuedMessages()
+			) {
+				const drain = await this._drainQueueAfterProviderBackoff(retryableFailureAwaitingDrain);
+				launchedContinuation = drain === "continued";
+				// A cancelled wait settles the run, as a retry cancelled during its backoff does.
+				retryContinuationBlocked ||= drain === "cancelled";
 			}
 			// agent_before_settle (D-15): handlers may append entries or ask for one more request before
 			// the run settles. A user abort or a blocked retry settles without it.
@@ -5037,25 +5065,12 @@ export class AgentSession {
 		return this._structuredLane.available;
 	}
 
-	/**
-	 * Temporarily disconnect from agent events.
-	 * User listeners are preserved and will receive events again after resubscribe().
-	 * Used internally during operations that need to pause event processing.
-	 */
+	/** Disconnect from agent events during disposal. */
 	private _disconnectFromAgent(): void {
 		if (this._unsubscribeAgent) {
 			this._unsubscribeAgent();
 			this._unsubscribeAgent = undefined;
 		}
-	}
-
-	/**
-	 * Reconnect to agent events after _disconnectFromAgent().
-	 * Preserves all existing listeners.
-	 */
-	private _reconnectToAgent(): void {
-		if (this._unsubscribeAgent) return; // Already connected
-		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 	}
 
 	/**
@@ -10787,15 +10802,12 @@ export class AgentSession {
 		const controller = admission.controller;
 		const requestId = randomUUID();
 		let outcome: "completed" | "failed" | "aborted" = "failed";
-		let disconnected = false;
 
 		try {
-			// Keep the session subscriber attached until the aborted run emits
-			// agent_end. That event clears the active-run and retry state that
-			// waitForIdle() depends on.
+			// The session stays subscribed to its agent for the whole compaction. The abort's agent_end clears the
+			// active-run and retry state waitForIdle() depends on, and a run this abort does not stop (a continuation
+			// the ending run schedules, a run the session does not own) still has every message written (omo#14428).
 			await this._abortActiveAgentAndRetry("system");
-			this._disconnectFromAgent();
-			disconnected = true;
 			this._emit({ type: "compaction_start", reason: "manual", requestId });
 			const execution = await this._executeCompaction({
 				controller,
@@ -10846,7 +10858,6 @@ export class AgentSession {
 				this._compactionAbortController = undefined;
 			}
 			this._releasePendingCompactionAdmission(admission, outcome);
-			if (disconnected && !this.isCompacting) this._reconnectToAgent();
 			if (outcome === "completed") this._resumeQueuedMessagesAfterCompaction();
 		}
 	}
@@ -12801,12 +12812,9 @@ export class AgentSession {
 					void (async () => {
 						let outcome: "completed" | "failed" | "aborted" = "failed";
 						let compactionCompleted = false;
-						let disconnected = false;
 
 						try {
 							await this._abortActiveAgentAndRetry("system");
-							this._disconnectFromAgent();
-							disconnected = true;
 							this._emit({
 								type: "compaction_start",
 								reason: "extension",
@@ -12856,7 +12864,6 @@ export class AgentSession {
 								this._compactionAbortController = undefined;
 							}
 							this._releasePendingCompactionAdmission(admission, outcome);
-							if (disconnected && !this.isCompacting) this._reconnectToAgent();
 							// A throwing onComplete consumer overwrites outcome in the catch
 							// block, so recovery keys off whether compaction itself succeeded.
 							if (compactionCompleted) this._resumeQueuedMessagesAfterCompaction();
@@ -14125,6 +14132,35 @@ export class AgentSession {
 		this._failedResponse = message;
 		this._scheduleContinuationAfterCurrentEvent(continuation.options, true, continuation.watchdogTimeoutMs);
 
+		return "continued";
+	}
+
+	/**
+	 * omo#14428: the retry owner gave up on a rate-limited or overloaded provider while input was still queued. The
+	 * session waits the provider out (the provider's stated delay, else a backoff that grows with each wait and
+	 * restarts after a run that ends without an error) and then runs the queue, whose own failures retry again. An
+	 * abort cancels the wait like a retry backoff.
+	 */
+	private async _drainQueueAfterProviderBackoff(
+		failure: AssistantMessage,
+	): Promise<"continued" | "cancelled" | "nothing-queued"> {
+		const attempt = ++this._queuedDrainBackoffAttempt;
+		const backoffMs = Math.min(
+			retryBackoffDelayMs(this._resolveRetryProfile().turn.backoff, attempt, this._retryRandom()),
+			this.settingsManager.getRetrySettings().maxAgentDelayMs,
+		);
+		const hintMs = failure.errorMessage ? this._getProviderRetryDelayMs(failure.errorMessage) : undefined;
+		const controller = new AbortController();
+		this._retryAbortController = controller;
+		try {
+			await sleep(Math.max(backoffMs, hintMs ?? 0), controller.signal);
+		} catch {
+			return "cancelled";
+		} finally {
+			if (this._retryAbortController === controller) this._retryAbortController = undefined;
+		}
+		if (!this.agent.hasQueuedMessages()) return "nothing-queued";
+		this._scheduleContinuationAfterCurrentEvent();
 		return "continued";
 	}
 
