@@ -1,3 +1,21 @@
+## 2026-11-19 - A continued session keeps its goal streak (senpi#7020)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: the load-time suppression of a goal ending on `GOAL_CONTINUATION_CAP` trailing continuations skips a `session_start` with `continued`.
+
+### Why
+
+- A long-running goal that a host restart interrupted stayed parked until a person wrote, although nothing about it was cold.
+
+### Why an extension could not handle it
+
+- This is the builtin goal extension's own session-start policy.
+
+### Expected merge conflict zones
+
+- LOW: one condition in the `session_start` handler.
+
 ## 2026-11-18 - The audit-free continuation prompt follows the Astra family (senpi#6975)
 
 ### What changed

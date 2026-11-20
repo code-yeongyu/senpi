@@ -1,3 +1,62 @@
+## 2026-11-14 - The terminal control endpoint refuses an `interrupt` `background` other than `"stop"`
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-session-commands.ts`: the control endpoint's `interrupt` refuses a `background` other than `"stop"` with the RPC host's reason, before it touches the turn.
+
+### Why
+
+- The endpoint passed any value through, so an invalid one interrupted the turn as a plain interrupt where the RPC host refused it.
+
+### Why an extension could not handle it
+
+- The control endpoint is interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: the `interrupt` case of `runSessionControlCommand`.
+
+## 2026-11-19 - A terminal closes its own session gracefully on request (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the control surface's `closeSession` runs the normal quit path after the close's answer is sent.
+- `packages/coding-agent/src/modes/interactive/session-control-close.ts` (new): `unload_session { graceful: true }` on the control endpoint. It refuses while the composer holds unsent text (before the fence and again after the drain), drains like a host, answers, and then asks the terminal to exit.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: lists `unload_session` and the `unload_graceful` capability, and routes the command.
+
+### Why
+
+- oh-my-openagent#14313: moving or closing a terminal-hosted session needed a kill or TERM, which reopened as an interrupted run.
+
+### Why an extension could not handle it
+
+- The control endpoint's command set and the terminal's quit path are the interactive mode's own.
+
+### Expected merge conflict zones
+
+- LOW: `sessionControlContext()` in `interactive-mode.ts`.
+
+## 2026-11-19 - A peer delivery to an idle terminal starts its own turn and leaves the draft alone (senpi#7043)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the control surface answers `submissionInFlight()` (the host's open submission tickets) and `hasDraft()` (`hasComposerDraft()`: non-blank text or pending images) instead of one `draftHold()`; `composerHold()` became the boolean `hasComposerDraft()`, which also feeds `attachEditor`.
+- `packages/coding-agent/src/modes/interactive/session-control-lifecycle.ts`: `editorHold` reports `hold_reason: "draft"` only while a submission is in flight; a draft in the composer no longer holds admission.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: `TuiControlSurface` declares `submissionInFlight()` and `hasDraft()`; `get_state.editor_has_draft` is either of them, as before.
+- `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`: the `held_draft` refusal names the submitted input still on its way, not the user composing.
+
+### Why
+
+- A delivery from another session to an idle terminal with a half-typed draft was refused as `held_draft` and stayed queued with its sender until the person submitted or cleared the draft, so the delivery would run together with the person's prompt. Now it starts its own turn at once (the sender is answered `started`), and the draft stays in the composer to send on its own. Submitted input still holds admission, so a delivery never overtakes it.
+
+### Why an extension could not handle it
+
+- The composer state and the submission tickets are interactive-mode internals that feed the engine's admission gate; an extension draining deliveries only sees the gate's refusal.
+
+### Expected merge conflict zones
+
+- LOW: the `draftHold` line of `sessionControlContext`, the `composerHold` method and its `attachEditor` call site in `interactive-mode.ts`.
+
 ## 2026-11-18 - `/trust` and the reload trust save await the asynchronous trust store (#6823 re-land)
 
 ### What changed

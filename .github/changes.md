@@ -1,3 +1,23 @@
+## 2026-11-16 - Build Binaries no longer holds a runner while npm publishes (senpi#6851)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `publish-npm` job only dispatches `publish-npm.yml` (now with `-f build_run_id=<this run>`) and finds the run. The "Await publish-npm.yml completion" step is gone, and the timeout drops from 360 to 15 minutes. `report-smoke-failure-after-npm`, `publish-github-release` and `cleanup-draft-github-release` are replaced by one `finalize-release` job. It needs `build`, `smoke-test-binaries`, `stage-github-release` and `publish-npm`, runs `if: always()` unless it is a dry run or nothing was dispatched, uses the concurrency group `release-finalize-<tag>` (never cancelled), and runs `scripts/release-finalize.mjs`. It is now the only job with `issues: write`.
+- `.github/workflows/publish-npm.yml`: a new `build_run_id` input (default empty), and a new `finalize-github-release` job. The job needs `release` and runs only in a publish-only, non-dry run that names a Build Binaries run. It has job-level `actions: read`, `contents: write` and `issues: write` (so neither id-token nor the push token), shares the same concurrency group, and runs the same script.
+- `.github/agent/skills/release-publish/SKILL.md`: the publish watch, the recovery command and the post-release checklist describe the two finalize jobs.
+
+### Why
+
+- The awaiting job idled on a hosted runner for a median 12.9 min and up to 54.1 min per release (24 of Build Binaries' 26.7 Linux runner-minutes). Each half now finishes the release when it ends, so the ordering does not change: the GitHub Release is public only after the full smoke, staging and npm all succeeded. The failure handling does not change either: the smoke rollback issue and the draft cleanup still run.
+
+### Why an extension could not handle it
+
+- These are the repository's own release workflows.
+
+### Expected merge conflict zones
+
+- MEDIUM: the jobs after `stage-github-release` in `build-binaries.yml`. LOW: the `workflow_dispatch` inputs of `publish-npm.yml`.
+
 ## 2026-11-18 - CI installs APT packages from a .deb set cached per runner image (senpi#4552)
 
 ### What changed

@@ -36,7 +36,12 @@ export {
 	parseSkillBlock,
 	type SessionStats,
 } from "./core/agent-session.ts";
-export { type OAuthCredential, readStoredCredential } from "./core/auth-storage.ts";
+export { AuthStorage, type OAuthCredential, readStoredCredential } from "./core/auth-storage.ts";
+export {
+	type ConfigValueObservation,
+	type ConfigValueObserver,
+	resolveConfigValue,
+} from "./core/resolve-config-value.ts";
 export { REQUIRED_COMPACTION_ERROR_MESSAGE, RequiredCompactionError } from "./core/required-compaction-error.ts";
 // Compaction
 export {
@@ -710,6 +715,7 @@ export {
 // Exact-pid collection of children whose owning thread is gone (#1962)
 export { collectOrphanedChildren } from "./modes/rpc/child-reaper.ts";
 // Shell utilities
+export { childEnvironmentOf } from "./modes/rpc/host-identity-env.ts";
 export { withBundledBunCommands } from "./utils/bundled-bun.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";

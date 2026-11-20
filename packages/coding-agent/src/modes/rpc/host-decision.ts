@@ -10,7 +10,8 @@
  *   I2 - compatibility is `protocolVersion` + capabilities, NEVER a version-string compare,
  *        and "is my build newer?" is `compareEngineOrdinal`, never `serverVersion`. An
  *        ordinal that cannot be compared (a build without git metadata, a host that reports
- *        none) is EQUAL, and since a handoff needs STRICTLY greater, such a pair attaches.
+ *        none, an ordinal outside senpi CalVer such as a compiled omo's `[5, 1, 78]`, senpi#7040) is
+ *        EQUAL, and since a handoff needs STRICTLY greater, such a pair attaches.
  *
  * The profile rule is the third guard: a handoff additionally requires the candidate's
  * extension set to be a SUPERSET of the running host's. Handing off to a narrower generation

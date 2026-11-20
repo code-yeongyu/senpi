@@ -41,7 +41,7 @@
  * that keeps its shard connection after its last session closed then no longer keeps a 0-session host alive.
  */
 
-import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { HOST_INSTANCE_ID_ENV, ORIGIN_HOST_INSTANCE_ENV, presentInstanceId } from "./host-identity-env.ts";
 import { RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 
 export const OBSERVE_REQUEST_FIELD = "observe";
@@ -131,8 +131,8 @@ export function hostOccupancyHolders(line: string): number | undefined {
 export function originHostInstance(
 	env: Readonly<Record<string, string | undefined>> = process.env,
 ): string | undefined {
-	const instance = env[HOST_INSTANCE_ID_ENV]?.trim();
-	return instance ? instance : undefined;
+	// A host's own process holds its instance id; a child it started for an agent holds the origin (senpi#5635).
+	return presentInstanceId(env[HOST_INSTANCE_ID_ENV]) ?? presentInstanceId(env[ORIGIN_HOST_INSTANCE_ENV]);
 }
 
 /** The generation a request line says its client runs in; undefined when unmarked or not JSON. */

@@ -1,3 +1,21 @@
+## 2026-11-17 - Root export of the OAuth refresh (custody CK18, senpi#5865)
+
+### What changed
+
+- `packages/ai/src/index.ts`: exports `refreshOAuthCredential` and `OAuthRefreshRequest` from `auth/oauth-refresh.ts`.
+
+### Why
+
+`AuthStorage.refreshOAuthCredential` in the coding-agent package delegates to it, so a refresh started there and one started by request-time resolution take the same per-account refresh lock (#5837).
+
+### Why an extension could not handle it
+
+The package root's export list is the public contract; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- LOW: the `auth/` export block in `index.ts`.
+
 ## 2026-11-18 - GPT-6.2 ids in the map-less effort inference (senpi#6948, senpi#6942)
 
 ### What changed

@@ -1675,14 +1675,18 @@ parsing a version string:
   host?" signal: it changes whenever the process does, including after a replacement.
 - `generation` - which generation of its daemon directory this host is, handed to it at spawn time
   (`SENPI_RPC_HOST_GENERATION`). A host nobody ensured reports `0`.
-- `engineVersion` - the build string: the CalVer package version plus `+<buildEpoch>.<sha7>` when the binary
-  was compiled with build metadata. Informational, like `serverVersion`.
+- `engineVersion` - the build string: the engine's senpi CalVer version plus `+<buildEpoch>.<sha7>` when the binary
+  was compiled with build metadata. A distribution compiled beside its own package.json (whose version is then
+  `serverVersion`) defines `SENPI_ENGINE_VERSION` with the embedded senpi version, so this field and the ordinal
+  stay senpi CalVer. Informational, like `serverVersion`.
 - `engineOrdinal` - `[year, month, day, postRelease, buildEpoch]`, the ONLY ordering a client may use.
   `[y, m, d, n]` compares lexicographically, where `n` is the CalVer post-release increment (`2026.9.16-3`
   ships AFTER `2026.9.16`, the opposite of the semver reading of those strings). The build epoch breaks a tie
   only when BOTH sides carry one; otherwise the two builds are EQUAL, so a build whose age cannot be established
   never outranks one that can. Binaries built without git metadata report an epoch of `0`, which is exactly how a
-  client reads "this build has no age": a non-zero epoch is comparable, `0` is not.
+  client reads "this build has no age": a non-zero epoch is comparable, `0` is not. Only two senpi CalVer
+  ordinals (first part a year, 2000 or later) are ordered (senpi#7040): compiled omo builds through 5.1.78
+  advertised their omo version (`[5, 1, 78, 0, 0]`), and a pair with such an ordinal is uncomparable.
 - `launch_profile` - what the host was launched with: `core.session_runtime`, `core.multi_session` and
   `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
@@ -1862,6 +1866,10 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    reopen does: they wait as notices, its running turn is its last on this generation, and it parks once
    that turn settles. A person's input or `resume_session` releases the hold after the reopen. A session a
    client is still attached to keeps its automatic turns.
+   While the successor is still taking over (parks it has not reopened yet, or a predecessor that still runs),
+   its `list_sessions` answer carries `handover: { pending, predecessor_draining }` beside `sessions`: the
+   listing is not yet the endpoint's whole set, so a reader must not treat a missing session as gone. The field
+   is absent once the takeover is done (senpi#7020).
 
 Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
@@ -1882,9 +1890,11 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
 - The successor must not run an OLDER engine than the running host (senpi#7018). `handoffHost` compares the
   successor's engine (this process's build, or the requester's `target_engine` in an idle handover) with the
   host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
-  sides carry one; equal and uncomparable builds are not older; version strings are never compared) and refuses
-  `{ action: "refuse", reason: "older_engine", upgradeable: false }` before spawning anything when the
-  successor is strictly older; `detail` names both engines. `allowDowngrade` (`host handoff --allow-downgrade`)
+  sides carry one; equal builds and builds uncomparable only for a missing epoch are not older; version strings
+  are never compared) and refuses `{ action: "refuse", reason: "older_engine", upgradeable: false }` before
+  spawning anything when the successor is strictly older, or when either ordinal is not senpi CalVer and the
+  successor therefore cannot be proven not older (senpi#7040); `detail` names both engines. An `ensure` with the
+  upgrade policy keeps such a host and writes one `engine order uncomparable` line to stderr. `allowDowngrade` (`host handoff --allow-downgrade`)
   is the caller's explicit consent and skips the check. A host that advertises no ordinal is not judged.
 - Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
   dir's default `<dir>/rpc/rpc.sock` (or whose layout-2 record there proves no live owner), cannot be
@@ -2652,7 +2662,8 @@ A connection without an attachment receives `errorCode: "session_not_attached"` 
 ```
 
 - `status`: `opening`, `idle`, `running`, `waiting_input` (a question is pending), `compacting`, `unloaded` (the routing handle ended and the session reopens by `sessionPath`; `reason` is `idle`, `unload_session` or `handoff`), or `closed` (`reason` is the `session_closed.reason`). After an abort ends a run, `idle` carries `reason: "aborted"`.
-- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close`, `context`, `rename` (the session's name changed: `set_session_name` or a generated title), `archive` (`set_session_archived`) or `settle` (`set_session_settled`); `by` is `client`, `agent` or `host`.
+- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close`, `context`, `rename` (the session's name changed: `set_session_name` or a generated title), `archive` (`set_session_archived`), `settle` (`set_session_settled`) or `retry` (an auto-retry wait started or ended); `by` is `client`, `agent` or `host`.
+- `waiting: { kind, attempt, maxAttempts, delayMs, until, error? }` is present only while a `running` session sleeps in an auto-retry backoff: `kind` is `rate_limit` for a 429, rate, usage or quota limit and `retry` for any other transient error, `until` is the ISO time of the next attempt, `error` the provider error cut to 200 characters. It clears when the retried request starts or the retry ends. `get_state` carries it as `retryWait`. A `list_sessions` row carries the same `waiting` without `error`: a listing reaches every connection that can list sessions, so the provider's error text stays on `get_state` and on `session_status`.
 - `archived` is the session file's archived flag (`set_session_archived`); it is always present.
 - `settled` is the session file's Done flag (`set_session_settled`); it is always present. `settledBy` says how the session reached Done and is present only while `settled` is true and the flag was written with a `by`.
 - `context` is present only with `include_context`. `lastEffect: { effectId, kind, state }` names the session's most recent effect receipt (an input with a `clientMessageId`, an abort, a model or thinking-level switch) and is absent on hosts without the `effect_ledger` capability or before the session's first effect.
@@ -3122,6 +3133,18 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 
 With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays (a refusal with its `pending.deliveries`). Capability: `unload_session`; `deliveries` and `pending.deliveries`: `unload_refuse_deliveries`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
 
+##### Graceful close (`graceful: true`)
+
+`unload_session { sessionId, graceful: true, waitMs?, force?, children?, effectId? }` closes a session without interrupting it (oh-my-openagent#14313). `graceful` and `interrupt` exclude each other. Capability: `unload_graceful`.
+
+1. The fence, in one step: automatic turns (monitor, goal and loop wakes) wait as notices under the engine-turn hold `closing`, `admit_external_message` refuses every new delivery with `errorCode: "session_closing"`, and the queued input leaves the session unread: admitted delivery ids in `dropped.deliveries` (their senders keep them), the user's queued text in `dropped.user_messages`.
+2. The drain: the running turn, its tool calls, bash, compaction, prompts in preflight and other requests end on their own. Nothing is aborted. The wait is bounded by `waitMs` (default 60 000 ms, at most 600 000 ms).
+3. The close: the `closing` hold is released, a `session-closed` custom entry (`{ graceful, turn, waited_ms, returned, stopped: { wake_sources }, at }`) is the clean-stop record, and the teardown's `session_shutdown` carries `closed: true`. The terminal builtin then records no monitor or background job to restore, loops end `stopped` and an active goal is paused. The run ended normally, so a reopen writes no `interrupted-run` entry and arms no hold.
+
+The answer is `outcome: "unloaded"` with `sessionPath`, `dropped` and `graceful: { turn, waited_ms, stopped }`. `turn_active` and `work_pending` are what a graceful close waits for, and `extension_work` is what it stops, so neither refuses it; every other reason refuses before anything is fenced. A drain that outlives `waitMs` answers `outcome: "refused"`, `reason: "turn_active"`, `timed_out: true`, `open: true`, `admission: "reopened"`, `turn` and `waited_ms`, plus `dropped`: the hold is released and admission reopened, so the session keeps running as before, minus the input already handed back. With `effectId` the effect is `done` only when the session closed, so its `updatedAt` is the close.
+
+A terminal's control endpoint takes the same record, `graceful: true` only (anything else is refused `unsupported`). It also refuses `composer_draft` while the composer holds unsent text or an attachment, before the fence and again after the drain, so a close never discards what a person typed. After the answer, the terminal exits by itself as a quit does, and its session file keeps the same clean-stop record.
+
 ### Multi-session host lifecycle (cold start + idle exit)
 
 The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
@@ -3167,9 +3190,14 @@ holds the host this way while at least one remote viewer is attached, and releas
 held observer is occupancy everywhere occupancy is read: the idle-exit window, the empty-host exit, and the
 owner-death quiescence check. Hosts that predate the field ignore it and treat the read as a plain observing read.
 
-A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
-id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
-on every socket request. When a connection's first non-observing request names the host's own generation, the
+A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host keeps its generation
+id (`SENPI_RPC_HOST_INSTANCE_ID`) in its own environment (a socket host that named itself writes it there at start),
+and every child it starts for an agent (shells, eval kernels, the tool child) gets it as
+`SENPI_RPC_ORIGIN_HOST_INSTANCE` instead, so a nested host never adopts it as its own identity (senpi#7034). The
+host's other launch hand-off (daemon directory, generation, build id, watch binding, key sentinel and its
+launch-default `SENPI_RPC_CLIENT_CAPABILITIES`) never reaches those children. `RpcClient` sends whichever of the two
+ids it has as `"origin_host_instance"` on every socket request. When a connection's first non-observing request
+names the host's own generation, the
 connection neither holds the window open, nor blocks the owner-death grace, nor keeps an empty host alive. Without
 this, a task tree whose children open their own children on the shard they run in (omo's `p` shards are keyed by the
 root session) keeps that shard alive through its own connections after the owner and every outside client are gone.
@@ -3548,10 +3576,10 @@ registrant opens no socket and writes no registry directory.
     `attachments` counts the terminal plus each attached client; a subscriber, mirrored or not, is not one.
   - `steer`/`follow_up { message, whenIdle?, clientMessageId?, expected_turn_id? }` and
     `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
-    (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
+    (`admitExternalMessage`), so input the user submitted and the runtime has not taken yet holds them, with the host's `whenIdle` choice (`queue`, the
     default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
     steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started`,
-    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user's submitted input has not reached the runtime yet) and `turn_conflict` are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
     skills. Input sent with a `clientMessageId` is answered with an admission receipt,
@@ -3603,8 +3631,9 @@ registrant opens no socket and writes no registry directory.
   - `steered`: the session is mid-turn, the steer names the current `turn_epoch`, and it goes on the steering
     queue once.
   - `turn_conflict`: the epoch is stale, or a steer names none.
-  - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
-    submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
+  - `held_draft`: input the user submitted has not reached the runtime yet (a buffered submission, a command that
+    may still submit text). Nothing is enqueued; retry on the next wake. A draft still in the composer holds
+    nothing: an idle session starts the delivery's own turn and leaves the draft in place (senpi#7043).
   - `held` (with `holds`, the hold kinds): the session is idle under a hold a peer cannot release - a person's Stop,
     an interrupted run, a parent's run hold (senpi#6490). The delivery is kept as a held notice and starts once that
     hold is released; do not send it again. An `unattended` hold alone is released by the delivery (`started`).
@@ -4301,6 +4330,7 @@ codes or code prefixes in `error`:
   - **Conservative admission:** `new_session`, `fork`, `clone`, and settings or account commands carrying this session's routing handle are also refused while its current file is held. Close the handle and open another session to leave a held file.
   - Holder records are admission evidence, not an exclusive filesystem lock. SessionManager's append API is synchronous and fresh process-identity checks are asynchronous; changing append to asynchronous admission would change the SDK contract and could discard results of already-executed tools.
 - `session_path_in_use` (path held by an opening or quarantined owner; a fully-open current owner is attached instead, an owner whose teardown is already in flight is waited out on the in-process runtime, and a path a live owner has superseded is released rather than held). A path held by ANOTHER GENERATION of the daemon carries `errorData { owner: { instanceId, pid, processStartTime, sessionPath, current }, retry_after_ms: 2000 }`: that generation is still writing the file and is parking it, so the open is a retry, not a failure. An open that arrives while ANOTHER open of the same path is still taking that cross-generation claim waits for it - bounded by the close grace window - and then attaches to the session that open is building; a claim that does not settle in that window answers `errorData { reason: "claim_in_progress", retry_after_ms: 2000 }`. When the claim it waited on is refused, the next waiting open takes the claim itself and later ones wait on that, so no racing open answers a bare refusal; a path still reserved by a session past its teardown grace answers `errorData { reason: "path_still_held", retry_after_ms: 2000 }` (senpi#3485). Only a claim whose owner serves the socket (`current: true`) or still has a client attached refuses an open at all - a superseded, attachment-less claim is reclaimed instead
+  - On the worker runtime, an `open_session` naming a session whose worker is quarantined (it stopped answering, so the host is ending it) answers `session_path_in_use` with `errorData { reason: "session_quarantined", action: "retry", retry_after_ms: 2000 }`. The refusal releases nothing: the quarantined entry keeps its claim and reservations, because a worker stuck in a system call can still be writing the file. When the worker's thread exits, the host first removes its session claim, waiting at most the close grace window (it carries on when the window ends even if the removal has not settled), and only then drops the entry and its reservations. Until that drop, every open naming the session gets this same refusal, including one sent just after the thread exited. Retry after `retry_after_ms`: the first open after the drop is no longer refused for the quarantine and opens the session from its file in a new worker (senpi#6452).
 - `session_reservation_limit` (this worker already holds 64 live session paths; the open or session replacement was refused without disturbing the existing session)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
@@ -7623,6 +7653,8 @@ A provider whose API-key login asks a region (Kimi Code: `"mainland-cn"` or `"gl
 A provider holds logins of one kind. If it had an OAuth login, the key replaces it: `auth.json` is backed up first, and the response `data` is `{replaced: "oauth", backupPath?}`, where `backupPath` is absent when the credential store is not a file (a failed backup fails the login instead). A key added over another key has no `data`.
 
 When `auth.json` exists but cannot be loaded, `get_auth_providers` `data` also carries `storeError` `{kind, reason}`. `kind` is `malformed_json` (not valid JSON), `invalid_format` (the document is not a JSON object), `unreadable` (the file cannot be read, for example a permission error) or `write_back_failed` (the file was read, but saving its repaired or migrated copy failed; the sign-ins it read stay configured and writes are not refused for this kind). `reason` is a short message that never includes the file's path or contents. While `storeError` has any other kind, a stored sign-in reads as unconfigured because it could not be read, not because it is missing (a store that loaded earlier in the process keeps its last loaded sign-ins). Every write, such as `login_api_key`, a login, or `logout`, fails and leaves the file unchanged. A client should say the sign-in store could not be read and ask the user to repair or move `auth.json`. The next `get_auth_providers` after the file becomes readable no longer has `storeError`. A store that is only locked by another writer is not a `storeError`.
+
+While another process holds `auth.json`'s lock, `get_auth_providers` `data` also carries `storeBusy: true`. The request still answers within about a second: the rows come from `auth.json` read without its lock, so a stored sign-in stays configured instead of reading as missing. A client can say the sign-in store is busy and read again; `storeBusy` is absent once the store has been read under its lock.
 
 `get_auth_providers` API-key rows carry `keyHint`, the last four characters of a literal key the app stored when it is at least 12 characters long. OAuth rows, `!command` and `$ENV` references, and short keys have none.
 

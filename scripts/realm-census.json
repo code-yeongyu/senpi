@@ -8802,6 +8802,18 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/host-identity-env.ts#HOST_HANDOFF_ENV_NAMES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/host-identity-env.ts#HOST_HANDOFF_NAME_SET": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/host-watchdog.ts#WATCH_ENV_SUFFIXES": {
+			"class": "constant",
+			"reason": "lookup data derived at load from a literal; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/host-bind-alias-reaper.ts#ALIAS_NAME": {
 			"class": "constant",
 			"reason": "regex without g/y flags; carries no lastIndex state"

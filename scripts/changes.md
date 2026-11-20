@@ -1,3 +1,47 @@
+## 2026-11-16 - release-finalize.mjs joins the binary and npm halves of a release (senpi#6851)
+
+### What changed
+
+- `scripts/release-finalize.mjs` (new): reads the Build Binaries run's staging and smoke jobs and the publish run's `release` job, then does one of the following.
+  - If either half is still running, it does nothing (exit 0).
+  - Otherwise it publishes the draft (and does nothing more when the release is already public), or runs `release-smoke-failure-issue.mjs` when the smoke failed after npm, or runs `release-draft-cleanup.sh` when staging or npm failed. Each of these exits non-zero.
+- `scripts/release-draft-cleanup.sh`: a new `PUBLISH_RELEASE_RESULT` env carries the publish run's `release` job result. When it is set, it decides instead of the run status, because the run stays in progress while its finalize job runs.
+- `scripts/release-smoke-failure-issue.mjs`: opens no second issue when one with the same title exists.
+- `scripts/await-dispatched-run.sh` and its test: removed; nothing polls the publish run any more.
+- Tests:
+  - `scripts/release-finalize.test.mjs` (new) covers the state readers, the decision table and the script against fake `gh`/`npm`.
+  - `scripts/build-binaries-release-recovery.test.mjs`, `scripts/build-binaries-npm-dispatch.test.mjs`, `scripts/release-smoke-failure-issue.test.mjs` and `scripts/release-draft-cleanup.test.mjs` pin the new graph, the shared concurrency group and the new cases.
+
+### Why
+
+- A runner must not idle while the publish run works, and the release must still finish exactly as before.
+
+### Why an extension could not handle it
+
+- These are the repository's own release scripts.
+
+### Expected merge conflict zones
+
+- LOW: the publish-run branch of `scripts/release-draft-cleanup.sh`.
+
+## 2026-11-16 - A dry run with a CI-basis receipt previews the refusal of a red hosted run (senpi#6859 follow-up)
+
+### What changed
+
+- `scripts/release-ci-evidence.mjs`: with `--dry-run --ci-basis-receipt`, when the previewed hosted "Check and test" run concluded red, the dry run logs `the live run would refuse: CI failed on <sha>: ...; a ci_basis_receipt waives only the wait for hosted CI, not a red result` instead of `no CI wait (...)`. The live refusal and the preview share one message (`receiptRefusal`).
+
+### Why
+
+- Review of senpi#6867 (LOW L1): the dry run said the release would go ahead while the live run stops on that red run.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the dry-run branch and the receipt branch of `secureCiEvidence`.
+
 ## 2026-11-16 - A CI-basis receipt waives the hosted CI wait, not a red hosted run (senpi#6859 follow-up)
 
 ### What changed

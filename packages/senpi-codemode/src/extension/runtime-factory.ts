@@ -1,5 +1,6 @@
 import {
 	activeKillGuardEnvironment,
+	childEnvironmentOf,
 	type ExtensionContext,
 	readKillGuardSetting,
 	withBundledBunCommands,
@@ -102,6 +103,8 @@ export async function createRuntime(
 	// bash's BASH_ENV wrapper, as the bash tool does.
 	const killGuardEnv = killGuard ? activeKillGuardEnvironment({ ...process.env, ...pathEntry }) : {};
 	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...pathEntry, ...killGuardEnv, ...withheldCredentialEntries() };
+	// Kernels and their children never see the RPC host's supervisor hand-off (senpi#5635).
+	const inheritedEnv = () => childEnvironmentOf(process.env);
 	const configuredPoolWidth = settings.parallelPoolWidth;
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
 	const pythonEnvironments =
@@ -111,6 +114,7 @@ export async function createRuntime(
 					cwd: ctx.cwd,
 					interpreter: availability.py.detected.path,
 					settings,
+					inheritedEnv,
 				})
 			: undefined;
 	const manager = await create({
@@ -118,6 +122,7 @@ export async function createRuntime(
 		ownerSessionId: ctx.sessionManager.getSessionId(),
 		cwd: ctx.cwd,
 		sessionEnv,
+		inheritedEnv,
 		killGuard,
 		settings,
 		availability,
@@ -147,7 +152,7 @@ export async function createRuntime(
 			artifactsDir: artifacts.dir,
 			cwd: ctx.cwd,
 			runtime: jsRuntimeInfo().name,
-			env: { ...process.env, ...sessionEnv },
+			env: { ...inheritedEnv(), ...sessionEnv },
 			settings,
 		}),
 		...(pythonEnvironments === undefined ? {} : { pythonEnvironments }),

@@ -1,3 +1,40 @@
+## 2026-11-14 - An interrupt's stop names a session the manager no longer holds
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`: `stopForInterrupt` fails with `the terminal manager has no session <id> to stop` when `manager.stop` found no registry entry, and keeps `<id> was still running after the stop (TERM, then KILL)` for a session the stop did not end, as the auto-reap reports them.
+
+### Why
+
+- Both cases were reported as still running after a TERM and a KILL that were never sent for the first one.
+
+### Why an extension could not handle it
+
+- This is the terminal builtin; the change is inside it.
+
+### Expected merge conflict zones
+
+- LOW: `stopForInterrupt` in `session-bundle.ts`.
+
+## 2026-11-19 - A graceful close leaves nothing to restore (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/terminal-manifest.ts`: `recordClosed()` drops every monitor, background job and pending checkpoint, and the manifest file goes away with the last entry.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/restore-session.ts`, `extension.ts`: a `session_shutdown` with `closed: true` records `recordClosed()` instead of `recordShutdown()`.
+
+### Why
+
+- oh-my-openagent#14313 (and senpi#7033's shape): a restored monitor that fires on reopen opens a run the restore sweep then marks interrupted. A session closed on purpose has nothing to restore.
+
+### Why an extension could not handle it
+
+- This is the terminal builtin's own manifest.
+
+### Expected merge conflict zones
+
+- LOW: `stopPersistence` in `restore-session.ts`.
+
 ## 2026-11-15 - Terminal notices from a hand (senpi#6763, PR #6767)
 
 ### What changed

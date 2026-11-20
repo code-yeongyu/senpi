@@ -1,3 +1,58 @@
+## 2026-11-19 - A regression test pins the over-budget sentence first for an older hand's result with no text part (senpi#7062)
+
+### What changed
+
+- `packages/coding-agent/test/headless/hand-page-budget.test.ts`: a new case where an older hand (no `details.resultText`) leaves its show_html_page result with only an image part. The over-budget page must come back as `[text, image]` with the over-budget sentence first and `imagesInlined: false`. Test only; no source change.
+
+### Why
+
+- senpi#6939 asked for this test. The behaviour itself already landed on main with senpi#6938 (`applied` in `html-render/hand-page-budget.ts`), so senpi#6943's code change was superseded; this keeps its test.
+
+### Why an extension could not handle it
+
+- It tests the brain-side page budget, which is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: the end of the senpi#6921 describe block in `test/headless/hand-page-budget.test.ts`.
+
+## 2026-11-18 - An older hand's page text is still replaced when its page goes over budget (senpi#6938)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`: when a hand's show_html_page result carries no `details.resultText` (a hand on a release from before senpi#6934), the over-budget downgrade replaces the first text part that names the page's saved copy, else the first text part. The `resultText` rule still decides when the marker is present.
+
+### Why
+
+- senpi#6937. Without the marker nothing was replaced, so the tool's own "Local images were inlined." stayed next to `imagesInlined: false` for every older hand.
+
+### Why an extension could not handle it
+
+- The brain-side page budget is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `applied` and the new `olderHandOwnText` in `html-render/hand-page-budget.ts`.
+
+## 2026-11-19 - A hand page's own text is found by the resultText show_html_page emits (senpi#6936)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/tool.ts`: `ShowHtmlPageDetails.resultText` carries the exact text part of the result. `writeHtmlPage` always sets it. The session's over-budget rewrite (`handHtmlPage`) rewrites it the same way as the text part, so it stays equal to that part. A routed host result may omit it, but a non-string value is not accepted as page details.
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`: the brain-side over-budget downgrade replaces only the text part equal to `details.resultText` and leaves every other part. When no part equals it, nothing is replaced and the over-budget sentence is appended as its own part. A hand result with no `resultText` (a hand on an older version) keeps the first-text-part rule, so its "Local images were inlined." text is still replaced. The downgraded details carry the sentence as their `resultText`.
+
+### Why
+
+- senpi#6934. Matching by position (senpi#6933's first text part) replaced a note that a hand-side `tool_result` handler put in front of the page text. Matching by path (senpi#6931) missed a page text that a handler had rewritten. Either way, a stale "Local images were inlined." could stay next to `imagesInlined: false`.
+
+### Why an extension could not handle it
+
+- show_html_page and the brain-side page budget are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `ShowHtmlPageDetails`, the end of `writeHtmlPage`, the over-budget `details` in `handHtmlPage` and `isShowHtmlPageDetails` in `html-render/tool.ts`; `applied` and `overBudget` in `html-render/hand-page-budget.ts`.
+
 ## 2026-11-19 - The hand link's page ledger empties when a run ends; the page text is found structurally (senpi#6933)
 
 ### What changed

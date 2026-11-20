@@ -82,6 +82,11 @@ export class ExternalAdmission {
 		return this.turnEpochValue;
 	}
 
+	/** Why admission is closed (a release or a graceful close took the session); `undefined` while it admits. */
+	get closed(): string | undefined {
+		return this.closedReason;
+	}
+
 	get hasInputWork(): boolean {
 		return this.inputHolds.size > 0;
 	}
@@ -91,7 +96,7 @@ export class ExternalAdmission {
 		this.turnEpochValue += 1;
 	}
 
-	/** The composer whose draft holds admissions; `undefined` detaches it (no composer = never held). */
+	/** The terminal whose submitted-but-untaken input holds admissions; `undefined` detaches it (never held). */
 	setEditorSource(source: (() => EditorHoldState) | undefined): void {
 		this.editorSource = source;
 	}

@@ -12,6 +12,66 @@
 
 ### Removed
 
+## [2026.11.19-5] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `interrupt { background: "stop" }` stops the turn's background jobs at once, so jobs that ignore TERM no longer delay the answer one grace period each; a job the terminal no longer holds is reported as such instead of as still running; the terminal control endpoint refuses a `background` other than `"stop"` as the RPC host does.
+- A worker that keeps answering progress is no longer quarantined by the open deadline, a request sent after a quiet spell gets its full deadline, and an open naming a quarantined session answers a typed, retryable refusal until the old worker has exited ([#6815](https://github.com/code-yeongyu/senpi/pull/6815))
+- `get_auth_providers` answers within the lock budget while another process holds `auth.json`, keeps stored sign-ins configured and adds `storeBusy: true` ([#6849](https://github.com/code-yeongyu/senpi/pull/6849))
+- A session whose resumed run a second host kill cut resumes again when that run had made progress, instead of staying held until a person returns; a run cut again with no progress, or after three restart continuations without new input, stays held with a reason that names the repeated restart ([#7080](https://github.com/code-yeongyu/senpi/pull/7080))
+
+### Removed
+
+## [2026.11.19-4] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+- `resolveConfigValue` and `AuthStorage` are exported from the package root. `resolveConfigValue` accepts an optional observation that receives each resolved value with its provider, field and cwd, and `AuthStorage.refreshOAuthCredential` refreshes an expired OAuth credential through pi-ai's refresh lock, so it and request-time resolution in any process run one exchange ([#5865](https://github.com/code-yeongyu/senpi/pull/5865))
+- `unload_session { graceful: true, waitMs }` closes a session without interrupting it. New deliveries are refused `session_closing`, queued input is handed back unread, the running turn ends on its own (bounded), and monitors, loops and the goal stop cleanly. A reopen finds no interrupted run and no hold. A drain that outlives `waitMs` is answered typed, and the session stays open. A terminal's control endpoint takes it too and then exits by itself. Capability `unload_graceful` ([#7046](https://github.com/code-yeongyu/senpi/pull/7046))
+
+### Changed
+
+### Fixed
+
+- A `show_html_page` page from a hand on an older release that goes over the session's image budget gets its own text replaced again, instead of keeping "Local images were inlined." next to the over-budget sentence ([#6938](https://github.com/code-yeongyu/senpi/pull/6938))
+- `senpi host ensure` and `host handoff` no longer hand a newer host down to an older engine when the two builds advertise their engine ordinal in different vocabularies (a compiled omo through 5.1.78 advertised its omo version, `[5,1,78,0,0]`): only two senpi CalVer ordinals are ordered, an upgrade ensure keeps such a host and says so on stderr, and a handoff is refused `older_engine` unless the downgrade is allowed. A distribution compiled beside its own package.json can define `SENPI_ENGINE_VERSION` so its ordinal stays CalVer ([#7047](https://github.com/code-yeongyu/senpi/pull/7047))
+- A cleanly exited session no longer reopens under the interrupted-run hold when a restored monitor fires while it restores: the restore sweep skips the run that wake started ([#7053](https://github.com/code-yeongyu/senpi/pull/7053))
+- On Linux, every process a tool starts (bash commands, background terminal sessions, monitor watches) begins with `oom_score_adj` 1000, so when memory runs out the kernel kills the runaway tool command instead of the engine host and every session in it; the host keeps its own value ([#7056](https://github.com/code-yeongyu/senpi/pull/7056))
+- A retained session that was running when its RPC host was killed, stopped or handed off resumes by itself on the next host: wakes held during the drain are delivered, an active goal continues, and an engine-started run the restart cut continues once. On a long lane reopened dormant, an explicit `resume_session` and the first peer delivery start their turn even when the lane ran more than 8 engine turns since its last real input. A person's Stop, an unattended hold the session already had, and a run a person started stay held; sessions an idle sweep or an unload parked reopen dormant as before. A restored session lists `attachments: 0` until a client attaches, so `host session close` closes it ([#7020](https://github.com/code-yeongyu/senpi/issues/7020))
+- An extension's PostToolUse (`tool_result`) handler that never returns no longer wedges the session: the host stops waiting at a deadline (120 s by default, `SENPI_TOOL_RESULT_HANDLER_TIMEOUT_MS`), delivers the tool result without it and reports the extension. Esc and an RPC interrupt now end the wait on a PreToolUse or PostToolUse handler at once; an interrupted PreToolUse handler blocks its tool call ([oh-my-openagent#14354](https://github.com/code-yeongyu/oh-my-openagent/issues/14354))
+- After an abort cut a running tool, its PostToolUse (`tool_result`) handlers run to completion again; the new hook wait skipped them and reported the hook as failed ([#7073](https://github.com/code-yeongyu/senpi/pull/7073))
+
+### Removed
+
+## [2026.11.19-3] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+- `session_status` and `list_sessions` rows carry `waiting: { kind, attempt, maxAttempts, delayMs, until, error? }` while a running session sleeps in an auto-retry backoff, with the new status cause `retry`; `get_state` carries it as `retryWait`. A `list_sessions` row omits `error`, which stays on `get_state` and on `session_status` ([#7027](https://github.com/code-yeongyu/senpi/pull/7027))
+
+### Changed
+
+### Fixed
+
+- When a `show_html_page` page from a hand goes over the session's image budget, its own text is now found by the exact text the tool emitted (new `details.resultText`). A note that a hand-side `tool_result` handler put before or after it stays in place. A page text a handler rewrote is left as is, and the over-budget sentence is appended after it ([#6936](https://github.com/code-yeongyu/senpi/pull/6936))
+- On the Claude subscription lane, Claude Code no longer cuts senpi's tool descriptions at 4096 chars: the lane sets `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` unless you already set it ([#7032](https://github.com/code-yeongyu/senpi/pull/7032))
+- Processes a session starts through its shell tool, eval cells, the tool child or an `RpcClient` stdio child no longer inherit the RPC host's identity (`SENPI_RPC_HOST_GENERATION`, `_INSTANCE_ID`, `_DAEMON_DIR`, build id, watch binding, key sentinel) or its launch-default `SENPI_RPC_CLIENT_CAPABILITIES`; they get the host id as the read-only `SENPI_RPC_ORIGIN_HOST_INSTANCE`, so a senpi started there is still attributed to that host as a dependent client. `PI_SESSION_*` and socket routing variables are unchanged ([#7037](https://github.com/code-yeongyu/senpi/pull/7037))
+- After a generation handoff, a successor still taking over its predecessor's sessions answers `list_sessions` with `handover: { pending, predecessor_draining }` beside `sessions`, so a reader no longer mistakes the partial listing for sessions that are gone. The field is absent once the takeover is done ([#7041](https://github.com/code-yeongyu/senpi/pull/7041))
+- A message from another session to an idle terminal starts its own turn even while a draft sits in the composer; the sender is answered `started` and the draft stays in the composer untouched. Only input the person already submitted still holds a delivery ([#7045](https://github.com/code-yeongyu/senpi/pull/7045))
+
+### Removed
+
 ## [2026.11.19-2] - 2026-11-19
 
 ### Breaking Changes

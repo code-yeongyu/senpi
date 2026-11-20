@@ -85,34 +85,45 @@ const sorted = (counts) =>
 
 // The tracked JS/TS sources (never built bundles or vendored output), linted with only the ratcheted rules.
 const SOURCE = /\.(?:[cm]?[jt]s|tsx)$/;
+// oxlint never lints a minified file (it skips `*.min.*` sources by name), so the vendored export-html
+// bundles were never counted; they are excluded here instead of showing up as skipped.
+const MINIFIED = /\.min\.(?:[cm]?[jt]s|tsx)$/;
 const CONFIG = "scripts/lint-ratchet.oxlintrc.json";
 
 const run = (root, command, args) =>
   NodeChildProcess.spawnSync(command, args, { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
 
-// A diagnostic with no rule code is a parse error: that file's findings cannot be counted.
-const lint = (root) => {
+// A diagnostic with no rule code is a parse error: that file's findings cannot be counted. A file
+// oxlint was given but did not lint (`skipped`) cannot be counted either.
+export const lint = (root) => {
   const listed = run(root, "git", ["ls-files", "-z"]);
   if (listed.status !== 0) throw new Error(`git ls-files failed: ${listed.stderr}`);
   const files = listed.stdout
     .split("\0")
-    .filter((file) => SOURCE.test(file))
+    .filter((file) => SOURCE.test(file) && !MINIFIED.test(file))
     // A tracked path missing on disk (an unchecked-out submodule) is not linted either.
     .filter((file) => NodeFS.existsSync(NodePath.join(root, file)));
   const diagnostics = [];
+  let skipped = 0;
   // Batches keep each argv under the OS limit.
   for (let start = 0; start < files.length; start += 2000) {
+    const batch = files.slice(start, start + 2000);
+    // --no-ignore: no .eslintignore entry, --ignore-path or --ignore-pattern may hide a file and drop
+    // its counts silently. The ratchet's only exclusion is its own file filter above.
     const result = run(root, NodePath.join(root, "node_modules/.bin/oxlint"), [
+      "--no-ignore",
       "-c",
       CONFIG,
       "--format",
       "json",
-      ...files.slice(start, start + 2000),
+      ...batch,
     ]);
     if (result.error !== undefined || (result.status !== 0 && result.status !== 1))
       throw new Error(`oxlint failed (status ${String(result.status)}): ${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
     diagnostics.push(...parsed.diagnostics);
+    // --no-ignore does not reach a config's ignorePatterns, so a file oxlint skips is caught here.
+    skipped += batch.length - parsed.number_of_files;
   }
   const ruled = diagnostics.flatMap((diagnostic) =>
     typeof diagnostic.code === "string" ? [{ ...diagnostic, code: diagnostic.code }] : [],
@@ -125,16 +136,22 @@ const lint = (root) => {
     const count = countSuppressions(file, NodeFS.readFileSync(NodePath.join(root, file), "utf8"));
     if (count > 0) counts[file] = { ...counts[file], [SUPPRESSION]: count };
   }
-  return { counts, unparsed };
+  return { counts, unparsed, skipped };
 };
 
 const main = () => {
   const root = NodePath.resolve(import.meta.dirname, "..");
   const baselinePath = NodePath.join(root, "scripts/lint-ratchet.baseline.json");
-  const { counts: current, unparsed } = lint(root);
+  const { counts: current, unparsed, skipped } = lint(root);
   if (unparsed.length > 0) {
     for (const line of unparsed) console.error(line);
     console.error("lint-ratchet: a file that fails to parse cannot be counted; fix the syntax first.");
+    NodeProcess.exit(1);
+  }
+  if (skipped > 0) {
+    console.error(
+      `lint-ratchet: oxlint skipped ${skipped} file(s) it was given, so their counts would drop silently; remove the ignorePatterns entry and exclude files in the ratchet's file filter instead.`,
+    );
     NodeProcess.exit(1);
   }
   if (NodeProcess.argv.includes("--update")) {

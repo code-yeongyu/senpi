@@ -69,6 +69,12 @@ export interface ShowHtmlPageDetails {
 	 */
 	html: string;
 	imagesInlined: boolean;
+	/**
+	 * The exact text part this call's result carries, so a later step that rewrites the result (the brain's page
+	 * budget for a hand) finds the page's own text whatever a `tool_result` handler added around it (senpi#6934).
+	 * writeHtmlPage always sets it; a result a host route produced elsewhere may lack it.
+	 */
+	resultText?: string;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -120,20 +126,16 @@ export async function writeHtmlPage(
 	const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
 	await writeFile(path, prepared, "utf8");
 	const imagesInlined = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
+	const resultText = handedPageText({
+		path,
+		shown: shownInline,
+		imagesInlined,
+		fitsPage: imagesInlined,
+		alreadyHanded: 0,
+		inlinedLength: inlined.html.length,
+	});
 	return {
-		content: [
-			{
-				type: "text",
-				text: handedPageText({
-					path,
-					shown: shownInline,
-					imagesInlined,
-					fitsPage: imagesInlined,
-					alreadyHanded: 0,
-					inlinedLength: inlined.html.length,
-				}),
-			},
-		],
+		content: [{ type: "text", text: resultText }],
 		details: {
 			path,
 			title: params.title,
@@ -141,6 +143,7 @@ export async function writeHtmlPage(
 			prepared: true,
 			html: imagesInlined ? inlined.html : params.html,
 			imagesInlined,
+			resultText,
 		},
 	};
 }
@@ -170,7 +173,14 @@ function handHtmlPage(
 		content: result.content.map((part) =>
 			part.type === "text" ? { ...part, text: part.text.replace(IMAGES_INLINED, overBudget) } : part,
 		),
-		details: { ...details, html: params.html, imagesInlined: false },
+		details: {
+			...details,
+			html: params.html,
+			imagesInlined: false,
+			...(details.resultText === undefined
+				? {}
+				: { resultText: details.resultText.replace(IMAGES_INLINED, overBudget) }),
+		},
 	};
 }
 
@@ -181,7 +191,8 @@ const isShowHtmlPageDetails = (details: unknown): details is ShowHtmlPageDetails
 	(details.height === undefined || typeof details.height === "number") &&
 	typeof details.prepared === "boolean" &&
 	typeof details.html === "string" &&
-	typeof details.imagesInlined === "boolean";
+	typeof details.imagesInlined === "boolean" &&
+	(details.resultText === undefined || typeof details.resultText === "string");
 
 /**
  * handHtmlPage for a result a host route produced in another process: its params and details are checked

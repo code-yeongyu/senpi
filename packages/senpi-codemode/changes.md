@@ -1,3 +1,21 @@
+## 2026-11-19 - The eval description names eval-only tools first (senpi#7032)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt-template.ts`: the `Eval-only tools (...)` line moves from `<prelude>` to right after the description's first line and says the tools are called inside a cell as `tool.<name>(args)`.
+
+### Why
+
+- A host that caps tool descriptions (Claude Code cuts MCP tool descriptions at 4096 chars) dropped the line, which sat at ~char 4.8k: the one place the thread tools are named (oh-my-openagent#14291).
+
+### Why an extension could not handle it
+
+- The eval description is this extension's own template.
+
+### Expected merge conflict zones
+
+- LOW: the head of `EVAL_PROMPT_TEMPLATE` and the `tool.<name>()` entry of its prelude.
+
 ## 2026-11-17 - A nested tool result with isError: true counts as a failure (senpi#6906, senpi#6904)
 
 ### What changed
