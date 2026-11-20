@@ -202,9 +202,7 @@ describe("Claude Haiku 5.5 catalog rows (Amazon Bedrock)", () => {
 			output: 0.55,
 			cacheRead: 0.011,
 			cacheWrite: 0.1375,
-			tiers: [
-				{ inputTokensAbove: 100_000, input: 0.55, output: 2.75, cacheRead: 0.055, cacheWrite: 0.6875 },
-			],
+			tiers: [{ inputTokensAbove: 100_000, input: 0.55, output: 2.75, cacheRead: 0.055, cacheWrite: 0.6875 }],
 		};
 		for (const [id, cost] of [
 			["anthropic.claude-haiku-5-5", onDemandCost],
