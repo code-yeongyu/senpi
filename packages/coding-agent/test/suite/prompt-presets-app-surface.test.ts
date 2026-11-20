@@ -16,13 +16,13 @@ import { createHarness, type Harness } from "./harness.ts";
 // replies in a chat UI relies on: no routing-line mandate, and tool/hook feedback
 // stays with the agent. The chat surface (a chat bridge, senpi#2398) keeps every app
 // rule and also drops the handoff block. The terminal surface keeps the routing line.
-// A preset whose core defines no handoff block (senpi#6979) renders none on any surface.
+// A preset whose core defines no handoff block (senpi#6979, senpi#7100) renders none on any surface.
 const ROUTING_LINE_SENTINEL = "I read this as";
 const FEEDBACK_GUIDANCE = /tool and hook feedback/i;
 const COVERED_BY_EVIDENCE = "covered by the evidence that did run";
 const HANDOFF_TEMPLATE = [/Ask: \[/, /For you:/, /Now: \[/, /handoff block/i];
 const HANDOFF_SLOT = /For you|You need/;
-const BLOCKLESS_PRESETS = ["gpt-6.2"] as const satisfies readonly PromptPresetName[];
+const BLOCKLESS_PRESETS = ["gpt-6.2", "deepseek-v4-1-flash"] as const satisfies readonly PromptPresetName[];
 const UNRUN_CHECK_REPORTING =
 	/flag the unverified explicitly|could not (verify|run)|cannot run, say so|what you could not and why/i;
 

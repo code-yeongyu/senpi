@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// senpi-qa scenario for senpi#7101: what the first request of a session carries under each prompt
+// senpi-qa scenario for senpi#7101 and senpi#7100: what the first request of a session carries under each prompt
 // preset. The real CLI runs in `--mode rpc` (print and json modes never arm the first-turn plan
 // opener) against the fake model server, and the captured request body is the proof:
 //
@@ -7,7 +7,9 @@
 // - `todo.firstTurnPlan: "force"` set by the user under a GPT preset: both are back;
 // - a Claude preset: both, as before;
 // - the gpt-6.2 core: its own goal and todo rules, no Task_Management block, and the opener on
-//   the terminal surface (the "I read this as" line) and on the app surface (plain sentences).
+//   the terminal surface (the "I read this as" line) and on the app surface (plain sentences);
+// - the deepseek-v4-1-flash core, over chat completions: the same four facts as gpt-6.2, while the
+//   deepseek-v4-flash-0731 preset keeps the forced todo, the reminder and Task_Management.
 //
 //   node .agents/skills/senpi-qa/scripts/scenarios/first-turn-plan-preset-qa.mjs --self-test
 //   node .agents/skills/senpi-qa/scripts/scenarios/first-turn-plan-preset-qa.mjs --self-test --evidence first-turn-plan-preset
@@ -22,7 +24,7 @@ const REMINDER_SENTINEL = "This is the first request of the session";
 const TASK_MANAGEMENT_TAG = "<Task_Management>";
 const TERMINAL_OPENER = "I read this as [what you take the user to want]";
 const APP_OPENER = "what you take them to want and what it is for";
-const GPT62_PLAN_SECTION = "## Goal and plan";
+const PLAN_SECTION = "## Goal and plan";
 const PROMPT = "add retries to fetchUser";
 const TITLE_REQUEST = "Generate a concise title";
 const WAIT_TIMEOUT_MS = 90000;
@@ -60,6 +62,32 @@ const SCENARIOS = [
 		model: "claude-opus-5",
 		expect: { forcedTodo: true, reminder: true, taskManagement: true, planSection: false },
 	},
+	{
+		name: "deepseek-v4.1-flash-ultrafast-default",
+		api: "openai-completions",
+		model: "deepseek-v4.1-flash-ultrafast",
+		expect: { forcedTodo: false, reminder: false, taskManagement: false, planSection: true, terminalOpener: true },
+	},
+	{
+		name: "deepseek-flash-app-surface",
+		api: "openai-completions",
+		model: "deepseek-flash",
+		surface: "app",
+		expect: { forcedTodo: false, reminder: false, taskManagement: false, planSection: true, appOpener: true },
+	},
+	{
+		name: "deepseek-flash-user-force",
+		api: "openai-completions",
+		model: "deepseek-flash",
+		firstTurnPlan: "force",
+		expect: { forcedTodo: true, reminder: true, taskManagement: false, planSection: true, terminalOpener: true },
+	},
+	{
+		name: "deepseek-v4-flash-0731-default",
+		api: "openai-completions",
+		model: "deepseek-v4-flash-0731",
+		expect: { forcedTodo: true, reminder: true, taskManagement: true, planSection: false },
+	},
 ];
 
 const argv = process.argv.slice(2);
@@ -71,12 +99,13 @@ function textOf(content) {
 	return content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("\n");
 }
 
-/** The system prompt as the wire carries it: `instructions` or developer/system items (Responses), `system` (Anthropic). */
+/** The system prompt as the wire carries it: `instructions` or developer/system items (Responses), `system` (Anthropic), system/developer messages (Chat Completions). */
 function systemTextOf(body) {
 	const parts = [];
 	if (typeof body?.instructions === "string") parts.push(body.instructions);
 	if (body?.system !== undefined) parts.push(textOf(body.system));
-	for (const item of Array.isArray(body?.input) ? body.input : []) {
+	const items = [body?.input, body?.messages].flatMap((list) => (Array.isArray(list) ? list : []));
+	for (const item of items) {
 		if (item?.role === "developer" || item?.role === "system") parts.push(textOf(item.content));
 	}
 	return parts.join("\n");
@@ -138,8 +167,8 @@ async function runScenario(scenario, checks, evidence) {
 			system.includes(TASK_MANAGEMENT_TAG) === expect.taskManagement,
 		);
 		checks.ok(
-			`${scenario.name}: gpt-6.2 "Goal and plan" section ${expect.planSection ? "rendered" : "absent"}`,
-			system.includes(GPT62_PLAN_SECTION) === expect.planSection,
+			`${scenario.name}: "Goal and plan" section ${expect.planSection ? "rendered" : "absent"}`,
+			system.includes(PLAN_SECTION) === expect.planSection,
 		);
 		if (expect.terminalOpener) {
 			checks.ok(`${scenario.name}: terminal opener line rendered`, system.includes(TERMINAL_OPENER));
@@ -185,7 +214,7 @@ if (argv[0] === "--self-test") {
 } else {
 	process.stderr.write(
 		[
-			"senpi-qa - first request of a session under each prompt preset (RPC channel, senpi#7101)",
+			"senpi-qa - first request of a session under each prompt preset (RPC channel, senpi#7101, senpi#7100)",
 			"  node first-turn-plan-preset-qa.mjs --self-test [--evidence <slug>]",
 			"",
 		].join("\n"),
