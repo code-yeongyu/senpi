@@ -14158,15 +14158,14 @@ export class AgentSession {
 		} finally {
 			if (this._retryAbortController === controller) this._retryAbortController = undefined;
 		}
-		if (outcome !== "continued") {
-			this._emit({
-				type: "auto_retry_end",
-				success: false,
-				attempt,
-				...(outcome === "cancelled" ? { finalError: "Retry cancelled" } : {}),
-			});
-			return outcome;
-		}
+		// Every announced wait is closed: a cancelled one failed; a wait that hands the queue to a run, or that found nothing
+		// left to run (the user took the queue back to edit it), ended as it should.
+		this._emit(
+			outcome === "cancelled"
+				? { type: "auto_retry_end", success: false, attempt, finalError: "Retry cancelled" }
+				: { type: "auto_retry_end", success: true, attempt },
+		);
+		if (outcome !== "continued") return outcome;
 		this._scheduleContinuationAfterCurrentEvent();
 		return "continued";
 	}
