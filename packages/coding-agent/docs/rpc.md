@@ -1872,6 +1872,11 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    and the listing still answers with the successor's own. A command sent on a routed handle while the session moves
    onto the successor waits at most the close grace window, then answers the retryable `generation_switch_pending`;
    if the move cannot finish (the successor began draining, the session file is gone) it answers that reason instead.
+   Every other call the successor makes to its predecessor is bounded the same way: an answer later than the host's
+   stall threshold (5 s) is followed by a liveness probe on that connection, and a predecessor that answers neither is
+   cut, so the routed command or `open_session` answers `predecessor_request_timeout`. A long command on a live
+   predecessor keeps waiting. A narrowing `set_client_info` or `declare_delegation` that a predecessor does not
+   install is still acknowledged: that copy is cut and its session moves to the successor.
    An older predecessor without a route endpoint keeps its claim and the reopen returns the existing retryable
    `session_path_in_use`.
    While a predecessor still runs, new connections negotiate ordinary JSONL, not compact recovery:
