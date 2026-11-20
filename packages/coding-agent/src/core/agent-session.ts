@@ -4649,11 +4649,13 @@ export class AgentSession {
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
 			}
+			// Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again,
+			// while a person's own input queued behind a failed response waits for their next prompt (#4036).
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
 				retryableFailureAwaitingDrain &&
-				this.agent.hasQueuedMessages()
+				this.agent.peekQueuedMessages({ all: true }).some((queued) => deliveryIdOf(queued) !== undefined)
 			) {
 				const drain = await this._drainQueueAfterProviderBackoff(retryableFailureAwaitingDrain);
 				launchedContinuation = drain === "continued";
