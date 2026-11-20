@@ -71,6 +71,20 @@ describe("find_session finds a session file by its durable id (senpi#6429)", () 
 		expect(readFileSync(file, "utf8")).toBe(before);
 	});
 
+	// senpi#7017
+	it("#given a session file directly in the sessions root, outside any folder #when find_session names its durable id #then the answer is that file", async () => {
+		const fixture = await devices();
+		await using host = createInProcessRig(fixture.agentA);
+		const file = writeSessionFile(join(fixture.agentA, "sessions"), ID);
+
+		const answer = await find(host, ID);
+
+		expect(answer).toMatchObject({
+			success: true,
+			data: { found: { sessionPath: file, cwd: join(fixture.agentA, "sessions"), open: false } },
+		});
+	});
+
 	it("#given two session files that carry one durable id #then the answer is ambiguous and names neither", async () => {
 		const fixture = await devices();
 		await using host = createInProcessRig(fixture.agentA);
