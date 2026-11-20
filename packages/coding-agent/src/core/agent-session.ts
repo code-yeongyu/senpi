@@ -4649,8 +4649,9 @@ export class AgentSession {
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
 			}
-			// Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again,
-			// while a person's own input queued behind a failed response waits for their next prompt (#4036).
+			// Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again.
+			// A queue of a person's own input alone waits for their next prompt (#4036); in a queue that holds both, the
+			// drained run takes the person's input too, in queue order.
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
