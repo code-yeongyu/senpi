@@ -18,8 +18,11 @@ export interface SpawnRequest {
 	readonly sessionId?: string;
 }
 
-/** Inside the PTY: no echo while it waits for the go-line, then the real command keeps the PTY's pid and group. */
-const PTY_GO_SHIM = 'stty -echo 2>/dev/null; IFS= read -r _go || exit 127; stty echo 2>/dev/null; exec "$0" "$@"';
+/**
+ * Inside the PTY: wait for the go-line, then exec, so the real command keeps the PTY's pid and group. The terminal's
+ * echo settings are left alone: the go-line's echo can only lead the output, where `GoLineEchoFilter` drops it.
+ */
+const PTY_GO_SHIM = 'IFS= read -r _go || exit 127; exec "$0" "$@"';
 
 /**
  * Resolve the configured shell (honoring `SENPI_GIT_BASH_PATH` + shell kind) and spawn a
@@ -29,7 +32,7 @@ const PTY_GO_SHIM = 'stty -echo 2>/dev/null; IFS= read -r _go || exit 127; stty 
  * A command attested to a session, or launched behind the tool child's barrier, starts gated: the PTY runs the go-line
  * shim, the session-spawn record is written and the barrier admits the launch, and only then is the go-line written
  * (senpi#7120: a command that proves its session the moment it starts must find its record). The go-line is a random
- * token, so its echo, which a native PTY emits when the line arrives before the shim turned echo off, is recognised
+ * token, so its echo, which a native PTY emits ahead of anything the command prints, is recognised
  * and dropped from the output (`goLine`).
  */
 export async function spawnCommandSession(

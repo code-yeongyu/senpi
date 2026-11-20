@@ -91,8 +91,8 @@ export class TerminalRuntimeSession {
 				clearTimeout(this.redactionIdleTimer);
 				this.redactionIdleTimer = undefined;
 				const held = this.goLineEcho?.flush() ?? "";
-				if (this.redactor) this.ingest(this.redactor.push(held + this.decoder.decode()) + this.redactor.finish());
-				else this.ingest(held);
+				const tail = held + this.decoder.decode();
+				this.ingest(this.redactor ? this.redactor.push(tail) + this.redactor.finish() : tail);
 				// Best-effort like every screen write (#837): a failed release leaves an empty final screen, never an unhandled rejection.
 				void this.releaseScreen()
 					.catch(() => {})

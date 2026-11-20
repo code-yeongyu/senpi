@@ -1,9 +1,8 @@
 /**
  * Drops the echo of a gated command's go-line from the front of its output (senpi#7120).
  *
- * A gated command's PTY runs a shim that turns echo off and reads one go-line before it execs the command
- * (`tools/spawn.ts`). When the go-line arrives before the shim turned echo off, which on a native PTY is the usual
- * order, the line discipline echoes it ahead of anything the command prints. The go-line is a random token, so the
+ * A gated command's PTY runs a shim that reads one go-line before it execs the command (`tools/spawn.ts`). A native
+ * PTY's line discipline echoes that line, and since the command has not run yet, the echo leads the output. The go-line is a random token, so the
  * output can only start with it through that echo: this filter holds output while it is still a prefix of the echo,
  * drops the echo when it is there (with the `\r\n` ONLCR makes of the newline, or a bare `\n`), and passes everything
  * through untouched from the first byte that rules the echo out.
