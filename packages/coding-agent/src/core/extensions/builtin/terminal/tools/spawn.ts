@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { getShellConfig } from "../../../../../utils/shell.ts";
 import { attestSessionSpawn } from "../../../../session-spawn-attestation.ts";
 import type { CreatedTerminalSession } from "../manager.ts";
@@ -17,10 +18,22 @@ export interface SpawnRequest {
 	readonly sessionId?: string;
 }
 
+/** Inside the PTY: no echo while it waits for the go-line, then the real command keeps the PTY's pid and group. */
+const PTY_GO_SHIM = 'stty -echo 2>/dev/null; IFS= read -r _go || exit 127; stty echo 2>/dev/null; exec "$0" "$@"';
+
+/** Where a session-spawn record can be written (`readKernelProcessIdentity`), and so where a command waits for it. */
+const ATTESTING_PLATFORM = process.platform === "linux" || process.platform === "darwin";
+
 /**
  * Resolve the configured shell (honoring `SENPI_GIT_BASH_PATH` + shell kind) and spawn a
  * terminal session that runs `command` through it. For stdin-transport shells (legacy WSL
  * bash `-s`) the command is written to the PTY after start; otherwise it rides in argv.
+ *
+ * A command attested to a session, or launched behind the tool child's barrier, starts gated: the PTY runs the go-line
+ * shim, the session-spawn record is written and the barrier admits the launch, and only then is the go-line written
+ * (senpi#7120: a command that proves its session the moment it starts must find its record). The go-line is a random
+ * token, so its echo, which a native PTY emits when the line arrives before the shim turned echo off, is recognised
+ * and dropped from the output (`goLine`).
  */
 export async function spawnCommandSession(
 	ctx: TerminalToolContext,
@@ -30,30 +43,30 @@ export async function spawnCommandSession(
 	const useStdin = shell.commandTransport === "stdin";
 	const args = useStdin ? [...shell.args] : [...shell.args, request.command];
 
-	const launch = ctx.launchBarrier?.wrap(shell.shell, args) ?? { command: shell.shell, args };
+	const gated = ctx.launchBarrier !== undefined || (request.sessionId !== undefined && ATTESTING_PLATFORM);
+	const goLine = gated ? `~senpi-go-${randomBytes(8).toString("hex")}` : undefined;
 	const created = await ctx.manager.create(shell.shell, {
-		command: launch.command,
-		args: [...launch.args],
+		command: gated ? "/bin/sh" : shell.shell,
+		args: gated ? ["-c", PTY_GO_SHIM, shell.shell, ...args] : args,
 		cwd: request.cwd ?? ctx.cwd,
 		env: { ...ctx.getEnv(), ...request.envOverrides } as Record<string, string | undefined>,
 		cols: request.cols,
 		rows: request.rows,
 		timeoutMs: request.timeoutMs,
 		redactSecretsInOutput: ctx.redactSecretsInOutput,
+		...(goLine === undefined ? {} : { goLine }),
 	});
 
-	const spawnedPid = created.runtime.session.pid;
-	if (request.sessionId !== undefined && spawnedPid !== undefined) {
-		const attestation = attestSessionSpawn(request.sessionId, spawnedPid);
-		created.runtime.session.onExit(() => void attestation.release());
+	const session = created.runtime.session;
+	if (request.sessionId !== undefined && session.pid !== undefined) {
+		const attestation = attestSessionSpawn(request.sessionId, session.pid);
+		session.onExit(() => void attestation.release());
 		await attestation.recorded;
 	}
-	if (ctx.launchBarrier !== undefined) {
-		const session = created.runtime.session;
+	if (goLine !== undefined) {
 		try {
-			await ctx.launchBarrier.release({
+			await ctx.launchBarrier?.admit({
 				pid: session.pid,
-				write: (data) => session.write(data),
 				onExit: (listener) => session.onExit(() => listener(session.exitResult?.exitCode ?? null)),
 			});
 		} catch (error) {
@@ -61,9 +74,10 @@ export async function spawnCommandSession(
 			await ctx.manager.stop(created.id);
 			throw error;
 		}
+		session.write(`${goLine}\n`);
 	}
 	if (useStdin) {
-		created.runtime.session.write(`${request.command}\n`);
+		session.write(`${request.command}\n`);
 	}
 	return created;
 }
