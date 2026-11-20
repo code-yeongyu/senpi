@@ -1,10 +1,19 @@
 import { Socket } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
-import { RpcMonitorWatch } from "../../../src/core/extensions/builtin/terminal/rpc-monitor-watch.ts";
+import type { RpcTarget } from "../../../src/core/extensions/builtin/terminal/rpc-monitor-targets.ts";
+import {
+	type RpcMonitorCheckpoint,
+	RpcMonitorWatch,
+} from "../../../src/core/extensions/builtin/terminal/rpc-monitor-watch.ts";
+import * as hostTransport from "../../../src/modes/rpc/rpc-auth-client.ts";
+import * as socketTransport from "../../../src/modes/rpc/tui-socket.ts";
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.useRealTimers();
+});
 
-function fixture(id: string, snapshot: object[]) {
+function fixture(target: string | RpcTarget, snapshot: object[], restoredFrom?: RpcMonitorCheckpoint) {
 	vi.useFakeTimers();
 	const socket = new Socket();
 	vi.spyOn(socket, "write").mockImplementation(() => {
@@ -18,14 +27,16 @@ function fixture(id: string, snapshot: object[]) {
 		socket.emit("data", Buffer.from(`${frames.map((frame) => JSON.stringify(frame)).join("\n")}\n`));
 		return true;
 	});
+	vi.spyOn(socketTransport, "socketNeedsHandshake").mockReturnValue(false);
+	vi.spyOn(hostTransport, "connectAuthenticatedRpcSocket").mockResolvedValue({ socket, protocol: {} });
 	const lines: string[] = [];
 	const watch = new RpcMonitorWatch({
 		agentDir: ".",
-		target: { kind: "id", id },
+		target: typeof target === "string" ? { kind: "id", id: target } : target,
+		...(restoredFrom ? { restoredFrom } : {}),
 		events: "all",
 		exclude: [],
 		endpoints: async () => ["fixture.sock"],
-		connectEndpoint: async () => ({ socket }),
 		line: (line) => lines.push(line),
 	});
 	return { watch, lines, socket };
@@ -34,14 +45,29 @@ function fixture(id: string, snapshot: object[]) {
 it("does not deliver any records or leave a watch for an unresolved explicit target", async () => {
 	const { watch, lines, socket } = fixture("missing", []);
 	try {
-		const started = watch.start().then(
-			() => "armed",
-			() => "refused",
-		);
-		expect.soft(await started).toBe("refused");
+		await expect(watch.start()).rejects.toThrow("no matching local session");
 		expect(lines).toEqual([]);
 		expect(socket.destroyed).toBe(true);
 		expect(vi.getTimerCount()).toBe(0);
+	} finally {
+		watch.stop();
+	}
+});
+
+it.each<RpcTarget>([
+	{ kind: "id", id: "old" },
+	{ kind: "task", taskId: "st_old" },
+])("restores a $kind watch and distinguishes an empty host from one that did not answer", async (target) => {
+	const saved = { hosts: {}, statuses: { "fixture.sock#old": "idle", "offline.sock#other": "idle" } };
+	const { watch, lines } = fixture(target, [], saved);
+	try {
+		expect(await watch.start()).toEqual([]);
+		expect(lines).toEqual([]);
+		expect(watch.diffSince(saved)).toEqual([
+			"rpc old closed (gone while detached)",
+			"rpc other unreachable (its host did not answer)",
+		]);
+		expect(vi.getTimerCount()).toBe(1);
 	} finally {
 		watch.stop();
 	}
@@ -74,9 +100,10 @@ it("follows a durable identity to its new route without following the replaced s
 			{ type: "agent_idle", sessionId: "next" },
 		])
 			socket.emit("data", Buffer.from(`${JSON.stringify(record)}\n`));
-		expect(lines).toHaveLength(2);
-		expect(lines[0]).toContain("(next) status");
-		expect(lines[1]).toMatch(/ agent_idle$/);
+		expect(lines).toHaveLength(3);
+		expect(lines[0]).toContain("session_replaced -> different");
+		expect(lines[1]).toContain("(next) status");
+		expect(lines[2]).toMatch(/ agent_idle$/);
 	} finally {
 		watch.stop();
 	}
