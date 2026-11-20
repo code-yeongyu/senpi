@@ -110,6 +110,19 @@ describe("find_session finds a session file by its durable id (senpi#6429)", () 
 		});
 	});
 
+	// senpi#7136: the header decides, never the name alone.
+	it("#given a file named for the id whose header carries another id and a file under another name that carries the id #when find_session names it #then the file whose header carries the id answers", async () => {
+		const fixture = await devices();
+		await using host = createInProcessRig(fixture.agentA);
+		const dir = getDefaultSessionDir(fixture.repoA, fixture.agentA);
+		const decoy = writeSessionFile(dir, OTHER_ID);
+		renameSync(decoy, join(dir, `2026-11-11T00-00-00-000Z_${ID}.jsonl`));
+		const real = join(dir, "chosen.jsonl");
+		renameSync(writeSessionFile(dir, ID, "2026-11-11T03-00-00-000Z"), real);
+
+		expect(await find(host, ID)).toMatchObject({ success: true, data: { found: { sessionPath: real } } });
+	});
+
 	// senpi#7136
 	it("#given a session file under a caller-chosen name that does not carry the id #when find_session names its durable id #then every header is read and the file answers", async () => {
 		const fixture = await devices();
