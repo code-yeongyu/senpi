@@ -1,7 +1,7 @@
 import type { RpcSessionClosedReason } from "./rpc-types.ts";
 
 import { readDrainVerdicts } from "./session-drain.ts";
-import { holdUnattendedTurns } from "./session-drain-hold.ts";
+import { holdDrainedTurns } from "./session-drain-hold.ts";
 import { forgetSessionOwnership } from "./session-router-attachments.ts";
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
@@ -43,7 +43,7 @@ export function sweepDrain(host: RouterContext): void {
 	// A pass that failed as a whole is retried by the drain timer armed before it (senpi#2285).
 	const verdicts = readDrainVerdicts(host.registry, (sessionId) => host.activeRequests.has(sessionId));
 	if (!verdicts) return;
-	holdUnattendedTurns(host);
+	holdDrainedTurns(host);
 	for (const sessionId of verdicts.gone) parkForHandoff(host, sessionId, "session_dir_removed");
 	for (const sessionId of verdicts.park) parkForHandoff(host, sessionId, "handoff_parked");
 	if (host.registry.size > 0 || host.parks.size > 0 || host.handoffParks > 0 || host.finalizations.size > 0) return;
