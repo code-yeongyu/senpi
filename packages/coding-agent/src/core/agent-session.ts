@@ -14004,16 +14004,7 @@ export class AgentSession {
 		// admitted passes through verbatim; a number is the profile's own cap. The
 		// settings cap applies only when the profile declares no ceiling of its own
 		// (the tiered senpi-default).
-		const profileTurnCeilingMs =
-			retryProfile.turn.serverHint.mode === "override" ? retryProfile.turn.serverHint.ceiling.maxDelayMs : undefined;
-		// An explicitly user-configured retry.maxAgentDelayMs always wins; a profile's own
-		// ceiling is the next authority; the 60s default is the last resort.
-		const userConfiguredCeilingMs = this.settingsManager.isRetryMaxAgentDelayMsConfigured?.() ?? false;
-		const agentCeilingMs = userConfiguredCeilingMs
-			? settings.maxAgentDelayMs
-			: profileTurnCeilingMs === undefined
-				? settings.maxAgentDelayMs
-				: profileTurnCeilingMs;
+		const agentCeilingMs = this._agentDelayCeilingMs(retryProfile, settings.maxAgentDelayMs);
 		const delayMs = Math.min(plannedDelayMs, agentCeilingMs ?? Number.MAX_SAFE_INTEGER);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
@@ -14145,23 +14136,53 @@ export class AgentSession {
 		failure: AssistantMessage,
 	): Promise<"continued" | "cancelled" | "nothing-queued"> {
 		const attempt = ++this._queuedDrainBackoffAttempt;
-		const backoffMs = Math.min(
-			retryBackoffDelayMs(this._resolveRetryProfile().turn.backoff, attempt, this._retryRandom()),
-			this.settingsManager.getRetrySettings().maxAgentDelayMs,
-		);
-		const hintMs = failure.errorMessage ? this._getProviderRetryDelayMs(failure.errorMessage) : undefined;
+		const retryProfile = this._resolveRetryProfile();
+		const settings = this.settingsManager.getRetrySettings();
+		const backoffMs = retryBackoffDelayMs(retryProfile.turn.backoff, attempt, this._retryRandom());
+		const errorMessage = failure.errorMessage ?? "";
+		const hintMs = errorMessage === "" ? undefined : this._getProviderRetryDelayMs(errorMessage);
+		// The same ceiling the retry backoff applies, and never unbounded: this wait holds input the user may still type,
+		// so a provider asking for an hour (the case the retry owner gave up on) is retried within the ceiling instead.
+		const ceilingMs = this._agentDelayCeilingMs(retryProfile, settings.maxAgentDelayMs) ?? settings.maxAgentDelayMs;
+		const delayMs = Math.min(Math.max(backoffMs, hintMs ?? 0), ceilingMs);
 		const controller = new AbortController();
 		this._retryAbortController = controller;
+		// Announced like a retry backoff, so the UI and `list_sessions` show the wait instead of an unexplained busy run.
+		this._emit({ type: "auto_retry_start", attempt, maxAttempts: attempt, delayMs, errorMessage });
+		let outcome: "continued" | "cancelled" | "nothing-queued";
 		try {
-			await sleep(Math.max(backoffMs, hintMs ?? 0), controller.signal);
+			await sleep(delayMs, controller.signal);
+			outcome = this.agent.hasQueuedMessages() ? "continued" : "nothing-queued";
 		} catch {
-			return "cancelled";
+			outcome = "cancelled";
 		} finally {
 			if (this._retryAbortController === controller) this._retryAbortController = undefined;
 		}
-		if (!this.agent.hasQueuedMessages()) return "nothing-queued";
+		if (outcome !== "continued") {
+			this._emit({
+				type: "auto_retry_end",
+				success: false,
+				attempt,
+				...(outcome === "cancelled" ? { finalError: "Retry cancelled" } : {}),
+			});
+			return outcome;
+		}
 		this._scheduleContinuationAfterCurrentEvent();
 		return "continued";
+	}
+
+	/**
+	 * The ceiling on one agent-level wait: an explicitly configured `retry.maxAgentDelayMs` wins, then a profile's own
+	 * override-mode turn ceiling (`null` is explicitly uncapped, as kimi-code declares), then the settings default.
+	 */
+	private _agentDelayCeilingMs(
+		retryProfile: ReturnType<SettingsManager["resolveRetryProfile"]>,
+		settingsCeilingMs: number,
+	): number | null {
+		const profileTurnCeilingMs =
+			retryProfile.turn.serverHint.mode === "override" ? retryProfile.turn.serverHint.ceiling.maxDelayMs : undefined;
+		const userConfigured = this.settingsManager.isRetryMaxAgentDelayMsConfigured?.() ?? false;
+		return userConfigured || profileTurnCeilingMs === undefined ? settingsCeilingMs : profileTurnCeilingMs;
 	}
 
 	/**
