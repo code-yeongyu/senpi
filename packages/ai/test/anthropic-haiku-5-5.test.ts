@@ -189,15 +189,31 @@ describe("Claude Haiku 5.5 catalog rows (every route)", () => {
 });
 
 describe("Claude Haiku 5.5 catalog rows (Amazon Bedrock)", () => {
-	it("ships the on-demand id and the global inference profile with the same contract", () => {
+	it("ships the on-demand id and the global inference profile with the same contract and route-specific prices", () => {
 		const ids = getModels("amazon-bedrock").map((model) => model.id);
 		expect(ids).toContain("anthropic.claude-haiku-5-5");
 		expect(ids).toContain("global.anthropic.claude-haiku-5-5");
-		for (const id of ["anthropic.claude-haiku-5-5", "global.anthropic.claude-haiku-5-5"] as const) {
+		// AWS bills the two routes at different bands (us-east-1 price list): the on-demand id at
+		// $0.11 / $0.55 in / out (SKUs GWDHRAKM6RFD2XYJ / KYPW3D8EBWFD83XS) and the global inference
+		// profile at $0.10 / $0.50 (CT2JY6DA5N94ZAXN / 9C6E7ATQE23Q4W66), each with its own cache
+		// rates and 5x long-context tier; models.dev carries the same split (senpi#7121).
+		const onDemandCost = {
+			input: 0.11,
+			output: 0.55,
+			cacheRead: 0.011,
+			cacheWrite: 0.1375,
+			tiers: [
+				{ inputTokensAbove: 100_000, input: 0.55, output: 2.75, cacheRead: 0.055, cacheWrite: 0.6875 },
+			],
+		};
+		for (const [id, cost] of [
+			["anthropic.claude-haiku-5-5", onDemandCost],
+			["global.anthropic.claude-haiku-5-5", HAIKU_55_COST],
+		] as const) {
 			const model = getModel("amazon-bedrock", id);
 			expect(model.contextWindow).toBe(100_000);
 			expect(model.maxTokens).toBe(32_000);
-			expect(model.cost).toEqual(HAIKU_55_COST);
+			expect(model.cost).toEqual(cost);
 			expect(model.thinkingLevelMap?.off).toBeNull();
 			expect(getSupportedThinkingLevels(model)).not.toContain("off");
 			expect(getSupportedThinkingLevels(model)).toEqual(
