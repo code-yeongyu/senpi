@@ -3378,6 +3378,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/dynamic-prompt/handoff.ts#REPLY_LANGUAGE_RULE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts#ROUTE_RULES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"

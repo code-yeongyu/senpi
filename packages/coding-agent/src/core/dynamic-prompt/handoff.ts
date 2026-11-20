@@ -8,6 +8,12 @@ export interface HandoffSectionOptions {
 	 */
 	turnEndRuleStatedElsewhere?: boolean;
 	/**
+	 * The caller's core states the reply language in its Style section (`REPLY_LANGUAGE_RULE`), so the block
+	 * keeps only the label half of its language rule: stated inside the Handoff section, the whole rule read as
+	 * a rule for the handoff block alone and other replies drifted into English (senpi#7113).
+	 */
+	languageRuleStatedElsewhere?: boolean;
+	/**
 	 * The model under-reports during long tool chains by default (Claude Fable 5.1 guide, "Ask for
 	 * user-facing progress updates": remove narration-suppressing lines, then say when user-facing
 	 * text is wanted and what each update contains), so the quiet-between-handoffs sentence becomes a
@@ -35,6 +41,23 @@ export const FULL_HANDOFF_LANGUAGE_RULE =
 	"Keep the labels Ask, wanted, For you, Now, and Next exactly as written; write everything else - the routing line, slot contents, todo labels, and the reply itself - in the user's language (the one their instructions name, else the one they write in), with Now and Next repeating the todo labels verbatim.";
 
 const FULL_APP_HANDOFF_LANGUAGE_RULE = FULL_HANDOFF_LANGUAGE_RULE.replace("the routing line, ", "");
+
+/** The label half of the handoff language rule, for a block whose core states the reply language itself. */
+const HANDOFF_LABEL_RULE =
+	"Labels Ask, wanted, For you, Now, Next: exactly as written; Now/Next repeat todo labels verbatim.";
+
+const FULL_HANDOFF_LABEL_RULE =
+	"Keep the labels Ask, wanted, For you, Now, and Next exactly as written, with Now and Next repeating the todo labels verbatim.";
+
+/**
+ * The reply-language half, stated in a core's Style section so it covers every reply (senpi#7113). Chat has
+ * no handoff block and states the language in `CHAT_REPLY_RULE`.
+ */
+export const REPLY_LANGUAGE_RULE: Record<TerminalOrApp, string> = {
+	terminal:
+		"Write every reply in the user's language (the one their instructions name, else the one they write in), the routing line, handoff slots, and todo labels included; only the handoff labels stay as written.",
+	app: "Write every reply in the user's language (the one their instructions name, else the one they write in), handoff slots and todo labels included; only the handoff labels stay as written.",
+};
 
 const HANDOFF_MOMENTS: Record<TerminalOrApp, string> = {
 	terminal:
@@ -70,7 +93,11 @@ export function buildHandoffSection(options: HandoffSectionOptions = {}): string
 	const betweenRule = options.briefUpdatesBetweenHandoffs
 		? "Between handoffs: after each tool wave that changes what you know, one line of reply text - what you found, then `Now: [task]. Next: [task].`"
 		: "Between handoffs: work without narration.";
-	const languageRule = surface === "app" ? APP_HANDOFF_LANGUAGE_RULE : HANDOFF_LANGUAGE_RULE;
+	const languageRule = options.languageRuleStatedElsewhere
+		? HANDOFF_LABEL_RULE
+		: surface === "app"
+			? APP_HANDOFF_LANGUAGE_RULE
+			: HANDOFF_LANGUAGE_RULE;
 	return `## Handoff
 
 ${HANDOFF_MOMENTS[surface]} First weigh original ask + what user needs now; then one short block:
@@ -87,7 +114,11 @@ function buildFullHandoffSection(options: HandoffSectionOptions, surface: Termin
 	const betweenRule = options.briefUpdatesBetweenHandoffs
 		? "Between handoffs, after each tool wave that changes what you know, write one line of reply text: what you found, then `Now: [task]. Next: [task].`"
 		: "Between handoffs, work without narration.";
-	const languageRule = surface === "app" ? FULL_APP_HANDOFF_LANGUAGE_RULE : FULL_HANDOFF_LANGUAGE_RULE;
+	const languageRule = options.languageRuleStatedElsewhere
+		? FULL_HANDOFF_LABEL_RULE
+		: surface === "app"
+			? FULL_APP_HANDOFF_LANGUAGE_RULE
+			: FULL_HANDOFF_LANGUAGE_RULE;
 	return `## Handoff
 
 ${FULL_HANDOFF_MOMENTS[surface]} Before writing one, weigh what the user originally asked for and what they would want to know right now; then state it in one short block:

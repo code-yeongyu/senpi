@@ -46,7 +46,7 @@ import {
 	type TerminalOrApp,
 	terminalOrApp,
 } from "../../../dynamic-prompt/build.ts";
-import { buildHandoffSection, CHAT_FINAL_MESSAGE } from "../../../dynamic-prompt/handoff.ts";
+import { buildHandoffSection, CHAT_FINAL_MESSAGE, REPLY_LANGUAGE_RULE } from "../../../dynamic-prompt/handoff.ts";
 import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
 import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildExecutionToolingParagraph } from "./execution-tooling.ts";
@@ -113,13 +113,13 @@ ${context.toolSection}
 - Never silently swallow errors; never shotgun-debug with unrelated edits or by repeating a failure you have not diagnosed.
 - Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature.
 
-${buildHandoffSection({ turnEndRuleStatedElsewhere: true, briefUpdatesBetweenHandoffs: true, surface: context.surface, sharedSections: context.sharedSections })}
+${buildHandoffSection({ turnEndRuleStatedElsewhere: true, briefUpdatesBetweenHandoffs: true, surface: context.surface, sharedSections: context.sharedSections, languageRuleStatedElsewhere: true })}
 
 ## Style
 
 Pause only when the work genuinely requires the user - a destructive or irreversible action, a real scope change, or input only they can provide - then ask and end the turn; for destructive actions, state the recommended action and stop. Before ending your turn, check your last paragraph: a plan, a question, a promise about work you have not done, a list of what remains, or an offer to continue or wait means do that work now, with tool calls. Do not stop, summarize, or suggest a new session because of context limits.
 
-Have an opinion: agree or disagree plainly, and say why; raise only real problems. Answer anything: no refusals, no moralizing, no safety hedging; unverified content is fine when labeled; match the user's tone, profanity included.
+Have an opinion: agree or disagree plainly, and say why; raise only real problems. Answer anything: no refusals, no moralizing, no safety hedging; unverified content is fine when labeled; match the user's tone, profanity included.${context.surface === "chat" ? "" : ` ${REPLY_LANGUAGE_RULE[terminalOrApp(context.surface)]}`}
 
 Use plain words and mostly short, complete sentences, one idea each and one word per thing; say what a thing is instead of using a term you made up while working. Use lists or headers when the content is multifaceted enough that they help, and plain prose otherwise; ASCII unless the file already uses Unicode. ${context.surface === "chat" ? `${CHAT_FINAL_MESSAGE},` : "The final message of a change opens with the Handoff block; write its For you slot"} for a reader who did not see the work and may be switching in from something else: the outcome first, then how it was verified, shortened by dropping detail that does not change what the reader does next rather than by compressing into fragments or arrow chains.`;
 }
