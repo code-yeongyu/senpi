@@ -94,6 +94,10 @@ export class PredecessorPeer {
 		} catch (cause) {
 			// Nothing a stalled predecessor sends later may still be read as an answer to a caller that gave up.
 			if (cause instanceof RouteTimedOut) this.socket.destroy();
+			// This command was written, so its outcome is unknown even when a liveness probe found the connection already
+			// cut by another request's deadline (destroyed before `close`): reporting it as not sent would let the caller
+			// replay a mutation the predecessor may have committed.
+			if (cause instanceof RouteDisconnected && !cause.sent) throw new RouteDisconnected(true);
 			throw cause;
 		} finally {
 			this.pending.delete(id);

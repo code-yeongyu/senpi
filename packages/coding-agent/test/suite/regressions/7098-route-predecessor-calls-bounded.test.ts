@@ -138,6 +138,46 @@ it.skipIf(process.platform === "win32")("a routed command the predecessor never 
 });
 
 it.skipIf(process.platform === "win32")(
+	"a written mutation whose probe meets a connection another deadline just cut is never replayed",
+	async () => {
+		const received: string[] = [];
+		const both = Promise.withResolvers<void>();
+		const host = await successorWithPredecessorClaim(cleanups);
+		await host.predecessorHolds();
+		const first = Promise.withResolvers<void>();
+		await fakePredecessor(cleanups, host, {
+			...attaches,
+			prompt: (_stream, request) => {
+				received.push(String(request.message));
+				if (received.length === 1) first.resolve();
+				else both.resolve();
+			},
+		});
+		const sessionId = await routedSessionId(host);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+		// A's answer bound passes and its probe goes out; B is written while that probe is pending, so A's probe
+		// deadline (which cuts the connection) and B's own bound expire in the same timers phase.
+		const a = host.send({ type: "prompt", id: "a", sessionId, message: "a" });
+		await first.promise;
+		vi.advanceTimersByTime(PREDECESSOR_REQUEST_TIMEOUT_MS);
+		const b = host.send({ type: "prompt", id: "b", sessionId, message: "b" });
+		await both.promise;
+		vi.advanceTimersByTime(PREDECESSOR_REQUEST_TIMEOUT_MS);
+
+		expect(await advanceUntil(Promise.all([a, b]), PREDECESSOR_REQUEST_TIMEOUT_MS / 50, 400)).toBe(true);
+		expect(received).toEqual(["a", "b"]);
+		const answeredB = await b;
+		expect(answeredB, JSON.stringify(answeredB)).toMatchObject({
+			success: false,
+			error: "predecessor_delivery_outcome_unknown",
+		});
+		expect(await a).toMatchObject(TIMEOUT);
+		expect(host.registry.peek(sessionId)).toBeUndefined();
+	},
+);
+
+it.skipIf(process.platform === "win32")(
 	"a long routed command keeps waiting while the predecessor answers its liveness probes",
 	async () => {
 		const held = Promise.withResolvers<() => void>();
