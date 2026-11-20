@@ -29,6 +29,7 @@ import {
 	type ModelWithPromptPresetMetadata,
 } from "./matchers.ts";
 import type { SharedSections } from "../../../dynamic-prompt/types.ts";
+import type { TodoFirstTurnPlan } from "../../../settings-shapes.ts";
 import type { PromptPresetName } from "./settings.ts";
 
 export type ResolvedPresetName = Exclude<PromptPresetName, "auto">;
@@ -168,6 +169,27 @@ export function presetHandoffCueKind(name: ResolvedPresetName | undefined): Hand
 	if (GPT_BLOCK_HANDOFF_PRESETS.has(name)) return "gpt-block";
 	if (NO_HANDOFF_BLOCK_PRESETS.has(name)) return "none";
 	return "default";
+}
+
+/**
+ * Presets whose model plans after it has read. The first-turn plan opener (a hidden reminder and,
+ * under `force`, a named `todo` tool_choice) made GPT sessions write a list before they had read
+ * what the request points at (senpi#7101), so an unset `todo.firstTurnPlan` means `off` under these
+ * presets and `force` under every other preset and the default prompt. A value the user set wins.
+ */
+const PLAN_AFTER_READING_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
+	"gpt-6.2",
+	"gpt-6-astra",
+	"gpt-5.6",
+	"gpt-5.5",
+	"gpt-5.4",
+	"gpt-5.3-codex",
+	"gpt-5.2",
+	"gpt-5",
+]);
+
+export function presetFirstTurnPlanDefault(name: ResolvedPresetName | undefined): TodoFirstTurnPlan {
+	return name !== undefined && PLAN_AFTER_READING_PRESETS.has(name) ? "off" : "force";
 }
 
 export type PromptPresetModelCase = {

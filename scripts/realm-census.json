@@ -5275,6 +5275,10 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#PLAN_AFTER_READING_PRESETS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#FULL_SHARED_SECTION_PRESETS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"

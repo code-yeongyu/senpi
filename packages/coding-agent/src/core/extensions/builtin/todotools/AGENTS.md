@@ -37,7 +37,8 @@ task in phase order that is not Now.
 admitted `session_control_delivery` (not a preview, not a `?`/`!` question, not an ask-user
 answer frame, no earlier prompt or delivery request on the branch (answer frames do not count,
 senpi#2419), `todo` active, not `print`/`json`, not another extension-triggered turn,
-`todo.firstTurnPlan` not `off`). `before_agent_start` then adds the hidden
+`todo.firstTurnPlan` not `off`; unset, it is `off` under a GPT prompt preset and `force` elsewhere,
+`presetFirstTurnPlanDefault` in `../prompt-preset/contract.ts`, senpi#7101). `before_agent_start` then adds the hidden
 `senpi.todo-first-turn` reminder; under `force`, `before_provider_request` names `todo` in
 `tool_choice` on that run's requests until the first assistant `message_end` (or
 `agent_end` / abort / session change), only where the resolved compat allows a forced

@@ -1,10 +1,12 @@
 import { createSessionLogger, type SessionLogger } from "../../../session-log.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
+import type { TodoFirstTurnPlan } from "../../../settings-shapes.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { registerTodoCommand } from "./commands.ts";
 import { FIRST_TURN_CUSTOM_TYPE, FIRST_TURN_REMINDER, shouldArmFirstTurn, withForcedTodoChoice } from "./first-turn.ts";
 import { phasesFromCursorTodos } from "./native-todo-mirror.ts";
-import { activeSharedSections } from "../prompt-preset/active-preset.ts";
+import { resolveActivePresetName } from "../prompt-preset/active-preset.ts";
+import { presetFirstTurnPlanDefault, presetSharedSections } from "../prompt-preset/contract.ts";
 import { FULL_TASK_MANAGEMENT_SECTION, TASK_MANAGEMENT_SECTION } from "./prompt.ts";
 import {
 	clonePhases,
@@ -20,10 +22,11 @@ import { getTodoWidgetModel } from "./todo-widget.ts";
 import { TodoWidgetComponent } from "./todo-widget-component.ts";
 import { registerTodoTool } from "./tools/todo.ts";
 
-function readFirstTurnPlan(ctx: ExtensionContext) {
+/** The user's `todo.firstTurnPlan`, else the default the active prompt preset declares. */
+function readFirstTurnPlan(ctx: ExtensionContext, presetDefault: TodoFirstTurnPlan): TodoFirstTurnPlan {
 	return SettingsManager.create(ctx.cwd, ctx.agentDir, {
 		projectTrusted: ctx.isProjectTrusted(),
-	}).getTodoFirstTurnPlan();
+	}).getTodoFirstTurnPlan(presetDefault);
 }
 
 /** Every handler here reads or drives the session, so it belongs to the loop's side of a split session (S39). */
@@ -128,11 +131,13 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 	pi.on(
 		"before_agent_start",
 		async (event, ctx) => {
-			const section = activeSharedSections(ctx) === "full" ? FULL_TASK_MANAGEMENT_SECTION : TASK_MANAGEMENT_SECTION;
+			const preset = resolveActivePresetName(ctx);
+			const section =
+				presetSharedSections(preset) === "full" ? FULL_TASK_MANAGEMENT_SECTION : TASK_MANAGEMENT_SECTION;
 			const systemPrompt = `${event.systemPrompt}\n${section}`;
 			if (event.preview) return { systemPrompt };
 			const branchEntries = ctx.sessionManager.getBranch();
-			const setting = readFirstTurnPlan(ctx);
+			const setting = readFirstTurnPlan(ctx, presetFirstTurnPlanDefault(preset));
 			const armed = shouldArmFirstTurn({
 				preview: event.preview,
 				trigger: event.trigger,
