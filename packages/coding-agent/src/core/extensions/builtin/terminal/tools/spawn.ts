@@ -73,7 +73,7 @@ export async function spawnCommandSession(
 				onExit: (listener) => session.onExit(() => listener(session.exitResult?.exitCode ?? null)),
 			});
 		} catch (error) {
-			// The command never ran: its gated shim and its registration go with the refusal.
+			// The command never ran: its gated shim is stopped with the refusal (the exited entry stays listed until swept).
 			await ctx.manager.stop(created.id);
 			throw error;
 		}

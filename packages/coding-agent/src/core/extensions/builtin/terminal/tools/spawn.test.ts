@@ -1,14 +1,17 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TerminalManager } from "../manager.ts";
 import { spawnCommandSession } from "./spawn.ts";
 
-// senpi#7061: a gated command runs only once the barrier admits it; a refused launch never runs and leaves no session.
+// senpi#7061: a gated command runs only once the barrier admits it; a refused launch never runs and its session is stopped.
 describe.skipIf(process.platform === "win32")("spawnCommandSession behind a launch barrier", () => {
 	const manager = new TerminalManager();
-	const dir = mkdtempSync(join(tmpdir(), "spawn-barrier-"));
+	let dir = "";
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "spawn-barrier-"));
+	});
 	afterEach(async () => {
 		await manager.teardown();
 		rmSync(dir, { recursive: true, force: true });
