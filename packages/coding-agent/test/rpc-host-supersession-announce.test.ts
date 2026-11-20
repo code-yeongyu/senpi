@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
-import { signalGeneration } from "../src/modes/rpc/host-stop.ts";
+import { stopHost } from "../src/modes/rpc/host-stop.ts";
 import {
 	GENERATION_HOST_ARGS,
 	generationEnv,
@@ -95,7 +95,11 @@ async function rig(options: { held?: HeldAnthropicModel; monitor?: boolean; grac
 		connect,
 		takeover: () => handoffHost(launch),
 		release: () => options.held?.release(),
-		drain: () => expect(signalGeneration(host.pid, "SIGUSR1")).toBe(true),
+		// The drain request: a bare SIGUSR1 no longer drains a generation (senpi#7044).
+		drain: async () =>
+			expect(await stopHost({ socket: qa.socket, agentDir: qa.agentDir, drain: true })).toMatchObject({
+				action: "drained",
+			}),
 	};
 }
 
@@ -131,7 +135,7 @@ describe.skipIf(process.platform === "win32")("attached generation supersession"
 			r.client.waitFor((e) => e.type === "host_superseded", 10_000),
 			observer.waitFor((e) => e.type === "host_superseded", 10_000),
 		]);
-		r.drain();
+		await r.drain();
 		const [announcement] = await announcements;
 		expect(announcement).toMatchObject({ instanceId: r.identity?.instanceId, generation: 0, successor: null });
 		r.client.send({ id: "racing-state", type: "get_state", sessionId: r.sessionId });
@@ -152,7 +156,7 @@ describe.skipIf(process.platform === "win32")("attached generation supersession"
 		async (runtime) => {
 			const r = await rig({ monitor: true, runtime });
 			const announced = r.client.waitFor((e) => e.type === "host_superseded", 10_000);
-			r.drain();
+			await r.drain();
 			await announced;
 			await r.client.waitForClose(20_000);
 			expect(r.client.messages).toContainEqual(
@@ -176,7 +180,7 @@ describe.skipIf(process.platform === "win32")("attached generation supersession"
 		const expiry = await logSignal(paths.stderrLog, '"event":"handoff_grace_expired"');
 		try {
 			const announced = r.client.waitFor((e) => e.type === "host_superseded", 10_000);
-			r.drain();
+			await r.drain();
 			await announced;
 			await expiry.done;
 			expect(processAlive(r.host.pid)).toBe(true);
@@ -200,8 +204,8 @@ describe.skipIf(process.platform === "win32")("attached generation supersession"
 	}, 120_000);
 
 	it("announces once per connection when the drain is requested again", async () => {
-		// A re-entered drain (grace expiry, a second SIGUSR1, or a supersession watch firing after the
-		// signal) must rescan for parkable sessions WITHOUT announcing twice: a client that reacted to
+		// A re-entered drain (grace expiry, a second drain request, or a supersession watch firing after
+		// the request) must rescan for parkable sessions WITHOUT announcing twice: a client that reacted to
 		// the first record would otherwise see the handoff start over.
 		const r = await rig({ held: await HeldAnthropicModel.start() });
 		const started = r.client.waitFor((e) => e.type === "agent_start" && e.sessionId === r.sessionId);
@@ -212,12 +216,12 @@ describe.skipIf(process.platform === "win32")("attached generation supersession"
 			r.client.waitFor((e) => e.type === "host_superseded", 10_000),
 			observer.waitFor((e) => e.type === "host_superseded", 10_000),
 		]);
-		r.drain();
+		await r.drain();
 		await announced;
 		// The held turn keeps the generation alive, so the second request lands on the same host.
 		expect(processAlive(r.host.pid)).toBe(true);
-		r.drain();
-		// A served round-trip after the second signal is the barrier: the host processed it and is
+		await r.drain();
+		// A served round-trip after the second request is the barrier: the host processed it and is
 		// still serving the old connection rather than answering unknown_session.
 		expect(await r.client.request({ id: "after-redrain", type: "get_state", sessionId: r.sessionId })).toMatchObject({
 			success: true,
@@ -255,7 +259,7 @@ describe.skipIf(process.platform === "win32")("attached generation supersession"
 		await r.client.request({ id: "prompt", type: "prompt", sessionId: active, message: "hold" });
 		await started;
 		const parked = r.client.waitFor((e) => e.type === "session_closed" && e.sessionId === r.sessionId);
-		r.drain();
+		await r.drain();
 		await parked;
 		r.client.send({ id: "old-handle", type: "get_state", sessionId: r.sessionId });
 		expect(await r.client.request({ id: "active-state", type: "get_state", sessionId: active })).toMatchObject({

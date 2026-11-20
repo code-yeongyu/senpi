@@ -199,7 +199,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		child,
 		() => state.shuttingDown,
 		() => admission.stop(),
-		{ file: generation.childDrainRequestFile, sender: supervisorSender(instanceId) },
+		{ file: generation.childDrainRequestFile, sender: supervisorSender(instanceId), supervisorDir: internal.dir },
 	);
 	const server = createPublicProxy({
 		internalSocket,
@@ -253,7 +253,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// Registered before the startup handshake, not after it: the private internal directory already
 	// exists, so a SIGTERM arriving during host startup must run the same cleanup instead of Node's
 	// default kill, which would leave that directory behind.
-	registerSupervisorSignals(shutdown, () => drain.drain());
+	registerSupervisorSignals(shutdown);
 	startupRegistered = true;
 	try {
 		// Direct supervisor launches predate owner records and may have no generation settings.

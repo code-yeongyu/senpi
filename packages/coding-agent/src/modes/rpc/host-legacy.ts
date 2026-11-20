@@ -6,10 +6,15 @@
  * allowed on its strength, and both only while the record's identity guard (pid plus start time)
  * still matches the live process (a recycled pid proves nothing):
  *
- * - a DRAIN (SIGUSR1) against the endpoint the record describes, when that endpoint's host
- *   advertises `generation_handoff`. A drain ends no work, so `stop --drain` may send it;
+ * - a DRAIN against the endpoint the record describes, when that endpoint's host says it can be drained.
+ *   A host from before layout 2 advertises `generation_handoff` and drains on SIGUSR1. A drain ends no work,
+ *   so `stop --drain` may send it;
  * - an ensure may drain it and take over when that host reports no session at all. With any
  *   session open, the ensure refuses with `legacy_host` and says how to retire it.
+ *
+ * A host that DECIDES its own handoffs (`handoff_admission`, senpi#7044) ignores SIGUSR1, so the flat record
+ * licenses asking it instead: the ensure requests the admission a handoff would, for this build's engine, and
+ * shows it back. Such a host refuses a build older than itself, and then the ensure refuses `legacy_host`.
  *
  * Which endpoint a record describes: the last pre-layout-2 build stamped `socket` into it; an
  * unstamped record (older builds, and the desktop's own spawner) belongs to the agent directory's
@@ -17,6 +22,7 @@
  */
 import { dirname, join } from "node:path";
 import { APP_NAME } from "../../config.ts";
+import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import {
 	type DaemonPidFile,
 	ProcessIdentityUnreadableError,
@@ -27,7 +33,8 @@ import {
 } from "../../utils/process-identity.ts";
 import { type HostDaemonPaths, sameEndpoint } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
-import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { handoffSupport } from "./host-decision.ts";
+import { requestHandoffAdmission } from "./host-handoff-admission-request.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
@@ -39,7 +46,7 @@ export interface LegacyHost {
 /** What an ensure may do about a legacy host: nothing is there, drain it, or refuse and say why. */
 type LegacyHostVerdict =
 	| { readonly verdict: "absent" }
-	| { readonly verdict: "idle"; readonly host: LegacyHost }
+	| { readonly verdict: "idle"; readonly host: LegacyHost; readonly support: "admitted" | "legacy" }
 	| { readonly verdict: "held"; readonly detail: string };
 
 const LEGACY_PROBE_TIMEOUT_MS = 10_000;
@@ -59,7 +66,9 @@ export async function retireIdleLegacyHost(
 	if (judged.verdict === "absent") return undefined;
 	if (judged.verdict === "held") return judged.detail;
 	const { record, socket } = judged.host;
-	if (await drainAndWait(record, probe, drainTimeoutMs)) return undefined;
+	const refused = await askToDrain(judged.host, judged.support);
+	if (refused !== undefined) return refused;
+	if (await waitUntilGone(record, probe, drainTimeoutMs)) return undefined;
 	return `pid ${record.pid} (${socket}) was asked to drain and is still running after ${drainTimeoutMs}ms; retry once it exits`;
 }
 
@@ -91,7 +100,7 @@ export async function provenLegacyOwner(
 
 /**
  * Whether an ensure may retire the legacy host. `idle` only when the process is proven, its endpoint
- * answers with the drain capability, and the host lists no session - `list_sessions` with workers
+ * answers that it can be drained (and how), and the host lists no session - `list_sessions` with workers
  * included counts interactive, worker and retained sessions alike, so an idle host holds no work.
  * An identity that cannot be read on a live pid is `held`: it may still own an endpoint, and nothing
  * unproven is ever signalled.
@@ -124,14 +133,15 @@ async function judgeLegacyHost(
 		return { verdict: "held", detail: `${where} cannot be drained on win32; it exits once idle, then retry` };
 	}
 	const protocol = await probeProtocolInfo(host.socket, LEGACY_PROBE_TIMEOUT_MS);
-	if (!protocol?.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
+	const support = protocol === undefined ? undefined : handoffSupport(protocol);
+	if (support === undefined) {
 		return {
 			verdict: "held",
 			detail: `${where} ${protocol ? "cannot drain" : "does not answer"}; it is never signalled - stop it by hand, then retry`,
 		};
 	}
 	const sessions = await probeSessionCount(host.socket, LEGACY_PROBE_TIMEOUT_MS);
-	if (sessions === 0) return { verdict: "idle", host };
+	if (sessions === 0) return { verdict: "idle", host, support };
 	return { verdict: "held", detail: busyLegacyHostDetail(pid, host.socket, sessions) };
 }
 
@@ -147,19 +157,41 @@ export function describeSessions(sessions: number | undefined): string {
 }
 
 /**
- * SIGUSR1, then wait for the proven process to leave. A host that exits before the signal lands has
- * already done what was asked (ESRCH). While waiting, an identity that cannot be read is NOT gone.
+ * Asks the idle host to drain, the way it can be asked: SIGUSR1 for a host from before the admission (one that
+ * exits before the signal lands has already done what was asked, ESRCH), its own admission shown back for a host
+ * that grants one. Returns why the host will not be drained, when it refuses this build.
  */
-async function drainAndWait(
+async function askToDrain(host: LegacyHost, support: "admitted" | "legacy"): Promise<string | undefined> {
+	if (support === "legacy") {
+		try {
+			process.kill(host.record.pid, "SIGUSR1");
+		} catch (error: unknown) {
+			if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+		}
+		return undefined;
+	}
+	const outcome = await requestHandoffAdmission(
+		host.socket,
+		{ successorEngine: engineBuildIdentity(), allowDowngrade: false },
+		LEGACY_PROBE_TIMEOUT_MS,
+	);
+	if (!outcome.admitted) {
+		return `pid ${host.record.pid} (${host.socket}) does not admit being replaced by this build (${outcome.detail ?? outcome.reason}); it keeps serving`;
+	}
+	try {
+		await outcome.admission.drain(LEGACY_PROBE_TIMEOUT_MS);
+	} finally {
+		outcome.admission.close();
+	}
+	return undefined;
+}
+
+/** Waits for the proven process to leave. While waiting, an identity that cannot be read is NOT gone. */
+async function waitUntilGone(
 	record: DaemonPidFile,
 	probe: (pid: number) => Promise<string | undefined>,
 	timeoutMs: number,
 ): Promise<boolean> {
-	try {
-		process.kill(record.pid, "SIGUSR1");
-	} catch (error: unknown) {
-		if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
-	}
 	const stillRunning = () =>
 		processMatchesPidFile(record, probe, processIsLive, { attempts: 1 }).catch((error: unknown) => {
 			if (error instanceof ProcessIdentityUnreadableError) return true;

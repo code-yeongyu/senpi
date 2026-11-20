@@ -144,7 +144,48 @@ export async function connectAndAsk(
 	});
 }
 
-export function readAnswer(text: string, id: string = PROBE_REQUEST_ID): unknown {
+/**
+ * One more request over a connection `connectAndAsk` kept open: its `data`, or `undefined` when the answer does not
+ * arrive in time or the connection is gone. The answer comes from the process that was first asked, whoever
+ * serves the socket's path by now.
+ */
+export function askOnSocket(
+	socket: Socket,
+	request: Readonly<Record<string, unknown>> & { readonly id: string },
+	timeoutMs: number,
+): Promise<unknown> {
+	return new Promise((resolveAnswer) => {
+		let buffer = "";
+		const finish = (answer: unknown): void => {
+			clearTimeout(timeout);
+			socket.off("data", onData);
+			socket.off("close", onClose);
+			resolveAnswer(answer);
+		};
+		const onClose = (): void => finish(undefined);
+		const onData = (chunk: Buffer): void => {
+			buffer += chunk.toString("utf8");
+			for (let newline = buffer.indexOf("\n"); newline !== -1; newline = buffer.indexOf("\n")) {
+				const answer = readAnswer(buffer.slice(0, newline), request.id);
+				buffer = buffer.slice(newline + 1);
+				if (answer !== undefined) {
+					finish(answer);
+					return;
+				}
+			}
+		};
+		const timeout = setTimeout(() => finish(undefined), timeoutMs);
+		if (socket.destroyed) {
+			finish(undefined);
+			return;
+		}
+		socket.on("data", onData);
+		socket.once("close", onClose);
+		socket.write(`${JSON.stringify(request)}\n`);
+	});
+}
+
+function readAnswer(text: string, id: string = PROBE_REQUEST_ID): unknown {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(text);

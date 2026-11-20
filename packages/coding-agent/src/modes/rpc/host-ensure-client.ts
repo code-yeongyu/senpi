@@ -28,14 +28,16 @@ export function decideEnsureAction(
 		return decideHostAction(ensureClient(options, startedByUs), protocol, "never");
 	const client = ensureClient(options, startedByUs);
 	const decision = decideHostAction(client, protocol, "upgrade");
-	if (decision.action !== "handoff") reportUncomparableEngine(client.identity, protocol);
-	return decision.action === "fallback" ? { action: "reuse", reason: "compatible", upgradeable: false } : decision;
+	const ensured: Exclude<HostDecision, { action: "fallback" }> =
+		decision.action === "fallback" ? { action: "reuse", reason: "compatible", upgradeable: false } : decision;
+	if (ensured.action === "reuse") reportUncomparableEngine(client.identity, protocol);
+	return ensured;
 }
 
 /**
  * An upgrade that could not be judged is said out loud (senpi#7040): a host whose engine ordinal is not senpi
  * CalVer (a compiled omo through 5.1.78 advertised its omo version) is never ordered against this build, so it is
- * kept whichever engine is newer.
+ * kept whichever engine is newer. Said only for a host this ensure keeps: a refused host is not kept (senpi#7058).
  */
 function reportUncomparableEngine(client: EngineBuildIdentity, host: HostProtocolInfo | undefined): void {
 	if (host?.engineOrdinal === undefined) return;

@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { createConnection } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
+import { engineBuildIdentity } from "../../../src/core/engine-build-identity.ts";
 import { endpoint, type WorkerHostRecord } from "../rpc-host-endpoint.ts";
 import { startInProcessHost } from "../rpc-worker-host-support.ts";
 
@@ -67,7 +68,13 @@ it.skipIf(process.platform === "win32")(
 	async () => {
 		const client = await retainedClient();
 		try {
-			client.host.child.kill("SIGUSR1");
+			// A bare SIGUSR1 no longer drains a host (senpi#7044): it admits the handoff and is shown the admission back.
+			const engine = engineBuildIdentity();
+			const admitted = await client.wire.request({
+				type: "admit_handoff",
+				successor_engine: { text: engine.text, ordinal: engine.ordinal },
+			});
+			client.wire.send({ type: "drain_for_handoff", admission_id: admitted.data?.admission_id });
 			const records: WorkerHostRecord[] = await client.closed;
 			expect(records.at(-1)).toEqual(closing("host_handoff"));
 			expect(records.slice(0, -1)).toContainEqual(

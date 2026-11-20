@@ -9,15 +9,16 @@
  * - The sessions are counted over a connection that stays open, and counted again over that same
  *   connection once the successor owns the socket: the recount reaches the old process, and a session
  *   it accepted in between is seen there.
- * - A flat record that proves the process is the only licence to signal it, and the signal is a DRAIN
- *   (SIGUSR1), sent only when the recount still finds no session. A drain ends no work either way.
+ * - A flat record that proves the process is the only licence to ask it, and what it is asked is a DRAIN
+ *   (SIGUSR1, or its own admission presented back to a host that grants one), sent only when the recount
+ *   still finds no session. A drain ends no work either way.
  * - Without a provable owner nothing is signalled: the old host notices that it lost the public entry
  *   and drains itself (`host-supersession.ts`). That predecessor is named in one warning line, so an
  *   old host that outlives the handoff can still be identified.
  */
 import type { HostDaemonPaths } from "./host-daemon-paths.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
-import type { HandoffHostOptions, HandoffResult } from "./host-handoff.ts";
+import type { HandoffAdmit, HandoffHostOptions, HandoffResult } from "./host-handoff.ts";
 import { busyLegacyHostDetail, describeSessions, provenLegacyOwner } from "./host-legacy.ts";
 import { holdSessionCount } from "./host-probe.ts";
 import { startSuccessor } from "./host-successor.ts";
@@ -29,6 +30,7 @@ export async function handoffUnregisteredHost(
 	options: HandoffHostOptions,
 	paths: HostDaemonPaths,
 	host: HostProtocolInfo,
+	admit?: HandoffAdmit,
 ): Promise<HandoffResult> {
 	const counted = await holdSessionCount(options.socket, SESSION_COUNT_TIMEOUT_MS);
 	try {
@@ -56,6 +58,7 @@ export async function handoffUnregisteredHost(
 			host,
 			owner: legacy,
 			drainGate: async () => (await counted?.recount(SESSION_COUNT_TIMEOUT_MS)) === 0,
+			...(admit !== undefined && { admit }),
 		});
 		if (result.action === "handoff" && legacy === undefined) warnUnsignalledPredecessor(options.socket, host);
 		return result;

@@ -9,16 +9,26 @@
  *      has no right to unlink - and only renames its own entry over the public path once
  *      its host answers, and only while that path still holds the exact socket this
  *      handoff was decided against (`--replace <dev>:<ino>`);
- *   2. the predecessor is then asked to DRAIN with SIGUSR1: it stops accepting, keeps
- *      every connection it is already proxying, parks each retained session as its turn
- *      settles, and exits through its ordinary idle path;
+ *   2. the predecessor is then asked to DRAIN: it stops accepting, keeps every connection
+ *      it is already proxying, parks each retained session as its turn settles, and exits
+ *      through its ordinary idle path;
  *   3. clients that arrive in between reach whichever generation owns the path at that
  *      instant - both are alive and serving.
  *
+ * The running host DECIDES whether it is replaced (senpi#7044). One that advertises
+ * `handoff_admission` is asked `admit_handoff` before anything is spawned - it refuses a
+ * successor older than itself, or one it cannot order - and is drained by presenting that
+ * admission over the connection it was granted on (`host-handoff-admission.ts`); it ignores
+ * a bare SIGUSR1. A host from before the admission advertises `generation_handoff` instead,
+ * cannot be asked, and is drained with SIGUSR1 as it always was; there this requester's own
+ * engine check is the only guard, and it stays in front of an admitted handoff as well. Every
+ * refusal of this requester's own comes first: the host is asked only for a handoff that is
+ * then carried out, so it never admits (and logs) one the requester declines itself.
+ *
  * Two guards make this safe rather than merely clever. SIGUSR1 has a DEFAULT DISPOSITION OF
- * TERMINATE, so a host that does not advertise `generation_handoff` is never signalled - it
- * would die, taking its sessions with it. And a host whose pidfile identity cannot be proven
- * is never signalled either (I1), because "the process at this pid" is not evidence.
+ * TERMINATE, so a host that advertises neither capability is never signalled - it would die,
+ * taking its sessions with it. And a host whose pidfile identity cannot be proven is never
+ * signalled either (I1), because "the process at this pid" is not evidence.
  *
  * win32 has neither a renameable named pipe nor SIGUSR1, so every entry point here refuses
  * with `upgrade_unsupported`; upgrades there apply after a drain-stop or an idle exit.
@@ -32,13 +42,14 @@ import {
 	type EngineBuildIdentity,
 	engineBuildIdentity,
 	engineIdentityOf,
-	olderEngineDetail,
+	engineSuccessionRefusal,
 } from "../../core/engine-build-identity.ts";
 import type { Duplex } from "node:stream";
 import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
-import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { handoffSupport } from "./host-decision.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
+import { type HandoffAdmission, requestHandoffAdmission } from "./host-handoff-admission-request.ts";
 import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
 import { handoffUnregisteredHost } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
@@ -68,7 +79,8 @@ export interface HandoffHostOptions {
 	/**
 	 * The engine the successor runs. Defaults to THIS process's build; a running host performing an idle handover
 	 * passes the engine the requesting CLI stated. A successor strictly older than the running host is refused
-	 * `older_engine` unless `allowDowngrade` (senpi#7018).
+	 * `older_engine`, one that cannot be ordered against it `unordered_engine`, unless `allowDowngrade` (senpi#7018,
+	 * senpi#7044).
 	 */
 	readonly successorEngine?: EngineBuildIdentity;
 	/** The caller's explicit consent to hand a newer host down to an older engine. */
@@ -106,7 +118,7 @@ export interface SuccessorLaunch {
 export type HandoffRefusal =
 	/** Nothing is serving the socket: there is no generation to hand off from. */
 	| "no_host"
-	/** The running host predates the drain handler; signalling it would kill it. */
+	/** The running host advertises no way to hand it off: a host from before the drain, or one whose way this client predates. */
 	| "handoff_unsupported"
 	/** win32: a named pipe can be neither renamed nor drained. */
 	| "upgrade_unsupported"
@@ -123,7 +135,14 @@ export type HandoffRefusal =
 	/** The successor never answered on the public socket; it was stopped and nothing was replaced. */
 	| "successor_unavailable"
 	/** The successor's engine is older than the running host's and the caller did not allow a downgrade. */
-	| "older_engine";
+	| "older_engine"
+	/** The successor's engine cannot be ordered against the running host's (an ordinal outside senpi CalVer). */
+	| "unordered_engine"
+	/** The running host gave no usable answer to the admission request; nothing was spawned. */
+	| "not_admitted";
+
+/** Asks the running host to admit this handoff: its admission, or its refusal as this handoff's result. */
+export type HandoffAdmit = () => Promise<HandoffAdmission | HandoffResult>;
 
 export type HandoffResult =
 	| {
@@ -143,8 +162,9 @@ export type HandoffResult =
 /**
  * Hands the socket to a new generation of this build. Forced by design: the caller decides
  * whether an upgrade is warranted (`decideHostAction`); this performs the one it asked for, except
- * a downgrade: a successor whose engine is older than the running host's is refused unless the caller
- * says `allowDowngrade` (senpi#7018), so no caller can hand a newer host down by accident.
+ * a downgrade: a successor whose engine is older than the running host's, or cannot be ordered against
+ * it, is refused unless the caller says `allowDowngrade` (senpi#7018), so no caller can hand a newer host
+ * down by accident - and the running host, when it can be asked, refuses it as well (senpi#7044).
  */
 export async function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
 	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
@@ -169,26 +189,66 @@ export async function handoffHostLocked(requested: HandoffHostOptions): Promise<
 	await createDaemonDirectories(paths);
 	const host = await probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS);
 	if (!host) return { action: "refuse", reason: "no_host", upgradeable: false };
-	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
-		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
+	const support = handoffSupport(host);
+	if (support === undefined) return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
+	// A host that can be asked is asked LAST, where the successor is about to be started (`startSuccessor`): every
+	// refusal of this requester's own runs first. An admission it granted ends with its connection below.
+	const admission = support === "admitted" ? heldAdmission(options) : undefined;
+	try {
+		const downgrade = downgradeRefusal(options, host);
+		if (downgrade) return downgrade;
+		const foreign = await foreignAgentDirRefusal(options.socket, options.agentDir, host);
+		if (foreign) return foreign;
+		// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
+		await electPointer(paths);
+		const registered = await readHostRegistration(paths);
+		const owner = await provenOwner(registered, options.socket);
+		const admit = admission?.admit;
+		if (!owner) return await handoffUnregisteredHost(options, paths, host, admit);
+		return await startSuccessor({ options, paths, host, owner, ...(admit !== undefined && { admit }) });
+	} finally {
+		admission?.close();
 	}
-	const downgrade = downgradeRefusal(options, host);
-	if (downgrade) return downgrade;
-	const foreign = await foreignAgentDirRefusal(options.socket, options.agentDir, host);
-	if (foreign) return foreign;
-	// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
-	await electPointer(paths);
-	const registered = await readHostRegistration(paths);
-	const owner = await provenOwner(registered, options.socket);
-	if (!owner) return handoffUnregisteredHost(options, paths, host);
-	return startSuccessor({ options, paths, host, owner });
 }
 
+/** The admission of one handoff: asked for when the handoff reaches its spawn, and closed with the handoff. */
+function heldAdmission(options: HandoffHostOptions): { readonly admit: HandoffAdmit; close(): void } {
+	let granted: HandoffAdmission | undefined;
+	return {
+		admit: async () => {
+			const outcome = await admittedByHost(options);
+			if (!("action" in outcome)) granted = outcome;
+			return outcome;
+		},
+		close: () => granted?.close(),
+	};
+}
+
+/** The running host's own verdict on this handoff: the admission it granted, or its refusal as this handoff's. */
+async function admittedByHost(options: HandoffHostOptions): Promise<HandoffAdmission | HandoffResult> {
+	const outcome = await requestHandoffAdmission(
+		options.socket,
+		{
+			successorEngine: options.successorEngine ?? engineBuildIdentity(),
+			allowDowngrade: options.allowDowngrade === true,
+		},
+		HANDOFF_PROBE_TIMEOUT_MS,
+	);
+	if (outcome.admitted) return outcome.admission;
+	return {
+		action: "refuse",
+		reason: outcome.reason,
+		upgradeable: false,
+		...(outcome.detail !== undefined && { detail: outcome.detail }),
+	};
+}
+
+/** The requester's own check (senpi#7023): the only one a host from before the admission gets. */
 function downgradeRefusal(options: HandoffHostOptions, host: HostProtocolInfo): HandoffResult | undefined {
 	if (options.allowDowngrade === true || host.engineOrdinal === undefined) return undefined;
 	const running = engineIdentityOf(host.engineVersion ?? "", host.engineOrdinal);
-	const detail = olderEngineDetail(options.successorEngine ?? engineBuildIdentity(), running);
-	return detail === undefined ? undefined : { action: "refuse", reason: "older_engine", upgradeable: false, detail };
+	const refusal = engineSuccessionRefusal(options.successorEngine ?? engineBuildIdentity(), running);
+	return refusal === undefined ? undefined : { action: "refuse", upgradeable: false, ...refusal };
 }
 
 function handoffUnsupported(options: HandoffHostOptions): boolean {

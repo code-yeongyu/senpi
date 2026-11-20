@@ -231,19 +231,23 @@ export function waitForChildExit(child: ChildProcess, timeoutMs: number): Promis
 }
 
 /**
- * External stop (ensureHost replacement, tests, QA) must clean up like idle exit; SIGUSR1 is the
- * gentler request - finish what you are doing and leave - that a generation handoff and
- * `stopHost({ drain: true })` both send to a host from before the drain request. It exists on POSIX
- * only: on win32 the drain arrives as a drain request (host-stop-intent.ts), never as a signal.
+ * External stop (ensureHost replacement, tests, QA) must clean up like idle exit. SIGUSR1 was the gentler
+ * request - finish what you are doing and leave - and any process could send it, so a client from before
+ * senpi#7044 replaced this generation without asking its host. It is no longer a drain request: a drain
+ * arrives as a drain request (host-stop-intent.ts), written by `host stop --drain` or by this generation's own
+ * host for a handoff it admitted. The signal keeps a handler only because its default disposition would
+ * terminate the supervisor, and each one is logged.
  */
-export function registerSupervisorSignals(
-	shutdown: (reason: string, exitCode: number) => Promise<never>,
-	drain: () => void,
-): void {
+export function registerSupervisorSignals(shutdown: (reason: string, exitCode: number) => Promise<never>): void {
 	for (const signal of process.platform === "win32" ? (["SIGTERM"] as const) : (["SIGTERM", "SIGHUP"] as const)) {
 		process.on(signal, () => {
 			void shutdown(`signal:${signal}`, signal === "SIGHUP" ? 129 : 143);
 		});
 	}
-	if (process.platform !== "win32") process.on("SIGUSR1", drain);
+	if (process.platform === "win32") return;
+	process.on("SIGUSR1", () => {
+		supervisorLog(
+			"ignored SIGUSR1: a drain is requested, not signalled (a handoff is admitted by the host); still serving",
+		);
+	});
 }

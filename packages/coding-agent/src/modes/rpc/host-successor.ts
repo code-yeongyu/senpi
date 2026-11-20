@@ -9,7 +9,9 @@
  * the rename landed; an exit instead means it refused to replace a path that changed underneath and
  * left both sockets alone. The predecessor is asked to drain only AFTER that proof and after the
  * successor is registered - whether it may be asked at all was decided in `host-handoff.ts`, which
- * proved the owner and checked that the running host advertises it can survive the signal.
+ * proved the owner and either lets this module ask the predecessor for its own admission (asked for
+ * last, once nothing here refuses, and presented back for the drain, senpi#7044) or checked that a
+ * predecessor from before the admission advertises it can survive the signal.
  *
  * A REFUSED handoff leaves the endpoint as it found it: the successor is killed and, once it has
  * exited, its generation record and directory are released, and the boot `settings.json` it
@@ -32,10 +34,11 @@ import {
 	writeHostOwner,
 	writeHostSettings,
 } from "./host-daemon-state.ts";
-import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
+import type { HandoffAdmit, HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
 import { keepOwnerPipe, OWNER_WATCH_FD } from "./host-lifecycle-launch.ts";
+import { requestPredecessorDrain } from "./host-predecessor-drain.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import type { ChildExit } from "./host-readiness.ts";
 import { settleCandidateAdoption } from "./host-endpoint-owner.ts";
@@ -51,7 +54,6 @@ import {
 } from "./host-successor-startup.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { successorHostEnvironment } from "./host-spawn-environment.ts";
-import { signalGeneration } from "./host-stop.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
 import {
 	generationBindPath,
@@ -68,6 +70,8 @@ export async function startSuccessor(context: {
 	owner: { readonly pid: number } | undefined;
 	/** Asked once the successor owns the socket: the drain request is sent only when it answers true. */
 	drainGate?: () => Promise<boolean>;
+	/** Asks the predecessor to admit this handoff; absent for a predecessor from before the admission, which is signalled. */
+	admit?: HandoffAdmit;
 }): Promise<HandoffResult> {
 	const { options, paths, host, owner, drainGate } = context;
 	const generation = (host.generation ?? 0) + 1;
@@ -80,6 +84,10 @@ export async function startSuccessor(context: {
 	}
 	const replaced = await statSocketIdentity(options.socket);
 	if (!replaced) return { action: "refuse", reason: "socket_replaced", upgradeable: true };
+	// Every refusal of this requester's own is behind it: the predecessor is asked only for a handoff that is now
+	// carried out, so it admits (and logs) none the requester declines itself. The caller closes what was granted.
+	const admission = await context.admit?.();
+	if (admission !== undefined && "action" in admission) return admission;
 	// A handoff replaces the ENGINE, not the operator's lifecycle policy: the successor inherits
 	// what the running generation was started with unless this caller states its own.
 	const running = await readHostSettings(paths);
@@ -218,12 +226,11 @@ export async function startSuccessor(context: {
 		// An uncoordinated successor keeps today's order: its presenter result after the public answer.
 		if (!attempt.coordinated) await presenter?.();
 		child.unref();
-		// The successor owns the socket now: the predecessor may drain. SIGUSR1 is sent only here,
-		// to a pid the record proved and a host that advertised it can survive the signal. A
-		// predecessor that exited on its own in the meantime is already drained, and the handoff it
-		// was being asked to make room for has already happened.
+		// The successor owns the socket now: the predecessor may drain. It is asked only here, and only
+		// when a record proved its pid. A predecessor that exited on its own in the meantime is already
+		// drained, and the handoff it was being asked to make room for has already happened.
 		if (owner !== undefined && (drainGate === undefined || (await drainGate())))
-			signalGeneration(owner.pid, "SIGUSR1");
+			await requestPredecessorDrain(owner.pid, admission, options.socket);
 		return {
 			action: "handoff",
 			pid: child.pid,

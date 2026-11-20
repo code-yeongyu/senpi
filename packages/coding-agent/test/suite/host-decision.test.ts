@@ -15,6 +15,7 @@ import { type EngineBuildIdentity, engineBuildIdentityFrom } from "../../src/cor
 import {
 	decideHostAction,
 	GENERATION_HANDOFF_CAPABILITY,
+	HANDOFF_ADMISSION_CAPABILITY,
 	HOST_PROTOCOL_VERSION,
 	type HostDecision,
 	type HostDecisionClient,
@@ -123,6 +124,14 @@ const rows: readonly Row[] = [
 		host: host({ capabilities: ["multi_session", "extension_events", "session_kind"] }),
 		policy: "upgrade",
 		expected: { action: "refuse", reason: "capability", upgradeable: false },
+	},
+	{
+		// senpi#7044: a host that decides its own handoffs advertises `handoff_admission` and NOT the legacy name.
+		name: "newer engine against a host that admits its handoffs -> handoff:newer_engine",
+		client: client({ identity: identity("2026.9.18") }),
+		host: host({ capabilities: [...REQUIRED_HOST_CAPABILITIES, HANDOFF_ADMISSION_CAPABILITY] }),
+		policy: "upgrade",
+		expected: { action: "handoff", reason: "newer_engine", upgradeable: true },
 	},
 	{
 		name: "compatible host without generation_handoff -> reuse, not upgradeable",

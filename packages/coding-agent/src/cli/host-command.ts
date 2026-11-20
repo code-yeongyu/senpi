@@ -51,7 +51,8 @@ const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc
   handoff     [--launch-spec <file>] [--socket <path>] [--allow-downgrade]
               [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
               (--when idle: the running host hands over to THIS runtime at its next safe idle point)
-              (a host on a newer engine is refused older_engine unless --allow-downgrade)
+              (the running host refuses an older engine, older_engine, and one it cannot order,
+               unordered_engine, unless --allow-downgrade)
   shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
   gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
   session     <open|close|model|prompt|steer|abort|read|state|list|wait> [...]   (see "senpi host session")

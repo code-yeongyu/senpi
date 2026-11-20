@@ -28,7 +28,8 @@ import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
 import { bindRegisteredEndpoint } from "./host-bare-endpoint-registration.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
-import { ENDPOINT_OWNER_FENCE_CAPABILITY, GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { ENDPOINT_OWNER_FENCE_CAPABILITY, HANDOFF_ADMISSION_CAPABILITY } from "./host-decision.ts";
+import { armHostDrainChannels } from "./host-drain-channels.ts";
 import { HandoffAnnouncement } from "./host-handoff-announcement.ts";
 import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
@@ -44,7 +45,6 @@ import { HostOccupancyWatch } from "./host-occupancy-watch.ts";
 import { closeHostConnections, type HostConnection } from "./host-shutdown-connections.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
-import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
 import { armHostWatchdog, type HostWatchdogConfig } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { MachineOpHandler } from "./machine-op/handler.ts";
@@ -290,7 +290,7 @@ export function createHostCore(
 		// Read at line receipt, so a connection that ends before the open is dispatched still counts as delegated.
 		const delegated = writer.delegations.isDelegated(connection);
 		if (writer.handleMcpForm(parsed)) return;
-		if (await gate.intercept(parsed, (answer) => writer.enqueueControl(answer))) return;
+		if (await gate.intercept(parsed, (answer) => writer.enqueueControl(answer), connection)) return;
 		const shapeError = rpcCommandShapeError(parsed);
 		if (shapeError) {
 			await writer.enqueueControl(parseError(shapeError));
@@ -308,6 +308,8 @@ export function createHostCore(
 		machineOps,
 		handover: gate.handover,
 		handoverAnswered: () => gate.answered(),
+		/** A connection that ended gives up the handoff admission it held (senpi#7044). */
+		connectionClosed: (connection: string) => gate.connectionClosed(connection),
 		/** The in-process registry's `warm`; the worker registry has none. */
 		warm: "warm" in registry ? registry.warm : undefined,
 		/**
@@ -391,15 +393,15 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	}
 	const canHandOver = runtimeBuildId !== undefined && process.platform !== "win32";
 	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
-	const { router, handle, handover, handoverAnswered, warm, machineOps } = createHostCore(
+	const { router, handle, handover, handoverAnswered, connectionClosed, warm, machineOps } = createHostCore(
 		options,
 		writer,
 		[
 			...parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
-			// A socket host installs the SIGUSR1 drain below, so it can be handed off to a newer
-			// generation instead of being killed. A host that does not advertise this is never
-			// signalled - SIGUSR1 would simply terminate it, sessions and all.
-			GENERATION_HANDOFF_CAPABILITY,
+			// A socket host can be handed off to a newer generation instead of being killed, and decides each
+			// handoff itself: it drains for the admission it granted, never for a bare SIGUSR1 (senpi#7044).
+			// The legacy `generation_handoff` is NOT advertised: a client that consults it would not ask.
+			HANDOFF_ADMISSION_CAPABILITY,
 			// Every rename/remove of its public entry runs under the endpoint fence (senpi#4602 Q1).
 			ENDPOINT_OWNER_FENCE_CAPABILITY,
 			// The host reports the runtime it loaded and can hand over at its next idle point.
@@ -437,6 +439,11 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// A draining predecessor parks its retained sessions for the successor and must not reopen
 			// them into its own registry (senpi#3282). Gate the reopen watch on not draining.
 			shouldReopenParked: () => !draining,
+			handoffAdmission: {
+				engine: engineBuildIdentity,
+				drain: () => drainChannels.drainForAdmittedHandoff(),
+				log: hostLog,
+			},
 			...(runtimeBuildId !== undefined && { runtimeBuildId }),
 			...(canHandOver && {
 				endpoint: {
@@ -576,6 +583,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				detachReader();
 				writer.unregisterConnection(id);
 				connections.delete(id);
+				connectionClosed(id);
 				occupancy.release(socket);
 				occupancyWatch.forget(id);
 				// A socket that dies without close_session still owns its sessions' attachments
@@ -686,10 +694,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			? socketEntryReplaced(socketPath, boundIdentity)
 			: socketEntryReplaced(supervisorPublicSocketPath, supervisorPublicIdentity);
 	registerShutdownSignals(shutdown);
-	if (process.platform !== "win32") process.on("SIGUSR1", drainForHandoff);
-	// The supervisor's signal-free relay, the drain channel every platform shares (#3653).
-	const drainRequestFile = hostChildDrainRequestFile();
-	if (drainRequestFile !== undefined) watchDrainRequest(drainRequestFile, drainForHandoff);
+	// The supervisor's signal-free relay is the drain channel every platform shares (#3653); SIGUSR1 only wakes it.
+	const drainChannels = armHostDrainChannels({ drain: drainForHandoff, draining: () => draining, log: hostLog });
 	// Arm before listen: a supervisor death during the listen transition must
 	// still close the child and clean its private endpoint.
 	const watchdog =

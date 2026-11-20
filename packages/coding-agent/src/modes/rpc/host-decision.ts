@@ -6,12 +6,18 @@
  * are decided once instead of in every client:
  *
  *   I1 - never terminate, signal or replace a host you did not start. The only sanctioned
- *        replacement is the drain-based generation handoff, which ends no running work.
+ *        replacement is the drain-based generation handoff, which ends no running work, and
+ *        the HOST decides it: a host that advertises `handoff_admission` is asked first
+ *        (`admit_handoff`) and drains only for the admission it granted (senpi#7044). No
+ *        requester-side check is the last word on somebody else's host.
  *   I2 - compatibility is `protocolVersion` + capabilities, NEVER a version-string compare,
  *        and "is my build newer?" is `compareEngineOrdinal`, never `serverVersion`. An
  *        ordinal that cannot be compared (a build without git metadata, a host that reports
  *        none, an ordinal outside senpi CalVer such as a compiled omo's `[5, 1, 78]`, senpi#7040) is
- *        EQUAL, and since a handoff needs STRICTLY greater, such a pair attaches.
+ *        EQUAL, and since a handoff needs STRICTLY greater, such a pair attaches. The host
+ *        applies the same order to a successor it is asked to admit, and there an ordinal
+ *        outside CalVer is refused (`unordered_engine`) instead of read as equal: "not
+ *        proven newer" keeps this client attached, "not proven not older" keeps the host.
  *
  * The profile rule is the third guard: a handoff additionally requires the candidate's
  * extension set to be a SUPERSET of the running host's. Handing off to a narrower generation
@@ -40,10 +46,28 @@ export { type HostProtocolInfo, parseHostProtocolInfo } from "./host-protocol-in
 export const HOST_PROTOCOL_VERSION = 1;
 
 /**
- * HOST capability: this host drains into a successor generation on SIGUSR1 instead of dying with
- * its sessions. A host without it is attach-only - it is never renamed, signalled or upgraded.
+ * LEGACY host capability: this host drains into a successor generation on a bare SIGUSR1, with no say in
+ * who replaces it. Only a host from before senpi#7044 advertises it; such a host is still handed off the
+ * old way, guarded by the requester's own engine check, because it cannot be asked.
  */
 export const GENERATION_HANDOFF_CAPABILITY = "generation_handoff";
+
+/**
+ * HOST capability (senpi#7044): this host drains into a successor only for a handoff it admitted itself
+ * (`admit_handoff`, then `drain_for_handoff` on the admitting connection) and ignores a bare SIGUSR1. It
+ * replaces `generation_handoff` on such a host, so a client from before the admission, which consults that
+ * name alone, attaches instead of replacing it. The name shares no substring with the legacy one on purpose.
+ */
+export const HANDOFF_ADMISSION_CAPABILITY = "handoff_admission";
+
+/**
+ * How a host can be handed off: `admitted` when it decides the handoff itself, `legacy` when it only drains on
+ * SIGUSR1, `undefined` when it does neither and is attach-only - never renamed, signalled or upgraded.
+ */
+export function handoffSupport(host: Pick<HostProtocolInfo, "capabilities">): "admitted" | "legacy" | undefined {
+	if (host.capabilities.includes(HANDOFF_ADMISSION_CAPABILITY)) return "admitted";
+	return host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY) ? "legacy" : undefined;
+}
 
 /**
  * HOST capability (senpi#4602): every rename or remove this host makes on its public socket entry runs under the
@@ -214,7 +238,7 @@ export function decideHostAction(
 		if (policy === "fallback") return { action: "fallback", reason: "capability", upgradeable: false };
 		return { action: "refuse", reason: "capability", upgradeable: false };
 	}
-	const upgradeable = client.platform !== "win32" && host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY);
+	const upgradeable = client.platform !== "win32" && handoffSupport(host) !== undefined;
 	if (policy === "fallback" && host.engineVersion !== client.identity.text) {
 		return { action: "fallback", reason: "engine_mismatch", upgradeable };
 	}
