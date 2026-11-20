@@ -1630,6 +1630,15 @@ export async function main(args: string[], options?: MainOptions) {
 
 	const loadedExtensions = resourceLoader.getExtensions().extensions;
 	const extensionFlags = loadedExtensions.flatMap((extension) => Array.from(extension.flags.values()));
+	// Before extensions load, a bare option can consume the next positional as a string value.
+	if (parsed.unknownFlags.size > 0) {
+		const booleanExtensionFlags = new Set(
+			extensionFlags.filter((flag) => flag.type === "boolean").map((flag) => flag.name),
+		);
+		if ([...booleanExtensionFlags].some((name) => parsed.unknownFlags.has(name))) {
+			parsed.messages = parseArgs(args, { booleanExtensionFlags }).messages;
+		}
+	}
 	if (parsed.help) {
 		await printThenExit(() => printHelp(extensionFlags), 0);
 	}
