@@ -38,7 +38,9 @@ import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy }
 import { hostWatchdogBinding, internalHostTransport } from "./host-internal-transport.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
 import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
+import { isHostOccupancyWatch } from "./host-observe-request.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
+import { HostOccupancyWatch } from "./host-occupancy-watch.ts";
 import { closeHostConnections, type HostConnection } from "./host-shutdown-connections.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
@@ -412,7 +414,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		// sessionless connection must not hold this host open.
 		{
 			onEmptyExit: () => void shutdown(0),
-			canExitWhenEmpty: () => draining || (occupancy.attachedCount === 0 && occupancy.unclassifiedCount === 0),
+			// A watching supervisor owns the idle exit: its observer link never ends this host from here.
+			canExitWhenEmpty: () =>
+				draining ||
+				(occupancy.attachedCount === 0 && occupancy.unclassifiedCount === 0 && !occupancyWatch.watching),
 			onHandoffParked: async (ids) => {
 				await Promise.all(
 					ids.map(async (id) => {
@@ -424,7 +429,11 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		},
 		hostContext,
 		{
-			onSessionCountChange: (size) => trim.observe(size),
+			onSessionCountChange: (size) => {
+				trim.observe(size);
+				// A session the host closed itself (eviction, park) has left its owners' records by now.
+				occupancyWatch.refresh();
+			},
 			// A draining predecessor parks its retained sessions for the successor and must not reopen
 			// them into its own registry (senpi#3282). Gate the reopen watch on not draining.
 			shouldReopenParked: () => !draining,
@@ -454,6 +463,18 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			}),
 		},
 	);
+	const occupancyWatch = new HostOccupancyWatch({
+		connections: () => connections.keys(),
+		attached: (id) => {
+			const socket = connections.get(id)?.socket;
+			return socket !== undefined && occupancy.isAttached(socket);
+		},
+		holdsSessions: (id) => router.holdsSessions(id),
+		send: (id, record) =>
+			void writer
+				.enqueueControl(record, id)
+				.catch((cause) => hostLog(`host_occupancy to ${id} failed: ${errorMessage(cause)}`)),
+	});
 	const presenter = await startMcpPresenterControl(writer, {
 		enforcement: options.mcpPresenterEnforcement,
 		bootstrap:
@@ -523,13 +544,19 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			const detachReader = attachJsonlLineReader(
 				socket,
 				(line) => {
+					if (isHostOccupancyWatch(line)) {
+						occupancyWatch.watch(id);
+						return;
+					}
 					// Do not serialize awaited commands: extension_ui_response and other
 					// re-entrant frames must be able to resolve a command already awaiting them.
+					occupancyWatch.begin(id);
 					void writer
 						.withConnection(id, () => handle(line))
 						.catch((cause) => {
 							process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`);
-						});
+						})
+						.finally(() => occupancyWatch.end(id));
 				},
 				{
 					maxLineLength: MAX_RPC_LINE_CHARACTERS,
@@ -550,6 +577,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				writer.unregisterConnection(id);
 				connections.delete(id);
 				occupancy.release(socket);
+				occupancyWatch.forget(id);
 				// A socket that dies without close_session still owns its sessions' attachments
 				// and path reservations. Release them on the command chain so this runs after any
 				// in-flight command for this connection settles, otherwise the path stays pinned

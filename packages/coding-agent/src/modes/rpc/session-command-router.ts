@@ -43,6 +43,13 @@ export class SessionCommandRouter {
 	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
 		return reopenParked(this.context, entry);
 	}
+	/** Whether a connection holds a session here or has an open in flight (oh-my-openagent#14272). */
+	holdsSessions(connectionId: string): boolean {
+		return (
+			(this.context.sessionsByConnection.get(connectionId)?.size ?? 0) > 0 ||
+			(this.context.opensByConnection.get(connectionId)?.size ?? 0) > 0
+		);
+	}
 	releaseConnection(connectionId: string): Promise<string[]> {
 		return releaseConnection(this.context, connectionId);
 	}
