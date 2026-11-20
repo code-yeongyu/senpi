@@ -108,7 +108,11 @@ ${context.toolSection}
 - Never silently swallow errors; never shotgun-debug with unrelated edits or blind retries.
 - Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.
 
-${buildHandoffSection({ turnEndRuleStatedElsewhere: true, surface: context.surface, sharedSections: context.sharedSections })}
+${buildHandoffSection({
+	turnEndRuleStatedElsewhere: true,
+	surface: context.surface,
+	sharedSections: context.sharedSections,
+})}
 
 ## Style
 
