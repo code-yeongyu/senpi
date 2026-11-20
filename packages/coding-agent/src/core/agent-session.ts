@@ -8230,12 +8230,15 @@ export class AgentSession {
 				settled,
 			};
 		}
+		// The guarded receipt is also persisted under effectId. A notice waiting to be sent is not admission.
+		const firstAdmission = guard ? Promise.withResolvers<boolean>() : undefined;
 		const settled = this._engineTurnRelease.resume(
 			this._engineTurnHold,
 			async (message, admit) => {
 				const generation = this._userAbortGeneration;
 				await this.waitForIdle();
 				const claim = new DeferredTurnClaim();
+				if (firstAdmission) void claim.disposition.then((result) => firstAdmission.resolve(result === "started"));
 				await this.sendCustomMessage(message, { triggerTurn: true }, claim, () => (guard?.() ?? true) && admit(), undefined, onQueued);
 				if ((await claim.disposition) !== "started") return false;
 				await this.waitForIdle();
@@ -8248,12 +8251,17 @@ export class AgentSession {
 			},
 			(sources) => this._extensionRunner.emitHeldWakesReleased(sources),
 		);
+		const turnStarted = firstAdmission
+			? await Promise.race([firstAdmission.promise, settled.then(() => false)])
+			: deliveredNotices > 0;
+		if (guard && !turnStarted && !guard())
+			return { answer: { ...idle, resumed: false, reason: refusal, pauseSeq: this._engineTurnHold.currentPauseSeq }, settled };
 		return {
 			answer: {
 				resumed: true,
 				pauseSeq,
-				turnStarted: deliveredNotices > 0,
-				deliveredNotices,
+				turnStarted,
+				deliveredNotices: turnStarted ? deliveredNotices : 0,
 				deliveredHeldInputs: 0,
 			},
 			settled,

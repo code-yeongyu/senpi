@@ -1,4 +1,5 @@
-import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it } from "vitest";
 import { type ExtensionAPI, SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/types.ts";
@@ -348,7 +349,7 @@ it("a peer leaves a prepared extension command and the interrupted turn for huma
 });
 
 it.each(["person", "parent"] as const)(
-	"a %s Stop at the final admission hook retains the wake and input",
+	"a %s Stop at final admission retains the wake and input, including after restart",
 	async (owner) => {
 		const atAdmission = Promise.withResolvers<void>();
 		const proceed = Promise.withResolvers<void>();
@@ -383,5 +384,112 @@ it.each(["person", "parent"] as const)(
 		expect(fixture.session.automaticInputHoldLive()).toBe(true);
 		expect(fixture.session.pausedNoticeCount).toBe(1);
 		expect(fixture.session.pausedHeldInputCount).toBe(1);
+		const reopened = await fixture.reopen();
+		await reopened.handler.ready;
+		await fixture.session.waitForIdle();
+		expect(await reopened.send({ type: "get_state", observe: true })).toMatchObject({
+			data: { paused: true, pausedNoticeCount: 1, pausedHeldInputCount: 1 },
+		});
+		expect(fixture.session.holdInput({ inputId: "late", revision: 0, text: "still pending" })).toMatchObject({
+			kind: "held",
+			duplicate: true,
+		});
+		expect(
+			fixture.session.workObligations.active.some((item) => item.payload?.message.customType === "session-resumed"),
+		).toBe(false);
+		expect(fixture.session.messages.some((m) => m.role === "custom" && m.customType === "session-resumed")).toBe(
+			false,
+		);
+		expect(fixture.harness.faux.state.callCount).toBe(0);
 	},
 );
+
+it("guarded notice-only resume reports final admission refusal, not a started turn", async () => {
+	const entered = Promise.withResolvers<void>();
+	const proceed = Promise.withResolvers<void>();
+	const fixture = await createIdentityHarness({
+		sessionStartEvent: { type: "session_start", reason: "resume", attended: false },
+		extensionFactories: [
+			(api) => {
+				api.on("before_agent_start", async () => {
+					entered.resolve();
+					await proceed.promise;
+				});
+			},
+		],
+	});
+	cleanups.push(fixture.cleanup);
+	const rpc = fixture.bind();
+	await rpc.handler.ready;
+	await monitorWake(fixture.harness);
+	expect(fixture.session.holds.map((hold) => hold.key)).toEqual(["unattended"]);
+	fixture.harness.setResponses([fauxAssistantMessage("unexpected")]);
+	const resume = rpc.send({
+		type: "resume_session",
+		unlessStopped: true,
+		expectedSeq: fixture.session.pauseView.pauseSeq,
+		effectId: "notice-only",
+	});
+	await entered.promise;
+	const stop = fixture.session.stop();
+	proceed.resolve();
+	await stop;
+	const reply = await resume;
+	expect({
+		calls: fixture.harness.faux.state.callCount,
+		held: fixture.session.pausedNoticeCount,
+		stopped: fixture.session.automaticInputHoldLive(),
+	}).toEqual({ calls: 0, held: 1, stopped: true });
+	expect(reply).toMatchObject({
+		data: { resumed: false, reason: "stopped", turnStarted: false, deliveredNotices: 0, deliveredHeldInputs: 0 },
+	});
+	const retry = await rpc.send({
+		type: "resume_session",
+		unlessStopped: true,
+		expectedSeq: fixture.session.pauseView.pauseSeq,
+		effectId: "notice-only",
+	});
+	expect(retry).toMatchObject({ data: { resumed: false, reason: "stopped", turnStarted: false } });
+});
+
+it("acknowledges a guarded notice-only turn at admission without waiting for settlement", async () => {
+	const started = Promise.withResolvers<void>();
+	const finish = Promise.withResolvers<void>();
+	const fixture = await createIdentityHarness({
+		sessionStartEvent: { type: "session_start", reason: "resume", attended: false },
+		tools: [
+			{
+				name: "gate",
+				label: "gate",
+				description: "Hold until released",
+				parameters: Type.Object({}),
+				execute: async () => {
+					started.resolve();
+					await finish.promise;
+					return { content: [{ type: "text", text: "done" }], details: {} };
+				},
+			},
+		],
+	});
+	cleanups.push(fixture.cleanup);
+	const rpc = fixture.bind();
+	await rpc.handler.ready;
+	await monitorWake(fixture.harness);
+	fixture.harness.setResponses([
+		fauxAssistantMessage(fauxToolCall("gate", {}), { stopReason: "toolUse" }),
+		fauxAssistantMessage("finished"),
+	]);
+	const resume = rpc.send({
+		type: "resume_session",
+		unlessStopped: true,
+		expectedSeq: fixture.session.pauseView.pauseSeq,
+	});
+	try {
+		await started.promise;
+		expect(await resume).toMatchObject({ data: { resumed: true, turnStarted: true, deliveredNotices: 1 } });
+		expect(fixture.session.isStreaming).toBe(true);
+	} finally {
+		finish.resolve();
+		await fixture.session.waitForIdle();
+	}
+});
