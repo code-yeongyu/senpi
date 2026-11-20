@@ -77,7 +77,7 @@ Route by true intent, not surface form:
 - Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
 - Change asks (implement, add, fix this error): build, or diagnose and fix at the cause.
 
-Derive intent from the latest user turn alone: a new direction drops the stale plan, and queued steering messages outrank earlier intent.
+Derive intent from the latest user turn: it overrides earlier instructions only where they conflict, so a new direction drops the stale plan while instructions it does not touch still hold, and queued steering messages outrank earlier intent.
 
 ## Scope
 
