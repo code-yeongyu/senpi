@@ -1397,6 +1397,8 @@ The record is exclusively created with `O_NOFOLLOW`, fsynced, and checked to be 
 regular file with mode 0600. Publication failure closes the endpoint with `key_publication_failed`.
 A group- or other-writable agent directory or `rpc` (for example one created under umask 002) is such a
 failure: the host exits, and its message names the directory and the fix, `chmod go-w <dir>`.
+A supervised generation also publishes one record for its generation-private route endpoint (its
+`endpoint` names that `route` socket), which a successor authenticates against (senpi#7098).
 Each launch generates a new UUID and a new 32-byte key in memory. Hosts delete only their own
 record; `senpi host gc` also collects records whose process is dead or whose PID has been reused.
 
@@ -1865,8 +1867,13 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    the predecessor's existing writer while its turn runs. Use the returned `sessionId` on that connection:
    session commands and events follow the writer. After the park the same handle addresses the successor's
    local session; the routed client does not receive the predecessor's terminal record. `list_sessions`
-   reports the writer's `generation` and `hostInstanceId` on the session row. An older predecessor without
-   a route endpoint keeps its claim and the reopen returns the existing retryable `session_path_in_use`.
+   reports the writer's `generation` and `hostInstanceId` on the session row; a predecessor that does not answer
+   that listing within the socket handshake budget (it exited mid-request, or it stalled) contributes no routed rows,
+   and the listing still answers with the successor's own. A command sent on a routed handle while the session moves
+   onto the successor waits at most the close grace window, then answers the retryable `generation_switch_pending`;
+   if the move cannot finish (the successor began draining, the session file is gone) it answers that reason instead.
+   An older predecessor without a route endpoint keeps its claim and the reopen returns the existing retryable
+   `session_path_in_use`.
    While a predecessor still runs, new connections negotiate ordinary JSONL, not compact recovery:
    a compact checkpoint and its tokens belong to the physical writer's acceptance lane. The successor
    advertises compact recovery again once its predecessor scan finds no live predecessor.
@@ -1875,7 +1882,8 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    its last on this generation, and it parks once that turn settles. A person's input or `resume_session`
    releases the hold after the reopen. An attached client still steers or cancels the running turn and
    reopens the session on the successor after the park, so a session that keeps working never pins a
-   superseded generation (senpi#7098).   While the successor is still taking over (parks it has not reopened yet, or a predecessor that still runs),
+   superseded generation (senpi#7098).
+   While the successor is still taking over (parks it has not reopened yet, or a predecessor that still runs),
    its `list_sessions` answer carries `handover: { pending, predecessor_draining }` beside `sessions`: the
    listing is not yet the endpoint's whole set, so a reader must not treat a missing session as gone. The field
    is absent once the takeover is done (senpi#7020).
@@ -3381,9 +3389,13 @@ answers for the spawn environment (`XDG_RUNTIME_DIR` set) and `systemd-run` is o
 supervisor is started as `systemd-run --user --scope --unit=senpi-host-<instanceId>.scope --collect --quiet -- <supervisor
 argv>`: `systemd-run` moves itself into the new scope and then execs the supervisor in place, so the spawned pid is
 the supervisor and every inherited descriptor (owner pipe, presenter channel, startup pipe) is kept; the scope is
-unloaded when the generation exits. No running process is moved between cgroups. Without a reachable user manager
-(containers, CI without systemd, macOS) the spawn is unchanged and never fails for it; `host ensure`, `host handoff`
-and `host status` then report the unit the host's lifetime is tied to.
+unloaded when the generation exits. No running process is moved between cgroups. Before placing a generation the
+probe starts one throwaway scope (`systemd-run --user --scope --collect --quiet -- true`); a manager that answers but
+refuses transient scopes (no cgroup delegation in a container, bus or polkit policy) is treated like no manager.
+Without a reachable user manager that accepts scopes (containers, CI without systemd, macOS) the spawn is unchanged
+and never fails for it; `host ensure`, `host handoff` and `host status` then report the unit the host's lifetime is
+tied to. Only a manager that accepted the probe scope and then refuses the generation's own (a policy change in that
+instant) fails that start, as any spawn failure does.
 
 ### Supersession lifecycle: `host_superseded`
 
