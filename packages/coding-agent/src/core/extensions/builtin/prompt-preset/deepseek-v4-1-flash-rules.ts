@@ -106,7 +106,7 @@ export const DEEPSEEK_V41_FLASH_RULES = [
 		section: "Understand first",
 		requiresTool: ["task"],
 		directive:
-			"Start a subagent when the user or their instruction files ask for one, or for a self-contained side task you can state precisely because you have already looked.",
+			"Start a subagent only when the user, their instruction files, or a workflow they started asks for one, or for a self-contained side task you can state precisely because you have already looked.",
 	},
 	{
 		id: "follow-code",
@@ -242,7 +242,7 @@ export const DEEPSEEK_V41_FLASH_RULES = [
 		id: "no-unasked-commit",
 		section: "Limits",
 		directive:
-			"Never create a git commit unless the user or their instruction files ask for one, and never revert or overwrite changes you did not make.",
+			"Never create a git commit unless the user asks for one or their instruction files permit it, and never revert or overwrite changes you did not make.",
 	},
 	{
 		id: "no-unread-claims",
