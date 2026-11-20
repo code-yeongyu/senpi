@@ -194,18 +194,24 @@ export class PredecessorRoutes {
 				return error(command.id, command.type, cause instanceof Error ? cause.message : String(cause));
 			});
 	}
-	/** A narrowing declaration is not acknowledged until every upstream copy has installed it. */
+	/**
+	 * A narrowing declaration is not acknowledged until every upstream copy has installed it. A copy that refuses it or
+	 * does not answer is cut instead (its route switches to a local reopen), so the declaration holds everywhere and its
+	 * reply is never held by a predecessor.
+	 */
 	async configure(caller: string, record: RouteRecord): Promise<void> {
 		await Promise.all(
 			[...this.table.byId.values()].map(async (route) => {
 				const attachment = route.attachments.get(caller);
 				if (!attachment || route.switching) return;
-				const peer = await attachment.peer;
-				const reply = await peer.request(record);
-				if (reply.success !== true) {
-					peer.close();
-					throw new Error("predecessor_configuration_refused");
-				}
+				// A copy whose setup failed holds nothing upstream; its peer is already closed.
+				const peer = await attachment.peer.catch(() => undefined);
+				if (!peer) return;
+				const installed = await peer.request(record).then(
+					(reply) => reply.success === true,
+					() => false,
+				);
+				if (!installed) peer.close();
 			}),
 		);
 	}

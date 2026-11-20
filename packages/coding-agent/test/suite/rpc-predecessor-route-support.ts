@@ -41,7 +41,9 @@ export async function fakePredecessor(
 		streams.push(stream);
 		attachJsonlLineReader(stream, (line) => {
 			const request = JSON.parse(line) as WireRecord;
-			if (request.type === "get_protocol_info") answer(stream, request, { instanceId: "pred", generation: 0 });
+			// Only the authenticated handshake is answered for it; a later liveness probe goes to the handlers.
+			if (request.type === "get_protocol_info" && request.auth !== undefined)
+				answer(stream, request, { instanceId: "pred", generation: 0 });
 			else if (typeof request.type === "string") handlers[request.type]?.(stream, request);
 		});
 	});
@@ -85,10 +87,14 @@ export async function successorWithPredecessorClaim(
 	});
 	const writer = new SessionEventWriter(() => {});
 	const delivered: WireRecord[] = [];
-	writer.registerConnection("client", {
-		writeRaw: (line) => delivered.push(JSON.parse(line) as WireRecord),
-		waitForBackpressure: async () => {},
-	});
+	writer.registerConnection(
+		"client",
+		{
+			writeRaw: (line) => delivered.push(JSON.parse(line) as WireRecord),
+			waitForBackpressure: async () => {},
+		},
+		{ launchProof: "proven" },
+	);
 	const router = new SessionCommandRouter(
 		registry,
 		writer,
@@ -112,6 +118,7 @@ export async function successorWithPredecessorClaim(
 		heldPath,
 		registry,
 		router,
+		writer,
 		send,
 		list: () => send({ type: "list_sessions", id: "list" }),
 		/** `pred` holds `held.jsonl`: the file exists and its claim stands while a live process owns it. */

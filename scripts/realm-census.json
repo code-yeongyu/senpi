@@ -11625,6 +11625,10 @@
 		"packages/coding-agent/src/modes/rpc/predecessor-wire.ts#ROW_STATES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#PREDECESSOR_REQUEST_TIMEOUT_MS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
 		}
 	}
 }
