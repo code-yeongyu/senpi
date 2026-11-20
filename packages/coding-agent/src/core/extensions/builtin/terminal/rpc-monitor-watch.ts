@@ -5,7 +5,7 @@
  * nothing was watching.
  */
 import { RpcMonitorCoalescer } from "./rpc-monitor-coalesce.ts";
-import { openRpcObserver, type RpcObserver, type RpcRecord } from "./rpc-monitor-observer.ts";
+import { type ConnectRpcEndpoint, openRpcObserver, type RpcObserver, type RpcRecord } from "./rpc-monitor-observer.ts";
 import { type RpcRemoteCheckpoint, RpcRemoteFeed } from "./rpc-monitor-remote.ts";
 import { detachedLabel, RpcMonitorRenderer, sessionKey } from "./rpc-monitor-render.ts";
 import {
@@ -35,6 +35,7 @@ export interface RpcWatchOptions {
 	readonly exclude: readonly string[];
 	/** Where to look for endpoints; defaults to every endpoint registered under `agentDir`. */
 	readonly endpoints?: () => Promise<readonly string[]>;
+	readonly connectEndpoint?: ConnectRpcEndpoint;
 	/** Every line this watch reports. */
 	readonly line: (line: string) => void;
 	/** The watch's view changed (a host joined, a status moved): persist it. */
@@ -160,12 +161,18 @@ export class RpcMonitorWatch {
 		const { target, events } = this.#options;
 		let observer: RpcObserver;
 		try {
-			observer = await openRpcObserver(socket, subscriptionFor(target, events), {
-				record: (record) => {
-					if (!this.#stopped) this.#record(socket, record);
+			observer = await openRpcObserver(
+				socket,
+				subscriptionFor(target, events),
+				{
+					record: (record) => {
+						if (!this.#stopped) this.#record(socket, record);
+					},
+					closed: () => this.#lost(socket, observer),
 				},
-				closed: () => this.#lost(socket, observer),
-			});
+				undefined,
+				this.#options.connectEndpoint,
+			);
 		} catch {
 			return [];
 		}

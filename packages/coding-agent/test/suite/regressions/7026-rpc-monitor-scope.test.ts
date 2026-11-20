@@ -1,9 +1,6 @@
 import { Socket } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 import { RpcMonitorWatch } from "../../../src/core/extensions/builtin/terminal/rpc-monitor-watch.ts";
-import { connectAuthenticatedRpcSocket } from "../../../src/modes/rpc/rpc-auth-client.ts";
-
-vi.mock("../../../src/modes/rpc/rpc-auth-client.ts", () => ({ connectAuthenticatedRpcSocket: vi.fn() }));
 
 afterEach(() => vi.useRealTimers());
 
@@ -21,7 +18,6 @@ function fixture(id: string, snapshot: object[]) {
 		socket.emit("data", Buffer.from(`${frames.map((frame) => JSON.stringify(frame)).join("\n")}\n`));
 		return true;
 	});
-	vi.mocked(connectAuthenticatedRpcSocket).mockResolvedValue({ socket, protocol: {} });
 	const lines: string[] = [];
 	const watch = new RpcMonitorWatch({
 		agentDir: ".",
@@ -29,6 +25,7 @@ function fixture(id: string, snapshot: object[]) {
 		events: "all",
 		exclude: [],
 		endpoints: async () => ["fixture.sock"],
+		connectEndpoint: async () => ({ socket }),
 		line: (line) => lines.push(line),
 	});
 	return { watch, lines, socket };

@@ -19,6 +19,7 @@ import { socketNeedsHandshake } from "../../../../modes/rpc/tui-socket.ts";
 import type { subscriptionFor } from "./rpc-monitor-targets.ts";
 
 export type RpcRecord = Readonly<Record<string, unknown>>;
+export type ConnectRpcEndpoint = (path: string, options: RpcKeyOptions) => Promise<{ socket: Socket; secret?: Buffer }>;
 
 export interface RpcObserverHandlers {
 	/** Every record after the subscribe answer, in arrival order. */
@@ -35,18 +36,20 @@ export interface RpcObserver {
 
 const SUBSCRIBE_ID = "monitor-subscribe";
 
+const connectRpcEndpoint: ConnectRpcEndpoint = async (path, options) => {
+	if (!socketNeedsHandshake(path)) return connectAuthenticatedRpcSocket(path, undefined, options);
+	const secret = await readSocketSecret(socketSecretPath(path));
+	return { socket: createConnection(resolveSocketTransportAddress(path, process.platform, secret)), secret };
+};
+
 export async function openRpcObserver(
 	socketPath: string,
 	subscription: ReturnType<typeof subscriptionFor>,
 	handlers: RpcObserverHandlers,
 	options: RpcKeyOptions = {},
+	connect: ConnectRpcEndpoint = connectRpcEndpoint,
 ): Promise<RpcObserver> {
-	const secret = socketNeedsHandshake(socketPath) ? await readSocketSecret(socketSecretPath(socketPath)) : undefined;
-	const authenticated = !socketNeedsHandshake(socketPath)
-		? await connectAuthenticatedRpcSocket(socketPath, undefined, options)
-		: undefined;
-	const socket: Socket =
-		authenticated?.socket ?? createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
+	const { socket, secret } = await connect(socketPath, options);
 	const answer = Promise.withResolvers<RpcRecord>();
 	const selector = subscription.sessions;
 	const ids = typeof selector === "object" ? selector.ids : undefined;
@@ -125,7 +128,7 @@ export async function openRpcObserver(
 		detach();
 		end("connection closed");
 	});
-	if (authenticated) subscribe();
+	if (secret === undefined) subscribe();
 	else socket.once("connect", subscribe);
 	return {
 		subscribed: answer.promise,
