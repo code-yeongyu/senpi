@@ -1,4 +1,6 @@
+import { resolve } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { brandProfile } from "../core/brand.ts";
 import type { AttachPrompt, AttachStartup } from "../modes/interactive/attach-startup.ts";
 import { type Args, isValidThinkingLevel } from "./args.ts";
 import { processFileArguments } from "./file-processor.ts";
@@ -19,7 +21,7 @@ const UNAPPLIED_FLAGS: ReadonlyArray<readonly [flag: string, given: (parsed: Arg
 	["--no-tools", (parsed) => parsed.noTools === true],
 	["--no-builtin-tools", (parsed) => parsed.noBuiltinTools === true],
 	["--tool-runtime", (parsed) => parsed.toolRuntime !== undefined],
-	["--extension", (parsed) => (parsed.extensions?.length ?? 0) > 0],
+	["--extension", (parsed) => userExtensions(parsed).length > 0],
 	["--no-extensions", (parsed) => parsed.noExtensions === true],
 	["--skill", (parsed) => (parsed.skills?.length ?? 0) > 0],
 	["--no-skills", (parsed) => parsed.noSkills === true],
@@ -35,6 +37,15 @@ const UNAPPLIED_FLAGS: ReadonlyArray<readonly [flag: string, given: (parsed: Arg
 	["--grok-neo", (parsed) => parsed.grokNeo === true],
 	["- (stdin)", (parsed) => parsed.readStdin === true],
 ];
+
+/**
+ * The `--extension` paths beyond the distribution's own: its launcher prepends those to every start and a host it
+ * runs loads them already, so only the rest would go unapplied (oh-my-openagent#14465).
+ */
+function userExtensions(parsed: Args): string[] {
+	const own = new Set((brandProfile()?.extensions ?? []).map((path) => resolve(path)));
+	return (parsed.extensions ?? []).filter((path) => !own.has(resolve(path)));
+}
 
 function unappliedFlags(parsed: Args): string[] {
 	const given = UNAPPLIED_FLAGS.filter(([, isGiven]) => isGiven(parsed)).map(([flag]) => flag);

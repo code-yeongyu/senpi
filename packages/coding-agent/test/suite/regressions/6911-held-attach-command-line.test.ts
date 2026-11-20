@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../../../tui/test/virtual-terminal.ts";
 import { parseArgs } from "../../../src/cli/args.ts";
 import { heldSessionAttachPlan } from "../../../src/cli/held-session-attach.ts";
+import { BRAND_ENV_VAR, resetBrandProfileForTests } from "../../../src/core/brand.ts";
 import { admitStartupSession, SESSION_HELD_EXIT_CODE } from "../../../src/cli/session-opening.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
@@ -59,6 +60,7 @@ afterEach(async () => {
 	}
 	ttyDescriptors.clear();
 	vi.unstubAllEnvs();
+	resetBrandProfileForTests();
 	vi.restoreAllMocks();
 	vi.mocked(runAttachedTui).mockClear();
 	await rm(home, { recursive: true, force: true });
@@ -120,6 +122,12 @@ function terminalAt(stdin: boolean, stdout: boolean): void {
 		if (!ttyDescriptors.has(stream)) ttyDescriptors.set(stream, Object.getOwnPropertyDescriptor(stream, "isTTY"));
 		Object.defineProperty(stream, "isTTY", { value, configurable: true, writable: true });
 	}
+}
+
+/** A distribution whose launcher prepends `--extension <plugin>` names that plugin in its brand (oh-my-openagent#14465). */
+function distributionWithPlugin(plugin: string): void {
+	vi.stubEnv(BRAND_ENV_VAR, JSON.stringify({ name: "distro", envPrefix: "SENPI", extensions: [plugin] }));
+	resetBrandProfileForTests();
 }
 
 async function startCli(args: string[], file: string) {
@@ -286,6 +294,24 @@ describe("start flags an attaching start cannot apply", () => {
 		const plan = await heldSessionAttachPlan(parseArgs([...args, "hello"]), { autoResizeImages: false });
 		if (!("refusal" in plan)) throw new Error("expected a refusal");
 		expect(plan.refusal).toContain(`${flag} cannot be applied to a session another process already runs`);
+	});
+
+	it("oh-my-openagent#14465: the distribution's own extension is not a flag it cannot apply", async () => {
+		const plugin = join(tmpdir(), "distro", "plugin");
+		distributionWithPlugin(plugin);
+		expect(
+			await heldSessionAttachPlan(parseArgs(["--extension", plugin, "hi"]), { autoResizeImages: false }),
+		).toEqual({ startup: { prompts: [{ text: "hi" }] } });
+	});
+
+	it("oh-my-openagent#14465: an extension the user adds beside the distribution's own is still refused", async () => {
+		const plugin = join(tmpdir(), "distro", "plugin");
+		distributionWithPlugin(plugin);
+		const plan = await heldSessionAttachPlan(parseArgs(["--extension", plugin, "--extension", "e.ts", "hi"]), {
+			autoResizeImages: false,
+		});
+		if (!("refusal" in plan)) throw new Error("expected a refusal");
+		expect(plan.refusal).toContain("--extension cannot be applied to a session another process already runs");
 	});
 
 	it("the flags it applies build a startup and refuse nothing", async () => {
