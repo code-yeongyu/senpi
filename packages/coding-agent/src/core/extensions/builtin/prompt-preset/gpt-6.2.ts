@@ -38,13 +38,14 @@
 //   `todo-fresh` describes a cursor, and `todo-plan` sizes both the threshold and an item in tool calls.
 // - Depth is a condition: edit when you can explain the mechanism and why the change produces the
 //   result, ask why the cause is there, and let the goal decide how far down to go.
-// - Reading belongs to the session. What the user names is read in full, and a subagent takes a side
-//   task stated after looking, or one the user or their instruction files ask for. That is all the
-//   delegation guidance the core carries.
+// - Reading belongs to the session. What the user names is read in full, and a subagent takes only a
+//   side task stated after looking, or one the user, their instruction files or a workflow they started
+//   (a skill, ultrawork) asks for. That is all the delegation guidance the core carries.
 // - Reporting names its moments (an item closes, a finding, a decision of the session's own, an
 //   obstacle) and an update never ends the turn, so the core needs no handoff block and no
 //   stop-condition template.
-// - The user's instruction files count as standing authorization for commits and the other gated actions.
+// - The user's instruction files count as standing authorization for commits and the other gated actions:
+//   a file that permits commits is enough, it does not have to ask for one.
 // - No capitalized or bold emphasis: "Never" opens only the limits and the refusal rule (the guide's
 //   predecessor: absolutes for true invariants only).
 // - Harness facts the model cannot derive are short sentences bound to the tools they describe
