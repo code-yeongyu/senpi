@@ -104,11 +104,18 @@ async function sessionFiles(agentDir: string): Promise<string[]> {
 		if (files.length >= FIND_SESSION_FILE_LIMIT) throw new FindSessionTooManyError(FIND_SESSION_FILE_LIMIT);
 		files.push(join(dir, name));
 	};
+	const folders: string[] = [];
 	for (const entry of entries) {
 		if (entry.isFile()) add(root, entry.name);
-		if (!entry.isDirectory()) continue;
-		const folder = join(root, entry.name);
-		for (const name of await readdir(folder).catch(() => [])) add(folder, name);
+		if (entry.isDirectory()) folders.push(join(root, entry.name));
+	}
+	// One folder per cwd: a host with thousands of them lists them `READERS` at a time, not one after another (senpi#7136).
+	for (let index = 0; index < folders.length; index += READERS) {
+		const batch = folders.slice(index, index + READERS);
+		const listed = await Promise.all(batch.map((folder) => readdir(folder).catch(() => [])));
+		batch.forEach((folder, offset) => {
+			for (const name of listed[offset] ?? []) add(folder, name);
+		});
 	}
 	return files;
 }
