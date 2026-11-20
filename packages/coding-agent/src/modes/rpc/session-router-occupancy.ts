@@ -96,7 +96,11 @@ export function sweepIdleSessions(host: RouterContext): void {
 	for (const sessionId of verdicts.orphaned) void evictIdleSession(host, sessionId, "session_dir_removed");
 	for (const sessionId of verdicts.idle) void evictIdleSession(host, sessionId);
 	if (Number.isFinite(host.emptyExitMs)) {
-		if (host.registry.size === 0 && (host.canExitWhenEmpty?.() ?? true)) {
+		if (
+			host.registry.size === 0 &&
+			!host.inheritedHandover?.predecessorDraining &&
+			(host.canExitWhenEmpty?.() ?? true)
+		) {
 			if (host.emptySince === undefined) host.emptySince = now;
 			else if (now - host.emptySince >= host.emptyExitMs) {
 				stopSweep(host);

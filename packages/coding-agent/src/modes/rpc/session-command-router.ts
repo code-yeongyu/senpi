@@ -7,12 +7,16 @@ import { RouterContext } from "./session-router-context.ts";
 import { beginDrain, sweepIdleSessions } from "./session-router-occupancy.ts";
 import { reopenParked } from "./session-router-open.ts";
 import { handle } from "./session-router-routing.ts";
+import { authRecord } from "./rpc-auth-proof.ts";
+import { classifyRpcMethod } from "./method-classes.ts";
+import { ATTACH_GATE_EXEMPT } from "./session-attachment-gate.ts";
 
 export type { RpcBindingFactory, RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
 export class SessionCommandRouter {
 	private readonly context: RouterContext;
 	constructor(...args: ConstructorParameters<typeof RouterContext>) {
 		this.context = new RouterContext(...args);
+		this.context.routes.reopen = (entry) => this.reopenParked(entry);
 		this.context.releaseTeardown = (sessionId, sessionPath) => this.tearDownReleased(sessionId, sessionPath);
 	}
 	/** The release_session park teardown. Routed through this member, as before the split (senpi#3681). */
@@ -25,6 +29,52 @@ export class SessionCommandRouter {
 	handle(command: RpcCommand): Promise<RpcResponse | undefined> {
 		return handle(this.context, command);
 	}
+	configureRoutes(connection: string, record: Readonly<Record<string, unknown>>): Promise<void> {
+		return this.context.routes.configure(connection, record);
+	}
+	/** A successor connection can attach to existing writers; it cannot create work outside them. */
+	admitsRoutedRecord(connection: string, value: unknown): boolean {
+		const record = authRecord(value);
+		if (!record) return false;
+		switch (record.type) {
+			case "get_protocol_info":
+			case "list_sessions":
+			case "launch_proven":
+			case "declare_delegation":
+				return true;
+			case "set_client_info":
+				return (
+					record.sessionId === undefined ||
+					(typeof record.sessionId === "string" &&
+						this.context.sessionsByConnection.get(connection)?.has(record.sessionId) === true)
+				);
+			case "open_session":
+				return typeof record.sessionPath === "string" && typeof record.expectedHostInstance === "string";
+			case "attach_session":
+				return typeof record.expectedHostInstance === "string" && typeof record.durableSessionId === "string";
+			case "park_session":
+			case "claim_session":
+			case "warm":
+			case "move_session":
+			case "select_hand":
+			case "begin_handover":
+			case "detach_connection":
+			case "subscribe_sessions":
+			case "unsubscribe_sessions":
+			case "list_hands":
+			case "find_session":
+				return false;
+			default:
+				return (
+					typeof record.sessionId === "string" &&
+					(this.context.sessionsByConnection.get(connection)?.has(record.sessionId) === true ||
+						this.context.handoffClosed.has(record.sessionId) ||
+						(ATTACH_GATE_EXEMPT.has(record.type as RpcCommand["type"]) &&
+							this.context.registry.peek(record.sessionId)?.state === "open")) &&
+					classifyRpcMethod(record) !== undefined
+				);
+		}
+	}
 	beginDrain(): void {
 		beginDrain(this.context);
 	}
@@ -32,12 +82,14 @@ export class SessionCommandRouter {
 		this.context.memoryPressure = pressure;
 	}
 	setInheritedHandover(state: InheritedHandover | undefined): void {
+		this.context.awaitingPredecessorScan = false;
 		this.context.inheritedHandover = state;
 	}
 	sweepIdleSessions(): void {
 		sweepIdleSessions(this.context);
 	}
 	dispose(): Promise<void> {
+		this.context.routes.dispose();
 		return dispose(this.context);
 	}
 	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {

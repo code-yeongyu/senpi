@@ -1861,13 +1861,21 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    connection occupancy. Clients see `session_closed { reason: "handoff_parked", sessionPath }` before
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
+   When both generations support routing, an `open_session { sessionPath }` on the successor attaches to
+   the predecessor's existing writer while its turn runs. Use the returned `sessionId` on that connection:
+   session commands and events follow the writer. After the park the same handle addresses the successor's
+   local session; the routed client does not receive the predecessor's terminal record. `list_sessions`
+   reports the writer's `generation` and `hostInstanceId` on the session row. An older predecessor without
+   a route endpoint keeps its claim and the reopen returns the existing retryable `session_path_in_use`.
+   While a predecessor still runs, new connections negotiate ordinary JSONL, not compact recovery:
+   a compact checkpoint and its tokens belong to the physical writer's acceptance lane. The successor
+   advertises compact recovery again once its predecessor scan finds no live predecessor.
    Each drain pass holds the automatic turns (goal continuation, monitor and codemode wakes) of every
    session, attached or not, exactly as an unattended reopen does: they wait as notices, its running turn is
    its last on this generation, and it parks once that turn settles. A person's input or `resume_session`
    releases the hold after the reopen. An attached client still steers or cancels the running turn and
    reopens the session on the successor after the park, so a session that keeps working never pins a
-   superseded generation (senpi#7098).
-   While the successor is still taking over (parks it has not reopened yet, or a predecessor that still runs),
+   superseded generation (senpi#7098).   While the successor is still taking over (parks it has not reopened yet, or a predecessor that still runs),
    its `list_sessions` answer carries `handover: { pending, predecessor_draining }` beside `sessions`: the
    listing is not yet the endpoint's whole set, so a reader must not treat a missing session as gone. The field
    is absent once the takeover is done (senpi#7020).

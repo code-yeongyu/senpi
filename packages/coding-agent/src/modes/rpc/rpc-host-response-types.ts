@@ -145,6 +145,9 @@ export type RpcHostCommandResponse =
 			data: {
 				sessions: Array<{
 					sessionId: string;
+					/** The generation currently writing this session, not necessarily the one answering the listing. */
+					generation?: number;
+					hostInstanceId?: string;
 					durableSessionId?: string;
 					sessionPath?: string;
 					cwd: string;
