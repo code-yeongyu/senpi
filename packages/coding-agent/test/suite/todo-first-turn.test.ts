@@ -14,6 +14,10 @@ import {
 	supportsNamedToolChoice,
 } from "../../src/core/extensions/builtin/todotools/first-turn.ts";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
+import {
+	FULL_TASK_MANAGEMENT_SECTION,
+	TASK_MANAGEMENT_SECTION,
+} from "../../src/core/extensions/builtin/todotools/prompt.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "./harness.ts";
 import { fauxTodotoolsPi, model, TODO_PAYLOAD } from "./todo-first-turn-harness.ts";
@@ -223,6 +227,46 @@ describe("first-turn tool_choice through the faux pi shape", () => {
 		// then
 		expect(start.message?.customType).toBe(FIRST_TURN_CUSTOM_TYPE);
 		expect(payload?.tool_choice).toBeUndefined();
+	});
+});
+
+// senpi#7101: a GPT preset plans after it has read, so the opener is off there unless the user sets it,
+// and a preset whose core owns the todo rules gets no Task_Management block.
+describe("first turn under the active prompt preset", () => {
+	it.each<[string, "force" | "remind" | undefined, boolean, unknown]>([
+		["gpt-6.2-astra-ultrafast", undefined, false, undefined],
+		["gpt-6.2-sol", undefined, false, undefined],
+		["gpt-6-astra", undefined, false, undefined],
+		["gpt-5.6", undefined, false, undefined],
+		["gpt-6.2-astra", "force", true, { type: "function", name: "todo" }],
+		["gpt-6.2-astra", "remind", true, undefined],
+	])("%s with todo.firstTurnPlan %s", async (id, setting, armed, toolChoice) => {
+		// given
+		const gpt = model(id, "openai-responses");
+		const faux = fauxTodotoolsPi(tempDirs, setting === undefined ? { model: gpt } : { model: gpt, setting });
+
+		// when
+		const start = await faux.startTurn();
+		const payload = await faux.providerRequest(TODO_PAYLOAD, gpt);
+
+		// then
+		expect(start.message?.customType).toBe(armed ? FIRST_TURN_CUSTOM_TYPE : undefined);
+		expect(payload?.tool_choice).toEqual(toolChoice);
+	});
+
+	it.each<[string, Api, string]>([
+		["gpt-6.2-astra", "openai-responses", "base"],
+		["gpt-6-astra", "openai-responses", `base\n${TASK_MANAGEMENT_SECTION}`],
+		["claude-opus-5", "anthropic-messages", `base\n${FULL_TASK_MANAGEMENT_SECTION}`],
+	])("the system prompt after %s", async (id, api, expected) => {
+		// given
+		const faux = fauxTodotoolsPi(tempDirs, { model: model(id, api) });
+
+		// when
+		const start = await faux.startTurn();
+
+		// then
+		expect(start.systemPrompt).toBe(expected);
 	});
 });
 
