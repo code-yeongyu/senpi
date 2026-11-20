@@ -152,14 +152,14 @@ export function presetSharedSections(name: ResolvedPresetName | undefined): Shar
 /**
  * The handoff block a preset's prompt defines, so the todo tool's cue can name that block in the
  * prompt's own words instead of the default core's (senpi#6977): the GPT block presets render the
- * outcome-first block, the gpt-6.2 core renders no handoff block on any surface (senpi#6979), so a
- * cue there would name a block that prompt does not define, and every other preset (and the default
- * dynamic prompt) renders the Ask / For you / Now / Next block.
+ * outcome-first block, the gpt-6.2 and deepseek-v4-1-flash cores render no handoff block on any
+ * surface (senpi#6979, senpi#7100), so a cue there would name a block those prompts do not define, and
+ * every other preset (and the default dynamic prompt) renders the Ask / For you / Now / Next block.
  */
 export type HandoffCueKind = "default" | "gpt-block" | "none";
 
 const GPT_BLOCK_HANDOFF_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-5.5", "gpt-5.6", "gpt-6-astra"]);
-const NO_HANDOFF_BLOCK_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-6.2"]);
+const NO_HANDOFF_BLOCK_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-6.2", "deepseek-v4-1-flash"]);
 
 export function presetHandoffCueKind(name: ResolvedPresetName | undefined): HandoffCueKind {
 	if (name === undefined) return "default";
@@ -171,7 +171,8 @@ export function presetHandoffCueKind(name: ResolvedPresetName | undefined): Hand
 /**
  * Presets whose model plans after it has read. The first-turn plan opener (a hidden reminder and,
  * under `force`, a named `todo` tool_choice) made GPT sessions write a list before they had read
- * what the request points at (senpi#7101), so an unset `todo.firstTurnPlan` means `off` under these
+ * what the request points at (senpi#7101), and every measured DeepSeek V4.1 Flash session opened with
+ * that list as a text-less call (senpi#7100), so an unset `todo.firstTurnPlan` means `off` under these
  * presets and `force` under every other preset and the default prompt. A value the user set wins.
  */
 const PLAN_AFTER_READING_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
@@ -183,6 +184,7 @@ const PLAN_AFTER_READING_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<Reso
 	"gpt-5.3-codex",
 	"gpt-5.2",
 	"gpt-5",
+	"deepseek-v4-1-flash",
 ]);
 
 export function presetFirstTurnPlanDefault(name: ResolvedPresetName | undefined): TodoFirstTurnPlan {
@@ -191,9 +193,12 @@ export function presetFirstTurnPlanDefault(name: ResolvedPresetName | undefined)
 
 /**
  * Presets whose core states the todo rules itself, so the todotools extension does not append the
- * shared `Task_Management` block after them: one home per rule (senpi#7101).
+ * shared `Task_Management` block after them: one home per rule (senpi#7101, senpi#7100).
  */
-const TODO_RULE_OWNER_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>(["gpt-6.2"]);
+const TODO_RULE_OWNER_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
+	"gpt-6.2",
+	"deepseek-v4-1-flash",
+]);
 
 export function presetOwnsTodoRules(name: ResolvedPresetName | undefined): boolean {
 	return name !== undefined && TODO_RULE_OWNER_PRESETS.has(name);

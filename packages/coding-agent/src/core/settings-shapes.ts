@@ -22,7 +22,7 @@ export interface HandoffHintSettings {
 export type TodoFirstTurnPlan = "force" | "remind" | "off";
 
 export interface TodoSettings {
-	firstTurnPlan?: TodoFirstTurnPlan; // default: "force", or "off" under a GPT prompt preset (first prompt of a session gets a hidden plan reminder; "force" also names the todo tool in tool_choice where the provider allows it)
+	firstTurnPlan?: TodoFirstTurnPlan; // default: "force", or "off" under a GPT prompt preset or deepseek-v4-1-flash (first prompt of a session gets a hidden plan reminder; "force" also names the todo tool in tool_choice where the provider allows it)
 	turnEndBackstop?: boolean; // default: true (a main-session turn that ends text-only with open todo tasks and no active goal gets a hidden nudge, at most two per chain)
 }
 

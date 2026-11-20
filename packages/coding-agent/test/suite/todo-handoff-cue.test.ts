@@ -166,28 +166,33 @@ describe("the cue names the handoff block the active preset defines (senpi#6977)
 		expect(texts[1]).not.toContain("Handoff due");
 	});
 
-	it("emits no cue under the gpt-6.2 preset, whose prompt defines no handoff block", async () => {
-		// given: a session on gpt-6.2, whose prompt rewrite (settled with the rewrite lane) defines no
-		// handoff block on any surface; until that rewrite lands the prompt still carries the family
-		// block, and the interim state is no cue rather than a cue naming a block the rewrite removes
-		vi.stubEnv("SENPI_PROMPT_SURFACE", "terminal");
+	it.each(["gpt-6.2-astra", "deepseek-flash"])(
+		"emits no cue under %s, whose prompt defines no handoff block",
+		async (id) => {
+			// given: a session on a preset whose core defines no handoff block on any surface (senpi#6979, senpi#7100)
+			vi.stubEnv("SENPI_PROMPT_SURFACE", "terminal");
 
-		// when
-		const texts = await runFourTodoCalls("gpt-6.2-astra");
+			// when
+			const texts = await runFourTodoCalls(id);
 
-		// then: the todo results still report the list, and none carries a handoff cue
-		expect(texts).toHaveLength(4);
-		for (const text of texts) expect(text).not.toContain("Handoff due");
-	});
+			// then: the todo results still report the list, and none carries a handoff cue
+			expect(texts).toHaveLength(4);
+			for (const text of texts) expect(text).not.toContain("Handoff due");
+		},
+	);
 
 	it("maps every preset to the cue kind its rendered prompt implies", () => {
 		// given: the preset case table covers every preset family; the expectation is DERIVED from
-		// each case's rendered prompt (a prompt rendering the outcome-first block must be mapped gpt-block),
-		// so a preset that starts or stops rendering the block fails here until the table is set deliberately
+		// each case's rendered prompt (the outcome-first block maps to gpt-block, the Ask block to default,
+		// neither to none), so a preset that starts or stops rendering a block fails here until the table
+		// is set deliberately
 		for (const { providerID, modelID, preset } of PROMPT_PRESET_MODEL_CASES) {
 			const prompt = resolvePreset(createModel(modelID, providerID), AUTO)?.prompt ?? "";
-			const expected =
-				preset === "gpt-6.2" ? "none" : prompt.includes("[Outcome so far] toward") ? "gpt-block" : "default";
+			const expected = prompt.includes("[Outcome so far] toward")
+				? "gpt-block"
+				: prompt.includes("Ask: [the user's original request]")
+					? "default"
+					: "none";
 			expect(presetHandoffCueKind(preset), preset).toBe(expected);
 		}
 		expect(presetHandoffCueKind(undefined)).toBe("default");

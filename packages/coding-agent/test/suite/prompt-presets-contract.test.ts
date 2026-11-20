@@ -48,10 +48,11 @@ describe("prompt-preset shared contract", () => {
 		expect([...AUTO_RESOLVED_PRESET_NAMES].sort()).toEqual(autoResolvable);
 	});
 
-	it("defaults the first-turn plan to off under every GPT preset and to force elsewhere (senpi#7101)", () => {
+	it("defaults the first-turn plan to off under every GPT preset and deepseek-v4-1-flash, and to force elsewhere (senpi#7101, senpi#7100)", () => {
 		// The expectation follows the preset name, so a new GPT preset fails here until it joins the set.
 		for (const preset of ["gpt-5", ...AUTO_RESOLVED_PRESET_NAMES] as const) {
-			expect(presetFirstTurnPlanDefault(preset), preset).toBe(preset.startsWith("gpt-") ? "off" : "force");
+			const plansAfterReading = preset.startsWith("gpt-") || preset === "deepseek-v4-1-flash";
+			expect(presetFirstTurnPlanDefault(preset), preset).toBe(plansAfterReading ? "off" : "force");
 		}
 		expect(presetFirstTurnPlanDefault(undefined)).toBe("force");
 	});
