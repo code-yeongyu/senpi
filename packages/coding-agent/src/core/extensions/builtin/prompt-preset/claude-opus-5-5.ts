@@ -110,6 +110,7 @@ ${context.toolSection}
 
 ${buildHandoffSection({
 	turnEndRuleStatedElsewhere: true,
+	briefUpdatesBetweenHandoffs: true,
 	surface: context.surface,
 	sharedSections: context.sharedSections,
 	languageRuleStatedElsewhere: true,

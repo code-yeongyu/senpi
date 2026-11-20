@@ -17,8 +17,8 @@ export interface HandoffSectionOptions {
 	 * The model under-reports during long tool chains by default (Claude Fable 5.1 guide, "Ask for
 	 * user-facing progress updates": remove narration-suppressing lines, then say when user-facing
 	 * text is wanted and what each update contains), so the quiet-between-handoffs sentence becomes a
-	 * brief-update instruction naming the moment and the shape. Rendered only by the Claude Fable 5.1
-	 * preset (senpi#2681).
+	 * brief-update instruction naming the moment and the shape. Rendered by the Claude Fable 5.1 and 5.2
+	 * presets (senpi#2681) and the Claude Opus 5.5 preset (senpi#7113).
 	 */
 	briefUpdatesBetweenHandoffs?: boolean;
 	/** The app surface has no routing line, so the block stops referring to one; chat has no block at all. */
