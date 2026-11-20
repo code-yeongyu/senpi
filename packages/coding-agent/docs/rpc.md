@@ -2194,7 +2194,10 @@ symmetry with other commands; the answer is always JSON (the one exception is `s
 which prints the bare socket path).
 
 - `ensure` prints `{ action, socket, pid, instanceId, generation, engineVersion, engineOrdinal,
-  capabilities, launchProfileId, runtimeBuildId, clientRuntimeBuildId, reused, upgradeable }`. `--policy upgrade` (the default) allows a
+  capabilities, launchProfileId, runtimeBuildId, clientRuntimeBuildId, reused, upgradeable, unit, lifetime_tied_to? }`. `unit` is
+  `{ cgroup, name, own }` for the host's supervisor on Linux (`null` elsewhere): `own: true` when it runs in its own
+  `senpi-host-<instanceId>.scope`; otherwise `lifetime_tied_to` names the unit (`name`) whose stop would end the host
+  (see "Supervisor unit" below). `host handoff` prints the same two fields for the successor. `--policy upgrade` (the default) allows a
   generation handoff, `never` only attaches or starts, and `fallback` answers exit 4 rather than attaching
   to a host this build disagrees with. `action` is `handoff` exactly when the socket was already served and
   the process behind it changed. An ensure invoked by an in-process session inside a multi-session host is
@@ -2221,8 +2224,9 @@ which prints the bare socket path).
   `RssAnon` on Linux): unlike RSS it keeps counting compressed and swapped pages, so a host whose RSS reads
   1.3 GB can hold 14 GB, and it is the number to watch when a host grows. All are `null` where the platform does not publish them
   (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
-  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive }`, newest
-  ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, and `sessions` counts the session files it
+  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive, unit }`, newest
+  ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, `unit`
+  the cgroup and unit its supervisor runs in (`{ cgroup, name, own }`, `null` off Linux or for an ended generation), and `sessions` counts the session files it
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
   never lists a dead pid.
@@ -3367,6 +3371,19 @@ Plaintext (1..65536 bytes per record) is released only after tag verification. T
 invalid lengths and incomplete records at EOF close the hop. Complete-record truncation is ordinary transport loss.
 JSONL lines span records with backpressure and retain the existing 16 Mi-character ceiling. Windows retains the
 secret-file/raw-handshake internal hop.
+
+#### Supervisor unit (Linux)
+
+A supervisor is detached into its own session, but on Linux a process stays in the cgroup of whoever started it. A
+supervisor started by `host ensure` or `host handoff` from a transient unit (a terminal's per-terminal service, an ssh
+session scope, a CI job) therefore used to die with that unit (senpi#7099). Where `systemctl --user is-system-running`
+answers for the spawn environment (`XDG_RUNTIME_DIR` set) and `systemd-run` is on its `PATH`, each generation's
+supervisor is started as `systemd-run --user --scope --unit=senpi-host-<instanceId>.scope --collect --quiet -- <supervisor
+argv>`: `systemd-run` moves itself into the new scope and then execs the supervisor in place, so the spawned pid is
+the supervisor and every inherited descriptor (owner pipe, presenter channel, startup pipe) is kept; the scope is
+unloaded when the generation exits. No running process is moved between cgroups. Without a reachable user manager
+(containers, CI without systemd, macOS) the spawn is unchanged and never fails for it; `host ensure`, `host handoff`
+and `host status` then report the unit the host's lifetime is tied to.
 
 ### Supersession lifecycle: `host_superseded`
 
