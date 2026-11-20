@@ -1,3 +1,73 @@
+## 2026-11-20 - gpt-6.2 core, second edition: goal first, plan after reading, the core owns the todo rules (#7110, senpi#7101)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts` (new): the rule table moves out of `gpt-6.2.ts` and is rewritten. 37 rules in nine sections: Intent Gate, Goal and plan, Understand first, Keep going, When to involve the user, Code, Done means verified, Reporting, Limits.
+- What the core says now that it did not: work out the situation behind a request before acting (what it points at, memory, the instruction files, the conversation); open with what the user wants and what it is for, once per request, after the first look when the meaning sits in what the request points at (the "I read this as" line on the terminal, plain sentences on the app surface, none in chat); that understanding is the goal, and a registered goal is written from it; work larger than a few tool calls is planned in the todo tool one action per item, and the list is kept true (the tool keeps one item in progress, so the rule describes a cursor); what the user names is read in full by the session, and a subagent takes a side task only when the user, their instruction files or a workflow they started asks for one, or when the session can state it because it has looked; reports are tied to events (an item closes, a finding, a decision of the session's own, an obstacle) and an update never ends the turn; the user's instruction files count as standing authorization for commits and the other gated actions (a file that permits commits is enough).
+- Asking and choosing no longer overlap: the session asks when the outcome itself is unclear and the candidates call for materially different work, and chooses, as this user would, when the outcome is clear and only the way to it is open. A continuation prompt, reminder or notification the harness injects is not a new request.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts`: renders the table and carries the design note.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: `presetFirstTurnPlanDefault` (`off` for every GPT preset, `force` otherwise) and `presetOwnsTodoRules` (`gpt-6.2`).
+- `test/suite/prompt-presets-contract.test.ts`, `test/suite/prompt-presets-gpt-6-2.test.ts`: the default per preset; the rule-table checks import the new module. `test/suite/prompt-presets-native-baseline.json`: the six `gpt-6.2` rows are recaptured. No other hash changes.
+- `.agents/skills/senpi-qa/scripts/scenarios/first-turn-plan-preset-qa.mjs` (new): drives the real CLI in RPC mode against the fake model server and asserts the first request per preset (forced `tool_choice`, the hidden reminder, `Task_Management`, the 6.2 sections and opener per surface).
+
+Token count of the rendered core (`o200k_base`; section headings plus every rule the surface renders with every tool present, no tool guidelines):
+
+| Surface | before | after |
+|---|---|---|
+| terminal | 1,558 | 2,126 |
+| app | 1,613 | 2,201 |
+| chat | 1,597 | 2,101 |
+
+A GPT-6.2 session no longer receives the first-turn reminder (108 tokens) or `Task_Management` (76 tokens).
+
+### Why
+
+- senpi#7101: nine GPT-6.2 sessions from one day wrote a todo list, and often registered a goal, before reading what the request pointed at; lists went stale for more than a hundred tool calls; 12 to 20 percent of turns carried text for the user; "read it all" was done through filtered slices. The first 6.2 core left the goal, the todo list and delegation to tool descriptions and shared blocks that disagree with each other.
+
+### Why an extension could not handle it
+
+- Preset resolution and the cores are this builtin's own code.
+
+### Expected merge conflict zones
+
+- Fork-only files. The rule table moved to a new file, so an open change to the rules in `gpt-6.2.ts` conflicts as a whole.
+
+## 2026-11-20 - The deepseek-v4-1-flash preset is one standalone core, a sibling of gpt-6.2 (#7109, senpi#7100)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash-rules.ts` (new): every sentence of the core as rule data (id, owning section, `requiresTool`, `surfaces`). 37 rules in nine sections: Intent Gate, Goal and plan, Understand first, Keep going, When to involve the user, Code, Done means verified, Reporting, Limits. The text is the gpt-6.2 second-edition rules (senpi#7101) as this preset's own copy, so a later edit to `gpt-6.2-rules.ts` does not reach it.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts`: rewritten. It renders each rule once under its section, drops a section whose rules are all bound to absent tools, appends only the tool guidelines, and uses the codex workstation dialect. The header carries the design note and the session measurements.
+- What left the prompt: the RFC 2119 keyword line and the `<critical>` block, the stop-condition line and its binding rule, the propose-then-wait rule for open-ended asks, the two-wave search cap, the four repairs carried from V4 Flash (directive authority, settled reading, missing info, todo discipline), the execution-tooling paragraph, the Test Discipline section and the handoff block on every surface.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: `deepseek-v4-1-flash` joins the presets that plan after reading (`presetFirstTurnPlanDefault` returns `off`), the presets whose core owns the todo rules (`presetOwnsTodoRules`, so no `Task_Management` block follows it), and the presets without a handoff block (`presetHandoffCueKind` returns `none`, so the todo tool cues none).
+- Tests: `test/suite/prompt-presets-deepseek-v4-1-flash.test.ts` checks the rule table (each rule once under its section per surface, tool-bound rules gated per tool, an emptied section dropped, guidelines kept without a tool list, no rule text shared with the V4 presets, the emphasis budget, the workstation dialect); the id-routing tests are unchanged. `prompt-presets-contract.test.ts`, `todo-first-turn.test.ts`, `todo-handoff-cue.test.ts` and `prompt-presets-app-surface.test.ts` gain the preset's rows, with `deepseek-v4-flash-0731` as the control that keeps the forced todo and `Task_Management`. The cue-kind test now derives `none` from a rendered prompt that carries neither handoff block.
+- `test/suite/prompt-presets-native-baseline.json`: the six `deepseek-v4-1-flash` rows are recaptured. No other hash changes.
+- `.agents/skills/senpi-qa/scripts/scenarios/first-turn-plan-preset-qa.mjs`: four DeepSeek rows over chat completions; the system prompt is also read from chat-completions messages.
+
+Token count of the rendered preset (`o200k_base`, `buildPreset` with the second fixture of the native baseline: eight tools, one guideline, one context file, one skill):
+
+| Surface | before | after | change |
+|---|---|---|---|
+| terminal | 2,030 | 2,421 | +19.3% |
+| app | 2,064 | 2,496 | +20.9% |
+| chat | 1,914 | 2,396 | +25.2% |
+
+The 76-token `Task_Management` block is no longer appended after the preset, and the 108-token first-turn reminder is no longer sent on the first request.
+
+### Why
+
+- Ten working DeepSeek V4.1 Flash sessions on the compressed core (16,114 assistant messages) showed which of its instructions lost: every session opened with a text-less `todo` call before anything was read, `start` was 3 of 225 todo calls, and 72% of assistant messages were tool calls with no text (senpi#7100). The model follows the forced first call over "open every turn with one routing line", and follows "Between handoffs: work without narration" to the letter.
+- The maintainer's direction is that V4.1 Flash reacts to conflicting instructions the way the GPT family does. A cold audit of a draft that reworded eleven of the gpt-6.2 rules found no reason specific to DeepSeek for any of the eleven, so the conflicts it fixed were fixed in the gpt-6.2 text and this core copies the result.
+- The same sessions hold no trace that asks for the V4 Flash repairs, which were written against other weights.
+
+### Why an extension could not handle it
+
+- Preset resolution, the cores and the preset contract are this builtin's own code.
+
+### Expected merge conflict zones
+
+- Fork-only files. `deepseek-v4-1-flash.ts` is a full rewrite, so any open change to it conflicts as a whole. LOW in `contract.ts`: three set literals.
+
 ## 2026-11-18 - The gpt-6.2 preset is one standalone core, about half the size (#6980, senpi#6979)
 
 ### What changed

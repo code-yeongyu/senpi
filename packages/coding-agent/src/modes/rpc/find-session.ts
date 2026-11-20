@@ -86,19 +86,24 @@ async function headerOf(file: string): Promise<{ id: string; cwd: string } | und
 	}
 }
 
-/** Every session file of this host, counted before any of them is opened. */
+/**
+ * Every session file of this host, counted before any of them is opened: the files in each folder of `sessions/` and
+ * the files directly in it, where a session started with that folder as its session dir keeps its file (senpi#7017).
+ */
 async function sessionFiles(agentDir: string): Promise<string[]> {
 	const root = join(agentDir, "sessions");
-	const folders = await readdir(root, { withFileTypes: true }).catch(() => []);
+	const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
 	const files: string[] = [];
-	for (const folder of folders) {
-		if (!folder.isDirectory()) continue;
-		const names = await readdir(join(root, folder.name)).catch(() => []);
-		for (const name of names) {
-			if (!name.endsWith(".jsonl")) continue;
-			if (files.length >= FIND_SESSION_FILE_LIMIT) throw new FindSessionTooManyError(FIND_SESSION_FILE_LIMIT);
-			files.push(join(root, folder.name, name));
-		}
+	const add = (dir: string, name: string): void => {
+		if (!name.endsWith(".jsonl")) return;
+		if (files.length >= FIND_SESSION_FILE_LIMIT) throw new FindSessionTooManyError(FIND_SESSION_FILE_LIMIT);
+		files.push(join(dir, name));
+	};
+	for (const entry of entries) {
+		if (entry.isFile()) add(root, entry.name);
+		if (!entry.isDirectory()) continue;
+		const folder = join(root, entry.name);
+		for (const name of await readdir(folder).catch(() => [])) add(folder, name);
 	}
 	return files;
 }

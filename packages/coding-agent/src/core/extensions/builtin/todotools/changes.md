@@ -1,5 +1,24 @@
 # todotools Fork Tracker
 
+## 2026-11-20 - The first-turn plan default follows the prompt preset (#7110, senpi#7101)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: an unset `todo.firstTurnPlan` resolves through `presetFirstTurnPlanDefault` of the active preset (`off` under a GPT preset, `force` elsewhere); a value the user set still wins. `Task_Management` is not appended after a preset listed in `presetOwnsTodoRules` (`gpt-6.2`).
+- `packages/coding-agent/test/suite/todo-first-turn.test.ts`, `todo-first-turn-harness.ts`: the opener per model id and setting, and the system prompt after each preset.
+
+### Why
+
+- The opener made GPT sessions write a list before they had read anything: the first tool call was `todo` `init` in 9 of 9 measured sessions (senpi#7101). The 6.2 core now states the todo rules itself, so a second copy after it would be a second home for the same rule.
+
+### Why an extension could not handle it
+
+- The opener and the appended block live inside the todotools builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` handler in `index.ts`.
+
 ## 2026-11-18 - The GPT cue labels derive from one constant (senpi#6982 follow-up)
 
 ### What changed
