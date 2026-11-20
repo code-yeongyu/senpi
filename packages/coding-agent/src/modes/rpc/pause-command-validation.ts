@@ -28,8 +28,15 @@ export function validatePauseCommand(value: Command): string | undefined {
 	if (value.type === "resume_session") {
 		if (value.expectedSeq !== undefined && !seq(value.expectedSeq))
 			return "expectedSeq must be a non-negative integer.";
-		if (value.mode !== undefined && value.mode !== "continue" && value.mode !== "release")
-			return 'mode must be "continue" or "release".';
+		if (
+			value.mode !== undefined &&
+			value.mode !== "continue" &&
+			value.mode !== "release" &&
+			value.mode !== "interrupted"
+		)
+			return 'mode must be "continue", "release" or "interrupted".';
+		if (value.mode === "interrupted" && (value.unlessStopped !== true || !seq(value.expectedSeq)))
+			return 'mode "interrupted" requires expectedSeq and unlessStopped: true.';
 		if (value.message !== undefined && typeof value.message !== "string") return "message must be a string.";
 		if (value.effectId !== undefined && !nonEmpty(value.effectId)) return "effectId must be 1-256 characters.";
 		if (value.unlessStopped !== undefined && typeof value.unlessStopped !== "boolean")
