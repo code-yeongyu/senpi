@@ -60,6 +60,7 @@ export function fauxTodotoolsPi(tempDirs: string[], options: { setting?: string;
 	const startTurn = (prompt = "add retries to fetchUser") =>
 		emit("before_agent_start", { prompt, trigger: "prompt", systemPrompt: "base" }) as Promise<{
 			message?: { customType: string };
+			systemPrompt?: string;
 		}>;
 	const providerRequest = (payload: Record<string, unknown>, requestModel: Model<Api> = model("claude-opus-5")) =>
 		emit("before_provider_request", { payload, model: requestModel }) as Promise<

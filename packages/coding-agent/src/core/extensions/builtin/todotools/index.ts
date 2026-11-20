@@ -6,7 +6,7 @@ import { registerTodoCommand } from "./commands.ts";
 import { FIRST_TURN_CUSTOM_TYPE, FIRST_TURN_REMINDER, shouldArmFirstTurn, withForcedTodoChoice } from "./first-turn.ts";
 import { phasesFromCursorTodos } from "./native-todo-mirror.ts";
 import { resolveActivePresetName } from "../prompt-preset/active-preset.ts";
-import { presetFirstTurnPlanDefault, presetSharedSections } from "../prompt-preset/contract.ts";
+import { presetFirstTurnPlanDefault, presetOwnsTodoRules, presetSharedSections } from "../prompt-preset/contract.ts";
 import { FULL_TASK_MANAGEMENT_SECTION, TASK_MANAGEMENT_SECTION } from "./prompt.ts";
 import {
 	clonePhases,
@@ -134,7 +134,8 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 			const preset = resolveActivePresetName(ctx);
 			const section =
 				presetSharedSections(preset) === "full" ? FULL_TASK_MANAGEMENT_SECTION : TASK_MANAGEMENT_SECTION;
-			const systemPrompt = `${event.systemPrompt}\n${section}`;
+			// A preset whose core states the todo rules gets no second copy of them (senpi#7101).
+			const systemPrompt = presetOwnsTodoRules(preset) ? event.systemPrompt : `${event.systemPrompt}\n${section}`;
 			if (event.preview) return { systemPrompt };
 			const branchEntries = ctx.sessionManager.getBranch();
 			const setting = readFirstTurnPlan(ctx, presetFirstTurnPlanDefault(preset));

@@ -152,12 +152,9 @@ export function presetSharedSections(name: ResolvedPresetName | undefined): Shar
 /**
  * The handoff block a preset's prompt defines, so the todo tool's cue can name that block in the
  * prompt's own words instead of the default core's (senpi#6977): the GPT block presets render the
- * outcome-first block, gpt-6.2 is mapped to no cue pending its prompt rewrite (the rewrite lane's
- * settled decision: the rewritten 6.2 core renders no handoff block on any surface, so a cue
- * would name a block that prompt does not define; until that rewrite lands, 6.2 sessions get no
- * cue while the prompt still carries the family block - accepted interim state, merge order
- * senpi#6982 before the rewrite), and every other preset (and the default dynamic prompt) renders
- * the Ask / For you / Now / Next block.
+ * outcome-first block, the gpt-6.2 core renders no handoff block on any surface (senpi#6979), so a
+ * cue there would name a block that prompt does not define, and every other preset (and the default
+ * dynamic prompt) renders the Ask / For you / Now / Next block.
  */
 export type HandoffCueKind = "default" | "gpt-block" | "none";
 
@@ -190,6 +187,16 @@ const PLAN_AFTER_READING_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<Reso
 
 export function presetFirstTurnPlanDefault(name: ResolvedPresetName | undefined): TodoFirstTurnPlan {
 	return name !== undefined && PLAN_AFTER_READING_PRESETS.has(name) ? "off" : "force";
+}
+
+/**
+ * Presets whose core states the todo rules itself, so the todotools extension does not append the
+ * shared `Task_Management` block after them: one home per rule (senpi#7101).
+ */
+const TODO_RULE_OWNER_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>(["gpt-6.2"]);
+
+export function presetOwnsTodoRules(name: ResolvedPresetName | undefined): boolean {
+	return name !== undefined && TODO_RULE_OWNER_PRESETS.has(name);
 }
 
 export type PromptPresetModelCase = {

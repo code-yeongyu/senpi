@@ -44,7 +44,9 @@ senpi#2419), `todo` active, not `print`/`json`, not another extension-triggered 
 `agent_end` / abort / session change), only where the resolved compat allows a forced
 choice and the model has not refused one earlier in the process (senpi#2218), the payload declares `todo` with no `tool_choice` of its own, and Anthropic thinking
 is off. The decomposition mandate's single home is `TASK_MANAGEMENT_SECTION`; do not restate
-it in `TODO_TOOL_DESCRIPTION`, the tool guidelines, or a preset.
+it in `TODO_TOOL_DESCRIPTION` or the tool guidelines. A preset whose core states the todo rules itself
+is listed in `presetOwnsTodoRules` (`../prompt-preset/contract.ts`, today `gpt-6.2`), and `index.ts` appends
+no `Task_Management` block after it: the rule keeps one home either way.
 
 ## CONVENTIONS
 

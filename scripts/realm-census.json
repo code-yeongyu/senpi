@@ -5279,6 +5279,10 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#TODO_RULE_OWNER_PRESETS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#FULL_SHARED_SECTION_PRESETS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -5371,19 +5375,23 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#APP_AND_CHAT": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#APP_AND_CHAT": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#GPT62_RULES": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#GPT62_RULES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#TERMINAL": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#TERMINAL_AND_APP": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#LIST_SECTIONS": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#TERMINAL": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
