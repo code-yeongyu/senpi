@@ -108,7 +108,10 @@ describe("session writer claims", () => {
 		const rebooted = claimsDir();
 		const w2 = world();
 		await acquireWriterClaim(rebooted, "/s.jsonl", probesFor(w2, 100));
+		// After a reboot the pid, if alive, is some other process whose start time this host cannot match to the claim; with
+		// no readable start time the boot instant decides.
 		w2.boot = 50 + 10_000_000;
+		w2.starts.delete(100);
 		expect((await acquireWriterClaim(rebooted, "/s.jsonl", probesFor(w2, 200))).generation).toBe(2);
 	});
 

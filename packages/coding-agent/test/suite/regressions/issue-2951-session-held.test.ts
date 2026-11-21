@@ -183,18 +183,58 @@ it("does not block a holder in its own worker runtime", async () => {
 	}
 });
 
-it.each(["bootAtMs", "processStartedAtMs"])("ignores a complete live foreign holder with stale %s", async (field) => {
-	await using holder = await startHolder();
-	expect(holder.pid).not.toBe(process.pid);
-	const recordFile = join(dirname(sessionFile), "session-holders", SESSION_ID, `${holder.pid}.json`);
-	const record = JSON.parse(await readFile(recordFile, "utf8"));
-	expect(record.bootAtMs).toEqual(expect.any(Number));
-	expect(record.processStartedAtMs).toEqual(expect.any(Number));
-	record[field] -= 600_000;
-	await writeFile(recordFile, JSON.stringify(record));
-	await using rig = createInProcessRig(root);
-	expect(await rig.open("client", { sessionPath: sessionFile })).toMatchObject({ success: true });
-});
+// A record from an earlier boot, or one whose pid another process now wears, is not a live holder. Where the platform
+// has a process key (Linux, macOS) the key decides, so the earlier boot is a different boot id and the reused pid a
+// different start; a record without a key (other platforms, or written before keys) falls back to its start time.
+const keyed = process.platform === "linux" || process.platform === "darwin";
+
+it.runIf(keyed).each([
+	["boot", 0],
+	["start", 1],
+] as const)(
+	"ignores a complete live foreign holder whose recorded process key has another %s",
+	async (_half, index) => {
+		await using holder = await startHolder();
+		expect(holder.pid).not.toBe(process.pid);
+		const recordFile = join(dirname(sessionFile), "session-holders", SESSION_ID, `${holder.pid}.json`);
+		const record = JSON.parse(await readFile(recordFile, "utf8"));
+		expect(record.processKey).toEqual(expect.stringContaining(":"));
+		const halves = [
+			record.processKey.slice(0, record.processKey.indexOf(":")),
+			record.processKey.slice(record.processKey.indexOf(":") + 1),
+		];
+		halves[index] = `${halves[index]}-other`;
+		record.processKey = halves.join(":");
+		await writeFile(recordFile, JSON.stringify(record));
+		await using rig = createInProcessRig(root);
+		expect(await rig.open("client", { sessionPath: sessionFile })).toMatchObject({ success: true });
+	},
+);
+
+it.each([
+	{ stale: ["processStartedAtMs"], opens: true },
+	{ stale: ["bootAtMs", "processStartedAtMs"], opens: true },
+	// Only the boot instant differs while the live pid's start time matches: that is a wall-clock step under a live
+	// holder (the boot instant moves with the clock), so the holder still holds the session.
+	{ stale: ["bootAtMs"], opens: false },
+])(
+	"judges a live foreign holder record without a process key by its start time ($stale stale)",
+	async ({ stale, opens }) => {
+		await using holder = await startHolder();
+		expect(holder.pid).not.toBe(process.pid);
+		const recordFile = join(dirname(sessionFile), "session-holders", SESSION_ID, `${holder.pid}.json`);
+		const record = JSON.parse(await readFile(recordFile, "utf8"));
+		expect(record.bootAtMs).toEqual(expect.any(Number));
+		expect(record.processStartedAtMs).toEqual(expect.any(Number));
+		delete record.processKey;
+		for (const field of stale) record[field] -= 600_000;
+		await writeFile(recordFile, JSON.stringify(record));
+		await using rig = createInProcessRig(root);
+		expect(await rig.open("client", { sessionPath: sessionFile })).toMatchObject(
+			opens ? { success: true } : { success: false, errorCode: "session_held" },
+		);
+	},
+);
 
 it("keeps interactive startup advisory when the holder lookup has a filesystem error", async () => {
 	await mkdir(join(root, "session-holders"));
