@@ -7043,13 +7043,10 @@ export class InteractiveMode {
 		if (this.isShuttingDown) {
 			process.exit(1);
 		}
-		if (isDeadTerminalError(error)) {
-			// The terminal died under the session (e.g. an stdin read EIO after
-			// the controlling terminal vanished or this pgrp lost the tty
-			// foreground). Same handling as terminal write errors: exit silently
-			// instead of printing a crash banner to a terminal that is gone.
-			this.emergencyTerminalExit({ origin: `dead-terminal ${origin}`, error });
-		}
+		// An I/O errno alone does not identify the terminal: child-process pipes
+		// can report the same EIO/EPIPE/ENOTCONN. Only the owned stdio error
+		// handlers may choose the silent emergency exit; an uncaught error still
+		// attempts terminal restoration and records a visible fatal failure.
 		if (isRecoverableInspectorVmImportError(error, origin)) {
 			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
 			return;
@@ -7097,9 +7094,6 @@ export class InteractiveMode {
 	 * drawing on (#2284).
 	 */
 	private unhandledRejection(reason: unknown): void {
-		if (isDeadTerminalError(reason)) {
-			this.emergencyTerminalExit({ origin: "dead-terminal unhandledRejection", error: reason });
-		}
 		if (isRecoverableInspectorVmImportError(reason, "unhandledRejection")) {
 			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
 			return;
