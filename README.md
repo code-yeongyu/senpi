@@ -329,8 +329,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.m
 ## Development
 
 ```bash
-npm install --ignore-scripts  # Install all dependencies without running lifecycle scripts
-bun install --ignore-scripts # Bun alternative
+bun run setup        # Install dependencies without lifecycle scripts, then install Git hooks
+# npm alternative: npm install --ignore-scripts && npm run setup:hooks
 bun run build        # Build all packages
 bun run check        # Lint, format, and type check
 bun run test             # Run tests (skips LLM-dependent tests without API keys)

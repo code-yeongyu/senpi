@@ -37,6 +37,6 @@ test("the real CLI recovery self-test owns temp storage and counts leftovers (#3
 		"the self-test must run between snapshot setup and final count");
 	assert.match(job, /snapshot local-ignore\/test-temp-before\.json --export-env/);
 	assert.match(job, /--self-test --api anthropic-messages/);
-	assert.match(job, /if: always\(\) && steps\.test_temp_snapshot\.outcome == 'success'/);
+	assert.match(job, /if: always\(\) && steps\.ci_only_test_temp_snapshot\.outcome == 'success'/);
 	assert.match(job, /check local-ignore\/test-temp-before\.json/);
 });

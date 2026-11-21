@@ -133,6 +133,9 @@ function installDeps() {
 	} else {
 		log("Workspace node_modules present — skipping.");
 	}
+	if (existsSync(join(ROOT, ".git"))) {
+		run(process.execPath, ["scripts/install-git-hooks.mjs"], { cwd: ROOT });
+	}
 	const skillDir = join(ROOT, ".agents", "skills", "senpi-qa");
 	if (existsSync(join(skillDir, "package.json")) && !existsSync(join(skillDir, "node_modules"))) {
 		log("Installing senpi-qa skill deps (node-pty for cross-platform TUI QA)...");

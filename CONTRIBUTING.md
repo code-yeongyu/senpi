@@ -30,8 +30,8 @@ senpi periodically merges selected upstream releases from `upstream` (i.e. `badl
 
 ```bash
 # Bun is the fleet-standard invocation.
-bun install --ignore-scripts && bun run prepare
-# Contributor-compatible alternative: npm install --ignore-scripts && npm run prepare
+bun run setup
+# Contributor-compatible alternative: npm install --ignore-scripts && npm run setup:hooks
 bun scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
 bun scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
 bun run check     # oxlint + bun fmt + lint ratchet + tsc + browser-smoke check (pre-commit equivalent)
@@ -39,7 +39,9 @@ bun run test          # Vitest across workspaces (skips live-API)
 ./pi-test.sh      # Optional: live-API integration suite (env-gated; requires API keys)
 ```
 
-The explicit `prepare` step installs the repository's Git hooks. `--ignore-scripts` skips it along with dependency lifecycle scripts.
+`bun run setup` installs dependencies with `--ignore-scripts`, then installs and verifies the repository's Git hooks. If you already ran a script-disabled install, run `bun run setup:hooks` in this worktree before pushing.
+
+Pre-push checks a clean `HEAD` when sending branch updates. It runs the fast commands from CI's `check` job, then checks the changelog and change fragments against your local `origin/main`. Fetch `origin/main` before pushing. The local check has no label waivers; GitHub's changelog gate still uses the actual PR base and labels. Runner setup, builds, and test suites stay in CI.
 
 The default dev setup intentionally avoids global Rust installation and uses checked-in/prebuilt native artifacts where available.
 Use `--with-native` only when working on native Rust code; it reads `rust-toolchain.toml`, uses `rustup` to install the pinned

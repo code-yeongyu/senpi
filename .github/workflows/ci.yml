@@ -159,30 +159,41 @@ jobs:
     name: Static checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    # scripts/pre-push.mjs also runs this job's commands. Mark runner setup,
+    # tests, builds and reporting as ci_only_*; new steps default to local parity.
     steps:
       - name: Checkout
+        id: ci_only_checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
+        id: ci_only_node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
           cache: npm
 
       - name: Install system dependencies
+        id: ci_only_system_dependencies
         timeout-minutes: 5
         uses: ./.github/actions/install-ci-system-deps
         with:
           packages: libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
 
       - name: Link fd
+        id: ci_only_link_fd
         run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
+        id: ci_only_dependencies
         run: npm ci --ignore-scripts
 
       # check:bun-lock resolves bun.lock in an isolated island and fails when a fresh `bun install` would rewrite it (senpi#2352).
       - name: Setup Bun
+        id: ci_only_bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4.4"
@@ -199,7 +210,7 @@ jobs:
         run: npm run knip:check
 
       - name: Snapshot OS temp before tests
-        id: test_temp_snapshot
+        id: ci_only_test_temp_snapshot
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
@@ -209,6 +220,7 @@ jobs:
       # the --shallow-exclude fetch ("error processing shallow info") for a stacked PR whose base just merged; then fetch
       # the PR head with a bounded depth instead (senpi#4714).
       - name: Knip export coverage
+        id: ci_only_knip_export_coverage
         env:
           BASE_REF: ${{ github.base_ref || github.event.repository.default_branch }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -225,23 +237,28 @@ jobs:
           KNIP_COVERAGE_BASE="origin/${BASE_REF}" KNIP_COVERAGE_HISTORY="$history" node scripts/run-tests.mjs node --test scripts/check-knip-export-coverage.mjs
 
       - name: Real CLI text-tool recovery self-test
+        id: ci_only_cli_self_test
         timeout-minutes: 5
         run: node scripts/run-tests.mjs node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test --api anthropic-messages
 
       - name: Check OS temp after tests
-        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        id: ci_only_test_temp_check
+        if: always() && steps.ci_only_test_temp_snapshot.outcome == 'success'
         shell: bash
         run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
 
       - name: Build workspace package entries
+        id: ci_only_build
         run: npm run build
 
       # The publish workflow's release step refuses a dirty tree after `npm run build`, so a committed
       # dist file that the build rewrites (the bin stubs kept by .gitignore) must match the build output.
       - name: Committed dist files match the build
+        id: ci_only_dist_diff
         run: git diff --exit-code -- ':(glob)packages/*/dist/**'
 
       - name: Workflow summary
+        id: ci_only_summary
         if: always()
         shell: bash
         run: |

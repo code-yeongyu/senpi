@@ -66,6 +66,8 @@
 		"refresh-lock": "PI_ALLOW_LOCKFILE_CHANGE=1 npm install --package-lock-only --ignore-scripts && node scripts/regenerate-bun-lock-isolated.mjs && node scripts/hydrate-lock-registry-metadata.mjs && node scripts/generate-coding-agent-install-lock.mjs",
 		"preinstall": "node scripts/create-bin-stubs.mjs",
 		"prepare": "husky",
+		"setup": "bun install --ignore-scripts && node scripts/install-git-hooks.mjs",
+		"setup:hooks": "node scripts/install-git-hooks.mjs",
 		"hydrate:model-data": "node scripts/run-workspaces.mjs --workspace packages/ai hydrate-model-data",
 		"check:model-data": "node scripts/run-workspaces.mjs --workspace packages/ai check:model-data"
 	},
