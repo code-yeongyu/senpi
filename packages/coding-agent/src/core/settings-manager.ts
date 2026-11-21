@@ -38,6 +38,7 @@ import {
 } from "./compaction-settings-access.ts";
 import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
 import type { ContextFileLimits } from "./context-files.ts";
+import type { SkillCatalogLimits } from "./skills-prompt.ts";
 import {
 	MAX_ENGINE_TURNS_PER_RESUME_WINDOW,
 	MAX_ENGINE_TURNS_PER_USER_INPUT,
@@ -219,6 +220,8 @@ export interface Settings {
 	theme?: string;
 	compaction?: CompactionSettings & { model?: string };
 	contextFiles?: ContextFileLimits;
+	/** Caps for the rendered skills catalog; see docs/settings.md "Context Files and Skills". */
+	skillCatalog?: SkillCatalogLimits;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
 	fallback?: FallbackCircuitSettings;

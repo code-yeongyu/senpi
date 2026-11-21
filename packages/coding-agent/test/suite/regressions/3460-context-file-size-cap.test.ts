@@ -226,4 +226,27 @@ describe("issue #3460: a large skills catalog is listed compactly", () => {
 
 		expect(formatSkillsForPrompt(skills)).toContain("retry rules");
 	});
+
+	it("switches to one line per skill above a configured description budget", () => {
+		// Given ten 200-character descriptions (2000 bytes total, under the built-in 16 KiB budget)
+		const skills = Array.from({ length: 10 }, (_, index) => skill(index, "d".repeat(200)));
+		// When the session configures a smaller description budget
+		const prompt = formatSkillsForPrompt(skills, "read", { compactDescriptionBytes: 1024 });
+		// Then the catalog is one line per skill, and the default render still carries full descriptions
+		expect(prompt).toContain("- skill-0 [r0]: ");
+		expect(prompt).not.toContain("<description>");
+		expect(formatSkillsForPrompt(skills)).toContain("<description>");
+	});
+
+	it("honors a configured rendered cap and reports it in the warning", () => {
+		// Given forty long descriptions whose full render exceeds a small configured cap
+		const skills = Array.from({ length: 40 }, (_, index) => skill(index, LONG_DESCRIPTION));
+		// When the session configures a 4 KiB rendered cap
+		const prompt = formatSkillsForPrompt(skills, "read", { maxBytes: 4096 });
+		// Then the section stays within it and the warning names the configured cap
+		expect(Buffer.byteLength(prompt)).toBeLessThanOrEqual(4096);
+		expect(warnIfLargeSkillCatalog(skills, { maxBytes: 4096 })).toContainEqual(
+			expect.objectContaining({ message: expect.stringContaining("4 KiB") }),
+		);
+	});
 });
