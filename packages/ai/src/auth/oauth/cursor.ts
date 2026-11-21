@@ -6,18 +6,21 @@
  * `https://cursor.com/loginDeepControl` with a PKCE S256 challenge and a
  * request uuid, the user approves the login in the browser, and the CLI
  * polls `https://api2.cursor.sh/auth/poll` with the uuid and PKCE verifier
- * until the tokens are released. Refresh exchanges the stored refresh token
- * (or a dashboard user API key) at `auth/exchange_user_api_key` for a fresh
- * session JWT.
+ * until the tokens are released. Refresh renews the login session the way
+ * the Cursor IDE does (`refresh_token` grant to `oauth/token`); a dashboard
+ * user API key (`crsr_...`) still trades at `auth/exchange_user_api_key`.
  */
 
-import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
+import { OAuthReauthorizationRequiredError, OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { generatePKCE } from "./pkce.ts";
 
 const CURSOR_LOGIN_URL = "https://cursor.com/loginDeepControl";
 const CURSOR_POLL_URL = "https://api2.cursor.sh/auth/poll";
 const CURSOR_REFRESH_URL = "https://api2.cursor.sh/auth/exchange_user_api_key";
+const CURSOR_TOKEN_URL = "https://api2.cursor.sh/oauth/token";
+/** OAuth client the Cursor IDE renews its login session with (upstream oh-my-pi#14753). */
+const CURSOR_CLIENT_ID = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB";
 
 const POLL_INITIAL_INTERVAL_MS = 1000;
 const POLL_MAX_INTERVAL_MS = 10_000;
@@ -206,17 +209,80 @@ async function loginCursor(interaction: ProviderAuthInteraction): Promise<OAuthC
 }
 
 /**
- * Exchanges the stored refresh token (Cursor also accepts a dashboard user
- * API key here) for a fresh session JWT. Cursor may omit or rotate the
- * refresh token in the response; an omitted token keeps the previous one so
- * a non-rotating server cannot strand the credential.
+ * Renews the stored credential. A login session renews through the IDE's
+ * `refresh_token` grant; a dashboard user API key (`crsr_...`) is a
+ * different credential and still trades at the key exchange. Cursor may
+ * omit or rotate the refresh token in the response; an omitted token keeps
+ * the previous one so a non-rotating server cannot strand the credential.
  */
 async function refreshCursorCredential(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential> {
 	const refreshToken = credential.refresh;
 	if (typeof refreshToken !== "string" || refreshToken.length === 0) {
 		throw new Error("Cursor token refresh failed: no refresh token stored; run login again");
 	}
+	if (refreshToken.startsWith("crsr_")) {
+		return refreshCursorDashboardKey(refreshToken, signal);
+	}
+	return refreshCursorSession(refreshToken, signal);
+}
 
+/**
+ * Renews a login session the way the Cursor IDE does: a `refresh_token`
+ * grant to `oauth/token` with the IDE's public OAuth client id. The
+ * renewed session token is both the access and the refresh credential
+ * unless the response rotates the refresh token. Cursor answers a session
+ * it will not renew with 200 and `shouldLogout: true`; that is a
+ * permanent re-login failure (`invalid_grant`), never a transient one.
+ */
+async function refreshCursorSession(refreshToken: string, signal: AbortSignal): Promise<OAuthCredential> {
+	let response: Response;
+	try {
+		response = await fetch(CURSOR_TOKEN_URL, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "application/json",
+			},
+			body: JSON.stringify({
+				grant_type: "refresh_token",
+				client_id: CURSOR_CLIENT_ID,
+				refresh_token: refreshToken,
+			}),
+			signal,
+		});
+	} catch (error) {
+		if (signal.aborted) throw new Error("Cursor token refresh cancelled", { cause: signal.reason });
+		throw error;
+	}
+
+	const body = await readJsonBody(response);
+	if (!response.ok) {
+		throw new OAuthTokenEndpointError(
+			`Cursor token refresh failed (${describeFailure(response.status, body)})`,
+			response.status,
+		);
+	}
+
+	// Cursor answers a session it will not renew with 200, an empty token and `shouldLogout`.
+	if (body?.shouldLogout === true) {
+		throw new OAuthReauthorizationRequiredError("invalid_grant", response.status);
+	}
+
+	const access = requiredString(body ?? {}, "access_token");
+	const rotated = body?.refresh_token;
+	return {
+		type: "oauth",
+		access,
+		refresh: typeof rotated === "string" && rotated.length > 0 ? rotated : refreshToken,
+		expires: accessTokenExpiry(access, Date.now()),
+	};
+}
+
+/**
+ * Exchanges a dashboard user API key for a fresh session JWT. The key
+ * exchange answers camelCase tokens, unlike the session token endpoint.
+ */
+async function refreshCursorDashboardKey(refreshToken: string, signal: AbortSignal): Promise<OAuthCredential> {
 	let response: Response;
 	try {
 		response = await fetch(CURSOR_REFRESH_URL, {
