@@ -95,6 +95,7 @@ export function probeStdioTransport(
 	}
 
 	async function restart(): Promise<void> {
+		abort.signal.throwIfAborted();
 		logger.info(`MCP server ${serverName}: no clean discovery answer; restarting it for the legacy handshake`);
 		// The old child's close event is not the connection closing; swallow exactly that one event.
 		const pid = (transport as { readonly pid?: number | null }).pid;
@@ -140,7 +141,9 @@ export function probeStdioTransport(
 			transport.send = send;
 		};
 		const unclean = (report: () => void) => {
-			if (restarting) return report();
+			// A close or error after the probe was aborted (dispose, connect timeout, renew) is the connection ending:
+			// report it and never restart, so nothing is spawned or logged after the owner let go (senpi#4642).
+			if (restarting || abort.signal.aborted) return report();
 			// Only an initialize sent before the old child died needs replaying; a later one waits and goes once.
 			const replay = initialize;
 			restarting = (async () => {

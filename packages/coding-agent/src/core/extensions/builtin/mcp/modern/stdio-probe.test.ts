@@ -460,3 +460,40 @@ describe("stdio discovery ownership", () => {
 		expect(close).toHaveBeenCalledOnce();
 	});
 });
+
+describe("a never-ready stdio child its owner closes (senpi#4642)", () => {
+	it("#given a child that never answers discovery #when its owner closes it and the close event lands after close() returned #then it reports the close, is not restarted and logs nothing", async () => {
+		// given: a never-ready child whose close event is delivered late, as when the shutdown wait runs out
+		let alive = false;
+		let deliverClose: (() => void) | undefined;
+		const child: FakeChild = {
+			get pid() {
+				return alive ? 2_147_483_200 : null;
+			},
+			start: vi.fn(async () => {
+				alive = true;
+			}),
+			close: vi.fn(async () => {
+				if (!alive) return;
+				alive = false;
+				deliverClose = () => child.onclose?.();
+			}),
+			send: async () => {},
+		};
+		const spawn = child.start;
+		const log = logger();
+		probeStdioTransport(child, options, log, 2000, "never-ready", undefined, 1);
+		const closed = vi.fn();
+		child.onclose = closed;
+		await child.start();
+
+		// when
+		await child.close();
+		deliverClose?.();
+
+		// then
+		expect(closed).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(log.info).mock.calls.flat().join("\n")).not.toContain("restarting");
+		expect(spawn).toHaveBeenCalledTimes(1);
+	});
+});
