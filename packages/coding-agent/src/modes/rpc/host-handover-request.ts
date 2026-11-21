@@ -21,6 +21,7 @@ import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
 import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
+import { installGoneReplaces } from "./host-install-rule.ts";
 import { BEGIN_HANDOVER_COMMAND } from "./host-handover-wire.ts";
 import { defaultHostLaunch } from "./host-launch.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
@@ -71,10 +72,15 @@ export async function idleHandoverOutcome(
 		});
 	}
 	if (before === undefined) return refuse("no_host");
+	const namedGeneration = before.instanceId === terms.ifInstanceId && before.generation === terms.ifGeneration;
 	if (before.runtimeBuildId === terms.targetRuntimeBuildId) {
-		return answered(target, "handover_completed", before, terms, null);
+		// Another generation already serves the target: a repeated request after the handover completed.
+		if (!namedGeneration) return answered(target, "handover_completed", before, terms, null);
+		// The named generation runs the target build itself: nothing to hand over while its install is present (senpi#7086).
+		if (!installGoneReplaces(before.installPresent))
+			return refuse("already_current", { detail: before.runtimeBuildId ?? null });
 	}
-	if (before.instanceId !== terms.ifInstanceId || before.generation !== terms.ifGeneration) {
+	if (!namedGeneration) {
 		return refuse("stale_generation", {
 			detail: `the socket is served by ${before.instanceId ?? "an unnamed host"} generation ${before.generation ?? "?"}`,
 		});

@@ -16,6 +16,7 @@ import {
 } from "./host-cli-support.ts";
 
 const STATUS_FIELDS = [
+	"binaryPath",
 	"capabilities",
 	"claims",
 	"claims_live",
@@ -27,6 +28,7 @@ const STATUS_FIELDS = [
 	"handover",
 	"host_footprint_mb",
 	"host_rss_mb",
+	"installPresent",
 	"instanceId",
 	"launchProfile",
 	"lifecycle",

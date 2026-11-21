@@ -64,6 +64,10 @@ export interface HostStatusReport {
 	readonly launchProfile: RpcLaunchProfile | null;
 	/** Content digest of the runtime the ANSWERING host loaded at startup; `null` when nothing answers or it predates the field. */
 	readonly runtimeBuildId: string | null;
+	/** The runtime root the ANSWERING host runs (senpi#7086); `null` when nothing answers or it predates the field. */
+	readonly binaryPath: string | null;
+	/** Whether that runtime root was still on disk when the host answered; `null` when unknown. */
+	readonly installPresent: boolean | null;
 	/** The conditional idle handover the answering host holds (`handover_pending`, ...); `null` when it holds none. */
 	readonly handover: Readonly<Record<string, unknown>> | null;
 	readonly sessions: HostSessionCounts;
@@ -188,6 +192,8 @@ async function probeHostStatusInKeyRoot(
 		capabilities: host?.capabilities ?? [],
 		launchProfile: host?.launch_profile ?? null,
 		runtimeBuildId: host?.runtimeBuildId ?? null,
+		binaryPath: host?.installPath ?? null,
+		installPresent: host?.installPresent ?? null,
 		handover: host?.handover ?? null,
 		sessions: countSessions(listing),
 		zombies: metrics.zombies,
