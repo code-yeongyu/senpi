@@ -3091,6 +3091,11 @@ export abstract class TuiBase extends Container {
 			return;
 		}
 
+		// Hosts whose scrollback a resize must neither clear nor flood: multiplexers (senpi#1704) and Windows,
+		// where ESC[3J is already suppressed (senpi#1145/#1147), so a full redraw only appended one more copy
+		// of the whole transcript to the history on every resize (senpi#3405). Both re-wrap their own screen.
+		const preserveScrollbackOnResize = preserveMuxScrollback || process.platform === "win32";
+
 		// Width changes always need a full re-render because wrapping changes.
 		if (widthChanged) {
 			// A width change (or a forced render) repaints everything below; a focus repaint queued in the
@@ -3100,7 +3105,7 @@ export abstract class TuiBase extends Container {
 			// In a multiplexer only the re-wrapped viewport is repainted: re-emitting every line of the buffer scrolled a
 			// copy of the whole transcript into the pane's history on each width change (senpi#1704). Rows already in
 			// that history keep their old wrapping. The pane re-wrapped the screen itself, so the repaint homes there.
-			if (preserveMuxScrollback && this.previousWidth > 0) {
+			if (preserveScrollbackOnResize && this.previousWidth > 0) {
 				if (this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, undefined, "absolute"))
 					return;
 			}
@@ -3132,7 +3137,7 @@ export abstract class TuiBase extends Container {
 		// In that environment, a full redraw causes the entire history to replay on every toggle.
 		if (heightChanged && !isTermuxSession()) {
 			logRedraw(`terminal height changed (${this.previousHeight} -> ${height})`);
-			if (preserveMuxScrollback) {
+			if (preserveScrollbackOnResize) {
 				if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height)) {
 					fullRender(true, false);
 				}
