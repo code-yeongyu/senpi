@@ -79,9 +79,9 @@
 		"@earendil-works/pi-ai": "^2026.11.21-2",
 		"@earendil-works/pi-telemetry": "^2026.11.21-2",
 		"diff": "9.0.0",
-		"ignore": "7.0.9",
-		"typebox": "1.3.34",
-		"web-tree-sitter": "0.27.0",
+		"ignore": "7.0.16",
+		"typebox": "1.4.7",
+		"web-tree-sitter": "0.27.2",
 		"yaml": "2.9.1"
 	},
 	"keywords": [
@@ -103,11 +103,11 @@
 	},
 	"devDependencies": {
 		"@types/bun": "1.4.4",
-		"@types/node": "26.6.2",
+		"@types/node": "26.6.6",
 		"@vscode/tree-sitter-wasm": "0.3.1",
-		"@vitest/coverage-v8": "5.0.1",
+		"@vitest/coverage-v8": "5.1.1",
 		"typescript": "7.0.2",
-		"vitest": "5.0.1"
+		"vitest": "5.1.1"
 	},
 	"private": true
 }

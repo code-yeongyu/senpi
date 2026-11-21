@@ -55,11 +55,11 @@
 	"types": "./dist/index.d.ts",
 	"dependencies": {
 		"get-east-asian-width": "1.7.0",
-		"marked": "18.0.13"
+		"marked": "18.2.1"
 	},
 	"devDependencies": {
 		"@xterm/headless": "6.0.0",
-		"chalk": "6.0.0"
+		"chalk": "6.0.1"
 	},
 	"private": true
 }

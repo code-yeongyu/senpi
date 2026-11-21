@@ -7,13 +7,17 @@ import { detectJsonIndent, serializeLockfile } from "./install-lock-utils.mjs";
 
 const root = join(import.meta.dirname, "..");
 const lockPath = join(root, "package-lock.json");
-const sdkLockPath = "packages/coding-agent/node_modules/@anthropic-ai/claude-agent-sdk";
+// npm nests the SDK under coding-agent or hoists it to the root depending on the rest of the tree.
+const sdkLockPaths = [
+	"packages/coding-agent/node_modules/@anthropic-ai/claude-agent-sdk",
+	"node_modules/@anthropic-ai/claude-agent-sdk",
+];
 
 export async function updateClaudeAgentSdkPlatformLock({ check = false } = {}) {
 	const source = readFileSync(lockPath, "utf8");
 	const lock = JSON.parse(source);
-	const sdk = lock.packages?.[sdkLockPath];
-	if (!sdk) throw new Error(`package-lock.json is missing ${sdkLockPath}`);
+	const sdk = sdkLockPaths.map((path) => lock.packages?.[path]).find((entry) => entry !== undefined);
+	if (!sdk) throw new Error(`package-lock.json is missing ${sdkLockPaths.join(" and ")}`);
 
 	const missing = Object.entries(sdk.optionalDependencies ?? {}).filter(
 		([name, version]) => lock.packages[`node_modules/${name}`]?.version !== version,

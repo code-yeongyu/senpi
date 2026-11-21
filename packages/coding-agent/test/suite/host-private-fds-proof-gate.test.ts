@@ -11,17 +11,17 @@ const usablePair = { isPipe: () => true, clearInherit: () => true, ipc: null };
 // #4898: the release proof enables pairs only on win32 under the Bun the proof ran on.
 describe("Windows pair release proof (#4898)", () => {
 	it("accepts the ordered pair on win32 at the proven Bun", () => {
-		const result = parseTable('{"a":[5,6]}', { ...usablePair, platform: "win32", bun: "1.4.4" });
+		const result = parseTable('{"a":[5,6]}', { ...usablePair, platform: "win32", bun: "1.4.5" });
 		expect(result.entries.get("a")).toEqual([5, 6]);
 	});
 
 	it.each([
-		{ label: "another Bun", platform: "win32" as const, bun: "1.4.5" },
-		{ label: "a Bun that extends the proven version", platform: "win32" as const, bun: "1.4.40" },
-		{ label: "a prerelease of the proven Bun", platform: "win32" as const, bun: "1.4.4-canary.1" },
+		{ label: "another Bun", platform: "win32" as const, bun: "1.4.4" },
+		{ label: "a Bun that extends the proven version", platform: "win32" as const, bun: "1.4.50" },
+		{ label: "a prerelease of the proven Bun", platform: "win32" as const, bun: "1.4.5-canary.1" },
 		{ label: "no Bun", platform: "win32" as const, bun: undefined },
-		{ label: "Linux", platform: "linux" as const, bun: "1.4.4" },
-		{ label: "macOS", platform: "darwin" as const, bun: "1.4.4" },
+		{ label: "Linux", platform: "linux" as const, bun: "1.4.5" },
+		{ label: "macOS", platform: "darwin" as const, bun: "1.4.5" },
 	])("refuses the pair on $label", ({ platform, bun }) => {
 		expect(parseTable('{"a":[5,6]}', { ...usablePair, platform, bun }).entries.get("a")).toBeNull();
 	});
