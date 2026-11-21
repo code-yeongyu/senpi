@@ -52,4 +52,46 @@ describe("interactive program status (senpi#5323)", () => {
 		ui.setProgramStatus(undefined);
 		expect(write).not.toHaveBeenCalled();
 	});
+
+	it("emits herdr:blocked kind=auth around loginProvider and clears on both success and error", async () => {
+		const fake = createFakeInteractiveMode();
+		const login = vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValueOnce(undefined);
+		Object.assign(fake.session, {
+			modelRegistry: { authStorage: { takeReplacement: vi.fn(() => undefined) } },
+			modelRuntime: { login },
+		});
+		const loginProvider = (
+			fake as unknown as {
+				loginProvider(
+					dialog: { signal: AbortSignal },
+					providerId: string,
+					providerName: string,
+					method: "api_key" | "oauth",
+				): Promise<void>;
+			}
+		).loginProvider.bind(fake);
+		const controller = new AbortController();
+
+		await loginProvider({ signal: controller.signal }, "anthropic", "Anthropic", "oauth");
+		expect(fake.session.emitExtensionEvent.mock.calls).toHaveLength(2);
+		const [firstCall, secondCall] = fake.session.emitExtensionEvent.mock.calls;
+		expect(firstCall?.[0]).toBe("herdr:blocked");
+		expect(firstCall?.[1]).toMatchObject({ active: true, kind: "auth", label: "Sign in to Anthropic" });
+		const firstId = (firstCall?.[1] as { id?: string } | undefined)?.id;
+		expect(typeof firstId).toBe("string");
+		expect(secondCall).toEqual(["herdr:blocked", { active: false, id: firstId }]);
+
+		fake.session.emitExtensionEvent.mockClear();
+		login.mockRejectedValueOnce(new Error("cancelled"));
+		await expect(loginProvider({ signal: controller.signal }, "openai", "OpenAI", "api_key")).rejects.toThrow(
+			"cancelled",
+		);
+		expect(fake.session.emitExtensionEvent.mock.calls).toHaveLength(2);
+		const [errStartCall, errEndCall] = fake.session.emitExtensionEvent.mock.calls;
+		expect(errStartCall?.[0]).toBe("herdr:blocked");
+		expect(errStartCall?.[1]).toMatchObject({ active: true, kind: "auth", label: "Sign in to OpenAI" });
+		const errId = (errStartCall?.[1] as { id?: string } | undefined)?.id;
+		expect(typeof errId).toBe("string");
+		expect(errEndCall).toEqual(["herdr:blocked", { active: false, id: errId }]);
+	});
 });

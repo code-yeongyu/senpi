@@ -405,4 +405,42 @@ describe("builtin hooks lifecycle adapters", () => {
 			harness.cleanup();
 		}
 	});
+
+	it("records plain-text SessionStart stdout as additionalContext on exit 0 and ignores stdout on failure", async () => {
+		const hookDir = createTempDir("senpi-hooks-session-start-plaintext");
+		const plainScript = createNodeScript(
+			hookDir,
+			"session-start-plain.mjs",
+			`process.stdout.write("You are running inside Rex.\\nUse rex capture to read panes.\\n");`,
+		);
+		const failingScript = createNodeScript(
+			hookDir,
+			"session-start-fail.mjs",
+			`process.stdout.write("SECRET_TOKEN=plain-fail-secret"); process.exit(1);`,
+		);
+		const harness = await createHarness({
+			extensionFactories: [{ factory: hooksExtensionFactory(), path: "<builtin:hooks>" }],
+		});
+		writeProjectHooks(harness.tempDir, {
+			SessionStart: [
+				{
+					matcher: "startup",
+					commands: [`${process.execPath} ${plainScript}`, `${process.execPath} ${failingScript}`],
+				},
+			],
+		});
+
+		try {
+			await harness.session.bindExtensions({ shutdownHandler: () => {} });
+			const customMessages = harness.session.messages.filter((message) => message.role === "custom");
+			const customText = customMessages.map((message) => getMessageText(message)).join("\n");
+			const customPayload = JSON.stringify(customMessages);
+			expect(customText).toContain("You are running inside Rex.\nUse rex capture to read panes.");
+			expect(customPayload).toContain("Hook command failed with exit code 1.");
+			expect(customPayload).not.toContain("plain-fail-secret");
+			expect(customPayload).not.toContain("SECRET_TOKEN");
+		} finally {
+			harness.cleanup();
+		}
+	});
 });

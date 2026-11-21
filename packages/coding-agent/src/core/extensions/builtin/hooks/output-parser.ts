@@ -41,6 +41,11 @@ const SYSTEM_MESSAGE_EVENTS = new Set<SupportedHookEvent>([
 	"Stop",
 ]);
 
+type ParsedStdout =
+	| { readonly kind: "json"; readonly value: Record<string, unknown> }
+	| { readonly kind: "plain_text" }
+	| { readonly kind: "invalid" };
+
 export function parseHookOutput(input: HookOutputParseInput): ParsedHookOutput {
 	const state: ParseState = { input, output: {}, diagnostics: [] };
 	const stderr = text(input.stderr);
@@ -50,24 +55,31 @@ export function parseHookOutput(input: HookOutputParseInput): ParsedHookOutput {
 	const stdout = input.stdout.trim();
 	if (stdout.length === 0) return parsedOutput(state);
 	const parsed = parseStdoutJson(stdout, state);
-	if (!isRecord(parsed)) return parsedOutput(state);
-	parseUniversal(parsed, state);
-	const specific = parseSpecific(parsed.hookSpecificOutput, state);
+	if (parsed.kind === "plain_text") {
+		state.output.additionalContext = stdout;
+		return parsedOutput(state);
+	}
+	if (parsed.kind !== "json") return parsedOutput(state);
+	parseUniversal(parsed.value, state);
+	const specific = parseSpecific(parsed.value.hookSpecificOutput, state);
 	if (specific === "mismatched" || specific === "invalid") return parsedOutput(state);
-	parseEvent(parsed, specific, state);
+	parseEvent(parsed.value, specific, state);
 	return parsedOutput(state);
 }
 
-function parseStdoutJson(stdout: string, state: ParseState): unknown {
+function parseStdoutJson(stdout: string, state: ParseState): ParsedStdout {
 	try {
 		const parsed: unknown = JSON.parse(stdout);
-		if (isRecord(parsed)) return parsed;
+		if (isRecord(parsed)) return { kind: "json", value: parsed };
 		add(state, "invalid_root", "stdout", "Hook stdout JSON must be an object.");
 	} catch (error) {
 		if (!(error instanceof SyntaxError)) throw error;
+		if (state.input.event === "SessionStart" && state.input.exitCode === 0) {
+			return { kind: "plain_text" };
+		}
 		add(state, "invalid_root", "stdout", "Hook stdout must be valid JSON.");
 	}
-	return undefined;
+	return { kind: "invalid" };
 }
 
 function parseUniversal(parsed: Record<string, unknown>, state: ParseState): void {
