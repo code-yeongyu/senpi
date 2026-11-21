@@ -14,7 +14,13 @@ import {
 	JsonlPeer,
 	openedSessionId,
 } from "../../helpers/rpc-generation-support.ts";
-import { captureStderr, caseBudget, waitForFixtureExit, waitForFixtureFile } from "../../helpers/fixture-ready.ts";
+import {
+	captureStderr,
+	caseBudget,
+	outputTail,
+	waitForFixtureExit,
+	waitForFixtureFile,
+} from "../../helpers/fixture-ready.ts";
 import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { RpcOwnerProcesses } from "../../helpers/rpc-owner-processes.ts";
@@ -112,10 +118,17 @@ async function seedSelfClient(qa: GenerationScratch, ready: string, owner: Child
 	});
 	// Awaited together: an open that fails must not leave the file wait to reject unobserved once the owner exits.
 	const [opened] = await Promise.all([
-		outside.request(
-			{ id: "open", type: "open_session", cwd: qa.cwd, retain_on_disconnect: true },
-			budget(CASE_TIMEOUT_MS),
-		),
+		outside
+			.request(
+				{ id: "open", type: "open_session", cwd: qa.cwd, retain_on_disconnect: true },
+				budget(CASE_TIMEOUT_MS),
+			)
+			.catch((error: unknown) => {
+				// The host's stamps say how far the open got: no session_start, or a self-client stalled mid-way.
+				throw new Error(`open_session: ${String(error)}\n${outputTail(fixtureOutput(qa, owner)())}`, {
+					cause: error,
+				});
+			}),
 		written,
 	]);
 	openedSessionId(opened);
