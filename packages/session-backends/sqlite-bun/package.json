@@ -14,7 +14,7 @@
 		"src"
 	],
 	"scripts": {
-		"test": "node ../../../scripts/run-tests.mjs bun --bun ../../../node_modules/vitest/vitest.mjs run",
+		"test": "node ../../../scripts/run-tests.mjs bun test --isolate",
 		"clean": "node -e \"\"",
 		"build": "node -e \"\""
 	},
