@@ -76,6 +76,39 @@ describe.skipIf(!supported)("tool spawn attestation (#6972)", () => {
 		});
 	});
 
+	// senpi#7120: a command that proves its session the moment it starts (a seat gate run from bash) must already find
+	// its record, and the gate that waits for the record never shows in the output (a native PTY echoes its go-line).
+	it("the PTY bash tool's command finds its own record the moment it starts", async () => {
+		const ctx = harness.getExtensionRunner().createContext();
+		const tool = createPtyBashTool({
+			manager,
+			cwd: harness.tempDir,
+			defaultCols: 120,
+			defaultRows: 40,
+			getEnv: () => ({ ...process.env }),
+			getSessionContext: () => ctx,
+		});
+		const record = join(sessionSpawnsDir(getAgentDir()), "$$.json");
+		const outputs: string[] = [];
+		for (let run = 0; run < 5; run++) {
+			const result = await tool.execute(
+				`own-record-${run}`,
+				{ command: `[ -f "${record}" ] && echo RECORDED || echo MISSING` },
+				undefined,
+				undefined,
+				ctx,
+			);
+			outputs.push(
+				result.content
+					.map((block) => block.text)
+					.join("")
+					.trim(),
+			);
+		}
+
+		expect(outputs).toEqual(["RECORDED", "RECORDED", "RECORDED", "RECORDED", "RECORDED"]);
+	});
+
 	it("the core shell tool attests its command while it runs", async () => {
 		const fifo = join(harness.tempDir, "go.fifo");
 		execFileSync("mkfifo", [fifo]);

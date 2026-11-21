@@ -2,7 +2,7 @@
  * The terminal's tool bodies as tool-child job kinds (senpi#3566 todo 9): the child owns one TerminalManager - its PTYs
  * and background sessions - for the life of the child, and runs the same bash / bash_output / bash_input / bash_resize
  * / kill_bash bodies the in-process extension runs. Every command starts behind the execution barrier: the go-line
- * shim runs inside the PTY (echo off around the read), the server records the started session's group, and only then
+ * shim runs inside the PTY (`spawnCommandSession`), the server records the started session's group, and only then
  * is the go-line written. Foreground output streams back as job updates.
  */
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
@@ -24,9 +24,6 @@ import type {
 import { createKillBashTool } from "../../../core/extensions/builtin/terminal/tools/kill-bash.ts";
 import type { ToolChildJobContext, ToolChildJobHandler } from "./entry.ts";
 import { ToolChildJobError } from "./entry-error.ts";
-
-/** Inside the PTY: no echo while it waits for the go-line, then the real command keeps the PTY's pid and group. */
-const PTY_GO_SHIM = 'stty -echo 2>/dev/null; IFS= read -r _go || exit 127; stty echo 2>/dev/null; exec "$0" "$@"';
 
 import {
 	childTerminalIdScope,
@@ -91,8 +88,7 @@ function parseArgs(value: unknown): TerminalJobArgs {
 
 function barrierFor(job: ToolChildJobContext): TerminalLaunchBarrier {
 	return {
-		wrap: (command, args) => ({ command: "/bin/sh", args: ["-c", PTY_GO_SHIM, command, ...args] }),
-		async release(session) {
+		async admit(session) {
 			if (session.pid === undefined) throw new ToolChildJobError("terminal_spawn_failed", "the PTY reported no pid");
 			const gated = job.gate.request({
 				jobId: job.jobId,
@@ -106,7 +102,6 @@ function barrierFor(job: ToolChildJobContext): TerminalLaunchBarrier {
 			session.onExit((exitCode) => job.gate.done(gated.launchId, exitCode === null ? {} : { exitCode }));
 			if (!job.gate.skipsAckWait) await gated.acked;
 			job.gate.invokeNow(gated.launchId);
-			session.write("go\n");
 		},
 	};
 }

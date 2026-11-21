@@ -20,7 +20,8 @@
  * A record that still holds a live process is never replaced, and a release removes only the record it wrote, so one
  * session's record cannot be overwritten or deleted through another session's spawn or a recycled pid.
  *
- * The record lands a few event-loop turns after the spawn; it does not gate the command. Same-uid processes can write
+ * The record lands a few event-loop turns after the spawn. The terminal's PTY commands wait for it behind a go-line
+ * (`terminal/tools/spawn.ts`, senpi#7061); other spawners do not gate on it. Same-uid processes can write
  * the agent directory, as they can every other record under it, so this proves against a forged environment and a
  * recycled pid, not against deliberate tampering with the store.
  */

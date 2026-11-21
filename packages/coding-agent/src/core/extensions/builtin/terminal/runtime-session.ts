@@ -6,6 +6,7 @@ import type {
 	TerminalSessionOptions,
 } from "@earendil-works/pi-pty";
 import { SecretOutputRedactor } from "../../../tools/secret-output-redactor.ts";
+import { GoLineEchoFilter } from "./go-line-echo.ts";
 import { type ChildProcessIdentity, processBootAtMs } from "./process-identity.ts";
 import { loadPty } from "./pty.lazy.ts";
 import { DEFAULT_SCROLLBACK, MAX_SESSION_OUTPUT_CHARS } from "./shared.ts";
@@ -15,6 +16,8 @@ const pty = await loadPty();
 export interface TerminalRuntimeOptions extends TerminalSessionOptions {
 	readonly scrollback?: number;
 	readonly redactSecretsInOutput?: boolean;
+	/** The go-line a gated command waits for (`tools/spawn.ts`); its echo is not output (`GoLineEchoFilter`). */
+	readonly goLine?: string;
 }
 
 export interface DeltaRead {
@@ -49,6 +52,7 @@ export class TerminalRuntimeSession {
 	private readonly screenRelease: Promise<void>;
 	private readonly decoder = new TextDecoder("utf-8", { fatal: false });
 	private readonly redactor: SecretOutputRedactor | undefined;
+	private readonly goLineEcho: GoLineEchoFilter | undefined;
 	private redactionIdleTimer: ReturnType<typeof setTimeout> | undefined;
 	private buffer = "";
 	private droppedChars = 0;
@@ -59,6 +63,7 @@ export class TerminalRuntimeSession {
 
 	constructor(command: string, options: TerminalRuntimeOptions) {
 		this.redactor = options.redactSecretsInOutput === true ? new SecretOutputRedactor() : undefined;
+		this.goLineEcho = options.goLine === undefined ? undefined : new GoLineEchoFilter(options.goLine);
 		this.command = command;
 		this.argv = [options.command ?? command, ...(options.args ?? [])];
 		this.screen = new pty.TerminalScreen({
@@ -68,7 +73,8 @@ export class TerminalRuntimeSession {
 		});
 		this.session = new pty.TerminalSession(options);
 		this.unsubscribeData = this.session.onData((chunk) => {
-			const text = this.decoder.decode(chunk, { stream: true });
+			const decoded = this.decoder.decode(chunk, { stream: true });
+			const text = this.goLineEcho ? this.goLineEcho.push(decoded) : decoded;
 			this.ingest(this.redactor ? this.redactor.push(text) : text);
 			const redactor = this.redactor;
 			if (redactor) {
@@ -84,7 +90,9 @@ export class TerminalRuntimeSession {
 			this.session.onExit(() => {
 				clearTimeout(this.redactionIdleTimer);
 				this.redactionIdleTimer = undefined;
-				if (this.redactor) this.ingest(this.redactor.push(this.decoder.decode()) + this.redactor.finish());
+				const held = this.goLineEcho?.flush() ?? "";
+				const tail = held + this.decoder.decode();
+				this.ingest(this.redactor ? this.redactor.push(tail) + this.redactor.finish() : tail);
 				// Best-effort like every screen write (#837): a failed release leaves an empty final screen, never an unhandled rejection.
 				void this.releaseScreen()
 					.catch(() => {})

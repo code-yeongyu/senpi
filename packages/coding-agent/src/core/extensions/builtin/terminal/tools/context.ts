@@ -60,8 +60,9 @@ export interface TerminalToolContext {
 	readonly ensurePersistence?: () => Promise<void>;
 	/**
 	 * The tool child's execution barrier for terminal launches (senpi#3566 todo 9). When set, every command starts
-	 * behind a go-line shim inside its PTY: `wrap` rewrites the launch, and `release` records the started session with
-	 * the server and only then lets the command run. Absent on the in-process path, which spawns exactly as before.
+	 * behind the go-line shim inside its PTY (`spawnCommandSession`), and `admit` records the started session with the
+	 * server before the go-line lets the command run. Absent on the in-process path, where only a session attestation
+	 * gates the command.
 	 */
 	readonly launchBarrier?: TerminalLaunchBarrier;
 	/** Where a stalled spawn is reported (senpi#6189); defaults to the agent directory's session log. */
@@ -79,10 +80,9 @@ export interface TerminalExitView {
 }
 
 export interface TerminalLaunchBarrier {
-	wrap(command: string, args: readonly string[]): { readonly command: string; readonly args: readonly string[] };
-	release(session: {
+	/** Records a started, still gated session; the command runs once this resolves, and never when it rejects. */
+	admit(session: {
 		readonly pid: number | undefined;
-		write(data: string): unknown;
 		onExit(listener: (exitCode: number | null) => void): unknown;
 	}): Promise<void>;
 }
