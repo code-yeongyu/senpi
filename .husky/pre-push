@@ -1,5 +1,12 @@
 #!/usr/bin/env sh
 
+# Git clients do not always start a login shell. Keep a Bun already on PATH,
+# otherwise look where the Bun installer puts it.
+bun_bin="${BUN_INSTALL:-$HOME/.bun}/bin"
+if ! command -v bun >/dev/null 2>&1 && [ -x "$bun_bin/bun" ]; then
+	export PATH="$bun_bin:$PATH"
+fi
+
 if ! command -v node >/dev/null 2>&1; then
 	echo 'pre-push: Node.js is not on PATH; install Node.js 24 or newer.' >&2
 	exit 1
