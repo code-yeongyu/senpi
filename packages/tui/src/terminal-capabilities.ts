@@ -1,5 +1,6 @@
 import {
 	decideTmuxImageCapability,
+	isRexTermName,
 	parseTmuxKittyTerminalOverride,
 	type TmuxKittyTerminalOverride,
 } from "./tmux-image-capability.ts";
@@ -39,7 +40,9 @@ export function isVsCodeTerminal(env: NodeJS.ProcessEnv = process.env): boolean 
 
 export function outerKittyGraphicsMode(clientTermname: string): "placeholder" | null {
 	const term = clientTermname.trim().toLowerCase();
-	return term.includes("kitty") || term.includes("ghostty") || term.includes("warp") ? "placeholder" : null;
+	return term.includes("kitty") || term.includes("ghostty") || term.includes("warp") || isRexTermName(term)
+		? "placeholder"
+		: null;
 }
 
 export function detectTerminalCapabilities(
@@ -71,6 +74,9 @@ export function detectTerminalCapabilities(
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 	if (termProgram === "ghostty") {
+		return { images: "kitty", trueColor: true, hyperlinks: true, kittyUnicodePlaceholders: true };
+	}
+	if ((termProgram === "rex" && !term.startsWith("screen")) || isRexTermName(term)) {
 		return { images: "kitty", trueColor: true, hyperlinks: true, kittyUnicodePlaceholders: true };
 	}
 	if (env.WARP_SESSION_ID || env.WARP_TERMINAL_SESSION_UUID || termProgram === "warpterminal") {

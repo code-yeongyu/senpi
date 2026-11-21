@@ -44,6 +44,21 @@ describe("tmux image capability gating", () => {
 		assert.deepStrictEqual(overridden, { enabled: true, placement: "direct", terminal: "warp" });
 	});
 
+	it("supports Rex from live xterm-rex identity or explicit override", () => {
+		const on = decideTmuxImageCapability(readyState({ clientTermname: "xterm-rex" }), undefined);
+		const all = decideTmuxImageCapability(
+			readyState({ allowPassthrough: "all", clientTermname: "xterm-rex" }),
+			undefined,
+		);
+		const overridden = decideTmuxImageCapability(readyState({ clientTermname: "xterm-256color" }), "rex");
+		const unrelated = decideTmuxImageCapability(readyState({ clientTermname: "xterm-terex" }), undefined);
+
+		assert.deepStrictEqual(on, { enabled: true, placement: "placeholder", terminal: "rex" });
+		assert.deepStrictEqual(all, { enabled: true, placement: "placeholder", terminal: "rex" });
+		assert.deepStrictEqual(overridden, { enabled: true, placement: "placeholder", terminal: "rex" });
+		assert.deepStrictEqual(unrelated, { enabled: false, reason: "unknown-client" });
+	});
+
 	it("keeps WezTerm direct placement disabled", () => {
 		const decision = decideTmuxImageCapability(readyState({ clientTermname: "xterm-wezterm" }), undefined);
 		assert.deepStrictEqual(decision, { enabled: false, reason: "unknown-client" });

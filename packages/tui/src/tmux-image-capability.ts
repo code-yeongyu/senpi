@@ -1,8 +1,13 @@
 import type { TmuxDetectedState, TmuxImageState } from "./tmux-image-probe.ts";
 
-export type TmuxKittyTerminal = "kitty" | "ghostty" | "warp";
+export type TmuxKittyTerminal = "kitty" | "ghostty" | "warp" | "rex";
 export type TmuxKittyPlacement = "placeholder" | "direct";
 export type TmuxKittyTerminalOverride = TmuxKittyTerminal | undefined;
+
+export function isRexTermName(termname: string): boolean {
+	const term = termname.trim().toLowerCase();
+	return term === "rex" || term === "xterm-rex" || term.startsWith("xterm-rex-");
+}
 
 export type TmuxImageDisabledReason =
 	| "outside-tmux"
@@ -30,7 +35,7 @@ interface TmuxKittyIdentity {
 }
 
 export function parseTmuxKittyTerminalOverride(raw: string | undefined): TmuxKittyTerminalOverride {
-	return raw === "kitty" || raw === "ghostty" || raw === "warp" ? raw : undefined;
+	return raw === "kitty" || raw === "ghostty" || raw === "warp" || raw === "rex" ? raw : undefined;
 }
 
 function identityForTerminal(terminal: TmuxKittyTerminal): TmuxKittyIdentity {
@@ -49,6 +54,7 @@ function identifyTmuxKittyClient(
 	if (term.includes("kitty")) return identityForTerminal("kitty");
 	if (term.includes("ghostty")) return identityForTerminal("ghostty");
 	if (term.includes("warp")) return identityForTerminal("warp");
+	if (isRexTermName(term)) return identityForTerminal("rex");
 	return null;
 }
 
