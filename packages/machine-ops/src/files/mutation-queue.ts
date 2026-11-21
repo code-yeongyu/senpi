@@ -7,6 +7,7 @@ import {
 	RESOLUTION_TIMED_OUT,
 	withResolutionDeadline,
 } from "./bounded-realpath.ts";
+import { automountTriggerPath } from "./automount-trigger.ts";
 import { realpathWithoutOpenStrict } from "./realpath-without-open.ts";
 
 /**
@@ -19,6 +20,8 @@ import { realpathWithoutOpenStrict } from "./realpath-without-open.ts";
  */
 async function getMutationQueueKey(filePath: string): Promise<string> {
 	const resolvedPath = resolve(filePath);
+	const triggerPath = await automountTriggerPath(resolvedPath);
+	if (triggerPath !== undefined) return foldPathForCaseInsensitiveFilesystem(triggerPath);
 	const canonicalPath = await withResolutionDeadline(realpath(resolvedPath)).catch((error: unknown) => {
 		if (isMissingPathError(error)) return resolvedPath;
 		throw error;

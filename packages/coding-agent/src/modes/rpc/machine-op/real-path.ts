@@ -7,7 +7,12 @@
  */
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
-import { MachineOpError, RESOLUTION_TIMED_OUT, withResolutionDeadline } from "@code-yeongyu/senpi-machine-ops";
+import {
+	automountTriggerPath,
+	MachineOpError,
+	RESOLUTION_TIMED_OUT,
+	withResolutionDeadline,
+} from "@code-yeongyu/senpi-machine-ops";
 
 type Lookup = Readonly<{ kind: "ok"; value: string }> | Readonly<{ kind: "missing" }> | Readonly<{ kind: "timeout" }>;
 
@@ -24,6 +29,8 @@ const linkKind = (path: string): Promise<Lookup> =>
 	bounded(lstat(path).then((info) => (info.isSymbolicLink() ? "link" : "plain")));
 
 async function realPathUnder(base: string, raw: string): Promise<string | undefined> {
+	const triggerPath = await automountTriggerPath(resolve(base, raw));
+	if (triggerPath !== undefined) return triggerPath;
 	const root = isAbsolute(raw) ? parse(raw).root : base;
 	const start = await bounded(realpath(root));
 	if (start.kind !== "ok") return undefined;

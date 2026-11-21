@@ -1,5 +1,6 @@
 import { lstat, readlink, realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
+import { automountTriggerPath } from "../files/automount-trigger.ts";
 import { isMissingPathError, RESOLUTION_TIMED_OUT, withResolutionDeadline } from "../files/bounded-realpath.ts";
 import { realpathWithoutOpenStrict } from "../files/realpath-without-open.ts";
 
@@ -67,10 +68,14 @@ async function canonicalizeByOpening(filePath: string): Promise<string> {
  * following I/O will, and fails closed on EACCES/EIO/ELOOP instead of guessing. Because this runs
  * before every read/ls/grep/find/edit/write and `realpath` never returns on a wedged mount, the
  * traversal is bounded by a deadline; past it the open(2)-free walker answers instead, which still
- * refuses to guess past a non-missing error.
+ * refuses to guess past a non-missing error. A path under an automount trigger that has not mounted is answered from its
+ * text alone (`automount-trigger.ts`): the deadline bounds the caller but not the abandoned call, which keeps a thread of
+ * the shared filesystem pool until the automounter answers (senpi#7157).
  */
 export async function canonicalizeFilesystemPath(filePath: string): Promise<string> {
 	const absolutePath = resolve(filePath);
+	const triggerPath = await automountTriggerPath(absolutePath);
+	if (triggerPath !== undefined) return triggerPath;
 	const canonicalPath = await withResolutionDeadline(canonicalizeByOpening(absolutePath));
 	if (canonicalPath !== RESOLUTION_TIMED_OUT) return canonicalPath;
 	return realpathWithoutOpenStrict(absolutePath);
