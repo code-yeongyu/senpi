@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Image } from "../src/components/image.ts";
-import { detectTerminalCapabilities } from "../src/terminal-capabilities.ts";
+import { detectTerminalCapabilities, outerKittyGraphicsMode } from "../src/terminal-capabilities.ts";
 import {
 	buildKittyPlaceholderRow,
 	cropKittyImageLine,
@@ -52,6 +52,8 @@ const ENV_KEYS = [
 	"CMUX_WORKSPACE_ID",
 	"WARP_SESSION_ID",
 	"WARP_TERMINAL_SESSION_UUID",
+	"REX_SESSION",
+	"REX_BLOCK",
 	"PI_TUI_TMUX_KITTY_PLACEMENT",
 	"PI_HYPERLINKS",
 	"PI_IMAGE_PROTOCOL",
@@ -1209,5 +1211,89 @@ describe("VS Code terminal without TERM_PROGRAM (#2826)", () => {
 			tmuxWithoutHyperlinks,
 		);
 		assert.strictEqual(caps.hyperlinks, false);
+	});
+});
+
+describe("Rex terminal detection", () => {
+	it("enables Kitty images, truecolor, and hyperlinks via TERM_PROGRAM=rex", () => {
+		const env = { TERM_PROGRAM: "rex", TERM: "xterm-256color" };
+		assert.deepStrictEqual(
+			withEnv(env, () => detectCapabilities()),
+			{
+				images: "kitty",
+				trueColor: true,
+				hyperlinks: true,
+			},
+		);
+		assert.deepStrictEqual(detectTerminalCapabilities(env, "darwin"), {
+			images: "kitty",
+			trueColor: true,
+			hyperlinks: true,
+			kittyUnicodePlaceholders: true,
+		});
+	});
+
+	it("enables Kitty images, truecolor, and hyperlinks via TERM=xterm-rex without TERM_PROGRAM", () => {
+		const env = { TERM: "xterm-rex" };
+		assert.deepStrictEqual(
+			withEnv(env, () => detectCapabilities()),
+			{
+				images: "kitty",
+				trueColor: true,
+				hyperlinks: true,
+			},
+		);
+		assert.deepStrictEqual(detectTerminalCapabilities(env, "linux"), {
+			images: "kitty",
+			trueColor: true,
+			hyperlinks: true,
+			kittyUnicodePlaceholders: true,
+		});
+	});
+
+	it("does not detect Rex from inherited REX_SESSION or unrelated TERM substrings", () => {
+		for (const env of [
+			{ REX_SESSION: "session:123", REX_BLOCK: "block:456", TERM: "xterm-256color" },
+			{ TERM: "xterm-terex" },
+		]) {
+			assert.strictEqual(withEnv(env, () => detectCapabilities()).images, null);
+			assert.strictEqual(withEnv(env, () => detectCapabilities()).hyperlinks, false);
+			assert.strictEqual(detectTerminalCapabilities(env, "linux").images, null);
+			assert.strictEqual(detectTerminalCapabilities(env, "linux").hyperlinks, false);
+		}
+	});
+
+	it("respects tmux, screen, and explicit capability overrides inside Rex", () => {
+		withEnv({ TERM_PROGRAM: "rex", TERM: "screen-256color" }, () => {
+			assert.strictEqual(detectCapabilities().images, null);
+			assert.strictEqual(detectCapabilities().hyperlinks, false);
+		});
+		assert.deepStrictEqual(detectTerminalCapabilities({ TERM_PROGRAM: "rex", TERM: "screen-256color" }, "linux"), {
+			images: null,
+			trueColor: false,
+			hyperlinks: false,
+		});
+		withEnv({ TERM_PROGRAM: "rex", TMUX: "/tmp/tmux-1000/default,1234,0", TERM: "tmux-256color" }, () => {
+			const off = detectCapabilities(() => true, tmuxPassthroughOff);
+			assert.strictEqual(off.images, null);
+			assert.strictEqual(off.hyperlinks, true);
+			const on = detectCapabilities(
+				() => true,
+				() => ({ allowPassthrough: "on", clientTermname: "xterm-rex" }),
+			);
+			assert.strictEqual(on.images, "kitty");
+			assert.strictEqual(on.tmuxPassthrough, true);
+			assert.strictEqual(on.kittyUnicodePlaceholders, true);
+		});
+		assert.deepStrictEqual(
+			withEnv({ TERM_PROGRAM: "rex", PI_IMAGE_PROTOCOL: "none", PI_HYPERLINKS: "0" }, () => detectCapabilities()),
+			{ images: null, trueColor: true, hyperlinks: false },
+		);
+	});
+
+	it("classifies xterm-rex as placeholder-capable in outerKittyGraphicsMode", () => {
+		assert.strictEqual(outerKittyGraphicsMode("xterm-rex"), "placeholder");
+		assert.strictEqual(outerKittyGraphicsMode("rex"), "placeholder");
+		assert.strictEqual(outerKittyGraphicsMode("xterm-terex"), null);
 	});
 });
