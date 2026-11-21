@@ -17,6 +17,7 @@ import {
 	type FileMutationQueue,
 	inProcessFileMutationQueue,
 	lexicalCanonicalPath,
+	refuseSpecialFile,
 	resolvePosixToolPath,
 	type ToolPathCanonicalizer,
 	type ToolPathResolver,
@@ -225,6 +226,11 @@ export function createCoreEditToolDefinition(
 					throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
 				}
 				throwIfAborted();
+				// Custom operations own their filesystem; the machine's would block opening a FIFO or a device.
+				if (!options.operations) {
+					await refuseSpecialFile(machine, machine.context(signal, "caller"), absolutePath, path, "edit");
+					throwIfAborted();
+				}
 
 				// Read the file.
 				const buffer = await ops.readFile(absolutePath);
