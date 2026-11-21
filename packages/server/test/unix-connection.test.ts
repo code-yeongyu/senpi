@@ -1,8 +1,9 @@
 import { EventEmitter } from "node:events";
 import type { Socket } from "node:net";
 import { encodeServerMessage, type ServerHelloError, ServerMessageDecoder } from "@earendil-works/pi-protocol";
-import { expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 import { UnixByteConnection } from "../src/transports/unix/listener.ts";
+import { assertEventually } from "./fixtures/assert-eventually.ts";
 
 class ControlledSocket extends EventEmitter {
 	destroyed = false;
@@ -45,7 +46,7 @@ test("queues a final protocol error behind pending output before closing", async
 	const socket = new ControlledSocket();
 	const connection = new UnixByteConnection(socket as unknown as Socket, 1_000, 64 * 1024);
 	const pendingWrite = connection.send(new Uint8Array([1, 2, 3]));
-	await vi.waitFor(() => expect(socket.writableLength).toBe(1));
+	await assertEventually(() => expect(socket.writableLength).toBe(1));
 	const finalMessage: ServerHelloError = {
 		type: "hello_error",
 		error: { code: "invalid_request", message: "Protocol violation" },
@@ -57,7 +58,7 @@ test("queues a final protocol error behind pending output before closing", async
 
 	socket.completeWrite();
 	await pendingWrite;
-	await vi.waitFor(() => expect(socket.ended).toBe(true));
+	await assertEventually(() => expect(socket.ended).toBe(true));
 	expect(new ServerMessageDecoder().push(socket.finalChunk!)).toEqual([finalMessage]);
 
 	connection.markClosed();
