@@ -1,8 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
-import { ensureAgentDir } from "../utils/ensure-agent-dir.ts";
 import { canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { linkedWorktreeMainCheckoutDir } from "./linked-worktree-checkout.ts";
@@ -163,13 +162,16 @@ function writeTrustFile(path: string, data: TrustFile): void {
 			sorted[key] = value;
 		}
 	}
-	ensureAgentDir(dirname(path));
+	// 0700 whatever the umask: this can be the first write under a fresh agent dir, which the RPC host takes as its key
+	// root (senpi#6560). The mode alone suffices (umask only clears bits); no chmod, the RPC session path's sync
+	// baseline is frozen (no-sync-in-session-path.baseline.json).
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 	writeFileSync(path, `${JSON.stringify(sorted, null, 2)}\n`, "utf-8");
 }
 
 function acquireTrustLockSync(path: string): () => void {
 	const trustDir = dirname(path);
-	ensureAgentDir(trustDir);
+	mkdirSync(trustDir, { recursive: true, mode: 0o700 });
 	const maxAttempts = 10;
 	const delayMs = 20;
 	let lastError: unknown;
