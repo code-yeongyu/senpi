@@ -20,7 +20,7 @@ import {
 	segmentWithMarkers,
 } from "../paste-markers.ts";
 import { isSlashNamespaceItem } from "../slash-command-autocomplete.ts";
-import { normalizeWarpWslShiftEnterInput } from "../terminal.ts";
+import { normalizeAppleTerminalLineFeedInput, normalizeWarpWslShiftEnterInput } from "../terminal.ts";
 import {
 	type Component,
 	CURSOR_MARKER,
@@ -906,6 +906,7 @@ export class Editor implements Component, Focusable {
 			this.terminalPlatform,
 			this.terminalSocketExists,
 		);
+		data = normalizeAppleTerminalLineFeedInput(data, this.terminalEnvironment, this.terminalPlatform);
 		const kb = getKeybindings();
 
 		// Handle character jump mode (awaiting next character to jump to)

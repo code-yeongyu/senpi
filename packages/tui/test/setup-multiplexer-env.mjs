@@ -30,7 +30,9 @@
 for (const key of ["TMUX", "TMUX_PANE", "STY", "ZELLIJ"]) {
 	delete process.env[key];
 }
-if (process.env.TERM_PROGRAM === "herdr") {
+// Terminal.app sessions read a lone LF as the Ctrl+J newline instead of Enter; the LF-Enter tests
+// opt in to an explicit terminal environment, so the developer's own Terminal.app must not leak in.
+if (process.env.TERM_PROGRAM === "herdr" || process.env.TERM_PROGRAM === "Apple_Terminal") {
 	delete process.env.TERM_PROGRAM;
 }
 delete process.env.HERDR_ENV;
