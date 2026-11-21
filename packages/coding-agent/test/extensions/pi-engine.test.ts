@@ -6,39 +6,23 @@
  * is not compared: Bun's object loader hands each importer a fresh namespace object over the same exports.
  */
 import { execFileSync } from "node:child_process";
-import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	readdirSync,
-	rmSync,
-	statSync,
-	utimesSync,
-	writeFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+	BUILT_LOADER,
+	ENGINE_DEPENDENCIES,
+	ENGINE_LOADER_BUILD,
+	PACKAGE_ROOT,
+	PACKAGES,
+	type ProbeLoader,
+	resolveEngineBuilds,
+	selectProbeLoader,
+} from "../support/engine-build-freshness.ts";
 
 const LOADER = fileURLToPath(new URL("../../src/core/extensions/loader.ts", import.meta.url));
-const BUILT_LOADER = fileURLToPath(new URL("../../dist/core/extensions/loader.js", import.meta.url));
-const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const PACKAGES = fileURLToPath(new URL("../../..", import.meta.url));
-// Workspace packages the built engine imports at runtime, directly or through each other.
-const ENGINE_DEPENDENCIES = [
-	"agent",
-	"ai",
-	"chord",
-	"client",
-	"machine-ops",
-	"protocol",
-	"pty",
-	"realm-registry",
-	"telemetry",
-	"tui",
-];
 
 const EXTENSION = `import * as served from "@code-yeongyu/senpi";
 
@@ -67,38 +51,9 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-interface Build {
-	output: string;
-	sources: string;
-}
-
-function newestMtime(path: string): number {
-	const stat = statSync(path);
-	if (!stat.isDirectory()) return stat.mtimeMs;
-	return Math.max(stat.mtimeMs, ...readdirSync(path).map((entry) => newestMtime(join(path, entry))));
-}
-
-/**
- * "built" only when every build output is strictly newer than every file and directory of its sources; a missing
- * output or an equal mtime counts as stale. A stale build would let the probe pass on old engine code and hide a
- * regression in the sources, so anything short of provably fresh runs the sources.
- */
-function selectProbeLoader(builds: readonly Build[]): "built" | "source" {
-	for (const build of builds) {
-		if (!existsSync(build.output) || statSync(build.output).mtimeMs <= newestMtime(build.sources)) return "source";
-	}
-	return "built";
-}
-
-function engineBuilds(): Build[] {
-	return [
-		{ output: BUILT_LOADER, sources: join(PACKAGE_ROOT, "src") },
-		...ENGINE_DEPENDENCIES.map((name) => {
-			const root = join(PACKAGES, name);
-			const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { main: string };
-			return { output: join(root, manifest.main), sources: join(root, "src") };
-		}),
-	];
+function nodeProbeLoader(): ProbeLoader {
+	const builds = resolveEngineBuilds(PACKAGES, ENGINE_DEPENDENCIES, ENGINE_LOADER_BUILD);
+	return "loader" in builds ? builds : selectProbeLoader(builds);
 }
 
 function probe(runtime: "node" | "bun"): Record<string, unknown> {
@@ -107,8 +62,17 @@ function probe(runtime: "node" | "bun"): Record<string, unknown> {
 	writeFileSync(join(root, "extension.ts"), EXTENSION);
 	// Under load, tsx compiling the whole engine graph from source outran the 170 s limit on node, so node runs the
 	// built engine when it is fresh and falls back to the sources (tsx) when dist is missing or older than them.
-	const loader = runtime === "node" ? selectProbeLoader(engineBuilds()) : "source";
-	console.log(`pi.engine probe on ${runtime}: ${loader} loader`);
+	const choice: ProbeLoader =
+		runtime === "node" ? nodeProbeLoader() : { loader: "source", reason: "bun runs the sources" };
+	const loader = choice.loader;
+	console.log(
+		`pi.engine probe on ${runtime}: ${choice.loader === "built" ? "built loader" : `source loader (${choice.reason})`}`,
+	);
+	if (choice.skippedLinks) {
+		console.log(
+			`pi.engine probe: skipped ${choice.skippedLinks.length} symbolic link(s) under the sources, first ${choice.skippedLinks[0]}`,
+		);
+	}
 	const main = join(root, loader === "built" ? "main.mjs" : "main.mts");
 	writeFileSync(
 		main,
@@ -128,51 +92,6 @@ function probe(runtime: "node" | "bun"): Record<string, unknown> {
 	const output = execFileSync(command, args, { cwd: PACKAGE_ROOT, encoding: "utf8", timeout: 170_000 });
 	return JSON.parse(output) as Record<string, unknown>;
 }
-
-describe("selectProbeLoader", () => {
-	const T = 1_000_000_000;
-
-	function tree(): { root: string; build: Build; paths: string[] } {
-		const root = mkdtempSync(join(tmpdir(), "senpi-probe-loader-"));
-		roots.push(root);
-		const sources = join(root, "src");
-		mkdirSync(join(sources, "nested"), { recursive: true });
-		writeFileSync(join(sources, "a.ts"), "");
-		writeFileSync(join(sources, "nested", "b.ts"), "");
-		const paths = [join(sources, "a.ts"), join(sources, "nested", "b.ts"), join(sources, "nested"), sources];
-		for (const path of paths) utimesSync(path, T, T);
-		return { root, build: { output: join(root, "dist", "loader.js"), sources }, paths };
-	}
-
-	function writeOutput(build: Build, seconds: number): void {
-		mkdirSync(join(build.output, ".."), { recursive: true });
-		writeFileSync(build.output, "");
-		utimesSync(build.output, seconds, seconds);
-	}
-
-	it("takes the source when the build output is missing", () => {
-		expect(selectProbeLoader([tree().build])).toBe("source");
-	});
-
-	it("takes the build when its output is newer than every source", () => {
-		const { build } = tree();
-		writeOutput(build, T + 10);
-		expect(selectProbeLoader([build])).toBe("built");
-	});
-
-	it("takes the source when one source file is newer than the build output", () => {
-		const { build, paths } = tree();
-		writeOutput(build, T + 10);
-		utimesSync(paths[1], T + 20, T + 20);
-		expect(selectProbeLoader([build])).toBe("source");
-	});
-
-	it("takes the source when the build output and the sources have the same mtime", () => {
-		const { build } = tree();
-		writeOutput(build, T);
-		expect(selectProbeLoader([build])).toBe("source");
-	});
-});
 
 describe("pi.engine (omo#12965, T-F)", () => {
 	it.each(["node", "bun"] as const)(
