@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
@@ -24,9 +24,10 @@ import {
 import { createUnixServer, getUnixSocketPath } from "@earendil-works/pi-server/unix";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { getAgentDir } from "../config.ts";
-import { type HeldFileLock, lockWithLossHandling } from "../core/file-lock.ts";
+import type { HeldFileLock } from "../core/file-lock.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
+import { waitForFileLock } from "./lock-wait.ts";
 import { createPresentationFacetData } from "./plugins/bundled.ts";
 import {
 	createServerPluginPackage,
@@ -79,8 +80,38 @@ export function resolveSessionDirectory(sessionDir?: string): string {
 }
 
 const LOCK_STALE_MS = 30_000;
-const LOCK_RETRY_MS = 25;
-const LOCK_WAIT_MS = 30_000;
+/**
+ * The launcher lock is held by one server for its whole startup (plugin builds, its coordinator, its backend, worker
+ * discovery), however long that takes; proper-lockfile refreshes it every LOCK_STALE_MS / 3 while the holder lives.
+ * So a waiter waits as long as the holder lives: a holder that dies leaves a lock that goes stale LOCK_STALE_MS after
+ * its last refresh and is taken over then, or is removed at once by the activator that stopped it. A holder that lives
+ * but never finishes is bounded by LAUNCHER_LOCK_CEILING_MS, which ends the wait with an error naming it.
+ */
+const LAUNCHER_LOCK_CEILING_MS = 10 * 60_000;
+const LAUNCHER_LOCK_TOKEN = "token";
+const LAUNCHER_LOCK_BOUNDS = {
+	heldMs: LAUNCHER_LOCK_CEILING_MS,
+	transientMs: LOCK_STALE_MS,
+	marker: { name: LAUNCHER_LOCK_TOKEN, staleMs: LOCK_STALE_MS },
+};
+
+/** A launcher lock still held, by a live process, when its waiter's ceiling ran out. */
+class LauncherLockTimeoutError extends Error {
+	readonly code = "launcher_lock_timeout";
+	readonly holderPid: number | undefined;
+
+	constructor(path: string, waitedMs: number, holderPid: number | undefined) {
+		super(
+			`The experimental server launcher lock ${path} was still held after ${Math.round(waitedMs / 1000)} s${holderPid === undefined ? "" : ` by pid ${holderPid}`}`,
+		);
+		this.name = "LauncherLockTimeoutError";
+		this.holderPid = holderPid;
+	}
+}
+
+function launcherOwnerPath(directory: string, serverId: ServerId): string {
+	return join(directory, `launcher-${serverId}.owner`);
+}
 const DEFAULT_SERVER_ID_FILE = "default-server-id";
 
 export interface ServerProfile {
@@ -120,19 +151,49 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 		}
 	}
 
-	const { release, assertHeld } = await lockWithLossHandling(join(directory, `launcher-${serverId}`), {
-		realpath: false,
-		stale: LOCK_STALE_MS,
-		update: LOCK_STALE_MS / 3,
-		retries: {
-			retries: Math.ceil(LOCK_WAIT_MS / LOCK_RETRY_MS),
-			factor: 1,
-			minTimeout: LOCK_RETRY_MS,
-			maxTimeout: LOCK_RETRY_MS,
-			maxRetryTime: LOCK_WAIT_MS,
+	const lockPath = join(directory, `launcher-${serverId}`);
+	const ownerPath = launcherOwnerPath(directory, serverId);
+	const waitStarted = performance.now();
+	// A fresh random token, written both into the lock directory this holder took and into the owner record. An
+	// activator that stopped its own server removes the lock only while the directory still holds that server's token:
+	// a stale takeover re-creates the directory under a new token, whatever inode the file system hands it.
+	const token = randomUUID();
+	const lockDirectory = `${lockPath}.lock`;
+	const tokenPath = join(lockDirectory, LAUNCHER_LOCK_TOKEN);
+	let held: Awaited<ReturnType<typeof waitForFileLock>>;
+	while (true) {
+		held = await waitForFileLock(
+			lockPath,
+			{ realpath: false, stale: LOCK_STALE_MS, update: LOCK_STALE_MS / 3 },
+			LAUNCHER_LOCK_BOUNDS,
+		).catch(async (error: unknown) => {
+			if (!(error instanceof Error && "code" in error && error.code === "ELOCKED")) throw error;
+			const holder = await readLauncherOwner(ownerPath);
+			throw new LauncherLockTimeoutError(lockDirectory, performance.now() - waitStarted, holder?.pid);
+		});
+		try {
+			await withLockDirectoryTimes(lockDirectory, () => writeFile(tokenPath, token, { mode: 0o600 }));
+			break;
+		} catch (error) {
+			// Two waiters taking over one dead lock: the other judged it stale before this one re-created it, and its
+			// takeover removed the directory this one had just taken, before the token was in it. The other holds the
+			// lock now, so this waits again. The lost handle is never released (that would remove the other's lock); its
+			// own refresh sees a directory it does not own and marks it lost without touching it.
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+		}
+	}
+	const { release, assertHeld } = held;
+	await writeFile(ownerPath, `${process.pid} ${token}`, { mode: 0o600 });
+	return {
+		serverId,
+		async release() {
+			await rm(ownerPath, { force: true });
+			// proper-lockfile removes its directory with a non-recursive rmdir, so the token goes first.
+			await withLockDirectoryTimes(lockDirectory, () => rm(tokenPath, { force: true }));
+			await release();
 		},
-	});
-	return { serverId, release, assertHeld };
+		assertHeld,
+	};
 }
 
 const ACTIVATION_TIMEOUT_MS = 10_000;
@@ -144,6 +205,11 @@ const ACTIVATION_RETRY_MS = 10;
  * measured on the monotonic clock, so a system clock step cannot end the wait early either.
  */
 const ACTIVATION_STARTUP_HANG_MS = 120_000;
+/**
+ * How long an activator waits for another activator's lock. The holder may legitimately spend its whole startup wait
+ * on a slow cold start, so this outlasts that bound; measured on the monotonic clock like the startup wait.
+ */
+const ACTIVATION_LOCK_WAIT_MS = ACTIVATION_STARTUP_HANG_MS + ACTIVATION_TIMEOUT_MS;
 
 export interface ActivatedServer {
 	readonly client: Client;
@@ -209,6 +275,7 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 			}
 		} catch (error) {
 			await terminateInternalProcess(child);
+			await removeStoppedServerLauncherLock(options.directory, serverId, child.pid);
 			throw error;
 		}
 	} finally {
@@ -216,22 +283,54 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 	}
 }
 
+/** A server stopped during startup cannot release its launcher lock; the activator that stopped it removes it. */
+export async function removeStoppedServerLauncherLock(
+	directory: string,
+	serverId: ServerId,
+	pid: number | undefined,
+): Promise<void> {
+	if (pid === undefined) return;
+	const ownerPath = launcherOwnerPath(directory, serverId);
+	const owner = await readLauncherOwner(ownerPath);
+	if (owner?.pid !== pid) return;
+	const lockDirectory = join(directory, `launcher-${serverId}.lock`);
+	// Only the lock that server took: one re-created by a newer holder carries another token.
+	const current = await readFile(join(lockDirectory, LAUNCHER_LOCK_TOKEN), "utf8").catch(() => undefined);
+	if (current?.trim() !== owner.token) return;
+	await rm(lockDirectory, { recursive: true, force: true });
+	await rm(ownerPath, { force: true });
+}
+
+/**
+ * Runs `change` on an entry inside a held lock directory and puts the directory's own timestamps back.
+ *
+ * proper-lockfile keeps a lock alive by `utimes`-ing its directory on a timer and compares the stored mtime to the
+ * directory's current one EXACTLY (`isMtimeOurs`); writing or removing an entry bumps that mtime, so without this the
+ * holder's next refresh would report its own live lock as compromised. The times are read before the change and
+ * restored after it, which is exact: `stat` reports the same value the dependency stored, at whatever precision it
+ * probed for this file system.
+ */
+async function withLockDirectoryTimes(lockDirectory: string, change: () => Promise<void>): Promise<void> {
+	const before = await stat(lockDirectory).catch(() => undefined);
+	await change();
+	if (before !== undefined) await utimes(lockDirectory, before.atime, before.mtime).catch(() => {});
+}
+
+async function readLauncherOwner(ownerPath: string): Promise<{ pid: number; token: string } | undefined> {
+	const [rawPid, token] = ((await readFile(ownerPath, "utf8").catch(() => "")) ?? "").trim().split(" ");
+	const pid = Number(rawPid);
+	return Number.isInteger(pid) && token !== undefined && token.length > 0 ? { pid, token } : undefined;
+}
+
 export async function acquireServerActivation(
 	directory: string,
 	serverId: ServerId,
 ): Promise<Pick<HeldFileLock, "release" | "assertHeld">> {
-	return lockWithLossHandling(join(directory, `activation-${serverId}`), {
-		realpath: false,
-		stale: ACTIVATION_TIMEOUT_MS * 2,
-		update: ACTIVATION_TIMEOUT_MS,
-		retries: {
-			retries: Math.ceil(ACTIVATION_TIMEOUT_MS / 25),
-			factor: 1,
-			minTimeout: 25,
-			maxTimeout: 25,
-			maxRetryTime: ACTIVATION_TIMEOUT_MS,
-		},
-	});
+	return waitForFileLock(
+		join(directory, `activation-${serverId}`),
+		{ realpath: false, stale: ACTIVATION_TIMEOUT_MS * 2, update: ACTIVATION_TIMEOUT_MS },
+		{ heldMs: ACTIVATION_LOCK_WAIT_MS, transientMs: ACTIVATION_LOCK_WAIT_MS },
+	);
 }
 
 async function connect(route: UnixServerRoute): Promise<Client | undefined> {
@@ -636,7 +735,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 		const controlPath = join(directory, `control-${serverId}.sock`);
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);
 		const serverPath = join(directory, `server-${serverId}-${serverNonce}.sock`);
-		startupLease = await ensureCoordinator(socketPath, controlPath);
+		startupLease = await ensureCoordinator(socketPath, controlPath, assertHeld);
 		coordinator = new CoordinatorConnection({ controlPath, endpoint: serverPath });
 		const sessionDir = resolveSessionDirectory(options.sessionDir);
 		workers = new SessionWorkerManager(coordinator, sessionDir, workerModel, (count) =>
