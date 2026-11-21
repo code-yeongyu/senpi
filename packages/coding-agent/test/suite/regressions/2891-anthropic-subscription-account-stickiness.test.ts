@@ -42,8 +42,17 @@ async function storedPool(store: CredentialStore): Promise<AccountSlot[]> {
 
 type Turn = { served: string; attempts: string[]; sleeps: number[] };
 
-let attemptLog: string[] = [];
-let sleepLog: number[] = [];
+/** A turn that failed, carrying the attempts and waits it made (senpi#2987 item 2). */
+class FailedTurnError extends Error {
+	readonly attempts: string[];
+	readonly sleeps: number[];
+	constructor(cause: unknown, attempts: string[], sleeps: number[]) {
+		super(cause instanceof Error ? cause.message : String(cause), { cause });
+		this.name = "FailedTurnError";
+		this.attempts = attempts;
+		this.sleeps = sleeps;
+	}
+}
 
 async function runTurn(
 	store: CredentialStore,
@@ -53,8 +62,6 @@ async function runTurn(
 ): Promise<Turn> {
 	const attempts: string[] = [];
 	const sleeps: number[] = [];
-	attemptLog = attempts;
-	sleepLog = sleeps;
 	let served = "";
 	const stream = runFailover<AttemptEvent>({
 		accounts: await storedPool(store),
@@ -80,7 +87,11 @@ async function runTurn(
 		},
 	});
 	const events: AttemptEvent[] = [];
-	for await (const event of stream) events.push(event);
+	try {
+		for await (const event of stream) events.push(event);
+	} catch (error) {
+		throw new FailedTurnError(error, attempts, sleeps);
+	}
 	expect(events).toHaveLength(served === "" ? 0 : 1);
 	return { served, attempts, sleeps };
 }
@@ -132,14 +143,14 @@ describe("senpi#2891 a session stays on its account unless the account cannot se
 		const store = await storeWithPool();
 
 		// when the turn runs
-		const turn = await runTurn(store, 10_000, home, (account) =>
+		const failure = await runTurn(store, 10_000, home, (account) =>
 			account === home ? "fetch failed: ECONNRESET" : undefined,
-		).catch(() => undefined);
+		).catch((error: unknown) => error);
 
 		// then the account is tried three times with a doubling delay, no other account is tried, and nothing is blocked
-		expect(turn).toBeUndefined();
-		expect(attemptLog).toEqual([home, home, home]);
-		expect(sleepLog).toEqual([1_000, 2_000]);
+		expect(failure).toBeInstanceOf(FailedTurnError);
+		expect((failure as FailedTurnError).attempts).toEqual([home, home, home]);
+		expect((failure as FailedTurnError).sleeps).toEqual([1_000, 2_000]);
 		expect((await storedPool(store)).every((account) => account.blockedUntil === undefined)).toBe(true);
 	});
 
@@ -148,12 +159,57 @@ describe("senpi#2891 a session stays on its account unless the account cannot se
 		const store = await storeWithPool();
 
 		// when the turn runs
-		const turn = await runTurn(store, 10_000, home, () => "HTTP 529 overloaded").catch(() => undefined);
+		const failure = await runTurn(store, 10_000, home, () => "HTTP 529 overloaded").catch((error: unknown) => error);
 
 		// then only the session's account is retried, and no other account is touched
-		expect(turn).toBeUndefined();
-		expect(attemptLog).toEqual([home, home, home]);
-		expect(sleepLog).toEqual([1_000, 2_000]);
+		expect(failure).toBeInstanceOf(FailedTurnError);
+		expect((failure as FailedTurnError).attempts).toEqual([home, home, home]);
+		expect((failure as FailedTurnError).sleeps).toEqual([1_000, 2_000]);
+	});
+
+	it("honors the server retry-after for a transient same-account retry (senpi#2987)", async () => {
+		// given the session's account fails once with an overload that carries a retry-after
+		const store = await storeWithPool();
+
+		// when the turn runs
+		const turn = await runTurn(store, 10_000, home, (account, n) =>
+			account === home && n === 1 ? "HTTP 529 overloaded; retry-after: 5" : undefined,
+		);
+
+		// then it waits the server's 5 s instead of the 1 s backoff, and stays on the same account
+		expect(turn.attempts).toEqual([home, home]);
+		expect(turn.served).toBe(home);
+		expect(turn.sleeps).toEqual([5_000]);
+	});
+
+	it("honors a millisecond retry-after for a transient same-account retry (senpi#2987)", async () => {
+		// given the session's account fails once with an overload that carries a millisecond retry-after
+		const store = await storeWithPool();
+
+		// when the turn runs
+		const turn = await runTurn(store, 10_000, home, (account, n) =>
+			account === home && n === 1 ? "HTTP 529 overloaded; retry-after-ms: 2500" : undefined,
+		);
+
+		// then it waits the server's 2.5 s instead of the 1 s backoff, and stays on the same account
+		expect(turn.attempts).toEqual([home, home]);
+		expect(turn.served).toBe(home);
+		expect(turn.sleeps).toEqual([2_500]);
+	});
+
+	it("falls back to the doubling delay when retry-after exceeds the cap (senpi#2987)", async () => {
+		// given the session's account fails once with an overload that asks for a 120 s wait
+		const store = await storeWithPool();
+
+		// when the turn runs
+		const turn = await runTurn(store, 10_000, home, (account, n) =>
+			account === home && n === 1 ? "HTTP 529 overloaded; retry-after: 120" : undefined,
+		);
+
+		// then it waits the 1 s backoff instead of stalling the turn for two minutes
+		expect(turn.attempts).toEqual([home, home]);
+		expect(turn.served).toBe(home);
+		expect(turn.sleeps).toEqual([1_000]);
 	});
 
 	it("never moves another session off an account one session saw fail transiently (senpi#3466)", async () => {
