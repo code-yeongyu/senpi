@@ -2324,9 +2324,20 @@ which prints the bare socket path).
   the current one; `--socket` is ignored), and answers `{ removed: [{ socket, dir, reason }], kept: [{ socket,
   dir, reason }] }` with exit `0` whatever it found (`2` for a bad flag). It never signals a process and never
   runs implicitly - not inside `ensure`, not inside `status`. For each endpoint whose socket is known it takes
-  that socket's ENSURE lock (`<tmp>/senpi-rpc-host-locks/<sha256(transport address)[:32]>.lock`, the one
+  that socket's ENSURE lock (`<lock dir>/<sha256(transport address)[:32]>.lock`, the one
   `ensureHost` serializes on - not `daemon.lock`; on POSIX the address is the socket path with its directory
-  realpath-canonicalized, so every spelling of one socket shares one lock) for at most 2 s, and inside it requires all three: (a) no
+  realpath-canonicalized, so every spelling of one socket shares one lock; the lock dir is the user's own
+  `<tmp>/senpi-rpc-host-locks-<uid>`, 0700, whatever the session environment (`XDG_RUNTIME_DIR` is never consulted), and
+  a symlink, another user's directory or one group or others can write into is refused; `<tmp>/senpi-rpc-host-locks`
+  on Windows. A refusal is final: another local user who squats that name on purpose (a sticky `/tmp` keeps the victim
+  from removing it) blocks this user's ensures until that user or root removes it. While the pre-senpi#6874 directory
+  `<tmp>/senpi-rpc-host-locks` exists as a directory the user owns that no one else can write (its group only when that
+  is the user's own primary group, the umask 002 case; this ASSUMES that group is private to the user, as on
+  user-private-group systems, and a shared primary group such as `users` exposes the legacy lock files to its members
+  exactly as an older engine already did; the owner token there is staged with an exclusive create), the ensure lock,
+  the endpoint fence and the owner token are also taken and kept there, so an engine
+  from before that change and a newer one still exclude each other; remove that directory once no older engine runs)
+  for at most 2 s, and inside it requires all three: (a) no
   `generations/*/host.pid` names a live process (pid live and start time matching; a live pid whose identity
   cannot be read counts as live; the generation the pointer names is one of them), (b) no claim in
   `reservations/` has a live owner, and (c) connecting to the socket fails with `ENOENT`, or with `ECONNREFUSED`

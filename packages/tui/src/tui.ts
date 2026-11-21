@@ -3510,8 +3510,10 @@ export abstract class TuiBase extends Container {
 		buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
 
 		if (process.env.PI_TUI_DEBUG === "1") {
-			const debugDir = path.join(os.tmpdir(), "tui");
-			fs.mkdirSync(debugDir, { recursive: true });
+			// Whole-screen dumps stay in this TUI's own log directory, never a fixed `<tmpdir>/tui` that every user of the
+			// machine shares (senpi#6871): another user's directory there made the write fail and exposed the dumps.
+			const debugDir = path.join(this.logDirectory, "tui-render");
+			fs.mkdirSync(debugDir, { recursive: true, mode: 0o700 });
 			const debugPath = path.join(debugDir, `render-${Date.now()}-${Math.random().toString(36).slice(2)}.log`);
 			const debugData = [
 				`firstChanged: ${firstChanged}`,

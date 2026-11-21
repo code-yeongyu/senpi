@@ -12,7 +12,7 @@ const MOCK = API_PRESETS["openai-completions"];
 
 test.after(cleanupAll);
 
-// The endpoint fence (senpi#4602) keeps durable lock files under `<tmpdir>/senpi-rpc-host-locks/`. The EQ host is
+// The endpoint fence (senpi#4602) keeps durable lock files under `<tmpdir>/senpi-rpc-host-locks-<uid>/` (senpi#6871). The EQ host is
 // throwaway, so nothing it writes may outlive the run in the job's temp root (the CI temp guard counts leftovers).
 test("the EQ multi-session host leaves nothing in the temp root after its run stops", { timeout: 120_000 }, async () => {
 	const previous = process.env.TMPDIR;

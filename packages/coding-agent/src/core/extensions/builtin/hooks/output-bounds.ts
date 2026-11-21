@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+	makeUserPrivateDirectory,
+	UserDirUnsafeError,
+	userPrivateDirectoryPath,
+} from "../../../../utils/user-private-dir.ts";
 import { redactSensitiveOutput, redactSensitiveTokenValues } from "../../../sensitive-output.ts";
 
 export const DEFAULT_STDOUT_LIMIT_BYTES = 64 * 1024;
@@ -64,14 +68,38 @@ function redactHookOutput(text: string): string {
 	return redactSensitiveOutput(text);
 }
 
+const SPILL_DIRECTORY_NAME = "senpi-hook-output";
+const fallbackSpillDirectories = new Map<string, string>();
+
+/**
+ * This user's own spill directory, never a fixed name every user of the machine shares (senpi#6871). Another user can
+ * squat that predictable name, and a sticky `/tmp` keeps this user from removing it; a spill only needs somewhere
+ * private, so it then goes to one fresh `mkdtemp` directory (0700, unpredictable name) per process instead of failing
+ * every oversized hook (review #2 L1).
+ */
+function defaultSpillDirectory(): string {
+	try {
+		return makeUserPrivateDirectory(SPILL_DIRECTORY_NAME);
+	} catch (cause) {
+		if (!(cause instanceof UserDirUnsafeError)) throw cause;
+		const prefix = `${userPrivateDirectoryPath(SPILL_DIRECTORY_NAME)}-`;
+		let fallback = fallbackSpillDirectories.get(prefix);
+		if (fallback === undefined) {
+			fallback = mkdtempSync(prefix);
+			fallbackSpillDirectories.set(prefix, fallback);
+		}
+		return fallback;
+	}
+}
+
 export function redactHookTokenValues(text: string, replacement = "[REDACTED]"): string {
 	return redactSensitiveTokenValues(text, replacement);
 }
 
 function spillRedactedOutput(stream: "stderr" | "stdout", text: string, policy: HookOutputPolicy | undefined): string {
-	const spillDir = policy?.spillDir ?? join(tmpdir(), "senpi-hook-output");
-	mkdirSync(spillDir, { recursive: true });
+	const spillDir = policy?.spillDir ?? defaultSpillDirectory();
+	if (policy?.spillDir !== undefined) mkdirSync(spillDir, { recursive: true });
 	const path = join(spillDir, `hook-${stream}-${process.pid}-${randomUUID()}.txt`);
-	writeFileSync(path, text);
+	writeFileSync(path, text, { mode: 0o600, flag: "wx" });
 	return path;
 }

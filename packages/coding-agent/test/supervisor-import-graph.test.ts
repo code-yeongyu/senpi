@@ -134,12 +134,16 @@ const ENDPOINT_BIND_LEAVES = new Set(
 // Node builtins, socket-ownership and ownership-safe-lock, both already in the graph) and host-ensure-lock 2,633 /
 // 2,605, 31 (the canonical endpoint key the fence shares with the ensure lock; its imports were already in the graph).
 // Measured: 75 modules.
+// senpi#6871: the ensure lock and the fence moved into a directory private to each user, so host-ensure-lock and
+// host-endpoint-owner import utils/user-private-dir (3,625 source / 3,796 built bytes, 49 code lines; node:fs,
+// node:os and node:path only). Measured: 80 modules (8 hop, 3 public auth, 4 private fd, 2 endpoint bind leaves).
 const STARTUP_EVENT_LEAVES = new Set(
 	["host-startup-beacon", "host-startup-wire", "host-lifecycle-startup", "host-endpoint-owner", "host-ensure-lock"]
 		.map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`)
 		.concat(
 			"packages/coding-agent/dist/private-fd-startup-fillers.js",
 			"packages/coding-agent/dist/private-fd-table.js",
+			"packages/coding-agent/dist/utils/user-private-dir.js",
 		),
 );
 

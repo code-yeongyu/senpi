@@ -317,6 +317,41 @@
 			"symbol": "markNoticesSeen",
 			"count": 1,
 			"note": "auth-notices-seen.json, written once when a credential notice is first shown at startup (senpi#3486; a few hundred bytes, 0600)"
+		},
+		{
+			"file": "src/utils/user-private-dir.ts",
+			"api": "mkdirSync",
+			"symbol": "ensurePrivateDirectory",
+			"count": 2,
+			"note": "this user's private directory (senpi#6871) is created or proven through one no-follow directory handle before a lock, a fence, a hook spill or a bundled-bun shim root is used; that check must be synchronous because bundledBunDir backs the synchronous public getShellEnv and the hook spill runs inside the synchronous output bound, and it costs one mkdir, open, fstat and close of a single directory entry"
+		},
+		{
+			"file": "src/utils/user-private-dir.ts",
+			"api": "openSync",
+			"symbol": "ensurePrivateDirectory",
+			"count": 1,
+			"note": "this user's private directory (senpi#6871) is created or proven through one no-follow directory handle before a lock, a fence, a hook spill or a bundled-bun shim root is used; that check must be synchronous because bundledBunDir backs the synchronous public getShellEnv and the hook spill runs inside the synchronous output bound, and it costs one mkdir, open, fstat and close of a single directory entry"
+		},
+		{
+			"file": "src/utils/user-private-dir.ts",
+			"api": "fstatSync",
+			"symbol": "ensurePrivateDirectory",
+			"count": 1,
+			"note": "this user's private directory (senpi#6871) is created or proven through one no-follow directory handle before a lock, a fence, a hook spill or a bundled-bun shim root is used; that check must be synchronous because bundledBunDir backs the synchronous public getShellEnv and the hook spill runs inside the synchronous output bound, and it costs one mkdir, open, fstat and close of a single directory entry"
+		},
+		{
+			"file": "src/utils/user-private-dir.ts",
+			"api": "fchmodSync",
+			"symbol": "ensurePrivateDirectory",
+			"count": 1,
+			"note": "this user's private directory (senpi#6871) is created or proven through one no-follow directory handle before a lock, a fence, a hook spill or a bundled-bun shim root is used; that check must be synchronous because bundledBunDir backs the synchronous public getShellEnv and the hook spill runs inside the synchronous output bound, and it costs one mkdir, open, fstat and close of a single directory entry; the chmod runs only when the user's own directory was left readable by group or others"
+		},
+		{
+			"file": "src/utils/user-private-dir.ts",
+			"api": "closeSync",
+			"symbol": "ensurePrivateDirectory",
+			"count": 1,
+			"note": "this user's private directory (senpi#6871) is created or proven through one no-follow directory handle before a lock, a fence, a hook spill or a bundled-bun shim root is used; that check must be synchronous because bundledBunDir backs the synchronous public getShellEnv and the hook spill runs inside the synchronous output bound, and it costs one mkdir, open, fstat and close of a single directory entry"
 		}
 	]
 }

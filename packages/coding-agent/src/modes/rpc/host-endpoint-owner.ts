@@ -11,10 +11,16 @@
  * child-exit wait runs while it is held.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
-import { acquireOwnershipSafeLock, isBusy } from "./ownership-safe-lock.ts";
+import { ensurePrivateDirectory } from "../../utils/user-private-dir.ts";
+import {
+	acquireEndpointLock,
+	hostEnsureLockOptions,
+	hostEnsureLockTarget,
+	legacyHostEnsureLockTarget,
+} from "./host-ensure-lock.ts";
+import { isBusy } from "./ownership-safe-lock.ts";
 import {
 	adoptPublicSocket,
 	type SocketFileIdentity,
@@ -46,16 +52,26 @@ export function endpointOwnerToken(endpoint: string, instanceId: string, generat
 
 const ownerFile = (socket: string): string => `${hostEnsureLockTarget(socket)}.owner.json`;
 
+/**
+ * Where the owner token lives: this user's lock directory, plus the legacy one while an old engine of this user may
+ * read or write it there (senpi#6871 review L1). A token is written to both and read from both, the higher generation
+ * winning, so a handoff between an old and a new engine sees the same owner either way.
+ */
+async function ownerFiles(socket: string): Promise<readonly string[]> {
+	const legacy = await legacyHostEnsureLockTarget(socket);
+	return legacy === undefined ? [ownerFile(socket)] : [ownerFile(socket), `${legacy}.owner.json`];
+}
+
 async function withEndpointFence<T>(socket: string, run: () => Promise<T>, hooks?: FenceHooks): Promise<T> {
-	const fence = `${hostEnsureLockTarget(socket)}.fence.lock`;
-	await mkdir(dirname(fence), { recursive: true });
 	let release: () => Promise<void>;
 	try {
-		release = await acquireOwnershipSafeLock(fence, { retries: { retries: 0, minTimeout: 1, maxTimeout: 1 } });
+		release = await acquireEndpointLock(socket, ".fence.lock", {
+			retries: { retries: 0, minTimeout: 1, maxTimeout: 1 },
+		});
 	} catch (cause) {
 		if (!isBusy(cause)) throw cause;
 		hooks?.onFenceBusy?.();
-		release = await acquireOwnershipSafeLock(fence, hostEnsureLockOptions(ENDPOINT_FENCE_WAIT_MS));
+		release = await acquireEndpointLock(socket, ".fence.lock", hostEnsureLockOptions(ENDPOINT_FENCE_WAIT_MS));
 	}
 	try {
 		return await run();
@@ -66,9 +82,18 @@ async function withEndpointFence<T>(socket: string, run: () => Promise<T>, hooks
 
 /** The current owner token; `undefined` when none was claimed or it cannot be read as one. */
 export async function readEndpointOwner(socket: string): Promise<EndpointOwnerToken | undefined> {
+	let owner: EndpointOwnerToken | undefined;
+	for (const path of await ownerFiles(socket)) {
+		const token = await readOwnerToken(path);
+		if (token && (owner === undefined || token.generation > owner.generation)) owner = token;
+	}
+	return owner;
+}
+
+async function readOwnerToken(path: string): Promise<EndpointOwnerToken | undefined> {
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(await readFile(ownerFile(socket), "utf8"));
+		parsed = JSON.parse(await readFile(path, "utf8"));
 	} catch {
 		return undefined;
 	}
@@ -80,10 +105,16 @@ export async function readEndpointOwner(socket: string): Promise<EndpointOwnerTo
 }
 
 async function writeEndpointOwner(socket: string, token: EndpointOwnerToken): Promise<void> {
-	const path = ownerFile(socket);
-	const staged = `${path}.${process.pid}.tmp`;
-	await writeFile(staged, `${JSON.stringify(token)}\n`, { mode: 0o600 });
-	await rename(staged, path);
+	for (const path of await ownerFiles(socket)) {
+		// The legacy copy may sit in a directory the user's primary group can write (senpi#6871 review #2 L2): a member
+		// could have planted a symlink at the staged name. Remove whatever is there and create the file exclusively, which
+		// never follows a link; a name re-planted in between fails the write instead of redirecting it. `rename` replaces
+		// the final name itself, never what it points at.
+		const staged = `${path}.${process.pid}.tmp`;
+		await rm(staged, { force: true });
+		await writeFile(staged, `${JSON.stringify(token)}\n`, { mode: 0o600, flag: "wx" });
+		await rename(staged, path);
+	}
 }
 
 /**
@@ -105,7 +136,7 @@ export async function claimEndpoint(
 		await withEndpointFence(socket, claim);
 		return;
 	}
-	await mkdir(dirname(ownerFile(socket)), { recursive: true });
+	ensurePrivateDirectory(dirname(ownerFile(socket)));
 	await claim();
 }
 
@@ -162,7 +193,7 @@ export async function unlinkOwnedEndpoint(
 		}
 		await hooks?.afterValidate?.();
 		await unlinkOwnedSocket(socket, identity, log);
-		if (current) await rm(ownerFile(socket), { force: true });
+		if (current) for (const path of await ownerFiles(socket)) await rm(path, { force: true });
 	});
 }
 
