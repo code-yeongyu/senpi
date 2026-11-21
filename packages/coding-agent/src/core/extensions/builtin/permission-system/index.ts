@@ -381,6 +381,12 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				callPreset === "auto"
 					? await decideAuto(event.toolName, event.input, permissionRequest, ctx.cwd)
 					: undefined;
+			const pendingAdmission = Promise.withResolvers<void>();
+			const unsubscribePending = pi.events.on("permission_asked", () => {
+				if (activeService.list().some((pendingRequest) => pendingRequest.id === request.id)) {
+					pendingAdmission.resolve();
+				}
+			});
 			const askResultPromise = activeService
 				.ask(request, {
 					autoApproveAsk: permissionRequest.autoApproveAsk ?? false,
@@ -393,6 +399,12 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 					() => ({ ok: true as const }),
 					(error: unknown) => ({ ok: false as const, error }),
 				);
+			// Path identity preparation can yield before ask registers the pending request.
+			try {
+				await Promise.race([askResultPromise, pendingAdmission.promise]);
+			} finally {
+				unsubscribePending();
+			}
 			const isPending = activeService.list().some((pendingRequest) => pendingRequest.id === request.id);
 
 			if (!isPending) {
