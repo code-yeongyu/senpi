@@ -19,6 +19,13 @@ const BARE_WORD = /[^\s"'`;|&<>()]+/g;
 const EMBEDDED_PATH =
 	/(?<=^|[\s"'`=(),;|&<>:[{])(?:-[A-Za-z]+|@)?((?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE)(?=$|[\\/"'])|[A-Za-z]:[\\/]|\/)([^\s;|&<>()`,{}]*)/g;
 
+/**
+ * A network URL (`https://host/a/b`, `ssh://host/x`) names no local path, but its `//authority/path` tail reads as an
+ * anchored path after the `:`, which Windows resolves to the UNC share `\\host\a\b` and probes synchronously for
+ * minutes (senpi#3404). A scheme of two or more letters keeps a drive (`C://`) out; `file:` URLs do name local paths.
+ */
+const NETWORK_URL = /\b(?![Ff][Ii][Ll][Ee]:)[A-Za-z][A-Za-z0-9+.-]+:\/\/[^\s"'`;|&<>()]*/g;
+
 function withPlatformSeparators(path: string): string {
 	return sep === "/" ? path.replaceAll("\\", "/") : path.replaceAll("/", "\\");
 }
@@ -86,9 +93,10 @@ function cdTarget(segment: string, cwd: string): string | undefined {
  * A path the command assembles at run time is not seen.
  */
 export function commandPaths(command: string, cwd: string): string[] {
-	const paths = new Set(embeddedPaths(command));
+	const text = command.replace(NETWORK_URL, " ");
+	const paths = new Set(embeddedPaths(text));
 	let current = cwd;
-	for (const segment of segments(command)) {
+	for (const segment of segments(text)) {
 		const moved = cdTarget(segment, current);
 		if (moved !== undefined) {
 			current = moved;
