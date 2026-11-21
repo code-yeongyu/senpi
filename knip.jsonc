@@ -1480,6 +1480,7 @@
         "benchmark/session/allocation-profile.ts",
         "benchmark/session/loaded-footprint.ts",
         "scripts/generate-telemetry-docs.ts",
+        "scripts/pack-conformance-archive.ts",
       ],
       "includeEntryExports": true,
       "ignoreFiles": [

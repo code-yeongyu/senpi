@@ -42,7 +42,7 @@
 		"node": ">=22.19.0"
 	},
 	"devDependencies": {
-		"@types/node": "26.6.2",
+		"@types/node": "26.6.6",
 		"vitest": "5.0.1"
 	},
 	"private": true

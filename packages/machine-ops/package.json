@@ -52,6 +52,6 @@
 		"@earendil-works/pi-realm-registry": "^2026.11.21-2"
 	},
 	"devDependencies": {
-		"@types/node": "26.6.2"
+		"@types/node": "26.6.6"
 	}
 }

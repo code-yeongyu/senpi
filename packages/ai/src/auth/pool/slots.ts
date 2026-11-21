@@ -72,9 +72,9 @@ const UNSAFE_DISPLAY_CHARACTERS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 export const DISPLAY_NAME_MAX_COLUMNS = 32;
 
 /** Code points that advance a cell without painting anything a user can see. */
-const BLANK_DISPLAY_CHARACTER = /^[\s\p{M}\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]$/u;
+const BLANK_DISPLAY_CHARACTER = /^[\s\p{M}\u115f\u1160\u2800\u3164\uffa0]$/u;
 /** Invisible code points that are not whitespace, so trimming never removes them. */
-const INVISIBLE_DISPLAY_CHARACTER = /^[\p{M}\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]$/u;
+const INVISIBLE_DISPLAY_CHARACTER = /^[\p{M}\u115f\u1160\u2800\u3164\uffa0]$/u;
 const WIDE_DISPLAY_CHARACTER =
 	/^(?:[\u1100-\u115f\u2329\u232a\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff00-\uff60\uffe0-\uffe6]|[\u{1f300}-\u{1faff}]|[\u{20000}-\u{3fffd}])$/u;
 

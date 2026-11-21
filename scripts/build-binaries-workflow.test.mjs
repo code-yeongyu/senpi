@@ -14,7 +14,7 @@ const codingAgentPackage = JSON.parse(
 
 describe("binary release workflow", () => {
 	it("pins a stable Bun release with downloadable cross-compile executables", () => {
-		assert.match(workflow, /bun-version:\s*['"]1\.4\.4['"]/);
+		assert.match(workflow, /bun-version:\s*['"]1\.4\.5['"]/);
 		assert.doesNotMatch(workflow, /bun-version:\s*canary/);
 	});
 

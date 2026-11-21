@@ -404,6 +404,9 @@ function createClient(
 	if (model.baseUrl) {
 		httpOptions.baseUrl = model.baseUrl;
 		httpOptions.apiVersion = ""; // baseUrl already includes version path, don't append
+	} else {
+		// @google/genai 3 defaults the Gemini API to v1, which lacks the -latest aliases, preview models and caches.
+		httpOptions.apiVersion = "v1beta";
 	}
 	const headers = providerHeadersToRecord({ "User-Agent": getPiUserAgent(), ...model.headers, ...optionsHeaders });
 	if (headers) {

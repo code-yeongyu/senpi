@@ -6,7 +6,7 @@
  "platform": "darwin-arm64",
  "runtimes": {
   "harness": "node@26.12.0",
-  "child": "bun@1.4.4"
+  "child": "bun@1.4.5"
  },
  "hashes": {
   "harness": "sha256:7e0de6f104f2b0a7e7606b4742381e1af7e89729d84cf0b7ed38e2d64e30411d",

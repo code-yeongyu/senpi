@@ -9,7 +9,7 @@ build = "build.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-libc = "=0.2.189"
+libc = "=0.2.191"
 napi.workspace = true
 napi-derive.workspace = true
 portable-pty.workspace = true
