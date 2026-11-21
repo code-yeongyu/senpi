@@ -4,8 +4,9 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ToolChildClient } from "./client.ts";
+import { LaunchLog } from "./descendants.ts";
 import { ToolChildJobError } from "./entry.ts";
 import { containedModulePath, TOOL_CHILD_MODULE_ROOTS_ENV } from "./module-job.ts";
 
@@ -106,14 +107,41 @@ describe.skipIf(process.platform === "win32")("module job in the real tool child
 	}, 60_000);
 });
 
+/**
+ * Holds every `launch` record after the first out of launches.jsonl until the client starts closing (senpi#5026). The log
+ * is written off the ack path, so a job's result can reach the caller before that job's launch record lands; a test that
+ * reads the log has to await the writes, not race them.
+ */
+function holdLaterLaunchRecords(): void {
+	const record = LaunchLog.prototype.record;
+	const close = ToolChildClient.prototype.close;
+	const held: Array<() => void> = [];
+	let launches = 0;
+	vi.spyOn(LaunchLog.prototype, "record").mockImplementation(function (this: LaunchLog, entry) {
+		if (entry.type !== "launch" || ++launches === 1) return record.call(this, entry);
+		return new Promise<void>((resolveWrite) => held.push(() => resolveWrite(record.call(this, entry))));
+	});
+	vi.spyOn(ToolChildClient.prototype, "close").mockImplementation(function (this: ToolChildClient) {
+		for (const write of held.splice(0)) write();
+		return close.call(this);
+	});
+	onTestFinished(() => {
+		vi.restoreAllMocks();
+	});
+}
+
 describe("launch ids across a generation's workers", () => {
 	it("gives each job's worker its own ids: two jobs that each launch once leave two distinct ledger entries", async () => {
+		holdLaterLaunchRecords();
 		let dir = "";
 		const instance = await startChild([extensionDir], (created) => {
 			dir = created;
 		});
 		for (let job = 0; job < 2; job++)
 			expect(await instance.run("module", { modulePath, export: "launchTrue", args: null })).toEqual({ ok: true });
+		// The launch log is written off the ack path: close() resolves once the generation's teardown has settled every
+		// log write, so both launch records are on disk before the read (senpi#5026).
+		await instance.close();
 		const launches = (await readFile(join(dir, "launches.jsonl"), "utf8"))
 			.trim()
 			.split("\n")
