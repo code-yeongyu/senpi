@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { concurrentJobScope, retireScope, writeScopeOwner } from "./test-temp-scope-owner.mjs";
 
 export function tempEntries(directory) {
 	const handle = opendirSync(directory);
@@ -32,10 +33,13 @@ export function repoTempName(name) {
 		name === "tui" || /^[A-Za-z0-9_-]{21}$/.test(name);
 }
 
-export function reportTempLeaks(directory, before, matching = () => true) {
+export function reportTempLeaks(directory, before, matching = () => true, concurrent = () => false) {
 	const known = new Set(before);
 	const fresh = tempEntries(directory).filter((name) => !known.has(name));
-	const leaked = fresh.filter(matching);
+	const foreign = new Set(fresh.filter((name) => matching(name) && concurrent(join(directory, name))));
+	const leaked = fresh.filter((name) => matching(name) && !foreign.has(name));
+	for (const name of foreign)
+		console.log(`[test-temp] concurrent job scope, not this job's: ${JSON.stringify(join(directory, name))}`);
 	for (const name of fresh.filter((entry) => !matching(entry)))
 		console.log(`[test-temp] unrecognized new system entry: ${JSON.stringify(join(directory, name))}`);
 	console.log(
@@ -107,6 +111,7 @@ if (
 			]),
 		);
 		try {
+			if (scope) writeScopeOwner(scope, registry, process.env.SENPI_TEST_TEMP_REGISTRY);
 			// npm enables Node's default compile cache before launching the wrapped test, and jiti
 			// (the Node extension loader) writes its default cache to <TMPDIR>/jiti (#4916).
 			// Both are allocated by job setup and retired with the owned parent, not exempted.
@@ -133,7 +138,7 @@ if (
 				);
 			}
 		} catch (error) {
-			if (scope) rmSync(scope, { recursive: true, force: true, maxRetries: 3 });
+			if (scope) retireScope(scope);
 			throw error;
 		}
 	} else {
@@ -169,7 +174,8 @@ if (
 			let leaked = reportTempLeaks(snapshot.directory, snapshot.entries);
 			for (const system of snapshot.system ?? []) {
 				console.log(`[test-temp] checking system temp: ${JSON.stringify(system.directory)}`);
-				leaked += reportTempLeaks(system.directory, system.entries, repoTempName);
+				leaked += reportTempLeaks(system.directory, system.entries, repoTempName,
+					(path) => concurrentJobScope(path, snapshot));
 			}
 			let retired = 0;
 			for (const root of roots) {
@@ -190,7 +196,7 @@ if (
 			process.exitCode = leaked === 0 && retired === 0 ? 0 : 1;
 		} finally {
 			if (snapshot.scope) {
-				rmSync(snapshot.scope, { recursive: true, force: true, maxRetries: 3 });
+				retireScope(snapshot.scope);
 				// Post-job actions must not recreate the retired parent through inherited temp vars.
 				appendFileSync(
 					process.env.GITHUB_ENV,
