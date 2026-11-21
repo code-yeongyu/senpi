@@ -31,6 +31,13 @@ import { planCiEvidence } from "./release-test-gate.mjs";
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 const DAY_MS = 86_400_000;
 
+/** What the release job does with each non-red CI plan (awaitCiEvidence in release-test-gate.mjs). */
+const CI_NOTE_SUFFIX = {
+	reuse: "",
+	wait: "; the release job waits for it",
+	superseded: "; the release job moves onto the newer main commit, or refuses when the release is pinned",
+};
+
 /** Each catalog refresh branch and its workflow's MAX_STALE_DAYS (model-catalog-refresh.yml, opengateway-catalog-refresh.yml). */
 const CATALOG_REFRESH_BRANCHES = [
 	{ branch: "automation/model-catalog-refresh", maxStaleDays: 3 },
@@ -113,7 +120,7 @@ export function runPreflight(deps) {
 	if (!deps.forceTests && FULL_SHA.test(baseSha)) {
 		const plan = planCiEvidence({ sha: baseSha, checkRuns: deps.checkRuns(baseSha) });
 		if (plan.action === "stop") refusals.push(`CI failed on ${baseSha.slice(0, 12)}: ${plan.reason}; fix main before releasing`);
-		else notes.push(`test gate: ${plan.reason}${plan.action === "reuse" ? "" : "; the release job waits for it"}`);
+		else notes.push(`test gate: ${plan.reason}${CI_NOTE_SUFFIX[plan.action]}`);
 	}
 	return { baseSha, version, refusals, notes };
 }

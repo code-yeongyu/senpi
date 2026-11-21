@@ -66,6 +66,9 @@ describe("runPreflight", () => {
 		const unreadable = runPreflight(green({ checkRuns: () => null }));
 		assert.deepEqual(unreadable.refusals, []);
 		assert.match(unreadable.notes.join("\n"), /the CI lookup for a{12} failed; the release job waits for it/);
+		const superseded = runPreflight(green({ checkRuns: () => checkRun("cancelled") }));
+		assert.deepEqual(superseded.refusals, []);
+		assert.match(superseded.notes.join("\n"), /moves onto the newer main commit, or refuses when the release is pinned/);
 		assert.deepEqual(runPreflight(green({ forceTests: true, checkRuns: () => assert.fail("read CI under force_tests") })).refusals, []);
 	});
 
