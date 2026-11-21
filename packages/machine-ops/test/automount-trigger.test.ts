@@ -1,56 +1,24 @@
-import { vi } from "vitest";
-
-const state = vi.hoisted(() => ({
-	trigger: "",
-	fifo: "",
-	opened: [] as Promise<unknown>[],
-	realpathCalls: [] as string[],
-}));
-
-// Inside the fake trigger, `realpath` behaves like Bun's on a macOS automount that does not answer: it opens the path and
-// the open never returns. Opening a FIFO that has no writer blocks a real thread of the shared filesystem pool the same way.
-vi.mock("node:fs/promises", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("node:fs/promises")>();
-	return {
-		...actual,
-		realpath: async (...args: Parameters<typeof actual.realpath>) => {
-			const path = String(args[0]);
-			state.realpathCalls.push(path);
-			if (state.trigger && (path === state.trigger || path.startsWith(`${state.trigger}/`))) {
-				const opened = actual.open(state.fifo, "r");
-				state.opened.push(opened);
-				await opened;
-				throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
-			}
-			return actual.realpath(...args);
-		},
-	};
-});
-
-vi.mock("../src/files/mount-table.ts", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("../src/files/mount-table.ts")>();
-	return {
-		...actual,
-		readMountTable: async () => [
-			{ mountPoint: "/", type: "rootfs" },
-			{ mountPoint: state.trigger, type: "autofs" },
-			{ mountPoint: `${state.trigger}/mounted`, type: "nfs" },
-		],
-	};
-});
-
-import { execFileSync } from "node:child_process";
-import { closeSync, constants, mkdirSync, mkdtempSync, openSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { unmountedAutomountPath } from "../src/files/automount-trigger.ts";
-import { parseDarwinMountTable, parseLinuxMountInfo } from "../src/files/mount-table.ts";
+import {
+	answerAutomountTriggersFrom,
+	createAutomountTriggerLookup,
+	type MountView,
+	unmountedAutomountPath,
+} from "../src/files/automount-trigger.ts";
+import { type MountEntry, parseDarwinMountTable, parseLinuxMountInfo } from "../src/files/mount-table.ts";
 import { withFileMutationQueue } from "../src/files/mutation-queue.ts";
 import { canonicalizeFilesystemPath } from "../src/policy/filesystem.ts";
 
 const isWindows = process.platform === "win32";
+
+const viewOf = (mounts: readonly MountEntry[], caseInsensitive = false): MountView => ({
+	mounts,
+	aliases: new Map(),
+	caseInsensitive,
+});
 
 describe("mount table parsing", () => {
 	it("reads mount points and types from /proc/self/mountinfo, unescaping octal", () => {
@@ -87,13 +55,14 @@ describe("mount table parsing", () => {
 });
 
 describe("unmountedAutomountPath", () => {
-	const view = {
+	const view: MountView = {
 		mounts: [
 			{ mountPoint: "/", type: "apfs" },
 			{ mountPoint: "/System/Volumes/Data/home", type: "autofs" },
 			{ mountPoint: "/System/Volumes/Data/home/alice", type: "nfs" },
 		],
 		aliases: new Map([["/home", "/System/Volumes/Data/home"]]),
+		caseInsensitive: false,
 	};
 
 	it("maps a path through the root alias onto the trigger it reaches", () => {
@@ -106,67 +75,184 @@ describe("unmountedAutomountPath", () => {
 		expect(unmountedAutomountPath("/homework/x", view)).toBeUndefined();
 		expect(unmountedAutomountPath("/Users/me/x", view)).toBeUndefined();
 	});
+
+	it("treats a filesystem stacked on the trigger's own mount point as mounted, whichever entry the table lists first", () => {
+		// given: an x-systemd.automount share and the gpt-auto /boot, unmounted and then mounted over their autofs entry
+		const autofs = [
+			"22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw",
+			"40 22 0:40 / /mnt/nas rw,relatime shared:20 - autofs systemd-1 rw,fd=45,direct",
+			"41 22 0:41 / /boot rw,relatime shared:21 - autofs systemd-1 rw,fd=46,direct",
+		];
+		const mounted = [
+			"90 40 0:50 / /mnt/nas rw,relatime shared:30 - nfs4 server:/export rw",
+			"91 41 259:1 / /boot rw,relatime shared:31 - vfat /dev/nvme0n1p1 rw",
+		];
+		const linux = (lines: string[]): MountView => viewOf(parseLinuxMountInfo(lines.join("\n")));
+
+		// when / then
+		expect(unmountedAutomountPath("/mnt/nas/link/secret", linux(autofs))).toBe("/mnt/nas/link/secret");
+		expect(unmountedAutomountPath("/mnt/nas/link/secret", linux([...autofs, ...mounted]))).toBeUndefined();
+		expect(unmountedAutomountPath("/boot/efi/x", linux([...autofs, ...mounted]))).toBeUndefined();
+		expect(unmountedAutomountPath("/mnt/nas/link/secret", linux([...mounted, ...autofs]))).toBeUndefined();
+	});
+
+	it("treats a macOS direct-map share mounted over its autofs entry as mounted", () => {
+		// given
+		const trigger = "map auto_nas on /Volumes/nas (autofs, automounted, nobrowse)";
+		const share = "server:/export on /Volumes/nas (nfs, nodev, nosuid, automounted, nobrowse)";
+		const darwin = (lines: string[]): MountView => viewOf(parseDarwinMountTable(lines.join("\n")), true);
+
+		// when / then
+		expect(unmountedAutomountPath("/Volumes/nas/link/secret", darwin([trigger]))).toBe("/Volumes/nas/link/secret");
+		expect(unmountedAutomountPath("/Volumes/nas/link/secret", darwin([trigger, share]))).toBeUndefined();
+	});
+
+	it("matches mount points and root aliases regardless of case on a case-insensitive volume", () => {
+		// given
+		const folded: MountView = { ...view, caseInsensitive: true };
+
+		// when / then
+		expect(unmountedAutomountPath("/HOME/someone/x", folded)).toBe("/System/Volumes/Data/home/someone/x");
+		expect(unmountedAutomountPath("/System/Volumes/Data/HOME/someone/x", folded)).toBe(
+			"/System/Volumes/Data/home/someone/x",
+		);
+		expect(unmountedAutomountPath("/home/ALICE/notes.md", folded)).toBeUndefined();
+		expect(unmountedAutomountPath("/HOME/someone/x", view)).toBeUndefined();
+	});
 });
 
-describe.skipIf(isWindows)("paths under an automount trigger that does not answer", () => {
+describe("createAutomountTriggerLookup", () => {
+	const unmounted = viewOf([
+		{ mountPoint: "/", type: "ext4" },
+		{ mountPoint: "/home", type: "autofs" },
+	]);
+	const aliceMounted = viewOf([...unmounted.mounts, { mountPoint: "/home/alice", type: "nfs" }]);
+
+	function scriptedReader(views: readonly MountView[]): { read: () => Promise<MountView>; reads: () => number } {
+		let reads = 0;
+		return {
+			read: async () => views[Math.min(reads++, views.length - 1)] ?? unmounted,
+			reads: () => reads,
+		};
+	}
+
+	it("re-reads the mount view before a trigger answer, so a home that mounted since is resolved normally", async () => {
+		// given
+		const reader = scriptedReader([unmounted, aliceMounted]);
+		const lookup = createAutomountTriggerLookup(reader.read);
+
+		// when
+		const whileUnmounted = await lookup("/home/alice/link/x");
+		const afterMount = await lookup("/home/alice/link/x");
+
+		// then
+		expect(whileUnmounted).toBe("/home/alice/link/x");
+		expect(afterMount).toBeUndefined();
+		expect(reader.reads()).toBe(2);
+	});
+
+	it("classifies other paths from the cached view, and shares one re-read among concurrent trigger answers", async () => {
+		// given
+		const reader = scriptedReader([unmounted]);
+		const lookup = createAutomountTriggerLookup(reader.read);
+		await lookup("/srv/x");
+
+		// when
+		await lookup("/srv/y");
+		const readsForOtherPaths = reader.reads();
+		const answers = await Promise.all(Array.from({ length: 8 }, (_, index) => lookup(`/home/user-${index}/x`)));
+
+		// then
+		expect(readsForOtherPaths).toBe(1);
+		expect(answers).toEqual(Array.from({ length: 8 }, (_, index) => `/home/user-${index}/x`));
+		expect(reader.reads()).toBe(2);
+	});
+});
+
+// A temporary directory stands in for the trigger. Each home under it holds `link`, a symlink to a directory outside: an
+// answer that still names `link` was given from the path text, while `realpath` would have followed it.
+describe.skipIf(isWindows)("resolvers on paths under an automount trigger that has not mounted", () => {
+	const mountedLater: MountEntry[] = [];
 	let root = "";
-	let note = "";
+	let trigger = "";
+	let elsewhere = "";
+	let restore = (): void => {};
+
+	function homeWithLink(name: string): string {
+		const home = join(trigger, name);
+		mkdirSync(home);
+		symlinkSync(elsewhere, join(home, "link"));
+		return home;
+	}
 
 	beforeAll(() => {
 		root = mkdtempSync(join(realpathSync(tmpdir()), "automount-trigger-"));
-		state.trigger = join(root, "trigger");
-		state.fifo = join(root, "unanswered");
-		mkdirSync(state.trigger);
-		execFileSync("mkfifo", [state.fifo]);
-		note = join(root, "note.txt");
-		writeFileSync(note, "still readable");
+		trigger = join(root, "trigger");
+		elsewhere = join(root, "elsewhere");
+		mkdirSync(trigger);
+		mkdirSync(elsewhere);
+		restore = answerAutomountTriggersFrom(async () =>
+			viewOf([{ mountPoint: "/", type: "ext4" }, { mountPoint: trigger, type: "autofs" }, ...mountedLater]),
+		);
 	});
 
-	afterAll(async () => {
-		// While a writer end is open, every parked open of the FIFO completes and every queued one completes at once, so the
-		// writer stays open until all of them have settled and returned their pool threads.
-		let writer: number | undefined;
-		try {
-			writer = openSync(state.fifo, constants.O_WRONLY | constants.O_NONBLOCK);
-		} catch {
-			// ENXIO: no open is parked, nothing to release.
-		}
-		for (const opened of await Promise.allSettled(state.opened)) {
-			if (opened.status === "fulfilled") await (opened.value as { close(): Promise<void> }).close();
-		}
-		if (writer !== undefined) closeSync(writer);
+	afterAll(() => {
+		restore();
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	it("never hands them to realpath, so resolving many of them leaves the filesystem pool free", async () => {
+	it("answers the policy from the path text instead of following the path's symlinks", async () => {
 		// given
-		const targets = Array.from({ length: 32 }, (_, index) =>
-			join(state.trigger, `user-${index}`, "work", "file.txt"),
-		);
+		const home = homeWithLink("alice");
+		const targets = Array.from({ length: 32 }, (_, index) => join(home, "link", `file-${index}.txt`));
 
 		// when
 		const canonical = await Promise.all(targets.map((target) => canonicalizeFilesystemPath(target)));
-		const unrelatedRead = await Promise.race([
-			readFile(note, "utf8"),
-			new Promise<string>((resolveRace) => setTimeout(() => resolveRace("pool exhausted"), 5000).unref()),
-		]);
 
 		// then
-		expect(unrelatedRead).toBe("still readable");
 		expect(canonical).toEqual(targets);
-		expect(state.realpathCalls.filter((path) => path.startsWith(state.trigger))).toEqual([]);
-	}, 30_000);
+	});
 
-	it("keys a mutation of such a path without resolving it", async () => {
+	it("keys a mutation of such a path from its text, apart from the file its symlink names", async () => {
 		// given
-		const target = join(state.trigger, "someone", "draft.md");
-		const before = state.realpathCalls.length;
+		const home = homeWithLink("carol");
+		writeFileSync(join(elsewhere, "draft.md"), "draft");
+		let releaseHeld = (): void => {};
+		const held = new Promise<void>((resolveHeld) => {
+			releaseHeld = resolveHeld;
+		});
+		let heldStarted = (): void => {};
+		const started = new Promise<void>((resolveStarted) => {
+			heldStarted = resolveStarted;
+		});
+		const throughTrigger = withFileMutationQueue(join(home, "link", "draft.md"), async () => {
+			heldStarted();
+			await held;
+			return "through trigger";
+		});
+		await started;
 
-		// when
-		const result = await withFileMutationQueue(target, async () => "ran");
+		// when: the same file by its real path runs while the trigger spelling still holds its slot
+		const direct = await withFileMutationQueue(join(elsewhere, "draft.md"), async () => "direct");
+		releaseHeld();
 
 		// then
-		expect(result).toBe("ran");
-		expect(state.realpathCalls.slice(before)).toEqual([]);
+		expect(direct).toBe("direct");
+		expect(await throughTrigger).toBe("through trigger");
+	});
+
+	it("resolves symlinks for the policy again as soon as the home has mounted, without waiting for the view to age", async () => {
+		// given: a home answered as text while it has not mounted
+		const home = homeWithLink("bob");
+		const target = join(home, "link", "secret.txt");
+		expect(await canonicalizeFilesystemPath(target)).toBe(target);
+
+		// when: the automounter mounts the home
+		mountedLater.push({ mountPoint: home, type: "nfs" });
+		const canonical = await canonicalizeFilesystemPath(target);
+		mountedLater.length = 0;
+
+		// then
+		expect(canonical).toBe(join(elsewhere, "secret.txt"));
 	});
 });
