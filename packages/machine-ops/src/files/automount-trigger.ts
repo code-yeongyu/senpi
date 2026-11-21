@@ -1,5 +1,6 @@
 import { readdir, readlink } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { type AutomountRealpath, type AutomountRealpathOptions, realpathOutOfProcess } from "./automount-realpath.ts";
 import { type MountEntry, readMountTable } from "./mount-table.ts";
 
 const MOUNT_VIEW_MAX_AGE_MS = 60_000;
@@ -113,18 +114,30 @@ export function createAutomountTriggerLookup(readView: () => Promise<MountView>)
 	};
 }
 
-let lookup = createAutomountTriggerLookup(readMountView);
+let active: { readonly lookup: AutomountTriggerLookup; readonly resolve: AutomountRealpathOptions } = {
+	lookup: createAutomountTriggerLookup(readMountView),
+	resolve: {},
+};
 
 /**
- * Make {@link automountTriggerPath} answer from `readView` instead of the live mount table, until the returned function
- * restores it. Tests use it to stand a temporary directory in for a trigger; the live table cannot be written.
+ * Make {@link automountTriggerPath} answer from `readView` instead of the live mount table, and
+ * {@link realpathUnderAutomount} resolve with `resolve`, until the returned function restores both. Tests use it to
+ * stand a temporary directory in for a trigger; the live table cannot be written.
  */
-export function answerAutomountTriggersFrom(readView: () => Promise<MountView>): () => void {
-	const previous = lookup;
-	lookup = createAutomountTriggerLookup(readView);
+export function answerAutomountTriggersFrom(
+	readView: () => Promise<MountView>,
+	resolve: AutomountRealpathOptions = {},
+): () => void {
+	const previous = active;
+	active = { lookup: createAutomountTriggerLookup(readView), resolve };
 	return () => {
-		lookup = previous;
+		active = previous;
 	};
+}
+
+/** Where a path under an automount trigger really leads, resolved outside this process ({@link realpathOutOfProcess}). */
+export function realpathUnderAutomount(path: string): Promise<AutomountRealpath> {
+	return realpathOutOfProcess(path, active.resolve);
 }
 
 /**
@@ -137,5 +150,5 @@ export function answerAutomountTriggersFrom(readView: () => Promise<MountView>):
  * answer ({@link createAutomountTriggerLookup}).
  */
 export function automountTriggerPath(path: string): Promise<string | undefined> {
-	return lookup(path);
+	return active.lookup(path);
 }

@@ -11,6 +11,7 @@ import {
 	automountTriggerPath,
 	MachineOpError,
 	RESOLUTION_TIMED_OUT,
+	realpathUnderAutomount,
 	withResolutionDeadline,
 } from "@code-yeongyu/senpi-machine-ops";
 
@@ -29,8 +30,12 @@ const linkKind = (path: string): Promise<Lookup> =>
 	bounded(lstat(path).then((info) => (info.isSymbolicLink() ? "link" : "plain")));
 
 async function realPathUnder(base: string, raw: string): Promise<string | undefined> {
-	const triggerPath = await automountTriggerPath(resolve(base, raw));
-	if (triggerPath !== undefined) return triggerPath;
+	if ((await automountTriggerPath(resolve(base, raw))) !== undefined) {
+		// Never walked in this process (senpi#7157). The child hands the unnormalized path to realpath, so the kernel applies
+		// ".." after each symlink just as the walk below does; an automount that does not answer leaves no real target.
+		const answer = await realpathUnderAutomount(isAbsolute(raw) ? raw : `${base}${sep}${raw}`);
+		return answer.kind === "resolved" ? answer.path : undefined;
+	}
 	const root = isAbsolute(raw) ? parse(raw).root : base;
 	const start = await bounded(realpath(root));
 	if (start.kind !== "ok") return undefined;

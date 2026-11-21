@@ -1,7 +1,10 @@
+import type { ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { access, lstat, open, readdir, readlink, realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	answerAutomountTriggersFrom,
 	createAutomountTriggerLookup,
@@ -10,7 +13,13 @@ import {
 } from "../src/files/automount-trigger.ts";
 import { type MountEntry, parseDarwinMountTable, parseLinuxMountInfo } from "../src/files/mount-table.ts";
 import { withFileMutationQueue } from "../src/files/mutation-queue.ts";
+import { DEFAULT_LIMITS } from "../src/limits.ts";
 import { canonicalizeFilesystemPath } from "../src/policy/filesystem.ts";
+import { checkPath } from "../src/policy/gate.ts";
+import type { OpContext } from "../src/types.ts";
+
+// Observation only: every in-process filesystem call stays real, and the tests read which paths reached one.
+vi.mock("node:fs/promises", { spy: true });
 
 const isWindows = process.platform === "win32";
 
@@ -169,31 +178,54 @@ describe("createAutomountTriggerLookup", () => {
 	});
 });
 
-// A temporary directory stands in for the trigger. Each home under it holds `link`, a symlink to a directory outside: an
-// answer that still names `link` was given from the path text, while `realpath` would have followed it.
+// A temporary directory stands in for the trigger, which the automounter "mounts" the moment anything outside this
+// process opens it. Each home under it holds `link`, a symlink to a directory the policy denies.
 describe.skipIf(isWindows)("resolvers on paths under an automount trigger that has not mounted", () => {
 	const mountedLater: MountEntry[] = [];
 	let root = "";
 	let trigger = "";
-	let elsewhere = "";
+	let denied = "";
 	let restore = (): void => {};
+	const readView = async (): Promise<MountView> =>
+		viewOf([{ mountPoint: "/", type: "ext4" }, { mountPoint: trigger, type: "autofs" }, ...mountedLater]);
 
 	function homeWithLink(name: string): string {
 		const home = join(trigger, name);
 		mkdirSync(home);
-		symlinkSync(elsewhere, join(home, "link"));
+		symlinkSync(denied, join(home, "link"));
 		return home;
 	}
+
+	function inProcessCallsUnder(dir: string): string[] {
+		return [access, lstat, open, readdir, readlink, realpath, stat]
+			.flatMap((fn) => vi.mocked(fn).mock.calls.map((call) => String(call[0])))
+			.filter((path) => path === dir || path.startsWith(`${dir}/`));
+	}
+
+	const ctx = (): OpContext => ({
+		scope: { id: "automount-test" },
+		principal: { kind: "local-session", id: "automount-test" },
+		signal: new AbortController().signal,
+		limits: DEFAULT_LIMITS,
+		policy: {
+			filesystem: async ({ canonicalPath }) =>
+				canonicalPath === denied || canonicalPath.startsWith(`${denied}/`)
+					? { allow: false, reason: "denied directory" }
+					: { allow: true },
+		},
+	});
 
 	beforeAll(() => {
 		root = mkdtempSync(join(realpathSync(tmpdir()), "automount-trigger-"));
 		trigger = join(root, "trigger");
-		elsewhere = join(root, "elsewhere");
+		denied = join(root, "denied");
 		mkdirSync(trigger);
-		mkdirSync(elsewhere);
-		restore = answerAutomountTriggersFrom(async () =>
-			viewOf([{ mountPoint: "/", type: "ext4" }, { mountPoint: trigger, type: "autofs" }, ...mountedLater]),
-		);
+		mkdirSync(denied);
+		restore = answerAutomountTriggersFrom(readView);
+	});
+
+	beforeEach(() => {
+		vi.clearAllMocks();
 	});
 
 	afterAll(() => {
@@ -201,22 +233,53 @@ describe.skipIf(isWindows)("resolvers on paths under an automount trigger that h
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	it("answers the policy from the path text instead of following the path's symlinks", async () => {
+	it("lets the policy see where a symlink on a share that has not mounted yet leads, resolved outside this process", async () => {
 		// given
 		const home = homeWithLink("alice");
-		const targets = Array.from({ length: 32 }, (_, index) => join(home, "link", `file-${index}.txt`));
+		const target = join(home, "link", "secret.txt");
 
 		// when
-		const canonical = await Promise.all(targets.map((target) => canonicalizeFilesystemPath(target)));
+		const decision = checkPath(target, "read", "files.read", ctx());
 
 		// then
-		expect(canonical).toEqual(targets);
+		await expect(decision).rejects.toMatchObject({ code: "policy_denied", message: "denied directory" });
+		expect(await canonicalizeFilesystemPath(target)).toBe(join(denied, "secret.txt"));
+		expect(inProcessCallsUnder(trigger)).toEqual([]);
+	});
+
+	it("refuses a path whose automounter never answers, killing the resolver at its deadline", async () => {
+		// given
+		const home = homeWithLink("dave");
+		const target = join(home, "link", "secret.txt");
+		let exited: Promise<unknown[]> | undefined;
+		const restoreWedged = answerAutomountTriggersFrom(readView, {
+			deadlineMs: 300,
+			command: () => ({ command: process.execPath, args: ["-e", "setInterval(() => {}, 1 << 30)"] }),
+			onSpawn: (child: ChildProcess) => {
+				exited = once(child, "exit");
+			},
+		});
+
+		// when
+		const canonical = canonicalizeFilesystemPath(target);
+
+		// then
+		try {
+			await expect(canonical).rejects.toMatchObject({
+				code: "policy_denied",
+				message: expect.stringContaining("automount that did not answer"),
+			});
+			expect((await exited)?.[1]).toBe("SIGKILL");
+			expect(inProcessCallsUnder(trigger)).toEqual([]);
+		} finally {
+			restoreWedged();
+		}
 	});
 
 	it("keys a mutation of such a path from its text, apart from the file its symlink names", async () => {
 		// given
 		const home = homeWithLink("carol");
-		writeFileSync(join(elsewhere, "draft.md"), "draft");
+		writeFileSync(join(denied, "draft.md"), "draft");
 		let releaseHeld = (): void => {};
 		const held = new Promise<void>((resolveHeld) => {
 			releaseHeld = resolveHeld;
@@ -233,19 +296,21 @@ describe.skipIf(isWindows)("resolvers on paths under an automount trigger that h
 		await started;
 
 		// when: the same file by its real path runs while the trigger spelling still holds its slot
-		const direct = await withFileMutationQueue(join(elsewhere, "draft.md"), async () => "direct");
+		const direct = await withFileMutationQueue(join(denied, "draft.md"), async () => "direct");
 		releaseHeld();
 
 		// then
 		expect(direct).toBe("direct");
 		expect(await throughTrigger).toBe("through trigger");
+		expect(inProcessCallsUnder(trigger)).toEqual([]);
 	});
 
-	it("resolves symlinks for the policy again as soon as the home has mounted, without waiting for the view to age", async () => {
-		// given: a home answered as text while it has not mounted
+	it("resolves a home in this process as soon as it has mounted, without waiting for the view to age", async () => {
+		// given: the view is read while the home has not mounted
 		const home = homeWithLink("bob");
 		const target = join(home, "link", "secret.txt");
-		expect(await canonicalizeFilesystemPath(target)).toBe(target);
+		await canonicalizeFilesystemPath(target);
+		vi.clearAllMocks();
 
 		// when: the automounter mounts the home
 		mountedLater.push({ mountPoint: home, type: "nfs" });
@@ -253,6 +318,7 @@ describe.skipIf(isWindows)("resolvers on paths under an automount trigger that h
 		mountedLater.length = 0;
 
 		// then
-		expect(canonical).toBe(join(elsewhere, "secret.txt"));
+		expect(canonical).toBe(join(denied, "secret.txt"));
+		expect(inProcessCallsUnder(home)).toContain(target);
 	});
 });

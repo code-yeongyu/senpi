@@ -16,7 +16,9 @@ import { realpathWithoutOpenStrict } from "./realpath-without-open.ts";
  * including the on-disk case of an alias such as `Notes.txt` vs `notes.txt`; a path that does not
  * exist yet keys on its resolved form. On a wedged mount `realpath` never returns, so the
  * resolution is bounded and falls back to the open(2)-free walker, and the key is case-folded on
- * filesystems that ignore case so the fallback and the fast path agree on the same file.
+ * filesystems that ignore case so the fallback and the fast path agree on the same file. A path under an automount trigger
+ * that has not mounted keys on its text without any filesystem call (senpi#7157): the key only orders mutations, and every
+ * access decision on that path is made by the policy resolver, which resolves it for real.
  */
 async function getMutationQueueKey(filePath: string): Promise<string> {
 	const resolvedPath = resolve(filePath);

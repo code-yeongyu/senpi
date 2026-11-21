@@ -14,7 +14,7 @@ export {
 	withFileMutationQueue,
 	withFileMutationQueues,
 } from "./files/mutation-queue.ts";
-export { automountTriggerPath } from "./files/automount-trigger.ts";
+export { automountTriggerPath, realpathUnderAutomount } from "./files/automount-trigger.ts";
 export { realpathWithoutOpen, realpathWithoutOpenStrict } from "./files/realpath-without-open.ts";
 export { DEFAULT_LIMITS } from "./limits.ts";
 export { createLocalMachineOps, type LocalMachineOpsOptions } from "./local.ts";

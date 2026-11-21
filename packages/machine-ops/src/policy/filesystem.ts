@@ -1,6 +1,7 @@
 import { lstat, readlink, realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import { automountTriggerPath } from "../files/automount-trigger.ts";
+import { MachineOpError } from "../errors.ts";
+import { automountTriggerPath, realpathUnderAutomount } from "../files/automount-trigger.ts";
 import { isMissingPathError, RESOLUTION_TIMED_OUT, withResolutionDeadline } from "../files/bounded-realpath.ts";
 import { realpathWithoutOpenStrict } from "../files/realpath-without-open.ts";
 
@@ -68,17 +69,32 @@ async function canonicalizeByOpening(filePath: string): Promise<string> {
  * following I/O will, and fails closed on EACCES/EIO/ELOOP instead of guessing. Because this runs
  * before every read/ls/grep/find/edit/write and `realpath` never returns on a wedged mount, the
  * traversal is bounded by a deadline; past it the open(2)-free walker answers instead, which still
- * refuses to guess past a non-missing error. A path under an automount trigger that has not mounted is answered from its
- * text alone (`automount-trigger.ts`): the deadline bounds the caller but not the abandoned call, which keeps a thread of
- * the shared filesystem pool until the automounter answers (senpi#7157).
+ * refuses to guess past a non-missing error. The deadline bounds the caller but not the abandoned call, which keeps a
+ * thread of the shared filesystem pool until the mount answers (senpi#7157), so a path under an automount trigger that has
+ * not mounted is resolved in a child process instead (`automount-realpath.ts`): a working automounter mounts it and the
+ * policy sees where its symlinks really lead; one that does not answer leaves the path unknown, and it is refused.
  */
 export async function canonicalizeFilesystemPath(filePath: string): Promise<string> {
 	const absolutePath = resolve(filePath);
-	const triggerPath = await automountTriggerPath(absolutePath);
-	if (triggerPath !== undefined) return triggerPath;
+	if ((await automountTriggerPath(absolutePath)) !== undefined) return canonicalizeUnderAutomount(absolutePath);
 	const canonicalPath = await withResolutionDeadline(canonicalizeByOpening(absolutePath));
 	if (canonicalPath !== RESOLUTION_TIMED_OUT) return canonicalPath;
 	return realpathWithoutOpenStrict(absolutePath);
+}
+
+async function canonicalizeUnderAutomount(absolutePath: string): Promise<string> {
+	const answer = await realpathUnderAutomount(absolutePath);
+	switch (answer.kind) {
+		case "resolved":
+			return answer.path;
+		case "failed":
+			throw Object.assign(new Error(`${answer.code}: cannot resolve ${absolutePath}`), { code: answer.code });
+		case "unanswered":
+			throw new MachineOpError(
+				"policy_denied",
+				`${absolutePath} is under an automount that did not answer, so where it leads is unknown; refused`,
+			);
+	}
 }
 
 /** Compose extension policies in registration order. The first denial wins. */
