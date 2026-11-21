@@ -38,10 +38,12 @@ describe("job widgets on background bash sessions", () => {
 			}),
 		);
 
-		const pending = await log.waitFor((state) => jobState(state, id) === "pending");
+		// The running session is listed before its widget is built: `fallback`, or `pending` once the spec request
+		// starts. Publishing coalesces to one state per second, so either may be the one that is sent.
+		const building = await log.waitFor((state) => ["fallback", "pending"].includes(jobState(state, id) ?? ""));
 		const live = await log.waitFor((state) => jobState(state, id) === "live");
 		const done = await log.waitFor((state) => jobState(state, id) === "done");
-		expect(log.states.indexOf(pending)).toBeLessThan(log.states.indexOf(live));
+		expect(log.states.indexOf(building)).toBeLessThan(log.states.indexOf(live));
 		expect(live).toMatchObject({ v: 1, sessionId: harness.sessionManager.getSessionId() });
 		expect(live.jobs[0]).toMatchObject({
 			id,
@@ -113,22 +115,30 @@ describe("job widgets on background bash sessions", () => {
 		}
 	}, 30_000);
 
-	it("draws the live widget above the TUI editor and on top of bash_output, driven by job_widget_state", async () => {
-		let area: Component | undefined;
+	it("draws a silent session as a row below the TUI editor, then its live chart above it, driven by job_widget_state", async () => {
+		const areas = new Map<string, Component>();
+		const placements = new Map<string, string | undefined>();
 		const waiters = new Set<() => void>();
 		const redraw = (): void => {
 			for (const waiter of [...waiters]) waiter();
 		};
 		const tui = { requestRender: redraw } as unknown as TUI;
-		const setWidget = ((key: string, content: ((tui: TUI, theme: Theme) => Component) | undefined) => {
-			if (key !== "job-widgets") return;
-			area = content?.(tui, theme);
+		const setWidget = ((
+			key: string,
+			content: ((tui: TUI, theme: Theme) => Component) | undefined,
+			options?: { placement?: string },
+		) => {
+			const component = content?.(tui, theme);
+			if (component) areas.set(key, component);
+			else areas.delete(key);
+			placements.set(key, options?.placement);
 			redraw();
 		}) as ExtensionUIContext["setWidget"];
-		const areaLine = (accept: (line: string) => boolean): Promise<string> =>
+		const lines = (key: string): string[] => areas.get(key)?.render(80) ?? [];
+		const areaLine = (key: string, accept: (line: string) => boolean): Promise<string> =>
 			new Promise((resolve, reject) => {
 				const check = (): void => {
-					const line = area?.render(80).find(accept);
+					const line = lines(key).find(accept);
 					if (line === undefined) return;
 					waiters.delete(check);
 					clearTimeout(timer);
@@ -136,7 +146,7 @@ describe("job widgets on background bash sessions", () => {
 				};
 				const timer = setTimeout(() => {
 					waiters.delete(check);
-					reject(new Error(`no matching widget line: ${JSON.stringify(area?.render(80))}`));
+					reject(new Error(`no matching ${key} line: ${JSON.stringify(lines(key))}`));
 				}, 20_000);
 				waiters.add(check);
 				check();
@@ -149,16 +159,19 @@ describe("job widgets on background bash sessions", () => {
 		harness.setResponses([answerWithBlenderSpec]);
 		const plain = (line: string): string => line.replace(/\x1b\[[0-9;]*m/g, "");
 
-		const pending = areaLine((line) => plain(line).includes("reading output"));
+		const running = areaLine("job-widgets-bash", (line) => plain(line).includes("running"));
 		const id = bashIdOf(
 			await harness.session.executeTool("bash", { command: `${BLENDER_PRINT}; sleep 30`, run_in_background: true }),
 		);
 		try {
-			expect(plain(await pending)).toContain(id);
-			const live = plain(await areaLine((line) => plain(line).includes("rendered 2")));
+			expect(plain(await running)).toContain(`· ${id} · running ·`);
+			expect(placements.get("job-widgets-bash")).toBe("belowEditor");
+			const live = plain(await areaLine("job-widgets", (line) => plain(line).includes("rendered 2")));
 			expect(live).toMatch(
 				new RegExp(`^ ${id}  Blender render · seconds per frame  [▁-█]{2}  rendered 2 · 4\\.30 s$`),
 			);
+			// The chart above is the job's only line: its row below the editor is gone.
+			expect(lines("job-widgets-bash").map(plain).join("\n")).not.toContain(id);
 
 			const read = await harness.session.executeTool("bash_output", { bash_id: id });
 			expect(read.details).toMatchObject({ jobWidget: { id, state: "live" } });
