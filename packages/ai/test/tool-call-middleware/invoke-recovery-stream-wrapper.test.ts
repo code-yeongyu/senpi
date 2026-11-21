@@ -77,7 +77,19 @@ describe("wrapStreamWithInvokeRecovery", () => {
 			{
 				type: "text_tool_call_recovery_invalid_content_event",
 				timestamp: expect.any(Number),
-				details: { protocol: "kimi-xtml", status: "invalid_content_event_order" },
+				details: {
+					protocol: "kimi-xtml",
+					status: "invalid_content_event_order",
+					// The refused event and the validator's state: a text block started while thinking 0 was open.
+					event: {
+						type: "text_start",
+						index: 1,
+						blocks: 2,
+						activeIndex: 0,
+						activeKind: "thinking",
+						lastEndedIndex: -1,
+					},
+				},
 			},
 		]);
 	});

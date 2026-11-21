@@ -118,7 +118,12 @@ function expectInvalidTerminal(events: readonly AssistantMessageEvent[], result:
 		{
 			type: "text_tool_call_recovery_invalid_native_event",
 			timestamp: expect.any(Number),
-			details: { protocol: "antml", status: "invalid_native_event_order" },
+			details: {
+				protocol: "antml",
+				status: "invalid_native_event_order",
+				// The refused event with the validator's state, never the call's content.
+				event: expect.objectContaining({ type: expect.any(String), index: expect.any(Number) }),
+			},
 		},
 	]);
 	const diagnostic = JSON.stringify(result.diagnostics);
