@@ -21,6 +21,23 @@ export interface JsonlStorageOptions {
 	fileSystem: FileSystem;
 	path: string;
 	now?: () => number;
+	/** Called once each time damaged records are set aside and the file is repaired; see {@link JsonlStorageRecovery}. */
+	onRecovery?: (recovery: JsonlStorageRecovery) => void;
+}
+
+/** Why records were set aside: a failed append that hit a full disk, any other failed append, or damage found on open. */
+export type JsonlRecoveryCause = "disk_full" | "write_failed" | "unknown";
+
+/**
+ * One repair of a session file: the damaged bytes were copied to `backupPath` (never deleted) and the file was
+ * rewritten atomically with every record that still replays. `message` is the one-time notice for the user.
+ */
+export interface JsonlStorageRecovery {
+	readonly path: string;
+	readonly backupPath: string;
+	readonly droppedRecords: number;
+	readonly cause: JsonlRecoveryCause;
+	readonly message: string;
 }
 
 export interface JsonlSessionMetadata extends SessionMetadata {
@@ -42,4 +59,6 @@ export interface JsonlSessionRepoOptions {
 	fileSystem: FileSystem;
 	sessionsRoot: string;
 	now?: () => number;
+	/** Passed to every session this repo opens or creates; see {@link JsonlStorageOptions.onRecovery}. */
+	onRecovery?: (recovery: JsonlStorageRecovery) => void;
 }

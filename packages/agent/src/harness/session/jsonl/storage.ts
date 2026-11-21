@@ -16,15 +16,10 @@ import type {
 	Write,
 } from "../types.ts";
 import type { ListElement, ListReadOptions, StoredValue, Value, ValueList } from "../values.ts";
-import {
-	fileValue,
-	parseJsonlTransaction,
-	publishFileAtomically,
-	publishJsonl,
-	readJsonlHeader,
-	serializeJsonlTransaction,
-} from "./io.ts";
+import { fileValue, publishJsonl, readJsonlHeader, serializeJsonlTransaction } from "./io.ts";
 import { LegacyV3Source } from "./legacy-v3.ts";
+import { JsonlRepairs } from "./repair.ts";
+import { replayV4Lines } from "./salvage.ts";
 import { JSONL_STORAGE_VERSION, type JsonlStorageHeader, type JsonlStorageOptions } from "./types.ts";
 
 function splitCompleteLines(content: string): { lines: string[]; torn: boolean } {
@@ -45,6 +40,7 @@ export class JsonlStorage implements Storage {
 	private backing: JsonlBacking;
 	private readonly storageState = new InMemoryStorageState();
 	private commitQueue: Promise<void> = Promise.resolve();
+	private readonly repairs: JsonlRepairs;
 	private state: "open" | "closing" | "closed" = "open";
 	private closePromise: Promise<void> | undefined;
 
@@ -52,6 +48,7 @@ export class JsonlStorage implements Storage {
 		this.fileSystem = options.fileSystem;
 		this.path = options.path;
 		this.now = options.now ?? Date.now;
+		this.repairs = new JsonlRepairs(options);
 		this.header = header;
 		this.backing = backing;
 	}
@@ -96,20 +93,15 @@ export class JsonlStorage implements Storage {
 			throw new Error(`Session ${header.id} uses unsupported storage version ${header.storageVersion}`);
 		}
 		const storage = new JsonlStorage(options, header, { kind: "v4" });
-		for (let index = 1; index < lines.length; index++) {
-			const line = lines[index]!;
-			try {
-				storage.replayCommitted(parseJsonlTransaction(line));
-			} catch (error) {
-				throw new Error(`Invalid JSONL storage ${options.path}: line ${index + 1}`, { cause: error });
-			}
-		}
+		const tornTail = torn ? content.slice(content.lastIndexOf("\n") + 1) : undefined;
+		const { kept, setAside } = replayV4Lines(
+			lines,
+			tornTail,
+			(writes) => storage.replayCommitted(writes),
+			(lineNumber, cause) => new Error(`Invalid JSONL storage ${options.path}: line ${lineNumber}`, { cause }),
+		);
 		if (header.nextSeq !== undefined) storage.storageState.advanceNextSeq(header.nextSeq);
-		if (torn) {
-			await publishFileAtomically(options.fileSystem, options.path, context, (append) =>
-				append(`${lines.join("\n")}\n`),
-			);
-		}
+		await storage.repairs.repairOnOpen(kept, setAside, context);
 		return storage;
 	}
 
@@ -141,10 +133,15 @@ export class JsonlStorage implements Storage {
 		}
 		const prepared = this.storageState.prepareCommit(writes, this.now());
 		if (prepared.writes.length !== 0) {
-			fileValue(
-				await this.fileSystem.appendFile(this.path, `${serializeJsonlTransaction(prepared.writes)}\n`, context),
-				`Failed to append JSONL storage ${this.path}`,
-			);
+			await this.repairs.beforeAppend(context);
+			const line = `${serializeJsonlTransaction(prepared.writes)}\n`;
+			const appended = await this.fileSystem.appendFile(this.path, line, context);
+			if (!appended.ok) {
+				// Some of the line may have landed: cut it before the next append, and never hand its sequences out again.
+				this.repairs.appendFailed(line, appended.error);
+				this.storageState.advanceNextSeq(prepared.result.firstSeq + prepared.writes.length);
+			}
+			fileValue(appended, `Failed to append JSONL storage ${this.path}`);
 		}
 		const stats = this.storageState.applyValidated(prepared.writes);
 		return { ...prepared.result, stats: this.withImportedUsage(stats) };
