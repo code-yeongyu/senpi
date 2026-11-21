@@ -47,6 +47,7 @@ import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { reportedCount } from "../utils/reported-count.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { normalizeToolParametersForObjectRoot } from "../utils/tool-schema-compat.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { getCurrentTools, getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
 import {
@@ -737,7 +738,12 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			type: "function",
 			name: tool.name,
 			description: tool.description,
-			parameters: getJsonSchemaToolParameters(tool, strict === true) as ResponseFunctionTool["parameters"],
+			// OpenAI rejects a function whose root schema is not a plain object (#7092); strict mode is still
+			// decided on the original schema above.
+			parameters: getJsonSchemaToolParameters(
+				{ ...tool, parameters: normalizeToolParametersForObjectRoot({ ...tool.parameters }) },
+				strict === true,
+			) as ResponseFunctionTool["parameters"],
 			...(options?.toolSearchResult ? { defer_loading: true } : {}),
 		};
 		if (supportsStrictMode) {

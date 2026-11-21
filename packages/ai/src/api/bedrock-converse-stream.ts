@@ -66,7 +66,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
-import { normalizeToolParametersForBedrock } from "../utils/tool-schema-compat.ts";
+import { normalizeToolParametersForObjectRoot } from "../utils/tool-schema-compat.ts";
 import {
 	collapseSystemMessages,
 	getCurrentTools,
@@ -1178,7 +1178,7 @@ function convertToolConfig(
 	if (toolChoice === "none") return undefined;
 
 	const bedrockTools: BedrockTool[] = tools.map((tool) => {
-		const wireTool = { ...tool, parameters: normalizeToolParametersForBedrock({ ...tool.parameters }) };
+		const wireTool = { ...tool, parameters: normalizeToolParametersForObjectRoot({ ...tool.parameters }) };
 		const strict = resolveJsonSchemaStrictSampling(wireTool, supportsStrictMode);
 		return {
 			toolSpec: {
