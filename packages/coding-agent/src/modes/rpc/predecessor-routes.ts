@@ -226,7 +226,6 @@ export class PredecessorRoutes {
 					this.host.registry.attachSession?.(id);
 					recordAttachment(this.host, caller, id);
 				}
-			this.table.dropPeer(route, caller);
 		}
 		this.table.forget(route);
 	}
@@ -234,9 +233,6 @@ export class PredecessorRoutes {
 		for (const route of this.table.byId.values()) this.table.dropPeer(route, caller);
 	}
 	dispose(): void {
-		for (const route of this.table.byId.values()) {
-			for (const caller of route.attachments.keys()) this.table.dropPeer(route, caller);
-			this.table.forget(route);
-		}
+		for (const route of [...this.table.byId.values()]) this.table.forget(route);
 	}
 }
