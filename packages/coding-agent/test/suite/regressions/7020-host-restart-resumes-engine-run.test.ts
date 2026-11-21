@@ -11,6 +11,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { caseBudget } from "../../helpers/fixture-ready.ts";
 import { type FakeModelRequest, startFakeModelServer } from "../../helpers/rpc-fake-model.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import {
@@ -23,33 +24,74 @@ import {
 } from "../../helpers/rpc-restart-retained-support.ts";
 import { connectPeer, openedSessionId, scratch } from "../../helpers/rpc-socket-host-support.ts";
 
-/** Each step's bound, inside the test's timeout: a session that never resumes fails here, named. */
-const STEP_MS = 20_000;
+/** The package's `testTimeout`: every step's bound is what is left of it, so a stalled step fails here, named. */
+const CASE_TIMEOUT_MS = 30_000;
 const PROGRESS_MARKER = "progress-recorded-before-the-cut";
+const budget = caseBudget();
 
 type Qa = ReturnType<typeof scratch>;
+type FakeModel = Awaited<ReturnType<typeof startFakeModelServer>>;
+
+/**
+ * Runs `step` while waiting for the model request `match` takes; the request can arrive before `step` resolves.
+ * The wait ends with the request, with `step`'s failure, when `step` aborts it (a host gone before the request), or
+ * at the case's remaining budget. It never outlives this call, so a failed step leaves no rejection behind.
+ */
+async function requestDuring<T>(
+	fake: FakeModel,
+	label: string,
+	match: (request: FakeModelRequest, index: number) => boolean,
+	step: (stop: AbortController) => Promise<T>,
+): Promise<{ value: T; request: FakeModelRequest }> {
+	const stop = new AbortController();
+	try {
+		const [value, request] = await Promise.all([
+			step(stop),
+			fake.waitForRequest(match, budget(CASE_TIMEOUT_MS), stop.signal).catch((error: unknown) => {
+				throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+			}),
+		]);
+		return { value, request };
+	} finally {
+		stop.abort(new Error(`${label}: step settled`));
+	}
+}
+
+/** A host that exits while the session's next request is awaited can never send it: fail with its exit status. */
+function abortOnExit(host: ChildProcessWithoutNullStreams, stop: AbortController): void {
+	const onExit = (code: number | null, signal: NodeJS.Signals | null): void =>
+		stop.abort(new Error(`host exited (code ${String(code)}, signal ${String(signal)}) before the request`));
+	host.once("exit", onExit);
+	stop.signal.addEventListener("abort", () => host.off("exit", onExit), { once: true });
+}
 
 /** A retained session whose engine-started run (a peer's delivery) the model holds open on a live host. */
 async function cutEngineRun(
 	qa: Qa,
-	fake: Awaited<ReturnType<typeof startFakeModelServer>>,
+	fake: FakeModel,
 	text: string,
 ): Promise<{ host: ChildProcessWithoutNullStreams; session: OpenedSession }> {
 	const host = await startHost(qa);
 	const opener = await connectPeer(qa.socketPath);
 	try {
 		const session = await openWithTurn(opener.peer, qa.cwd, "lane");
-		const cut = fake.waitForRequest((request) => request.latest.includes(HOLD_MARKER), STEP_MS);
-		const admitted = await opener.peer.request({
-			id: "peer-delivery",
-			type: "admit_external_message",
-			sessionId: session.handle,
-			deliveryId: "lead-1",
-			text,
-			deliverAs: "followUp",
-		});
-		expect(admitted).toMatchObject({ success: true, data: { kind: "started" } });
-		await cut;
+		await requestDuring(
+			fake,
+			"engine run before the cut",
+			(request) => request.latest.includes(HOLD_MARKER),
+			async (stop) => {
+				abortOnExit(host, stop);
+				const admitted = await opener.peer.request({
+					id: "peer-delivery",
+					type: "admit_external_message",
+					sessionId: session.handle,
+					deliveryId: "lead-1",
+					text,
+					deliverAs: "followUp",
+				});
+				expect(admitted).toMatchObject({ success: true, data: { kind: "started" } });
+			},
+		);
 		return { host, session };
 	} finally {
 		opener.socket.destroy();
@@ -59,16 +101,24 @@ async function cutEngineRun(
 /** Restarts the host and resolves with the next model request, which only the session itself can send. */
 async function restartAndAwaitRequest(
 	qa: Qa,
-	fake: Awaited<ReturnType<typeof startFakeModelServer>>,
+	fake: FakeModel,
 	host: ChildProcessWithoutNullStreams,
 	signal: "SIGKILL" | "SIGTERM",
 	match: (request: FakeModelRequest) => boolean = () => true,
 ): Promise<{ host: ChildProcessWithoutNullStreams; request: FakeModelRequest }> {
 	await stopHost(host, signal);
 	const before = fake.requests.length;
-	const next = fake.waitForRequest((request, index) => index >= before && match(request), STEP_MS);
-	const restarted = await startHost(qa);
-	return { host: restarted, request: await next };
+	const { value, request } = await requestDuring(
+		fake,
+		`resumed request after ${signal}`,
+		(request, index) => index >= before && match(request),
+		async (stop) => {
+			const restarted = await startHost(qa);
+			abortOnExit(restarted, stop);
+			return restarted;
+		},
+	);
+	return { host: value, request };
 }
 
 describe.skipIf(process.platform === "win32")("an engine run cut by a host restart (senpi#7020)", () => {
