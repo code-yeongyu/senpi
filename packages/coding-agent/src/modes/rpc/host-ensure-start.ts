@@ -31,6 +31,7 @@ import { clearStartupIntent, settleStartupIntent, writeStartupIntent } from "./h
 import { finalizeFailedStart } from "./host-startup-finalizer.ts";
 import { beginStartupAttempt, driveStartupToReady, exitMessage, type StartupAttempt } from "./host-startup-run.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
+import { placeHostLaunch } from "./host-unit-placement.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
 import { ensureSocketSecret, socketSecretPath } from "./socket-transport.ts";
 import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
@@ -120,19 +121,21 @@ export async function startHost(
 				? ["ignore", "ignore", stderr.fd, "pipe"]
 				: ["ignore", "ignore", stderr.fd];
 		const stdio = attempt.stdio(base);
-		child = spawnWithPrivateFds(spawn, launch.command, [...launch.args], {
+		const env = {
+			...initialHostEnvironment({
+				agentDir: options.agentDir,
+				env: options.env,
+				paths,
+				instanceId,
+				generation,
+			}),
+			...attempt.env,
+		};
+		const placed = await placeHostLaunch(launch, instanceId, env);
+		child = spawnWithPrivateFds(spawn, placed.command, [...placed.args], {
 			detached: true,
 			windowsHide: true,
-			env: {
-				...initialHostEnvironment({
-					agentDir: options.agentDir,
-					env: options.env,
-					paths,
-					instanceId,
-					generation,
-				}),
-				...attempt.env,
-			},
+			env,
 			stdio,
 		});
 		if (options.presenterBootstrap)

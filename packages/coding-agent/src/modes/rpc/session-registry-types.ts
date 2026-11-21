@@ -145,6 +145,8 @@ export interface RpcSessionRegistryOptions {
 
 /** Host-side lifecycle policy for one `open_session`, distinct from the session's launch profile. */
 export interface RpcSessionOpenOptions {
+	/** Host-only handle already issued while this file's writer was on a predecessor. */
+	readonly routedHandle?: string;
 	/** Router-owned park construction; never accepted directly from the wire. */
 	speculative?: boolean;
 	/** Refuse unless the registry already owns the path; never prepare or construct a writer. */
