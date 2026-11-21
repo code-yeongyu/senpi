@@ -30,14 +30,16 @@ senpi periodically merges selected upstream releases from `upstream` (i.e. `badl
 
 ```bash
 # Bun is the fleet-standard invocation.
-bun install --ignore-scripts
-npm install --ignore-scripts # Contributor-compatible alternative
+bun install --ignore-scripts && bun run prepare
+# Contributor-compatible alternative: npm install --ignore-scripts && npm run prepare
 bun scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
 bun scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
 bun run check     # oxlint + bun fmt + lint ratchet + tsc + browser-smoke check (pre-commit equivalent)
 bun run test          # Vitest across workspaces (skips live-API)
 ./pi-test.sh      # Optional: live-API integration suite (env-gated; requires API keys)
 ```
+
+The explicit `prepare` step installs the repository's Git hooks. `--ignore-scripts` skips it along with dependency lifecycle scripts.
 
 The default dev setup intentionally avoids global Rust installation and uses checked-in/prebuilt native artifacts where available.
 Use `--with-native` only when working on native Rust code; it reads `rust-toolchain.toml`, uses `rustup` to install the pinned
