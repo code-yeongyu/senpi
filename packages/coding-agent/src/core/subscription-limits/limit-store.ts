@@ -14,6 +14,11 @@ export interface AccountLimits {
 	readonly windows: readonly LimitWindow[];
 	/** ISO time of the response that reported them. */
 	readonly reportedAt: string;
+	/**
+	 * ISO time each retained window was last reported. A partial response updates only the windows it names,
+	 * so consumers must not treat `reportedAt` as freshness for an older window kept beside it.
+	 */
+	readonly windowReportedAt?: Readonly<Record<string, string>>;
 	/** The plan the provider's usage endpoint names (`pro`, `max`, ...), when it names one. */
 	readonly plan?: string;
 	/**
@@ -58,11 +63,18 @@ export class SubscriptionLimitStore {
 		const previous = this.#accounts.get(key);
 		const merged = new Map((previous?.windows ?? []).map((window) => [window.id, window]));
 		for (const window of windows) merged.set(window.id, window);
+		const reportedAt = now.toISOString();
+		const windowReportedAt: Record<string, string> = {};
+		for (const id of merged.keys()) {
+			windowReportedAt[id] = previous?.windowReportedAt?.[id] ?? previous?.reportedAt ?? reportedAt;
+		}
+		for (const window of windows) windowReportedAt[window.id] = reportedAt;
 		this.#write(key, previous, {
 			provider,
 			account,
 			windows: [...merged.values()],
-			reportedAt: now.toISOString(),
+			reportedAt,
+			windowReportedAt,
 			...(previous?.plan === undefined ? {} : { plan: previous.plan }),
 		});
 	}
@@ -100,6 +112,7 @@ export class SubscriptionLimitStore {
 			account,
 			windows: [...report.windows],
 			reportedAt,
+			windowReportedAt: Object.fromEntries(report.windows.map((window) => [window.id, reportedAt])),
 			...(report.plan === undefined ? {} : { plan: report.plan }),
 		});
 	}
@@ -229,17 +242,43 @@ function combineConcurrent(a: MirroredLimits, b: MirroredLimits): MirroredLimits
 		x === undefined ? y : y === undefined ? x : canonical(x) >= canonical(y) ? x : y;
 	if (a.reportedAt !== b.reportedAt) {
 		const newer = a.reportedAt < b.reportedAt ? b : a;
-		return concurrentRecord(a, newer.windows, newer.plan, later(a.error, b.error), newer.reportedAt);
+		return concurrentRecord(
+			a,
+			newer.windows,
+			newer.windowReportedAt,
+			newer.plan,
+			later(a.error, b.error),
+			newer.reportedAt,
+		);
 	}
 	const windows = new Map(a.windows.map((window) => [window.id, window]));
 	for (const window of b.windows) windows.set(window.id, later(windows.get(window.id), window) ?? window);
-	return concurrentRecord(a, [...windows.values()], later(a.plan, b.plan), later(a.error, b.error), a.reportedAt);
+	const windowReportedAt = Object.fromEntries(
+		[...windows.keys()].map((id) => {
+			const first = a.windows.some((window) => window.id === id)
+				? (a.windowReportedAt?.[id] ?? a.reportedAt)
+				: undefined;
+			const second = b.windows.some((window) => window.id === id)
+				? (b.windowReportedAt?.[id] ?? b.reportedAt)
+				: undefined;
+			return [id, later(first, second) ?? a.reportedAt];
+		}),
+	);
+	return concurrentRecord(
+		a,
+		[...windows.values()],
+		windowReportedAt,
+		later(a.plan, b.plan),
+		later(a.error, b.error),
+		a.reportedAt,
+	);
 }
 
 /** The combined record at `a`'s stamp (both sides share it), reported at the later `reportedAt` of the two. */
 function concurrentRecord(
 	a: MirroredLimits,
 	windows: readonly MirroredLimits["windows"][number][],
+	windowReportedAt: Readonly<Record<string, string>> | undefined,
 	plan: string | undefined,
 	error: string | undefined,
 	reportedAt: string,
@@ -250,6 +289,7 @@ function concurrentRecord(
 		account: a.account,
 		windows: [...windows].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)),
 		reportedAt,
+		...(windowReportedAt === undefined ? {} : { windowReportedAt }),
 		...(plan === undefined ? {} : { plan }),
 		...(error === undefined ? {} : { error }),
 		...(updatedAt === reportedAt ? {} : { updatedAt }),
