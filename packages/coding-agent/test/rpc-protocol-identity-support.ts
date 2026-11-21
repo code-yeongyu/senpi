@@ -118,21 +118,29 @@ export function waitForJsonLine(
 	});
 }
 
+/**
+ * Exit-aware readiness wait (senpi#5340, senpi#7141): the host's own stderr line or its exit
+ * settles the promise; no wall-clock budget of its own, vitest's testTimeout is the outer bound.
+ */
 export function waitForStderr(child: ChildProcessWithoutNullStreams, text: string): Promise<void> {
 	let stderr = "";
 	return new Promise<void>((resolve, reject) => {
-		const timer = setTimeout(() => {
-			child.stderr.off("data", onData);
-			reject(new Error(`Timed out waiting for ${JSON.stringify(text)}: ${stderr}`));
-		}, 30_000);
-		const onData = (chunk: Buffer): void => {
+		const onData = (chunk: Buffer) => {
 			stderr += chunk.toString("utf8");
 			if (!stderr.includes(text)) return;
-			clearTimeout(timer);
-			child.stderr.off("data", onData);
+			cleanup();
 			resolve();
 		};
+		const onExit = () => {
+			cleanup();
+			reject(new Error(`RPC host exited before ${JSON.stringify(text)}: ${stderr}`));
+		};
+		const cleanup = () => {
+			child.stderr.off("data", onData);
+			child.off("exit", onExit);
+		};
 		child.stderr.on("data", onData);
+		child.once("exit", onExit);
 	});
 }
 

@@ -10,6 +10,7 @@ import { teardownChildProcessesAndRoots } from "./helpers/process-teardown.ts";
 import { startFakeModelServer } from "./helpers/rpc-fake-model.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
+import { waitForStderr } from "./helpers/rpc-socket-host-support.ts";
 
 const roots: string[] = [];
 const children: ChildProcessWithoutNullStreams[] = [];
@@ -60,17 +61,9 @@ async function fixture(label: string) {
 		},
 	);
 	children.push(host);
-	await new Promise<void>((resolve, reject) => {
-		let text = "";
-		const timer = setTimeout(() => reject(new Error(text)), 15000);
-		host.stderr.on("data", (chunk) => {
-			text += chunk;
-			if (text.includes(`senpi rpc listening on unix://${socket}`)) {
-				clearTimeout(timer);
-				resolve();
-			}
-		});
-	});
+	// Exit-aware readiness (senpi#5340's contract, senpi#7141): no fixed budget — the host's own
+	// listening line or its exit settles the wait, and vitest's testTimeout is the outer bound.
+	await waitForStderr(host, `senpi rpc listening on unix://${socket}`);
 	const client = new RpcClient({ socketPath: socket });
 	await client.start();
 	const manager = SessionManager.create(cwd, sessionDir);
