@@ -1,14 +1,26 @@
 import { BoundedAsyncQueue, SESSION_STREAM_QUEUE_CAPACITY } from "./bounded-queue.ts";
 import { sdkResultFailure } from "./errors.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
-import { bindingFromEntry, type ContinuityBinding, forgetBinding, rememberBinding } from "./session-reattach.ts";
+import { logContinuityEvent } from "./session-observability.ts";
+import {
+	bindingFromEntry,
+	type ContinuityBinding,
+	forgetBinding,
+	keepBindingThenClose,
+	rememberBinding,
+} from "./session-reattach.ts";
 import {
 	type AnthropicSubscriptionSessionEntry,
 	closeSession,
+	getSession,
 	isCurrentGeneration,
 	sessionRegistry,
 } from "./session-registry.ts";
-import { submitSessionTurn, waitForTurnAdmission } from "./session-registry-pump.ts";
+import {
+	ConcurrentSessionTurnAdmissionError,
+	submitSessionTurn,
+	waitForTurnAdmission,
+} from "./session-registry-pump.ts";
 import { recordSyncedStream, sentHashPrefixDigest } from "./session-sync.ts";
 
 type StagedContinuityDecision = { emit(): void };
@@ -22,7 +34,7 @@ const attemptBookkeeping = new WeakMap<AnthropicSubscriptionSessionEntry, Promis
  * continuity and the delta only after this, so the delta starts after the earlier turn's message instead of
  * sending it again (senpi#5015 review).
  */
-export async function waitForActiveTurn(
+async function waitForActiveTurn(
 	entry: AnthropicSubscriptionSessionEntry,
 	signal: AbortSignal | undefined,
 ): Promise<void> {
@@ -30,6 +42,57 @@ export async function waitForActiveTurn(
 	if (!pending) return;
 	if ((await waitForTurnAdmission(entry.senpiSessionId, pending, signal)) === "aborted") {
 		throw new Error("Anthropic Subscription turn aborted while waiting for the previous turn");
+	}
+}
+
+/**
+ * Holds a new attempt until the live model switch `model_select` started has settled, so a prompt sent right after
+ * `set_model` runs on the selected model and continuity reads the confirmed `modelId` (senpi#6411). Bounded like
+ * `waitForActiveTurn`: a switch Claude Code never confirms retires that process, keeping the lineage on the selected
+ * model, so the turn reattaches instead of hanging. Returns the switch it waited for.
+ */
+async function waitForModelSwitch(
+	entry: AnthropicSubscriptionSessionEntry,
+	signal: AbortSignal | undefined,
+): Promise<AnthropicSubscriptionSessionEntry["pendingModelSwitch"]> {
+	const pending = entry.pendingModelSwitch;
+	if (!pending) return undefined;
+	let outcome: "admitted" | "aborted";
+	try {
+		outcome = await waitForTurnAdmission(entry.senpiSessionId, pending.done, signal);
+	} catch (error) {
+		if (!(error instanceof ConcurrentSessionTurnAdmissionError)) throw error;
+		if (isCurrentGeneration(entry.senpiSessionId, entry.generation)) {
+			logContinuityEvent("claude_sdk_oauth_model_switch_timeout", { modelId: pending.modelId });
+			keepBindingThenClose(entry.senpiSessionId, "model_switch_timeout");
+		}
+		return pending;
+	}
+	if (outcome === "aborted") throw new Error("Anthropic Subscription turn aborted while waiting for the model switch");
+	return pending;
+}
+
+/**
+ * Runs `admit` once the session's previous turn and pending model switch have settled. `admit` awaits, and a switch
+ * issued meanwhile would otherwise run while this turn does (senpi#6412 review), so admission repeats until no switch
+ * other than the one already awaited is pending; a switch issued after admission applies to the next turn. Each wait
+ * keeps its own admission bound and the abort signal.
+ */
+export async function admitSettledTurn<T>(
+	sessionId: string,
+	signal: AbortSignal | undefined,
+	admit: () => Promise<T>,
+): Promise<T> {
+	for (;;) {
+		const entry = getSession(sessionId);
+		let awaited: AnthropicSubscriptionSessionEntry["pendingModelSwitch"];
+		if (entry) {
+			await waitForActiveTurn(entry, signal);
+			awaited = await waitForModelSwitch(entry, signal);
+		}
+		const admitted = await admit();
+		const pending = getSession(sessionId)?.pendingModelSwitch;
+		if (pending === undefined || pending === awaited) return admitted;
 	}
 }
 

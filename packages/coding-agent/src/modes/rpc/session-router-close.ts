@@ -202,17 +202,26 @@ export async function tearDownReleased(host: RouterContext, sessionId: string, s
 	const binding = host.bindings.get(sessionId);
 	binding?.cancelPendingExtensionUiRequests?.();
 	forgetSessionOwnership(host, sessionId);
-	if (claim.finalizer)
+	if (claim.finalizer) {
+		// The file is another runtime's now: drop its handover-parked record entry as an explicit close does, or the
+		// next host on this endpoint would reopen it (senpi#6444).
+		if (host.handoverParkedDir !== undefined) await clearRetainedRecord(host, host.registry.peek(sessionId));
 		await finalizeClose(host, sessionId, binding, () => host.writer.releaseSession(sessionId, sessionPath));
-	else await host.finalizations.get(sessionId)?.promise;
+	} else await host.finalizations.get(sessionId)?.promise;
 	host.writer.forgetSession(sessionId);
 	return true;
 }
 
 /** The idle park on request: every attachment drained, sealed `session_parked { reason: "unloaded" }`. */
 export async function tearDownUnloaded(host: RouterContext, sessionId: string, sessionPath: string): Promise<boolean> {
+	const unloaded = host.registry.peek(sessionId);
 	const claim = tryClaimClose(host, sessionId, { drainAttachments: true });
 	if (!claim) return false;
+	// The resident stamp said the session was live here; an unloaded session reopens dormant on the next host (senpi#7020).
+	if (claim.finalizer && unloaded?.retainOnDisconnect === true && unloaded.recordedPath !== undefined)
+		await recordRetainedSession(host, unloaded, unloaded.recordedPath, false, false).catch((cause: unknown) => {
+			process.stderr.write(`senpi rpc unload park record ${sessionId} failed: ${String(cause)}\n`);
+		});
 	const binding = host.bindings.get(sessionId);
 	binding?.cancelPendingExtensionUiRequests?.();
 	forgetSessionOwnership(host, sessionId);
@@ -228,6 +237,7 @@ export async function dispose(host: RouterContext): Promise<void> {
 	host.drainExitRequested = true;
 	stopSweep(host);
 	if (host.drainTimer !== undefined) clearInterval(host.drainTimer);
+	await host.parks.stop();
 	if (host.admissions) await host.admissions.dispose();
 	await Promise.all(
 		[...host.bindings.entries()].map(async ([sessionId, binding]) => {
@@ -245,7 +255,7 @@ export async function dispose(host: RouterContext): Promise<void> {
 			if (claim.finalizer) {
 				await abortForHostShutdownWithin(sessionId, entry);
 				if (entry !== undefined && parkedPath !== undefined)
-					await recordRetainedSession(host, entry, parkedPath, false).catch((cause: unknown) => {
+					await recordRetainedSession(host, entry, parkedPath, false, true).catch((cause: unknown) => {
 						process.stderr.write(`senpi rpc host shutdown park record ${sessionId} failed: ${String(cause)}\n`);
 					});
 				await finalizeClose(host, sessionId, binding, () =>

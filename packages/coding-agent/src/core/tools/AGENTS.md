@@ -7,11 +7,25 @@ Built-in tool implementations. **Prefer extensions for new tools** — this dir 
 ```
 tools/
 ├── index.ts                     # Tool definition exports (read, write, edit, bash, grep, find, ls)
-├── bash.ts                      # Bash tool — promptSnippet uses `rg` (not `grep`) per fork tuning
-├── read.ts                      # File read tool with image/binary handling
-├── write.ts                     # File create/replace tool
-├── edit.ts                      # In-place edit tool (uses `edit-diff.ts` for hunks)
-├── edit-diff.ts                 # Fuzzy matching + diff helpers for the edit tool (fuzzyFindText, computeEditsDiff)
+├── bash.ts                      # Local bash tool: bash-core.ts + renderers, temp-file spill, local shell, detached-group tracking
+├── read.ts                      # Local read tool: read-core.ts + renderers, photon image processing, fs path variants
+├── write.ts                     # Local write tool: write-core.ts + renderers, fs baseline, machine-ops mutation queue
+├── edit.ts                      # Local edit tool: edit-core.ts + renderers, machine-ops mutation queue
+├── bash-core.ts, bash-schema.ts # Worker-safe bash core (schema, description, execute over a ToolMachine, output shaping)
+├── shell-operations.ts          # One process.exec per command over a ToolMachine; ShellExecHost carries host specifics
+├── shell-output.ts              # Redaction, throttled updates, spill settlement and the model-facing bash text
+├── posix-signals.ts             # Signal numbers per machine OS for the 128 + n exit code of the worker path
+├── read-core.ts, read-text.ts   # Worker-safe read core; read-text.ts shapes a text read (fold, truncation, notices)
+├── write-core.ts, edit-core.ts  # Worker-safe write and edit cores
+├── coding-tools-core.ts         # createCoreCodingTools: the four cores in createCodingTools order
+├── tool-machine.ts              # ToolMachine binding over any MachineOps (worker-safe); machine.ts adds the local default
+├── file-tool-host.ts            # Injected host pieces with worker defaults: POSIX paths, in-isolate queue, read variants
+├── fs-error-code.ts             # Maps machine-ops error codes back to the fs codes the tools show
+├── encoding.ts                  # UTF-8/base64 helpers without the Buffer global
+├── output-accumulator-core.ts   # Streaming output state behind an OutputSpill; output-accumulator.ts adds the temp-file spill
+├── machine-output-spill.ts      # OutputSpill that keeps the full output in a file on the tool machine
+├── edit-diff.ts                 # Fuzzy matching + diff helpers for the edit tool (fuzzyFindText, generateDiffString)
+├── edit-preview.ts              # computeEditsDiff: fs-reading preview for the edit renderer
 ├── diff-render.ts               # renderToolDiff() — diff rendering shared by edit, write, and gpt-apply-patch previews
 ├── grep.ts                      # Ripgrep-backed search tool
 ├── find.ts                      # Path search tool (gitignore-aware)
@@ -40,6 +54,10 @@ tools/
    renderResult: (result) => <terminal output>,
 }
 ```
+
+## WORKER-SAFE CORES
+
+`src/tools-core.ts` (`@code-yeongyu/senpi/tools-core`) exports the cores. Nothing reachable from it may import a Node builtin or use the `Buffer`/`process` globals; `test/tools-core/worker-bundle.test.ts` bundles it for a browser target. Host differences are injected options with the local default in the local tool file, never runtime sniffing. `test/tools-core/parity.test.ts` runs core and local tools on one fake machine and requires identical content and details.
 
 ## CONVENTIONS
 

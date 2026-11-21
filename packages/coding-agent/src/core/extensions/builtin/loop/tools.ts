@@ -268,6 +268,7 @@ async function executeSchedule(
 export function registerLoopTools(pi: ExtensionAPI, deps: LoopToolRegistrationDeps): void {
 	pi.registerTool({
 		name: SCHEDULE_WAKEUP_TOOL,
+		sessionBound: true,
 		label: "Schedule Wakeup",
 		description: SCHEDULE_WAKEUP_DESCRIPTION,
 		parameters: scheduleWakeupSchema,

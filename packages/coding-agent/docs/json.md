@@ -19,7 +19,7 @@ type AgentSessionEvent =
   | { type: "queue_update"; steering: readonly string[]; followUp: readonly string[] }
   | { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
   | { type: "compaction_progress"; reason: "manual" | "threshold" | "overflow"; delta?: string; text?: string }
-  | { type: "compaction_end"; reason: "manual" | "threshold" | "overflow"; result: CompactionResult | undefined; aborted: boolean; willRetry: boolean; requestId?: string; accepted?: boolean; rejectionCause?: "cancelled-by-extension" | "external-owner" | "would-overflow" | "circuit-breaker" | "per-turn-cap"; errorMessage?: string }
+  | { type: "compaction_end"; reason: "manual" | "threshold" | "overflow"; result: CompactionResult | undefined; aborted: boolean; willRetry: boolean; requestId?: string; accepted?: boolean; rejectionCause?: "cancelled-by-extension" | "external-owner" | "would-overflow" | "circuit-breaker" | "per-turn-cap" | "stale-revision" | "transient-failure"; errorMessage?: string }
   | { type: "session_info_changed"; name: string | undefined }
   | { type: "thinking_level_changed"; level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" }
   | { type: "thinking_level_clamped"; provider: string; modelId: string; requestedLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; appliedLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; reason: "model-not-reasoning" | "level-unsupported" }

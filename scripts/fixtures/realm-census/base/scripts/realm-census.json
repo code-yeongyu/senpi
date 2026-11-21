@@ -1,0 +1,9 @@
+{
+	"roots": [
+		"coding-agent",
+		"extension-dependency",
+		"lib",
+		"senpi-codemode"
+	],
+	"bindings": {}
+}

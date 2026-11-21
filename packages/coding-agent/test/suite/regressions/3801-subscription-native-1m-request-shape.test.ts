@@ -9,6 +9,7 @@ import {
 	queryWithAuthLane,
 	resetAuthLaneBoundary,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts";
+import { claudeCodeMaxContextTokens } from "../../../src/core/extensions/builtin/anthropic-subscription/context-window.ts";
 import { anthropicSubscriptionModels } from "../../../src/core/extensions/builtin/anthropic-subscription/index.ts";
 import {
 	_resetLongContextForTesting,
@@ -64,7 +65,7 @@ function plannedWindow(id: string, longContext: boolean): number | undefined {
 }
 
 describe("#3801: native-1M models are requested by their plain id with the window senpi plans", () => {
-	it.each(NATIVE)("%s: plain id, CLAUDE_CODE_MAX_CONTEXT_TOKENS = catalog window, DISABLE_COMPACT", (id) => {
+	it.each(NATIVE)("%s: plain id, CLAUDE_CODE_MAX_CONTEXT_TOKENS opens the catalog window, DISABLE_COMPACT", (id) => {
 		const window = catalogModel(id).contextWindow;
 
 		const before = requestOptions(id);
@@ -74,7 +75,7 @@ describe("#3801: native-1M models are requested by their plain id with the windo
 		for (const options of [before, afterRefusal]) {
 			expect(options.model).toBe(id);
 			expect(options.env).toMatchObject({
-				CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(window),
+				CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(claudeCodeMaxContextTokens(window)),
 				DISABLE_COMPACT: "1",
 			});
 		}
@@ -90,9 +91,9 @@ describe("#3801: native-1M models are requested by their plain id with the windo
 		const refused = requestOptions(id);
 
 		expect(available.model).toBe(`${id}[1m]`);
-		expect(available.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("1000000");
+		expect(available.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe(String(claudeCodeMaxContextTokens(1_000_000)));
 		expect(refused.model).toBe(id);
-		expect(refused.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("200000");
+		expect(refused.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe(String(claudeCodeMaxContextTokens(200_000)));
 		expect(plannedWindow(id, false)).toBe(200_000);
 	});
 
@@ -112,7 +113,9 @@ describe("#3801: a refusal recorded before the fix does not outlive it", () => {
 
 		expect(longContextAvailable()).toBe(true);
 		expect(existsSync(statePath)).toBe(false);
-		expect(requestOptions("claude-fable-5").env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("1000000");
+		expect(requestOptions("claude-fable-5").env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe(
+			String(claudeCodeMaxContextTokens(1_000_000)),
+		);
 		expect(requestOptions("claude-opus-4-6").model).toBe("claude-opus-4-6[1m]");
 	});
 

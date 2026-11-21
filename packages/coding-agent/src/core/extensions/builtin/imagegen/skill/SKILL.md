@@ -12,7 +12,7 @@ How to get the image right the first time, and how to fix it fast when it is not
 When image generation tooling is present in your tool set, pick the surface that actually exists right now:
 
 - If a native `image_generation` server tool is available, use it. The provider runs generation server-side and returns the image in the response stream.
-- Otherwise, call the `generate_image` tool. It sends your prompt and optional reference images to the configured OpenAI-compatible endpoint and saves the result as a png, jpeg, or webp file. The model, quality, size, background, and format controls below apply to `generate_image`, not to the native server tool.
+- Otherwise, call `generate_image`. It is eval-only, like `bash`: when an `eval` tool exists it is not in your direct tool list, so run it inside an eval cell as `tool.generate_image({ prompt: "..." })` (js) or `tool.generate_image(prompt="...")` (py); `tool_schema("generate_image")` lists every parameter. Without an eval tool it is an ordinary direct tool. It sends your prompt and optional reference images to the configured OpenAI-compatible endpoint and saves the result as a png, jpeg, or webp file. The model, quality, size, background, and format controls below apply to `generate_image`, not to the native server tool.
 
 Check your current tool set before choosing. Tool state can change mid-session (model switch, credential change), so trust the tools you can see over what this page said at startup. If both surfaces ever appear, prefer the native server tool. When the request is clear, generate directly instead of asking for confirmation; ask only when a required reference image is missing.
 

@@ -120,6 +120,8 @@ const HOST_LIFECYCLE_ENV = {
 	SENPI_RPC_HOST_WATCH_FD: "3",
 	SENPI_RPC_HOST_SCRATCH_DIR: "/outer/scratch",
 	SENPI_RPC_HOST_CLEANUP_PATHS: "/outer/host.pid",
+	// An agent shell carries the outer host's id under this name instead of the instance id (senpi#5635).
+	SENPI_RPC_ORIGIN_HOST_INSTANCE: "outer-host",
 } as const;
 
 describe("RPC host lifecycle environment", () => {

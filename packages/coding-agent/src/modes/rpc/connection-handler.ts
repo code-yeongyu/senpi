@@ -1,3 +1,4 @@
+import { projectCwdMismatch } from "./project-expected-cwd.ts";
 import {
 	isHostOwnedToolRuntimeCapability,
 	type ToolRuntimeKind,
@@ -73,21 +74,25 @@ import type {
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { setSessionArchived } from "../../core/session-archived.ts";
+import { parseSessionSettled, setSessionSettled, settledFields } from "../../core/session-settled.ts";
 import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
-import { holdAutomaticInput } from "./automatic-input-gate.ts";
+import { automaticInputWouldBeHeld, holdAutomaticInput } from "./automatic-input-gate.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { admitInputChain } from "./chain-admission.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
+import { refusePromptAtMovedLeaf } from "./prompt-expected-leaf.ts";
 import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
 import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import { commandAuthority } from "./command-authority.ts";
-import { noteDelegatedRecord } from "./delegated-drive-origin.ts";
+import { runInRecordScope } from "../../core/turn-origin.ts";
+import { recordTurnOrigin } from "./delegated-drive-origin.ts";
 import { ConnectionRoles, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
 import {
 	ACCOUNT_RESET_CAPABILITY,
@@ -138,6 +143,10 @@ import {
 	writeProjectSetting,
 	writeProjectTrust,
 } from "./project-workspace-commands.ts";
+import { readProjectFile, writeProjectFile } from "./project-file-commands.ts";
+import { getProjectMcpServers, setProjectMcpServers } from "./project-mcp-commands.ts";
+import { readProjectSkillFile, writeProjectSkillFile } from "./project-skill-commands.ts";
+import { readUserSkillFile, writeUserSkillFile } from "./user-skill-commands.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
 import {
@@ -268,6 +277,8 @@ export interface RpcConnectionHandler {
 	 * extension UI context is installed (used by tests that drive ctx.ui directly).
 	 */
 	readonly ready: Promise<void>;
+	/** Complete a prebuilt binding with the capabilities its opener supplied. */
+	setClientCapabilities(capabilities: readonly string[]): void;
 	/** Feed one inbound JSONL line (command or extension_ui_response). */
 	handleInputLine(line: string): Promise<void>;
 	/**
@@ -425,6 +436,10 @@ export function createRpcConnectionHandler(
 	const hasRole = (role: string): boolean => connectionRoles.has(currentConnectionId(), role);
 	const connectionOrigin = (): ConnectionOrigin =>
 		connectionRoles.isDelegated(currentConnectionId()) ? "delegated" : "local";
+	// senpi#6342: a turn follows this machine's own setting; only a device the forwarder did not state is the same account
+	// counts as delegated for the permission rule.
+	const turnOrigin = (): ConnectionOrigin =>
+		connectionOrigin() === "delegated" && !connectionRoles.sameAccount(currentConnectionId()) ? "delegated" : "local";
 	const routingSessionId = options.sessionId;
 	// True only while THIS connection's own command drives a replacement; the issuer
 	// already learns the new identity from its command response.
@@ -990,6 +1005,8 @@ export function createRpcConnectionHandler(
 		grantPresentationAbort = new AbortController();
 		if (securityBoundByHost) return;
 		if (!clientCapabilities?.includes("grant_select")) return;
+		// A connection that speaks for another device never presents a grant (D11 R-1, senpi#6901 review H1).
+		if (connectionRoles.originOf(currentConnectionId()) !== undefined) return;
 		const signal = grantPresentationAbort.signal;
 		detachGrantPresentation = attachMcpGrantPresentation(session.sessionId, (title, choices, opts) =>
 			selectGrantDialog(title, choices, {
@@ -1339,7 +1356,8 @@ export function createRpcConnectionHandler(
 		requestContext?: ExtensionRpcRequestContext,
 	): Promise<RpcResponse | undefined> => {
 		const id = command.id;
-		noteDelegatedRecord(command, connectionOrigin(), session.sessionManager);
+		const cwdMismatch = projectCwdMismatch(command, session.sessionManager.getCwd());
+		if (cwdMismatch !== undefined) return error(id, command.type, cwdMismatch.message, cwdMismatch.errorCode);
 
 		switch (command.type) {
 			case "get_protocol_info":
@@ -1380,7 +1398,9 @@ export function createRpcConnectionHandler(
 								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
 								...advertisedCompactCapabilities(options.capabilities ?? [], false).filter(
 									(capability) =>
-										capability !== SESSION_HELD_CAPABILITY && !isHostOwnedToolRuntimeCapability(capability),
+										capability !== SESSION_HELD_CAPABILITY &&
+										capability !== "park_claim" &&
+										!isHostOwnedToolRuntimeCapability(capability),
 								),
 							]),
 						],
@@ -1389,13 +1409,22 @@ export function createRpcConnectionHandler(
 					},
 				};
 			case "open_session":
-				return error(id, "open_session", "multi_session_disabled");
+			case "park_session":
+			case "claim_session":
+				return error(id, command.type, "multi_session_disabled");
 
 			// =================================================================
 			// Prompting
 			// =================================================================
 
 			case "prompt": {
+				// senpi#6922: a prompt decided at one leaf never runs from another; nothing is appended or sent.
+				const leafRefusal = refusePromptAtMovedLeaf(
+					session,
+					command,
+					automaticInputWouldBeHeld(session, hasRole(INTERACTIVE_USER_CAPABILITY)),
+				);
+				if (leafRefusal !== undefined) return error(id, "prompt", leafRefusal.message, leafRefusal.errorCode);
 				const chain = admitInputChain(command.chainCount, session.settingsManager);
 				if (chain.kind === "refused")
 					return error(id, "prompt", chain.refusal.message, chain.refusal.errorCode, chain.refusal.errorData);
@@ -1406,7 +1435,7 @@ export function createRpcConnectionHandler(
 					session,
 					command,
 					{ output, promptCalls },
-					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: connectionOrigin() },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: turnOrigin() },
 				);
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
@@ -1447,6 +1476,7 @@ export function createRpcConnectionHandler(
 					mode: command.mode,
 					message: command.message,
 					effectId: command.effectId,
+					unlessStopped: command.unlessStopped,
 				});
 				promptCalls.add(settled);
 				void settled.then(
@@ -1491,7 +1521,7 @@ export function createRpcConnectionHandler(
 					session,
 					command,
 					{ output, promptCalls },
-					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: connectionOrigin() },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: turnOrigin() },
 				);
 				return undefined;
 			}
@@ -1520,20 +1550,30 @@ export function createRpcConnectionHandler(
 					);
 				if (command.intent === "stop") {
 					// A Stop names the user's intent, not one turn: an automatic turn that started after the named one stops too.
-					const stopped = await interruptRunningTurn(session, undefined, () => {
-						ClientAdmissions.forSession(session).noteAbort(effectContext().by);
-						return session.stop();
-					});
+					const stopped = await interruptRunningTurn(
+						session,
+						undefined,
+						() => {
+							ClientAdmissions.forSession(session).noteAbort(effectContext().by);
+							return session.stop();
+						},
+						command.background,
+					);
 					if (!stopped.interrupted) await session.stop();
 					return success(id, "interrupt", stopped);
 				}
 				return success(
 					id,
 					"interrupt",
-					await interruptRunningTurn(session, command.turnId, () => {
-						ClientAdmissions.forSession(session).noteAbort(effectContext().by);
-						return session.abort();
-					}),
+					await interruptRunningTurn(
+						session,
+						command.turnId,
+						() => {
+							ClientAdmissions.forSession(session).noteAbort(effectContext().by);
+							return session.abort();
+						},
+						command.background,
+					),
 				);
 
 			case "hold_input": {
@@ -1623,6 +1663,7 @@ export function createRpcConnectionHandler(
 				const peer = {
 					origin: connectionRoles.originOf(currentConnectionId()),
 					connectionOrigin: connectionOrigin(),
+					turnOrigin: turnOrigin(),
 				};
 				const answer = admitExternalMessage(session, command, peer);
 				if (!answer.ok) {
@@ -1678,7 +1719,7 @@ export function createRpcConnectionHandler(
 					secretRoute.handshake?.(command.capabilities);
 					secretInputs.recheck();
 				}
-				if (next.grantChanged) refreshGrantPresentation();
+				if (next.grantChanged || origin.origin !== undefined) refreshGrantPresentation();
 				return success(id, "set_client_info");
 			}
 
@@ -2167,6 +2208,21 @@ export function createRpcConnectionHandler(
 				return success(id, "set_session_name");
 			}
 
+			case "set_session_archived": {
+				setSessionArchived(session.sessionManager, command.archived);
+				outputEvent({ type: "session_archived_changed", archived: command.archived });
+				return success(id, "set_session_archived");
+			}
+
+			case "set_session_settled": {
+				// Read as unknown: a local client's `by` is unchecked by the inbound schema.
+				const parsed = parseSessionSettled(command);
+				if (!parsed.ok) return error(id, "set_session_settled", parsed.error, RPC_ERROR_INVALID_ARGUMENT);
+				setSessionSettled(session.sessionManager, parsed.value);
+				outputEvent({ type: "session_settled_changed", ...settledFields(parsed.value) });
+				return success(id, "set_session_settled");
+			}
+
 			case "record_user_activity": {
 				// `prompt` activity is emitted by prompt admission itself; a client may only report a draft.
 				// Read as unknown: the wire value is unchecked, whatever the declared command type says.
@@ -2248,6 +2304,63 @@ export function createRpcConnectionHandler(
 					: error(id, "set_project_setting", result.message, result.errorCode);
 			}
 
+			case "read_project_file": {
+				const result = await readProjectFile(session, command.path);
+				return result.ok
+					? success(id, "read_project_file", result.data)
+					: error(id, "read_project_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "write_project_file": {
+				const result = await writeProjectFile(session, command.path, command.content, command.ifEtag);
+				return result.ok
+					? success(id, "write_project_file", result.data)
+					: error(id, "write_project_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "get_project_mcp_servers": {
+				const result = await getProjectMcpServers(session);
+				return result.ok
+					? success(id, "get_project_mcp_servers", result.data)
+					: error(id, "get_project_mcp_servers", result.message, result.errorCode, result.errorData);
+			}
+
+			case "set_project_mcp_servers": {
+				const result = await setProjectMcpServers(session, command.patch, command.ifEtag);
+				return result.ok
+					? success(id, "set_project_mcp_servers", result.data)
+					: error(id, "set_project_mcp_servers", result.message, result.errorCode, result.errorData);
+			}
+
+			case "read_project_skill_file": {
+				const result = await readProjectSkillFile(session, command.skill);
+				return result.ok
+					? success(id, "read_project_skill_file", result.data)
+					: error(id, "read_project_skill_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "write_project_skill_file": {
+				const result = await writeProjectSkillFile(session, command.skill, command.content, command.ifEtag);
+				return result.ok
+					? success(id, "write_project_skill_file", result.data)
+					: error(id, "write_project_skill_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "read_user_skill_file": {
+				const result = await readUserSkillFile(session, command.skill);
+				return result.ok
+					? success(id, "read_user_skill_file", result.data)
+					: error(id, "read_user_skill_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "write_user_skill_file": {
+				const origin = connectionRoles.originOf(currentConnectionId());
+				const result = await writeUserSkillFile(session, command.skill, command.content, command.ifEtag, origin);
+				return result.ok
+					? success(id, "write_user_skill_file", result.data)
+					: error(id, "write_user_skill_file", result.message, result.errorCode, result.errorData);
+			}
+
 			case "extension_request":
 			case "eval_cells.list":
 			case "eval_cells.peek":
@@ -2290,6 +2403,7 @@ export function createRpcConnectionHandler(
 
 			case "get_auth_providers": {
 				const modelRegistry = session.modelRegistry;
+				await modelRegistry.authStorage.readWhileBusy();
 				const oauthInfos = buildLoginProviderInfos(modelRegistry, "oauth");
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
 				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => {
@@ -2305,7 +2419,12 @@ export function createRpcConnectionHandler(
 				});
 				// Read after the rows: building them re-reads a store that failed to load (#4413).
 				const storeError = modelRegistry.authStorage.getLoadError();
-				return success(id, "get_auth_providers", { providers, ...(storeError ? { storeError } : {}) });
+				const storeBusy = modelRegistry.authStorage.isCredentialStoreBusy();
+				return success(id, "get_auth_providers", {
+					providers,
+					...(storeError ? { storeError } : {}),
+					...(storeBusy ? { storeBusy: true as const } : {}),
+				});
 			}
 
 			case "login_start": {
@@ -2528,7 +2647,10 @@ export function createRpcConnectionHandler(
 			return;
 		}
 		try {
-			const response = await handleCommand(command, requestContext);
+			// senpi#6342: the record's own handling, and the first run it starts, run under the record's origin.
+			const response = await runInRecordScope(recordTurnOrigin(command, turnOrigin()), () =>
+				handleCommand(command, requestContext),
+			);
 			if (response) {
 				output(response);
 				await waitForRpcBackpressure();
@@ -2600,6 +2722,10 @@ export function createRpcConnectionHandler(
 		},
 		pendingPrompts() {
 			return [...promptCalls];
+		},
+		setClientCapabilities(capabilities) {
+			replaceClientCapabilities([...capabilities]);
+			refreshGrantPresentation();
 		},
 		isShutdownRequested() {
 			return shutdownRequested;

@@ -55,7 +55,7 @@ export type {
 export type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 export type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 export { isOpenAIResponsesPromptCacheModel } from "./api/openai-responses-prompt-cache.ts";
-export { convertResponsesMessages } from "./api/openai-responses-shared.ts";
+export { convertResponsesMessages, ULTRAFAST_DOCUMENTED_MODEL_IDS } from "./api/openai-responses-shared.ts";
 export type { PiMessagesEvent, PiMessagesOptions, PiMessagesRewriteImpact } from "./api/pi-messages.ts";
 export {
 	type WarmPromptCacheOptions,
@@ -68,6 +68,7 @@ export * from "./auth/context.ts";
 export * from "./auth/credential-store.ts";
 export * from "./auth/headers.ts";
 export * from "./auth/helpers.ts";
+export { type OAuthRefreshRequest, refreshOAuthCredential } from "./auth/oauth-refresh.ts";
 export * from "./auth/types.ts";
 export type {
 	OAuthAuthInfo,

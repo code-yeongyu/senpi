@@ -3,6 +3,7 @@ import { MODELS } from "../../../ai/src/models.generated.ts";
 import {
 	AUTO_RESOLVED_PRESET_NAMES,
 	PROMPT_PRESET_MODEL_CASES,
+	presetFirstTurnPlanDefault,
 	resolvePresetName as resolveContractPresetName,
 } from "../../src/core/extensions/builtin/prompt-preset/contract.ts";
 import { resolvePresetName as resolveRuntimePresetName } from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
@@ -45,6 +46,15 @@ describe("prompt-preset shared contract", () => {
 	it("exposes exactly the non-auto valid presets", () => {
 		const autoResolvable = [...VALID_PRESETS].filter((preset) => preset !== "auto" && preset !== "gpt-5").sort();
 		expect([...AUTO_RESOLVED_PRESET_NAMES].sort()).toEqual(autoResolvable);
+	});
+
+	it("defaults the first-turn plan to off under every GPT preset and deepseek-v4-1-flash, and to force elsewhere (senpi#7101, senpi#7100)", () => {
+		// The expectation follows the preset name, so a new GPT preset fails here until it joins the set.
+		for (const preset of ["gpt-5", ...AUTO_RESOLVED_PRESET_NAMES] as const) {
+			const plansAfterReading = preset.startsWith("gpt-") || preset === "deepseek-v4-1-flash";
+			expect(presetFirstTurnPlanDefault(preset), preset).toBe(plansAfterReading ? "off" : "force");
+		}
+		expect(presetFirstTurnPlanDefault(undefined)).toBe("force");
 	});
 
 	it("returns undefined for an unknown model", () => {

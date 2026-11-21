@@ -52,7 +52,7 @@ ${opening ? `${opening}\n\n` : ""}- \`bash_output({ bash_id, filter, view })\`: 
 - Waiting on observable state (CI, build, log pattern, deploy, file, other session): register \`${monitor}\`, keep working. No sleep/poll in cells, no repeated \`bash_output\`; sleep loops live inside monitor command. Exactly one source per call:
   - \`${monitor}({ description, command, filter?, timeout_ms?, persistent? })\`: lines matching \`filter\` -> events; exit -> summary. \`timeout_ms\` KILLS watched command; ${longerJob}. One-shot gate: \`until <cond>; do sleep 1; done; printf 'READY\\n'\` + \`filter: "^READY$"\`. Stream: \`tail -n 0 -F <log> | grep --line-buffered <pat>\` + \`persistent: true\`. Filter noise at source; stop via \`kill_bash\`.
   - \`${monitor}({ description, path, event?, persistent? })\`: one regular file, parent dir must exist, fires once, no \`filter\`. \`"create"\` (default) fires only for a file that appears after registration; existing file -> \`event: "modify"\`; run creates the dir too -> \`command\` poll.
-  - \`${monitor}({ type: "rpc", target, description, events?, exclude?, filter?, persistent? })\`: \`target\` = \`"children"\` / \`"all"\` / one session id, path, \`st_\` id. Status changes + effect receipts -> events; \`events: "all"\` adds content; \`exclude\` drops kinds.
+  - \`${monitor}({ type: "rpc", target, description, events?, exclude?, filter?, persistent? })\`: \`target\` = \`"children"\` / \`"all"\` / one session id, path, \`st_\` id / \`<device>/<session>\` on another device (e.g. \`"laptop/abc123"\`). Status changes + effect receipts -> events; \`events: "all"\` adds content; \`exclude\` drops kinds.
 - \`persistent: true\`: no deadline, survives restart (command re-run with \`SENPI_MONITOR_RESTORED=1\`, file rescanned), expires 7 days. Baseline in \`$SENPI_MONITOR_STATE_DIR\` so a move during downtime (<= \`$SENPI_MONITOR_DOWNTIME_MS\` ms) still reported. Loop failures non-fatal: exited watch not restarted.
 - Repeated monitor-only wakes pause that noisy monitor only. \`${monitor}({ action: "rearm", bash_id })\` resumes one; \`${monitor}({ action: "rearm" })\` all. Completion and real user input also resume.
 - \`bash_input({ bash_id, input, keys, submit })\`: stdin or keys (\`["ctrl+c"]\`, \`["enter"]\`). \`bash_resize({ bash_id, cols, rows })\`: reflow TUI. \`kill_bash({ bash_id })\` / \`{ all: true }\`: tear down session tree.
@@ -113,7 +113,8 @@ ${bashGuidance}- \`bash_output({ bash_id, filter, view })\` peeks at a session w
     directory too. This branch takes no \`filter\`.
   - \`${monitor}({ type: "rpc", target, description, events?, exclude?, filter?, persistent? })\` watches other
     sessions over every RPC host and terminal: \`target: "children"\` (sessions you spawned, including
-    later ones), \`"all"\`, or one session id, path or \`st_\` task id. The result lists each matched
+    later ones), \`"all"\`, or one session id, path or \`st_\` task id; a session on another device is
+    \`<device>/<session>\` (e.g. \`"laptop/abc123"\`). The result lists each matched
     session as it is now; then each status change (\`rpc <label> status running -> idle ...\`) and
     effect receipt arrives as an event. \`events: "all"\` adds their content, streaming collapsed to one
     line per 2 s; \`exclude\` drops kinds. Watching never attaches to a session.

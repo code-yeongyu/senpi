@@ -156,11 +156,13 @@ it.each(["drain", "shutdown"] as const)("refuses reclaim during %s before admiss
 	const turn = rig.turns.get(ref.sessionPath);
 	if (!entry || !turn) throw new Error("Missing live session");
 	turn.start();
-	if (phase === "shutdown") rig.teardown.hold();
+	const tearingDown = phase === "shutdown" ? rig.teardown.hold() : undefined;
 	const shutdown = phase === "shutdown" ? rig.router.dispose() : undefined;
 	if (phase === "drain") rig.router.beginDrain();
-	const before = { state: entry.state, attachments: entry.attachments };
 	try {
+		// Shutdown may first await speculative parks. Snapshot after its own close claim, while disposal is held.
+		await tearingDown;
+		const before = { state: entry.state, attachments: entry.attachments };
 		const response = await rig.send("recovery", {
 			id: "draining-reclaim",
 			type: "reclaim_session",

@@ -54,7 +54,7 @@ export function renderEvalCall(
 	// renders (the host would otherwise fall back to a raw key=value row).
 	const code = typeof args.code === "string" ? args.code : "";
 	const language = knownLanguage(args.language);
-	component.syncLiveTicker(theme !== undefined, context.invalidate);
+	component.syncLiveTicker(theme !== undefined, context.invalidate, context.expanded ? "expanded" : "collapsed");
 	if (theme === undefined && context.spinnerFrame === undefined) {
 		const reset = args.reset === true ? " reset" : "";
 		const timeout = args.timeout === undefined ? "" : ` timeout ${args.timeout}s`;

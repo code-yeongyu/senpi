@@ -277,7 +277,7 @@ describe("AgentSession compaction race handling", () => {
 		expect(getUserTexts(harness)).toEqual(["after compaction prompt"]);
 	});
 
-	it("aborts an active run before manual compaction disconnects the agent-event subscription", async () => {
+	it("aborts an active run before manual compaction starts", async () => {
 		const eventOrder: string[] = [];
 		let resolveStreamingUpdate: (() => void) | undefined;
 		const streamingUpdate = new Promise<void>((resolve) => {

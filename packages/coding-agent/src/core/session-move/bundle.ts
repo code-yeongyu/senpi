@@ -55,8 +55,44 @@ export async function sha256File(path: string): Promise<string> {
 const isString = (value: unknown): value is string => typeof value === "string";
 
 /** Both separators count: a bundle written on one OS is read on another. */
-function leavesBundle(path: string): boolean {
+export function leavesBundle(path: string): boolean {
 	return posix.isAbsolute(path) || win32.isAbsolute(path) || path.split(/[\\/]/).includes("..");
+}
+
+/**
+ * The most segments a path in a bundle may have (senpi#6469). The engine's own paths are at most four deep
+ * (`files/extensions/<extension>/<id>.json`, `files/resident-blobs/<session>/<id>.blob`); extension state under
+ * `state/` is as deep as its extension makes it, and this leaves eight times the engine's depth for it. With no cap a
+ * path of 1,024 bytes names about 500 folders, and an import creates every folder of every listed path.
+ */
+export const MAX_BUNDLE_PATH_SEGMENTS = 32;
+
+/** Both separators count, as in `leavesBundle`. */
+export function nestsTooDeep(path: string): boolean {
+	return path.split(/[\\/]/).length > MAX_BUNDLE_PATH_SEGMENTS;
+}
+
+/** A path as an error may show it: quoted, and cut short only when it is long. */
+export const shown = (path: string): string => JSON.stringify(path.length > 120 ? `${path.slice(0, 120)}...` : path);
+
+/**
+ * A file the move would carry sits deeper than a bundle path may be, so a receiver would refuse the bundle. The
+ * sender refuses first: before it seals the session where it still can, and before it writes a bundle where the
+ * session was sealed already (by a version that did not look).
+ */
+export class MovePathTooDeepError extends Error {
+	readonly code = "move_path_too_deep";
+
+	constructor(path: string, sealedAlready: boolean) {
+		super(
+			`A file of this session is nested deeper than a move can carry (${MAX_BUNDLE_PATH_SEGMENTS} path segments): ${shown(path)}. ${
+				sealedAlready
+					? "No bundle was written. The session is sealed for this move: finish the move as declined to take it back."
+					: "The session was not sealed for the move and nothing was written."
+			}`,
+		);
+		this.name = "MovePathTooDeepError";
+	}
 }
 
 function parseFile(value: unknown): BundleFile {
@@ -64,6 +100,10 @@ function parseFile(value: unknown): BundleFile {
 	if (typeof file !== "object" || file === null || !isString(file.path) || !isString(file.sha256))
 		throw new MoveBundleInvalidError("a listed file is malformed");
 	if (leavesBundle(file.path)) throw new MoveBundleInvalidError(`a listed path leaves the bundle: ${file.path}`);
+	if (nestsTooDeep(file.path))
+		throw new MoveBundleInvalidError(
+			`a listed path is nested deeper than ${MAX_BUNDLE_PATH_SEGMENTS} segments: ${shown(file.path)}`,
+		);
 	return { path: file.path, sha256: file.sha256 };
 }
 
@@ -94,8 +134,12 @@ export function parseMoveId(value: unknown): MoveId {
 /** The importer joins this name onto its session folder, so it must be a plain session file name and nothing else. */
 const SESSION_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl$/;
 
+/** Whether `value` is a name a session can land under: what a manifest may carry and what a `status` may name. */
+export const isSessionFileName = (value: unknown): value is string =>
+	typeof value === "string" && SESSION_FILE_NAME.test(value) && !value.includes("..");
+
 function parseSessionFileName(value: string): string {
-	if (!SESSION_FILE_NAME.test(value) || value.includes(".."))
+	if (!isSessionFileName(value))
 		throw new MoveBundleInvalidError(`the session file name is not a plain file name: ${value}`);
 	return value;
 }
@@ -120,15 +164,50 @@ function parsePayload(value: unknown): MovePayload {
 	return { kind: payload.kind, files };
 }
 
+const unreadable = (error: unknown) =>
+	new MoveBundleInvalidError(`manifest unreadable: ${error instanceof Error ? error.message : String(error)}`);
+
 export async function readManifest(bundleDir: string): Promise<MoveManifest> {
+	let text: string;
+	try {
+		text = await readFile(join(bundleDir, MANIFEST_FILE), "utf8");
+	} catch (error) {
+		throw unreadable(error);
+	}
+	return parseManifest(text);
+}
+
+/**
+ * What a sender reads back from the bundle it kept: the move it is for, and the queued input the release took out,
+ * in a format this version knows. Nothing else is checked. The bundle is the sender's own, and a rule about its paths that is newer than the bundle
+ * (the depth cap) must not stop the sender from finishing its move.
+ */
+export async function readKeptBundle(bundleDir: string): Promise<Pick<MoveManifest, "moveId" | "droppedUserMessages">> {
 	let raw: unknown;
 	try {
 		raw = JSON.parse(await readFile(join(bundleDir, MANIFEST_FILE), "utf8"));
 	} catch (error) {
-		throw new MoveBundleInvalidError(
-			`manifest unreadable: ${error instanceof Error ? error.message : String(error)}`,
-		);
+		throw unreadable(error);
 	}
+	if (typeof raw !== "object" || raw === null) throw new MoveBundleInvalidError("the manifest is not an object");
+	// The format says what the two fields read below mean: a bundle of another format is left for a version that knows it.
+	const format: unknown = Reflect.get(raw, "format");
+	if (format !== MOVE_BUNDLE_FORMAT) throw new MoveBundleInvalidError(`unknown bundle format ${String(format)}`);
+	const queued: unknown = Reflect.get(raw, "droppedUserMessages");
+	const droppedUserMessages = Array.isArray(queued) ? queued : [];
+	if (!droppedUserMessages.every(isString)) throw new MoveBundleInvalidError("malformed queued input");
+	return { moveId: parseMoveId(Reflect.get(raw, "moveId")), droppedUserMessages };
+}
+
+/** The manifest from its own text: an inline bundle's manifest is read before any of its files is written. */
+export function parseManifest(text: string): MoveManifest {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(text);
+	} catch (error) {
+		throw unreadable(error);
+	}
+	if (typeof raw !== "object" || raw === null) throw new MoveBundleInvalidError("the manifest is not an object");
 	const m = raw as Record<string, unknown>;
 	if (m.format !== MOVE_BUNDLE_FORMAT) throw new MoveBundleInvalidError(`unknown bundle format ${String(m.format)}`);
 	for (const key of ["moveId", "sessionId", "sessionFileName", "sourceCwd"] as const) {
@@ -151,8 +230,23 @@ export async function readManifest(bundleDir: string): Promise<MoveManifest> {
 	};
 }
 
-export async function verifyBundle(bundleDir: string, manifest: MoveManifest): Promise<void> {
-	for (const file of [manifest.session, ...manifest.sidecars, ...manifest.payloads.flatMap((p) => p.files)]) {
+/** Every file a manifest lists besides itself: the session, its sidecars and the payload files. */
+export const listedFiles = (manifest: MoveManifest): readonly BundleFile[] => [
+	manifest.session,
+	...manifest.sidecars,
+	...manifest.payloads.flatMap((payload) => payload.files),
+];
+
+/**
+ * Checks every listed file against the manifest. `sent` is the sha256 each file of an inline bundle arrived with
+ * (senpi#6267): a file must match that too, so an entry that contradicts its own bytes is refused like a changed file.
+ */
+export async function verifyBundle(
+	bundleDir: string,
+	manifest: MoveManifest,
+	sent?: ReadonlyMap<string, string>,
+): Promise<void> {
+	for (const file of listedFiles(manifest)) {
 		let actual: string;
 		try {
 			actual = await sha256File(join(bundleDir, file.path));
@@ -160,6 +254,8 @@ export async function verifyBundle(bundleDir: string, manifest: MoveManifest): P
 			throw new MoveBundleInvalidError(`missing ${file.path}`);
 		}
 		if (actual !== file.sha256) throw new MoveBundleInvalidError(`${file.path} changed in transit`);
+		if (sent !== undefined && sent.get(file.path) !== actual)
+			throw new MoveBundleInvalidError(`${file.path} was sent with a sha256 that is not its bytes'`);
 	}
 	const header = (await readFile(join(bundleDir, manifest.session.path), "utf8")).split("\n", 1)[0] ?? "";
 	let id: unknown;

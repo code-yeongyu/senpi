@@ -14,6 +14,7 @@ import {
 	KEEP_GOING_LABEL,
 	START_FRESH_LABEL,
 } from "../../src/core/extensions/builtin/handoff-hint/index.ts";
+import { StaleExtensionContextError } from "../../src/core/extensions/stale-context-error.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 
@@ -63,8 +64,8 @@ function harness(
 	} = {},
 ) {
 	let now = 1_000_000;
-	const handlers = new Map<string, Handler[]>();
-	const commands = new Map<string, { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>();
+	let handlers = new Map<string, Handler[]>();
+	let commands = new Map<string, { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>();
 	const busHandlers = new Map<string, Array<(data: unknown) => void>>();
 	const entries: SessionEntry[] = [
 		messageEntry({ role: "user", content: "start", timestamp: 1 }, "u0"),
@@ -77,38 +78,56 @@ function harness(
 	const notices: string[] = [];
 	let tokens = options.tokens ?? 500_000;
 	let idle = true;
-	const pi = {
-		sessionKind: options.kind ?? "interactive",
-		sessionContext: {},
-		on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
-		registerCommand: (name: string, command: any) => commands.set(name, command),
-		appendEntry: (customType: string, data: unknown) => {
-			appended.push({ customType, data });
-			entries.push({
-				type: "custom",
-				id: `c${appended.length}`,
-				parentId: null,
-				timestamp: "",
-				customType,
-				data,
-			} as SessionEntry);
-		},
-		getSettings: () => ({ handoffHint: options.settings }),
-		events: {
-			emit: (channel: string, data: unknown) => {
-				if (channel === HANDOFF_HINT_EVENT) events.push(data as HandoffHintEvent);
-				for (const handler of busHandlers.get(channel) ?? []) handler(data);
-			},
-			on: (channel: string, handler: (data: unknown) => void) => {
-				busHandlers.set(channel, [...(busHandlers.get(channel) ?? []), handler]);
-				return () => {};
-			},
-		},
-	} as unknown as ExtensionAPI;
-	createHandoffHintExtension({
+	const factory = createHandoffHintExtension({
 		now: () => now,
 		readGoal: async () => (options.goal === "active" ? ({ status: "active", objective: "ship it" } as never) : null),
-	})(pi);
+	});
+	// One extension generation per session, like the runtime: `newSession()` retires the old one before the
+	// replacement starts, and a retired `pi` throws on use (senpi#4051).
+	function loadGeneration(): { retire: () => void } {
+		let retired = false;
+		const generationHandlers = new Map<string, Handler[]>();
+		const generationCommands: typeof commands = new Map();
+		const live = () => {
+			if (retired) throw new StaleExtensionContextError("stale pi after session replacement");
+		};
+		const pi = {
+			sessionKind: options.kind ?? "interactive",
+			sessionContext: {},
+			on: (event: string, handler: Handler) =>
+				generationHandlers.set(event, [...(generationHandlers.get(event) ?? []), handler]),
+			registerCommand: (name: string, command: any) => generationCommands.set(name, command),
+			appendEntry: (customType: string, data: unknown) => {
+				appended.push({ customType, data });
+				entries.push({
+					type: "custom",
+					id: `c${appended.length}`,
+					parentId: null,
+					timestamp: "",
+					customType,
+					data,
+				} as SessionEntry);
+			},
+			getSettings: () => ({ handoffHint: options.settings }),
+			events: {
+				emit: (channel: string, data: unknown) => {
+					live();
+					if (channel === HANDOFF_HINT_EVENT) events.push(data as HandoffHintEvent);
+					for (const handler of busHandlers.get(channel) ?? []) handler(data);
+				},
+				on: (channel: string, handler: (data: unknown) => void) => {
+					live();
+					busHandlers.set(channel, [...(busHandlers.get(channel) ?? []), handler]);
+					return () => {};
+				},
+			},
+		} as unknown as ExtensionAPI;
+		factory(pi);
+		handlers = generationHandlers;
+		commands = generationCommands;
+		return { retire: () => (retired = true) };
+	}
+	let generation = loadGeneration();
 	const ctx = {
 		mode: options.mode ?? "tui",
 		hasUI: true,
@@ -134,6 +153,13 @@ function harness(
 			if (options.cancelSwitch) return { cancelled: true };
 			const record = { parentSession: opts.parentSession, sent: [] as unknown[] };
 			newSessions.push(record);
+			generation.retire();
+			generation = loadGeneration();
+			await fire("session_start", {
+				type: "session_start",
+				reason: "new",
+				previousSessionFile: "/sessions/s1.jsonl",
+			});
 			await opts.withSession?.({ sendMessage: async (message: unknown) => record.sent.push(message) });
 			return { cancelled: false };
 		},
@@ -169,7 +195,9 @@ function harness(
 		// Commands get their own context object, as `createCommandContext()` builds one per invocation.
 		run: (args: string) => commands.get("handoff")!.handler(args, { ...ctx }),
 		setTokens: (value: number) => (tokens = value),
-		emitWarmPing: () => pi.events?.emit("cache_warm_ping", {}),
+		emitWarmPing: () => {
+			for (const handler of busHandlers.get("cache_warm_ping") ?? []) handler({});
+		},
 	};
 }
 
@@ -306,6 +334,13 @@ describe("handoff hint", () => {
 		await h.run("");
 		expect(h.events.map((event) => event.action)).toEqual(["shown"]);
 		expect(h.visible()).toBe(true);
+		// A later, unrelated new session from the same one must not deliver the cancelled acceptance.
+		await h.fire("session_start", {
+			type: "session_start",
+			reason: "new",
+			previousSessionFile: "/sessions/s1.jsonl",
+		});
+		expect(h.events.map((event) => event.action)).toEqual(["shown"]);
 	});
 
 	it("an unknown argument explains the two choices and starts nothing", async () => {
@@ -326,7 +361,9 @@ describe("handoff hint", () => {
 		await h.humanTurn();
 		await h.advance(TTL_MS);
 		await h.run("");
+		// The old generation is retired by now, so the acceptance must leave through the replacement (senpi#4051).
 		expect(h.events.map((event) => event.action)).toEqual(["shown", "accepted"]);
+		expect(h.events[1]).toMatchObject({ action: "accepted", sessionId: "s1", contextTokens: 500_000 });
 		expect(h.newSessions).toHaveLength(1);
 		expect(h.newSessions[0].parentSession).toBe("/sessions/s1.jsonl");
 		const [brief] = h.newSessions[0].sent as Array<{ customType: string; content: string; display: boolean }>;

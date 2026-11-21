@@ -64,6 +64,7 @@ export function recordAttachment(host: RouterContext, owner: string, sessionId: 
  * their running turn settles, or every owned one while the host drains.
  */
 export function releaseConnection(host: RouterContext, connectionId: string): Promise<string[]> {
+	host.routes.release(connectionId);
 	// Not async: with the flag off the caller gets the legacy body's own promise, with no extra microtask hop.
 	if (!host.admissions) return releaseConnectionHolds(host, connectionId);
 	return releaseAdmittedConnection(host, host.admissions, connectionId);

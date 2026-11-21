@@ -70,6 +70,19 @@ describe("Claude Fable 5.2 prompt preset", () => {
 		expect(preset?.prompt).toContain("ask_user_question");
 	});
 
+	// senpi#6356: the guide's ownership sentence is shipped verbatim for Fable 5.2.
+	it("renders the guide's codebase-ownership sentence without the smallest-change instruction", () => {
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-fable-5-2", "anthropic");
+
+		const preset = resolvePreset(model, settings);
+
+		expect(preset?.prompt).toContain(
+			"This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it.",
+		);
+		expect(preset?.prompt).not.toContain("Smallest correct change wins");
+	});
+
 	it("allows settings.json to force claude-fable-5-2 regardless of model id", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "claude-fable-5-2" };
