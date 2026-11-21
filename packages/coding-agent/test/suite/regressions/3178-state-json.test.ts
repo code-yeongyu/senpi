@@ -219,7 +219,7 @@ describe("3178 config and state separation", () => {
 		const contents = new Map<string, string>();
 		refreshSettingsContentSnapshots(contents, agentDir, cwd);
 		writeFileSync(settingsPath, JSON.stringify({ ...JSON.parse(config), ...changed }));
-		const log = () => ({ written: true, disabled: false });
+		const log = () => ({ written: true, paused: false });
 		expect(
 			excludeRoutineOnlySettingsChanges([settingsPath], contents, agentDir, cwd, {
 				debug: log,

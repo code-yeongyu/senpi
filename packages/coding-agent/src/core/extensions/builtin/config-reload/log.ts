@@ -47,7 +47,8 @@ export interface ConfigReloadLogDetails {
 
 export interface ConfigReloadLogStatus {
 	written: boolean;
-	disabled: boolean;
+	/** True while the sink is paused for the retry window after a write failure (senpi#2981); it recovers on its own. */
+	paused: boolean;
 }
 
 export interface ConfigReloadLogger {
@@ -86,13 +87,13 @@ export function createConfigReloadLogger(
 		event: Event,
 		details: ConfigReloadLogDetails[Event],
 	): ConfigReloadLogStatus {
-		if (Date.now() < retryAt) return { written: false, disabled: true };
+		if (Date.now() < retryAt) return { written: false, paused: true };
 		try {
 			writeLine(filePath, JSON.stringify(formatEntry(level, event, details)), maxBytes);
-			return { written: true, disabled: false };
+			return { written: true, paused: false };
 		} catch {
 			retryAt = Date.now() + LOG_SINK_RETRY_MS;
-			return { written: false, disabled: true };
+			return { written: false, paused: true };
 		}
 	}
 
