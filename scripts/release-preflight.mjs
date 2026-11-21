@@ -9,7 +9,9 @@
  * already tagged or published), the commit (`--sha` one of main's own commits), the publish set (every name known to
  * the registry), main's macOS/Windows legs, and the commit's hosted "Check and test" (a known-red run stops the
  * release now; an unfinished one is left for the release job to wait for). Every refusal is collected and printed, then
- * the job fails; a dry run prints them as warnings and passes.
+ * the job fails; a dry run prints them as warnings and passes. A catalog refresh PR open longer than its workflow's
+ * MAX_STALE_DAYS is printed as a warning, never a refusal: the release ships main's catalog, and the operator should
+ * know when that catalog is stale (senpi#2287).
  *
  * It also fixes what every later job uses: `base_sha` (the `--sha` input, else the checked-out commit; resolved once,
  * here, and printed in full) and `version` (fixed now, so a run that crosses 00:00 UTC cannot change it).
@@ -27,6 +29,31 @@ import { assertLiveRunOnMain } from "./release-ref-guard.mjs";
 import { planCiEvidence } from "./release-test-gate.mjs";
 
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
+const DAY_MS = 86_400_000;
+
+/** Each catalog refresh branch and its workflow's MAX_STALE_DAYS (model-catalog-refresh.yml, opengateway-catalog-refresh.yml). */
+export const CATALOG_REFRESH_BRANCHES = [
+	{ branch: "automation/model-catalog-refresh", maxStaleDays: 3 },
+	{ branch: "automation/opengateway-catalog-refresh", maxStaleDays: 14 },
+];
+
+/**
+ * Warnings for refresh PRs that have waited longer than their limit.
+ * @param {Array<{branch: string, number: number, createdAt: string}>} open the open refresh PRs
+ * @param {number} now epoch ms
+ */
+export function staleCatalogNotices(open, now) {
+	const notices = [];
+	for (const { branch, maxStaleDays } of CATALOG_REFRESH_BRANCHES) {
+		for (const pr of open.filter((entry) => entry.branch === branch)) {
+			const days = Math.floor((now - Date.parse(pr.createdAt)) / DAY_MS);
+			if (days > maxStaleDays) {
+				notices.push(`catalog refresh #${pr.number} (${branch}) has waited ${days} days (limit ${maxStaleDays}); this release ships main's older catalog`);
+			}
+		}
+	}
+	return notices;
+}
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
 /** `$GITHUB_OUTPUT` lines for the preflight job's outputs. */
@@ -91,6 +118,20 @@ export function runPreflight(deps) {
 
 const log = (line) => process.stdout.write(`[preflight] ${line}\n`);
 
+/** The open catalog refresh PRs; a failed read is reported and yields none, since this check only warns. */
+function openRefreshPrs(capture) {
+	try {
+		return CATALOG_REFRESH_BRANCHES.flatMap(({ branch }) =>
+			JSON.parse(capture("gh", ["pr", "list", "--head", branch, "--base", "main", "--state", "open", "--json", "number,createdAt"])).map(
+				(pr) => ({ branch, ...pr }),
+			),
+		);
+	} catch (error) {
+		process.stdout.write(`::warning::could not read the open catalog refresh PRs: ${error instanceof Error ? error.message : String(error)}\n`);
+		return [];
+	}
+}
+
 function main() {
 	const { values } = parseArgs({
 		options: {
@@ -122,6 +163,7 @@ function main() {
 	for (const refusal of result.refusals) {
 		process.stdout.write(`::${dryRun ? "warning" : "error"}::${refusal}\n`);
 	}
+	for (const notice of staleCatalogNotices(openRefreshPrs(capture), Date.now())) process.stdout.write(`::warning::${notice}\n`);
 	if (result.refusals.length > 0 && !dryRun) {
 		throw new Error(`${result.refusals.length} preflight check(s) refused the release; nothing was built, tested or pushed`);
 	}

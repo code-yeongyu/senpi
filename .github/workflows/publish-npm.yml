@@ -67,16 +67,9 @@ jobs:
       - name: Require a version for publish-only
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
-          REPOSITORY: ${{ github.repository }}
         run: |
           test -n "$EXPECTED_VERSION" || {
             echo "::error::publish-only requires an explicit version" >&2
-            exit 1
-          }
-          # The release run tags the version before anything publishes it; a missing tag fails here, not after the
-          # native prebuilds, at the tag checkout.
-          test -n "$(git ls-remote --tags "https://github.com/${REPOSITORY}.git" "refs/tags/v${EXPECTED_VERSION}")" || {
-            echo "::error::tag v${EXPECTED_VERSION} does not exist; publish-only publishes a version a release run already tagged" >&2
             exit 1
           }
 

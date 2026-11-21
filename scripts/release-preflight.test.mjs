@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { runPreflight } from "./release-preflight.mjs";
+import { runPreflight, staleCatalogNotices } from "./release-preflight.mjs";
 
 const SHA = "a".repeat(40);
 const checkRun = (conclusion, status = "completed") => [{ name: "Check and test", status, conclusion, head_sha: SHA }];
@@ -78,6 +78,23 @@ describe("runPreflight", () => {
 	});
 });
 
+describe("staleCatalogNotices (senpi#2287)", () => {
+	const now = Date.parse("2026-11-21T12:00:00Z");
+	it("warns only for a refresh PR past its own workflow's limit", () => {
+		const notices = staleCatalogNotices(
+			[
+				{ branch: "automation/model-catalog-refresh", number: 1, createdAt: "2026-11-17T11:00:00Z" },
+				{ branch: "automation/model-catalog-refresh", number: 2, createdAt: "2026-11-19T12:00:00Z" },
+				{ branch: "automation/opengateway-catalog-refresh", number: 3, createdAt: "2026-11-10T12:00:00Z" },
+				{ branch: "automation/opengateway-catalog-refresh", number: 4, createdAt: "2026-11-01T12:00:00Z" },
+			],
+			now,
+		);
+		assert.deepEqual(notices.map((notice) => notice.match(/#(\d+)/)?.[1]), ["1", "4"]);
+		assert.match(notices[0], /waited 4 days \(limit 3\)/);
+	});
+});
+
 const PREFLIGHT_CLI = fileURLToPath(new URL("./release-preflight.mjs", import.meta.url));
 
 // Release-train ruling on senpi#6642: the base commit is resolved once, here, and printed as a full sha (a step output
@@ -112,7 +129,7 @@ describe("release-preflight CLI", () => {
 		mkdirSync(bin, { recursive: true });
 		// npm view knows every publish-set name and no version; gh reports no main runs and no check runs.
 		writeFileSync(join(bin, "npm"), `#!${process.execPath}\nconst a = process.argv.slice(2);\nif (a[0] === "view" && !a[1].includes("@2")) process.stdout.write(JSON.stringify(a[1]) + "\\n");\nelse { process.stderr.write("npm error code E404\\n"); process.exit(1); }\n`);
-		writeFileSync(join(bin, "gh"), `#!${process.execPath}\nconst p = String(process.argv[3]);\nprocess.stdout.write(p.includes("/actions/workflows/") ? JSON.stringify({ workflow_runs: [] }) : JSON.stringify([{ check_runs: [] }]));\n`);
+		writeFileSync(join(bin, "gh"), `#!${process.execPath}\nconst p = String(process.argv[3]);\nprocess.stdout.write(process.argv[2] === "pr" ? "[]" : p.includes("/actions/workflows/") ? JSON.stringify({ workflow_runs: [] }) : JSON.stringify([{ check_runs: [] }]));\n`);
 		for (const name of ["npm", "gh"]) chmodSync(join(bin, name), 0o755);
 		const output = join(root, "github-output");
 		writeFileSync(output, "");
