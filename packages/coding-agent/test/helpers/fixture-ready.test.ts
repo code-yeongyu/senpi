@@ -115,7 +115,7 @@ describe("waitForFixtureMessage", () => {
 		await expect(
 			waitForFixtureMessage(child, readyType, { timeoutMs: budget(20_000), output }, "caller"),
 		).resolves.toBe("ready");
-	}, 20_000);
+	});
 
 	it("still delivers a report the fixture sent right before it exited", async () => {
 		// rpc-owner-caller.ts reports a failure, disconnects and exits; the exit must not win over that report.
@@ -125,7 +125,7 @@ describe("waitForFixtureMessage", () => {
 		await expect(
 			waitForFixtureMessage(child, readyType, { timeoutMs: budget(20_000), output }, "caller"),
 		).resolves.toBe("failure");
-	}, 20_000);
+	});
 
 	it("fails as soon as a fixture exits without reporting, with its status and output", async () => {
 		const { child, output } = reporter(`process.stderr.write("boot refused\\n"); process.exit(3);`);
@@ -133,7 +133,7 @@ describe("waitForFixtureMessage", () => {
 		await expect(waitForFixtureMessage(child, readyType, { timeoutMs: 600_000, output }, "caller")).rejects.toThrow(
 			/caller exited \(code 3, signal null\) before it reported[\s\S]*boot refused/,
 		);
-	}, 20_000);
+	});
 
 	it("fails with the error `accept` throws", async () => {
 		const { child, output } = reporter(`process.send({ type: "ready" }); setInterval(() => {}, 1000);`);
@@ -143,14 +143,14 @@ describe("waitForFixtureMessage", () => {
 		await expect(
 			waitForFixtureMessage(child, refuse, { timeoutMs: budget(20_000), output }, "caller"),
 		).rejects.toThrow("missing transferred exit pipe");
-	}, 20_000);
+	});
 
 	it("fails at its bound, with the output, when a live fixture never reports", async () => {
 		const { child, output } = reporter(`process.stderr.write("still booting\\n"); setInterval(() => {}, 1000);`);
 		await expect(waitForFixtureMessage(child, readyType, { timeoutMs: 500, output }, "caller")).rejects.toThrow(
 			/caller did not report within 500ms[\s\S]*still booting/,
 		);
-	}, 20_000);
+	});
 });
 
 describe("caseBudget", () => {
