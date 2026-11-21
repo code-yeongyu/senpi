@@ -1,7 +1,7 @@
 import { providerUrl } from "../provider-endpoints.ts";
 import type { BuiltSearchRequest, JsonObject, SearchResultItem } from "../types.ts";
 import type { BuildContext, ProviderModule } from "./shared.ts";
-import { collect, contentHeaders, getArray, getObject, getString, result } from "./shared.ts";
+import { collect, contentHeaders, getArray, getObject, getString, result, withConfigHeaders } from "./shared.ts";
 
 export function buildAnthropicMessagesSearchRequest(ctx: BuildContext, defaultModel: string): BuiltSearchRequest {
 	const { config, request, allowedDomains, blockedDomains } = ctx;
@@ -12,10 +12,13 @@ export function buildAnthropicMessagesSearchRequest(ctx: BuildContext, defaultMo
 		url: providerUrl(config),
 		init: {
 			method: "POST",
-			headers: contentHeaders({
-				"x-api-key": config.apiKey ?? "",
-				"anthropic-version": "2023-06-01",
-			}),
+			headers: withConfigHeaders(
+				config,
+				contentHeaders({
+					"x-api-key": config.apiKey ?? "",
+					"anthropic-version": "2023-06-01",
+				}),
+			),
 		},
 		body: {
 			model: config.model ?? defaultModel,
