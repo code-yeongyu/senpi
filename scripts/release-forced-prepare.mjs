@@ -20,7 +20,7 @@ import { assertReleasableCommit } from "./release-pin.mjs";
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 
 /** `$GITHUB_OUTPUT` lines for the prepare job's outputs. */
-export function formatPrepareOutputs({ baseSha, version }) {
+function formatPrepareOutputs({ baseSha, version }) {
 	return `base_sha=${baseSha}\nversion=${version}\n`;
 }
 
