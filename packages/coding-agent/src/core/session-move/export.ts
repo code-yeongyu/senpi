@@ -18,7 +18,9 @@ import {
 	SESSION_BUNDLE_PATH,
 	sha256File,
 } from "./bundle.ts";
+import { putAtPlace } from "./bundle-place.ts";
 import { EXTENSION_STATE_PAYLOAD } from "./extension-state.ts";
+import { keptQueuedInput } from "./kept-input.ts";
 import {
 	headerSessionId,
 	type MoveId,
@@ -101,8 +103,17 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	if (!ownership.writable && !(ownership.state === "moving" && ownership.moveId === moveId)) {
 		throw new SessionMovedAwayError(sessionFile, ownership);
 	}
+	// The queued input this export carries: the list the call sent, or with none sent, what an earlier export of this
+	// move kept at the bundle's place. Read before the seal, so a kept manifest that cannot be read fails the export
+	// with nothing changed.
+	const dropped = options.droppedUserMessages?.length
+		? options.droppedUserMessages
+		: ((await keptQueuedInput(options.bundleDir, moveId)) ?? []);
 	if (ownership.writable) {
-		// Refused here, the session is never sealed for a move whose bundle a receiver would refuse (senpi#6469).
+		// Refused here, the session is not sealed for a move whose bundle a receiver would refuse (senpi#6469). That
+		// covers a state folder given as a path. One given as a function is asked only after the seal, since it may
+		// read what the seal wrote, so a refusal for it leaves the session sealed: with what is kept below, a declined
+		// finish takes the session and its queued input back.
 		const given = typeof options.extensionStateDir === "string" ? options.extensionStateDir : undefined;
 		await assertMoveFits(sessionFile, sessionId, given, false);
 		(await SessionManager.openAsync(sessionFile)).appendCustomEntry(SESSION_RELEASED, {
@@ -113,6 +124,10 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 			released_at: new Date().toISOString(),
 		});
 	}
+	// From here the session is sealed for this move, and the input the release took out of it is in no file yet. It
+	// is kept first, where the bundle will be, so that whatever stops this export a declined finish can put it back
+	// (senpi#6542). The bundle takes its place below.
+	await keepQueuedInput(options.bundleDir, moveId, options.droppedUserMessages);
 	const stateDir =
 		typeof options.extensionStateDir === "function" ? await options.extensionStateDir() : options.extensionStateDir;
 	if (stateDir !== undefined && !(await pathExists(stateDir))) throw new MovedStateMissingError(stateDir);
@@ -133,13 +148,28 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		repository: await readRecordedRepositoryIdentity(sessionFile),
 		session: { path: SESSION_BUNDLE_PATH, sha256: await sha256File(join(staging, SESSION_BUNDLE_PATH)) },
 		sidecars,
-		droppedUserMessages: [...options.droppedUserMessages],
+		droppedUserMessages: [...dropped],
 		payloads: stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : [],
 	};
 	await writeFile(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);
-	await rm(options.bundleDir, { recursive: true, force: true });
-	await rename(staging, options.bundleDir);
+	await putAtPlace(staging, options.bundleDir);
 	return manifest;
+}
+
+/**
+ * Keeps the input a release took out of a session, in the place its bundle will take: a manifest with the move and
+ * that input and nothing else, which the sender's `finish` reads to put the input back. It is not a bundle, and a
+ * receiver's reader refuses it. Nothing is written when there is no input, or when a bundle is already there: an
+ * earlier export's bundle carries the input, and whoever sends it may be reading it.
+ */
+async function keepQueuedInput(bundleDir: string, moveId: string, queued: readonly string[]): Promise<void> {
+	if (queued.length === 0 || (await pathExists(bundleDir))) return;
+	const staging = `${bundleDir}.kept-${process.pid}`;
+	await rm(staging, { recursive: true, force: true });
+	await mkdir(staging, { recursive: true });
+	const kept = { format: MOVE_BUNDLE_FORMAT, moveId, droppedUserMessages: [...queued] };
+	await writeFile(join(staging, MANIFEST_FILE), `${JSON.stringify(kept, null, 1)}\n`);
+	await rename(staging, bundleDir);
 }
 
 /**
