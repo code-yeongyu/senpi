@@ -111,6 +111,58 @@ export function waitForFixtureExit(child: ChildProcess, wait: FixtureWait, label
 	});
 }
 
+/**
+ * Waits for the first IPC message from `child` that `accept` takes (returns something other than `undefined`); `accept`
+ * may throw to fail the wait. The wait also ends when the fixture exits without sending one, or at the case's remaining
+ * budget. An exit settles only once the IPC channel has disconnected: the fixture can send its report and exit before
+ * that report is read, and every message already sent is delivered before `disconnect`.
+ */
+export function waitForFixtureMessage<T>(
+	child: ChildProcess,
+	accept: (message: unknown, handle: unknown) => T | undefined,
+	wait: FixtureWait,
+	label: string,
+): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const settle = (outcome: { value: T } | { error: unknown }): void => {
+			clearTimeout(timer);
+			child.off("message", onMessage);
+			child.off("exit", onExit);
+			child.off("disconnect", onGone);
+			if ("error" in outcome) reject(outcome.error);
+			else resolve(outcome.value);
+		};
+		const onMessage = (message: unknown, handle: unknown): void => {
+			let value: T | undefined;
+			try {
+				value = accept(message, handle);
+			} catch (error) {
+				settle({ error });
+				return;
+			}
+			if (value !== undefined) settle({ value });
+		};
+		const onGone = (): void =>
+			settle({
+				error: failure(
+					`${label} exited (code ${String(child.exitCode)}, signal ${String(child.signalCode)}) before it reported`,
+					wait,
+				),
+			});
+		const onExit = (): void => {
+			if (child.connected) child.once("disconnect", onGone);
+			else onGone();
+		};
+		const timer = setTimeout(
+			() => settle({ error: failure(`${label} did not report within ${String(wait.timeoutMs)}ms`, wait) }),
+			wait.timeoutMs,
+		);
+		child.on("message", onMessage);
+		if (child.exitCode !== null || child.signalCode !== null) onExit();
+		else child.once("exit", onExit);
+	});
+}
+
 /** Collects a spawned fixture's stderr while still forwarding it, so a failure can quote its tail. */
 export function captureStderr(child: ChildProcess): () => string {
 	const chunks: string[] = [];
