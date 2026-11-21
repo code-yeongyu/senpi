@@ -76,11 +76,7 @@ async function caller(
 	const output = captureStderr(child);
 	processes.owner(child);
 	// A caller that dies before reporting fails here with its exit status and stderr, not after the whole bound.
-	const ready = await processes.callerReport(
-		child,
-		{ timeoutMs: CALLER_READINESS_MS, output },
-		runtime !== "bun",
-	);
+	const ready = await processes.callerReport(child, { timeoutMs: CALLER_READINESS_MS, output }, runtime !== "bun");
 	if (failure) {
 		expect(ready).toMatchObject({ type: "failure", error: expect.stringContaining(failure) });
 		return child;
