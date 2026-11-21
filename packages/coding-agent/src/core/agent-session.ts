@@ -4649,8 +4649,9 @@ export class AgentSession {
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
 			}
-			// Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again,
-			// while a person's own input queued behind a failed response waits for their next prompt (#4036).
+			// Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again.
+			// A queue of a person's own input alone waits for their next prompt (#4036); in a queue that holds both, the
+			// drained run takes the person's input too, in queue order.
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
@@ -14160,15 +14161,14 @@ export class AgentSession {
 		} finally {
 			if (this._retryAbortController === controller) this._retryAbortController = undefined;
 		}
-		if (outcome !== "continued") {
-			this._emit({
-				type: "auto_retry_end",
-				success: false,
-				attempt,
-				...(outcome === "cancelled" ? { finalError: "Retry cancelled" } : {}),
-			});
-			return outcome;
-		}
+		// Every announced wait is closed: a cancelled one failed; a wait that hands the queue to a run, or that found nothing
+		// left to run (the user took the queue back to edit it), ended as it should.
+		this._emit(
+			outcome === "cancelled"
+				? { type: "auto_retry_end", success: false, attempt, finalError: "Retry cancelled" }
+				: { type: "auto_retry_end", success: true, attempt },
+		);
+		if (outcome !== "continued") return outcome;
 		this._scheduleContinuationAfterCurrentEvent();
 		return "continued";
 	}

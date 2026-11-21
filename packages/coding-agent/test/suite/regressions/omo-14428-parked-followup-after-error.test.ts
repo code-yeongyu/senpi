@@ -275,6 +275,74 @@ describe("omo#14428 parked follow-ups after an error-ended run", () => {
 		expect(admission.list()).toEqual({ pending: [], emitted: ["f-1"] });
 	});
 
+	it("every announced queued-drain wait is closed: the drained run's wait ends as a success", async () => {
+		vi.useFakeTimers();
+		const target = await createHarness({
+			persistSession: true,
+			settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1_000, maxAgentDelayMs: 30_000 } },
+		});
+		harnesses.push(target);
+		target.setResponses([]);
+		const admission = target.session.externalAdmission;
+		const events: string[] = [];
+		target.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") events.push("start");
+			if (event.type === "auto_retry_end")
+				events.push(event.success ? "end:ok" : `end:fail:${event.finalError ?? ""}`);
+			if (event.type === "auto_retry_start")
+				queueMicrotask(() => void vi.advanceTimersByTimeAsync(Math.min(event.delayMs, 1_000)));
+		});
+
+		const turn = await failingTurn(target, "work", "HTTP 429: rate_limit_exceeded - retry after 3600 seconds");
+		expect(admission.admit({ delivery_id: "f-1", text: "queued", deliverAs: "followUp" }).kind).toBe("queued");
+		target.appendResponses([fauxAssistantMessage("ack f-1")]);
+		turn.release();
+		await vi.advanceTimersByTimeAsync(30_000);
+		await turn.settled;
+		await target.session.waitForIdle();
+
+		expect(deliveredIds(target)).toEqual(["f-1"]);
+		// The retry owner closes its own give-up with an end of its own; the drain's wait is the last start, closed once.
+		expect(events.slice(events.lastIndexOf("start"))).toEqual(["start", "end:ok"]);
+	});
+
+	it("a queued-drain wait whose queue was taken back closes quietly, not as a failed retry", async () => {
+		vi.useFakeTimers();
+		const target = await createHarness({
+			persistSession: true,
+			settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1_000, maxAgentDelayMs: 30_000 } },
+		});
+		harnesses.push(target);
+		target.setResponses([]);
+		const admission = target.session.externalAdmission;
+		const ends: { success: boolean; finalError?: string }[] = [];
+		let drainWaitSeen = false;
+		target.session.subscribe((event) => {
+			if (event.type === "auto_retry_end")
+				ends.push({
+					success: event.success,
+					...(event.finalError === undefined ? {} : { finalError: event.finalError }),
+				});
+			// The over-ceiling hint makes the retry owner give up at once; the next start is the drain's own wait.
+			if (event.type === "auto_retry_start" && ends.length > 0 && !drainWaitSeen) {
+				drainWaitSeen = true;
+				target.session.clearQueue();
+			}
+			if (event.type === "auto_retry_start")
+				queueMicrotask(() => void vi.advanceTimersByTimeAsync(Math.min(event.delayMs, 1_000)));
+		});
+
+		const turn = await failingTurn(target, "work", "HTTP 429: rate_limit_exceeded - retry after 3600 seconds");
+		expect(admission.admit({ delivery_id: "f-1", text: "queued", deliverAs: "followUp" }).kind).toBe("queued");
+		turn.release();
+		await vi.advanceTimersByTimeAsync(30_000);
+		await turn.settled;
+		await target.session.waitForIdle();
+
+		expect(drainWaitSeen).toBe(true);
+		expect(ends.at(-1)).toEqual({ success: true });
+	});
+
 	it("a delivery an interrupt takes from behind queued user input leaves the queue with its ledger entry", async () => {
 		const target = await createHarness({ persistSession: true });
 		harnesses.push(target);
