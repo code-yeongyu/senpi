@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	type BunRuntimeOptions,
@@ -10,6 +10,7 @@ import { APP_COMMAND, APP_NAME, BRAND, detectInstallMethod, getAgentDir, PACKAGE
 import { envValue } from "../../core/brand.ts";
 import type { NoticeSpec } from "../../core/extensions/notice/index.ts";
 import { hasInheritedInspectorOption } from "../../inspector-policy.ts";
+import { ensureAgentDir } from "../../utils/ensure-agent-dir.ts";
 import {
 	type BunAvailability,
 	buildRuntimeNotice,
@@ -35,7 +36,7 @@ export function readShownVersion(agentDir: string): string | undefined {
 
 function recordShownVersion(agentDir: string, version: string): void {
 	try {
-		mkdirSync(agentDir, { recursive: true });
+		ensureAgentDir(agentDir);
 		writeFileSync(join(agentDir, RUNTIME_NOTICE_STATE_FILE), `${JSON.stringify({ shownVersion: version })}\n`);
 	} catch {
 		// Best effort: a read-only agent dir only means the notice shows again next launch,

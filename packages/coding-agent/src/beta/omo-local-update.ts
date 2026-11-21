@@ -24,6 +24,7 @@ import chalk from "chalk";
 import type { PackageSource } from "../core/settings-manager.ts";
 import { spawnProcess, waitForChildProcess } from "../utils/child-process.ts";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
+import { ensureAgentDir } from "../utils/ensure-agent-dir.ts";
 import { killProcessTree } from "../utils/shell.ts";
 import {
 	collectArtifactInventory,
@@ -267,7 +268,7 @@ export function readStamp(agentDir: string): OmoLocalUpdateStamp | undefined {
 
 /** exported for tests only */
 export function writeStamp(agentDir: string, stamp: OmoLocalUpdateStamp): void {
-	mkdirSync(agentDir, { recursive: true });
+	ensureAgentDir(agentDir);
 	writeFileSync(omoLocalUpdateStampPath(agentDir), `${JSON.stringify(stamp, null, 2)}\n`, "utf-8");
 }
 
@@ -439,7 +440,7 @@ function pidIsAlive(pid: number): boolean {
  * throughout, so in-process contenders cannot interleave mid-check.
  */
 function acquireOmoLocalLock(agentDir: string, log: (message: string) => void): OmoLocalLock | undefined {
-	mkdirSync(agentDir, { recursive: true });
+	ensureAgentDir(agentDir);
 	const path = omoLocalUpdateLockPath(agentDir);
 	const lock: OmoLocalLock = { path, pid: process.pid, nonce: randomUUID() };
 	const payload = JSON.stringify({ pid: lock.pid, nonce: lock.nonce, startedAt: new Date().toISOString() });
