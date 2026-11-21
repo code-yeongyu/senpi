@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { RETRY_ROUTED_OPEN } from "./predecessor-routes.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { startOpenTimer } from "../../core/open-timing.ts";
 import { compactOpen, type OpenAcceptance } from "./compact-open-admission.ts";
@@ -100,6 +101,8 @@ export async function open(
 		readonly continued?: boolean;
 		/** No connection asked for this open: it counts no attachment (the successor's restore). */
 		readonly unattached?: boolean;
+		/** When this open first waited for a routed session to change generations (senpi#7098). */
+		readonly routedSince?: number;
 	},
 ): Promise<RpcResponse | undefined> {
 	const validated = validatedOpenProfile(host, command, options);
@@ -130,6 +133,7 @@ export async function open(
 			ancestry ? { ...profile, spawnedBy: ancestry } : profile,
 			// Host lifecycle policy, deliberately outside the immutable launch profile.
 			{
+				routedHandle: host.routes.handleFor(command.sessionPath),
 				retainOnDisconnect: command.retain_on_disconnect === true,
 				attachOnly: command.expectedHostInstance !== undefined,
 				...(options?.park ? { speculative: true } : {}),
@@ -234,6 +238,7 @@ export async function open(
 			return undefined;
 		}
 		publishOpen(host, openedSession, entry);
+		host.routes.adopt(openedSession.sessionId);
 		if (!options?.accept && !host.draining && owner !== undefined && host.releasedConnections.has(owner)) {
 			releaseOwnerAttachment(host, owner, openedSession.sessionId);
 			await releaseOwnedSession(host, openedSession.sessionId);
@@ -274,6 +279,38 @@ export async function open(
 			if (!opened.attached || !compactUpdatesEnabled()) host.writer.forgetSession(opened.sessionId);
 		}
 		if (cause instanceof CompactAdmissionError) throw cause;
+		if (
+			!opened &&
+			owner &&
+			command.expectedHostInstance &&
+			!host.draining &&
+			!options?.accept &&
+			code(cause) === "session_not_held" &&
+			!owner.startsWith("generation-route-")
+		) {
+			const attached = await host.routes.attachPath(command, owner);
+			if (attached) return attached;
+		}
+		if (
+			!opened &&
+			owner &&
+			!host.draining &&
+			!options?.park &&
+			!options?.accept &&
+			code(cause) === "session_path_in_use"
+		) {
+			const routed = await host.routes.open(command, owner, detail(cause));
+			if (routed === RETRY_ROUTED_OPEN && host.writer.hasConnection(owner) && !host.draining) {
+				// The handover between generations is bounded like a close: past the grace window the caller gets the
+				// retryable refusal instead of an open that never answers.
+				const routedSince = options?.routedSince ?? Date.now();
+				if (Date.now() - routedSince <= host.registry.closeGraceMs)
+					return open(host, command, owner, { ...options, routedSince });
+				return error(command.id, "open_session", code(cause), detail(cause));
+			}
+			if (routed === RETRY_ROUTED_OPEN) return error(command.id, command.type, "host_draining");
+			if (routed) return routed;
+		}
 		return error(command.id, "open_session", code(cause), detail(cause));
 	}
 }

@@ -1,3 +1,40 @@
+## 2026-11-20 - `getTodoFirstTurnPlan` takes the preset's default (#7110, senpi#7101)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `getTodoFirstTurnPlan(fallback = "force")` returns the configured `force`, `remind` or `off`, and `fallback` when the setting is absent or invalid.
+- `packages/coding-agent/src/core/settings-shapes.ts`: the `firstTurnPlan` comment names the per-preset default.
+
+### Why
+
+- The default now depends on the active prompt preset, which the settings manager does not know; the caller passes it.
+
+### Why an extension could not handle it
+
+- The settings accessor is core code that the builtin calls.
+
+### Expected merge conflict zones
+
+- LOW: one accessor in `settings-manager.ts`.
+
+## 2026-11-20 - The `firstTurnPlan` comment names deepseek-v4-1-flash (#7109, senpi#7100)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-shapes.ts`: the `firstTurnPlan` comment gives the default as `"force"`, or `"off"` under a GPT prompt preset or `deepseek-v4-1-flash`.
+
+### Why
+
+- The preset joined the ones that plan after reading (senpi#7100).
+
+### Why an extension could not handle it
+
+- A comment on a core settings shape.
+
+### Expected merge conflict zones
+
+- LOW: one comment line.
+
 ## 2026-11-19 - a restart continuation that made progress continues again; a crash loop stops (senpi#7080)
 
 ### What changed

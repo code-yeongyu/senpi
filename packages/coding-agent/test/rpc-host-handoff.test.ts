@@ -141,7 +141,7 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		expect((await probeHost({ socket: qa.socket }))?.instanceId).toBe(live?.instanceId);
 	}, 120_000);
 
-	it("answers session_path_in_use for an existing transcript until the old generation parks it", async () => {
+	it("honors a legacy owner's claim until it parks when it publishes no route endpoint", async () => {
 		const held = await HeldAnthropicModel.start();
 		models.push(held);
 		const qa = await generation("path", held.origin);
@@ -150,6 +150,8 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		const oldHost = JSON.parse(
 			await readFile(join(paths.dir, String(pointer.generation_dir), "host-child.pid"), "utf8"),
 		) as WireRecord;
+		// A mixed-version handoff: a strict-transfer predecessor without route support has no such record.
+		await rm(join(paths.dir, String(pointer.generation_dir), "route.json"), { force: true });
 		const sessionPath = join(qa.sessionDir, "held.jsonl");
 		await writeFile(
 			sessionPath,

@@ -94,7 +94,7 @@ function enqueueMutation(mutation: () => Promise<void>): Promise<void> {
 	return next;
 }
 
-function isEntry(value: unknown): value is HandoverParkedEntry {
+export function isHandoverParkedEntry(value: unknown): value is HandoverParkedEntry {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 	const record = value as Record<string, unknown>;
 	return (
@@ -149,7 +149,7 @@ export async function readHandoverParkedSessions(daemonDir: string): Promise<rea
 		const file = join(recordDir(daemonDir), name);
 		try {
 			const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
-			if (isEntry(parsed)) entries.push(parsed);
+			if (isHandoverParkedEntry(parsed)) entries.push(parsed);
 			// A well-formed JSON value that fails the shape check is not corrupt: it may be an entry a
 			// different-version generation wrote (a rollback handover). Leave it alone.
 		} catch (cause) {
@@ -186,7 +186,7 @@ export function clearInheritedParkedSession(
 				(text) => JSON.parse(text),
 				() => undefined,
 			);
-			if (isEntry(recorded) && recorded.parkedBy === holder) return;
+			if (isHandoverParkedEntry(recorded) && recorded.parkedBy === holder) return;
 		}
 		await rm(file, { force: true });
 	});

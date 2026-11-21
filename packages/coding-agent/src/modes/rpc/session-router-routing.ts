@@ -54,6 +54,8 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 }
 
 function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
+	const routed = host.routes.command(command, () => admitted(host, command));
+	if (routed) return routed;
 	if ("sessionId" in command && command.sessionId !== undefined && host.registry.peek(command.sessionId)?.speculative)
 		return Promise.resolve(error(command.id, command.type, "unknown_session"));
 	if (command.type === "park_session") return parkSession(host, command);
@@ -71,8 +73,17 @@ function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse
 	}
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
 	// A parked handle is answered by its terminal record and connection close, never unknown_session.
-	if (host.draining && sessionId !== undefined && host.handoffClosed.has(sessionId)) return Promise.resolve(undefined);
-	if (host.draining && command.type === "open_session")
+	if (host.draining && sessionId !== undefined && host.handoffClosed.has(sessionId))
+		return Promise.resolve(
+			host.writer.currentConnection()?.startsWith("generation-route-")
+				? error(command.id, command.type, "generation_session_parked")
+				: undefined,
+		);
+	if (
+		host.draining &&
+		command.type === "open_session" &&
+		!(host.writer.currentConnection()?.startsWith("generation-route-") && command.expectedHostInstance !== undefined)
+	)
 		return Promise.resolve(error(command.id, command.type, "host_draining"));
 	// A warm holds no session and no path, so it stays out of the accounting a drain waits on (senpi#2314).
 	if (command.type === "warm")
@@ -117,14 +128,35 @@ export async function dispatch(
 		return compactTransportDisabled(command);
 	if (command.type === "get_protocol_info") return answerProtocolInfo(host, command);
 	if (command.type === "get_subscription_limits") return answerSubscriptionLimits(command);
-	if (command.type === "list_sessions") return answerListSessions(host, command);
+	if (command.type === "list_sessions") {
+		if (!host.writer.currentConnection()?.startsWith("generation-route-")) {
+			try {
+				await host.routes.discover();
+			} catch (cause) {
+				return error(command.id, command.type, code(cause));
+			}
+		}
+		return answerListSessions(host, command);
+	}
 	if (command.type === "list_hands") return answerListHands(host, command);
 	if (command.type === "select_hand") return answerSelectHand(host, command);
 	if (command.type === "detach_connection")
 		return detachConnection(command, host.writer.currentConnection(), (id) => releaseConnection(host, id));
 	if (command.type === "open_session") return openWithBarrier(host, command);
 	if (command.type === "claim_session") return claimSession(host, command);
-	if (command.type === "attach_session") return attachSession(host, command);
+	if (command.type === "attach_session") {
+		const reply = await attachSession(host, command);
+		if (
+			reply?.success === false &&
+			(reply.error === "unknown_session" || reply.error === "session_identity_mismatch")
+		)
+			try {
+				return await host.routes.attachByIdentity(command, reply);
+			} catch (cause) {
+				return error(command.id, command.type, code(cause));
+			}
+		return reply;
+	}
 	if (command.type === "release_attachment") return releaseAttachment(host, command);
 	if (command.type === "reclaim_session") return reclaimSession(host, command);
 	if (command.type === "find_session")

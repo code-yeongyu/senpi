@@ -62,6 +62,9 @@ export class WorkerSessionRegistry {
 	get size(): number {
 		return this.entries.size;
 	}
+	reserveHandle(): string {
+		return `rpc-${++this.serial}`;
+	}
 
 	holderPids(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]> {
 		return this.options.pathReservations?.holderPids?.(observedStarts) ?? Promise.resolve([]);
@@ -77,7 +80,7 @@ export class WorkerSessionRegistry {
 				closeGraceMs: this.closeGraceMs,
 				size: this.options.capacity?.inUse() ?? this.size,
 				now: this.now,
-				nextHandle: () => `rpc-${++this.serial}`,
+				nextHandle: () => this.reserveHandle(),
 				knownReservationKey: (path) => this.knownReservationKey(path),
 				attach: (owner, path, options, requested) => this.attach(owner, path, options, requested),
 				reserve: (handle, path) => this.reserve(handle, path),
