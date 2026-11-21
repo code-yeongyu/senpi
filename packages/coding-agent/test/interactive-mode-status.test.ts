@@ -748,8 +748,9 @@ describe("InteractiveMode.getWorkingIndicatorOptions", () => {
 		expect(typeof messageFormatter).toBe("function");
 		expect(messageFormatter).toBeDefined();
 
-		const firstFrame = messageFormatter("Working", 0);
-		const nextFrame = messageFormatter("Working", 1_000);
+		const content = messageFormatter("Working", 0);
+		const firstFrame = options.presentationFormatter(content, 0);
+		const nextFrame = options.presentationFormatter(content, 1_000);
 
 		expect(stripAnsi(firstFrame)).toBe("Working (7s • esc to interrupt)");
 		expect(stripAnsi(nextFrame)).toBe("Working (7s • esc to interrupt)");

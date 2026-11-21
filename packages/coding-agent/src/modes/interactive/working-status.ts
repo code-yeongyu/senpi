@@ -25,7 +25,7 @@ type WorkingStatusTextFrameStyle = {
 	shimmer?: (text: string, intensity: number) => string;
 };
 
-type WorkingStatusMessageFrameStyle = WorkingStatusTextFrameStyle & {
+export type WorkingStatusMessageFrameStyle = WorkingStatusTextFrameStyle & {
 	suffix: (text: string) => string;
 };
 

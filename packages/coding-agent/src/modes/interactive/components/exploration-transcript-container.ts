@@ -38,7 +38,13 @@ export class ExplorationTranscriptContainer extends Container {
 
 	constructor(options: ProgressiveTranscriptOptions) {
 		super();
+		this.requestRender = options.requestRender;
 		this.display = new ProgressiveTranscriptContainer(options);
+	}
+	private readonly requestRender: () => void;
+
+	private stopGroupAnimations(children: readonly Component[] = this.display.children): void {
+		for (const child of children) if (child instanceof ExplorationGroup) child.stopAnimation();
 	}
 
 	override render(width: number): string[] {
@@ -69,7 +75,7 @@ export class ExplorationTranscriptContainer extends Container {
 			const call = child instanceof ToolExecutionComponent ? this.explorationCallOf(child) : undefined;
 			if (child instanceof ToolExecutionComponent && call) {
 				if (!group) {
-					group = this.groups.get(child) ?? new ExplorationGroup();
+					group = this.groups.get(child) ?? new ExplorationGroup(this.requestRender);
 					this.groups.set(child, group);
 					projected.push(group);
 					members = [];
@@ -93,6 +99,12 @@ export class ExplorationTranscriptContainer extends Container {
 			}
 		}
 		closeGroup();
+		if (memo) {
+			const current = new Set(projected);
+			this.stopGroupAnimations(
+				memo.projected.filter((child) => child instanceof ExplorationGroup && !current.has(child)),
+			);
+		}
 		this.projection = { source: [...this.children], clock: currentRenderRevision(), projected };
 		return projected;
 	}
@@ -119,6 +131,7 @@ export class ExplorationTranscriptContainer extends Container {
 	}
 
 	override clear(): void {
+		this.stopGroupAnimations();
 		this.display.detachAll();
 		this.groups = new WeakMap();
 		this.projection = undefined;
@@ -126,6 +139,7 @@ export class ExplorationTranscriptContainer extends Container {
 	}
 
 	override detachAll(): void {
+		this.stopGroupAnimations();
 		this.display.detachAll();
 		this.groups = new WeakMap();
 		this.projection = undefined;
@@ -133,6 +147,7 @@ export class ExplorationTranscriptContainer extends Container {
 	}
 
 	override dispose(): void {
+		this.stopGroupAnimations();
 		this.display.detachAll();
 		this.display.dispose();
 		super.dispose();
