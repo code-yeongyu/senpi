@@ -42,6 +42,11 @@ export function subscribeSessionRecords(
 			correlatedEvents.accept({ ...event, ordered: event.ordered.map(clientFacingIdentity) });
 			return;
 		}
+		if (event.type === "queued_input_failed") {
+			// Like queue_update: a host-minted client message id stays internal.
+			correlatedEvents.accept(clientFacingIdentity(event));
+			return;
+		}
 		if (event.type === "thinking_level_changed" || event.type === "model_changed") {
 			// Core emits the effective level only; the selection provenance lives beside it
 			// on the session and is what distinguishes an explicit choice from a default.

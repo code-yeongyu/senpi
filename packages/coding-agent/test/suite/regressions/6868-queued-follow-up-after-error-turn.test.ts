@@ -1,0 +1,182 @@
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { afterEach, describe, expect, it } from "vitest";
+import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
+import { createHarness, type Harness } from "../harness.ts";
+
+const FOLLOW_UP = "follow-up a remote sender queued during the failing turn";
+const HARD_ERROR = "invalid_request_error: the request was malformed";
+const OVERLOADED = "overloaded_error";
+const ACCOUNT_LIMIT =
+	'429 {"error":{"type":"rate_limit_error","message":"You have hit your session limit; resets 11pm"}}';
+// Bounds the wait only; a sender whose follow-up is parked never resolves on its own.
+const WAIT_BOUND_MS = 10_000;
+
+type SenderOutcome =
+	| { readonly kind: "started"; readonly answer: string }
+	| { readonly kind: "failed"; readonly code: string; readonly provider: string }
+	| { readonly kind: "still_waiting" };
+
+/**
+ * What a remote sender waiting on its queued prompt sees from the session's records (the records an RPC client
+ * receives): its prompt's own turn settling with an answer, or a typed failure for that queued input.
+ * Subscribed before the turn starts, so no record can be missed.
+ */
+function senderWait(harness: Harness, text: string): Promise<SenderOutcome> {
+	return new Promise((resolve) => {
+		let ownTurn = false;
+		let answer = "";
+		const done = (outcome: SenderOutcome) => {
+			clearTimeout(bound);
+			unsubscribe();
+			resolve(outcome);
+		};
+		const bound = setTimeout(() => done({ kind: "still_waiting" }), WAIT_BOUND_MS);
+		const unsubscribe = harness.session.subscribe((event: AgentSessionEvent) => {
+			if (event.type === "queued_input_failed" && event.text === text)
+				return done({ kind: "failed", code: event.error.code, provider: event.error.provider });
+			if (event.type === "message_end" && event.message.role === "user") {
+				const content = event.message.content;
+				const said =
+					typeof content === "string"
+						? content
+						: content.map((part) => ("text" in part ? part.text : "")).join("");
+				if (said === text) ownTurn = true;
+				return;
+			}
+			if (ownTurn && event.type === "message_end" && event.message.role === "assistant") {
+				answer = event.message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+				return;
+			}
+			if (ownTurn && event.type === "agent_settled") done({ kind: "started", answer });
+		});
+	});
+}
+
+async function settle(harness: Harness): Promise<void> {
+	await harness.session.waitForIdle();
+	await harness.session.waitForSettledSessionWork();
+}
+
+describe("#6868 a follow-up queued behind a turn that ended in a provider error", () => {
+	const harnesses: Harness[] = [];
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	it("#given a follow-up queued during a turn #when that turn ends in a provider error with no account hold #then the follow-up starts its own turn and the waiting sender resolves with its answer", async () => {
+		// given
+		const harness = await createHarness();
+		harnesses.push(harness);
+		let queued: Promise<void> | undefined;
+		harness.setResponses([
+			() => {
+				queued = harness.session.prompt(FOLLOW_UP, { streamingBehavior: "followUp", source: "rpc" });
+				return fauxAssistantMessage("", { stopReason: "error", errorMessage: HARD_ERROR });
+			},
+			fauxAssistantMessage("answered the follow-up"),
+			fauxAssistantMessage("unexpected extra turn"),
+		]);
+		const waited = senderWait(harness, FOLLOW_UP);
+
+		// when
+		await harness.session.prompt("a turn that fails").catch(() => undefined);
+		await queued;
+		const outcome = await waited;
+		await settle(harness);
+
+		// then
+		expect(outcome).toEqual({ kind: "started", answer: "answered the follow-up" });
+		expect(harness.session.pendingMessageCount).toBe(0);
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+	});
+
+	it("#given a follow-up queued during a turn #when that turn ends on a spent-account rate limit #then the follow-up never reaches the held provider and the waiting sender resolves with a typed failure naming the hold", async () => {
+		// given
+		const harness = await createHarness({
+			settings: { compaction: { enabled: false }, retry: { enabled: true, maxRetries: 5, baseDelayMs: 1 } },
+			fallbackNow: () => Date.now(),
+			retryRandom: () => 0,
+		});
+		harnesses.push(harness);
+		let queued: Promise<void> | undefined;
+		harness.setResponses([
+			() => {
+				queued = harness.session.prompt(FOLLOW_UP, { streamingBehavior: "followUp", source: "rpc" });
+				return fauxAssistantMessage("", { stopReason: "error", errorMessage: ACCOUNT_LIMIT });
+			},
+			fauxAssistantMessage("must not run while the account is held"),
+		]);
+		const waited = senderWait(harness, FOLLOW_UP);
+
+		// when
+		await harness.session.prompt("a turn that hits the account limit").catch(() => undefined);
+		await queued;
+		const outcome = await waited;
+		await settle(harness);
+
+		// then
+		expect(outcome).toEqual({ kind: "failed", code: "account_usage_limit", provider: "faux" });
+		expect(harness.session.pendingMessageCount).toBe(0);
+		expect(harness.faux.getCallLog()).toHaveLength(1);
+	});
+
+	it("#given a follow-up queued during a turn that ends in a provider error #when the person aborts as that error lands #then the follow-up still waits for the next prompt", async () => {
+		// given: the person's abort joins the run's open boundary after its last response ended in a provider error, so
+		// the run ends `error` (not `aborted`) and only the user-abort suppression keeps the follow-up queued.
+		const harness = await createHarness();
+		harnesses.push(harness);
+		let queued: Promise<void> | undefined;
+		let aborted: Promise<void> | undefined;
+		harness.setResponses([
+			() => {
+				queued = harness.session.prompt(FOLLOW_UP, { streamingBehavior: "followUp", source: "rpc" });
+				return fauxAssistantMessage("", { stopReason: "error", errorMessage: HARD_ERROR });
+			},
+			fauxAssistantMessage("unexpected turn after the abort"),
+		]);
+		harness.session.subscribe((event) => {
+			if (aborted !== undefined || event.type !== "message_end" || event.message.role !== "assistant") return;
+			if (event.message.stopReason === "error") aborted = harness.session.abort();
+		});
+
+		// when
+		await harness.session.prompt("a turn the person aborts as it fails").catch(() => undefined);
+		await queued;
+		await aborted;
+		await settle(harness);
+
+		// then
+		const last = harness.session.state.messages.findLast((message) => message.role === "assistant");
+		expect(last?.role === "assistant" && last.stopReason).toBe("error");
+		expect(harness.session.pendingMessageCount).toBe(1);
+		expect(harness.faux.getCallLog()).toHaveLength(1);
+	});
+
+	it("#given a follow-up queued while an error turn waits to retry #when the person aborts during that backoff #then the follow-up still waits for the next prompt", async () => {
+		// given
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: OVERLOADED }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: OVERLOADED }),
+			fauxAssistantMessage("unexpected turn after the abort"),
+		]);
+		let queued: Promise<void> | undefined;
+		let aborted: Promise<void> | undefined;
+		harness.session.subscribe((event) => {
+			if (event.type !== "auto_retry_start" || event.attempt !== 2 || queued !== undefined) return;
+			queued = harness.session.prompt(FOLLOW_UP, { streamingBehavior: "followUp", source: "rpc" });
+			aborted = queued.then(() => harness.session.abort());
+		});
+
+		// when
+		await harness.session.prompt("a turn that retries").catch(() => undefined);
+		await queued;
+		await aborted;
+		await settle(harness);
+
+		// then
+		expect(harness.session.pendingMessageCount).toBe(1);
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+	});
+});

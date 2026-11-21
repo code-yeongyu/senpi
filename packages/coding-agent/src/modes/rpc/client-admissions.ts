@@ -10,7 +10,7 @@ import {
 	type RpcClientInput,
 } from "./client-admission-record.ts";
 import { type AdmissionHooks, admitClientInput } from "./client-admission-intake.ts";
-import { EFFECT_OUTCOMES, turnErrorOutcome } from "./effect-outcome-copy.ts";
+import { EFFECT_OUTCOMES, queuedInputRefusedOutcome, turnErrorOutcome } from "./effect-outcome-copy.ts";
 import type { EffectActor, EffectOutcome } from "./effect-record.ts";
 import { projectAdmission } from "./effect-status.ts";
 import { noteSessionEffect } from "./session-effect-status.ts";
@@ -87,6 +87,17 @@ export class ClientAdmissions {
 				for (const record of this.records.values()) {
 					if (record.state === "running") this.save({ ...record, state: "completed", outcome });
 				}
+			} else if (event.type === "queued_input_failed") {
+				// Published before its dequeue (senpi#6868): the refusal is the receipt, so the queue_update that follows
+				// finds the input no longer queued and cannot store it as completed.
+				const record = event.clientMessageId === undefined ? undefined : this.records.get(event.clientMessageId);
+				if (record?.state === "queued")
+					this.save({
+						...record,
+						state: "completed",
+						prepared: undefined,
+						outcome: queuedInputRefusedOutcome(event.error),
+					});
 			} else if (event.type === "queue_update") {
 				const queuedIds = new Set(event.ordered.map((input) => input.clientMessageId));
 				const consumingId = readClientMessageIdentity(session.agent.state.streamingMessage).clientMessageId;
