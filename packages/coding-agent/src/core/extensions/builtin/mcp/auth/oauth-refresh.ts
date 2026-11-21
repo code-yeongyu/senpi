@@ -20,7 +20,15 @@ import {
 import type { McpOAuthProvider } from "./oauth-provider.ts";
 import type { McpStoredAuth } from "./token-store.ts";
 
+// Upper bound on how long before expiry a refresh is due.
 const REFRESH_LEEWAY_MS = 5 * 60 * 1000;
+
+// The leeway for one stored token: REFRESH_LEEWAY_MS, capped at half the lifetime the server granted. Without the cap
+// a token that lives no longer than the leeway is stale the moment it is saved, so every caller refreshes it again.
+function refreshLeewayMs(record: McpStoredAuth): number {
+	if (record.tokenLifetimeMs === undefined) return REFRESH_LEEWAY_MS;
+	return Math.min(REFRESH_LEEWAY_MS, record.tokenLifetimeMs / 2);
+}
 
 export interface RefreshManagerOptions {
 	fetchFn?: FetchLike;
@@ -33,7 +41,7 @@ export function isTokenStale(record: McpStoredAuth | undefined, now: number): bo
 	const token = record?.accessToken;
 	if (token === undefined || token.length === 0) return true;
 	if (record?.expiresAt === undefined) return false;
-	return record.expiresAt - now <= REFRESH_LEEWAY_MS;
+	return record.expiresAt - now <= refreshLeewayMs(record);
 }
 
 export function assertS256Supported(metadata: AuthorizationServerMetadata | undefined, serverName: string): void {
@@ -48,7 +56,7 @@ export function assertS256Supported(metadata: AuthorizationServerMetadata | unde
 }
 
 // Coalesces refresh across in-process callers (single promise) and across
-// processes (token-store lock). Preemptive at expiry - 5min.
+// processes (token-store lock). Preemptive at expiry - min(5min, half the token lifetime).
 export class McpRefreshManager {
 	readonly #provider: McpOAuthProvider;
 	readonly #options: RefreshManagerOptions;

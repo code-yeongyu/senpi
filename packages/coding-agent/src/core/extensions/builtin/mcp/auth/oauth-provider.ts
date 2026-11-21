@@ -246,6 +246,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 				delete next.accessToken;
 				delete next.refreshToken;
 				delete next.expiresAt;
+				delete next.tokenLifetimeMs;
 			}
 			if (scope === "tokens" || scope === "client") {
 				return {
