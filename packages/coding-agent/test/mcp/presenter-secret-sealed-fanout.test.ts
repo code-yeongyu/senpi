@@ -380,3 +380,71 @@ it("disposing the presenter control ends a pending sealed-only request at once",
 	await Promise.resolve();
 	expect(state.value).toBeUndefined();
 });
+
+// senpi#5934 item 1: a sealed-only request keeps the sole stdio lane empty (5.2). With the raiser's socket gone and the
+// fanout empty, `owner.raiser` is the only thing between a settle and the sole lane.
+it("a sealed-only request never writes the sole lane once its raiser's socket closes", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1", "raiser_notice_v1"]);
+	host.writer.setSoleSecretCapabilities(["interactive_user", "secret_input_v1"]);
+	let settled: string | undefined | null = null;
+	void host.writer
+		.withConnection("human", () => requests.input("API key", undefined))
+		.then((value) => {
+			settled = value;
+		});
+	await phone.recorded("mcp_presenter_secret_request");
+	host.sole.length = 0;
+	host.writer.unregisterConnection("human");
+	await Promise.resolve();
+	expect(host.sole).toEqual([]);
+	vi.advanceTimersByTime(30 * 60 * 1000);
+	await Promise.resolve();
+	expect(settled).toBeUndefined();
+	expect(host.sole).toEqual([]);
+});
+
+// senpi#5934 item 1: the same guarantee when the last holder's socket is the one that closes.
+it("closing the last holder's socket never writes a sealed-only request to the sole lane", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1"]);
+	host.writer.setSoleSecretCapabilities(["interactive_user", "secret_input_v1"]);
+	let settled: string | undefined | null = null;
+	void host.writer
+		.withConnection("human", () => requests.input("API key", undefined))
+		.then((value) => {
+			settled = value;
+		});
+	await phone.recorded("mcp_presenter_secret_request");
+	host.sole.length = 0;
+	host.writer.unregisterConnection("human");
+	await Promise.resolve();
+	host.writer.unregisterConnection("phone");
+	await Promise.resolve();
+	expect(settled).toBeUndefined();
+	expect(host.sole).toEqual([]);
+});
+
+// senpi#5934 item 1: a late answer on the sole connection is refused even after the sealed-only request ended.
+it("a sole connection's late extension_ui_response after a sealed-only request ended stays refused", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	host.writer.setSoleSecretCapabilities(["interactive_user", "secret_input_v1"]);
+	const pending = host.writer.withConnection("human", () => requests.input("API key", undefined));
+	const [request] = await phone.recorded("mcp_presenter_secret_request");
+	host.writer.unregisterConnection("human");
+	host.writer.unregisterConnection("phone");
+	await expect(pending).resolves.toBeUndefined();
+	const answer = {
+		type: "extension_ui_response",
+		id: "late",
+		uiRequestId: request?.uiRequestId,
+		answerId: "a",
+		secret: true,
+		value: "plaintext",
+	};
+	expect(requests.respond(answer)).toMatchObject({ success: false, error: "secret_answer_refused" });
+	expect(host.sole).toEqual([]);
+});
