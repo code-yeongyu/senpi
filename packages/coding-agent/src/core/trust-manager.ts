@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
+import { ensureAgentDir } from "../utils/ensure-agent-dir.ts";
 import { canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { linkedWorktreeMainCheckoutDir } from "./linked-worktree-checkout.ts";
@@ -162,13 +163,13 @@ function writeTrustFile(path: string, data: TrustFile): void {
 			sorted[key] = value;
 		}
 	}
-	mkdirSync(dirname(path), { recursive: true });
+	ensureAgentDir(dirname(path));
 	writeFileSync(path, `${JSON.stringify(sorted, null, 2)}\n`, "utf-8");
 }
 
 function acquireTrustLockSync(path: string): () => void {
 	const trustDir = dirname(path);
-	mkdirSync(trustDir, { recursive: true });
+	ensureAgentDir(trustDir);
 	const maxAttempts = 10;
 	const delayMs = 20;
 	let lastError: unknown;
