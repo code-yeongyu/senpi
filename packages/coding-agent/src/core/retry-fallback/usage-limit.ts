@@ -1,4 +1,9 @@
-import { type AssistantMessage, describeProviderFailureForUser, isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	describeProviderFailureForUser,
+	isEntitlementRefusalMessage,
+	isQuotaExhaustionMessage,
+} from "@earendil-works/pi-ai";
 import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
 import type { SessionEntry } from "../session-manager.ts";
 import { isBillingErrorMessage } from "./billing.ts";
@@ -75,6 +80,7 @@ export function usageLimitScope(
 	const limited =
 		isQuotaExhaustionMessage(errorMessage) ||
 		isBillingErrorMessage(errorMessage) ||
+		isEntitlementRefusalMessage(errorMessage) ||
 		SUBSCRIPTION_LIMIT_PATTERN.test(errorMessage) ||
 		PLAN_MODEL_LIMIT_PATTERN.test(errorMessage);
 	if (!limited) return undefined;
