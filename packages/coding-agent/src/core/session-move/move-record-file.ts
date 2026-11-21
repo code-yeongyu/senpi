@@ -5,7 +5,14 @@
 import { readFile, rename as renameFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseMoveId } from "./bundle.ts";
-import { type Landing, isCommitStamp, landedElsewhere, landsAt, parseLanding } from "./move-landing.ts";
+import {
+	type Landing,
+	isCommitStamp,
+	landedElsewhere,
+	landsAt,
+	parseLanding,
+	type UptimeStamp,
+} from "./move-landing.ts";
 import type { MoveRecordLocks } from "./move-ledger-lock.ts";
 import { MoveFencedError, type MoveRecord, parseRecord } from "./move-record.ts";
 import type { MoveId } from "./ownership.ts";
@@ -13,13 +20,15 @@ import type { MoveId } from "./ownership.ts";
 export class MoveRecordFile {
 	readonly dir: string;
 	readonly #locks: MoveRecordLocks;
-	readonly #stamp: () => Readonly<Record<string, unknown>>;
+	readonly #stamp: () => Partial<UptimeStamp>;
 
 	/**
 	 * `locks` is the ledger's own registry: a write here needs the lock the ledger took for the move. `stamp` is what
-	 * every write carries beside its time, so a reader on the same machine can age it without the wall clock.
+	 * every write carries beside its time, so a reader on the same machine can age it without the wall clock. Only its
+	 * `up` and `host` are written, and first: a stamp never replaces the record's own fields, its landing or its time,
+	 * and never adds one the landing left out (a `committing` the commit has not begun).
 	 */
-	constructor(dir: string, locks: MoveRecordLocks, stamp: () => Readonly<Record<string, unknown>> = () => ({})) {
+	constructor(dir: string, locks: MoveRecordLocks, stamp: () => Partial<UptimeStamp> = () => ({})) {
 		this.dir = dir;
 		this.#locks = locks;
 		this.#stamp = stamp;
@@ -60,8 +69,10 @@ export class MoveRecordFile {
 		const file = this.path(moveId);
 		const temp = `${file}.${process.pid}.tmp`;
 		const at = new Date().toISOString();
+		const { up, host } = this.#stamp();
+		const stamp = { ...(up === undefined ? {} : { up }), ...(host === undefined ? {} : { host }) };
 		this.#locks.assertHeld(file);
-		await writeFile(temp, `${JSON.stringify({ ...record, ...landing, at, ...this.#stamp() })}\n`);
+		await writeFile(temp, `${JSON.stringify({ ...stamp, ...record, ...landing, at })}\n`);
 		this.#locks.assertHeld(file);
 		await renameFile(temp, file);
 		return at;
