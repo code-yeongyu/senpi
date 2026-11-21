@@ -14,7 +14,7 @@ By default, `<session-id>` is a UUID. Callers can supply a custom ID through the
 
 ## Deleting Sessions
 
-Sessions can be removed by deleting their `.jsonl` files under `~/.senpi/agent/sessions/`.
+Sessions can be removed by deleting their `.jsonl` files under `~/.senpi/agent/sessions/`. A file deleted by hand leaves what the session kept beside it: its tool images (`media/<session id>`), its extension state (`extensions/<extension>/<session id>.json`) and its resident blobs (`resident-blobs/<session id>`). Remove those too, or delete the session from `/resume`, which takes them with it: a session of the same id that is later moved back into that folder is refused while an older extension state file of it is still there.
 
 Senpi also supports deleting sessions interactively from `/resume` (select a session and press `Ctrl+D`, then confirm). When available, senpi uses the `trash` CLI to avoid permanent deletion.
 

@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
+import { removeSessionSidecars, sessionSidecars } from "../../../core/session-sidecars.ts";
 import { removeToolMedia, toolMediaRoot, toolMediaScopeOfSessionFile } from "../../rpc/tool-media-store.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -571,18 +572,32 @@ class SessionList implements Component, Focusable {
 
 type SessionsLoader = (onProgress?: SessionListProgress, signal?: AbortSignal) => Promise<SessionInfo[]>;
 
-function withMediaOutcome<T extends object>(result: T, mediaError: string | undefined): T & { mediaError?: string } {
-	return mediaError === undefined ? result : { ...result, mediaError };
+function withLeftovers<T extends object>(
+	result: T,
+	mediaError: string | undefined,
+	sidecarError: string | undefined,
+): T & { mediaError?: string; sidecarError?: string } {
+	return {
+		...result,
+		...(mediaError === undefined ? {} : { mediaError }),
+		...(sidecarError === undefined ? {} : { sidecarError }),
+	};
 }
 
 /**
  * Delete a session file, trying the `trash` CLI first, then falling back to unlink. The session's
  * tool images go with it; when they cannot be removed the session is still deleted (its id is gone
  * with the file) and `mediaError` names the leftover directory so the caller can say so.
+ *
+ * Its sidecars (extension state files and resident blobs) go where the file went: into the trash
+ * with it, so a session restored from the trash comes back whole, or away for good when the file
+ * was unlinked. Left in the folder, a session of the same id that is moved back here would be given
+ * them as its own; `sidecarError` names what could not follow, and nothing is removed for good that
+ * the trash refused.
  */
 export async function deleteSessionFile(
 	sessionPath: string,
-): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string; mediaError?: string }> {
+): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string; mediaError?: string; sidecarError?: string }> {
 	// The header is read before the file goes: the media directory is named after the session id.
 	const mediaScope = await toolMediaScopeOfSessionFile(sessionPath);
 	const removeMedia = (): string | undefined => {
@@ -593,6 +608,25 @@ export async function deleteSessionFile(
 		} catch (cause) {
 			const reason = cause instanceof Error ? cause.message : String(cause);
 			return `${toolMediaRoot(mediaScope)}: ${reason}`;
+		}
+	};
+	const sidecarsFollow = async (method: "trash" | "unlink"): Promise<string | undefined> => {
+		if (mediaScope === undefined) return undefined;
+		const { sessionDir, durableSessionId } = mediaScope;
+		try {
+			if (method === "unlink") {
+				await removeSessionSidecars(sessionDir, durableSessionId);
+				return undefined;
+			}
+			const sidecars = await sessionSidecars(sessionDir, durableSessionId);
+			if (sidecars.length === 0) return undefined;
+			spawnSync("trash", sidecars.some((path) => path.startsWith("-")) ? ["--", ...sidecars] : sidecars, {
+				encoding: "utf-8",
+			});
+			const left = sidecars.filter((path) => existsSync(path));
+			return left.length === 0 ? undefined : `not moved to the trash: ${left.join(", ")}`;
+		} catch (cause) {
+			return cause instanceof Error ? cause.message : String(cause);
 		}
 	};
 	// Try `trash` first (if installed)
@@ -614,13 +648,13 @@ export async function deleteSessionFile(
 
 	// If trash reports success, or the file is gone afterwards, treat it as successful
 	if (trashResult.status === 0 || !existsSync(sessionPath)) {
-		return withMediaOutcome({ ok: true, method: "trash" }, removeMedia());
+		return withLeftovers({ ok: true, method: "trash" }, removeMedia(), await sidecarsFollow("trash"));
 	}
 
 	// Fallback to permanent deletion
 	try {
 		await unlink(sessionPath);
-		return withMediaOutcome({ ok: true, method: "unlink" }, removeMedia());
+		return withLeftovers({ ok: true, method: "unlink" }, removeMedia(), await sidecarsFollow("unlink"));
 	} catch (err) {
 		const unlinkError = err instanceof Error ? err.message : String(err);
 		const trashErrorHint = getTrashErrorHint();
@@ -796,11 +830,12 @@ export class SessionSelectorComponent extends Container implements Focusable {
 				this.sessionList.setSessions(sessions, showCwd);
 
 				const msg = result.method === "trash" ? "Session moved to trash" : "Session deleted";
-				if (result.mediaError) {
-					this.header.setStatusMessage(
-						{ type: "error", message: `${msg}, but its images were not removed: ${result.mediaError}` },
-						8000,
-					);
+				const leftovers = [
+					...(result.mediaError ? [`its images were not removed: ${result.mediaError}`] : []),
+					...(result.sidecarError ? [`its extension state was left behind: ${result.sidecarError}`] : []),
+				];
+				if (leftovers.length > 0) {
+					this.header.setStatusMessage({ type: "error", message: `${msg}, but ${leftovers.join("; ")}` }, 8000);
 				} else {
 					this.header.setStatusMessage({ type: "info", message: msg }, 2000);
 				}

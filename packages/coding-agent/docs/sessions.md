@@ -60,7 +60,7 @@ In the picker you can:
 - rename with Ctrl+R
 - delete with Ctrl+D, then confirm
 
-When available, senpi uses the `trash` CLI for deletion instead of permanently removing files.
+When available, senpi uses the `trash` CLI for deletion instead of permanently removing files. What the session kept beside its file in the session folder goes where the file goes: its extension state (`extensions/<extension>/<session id>.json`) and its resident blobs (`resident-blobs/<session id>`) are moved to the trash with it, as entries of their own, so a session restored from the trash together with them comes back whole. With no `trash` CLI they are removed with the file. The session's tool images (`media/<session id>`) are removed for good in both cases.
 
 ## Naming Sessions
 
