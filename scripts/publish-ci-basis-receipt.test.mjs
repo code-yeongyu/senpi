@@ -159,13 +159,13 @@ describe("release.mjs --ci-basis-receipt (senpi#6859)", () => {
 	const releaseCli = (args) =>
 		spawnSync(process.execPath, [new URL("./release.mjs", import.meta.url).pathname, ...args], { cwd: root, encoding: "utf8" });
 
-	it("needs --sha and refuses --force-tests and --tested-sha", () => {
+	it("needs --sha and refuses --force-tests and --shard-results", () => {
 		for (const [args, message] of [
 			[["--ci-basis-receipt", "r"], /--ci-basis-receipt needs --sha/],
 			[["--ci-basis-receipt", "  ", "--sha", SHA], /--ci-basis-receipt is blank or has leading or trailing whitespace/],
 			[["--ci-basis-receipt", "", "--sha", SHA], /--ci-basis-receipt is blank or has leading or trailing whitespace/],
-			[["--ci-basis-receipt", "r", "--sha", SHA, "--force-tests"], /--force-tests and --tested-sha releases do not have/],
-			[["--ci-basis-receipt", "r", "--sha", SHA, "--tested-sha", SHA, "--shard-results", root], /--force-tests and --tested-sha/],
+			[["--ci-basis-receipt", "r", "--sha", SHA, "--force-tests"], /--force-tests and --shard-results releases do not have/],
+			[["--ci-basis-receipt", "r", "--sha", SHA, "--shard-results", root], /--force-tests and --shard-results/],
 		]) {
 			const result = releaseCli(args);
 			assert.equal(result.status, 1, args.join(" "));

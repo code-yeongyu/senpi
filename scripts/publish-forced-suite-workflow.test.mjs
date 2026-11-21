@@ -15,7 +15,6 @@ const workflow = readFileSync(new URL("../.github/workflows/publish-npm.yml", im
 const MATRIX_JOBS = ["prepare", "forced-rest", "forced-shard"];
 const TESTED_JOBS = ["forced-rest", "forced-shard"];
 const SHARED_SETUP = [
-	"Download the tested commit",
 	"Check out the tested commit",
 	"Setup Node.js",
 	"Setup Bun",
@@ -28,15 +27,7 @@ const SHARED_SETUP = [
 	"Cache Rust",
 	"Build native grep addon",
 ];
-const PREPARE_SETUP = [
-	"Configure git identity",
-	"Setup Node.js",
-	"Setup Bun",
-	"Assert bun 1.4 toolchain",
-	"Install dependencies",
-	"Build all workspaces (so husky pre-commit type check resolves)",
-	"Reset auto-generated and npm-install drift files (not part of release diff)",
-];
+const PREPARE_SETUP = ["Setup Node.js"];
 
 /** The shard indices of the forced-shard matrix, read from a workflow's text. */
 function shardMatrix(text) {
@@ -62,7 +53,7 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		assert.throws(() => assertExactShards(dropped));
 	});
 
-	it("checks out the prepare job's tested_sha in every shard job and the release job, never github.sha or the dispatched ref", () => {
+	it("checks out the prepare job's base_sha in every shard job and the release job, never github.sha or the dispatched ref", () => {
 		for (const name of TESTED_JOBS) {
 			const job = workflowJob(workflow, name);
 			assert.doesNotMatch(job, /github\.sha|github\.ref|inputs\.sha/, `${name} reads the dispatched commit`);
@@ -70,7 +61,7 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		}
 		for (const name of [...TESTED_JOBS, "release"]) {
 			const step = jobStep(workflowJob(workflow, name), "Check out the tested commit");
-			assert.match(step, /TESTED_SHA: \$\{\{ needs\.prepare\.outputs\.tested_sha \}\}/);
+			assert.match(step, /TESTED_SHA: \$\{\{ needs\.prepare\.outputs\.base_sha \}\}/);
 			assert.match(step, /git checkout -B main "\$TESTED_SHA"/);
 		}
 		const release = workflowJob(workflow, "release");
@@ -79,12 +70,12 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 			"the release job installs and builds the tested commit",
 		);
 		const run = jobStep(release, "Run release");
-		assert.match(run, /TESTED_SHA: \$\{\{ needs\.prepare\.outputs\.tested_sha \}\}/);
-		assert.match(run, /--tested-sha "\$TESTED_SHA" --shard-results "\$FORCED_SUITE_RESULTS"/);
+		assert.match(run, /TESTED_SHA: \$\{\{ needs\.prepare\.outputs\.base_sha \}\}/);
+		assert.match(run, /--sha "\$TESTED_SHA" --shard-results "\$FORCED_SUITE_RESULTS"/);
 		assert.doesNotMatch(run, /--force-tests/);
 	});
 
-	it("the tested-commit step lands a shallow checkout of the dispatched commit on the bundled tested commit", () => {
+	it("the tested-commit step names the checked-out base commit main and refuses a commit it does not have", () => {
 		const script = jobStep(workflowJob(workflow, "forced-shard"), "Check out the tested commit")
 			.match(/run: \|\n([\s\S]*)/)?.[1]
 			.replace(/^ {10}/gm, "");
@@ -95,36 +86,22 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 			const source = join(root, "source");
 			mkdirSync(source);
 			git(source, "init", "-q", "-b", "main");
-			const commit = (message) => {
-				writeFileSync(join(source, "f"), message);
-				git(source, "add", "f");
-				git(source, "-c", "user.name=t", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message);
-				return git(source, "rev-parse", "HEAD");
-			};
-			const base = commit("base");
-			const tested = commit("catalog");
-			git(source, "update-ref", "refs/forced-suite/tested", tested);
-			const bundle = join(root, "tested-commit.bundle");
-			git(source, "bundle", "create", "-q", bundle, "refs/forced-suite/tested", `^${base}`);
-			git(source, "reset", "-q", "--hard", base);
-			const checkout = (name, testedSha, bundlePath) => {
+			writeFileSync(join(source, "f"), "base");
+			git(source, "add", "f");
+			git(source, "-c", "user.name=t", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base");
+			const base = git(source, "rev-parse", "HEAD");
+			const checkout = (name, testedSha) => {
 				const clone = join(root, name);
 				git(root, "clone", "-q", "--depth", "1", `file://${source}`, clone);
-				const result = spawnSync("bash", ["-c", script], {
-					cwd: clone,
-					env: { PATH: process.env.PATH, TESTED_SHA: testedSha, TESTED_BUNDLE: bundlePath },
-					encoding: "utf8",
-				});
+				git(clone, "checkout", "-q", "--detach", "HEAD");
+				const result = spawnSync("bash", ["-c", script], { cwd: clone, env: { PATH: process.env.PATH, TESTED_SHA: testedSha }, encoding: "utf8" });
 				return { result, head: git(clone, "rev-parse", "HEAD"), branch: git(clone, "branch", "--show-current") };
 			};
-			const changed = checkout("changed", tested, bundle);
-			assert.equal(changed.result.status, 0, changed.result.stderr);
-			assert.deepEqual([changed.head, changed.branch], [tested, "main"]);
-			const unchanged = checkout("unchanged", base, join(root, "absent.bundle"));
-			assert.equal(unchanged.result.status, 0, unchanged.result.stderr);
-			assert.equal(unchanged.head, base);
-			const missing = checkout("missing", tested, join(root, "absent.bundle"));
-			assert.notEqual(missing.result.status, 0, "a tested commit nobody bundled was checked out");
+			const landed = checkout("landed", base);
+			assert.equal(landed.result.status, 0, landed.result.stderr);
+			assert.deepEqual([landed.head, landed.branch], [base, "main"]);
+			const missing = checkout("missing", "e".repeat(40));
+			assert.notEqual(missing.result.status, 0, "a commit the checkout does not have was checked out");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -238,8 +215,7 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 						GITHUB_REPOSITORY: "o/r",
 						RELEASE_SHA: releaseSha,
 						RELEASE_VERSION: "2026.11.13",
-						TESTED_SHA: "c".repeat(40),
-						TESTED_BASE_SHA: "b".repeat(40),
+						TESTED_SHA: "b".repeat(40),
 						FORCED_SUITE_RESULTS: "/results",
 					},
 					encoding: "utf8",
@@ -251,17 +227,12 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 			for (const releaseSha of ["", "a".repeat(40)]) {
 				const forced = argsFor({ forceTests: true, releaseSha });
 				assert.deepEqual(shaArgs(forced), ["b".repeat(40)], `force_tests with inputs.sha=${releaseSha || "(empty)"}`);
-				assert.deepEqual(forced.slice(forced.indexOf("--tested-sha"), forced.indexOf("--tested-sha") + 4), [
-					"--tested-sha",
-					"c".repeat(40),
-					"--shard-results",
-					"/results",
-				]);
+				assert.deepEqual(forced.slice(forced.indexOf("--shard-results"), forced.indexOf("--shard-results") + 2), ["--shard-results", "/results"]);
 			}
 			assert.deepEqual(shaArgs(argsFor({ forceTests: false, releaseSha: "a".repeat(40) })), ["a".repeat(40)]);
 			const plain = argsFor({ forceTests: false, releaseSha: "" });
 			assert.deepEqual(shaArgs(plain), []);
-			assert.equal(plain.includes("--tested-sha"), false);
+			assert.equal(plain.includes("--shard-results"), false);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -359,7 +330,7 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 	});
 
 	// Review finding 6 on senpi#6645: under force_tests the summary names the commit the matrix tested and the release
-	// tags (prepare's tested_sha); otherwise the dispatched sha input, else the run's commit.
+	// tags (prepare's base_sha); otherwise the dispatched sha input, else the run's commit.
 	it("reports the tested commit in the workflow summary under force_tests", () => {
 		const summary = jobStep(workflowJob(workflow, "release"), "Workflow summary");
 		const expression = summary.match(/commit="\$\{\{ (.*) \}\}"/)?.[1];
@@ -367,7 +338,7 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		const commit = (forceTests, testedSha, sha) =>
 			evaluateExpression(expression, {
 				inputs: { force_tests: forceTests, sha },
-				needs: { prepare: { outputs: { tested_sha: testedSha } } },
+				needs: { prepare: { outputs: { base_sha: testedSha } } },
 				github: { sha: "GITHUBSHA" },
 			});
 		assert.equal(commit(true, "TESTED", ""), "TESTED");

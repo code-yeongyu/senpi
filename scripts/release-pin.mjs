@@ -38,7 +38,7 @@ export function assertReleasableCommit(sha, runCommand, log, capture) {
 
 /**
  * Pin the release, then reinstall and rebuild when the pinned tree differs from the job's checkout: the job installed
- * and built main's tip, and the forced suite and catalog regeneration must run the pinned code on its own dependencies.
+ * and built main's tip, and the forced suite, check and build must run the pinned code on its own dependencies.
  */
 export function preparePinnedRelease({ sha, dryRun, runCommand, capture, build, driftPaths, log, dryRunLog }) {
 	const before = capture("git", ["rev-parse", "HEAD"]).trim();
