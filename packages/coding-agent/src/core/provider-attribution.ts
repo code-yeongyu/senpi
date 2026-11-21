@@ -66,7 +66,6 @@ function getDefaultAttributionHeaders(
 }
 
 function getSessionHeaders(model: Model<Api>, sessionId: string | undefined): Record<string, string> | undefined {
-	if (!sessionId) return undefined;
 	if (
 		model.provider !== "opencode" &&
 		model.provider !== "opencode-go" &&
@@ -74,7 +73,11 @@ function getSessionHeaders(model: Model<Api>, sessionId: string | undefined): Re
 	) {
 		return undefined;
 	}
-	return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
+	const effectiveSessionId =
+		sessionId ||
+		(typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : undefined);
+	if (!effectiveSessionId) return undefined;
+	return { "x-opencode-session": effectiveSessionId, "x-opencode-client": "pi" };
 }
 
 export function mergeProviderAttributionHeaders(
