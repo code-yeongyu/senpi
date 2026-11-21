@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -24,7 +24,7 @@ const commitAll = (dir, message) => {
  * A pinned release whose own commit rewrites `file` (as the release's catalog regeneration does) while main has since
  * rewritten the same lines, so the merge-back conflicts there.
  */
-function pinnedReleaseConflictingOn(file) {
+function pinnedReleaseConflictingOn(file, releaseAlso = () => {}, pinnedAlso = () => {}) {
 	const root = mkdtempSync(join(tmpdir(), "senpi-pin-catalog-"));
 	const origin = join(root, "origin.git");
 	const job = join(root, "job");
@@ -39,6 +39,7 @@ function pinnedReleaseConflictingOn(file) {
 		git(job, "config", key, value);
 	}
 	put(job, file, "pinned\n");
+	pinnedAlso(job);
 	commitAll(job, "pinned");
 	const pinned = git(job, "rev-parse", "HEAD");
 	put(job, file, "main refresh\n");
@@ -49,6 +50,7 @@ function pinnedReleaseConflictingOn(file) {
 		execFileSync(bin, args, { cwd: job, encoding: "utf8" }),
 	);
 	put(job, file, "release regeneration\n");
+	releaseAlso(job);
 	commitAll(job, `chore(ai): regenerate the model catalog for v${VERSION}`);
 	git(job, "tag", `v${VERSION}`);
 	return { root, job, pinned };
@@ -77,6 +79,26 @@ describe("pinned release merge-back: generated catalog conflicts (senpi#6119)", 
 			assert.equal(readFileSync(join(job, CATALOG), "utf8"), "main refresh\n");
 			assert.equal(git(job, "show", `v${VERSION}:${CATALOG}`), "release regeneration");
 			assert.equal(git(job, "merge-base", "--is-ancestor", "origin/main", "HEAD"), "");
+			assert.equal(git(job, "status", "--porcelain"), "");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("restores main's whole catalog, so a file only the release changed or added cannot disagree with main's manifest", () => {
+		const MANIFEST = "packages/ai/src/providers/data/.manifest.json";
+		const ONLY_RELEASE = "packages/ai/src/providers/data/b.json";
+		const ADDED = "packages/ai/src/providers/data/new.json";
+		const { root, job, pinned } = pinnedReleaseConflictingOn(MANIFEST, (dir) => {
+			put(dir, ONLY_RELEASE, "b-rel\n");
+			put(dir, ADDED, "new\n");
+		}, (dir) => put(dir, ONLY_RELEASE, "b0\n"));
+		try {
+			mergeBack(job, pinned);
+			assert.equal(readFileSync(join(job, MANIFEST), "utf8"), "main refresh\n");
+			assert.equal(readFileSync(join(job, ONLY_RELEASE), "utf8"), "b0\n");
+			assert.equal(existsSync(join(job, ADDED)), false);
+			assert.equal(git(job, "show", `v${VERSION}:${ONLY_RELEASE}`), "b-rel");
 			assert.equal(git(job, "status", "--porcelain"), "");
 		} finally {
 			rmSync(root, { recursive: true, force: true });

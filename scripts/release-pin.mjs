@@ -1,5 +1,5 @@
 import { changelogAfterPinnedRelease } from "./release-pinned-changelog.mjs";
-import { isRegeneratedCatalogPath } from "./release-test-gate.mjs";
+import { GENERATED_HEADER, isRegeneratedCatalogPath } from "./release-test-gate.mjs";
 
 /**
  * Release an exact commit instead of whatever main is at dispatch (senpi#3609). The commit must be one of main's own
@@ -52,6 +52,30 @@ export function preparePinnedRelease({ sha, dryRun, runCommand, capture, build, 
 }
 
 /**
+ * Put main's whole generated catalog back after the merge (senpi#6119). The catalog is one unit: `.manifest.json`
+ * records a hash for every data file, so taking main's side only where git conflicted would pair main's manifest with
+ * a data file only the release changed. Every generated file main has goes back to main's content, and every
+ * generated file only the release added goes away.
+ */
+function restoreMainCatalog(capture, runCommand, show, log) {
+	const listed = (args) => capture("git", args).split("\n").filter(Boolean);
+	const candidates = new Set([...listed(["ls-files"]), ...listed(["ls-tree", "-r", "--name-only", "origin/main"])]);
+	const fromMain = [];
+	const releaseOnly = [];
+	for (const file of candidates) {
+		// Path-only pass first (a header-carrying shard is the only content-dependent case), so only catalog paths are read.
+		if (!isRegeneratedCatalogPath(file, GENERATED_HEADER)) continue;
+		const main = show("origin/main", file);
+		if (!isRegeneratedCatalogPath(file, main ?? show("HEAD", file) ?? "")) continue;
+		(main === null ? releaseOnly : fromMain).push(file);
+	}
+	if (fromMain.length + releaseOnly.length === 0) return;
+	log(`  generated catalog: keeping main's ${fromMain.length} file(s); the tag keeps the release's`);
+	if (fromMain.length > 0) runCommand("git", ["checkout", "origin/main", "--", ...fromMain]);
+	if (releaseOnly.length > 0) runCommand("git", ["rm", "-q", "-f", "--", ...releaseOnly]);
+}
+
+/**
  * Merge the newer main into a pinned release without moving main's later changelog entries under the released version
  * (senpi#3731 review). A plain merge puts every entry main added after the pinned commit into the stamped section, so
  * main would claim the release shipped them. Each changelog is rebuilt from main's [Unreleased] minus the pinned
@@ -96,20 +120,10 @@ export function syncPinnedReleaseIntoMain({ pinnedSha, version, changelogs, dryR
 		writeFile(file, next);
 		runCommand("git", ["add", "--", file]);
 	}
-	const conflicted = () => capture("git", ["diff", "--name-only", "--diff-filter=U"]).trim().split("\n").filter(Boolean);
-	for (const file of conflicted()) {
-		const main = show("origin/main", file);
-		if (!isRegeneratedCatalogPath(file, main ?? show("HEAD", file) ?? "")) continue;
-		log(`  ${file}: generated catalog, keeping main's side`);
-		if (main === null) runCommand("git", ["rm", "-q", "--", file]);
-		else {
-			runCommand("git", ["checkout", "--theirs", "--", file]);
-			runCommand("git", ["add", "--", file]);
-		}
-	}
-	const unresolved = conflicted();
-	if (unresolved.length > 0) {
-		throw new Error(`merging main into the pinned release left conflicts outside the changelogs: ${unresolved.join(", ")}`);
+	restoreMainCatalog(capture, runCommand, show, log);
+	const unresolved = capture("git", ["diff", "--name-only", "--diff-filter=U"]).trim();
+	if (unresolved) {
+		throw new Error(`merging main into the pinned release left conflicts outside the changelogs: ${unresolved.split("\n").join(", ")}`);
 	}
 	runCommand("git", ["commit", "--no-edit"]);
 }
