@@ -203,6 +203,19 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"connection.?error",
 	"connection.?refused",
 	"connection.?lost",
+	// Connection-level failures carry no HTTP status and no provider verdict (senpi#3826): Bun reports a
+	// refused connect as "Unable to connect" (code ConnectionRefused) or FailedToOpenSocket and a dropped
+	// socket as ConnectionClosed; Node surfaces the bare errno codes.
+	"connection.?closed",
+	// Go-based proxies and gateways report a peer reset as prose: "read: connection reset by peer".
+	"connection.?reset",
+	"unable to connect",
+	"failed.?to.?open.?socket",
+	"\\beconn(?:refused|reset|aborted)\\b",
+	"\\betimedout\\b",
+	"\\behostunreach\\b",
+	"\\benetunreach\\b",
+	"\\bepipe\\b",
 	"other side closed",
 	"fetch failed",
 	"getaddrinfo",
