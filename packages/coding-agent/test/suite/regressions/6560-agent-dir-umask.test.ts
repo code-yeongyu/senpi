@@ -79,13 +79,21 @@ describe.skipIf(process.platform === "win32")("agent dir created under any umask
 		},
 	);
 
-	it("#given a group-writable agent dir senpi did not create #when senpi ensures it #then it is left as is and the host still refuses it", async () => {
-		const agentDir = join(scratchRoot(), "agent");
-		underUmask(0o002, () => mkdirSync(agentDir));
+	// Neither the launcher's ensureAgentDir nor the trust store's mkdir re-modes an existing dir: a loose one stays
+	// refused with its chmod hint instead of being silently tightened.
+	it.each([
+		["senpi ensures it", (agentDir: string) => ensureAgentDir(agentDir)],
+		["the project trust store touches it", (agentDir: string) => new ProjectTrustStore(agentDir).get(agentDir)],
+	])(
+		"#given a group-writable agent dir senpi did not create #when %s #then it is left as is and the host still refuses it",
+		async (_, touch) => {
+			const agentDir = join(scratchRoot(), "agent");
+			underUmask(0o002, () => mkdirSync(agentDir));
 
-		ensureAgentDir(agentDir);
+			touch(agentDir);
 
-		expect(modeOf(agentDir)).toBe(0o775);
-		await expect(checkRpcKeyDirectory(agentDir)).rejects.toMatchObject({ code: "unsafe_key_record" });
-	});
+			expect(modeOf(agentDir)).toBe(0o775);
+			await expect(checkRpcKeyDirectory(agentDir)).rejects.toMatchObject({ code: "unsafe_key_record" });
+		},
+	);
 });
