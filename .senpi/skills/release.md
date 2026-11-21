@@ -11,7 +11,7 @@ Run repository commands from the repo root (two directories above this skill).
 
 Releases are two-phase and run in GitHub Actions through `.github/workflows/publish-npm.yml`:
 
-1. **Prepare** (`gh workflow run publish-npm.yml`, optionally `-f version=<CalVer>`): the job runs `scripts/release.mjs`, which writes the version into every release workspace, syncs inter-package deps, regenerates the lock and release artifacts, compiles pending fragments on the release tree, stamps `[Unreleased]` as `[<version>] - <date>`, runs check, build and test, commits, tags, re-inserts a fresh `[Unreleased]` block, and pushes `main` plus the tag.
+1. **Prepare** (`gh workflow run publish-npm.yml`, optionally `-f version=<CalVer>`): the job runs `scripts/release.mjs`, which writes the version into every release workspace, syncs inter-package deps, regenerates the lock and release artifacts, compiles pending fragments on the release tree, stamps `[Unreleased]` as `[<version>] - <date>`, runs check, build and test, commits, tags, re-inserts a fresh `[Unreleased]` block, and pushes `main` plus the tag. It ships the model catalog the release commit carries and never regenerates it: catalog changes reach `main` only through the refresh workflows' own PRs (`model-catalog-refresh.yml`, `opengateway-catalog-refresh.yml`), whose CI tests them.
 2. **Publish-only** (`gh workflow run publish-npm.yml -f version=<CalVer> -f publish-only=true`): publishes the already prepared version through npm trusted publishing (GitHub OIDC). No local `npm publish`, OTP, or `npm whoami`.
 
 Pass `-f dry_run=true` to either phase to preview without pushing or publishing.
