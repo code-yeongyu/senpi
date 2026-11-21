@@ -12,7 +12,7 @@
  *
  * Flags:
  *   --help         show this help
- *   --no-install   skip `npm install` steps (just wire config + .env.local)
+ *   --no-install   skip dependency and Git hook setup (just wire config + .env.local)
  *   --with-native run optional Rust native setup/build using rust-toolchain.toml
  *   --quiet        less chatter
  */
@@ -43,10 +43,10 @@ const fail = (msg) => {
 function printHelp() {
 	process.stdout.write(`Usage: node scripts/devenv-setup.mjs [--no-install] [--with-native] [--quiet]
 
-Default setup uses npm prebuilt artifacts and does not require Rust.
+Default setup uses prebuilt artifacts and does not require Rust.
 
 Options:
-  --no-install     Skip npm install steps; still wire config and .env.local.
+  --no-install     Skip dependency and Git hook setup; still wire config and .env.local.
   --with-native   Install the pinned Rust toolchain with rustup when available,
                   then build/check native Rust workspace files if present.
   --quiet         Reduce setup output.
@@ -124,18 +124,12 @@ function checkRuntime() {
 // 2. Dependencies ----------------------------------------------------------
 function installDeps() {
 	if (NO_INSTALL) {
-		log("Skipping npm install (--no-install).");
+		log("Skipping dependency and Git hook setup (--no-install).");
 		return;
 	}
-	if (!existsSync(join(ROOT, "node_modules"))) {
-		log("Installing workspace dependencies (npm install --ignore-scripts)...");
-		npm(ROOT, ["install", "--ignore-scripts", "--no-audit", "--no-fund"]);
-	} else {
-		log("Workspace node_modules present — skipping.");
-	}
-	if (existsSync(join(ROOT, ".git"))) {
-		run(process.execPath, ["scripts/install-git-hooks.mjs"], { cwd: ROOT });
-	}
+	if (!hasCmd("bun")) fail("Bun is required for workspace setup. Install Bun >= 1.4.4, then re-run.");
+	log("Installing workspace dependencies and Git hooks (bun run setup)...");
+	run(isWindows ? "bun.exe" : "bun", ["run", "setup"], { cwd: ROOT });
 	const skillDir = join(ROOT, ".agents", "skills", "senpi-qa");
 	if (existsSync(join(skillDir, "package.json")) && !existsSync(join(skillDir, "node_modules"))) {
 		log("Installing senpi-qa skill deps (node-pty for cross-platform TUI QA)...");

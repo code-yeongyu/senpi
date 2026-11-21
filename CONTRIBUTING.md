@@ -32,8 +32,8 @@ senpi periodically merges selected upstream releases from `upstream` (i.e. `badl
 # Bun is the fleet-standard invocation.
 bun run setup
 # Contributor-compatible alternative: npm install --ignore-scripts && npm run setup:hooks
-bun scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
-bun scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
+# Full developer bootstrap (also runs bun run setup): bun scripts/devenv-setup.mjs
+# Optional native Rust build: bun scripts/devenv-setup.mjs --with-native
 bun run check     # oxlint + bun fmt + lint ratchet + tsc + browser-smoke check (pre-commit equivalent)
 bun run test          # Vitest across workspaces (skips live-API)
 ./pi-test.sh      # Optional: live-API integration suite (env-gated; requires API keys)
