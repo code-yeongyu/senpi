@@ -1,4 +1,5 @@
 import { changelogAfterPinnedRelease } from "./release-pinned-changelog.mjs";
+import { isRegeneratedCatalogPath } from "./release-test-gate.mjs";
 
 /**
  * Release an exact commit instead of whatever main is at dispatch (senpi#3609). The commit must be one of main's own
@@ -54,7 +55,9 @@ export function preparePinnedRelease({ sha, dryRun, runCommand, capture, build, 
  * Merge the newer main into a pinned release without moving main's later changelog entries under the released version
  * (senpi#3731 review). A plain merge puts every entry main added after the pinned commit into the stamped section, so
  * main would claim the release shipped them. Each changelog is rebuilt from main's [Unreleased] minus the pinned
- * entries, the tag's own release section, and main's older sections. The tag itself is never touched.
+ * entries, the tag's own release section, and main's older sections. A conflict in a generated model-catalog file
+ * keeps main's side (senpi#6119): the release's regenerated catalog is a release-only commit the tag already carries,
+ * and main's own catalog refreshes stay main's. The tag itself is never touched.
  */
 export function syncPinnedReleaseIntoMain({ pinnedSha, version, changelogs, dryRun, runCommand, capture, readFile, writeFile, log, dryRunLog }) {
 	if (dryRun) {
@@ -93,9 +96,20 @@ export function syncPinnedReleaseIntoMain({ pinnedSha, version, changelogs, dryR
 		writeFile(file, next);
 		runCommand("git", ["add", "--", file]);
 	}
-	const unresolved = capture("git", ["diff", "--name-only", "--diff-filter=U"]).trim();
-	if (unresolved) {
-		throw new Error(`merging main into the pinned release left conflicts outside the changelogs: ${unresolved.split("\n").join(", ")}`);
+	const conflicted = () => capture("git", ["diff", "--name-only", "--diff-filter=U"]).trim().split("\n").filter(Boolean);
+	for (const file of conflicted()) {
+		const main = show("origin/main", file);
+		if (!isRegeneratedCatalogPath(file, main ?? show("HEAD", file) ?? "")) continue;
+		log(`  ${file}: generated catalog, keeping main's side`);
+		if (main === null) runCommand("git", ["rm", "-q", "--", file]);
+		else {
+			runCommand("git", ["checkout", "--theirs", "--", file]);
+			runCommand("git", ["add", "--", file]);
+		}
+	}
+	const unresolved = conflicted();
+	if (unresolved.length > 0) {
+		throw new Error(`merging main into the pinned release left conflicts outside the changelogs: ${unresolved.join(", ")}`);
 	}
 	runCommand("git", ["commit", "--no-edit"]);
 }
