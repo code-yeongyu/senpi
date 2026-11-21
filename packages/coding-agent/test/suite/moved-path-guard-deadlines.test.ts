@@ -73,6 +73,23 @@ describe("moved-path-guard step deadline (#2898)", () => {
 		);
 	});
 
+	// senpi#3497: a bound line names the session whose call hit it, and each session's first hit is logged, so a
+	// multi-session log can be read per session.
+	it("logs each session's step bound with that session's id", async () => {
+		const first = await setup();
+		const second = await setup();
+		const ids = [first, second].map(({ harness }) => harness.session.sessionManager.getSessionId());
+
+		for (const { layout, harness } of [first, second])
+			await runTool(harness, "bash", { command: `touch ${layout.oldWorktree}/SLOWdir/a.txt` });
+
+		const stepLines = (await guardLogEvents()).filter(
+			(line) => line.event === "call_bound_reached" && line.bound === "step",
+		);
+		expect(new Set(ids).size).toBe(2);
+		for (const id of ids) expect(stepLines).toContainEqual(expect.objectContaining({ sessionId: id }));
+	});
+
 	// Third review M-b: past the call deadline, a re-used worktree the probe already cleared is not refused by text.
 	it("allows a re-used worktree's paths past the call deadline", async () => {
 		const { layout, harness } = await setup();

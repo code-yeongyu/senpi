@@ -73,7 +73,12 @@ function firstKnownMove(list: readonly Target[], probe: MovedPathProbe): MovedPa
 	return undefined;
 }
 
-async function checkTargets(list: readonly Target[]): Promise<MovedPath | undefined> {
+/** The session a check runs for, carried on its bound diagnostics so one log can be read per session (senpi#3497). */
+function boundDetails(bound: string, count: number, sessionId: string | undefined): Record<string, string> {
+	return sessionId === undefined ? { bound, count: String(count) } : { bound, count: String(count), sessionId };
+}
+
+async function checkTargets(list: readonly Target[], sessionId: string | undefined): Promise<MovedPath | undefined> {
 	// Probe order: targets under a listed prefix trusted earlier, then ones only under a legacy root, then the rest, so
 	// unlisted legacy paths cannot push a known prefix (re-used or moved) past the probe budget.
 	const rank = (target: Target) => (knownPrefixKeys(target.path).length > 0 ? 0 : looksMoved(target.path) ? 1 : 2);
@@ -102,12 +107,12 @@ async function checkTargets(list: readonly Target[]): Promise<MovedPath | undefi
 	})();
 	const result = await withResolutionDeadline(probing, CALL_DEADLINE_MS);
 	if (result === RESOLUTION_TIMED_OUT) probe.stop();
-	if (probe.timedOut) logGuardEvent("debug", "call_bound_reached", { bound: "step", count: String(ordered.length) });
+	if (probe.timedOut) logGuardEvent("debug", "call_bound_reached", boundDetails("step", ordered.length, sessionId));
 	if (unprobed.length > 0)
-		logGuardEvent("debug", "call_bound_reached", { bound: "paths", count: String(ordered.length) });
+		logGuardEvent("debug", "call_bound_reached", boundDetails("paths", ordered.length, sessionId));
 	// After any step timeout the probed targets' answers are incomplete too, so all of them get the text check.
 	if (result !== RESOLUTION_TIMED_OUT) return result ?? firstKnownMove(probe.timedOut ? ordered : unprobed, probe);
-	logGuardEvent("debug", "call_bound_reached", { bound: "deadline", count: String(ordered.length) });
+	logGuardEvent("debug", "call_bound_reached", boundDetails("deadline", ordered.length, sessionId));
 	return firstKnownMove(ordered, probe);
 }
 
@@ -118,15 +123,24 @@ async function checkTargets(list: readonly Target[]): Promise<MovedPath | undefi
  * handler, which also sees calls a codemode script makes through `ctx.executeTool()`.
  */
 export default function movedPathGuardExtension(pi: ExtensionAPI): void {
+	// A filesystem policy request names no session, so the policy uses the one this instance last started in.
+	let sessionId: string | undefined;
+	pi.on("session_start", (_event, ctx) => {
+		sessionId = ctx.sessionManager.getSessionId();
+	});
+
 	pi.registerFilesystemPolicy({
 		check: async ({ operation, canonicalPath }) => {
-			const moved = await checkTargets([{ path: canonicalPath, onlyIfMissing: operation !== "write" }]);
+			const moved = await checkTargets([{ path: canonicalPath, onlyIfMissing: operation !== "write" }], sessionId);
 			return moved ? { allow: false, reason: movedPathReason(moved) } : { allow: true };
 		},
 	});
 
 	pi.on("tool_call", async (event, ctx): Promise<ToolCallEventResult | undefined> => {
-		const moved = await checkTargets(targets(event.toolName, event.input, ctx.cwd));
+		const moved = await checkTargets(
+			targets(event.toolName, event.input, ctx.cwd),
+			ctx.sessionManager.getSessionId(),
+		);
 		return moved ? { block: true, reason: movedPathReason(moved) } : undefined;
 	});
 }
