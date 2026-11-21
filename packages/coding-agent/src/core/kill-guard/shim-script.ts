@@ -5,7 +5,7 @@
  * interactive bash. All share one sh library: the fast path for literal `kill` targets, the bounded judge call, and the
  * judge-missing fallback.
  */
-import { refuseAll } from "./kill.ts";
+import { refuseAll, refuseProcpsTarget } from "./kill.ts";
 import type { KillGuardVerdict } from "./types.ts";
 import { KILL_GUARD_TAG, refuse } from "./verdict.ts";
 
@@ -29,6 +29,8 @@ const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 const refusal = (verdict: KillGuardVerdict): string => (verdict.action === "refuse" ? verdict.message : "");
 
 const ALL_PROCESSES = refusal(refuseAll());
+const PROCPS_ALL = refusal(refuseProcpsTarget("-1<digits>"));
+const PROCPS_GROUP = refusal(refuseProcpsTarget("-N<digits>"));
 const PROTECTED_WITHOUT_JUDGE = refusal(
 	refuse("R2", "it names a pid the host marked protected, and the kill guard's judge is not installed to check it"),
 );
@@ -39,25 +41,45 @@ const JUDGE_MISSING = `${KILL_GUARD_TAG} the kill guard's judge is not installed
 
 function library(deadlineSeconds: number): string {
 	return `__senpi_kg_all=${quote(ALL_PROCESSES)}
+__senpi_kg_procps_all=${quote(PROCPS_ALL)}
+__senpi_kg_procps_group=${quote(PROCPS_GROUP)}
 __senpi_kg_protected=${quote(PROTECTED_WITHOUT_JUDGE)}
 __senpi_kg_failed=${quote(JUDGE_FAILED)}
 __senpi_kg_missing=${quote(JUDGE_MISSING)}
 __senpi_kg_deadline=${deadlineSeconds}
 
 # kill's arguments, decided in sh with no runtime start: 0 = only literal positive pids and none protected,
-# 1 = the judge decides, 2 = a literal -1 target, 3 = a literal pid the host marked protected.
+# 1 = the judge decides, 2 = a literal -1 target, 3 = a literal pid the host marked protected, 4 / 5 = a target
+# before \`--\` like -1429035 / -2429035 that procps \`kill\` reads by its first digit, as -1 / a one-digit group.
 __senpi_kg_fast() {
 	__senpi_kg_p=0
 	__senpi_kg_n=0
+	__senpi_kg_d=0
 	if [ "$#" -eq 1 ] && [ "$1" = "-1" ]; then return 2; fi
 	case \${1-} in
 	-l | -L) return 0 ;;
 	--) ;;
+	-[0-9]*)
+		# A signal number to procps only with at most two digits up to 93; anything else is a target.
+		case \${1#-} in
+		[0-9] | [0-9][0-9]) if [ "\${1#-}" -le 93 ]; then shift; fi ;;
+		esac
+		;;
 	-*) shift ;;
 	esac
-	if [ "\${1-}" = "--" ]; then shift; fi
+	if [ "\${1-}" = "--" ]; then
+		shift
+		__senpi_kg_d=1
+	fi
 	if [ "$#" -eq 0 ]; then return 1; fi
 	for __senpi_kg_a do
+		if [ "$__senpi_kg_d" -eq 0 ]; then
+			case $__senpi_kg_a in
+			--) __senpi_kg_d=1 ;;
+			-1?*) return 4 ;;
+			-[0-9]?*) return 5 ;;
+			esac
+		fi
 		case $__senpi_kg_a in
 		-1) return 2 ;;
 		'' | 0* | *[!0-9]*) __senpi_kg_n=1 ;;
@@ -119,6 +141,14 @@ __senpi_kg_decide() {
 		0) return 0 ;;
 		2)
 			printf '%s\\n' "$__senpi_kg_all" >&2
+			return 126
+			;;
+		4)
+			printf '%s\\n' "$__senpi_kg_procps_all" >&2
+			return 126
+			;;
+		5)
+			printf '%s\\n' "$__senpi_kg_procps_group" >&2
 			return 126
 			;;
 		esac
@@ -197,7 +227,7 @@ ${killFunction(deadlineSeconds)}`;
 function killFunction(deadlineSeconds: number): string {
 	return `${library(deadlineSeconds)}
 function kill {
-	local __senpi_kg_v __senpi_kg_f __senpi_kg_s __senpi_kg_p __senpi_kg_n __senpi_kg_a
+	local __senpi_kg_v __senpi_kg_f __senpi_kg_s __senpi_kg_p __senpi_kg_n __senpi_kg_a __senpi_kg_d
 	__senpi_kg_decide "\${BASHPID:-$$}" kill "$@" || return
 	command kill "$@"
 }
