@@ -1,4 +1,4 @@
-import type { Image } from "openai/resources/images";
+import type { Image } from "openai/resources/images.js";
 import type { ImageContent } from "../types.ts";
 import type { OpenAIImageOutputFormat, OpenAIImagesOptions } from "./openai-images-params.ts";
 

@@ -95,7 +95,7 @@
 		"google-auth-library": "11.3.4",
 		"http-proxy-agent": "9.1.0",
 		"https-proxy-agent": "9.1.0",
-		"openai": "7.60.0",
+		"openai": "6.26.0",
 		"partial-json": "0.1.7",
 		"typebox": "1.4.7",
 		"@bufbuild/protobuf": "2.17.0",

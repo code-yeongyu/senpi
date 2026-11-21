@@ -428,7 +428,7 @@ export function convertResponsesMessages<TApi extends Api>(
 					const block = {
 						type: "input_text" as const,
 						text: sanitizeSurrogates(text),
-						prompt_cache_breakpoint: { mode: "explicit" as const },
+						prompt_cache_breakpoint: { mode: "explicit" },
 					};
 					messages.push({ role: instructionRole, content: [block] });
 				} else if (text.length > 0) {

@@ -36,7 +36,7 @@
 		"@babel/parser": "8.1.2",
 		"@earendil-works/pi-ai": "^2026.11.21-2",
 		"@earendil-works/pi-realm-registry": "^2026.11.21-2",
-		"quickjs-wasi": "3.7.0",
+		"quickjs-wasi": "3.6.2",
 		"typebox": "1.4.7"
 	},
 	"peerDependencies": {

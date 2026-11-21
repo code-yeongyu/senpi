@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { ImageEditParamsNonStreaming, ImageGenerateParamsNonStreaming } from "openai/resources/images";
+import type { ImageEditParamsNonStreaming, ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
 import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	AssistantImages,
@@ -77,12 +77,13 @@ export const generateImages: ImagesFunction<OpenAIImagesOptions> = async (
 		};
 		const { data: response, response: rawResponse } = await retryProviderRequest(
 			() => {
-				// `params` is the provider's own wire shape (e.g. gpt-image-2.5 quality tiers), not the SDK's.
+				// openai SDK pinned at 6.26.0 predates gpt-image-2.5 quality tiers
+				const sdkParams = params as ImageGenerateParamsNonStreaming & ImageEditParamsNonStreaming;
 				return awaitProviderTransport(
 					() =>
 						(method === "edit"
-							? client.images.edit(params as ImageEditParamsNonStreaming, requestOptions)
-							: client.images.generate(params as ImageGenerateParamsNonStreaming, requestOptions)
+							? client.images.edit(sdkParams, requestOptions)
+							: client.images.generate(sdkParams, requestOptions)
 						).withResponse(),
 					openAICompatibleProviderDiagnosticFromError,
 				);

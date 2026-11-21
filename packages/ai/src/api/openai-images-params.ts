@@ -1,5 +1,5 @@
 import type { Uploadable } from "openai";
-import type { ImageGenerateParamsNonStreaming } from "openai/resources/images";
+import type { ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
 import type { ImageApi, ImageContent, ImageModel, ImagesContext, ImagesOptions } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
