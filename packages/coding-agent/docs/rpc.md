@@ -6373,7 +6373,9 @@ Every other command that takes a durable id works on a session the host still ha
 
 `open` says an engine of this host holds that session now, so a client knows whether its next step is an `open_session` or an attach. `ambiguous` is the answer when two session files carry one durable id (a caller-minted id reused while the first was parked); it names neither, and the client picks by another means. `unknown` is the answer when no session file of this host carries it.
 
-The command is a read: it opens, claims, unloads, seals and rewrites nothing, and touches no move record. It reads only this host's own session folder (`<agentDir>/sessions/<folder>/`), never a path from the request, which carries the durable id alone. Of each session file only the first line, its header, is read.
+The command is a read: it opens, claims, unloads, seals and rewrites nothing, and touches no move record. It reads only this host's own session folder (`<agentDir>/sessions/<folder>/` and files directly in `<agentDir>/sessions/`), never a path from the request, which carries the durable id alone. Of each session file only the first line, its header, is read.
+
+The files senpi names for the id (`<timestamp>_<durable id>.jsonl`) are read first, and the header decides: a file whose name carries the id but whose header names another id is not a candidate. Only when no such file carries the id is every other header read, so a session file under a caller-chosen name (`--session <path>`) is still found. When a senpi-named file carries the id, a file under another name carrying the same id is not read: two senpi-named files still answer `ambiguous`, a renamed copy beside a named file does not.
 
 It needs the standing a path-naming `open_session` needs, so on a delegated connection it needs `device_admin`. A caller without that standing is refused before the lookup runs, and the refusal is the same for an id this host knows and one it does not, so it learns nothing either way.
 
