@@ -133,6 +133,7 @@ import { completeCompactFactory } from "./modes/rpc/compact-runtime-factory.ts";
 import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { readPipedStdin } from "./utils/piped-stdin.ts";
+import { ensureAgentDir } from "./utils/ensure-agent-dir.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP_NAME} -ne".`;
@@ -1247,6 +1248,18 @@ export async function main(args: string[], options?: MainOptions) {
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 	}
 
+	// Internal launch surface used by bundled/rebranded runtimes. It is deliberately
+	// not accepted by parseArgs, so existing CLI modes remain unchanged. The route and
+	// the RPC host graph behind it live in ./modes/rpc/supervisor-route.ts.
+	if (await dispatchInternalSupervisor(args)) {
+		return;
+	}
+
+	// Before any command writes under it: a nested `mkdir -p` would otherwise create the agent dir with the
+	// umask's group bits, and the RPC host refuses that dir as its key root (senpi#6560).
+	const agentDir = getAgentDir();
+	ensureAgentDir(agentDir);
+
 	if (await runAuthCommand(args)) {
 		return;
 	}
@@ -1256,19 +1269,11 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
-	// Internal launch surface used by bundled/rebranded runtimes. It is deliberately
-	// not accepted by parseArgs, so existing CLI modes remain unchanged. The route and
-	// the RPC host graph behind it live in ./modes/rpc/supervisor-route.ts.
-	if (await dispatchInternalSupervisor(args)) {
-		return;
-	}
-
 	if (process.platform === "win32") {
 		cleanupWindowsSelfUpdateQuarantine(getInstallPackageDir());
 	}
 
 	const cwd = process.cwd();
-	const agentDir = getAgentDir();
 	const fromSourceWarning = getFromSourceRealConfigWarning(agentDir);
 	if (fromSourceWarning) {
 		console.error(chalk.yellow(fromSourceWarning));

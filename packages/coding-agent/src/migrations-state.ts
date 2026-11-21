@@ -5,9 +5,10 @@
  * Bump MIGRATIONS_STATE_SCHEMA_VERSION when a listed migration's semantics change.
  */
 
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "./config.ts";
+import { ensureAgentDir } from "./utils/ensure-agent-dir.ts";
 
 export const MIGRATIONS_STATE_SCHEMA_VERSION = 1;
 export const MIGRATIONS_STATE_FILENAME = "migrations-state.json";
@@ -97,7 +98,7 @@ export function recordLegacyPiAgentDirCopy(agentDir: string = getAgentDir(), cop
 
 /** Keeps every field it does not own, so the scan list and the pi-copy record never erase each other. */
 function writeState(agentDir: string, fields: Record<string, unknown>): void {
-	mkdirSync(agentDir, { recursive: true });
+	ensureAgentDir(agentDir);
 	const target = join(agentDir, MIGRATIONS_STATE_FILENAME);
 	const temporary = `${target}.${process.pid}.tmp`;
 	const payload = { schemaVersion: MIGRATIONS_STATE_SCHEMA_VERSION, ...fields };
