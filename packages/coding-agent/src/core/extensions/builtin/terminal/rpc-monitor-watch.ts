@@ -68,6 +68,10 @@ export class RpcMonitorWatch {
 		const { target } = this.#options;
 		if (target.kind === "remote") return this.#startRemote(target.device, target.session);
 		const rows = await this.#join();
+		if (target.kind === "id" && rows.length === 0 && this.#options.restoredFrom === undefined) {
+			this.stop();
+			throw new Error("no matching local session");
+		}
 		this.#rescan = setInterval(() => void this.#join(), RPC_RESCAN_MS);
 		this.#rescan.unref?.();
 		return rows;

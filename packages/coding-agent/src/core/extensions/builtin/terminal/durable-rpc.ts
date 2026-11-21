@@ -43,6 +43,8 @@ export function createCheckpointedRpcRestoreHandler(deps: CheckpointedRpcRestore
 			return lost(`monitor ${monitor.monitorId} has an invalid filter`);
 		}
 		try {
+			// A saved explicit watch is a restore even if its first checkpoint never reached disk.
+			const restoredFrom = monitor.rpcCheckpoint ?? (target.kind === "id" ? { hosts: {}, statuses: {} } : undefined);
 			const { id } = await deps.registry.registerRpc({
 				description: monitor.description,
 				target,
@@ -55,7 +57,7 @@ export function createCheckpointedRpcRestoreHandler(deps: CheckpointedRpcRestore
 				...(monitor.expiresAt === null ? {} : { expiresAt: monitor.expiresAt }),
 				monitorId: monitor.monitorId,
 				agentDir: deps.agentDir ?? getAgentDir(),
-				...(monitor.rpcCheckpoint === undefined ? {} : { restoredFrom: monitor.rpcCheckpoint }),
+				...(restoredFrom === undefined ? {} : { restoredFrom }),
 				onCheckpoint: (monitorId, checkpoint) => deps.writer?.scheduleRpcCheckpoint(monitorId, checkpoint),
 			});
 			deps.bindMonitorId?.(monitor.monitorId, id);

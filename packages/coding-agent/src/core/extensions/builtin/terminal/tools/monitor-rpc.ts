@@ -75,19 +75,13 @@ export async function createRpcMonitor(ctx: TerminalToolContext, input: MonitorI
 				}
 			: {}),
 	});
-	// A remote source refuses with a typed reason (unknown device, no grant, no plan): the caller reads it.
-	const refusal =
-		target.kind === "remote"
-			? await armed.then(
-					() => undefined,
-					(error: unknown) => error,
-				)
-			: undefined;
-	if (refusal !== undefined)
-		return errorResult(
-			`Cannot watch ${input.target}: ${refusal instanceof Error ? refusal.message : String(refusal)}`,
-		);
-	const { id, monitorId, rows } = await armed;
+	let result: Awaited<typeof armed>;
+	try {
+		result = await armed;
+	} catch (error) {
+		return errorResult(`Cannot watch ${input.target}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	const { id, monitorId, rows } = result;
 	ctx.manager.bindMonitorId(monitorId, id);
 	await handMonitorSpec(sessionKey, {
 		monitorId,

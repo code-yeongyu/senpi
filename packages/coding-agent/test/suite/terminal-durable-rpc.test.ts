@@ -97,6 +97,24 @@ describe("checkpointed-rpc durability (senpi#3226)", () => {
 		expect(result.outcome).toBe("lost");
 	});
 
+	it("restores an explicit watch whose first checkpoint was not saved", async () => {
+		const armed: RegisterRpcMonitorOptions[] = [];
+		const handler = createCheckpointedRpcRestoreHandler({
+			registry: {
+				pause: (ids) => [...ids],
+				registerRpc: async (options) => {
+					armed.push(options);
+					return { id: "rpc_1", monitorId: "mon_RPC", rows: [] };
+				},
+			},
+			sessionId: () => "owner",
+		});
+		const { rpcCheckpoint: _checkpoint, ...entry } = parsedEntry();
+		const result = await handler({ ...entry, target: "old" }, { downtimeMs: 1_000 });
+		expect(result.outcome).toBe("restored");
+		expect(armed[0]?.restoredFrom).toEqual({ hosts: {}, statuses: {} });
+	});
+
 	it("a watch muted before the restart comes back muted (senpi#3381 review)", async () => {
 		const paused: string[][] = [];
 		const handler = createCheckpointedRpcRestoreHandler({
