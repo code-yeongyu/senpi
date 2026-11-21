@@ -1,3 +1,21 @@
+## 2026-11-03 — A template restated under new recipient lines is not a collapse loop (omo#12213)
+
+### What changed
+- `detectors/collapse-novelty.ts` (new): `ParagraphNovelty` remembers the paragraphs one message has written, compared after `normalizeTurnText`, so a counter (`Attempt 2:`) is not new content and a recipient line (`Reply to Bob:`) is.
+- `detectors/collapse-paragraphs.ts`: an exact repeat counts only back to the last new paragraph, plus the one occurrence it repeats. Three occurrences with nothing new between them still fire; a template paragraph restated under a new recipient line each time starts over.
+- `detectors/collapse-near-duplicates.ts`: a short prose paragraph the message never wrote before clears the echo window. Echoes of long paragraphs, code lines and repeated interjections score as before.
+
+### Why
+- Drafting several replies from one template quoted the same paragraphs once per reply. The exact detector fired at the third reply and, after its one correction, the next draft fired again and stopped the run with no reply (omo#12213). The stop path itself (typed reason, episode renewal) is senpi#4623's.
+
+### Tests
+- `test/suite/regressions/12213-ttsr-template-repetition.test.ts` (RED on both detectors separately before the change): the templated draft is silent on text and thinking; the same draft with nothing new between replies, or only a counter, still fires both mechanisms. Every existing `test/ttsr` loop fixture still fires.
+
+### Paths
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-novelty.ts`
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-paragraphs.ts`
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-near-duplicates.ts`
+
 ## 2026-10-22 — Markup that spells a special token is not a leak (senpi#3880)
 
 ### What changed

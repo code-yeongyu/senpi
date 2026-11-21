@@ -1,5 +1,6 @@
 import { CharCode, FixedRing, isAsciiWhitespace, type ScalarEntry } from "../stream-utils.ts";
 import type { DetectorMatch } from "../types.ts";
+import { ParagraphNovelty } from "./collapse-novelty.ts";
 import { isAsciiAlphanumeric, isBoxDrawing } from "./collapse-scalars.ts";
 import { normalizeTurnText } from "./repetitive-turns.ts";
 
@@ -46,6 +47,7 @@ export interface NearDuplicateState {
 	retained: string;
 	fenced: boolean;
 	insideFence: boolean;
+	readonly novelty: ParagraphNovelty;
 }
 
 export function createNearDuplicateState(): NearDuplicateState {
@@ -64,6 +66,7 @@ export function createNearDuplicateState(): NearDuplicateState {
 		retained: "",
 		fenced: false,
 		insideFence: false,
+		novelty: new ParagraphNovelty(),
 	};
 }
 
@@ -109,8 +112,15 @@ function completeParagraph(state: NearDuplicateState): DetectorMatch | null {
 		!state.fenced && state.length >= NEAR_DUPLICATE_MIN_CHARS && state.wordChars >= NEAR_DUPLICATE_MIN_WORD_CHARS;
 	const text = state.retained;
 	const startOffset = state.startOffset;
+	const prose = !state.fenced;
 	resetParagraph(state);
-	if (!eligible) return null;
+	if (!eligible) {
+		// A short prose line the message never wrote before (a reply's own recipient or subject line) is new content
+		// between the echoes, so the run of echoes before it is a template restated, not a loop (omo#12213). A
+		// counter or a repeated interjection is not new and keeps the window.
+		if (prose && state.novelty.observe(text)) state.window.clear();
+		return null;
+	}
 	const tokens = tokenize(text);
 	if (tokens.size === 0) return null;
 	let best = 0;
