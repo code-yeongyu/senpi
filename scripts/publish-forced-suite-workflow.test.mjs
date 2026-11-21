@@ -172,7 +172,7 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 
 	it("gives the preflight read-only permissions and only whether the push token is set, never its value", () => {
 		const job = workflowJob(workflow, "preflight");
-		assert.match(job, /\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n(?! {6}\S)/);
+		assert.match(job, /\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n(?! {6}\S)/);
 		assert.doesNotMatch(job, /id-token|: write/);
 		assert.deepEqual(job.match(/secrets\.[^}]*/g), ["secrets.UPSTREAM_AUTOMATION_TOKEN != '' "]);
 	});

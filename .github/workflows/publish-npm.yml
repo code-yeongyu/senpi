@@ -452,6 +452,7 @@ jobs:
       actions: read
       checks: read
       contents: read
+      pull-requests: read
     outputs:
       base_sha: ${{ steps.preflight.outputs.base_sha }}
       version: ${{ steps.preflight.outputs.version }}

@@ -74,10 +74,11 @@ export function formatPreflightOutputs({ baseSha, version }) {
  *   platformBlockers: () => string[],
  *   checkRuns: (sha: string) => Array|null,
  * }} deps
- * @returns {{baseSha: string, version: string, refusals: string[]}}
+ * @returns {{baseSha: string, version: string, refusals: string[], notes: string[]}}
  */
 export function runPreflight(deps) {
 	const refusals = [];
+	const notes = [];
 	const attempt = (check) => {
 		try {
 			check();
@@ -112,8 +113,9 @@ export function runPreflight(deps) {
 	if (!deps.forceTests && FULL_SHA.test(baseSha)) {
 		const plan = planCiEvidence({ sha: baseSha, checkRuns: deps.checkRuns(baseSha) });
 		if (plan.action === "stop") refusals.push(`CI failed on ${baseSha.slice(0, 12)}: ${plan.reason}; fix main before releasing`);
+		else notes.push(`test gate: ${plan.reason}${plan.action === "reuse" ? "" : "; the release job waits for it"}`);
 	}
-	return { baseSha, version, refusals };
+	return { baseSha, version, refusals, notes };
 }
 
 const log = (line) => process.stdout.write(`[preflight] ${line}\n`);
@@ -163,6 +165,7 @@ function main() {
 	for (const refusal of result.refusals) {
 		process.stdout.write(`::${dryRun ? "warning" : "error"}::${refusal}\n`);
 	}
+	for (const note of result.notes) log(note);
 	for (const notice of staleCatalogNotices(openRefreshPrs(capture), Date.now())) process.stdout.write(`::warning::${notice}\n`);
 	if (result.refusals.length > 0 && !dryRun) {
 		throw new Error(`${result.refusals.length} preflight check(s) refused the release; nothing was built, tested or pushed`);

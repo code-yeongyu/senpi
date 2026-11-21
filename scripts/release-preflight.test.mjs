@@ -32,7 +32,12 @@ const green = (overrides = {}) => ({
 
 describe("runPreflight", () => {
 	it("accepts a dispatch every check passes and fixes its base and version", () => {
-		assert.deepEqual(runPreflight(green()), { baseSha: SHA, version: "2026.11.21-3", refusals: [] });
+		assert.deepEqual(runPreflight(green()), {
+			baseSha: SHA,
+			version: "2026.11.21-3",
+			refusals: [],
+			notes: [`test gate: ${SHA.slice(0, 12)} has a green "Check and test" run; it is the release's test evidence`],
+		});
 	});
 
 	it("reports every refusal of one dispatch at once instead of stopping at the first", () => {
@@ -58,7 +63,9 @@ describe("runPreflight", () => {
 
 	it("leaves an unfinished or unreadable CI run to the release job's wait, and never reads CI under force_tests", () => {
 		assert.deepEqual(runPreflight(green({ checkRuns: () => checkRun(null, "in_progress") })).refusals, []);
-		assert.deepEqual(runPreflight(green({ checkRuns: () => null })).refusals, []);
+		const unreadable = runPreflight(green({ checkRuns: () => null }));
+		assert.deepEqual(unreadable.refusals, []);
+		assert.match(unreadable.notes.join("\n"), /the CI lookup for a{12} failed; the release job waits for it/);
 		assert.deepEqual(runPreflight(green({ forceTests: true, checkRuns: () => assert.fail("read CI under force_tests") })).refusals, []);
 	});
 
