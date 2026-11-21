@@ -10,6 +10,7 @@ import {
 	type StreamOptions,
 	sanitizeAnthropicToolPairs as sanitizeAnthropicPayload,
 	type TextContent,
+	uuidv7,
 } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/compat";
 import { estimateContextTokens, estimateTokens } from "../../../compaction/compaction.ts";
@@ -244,6 +245,10 @@ export async function generateSummaryMessage(options: {
 			? await providerRequest.transformHeaders(options.auth.headers ?? {})
 			: options.auth.headers;
 		const responseStream = summarizationStream(options.context, options.snapshot.model, requestContext, {
+			// The same request-identity split as completeSummarization(): a fresh id per request, affinity to the
+			// session. Session-routed providers require the id (OpenCode Go's x-opencode-session, omo#10092).
+			affinitySessionId: options.context.sessionManager.getSessionId(),
+			sessionId: uuidv7(),
 			apiKey: options.auth.apiKey,
 			headers,
 			extraBody: options.auth.extraBody,
