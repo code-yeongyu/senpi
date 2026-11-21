@@ -722,15 +722,9 @@ export function repairManagedSentinelSlots(providerId: string, credential: Crede
 }
 
 /**
- * Merges a rotated OAuth credential back into the pool: the slot whose material
- * matches the pre-refresh flat fields is updated in place together with those
- * flat fields, while every sibling and the pin survive byte-identical. A flat
- * current entry keeps today's whole-write shape.
- */
-/**
  * Merges a rotated OAuth credential into the NAMED slot. The flat top-level
- * projection rotates only when it mirrored that slot's previous material, so
- * refreshing a secondary slot never disturbs what an older binary reads.
+ * projection rotates when it mirrors that slot or is desynchronized from the
+ * whole pool and the primary slot is refreshed.
  */
 export function mergeRefreshedSlot(current: PooledCredential, name: string, refreshed: Credential): Credential {
 	if (refreshed.type !== "oauth" || current.type !== "oauth") return current;
@@ -742,16 +736,23 @@ export function mergeRefreshedSlot(current: PooledCredential, name: string, refr
 		refreshed,
 	);
 	const accounts = current.accounts.map((slot) => (slot === target ? { ...slot, ...rotated } : slot));
-	const mirrorsFlat = target.access === current.access || target.refresh === current.refresh;
+	const mirrorsFlat =
+		target.access === current.access ||
+		target.refresh === current.refresh ||
+		(target === current.accounts[0] &&
+			!current.accounts.some((slot) => slot.access === current.access || slot.refresh === current.refresh));
 	return mirrorsFlat ? { ...current, ...rotated, accounts } : { ...current, accounts };
 }
 
+/** Updates the slot matching the flat credential, or the primary slot when none matches. */
 export function mergeRefreshed(current: PooledCredential, refreshed: Credential): Credential {
 	if (!Array.isArray(current.accounts) || current.accounts.length === 0) {
 		return refreshed;
 	}
 	if (refreshed.type !== "oauth" || current.type !== "oauth") return refreshed;
-	const target = current.accounts.find((slot) => slot.access === current.access || slot.refresh === current.refresh);
+	const target =
+		current.accounts.find((slot) => slot.access === current.access || slot.refresh === current.refresh) ??
+		current.accounts[0];
 	const rotated = withOAuthAccountFields(
 		{
 			access: refreshed.access,
