@@ -9,7 +9,7 @@ type SlotHeadroom = {
 	providerId: string;
 	limits: readonly AccountLimits[];
 	now: number;
-	/** The account an earlier headroom skip moved this session to. */
+	/** The account an earlier headroom skip, or a most-headroom pick, gave this session. */
 	remembered?: string;
 };
 
@@ -55,7 +55,17 @@ export function orderRotationSlots<TSlot extends RotationSlot>(
 	policy: SlotPickPolicy,
 ): readonly TSlot[] {
 	const ranked = policy.useAffinity ? rendezvousOrder(policy.affinityKey, candidates, policy.hasher) : candidates;
-	return orderAccounts(candidates, ranked, policy.order, policy.strategy, policy.roundRobinOffset);
+	const headroom = policy.headroom;
+	return orderAccounts(
+		candidates,
+		ranked,
+		policy.order,
+		policy.strategy,
+		policy.roundRobinOffset,
+		headroom === undefined
+			? undefined
+			: { provider: headroom.providerId, limits: headroom.limits, now: headroom.now },
+	);
 }
 
 /**
