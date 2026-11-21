@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 
 /** How long a path under an automount trigger may take to mount and resolve before it counts as unanswered. */
-export const AUTOMOUNT_RESOLUTION_DEADLINE_MS = 5000;
+const AUTOMOUNT_RESOLUTION_DEADLINE_MS = 5000;
 
 /** Where a path under an automount trigger really leads, as a short-lived child process found it. */
 export type AutomountRealpath =
