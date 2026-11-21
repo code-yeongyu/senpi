@@ -110,10 +110,15 @@ async function seedSelfClient(qa: GenerationScratch, ready: string, owner: Child
 		output: fixtureOutput(qa, owner),
 		gone: once(owner, "exit"),
 	});
-	openedSessionId(
-		await outside.request({ id: "open", type: "open_session", cwd: qa.cwd, retain_on_disconnect: true }),
-	);
-	await written;
+	// Awaited together: an open that fails must not leave the file wait to reject unobserved once the owner exits.
+	const [opened] = await Promise.all([
+		outside.request(
+			{ id: "open", type: "open_session", cwd: qa.cwd, retain_on_disconnect: true },
+			budget(CASE_TIMEOUT_MS),
+		),
+		written,
+	]);
+	openedSessionId(opened);
 	outside.destroy();
 }
 
