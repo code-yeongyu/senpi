@@ -25,6 +25,17 @@ export async function ensureMonitorStateDir(terminalDir: string, monitorId: stri
 	return dir;
 }
 
-export async function removeMonitorStateDir(terminalDir: string, monitorId: string): Promise<void> {
-	await rm(monitorStateDir(terminalDir, monitorId), { recursive: true, force: true });
+const pendingRemovals = new Map<string, Promise<void>>();
+
+/**
+ * A stopped watch has two removers, `kill_bash` and the monitor-ended sink, so callers share one
+ * in-flight `rm` per dir instead of racing two recursive removals of the same tree (senpi#2883).
+ */
+export function removeMonitorStateDir(terminalDir: string, monitorId: string): Promise<void> {
+	const dir = monitorStateDir(terminalDir, monitorId);
+	const pending = pendingRemovals.get(dir);
+	if (pending !== undefined) return pending;
+	const removal = rm(dir, { recursive: true, force: true }).finally(() => pendingRemovals.delete(dir));
+	pendingRemovals.set(dir, removal);
+	return removal;
 }
