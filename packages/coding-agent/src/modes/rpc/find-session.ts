@@ -159,7 +159,8 @@ export async function findSession(
 	}
 }
 
-async function findSessionFile(options: FindSessionOptions): Promise<FindSessionAnswer> {
+/** Which session file of this host carries `durableSessionId`; also how `open_session { forkFrom }` finds its source. */
+export async function findSessionFile(options: FindSessionOptions): Promise<FindSessionAnswer> {
 	const files = await sessionFiles(options.agentDir);
 	const byPath = new Map<string, Candidate>();
 	for (const row of options.hosted) {

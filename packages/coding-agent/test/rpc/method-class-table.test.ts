@@ -146,11 +146,11 @@ describe("RPC method classes (senpi#4319)", () => {
 		expect(classifyRpcMethod({ type: "subscribe_sessions", mirror: "all" })).toBe("connection_local");
 	});
 
-	it("classifies open_session with a tool environment as device_admin (rule open_session@2)", () => {
+	it("classifies open_session with a tool environment as device_admin (rule open_session@3)", () => {
 		const env = { type: "open_session", sessionId: "s", env: { OMOCAT_LANE: "lane" } };
 		expect(classifyRpcMethod(env)).toBe("device_admin");
 		expect(rpcMethodPermitted(env, new Set<RpcMethodClass>(["thread", "drive"]))).toBe(false);
-		expect(describeRpcMethodClasses().dynamic_versions.open_session).toBe(2);
+		expect(describeRpcMethodClasses().dynamic_versions.open_session).toBe(3);
 	});
 
 	it("pins every dynamic rule's outputs under <type>@<version>", () => {
@@ -233,7 +233,7 @@ describe("RPC method classes (senpi#4319)", () => {
 			.map(([type, methodClass]) => `${type}=${methodClass}\n`)
 			.sort()
 			.join("");
-		expect(lines).toContain("open_session=dynamic@2\n");
+		expect(lines).toContain("open_session=dynamic@3\n");
 		expect(RPC_METHOD_CLASSES_DIGEST).toBe(createHash("sha256").update(lines).digest("hex"));
 		expect(rpcMethodClassesDigest(Object.fromEntries(Object.entries(values).reverse()))).toBe(
 			RPC_METHOD_CLASSES_DIGEST,
@@ -247,7 +247,7 @@ describe("RPC method classes (senpi#4319)", () => {
 	it("changes the digest on one reassignment and on one rule version bump", () => {
 		const values = digestValues();
 		expect(rpcMethodClassesDigest({ ...values, get_state: "drive" })).not.toBe(RPC_METHOD_CLASSES_DIGEST);
-		expect(rpcMethodClassesDigest({ ...values, open_session: "dynamic@3" })).not.toBe(RPC_METHOD_CLASSES_DIGEST);
+		expect(rpcMethodClassesDigest({ ...values, open_session: "dynamic@4" })).not.toBe(RPC_METHOD_CLASSES_DIGEST);
 		expect(rpcMethodClassesDigest({ ...values, append_session_entry: "dynamic@2" })).not.toBe(
 			RPC_METHOD_CLASSES_DIGEST,
 		);

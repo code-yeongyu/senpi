@@ -29,6 +29,7 @@ import {
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	MOVED_PATH_GUARD_CAPABILITY,
 	OBSERVE_READS_CAPABILITY,
+	OPEN_SESSION_FORK_CAPABILITY,
 	OPEN_SESSION_HEADER_CWD_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
@@ -146,6 +147,8 @@ export function multiSessionHostCapabilities(options: {
 			RETAIN_ON_DISCONNECT_CAPABILITY,
 			// An open by path with no `cwd` resumes the session where its file's header says, not where this host runs.
 			OPEN_SESSION_HEADER_CWD_CAPABILITY,
+			// An open with `forkFrom` forks a session file of this host instead of starting a blank session (omo#13031).
+			OPEN_SESSION_FORK_CAPABILITY,
 			// Only a multi-session host tracks attachments per connection, so only it can drop them on request.
 			DETACH_CONNECTION_CAPABILITY,
 			// Its host core decides every inbound line of a delegated connection before dispatch (senpi#5632).

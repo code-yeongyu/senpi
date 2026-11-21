@@ -43,6 +43,14 @@ type RpcCommandBody =
 			expectedHostInstance?: string;
 			sessionPath?: string;
 			/**
+			 * Fork this session instead of creating a blank one (capability `open_session_fork`, omo#13031): a durable id
+			 * a session file of this host carries, or an absolute session file path. The open answers the fork, a new
+			 * session (its id `durableSessionId` when given) whose history is the source's up to now; the source is only
+			 * read. An id no session file here carries refuses `fork_source_not_local`; a path with no readable session
+			 * file refuses `fork_source_not_found`. It cannot be combined with `sessionPath`.
+			 */
+			forkFrom?: string;
+			/**
 			 * The folder the session works in. Omitted, a `sessionPath` at which a session file exists opens where that
 			 * file's header says (capability `open_session_header_cwd`); a header folder that is not on this host refuses
 			 * the open. Any other open without it works in the host's own folder.
@@ -303,7 +311,7 @@ export type RpcCommand = (
 			kind?: SessionKind;
 			context?: Record<string, string>;
 	  }
-	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd" | "forkFrom"> & {
 			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
 			type: "claim_session";
 			cwd: string;

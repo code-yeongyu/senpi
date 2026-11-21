@@ -19,6 +19,7 @@ import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { openSessionFolder } from "./open-session-folder.ts";
+import { forkForOpen } from "./session-router-open-fork.ts";
 import { invalidSpawnedBy, validatedOpenProfile } from "./session-router-open-profile.ts";
 import { holdOpenConnection, type OpenReplyAs, ownOpen, publishOpen, replyOpen } from "./session-router-open-result.ts";
 import { closePark } from "./session-router-park.ts";
@@ -85,7 +86,7 @@ export function reopenParked(host: RouterContext, entry: HandoverParkedEntry): P
 
 export async function open(
 	host: RouterContext,
-	command: Extract<RpcCommand, { type: "open_session" }>,
+	requested: Extract<RpcCommand, { type: "open_session" }>,
 	owner?: string,
 	options?: {
 		readonly reply?: boolean;
@@ -105,8 +106,17 @@ export async function open(
 		readonly routedSince?: number;
 	},
 ): Promise<RpcResponse | undefined> {
-	const validated = validatedOpenProfile(host, command, options);
-	if ("type" in validated) return validated;
+	const asked = validatedOpenProfile(host, requested, options);
+	if ("type" in asked) return asked;
+	// A fork (omo#13031) is written before the open and then opened by its file; a refused fork opens nothing.
+	const forked = await forkForOpen(host, requested);
+	if (forked !== undefined && "type" in forked) return forked;
+	const command = forked?.command ?? requested;
+	const validated = forked === undefined ? asked : validatedOpenProfile(host, command, options);
+	if ("type" in validated) {
+		await forked?.discard();
+		return validated;
+	}
 	let opened: OpenRpcSession | undefined;
 	const timer = startOpenTimer(`host-open:${command.id ?? "-"}`);
 	const assertSessionNotHeld = sessionHeldCheck(
@@ -278,6 +288,8 @@ export async function open(
 			}
 			if (!opened.attached || !compactUpdatesEnabled()) host.writer.forgetSession(opened.sessionId);
 		}
+		// A fork that could not be opened leaves no file behind: the caller gets the refusal, never an orphan copy.
+		await forked?.discard();
 		if (cause instanceof CompactAdmissionError) throw cause;
 		if (
 			!opened &&

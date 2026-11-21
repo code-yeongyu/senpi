@@ -63,6 +63,9 @@ export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
 /** An `open_session` that names a session file and no `cwd` works where that file's header says (senpi#6427). */
 export const OPEN_SESSION_HEADER_CWD_CAPABILITY = "open_session_header_cwd";
 
+/** `open_session { forkFrom }` forks a session file of this host instead of starting a blank session (omo#13031). */
+export const OPEN_SESSION_FORK_CAPABILITY = "open_session_fork";
+
 /**
  * HOST capability: a connection that proved the launch key can `declare_delegation`, and the host then enforces its own
  * method-class table on every record of that connection before dispatch; `classify_record` answers (senpi#5632).

@@ -107,10 +107,11 @@ function namesAny(record: object, fields: ReadonlyArray<string>): boolean {
 /**
  * Opening by id is a thread operation; naming a session file, a cwd, a permission preset, a browser engine (the
  * user's own signed-in browser) or an environment for the session's tool subprocesses (`env`, version 2) acts on
- * the device.
+ * the device. A fork (`forkFrom`, version 3, omo#13031) reads another session's file on this host, by its path or
+ * by the id `find_session` would look up, so it acts on the device whichever form names it.
  */
 function openSessionClass(record: object): RpcMethodClass {
-	return namesAny(record, ["sessionPath", "cwd", "permissionPreset", "browserEngine", "env"])
+	return namesAny(record, ["sessionPath", "cwd", "permissionPreset", "browserEngine", "env", "forkFrom"])
 		? "device_admin"
 		: "thread";
 }
@@ -241,7 +242,7 @@ export const RPC_METHOD_CLASS = {
 	// thread
 	// thread by id; device_admin when the record names a host path, a permission preset or a tool environment
 	new_session: { classify: newSessionClass, version: 1 },
-	open_session: { classify: openSessionClass, version: 2 },
+	open_session: { classify: openSessionClass, version: 3 },
 	// Both commands require a cwd; claim has the same device authority as a cwd-naming open.
 	claim_session: "device_admin",
 	park_session: "device_admin",
