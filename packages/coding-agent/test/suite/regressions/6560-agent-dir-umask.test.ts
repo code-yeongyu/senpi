@@ -97,7 +97,6 @@ describe.skipIf(process.platform === "win32")("agent dir created under any umask
 			expect(modeOf(join(home, ".senpi"))).toBe(0o700);
 			await expect(publishKey(agentDir)).resolves.toBeUndefined();
 		},
-		60_000,
 	);
 
 	it("#given umask 0002 #when the migrations state is first written #then the agent dir it creates is 0700", () => {
