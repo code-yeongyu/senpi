@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readByProviderId } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
+import { listedAnthropicModels } from "@earendil-works/pi-ai/providers/anthropic-listed-models";
 import { getAgentDir } from "../../../../config.ts";
 import type { ExtensionAPI, ProviderConfig } from "../../types.ts";
 import { toBuiltinProviderContext } from "../provider-context.ts";
@@ -13,6 +14,7 @@ import { plannedContextWindow } from "./context-window.ts";
 import { claudeCliDefaultModel } from "./claude-cli-account-test.ts";
 import { longContextAvailable, onLongContextAvailabilityChange } from "./long-context.ts";
 import { registerLimitRecheck } from "./limit-recheck.ts";
+import { listAccountModelIds } from "./listed-models.ts";
 import { createOAuthConfig } from "./oauth-login.ts";
 import { registerSessionRegistry } from "./session-registry-wiring.ts";
 import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
@@ -32,10 +34,17 @@ export type AnthropicSubscriptionExtensionDeps = {
 /**
  * The lane's models carry the window their requests actually get, which is what compaction plans
  * against: the catalog window, except a legacy long-context id at Claude Code's 200k default after the
- * account refused its 1M opt-in (senpi#3408, senpi#3801).
+ * account refused its 1M opt-in (senpi#3408, senpi#3801). `listedIds` are the ids the accounts' own `/v1/models`
+ * returned; a gated release among them (Claude Mythos for verified organizations) joins the catalog.
  */
-export const anthropicSubscriptionModels = (longContext = longContextAvailable()) =>
-	getModels("anthropic").map((model) => ({
+export const anthropicSubscriptionModels = (
+	longContext = longContextAvailable(),
+	listedIds: readonly string[] = [],
+) => {
+	const catalog = getModels("anthropic");
+	const byId = new Map(catalog.map((model) => [model.id, model]));
+	for (const model of listedAnthropicModels(catalog, listedIds)) byId.set(model.id, model);
+	return [...byId.values()].map((model) => ({
 		id: model.id,
 		name: model.name,
 		reasoning: model.reasoning,
@@ -48,6 +57,7 @@ export const anthropicSubscriptionModels = (longContext = longContextAvailable()
 			minimal: null,
 		},
 	}));
+};
 
 function readStoredCredential(providerId: string): AnthropicSubscriptionCredential | undefined {
 	const authPath = join(getAgentDir(), "auth.json");
@@ -73,13 +83,32 @@ export function registerAnthropicSubscriptionExtension(
 	registerClaudeAccountCommand(pi);
 	registerSessionRegistry(pi);
 	const limitRecheck = registerLimitRecheck(pi);
+	let listedModelIds: readonly string[] = [];
 	// The lane re-registers whenever the 1M window is refused or offered again, so the session's current
 	// model, and compaction with it, plans against the window the requests get. Each registration is the
 	// whole config: the runtime validates a registration on its own, not merged with the previous one.
 	const providerConfig = (longContext: boolean): ProviderConfig => ({
 		baseUrl: CLAUDE_SDK_OAUTH_API_ID,
 		api: CLAUDE_SDK_OAUTH_API_ID,
-		models: anthropicSubscriptionModels(longContext),
+		models: anthropicSubscriptionModels(longContext, listedModelIds),
+		// The stored entry holds the gated rows the last listing added, so they resolve before the network answers.
+		refreshModels: async (context) => {
+			if (!context.allowNetwork) {
+				if (context.stored) listedModelIds = context.stored.models.map((model) => model.id);
+			} else {
+				const listed = await listAccountModelIds(context.credential, context.signal);
+				if (listed !== undefined && !context.signal.aborted) {
+					listedModelIds = listed;
+					const catalog = getModels("anthropic");
+					const catalogIds = new Set(catalog.map((model) => model.id));
+					const gated = listedAnthropicModels(catalog, listed)
+						.filter((model) => !catalogIds.has(model.id))
+						.map((model) => ({ ...model, provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID }));
+					await context.publish({ persist: { models: gated, checkedAt: Date.now() } });
+				}
+			}
+			return anthropicSubscriptionModels(longContext, listedModelIds);
+		},
 		streamSimple: (model, context, options) =>
 			streamAnthropicSubscription(
 				model,
