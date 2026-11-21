@@ -1,3 +1,5 @@
+import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
+import { launchRetryFallback } from "../../core/launch-model-pin.ts";
 import { isSpawnedBy } from "../../core/session-spawned-by.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 
@@ -122,7 +124,14 @@ export function validatedOpenProfile(
 		...(typeof command.auto_title === "boolean" ? { autoTitle: command.auto_title } : {}),
 		...(command.promptSurface !== undefined ? { promptSurface: command.promptSurface } : {}),
 		...(command.browserEngine !== undefined ? { browserEngine: command.browserEngine } : {}),
-		...(command.retryFallback !== undefined ? { retryFallback: command.retryFallback } : {}),
+		// A model the client named is a pin unless the client sent its own policy (omo#13243); a host default
+		// model is not the client's choice and stays on the host's settings.
+		...withRetryFallback(
+			launchRetryFallback({
+				namedModel: Boolean(command.provider && command.modelId),
+				retryFallback: command.retryFallback,
+			}),
+		),
 		...(sessionEnv !== undefined ? { sessionEnv } : {}),
 	};
 }
@@ -142,4 +151,10 @@ function parentSessionEnv(host: RouterContext, parentSessionId: string | undefin
 	if (parent === undefined) return undefined;
 	const entry = host.registry.peek(parent.sessionId);
 	return entry?.state === "open" && host.bindings.has(parent.sessionId) ? entry.profile.sessionEnv : undefined;
+}
+
+function withRetryFallback(retryFallback: SessionRetryFallbackProfile | undefined): {
+	retryFallback?: SessionRetryFallbackProfile;
+} {
+	return retryFallback === undefined ? {} : { retryFallback };
 }
