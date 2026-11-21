@@ -99,12 +99,10 @@ describe("generate_image tool", () => {
 
 	beforeEach(() => {
 		stub = registerStubImagesProvider();
-		setNativeBypass(false);
 		setImageGenRegistry(undefined);
 	});
 
 	afterEach(() => {
-		setNativeBypass(false);
 		setImageGenRegistry(undefined);
 		unregisterImagesApiProviders(STUB_SOURCE_ID);
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
@@ -277,7 +275,7 @@ describe("generate_image tool", () => {
 
 	it("defers to the native server tool when the bypass seam is enabled", async () => {
 		const harness = await createToolHarness({ gateway: true });
-		setNativeBypass(true);
+		setNativeBypass(harness.sessionManager, true);
 
 		const result = await harness.session.executeTool<ImageDetails>(TOOL_NAME, { prompt: "a red fox" });
 

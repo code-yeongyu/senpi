@@ -10,7 +10,7 @@ import { registerImagesApiProvider, unregisterImagesApiProviders } from "@earend
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ImageGenAuthRegistry } from "../../src/core/extensions/builtin/imagegen/auth.ts";
 import imageGenExtension from "../../src/core/extensions/builtin/imagegen/index.ts";
-import { setImageGenRegistry, setNativeBypass } from "../../src/core/extensions/builtin/imagegen/state.ts";
+import { setImageGenRegistry } from "../../src/core/extensions/builtin/imagegen/state.ts";
 import type { GenerateImageDetails } from "../../src/core/extensions/builtin/imagegen/tool.ts";
 import openaiImageGenExtension, {
 	supportsNativeOpenAiImageGeneration,
@@ -196,13 +196,11 @@ async function payloadFor(harness: Harness, payload: unknown = requestPayload())
 describe("openai-image-gen arbitration", () => {
 	beforeEach(() => {
 		delete process.env[ENABLE_ENV];
-		setNativeBypass(false);
 		setImageGenRegistry(undefined);
 	});
 
 	afterEach(() => {
 		delete process.env[ENABLE_ENV];
-		setNativeBypass(false);
 		setImageGenRegistry(undefined);
 		unregisterImagesApiProviders(STUB_SOURCE_ID);
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
