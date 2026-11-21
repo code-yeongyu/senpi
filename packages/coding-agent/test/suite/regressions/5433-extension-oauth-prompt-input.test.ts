@@ -147,6 +147,56 @@ describe("LoginDialogComponent OAuth prompts", () => {
 		expect(hintLines[0]).toContain("to submit");
 	});
 
+	// Claude CLI browser login: the CLI prints its paste-code fallback URL (a prompt opens) before its `$BROWSER`
+	// helper reports the browser URL (an auth step lands while that prompt is open). The auth step must not unmount it.
+	test.each([
+		[
+			"an auth URL",
+			(dialog: LoginDialogComponent) => dialog.showAuth("https://example.invalid/login"),
+			"https://example.invalid/login",
+		],
+		[
+			"a device code",
+			(dialog: LoginDialogComponent) =>
+				dialog.showDeviceCode({ userCode: "ABCD-EFGH", verificationUri: "https://example.invalid/device" }),
+			"ABCD-EFGH",
+		],
+		["setup details", (dialog: LoginDialogComponent) => dialog.showDetails(["Sign in below."]), "Sign in below."],
+	] as const)(
+		"%s that arrives while a prompt is open keeps the prompt visible and answerable",
+		async (_name, show, shown) => {
+			const dialog = createDialog();
+
+			const paste = dialog.showPrompt("Paste the code:", "https://example.invalid/manual");
+			show(dialog);
+			dialog.handleInput("code-value");
+
+			const lines = renderDialog(dialog);
+			const output = lines.join("\n");
+			expect(output).toContain(shown);
+			expect(output).toContain("Paste the code:");
+			expect(output.indexOf(shown)).toBeLessThan(output.indexOf("Paste the code:"));
+			expect(countRenderedValue(lines, "code-value")).toBe(1);
+			expect(lines.filter((line) => /^\([^)]*to (?:cancel|close|submit)/.test(line.trim())).length).toBe(1);
+
+			dialog.handleInput("\n");
+			await expect(paste).resolves.toBe("code-value");
+		},
+	);
+
+	// A waiting step replaced the live hint while the prompt waited; the restored prompt shows its own hint again.
+	test("a step that restores an open prompt restores its own hint, not a later waiting hint", () => {
+		const dialog = createDialog();
+
+		void dialog.showPrompt("Paste the code:");
+		dialog.showWaiting("Waiting for the browser...");
+		dialog.showAuth("https://example.invalid/login");
+
+		const hintLines = renderDialog(dialog).filter((line) => /^\([^)]*to (?:cancel|close|submit)/.test(line.trim()));
+		expect(hintLines.length).toBe(1);
+		expect(hintLines[0]).toContain("to submit");
+	});
+
 	test("keeps previous manual input stable when a later prompt is active", async () => {
 		const dialog = createDialog();
 
