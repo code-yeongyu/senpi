@@ -35,7 +35,7 @@ name: Release
         type: boolean
         default: false
       force_tests:
-        description: 'Run the CI=1 test suite in this run''s forced-suite matrix jobs (prepare, coding-agent shards, rest) instead of waiting for the release commit''s green "Check and test" CI run (use when CI runners are backlogged).'
+        description: 'Run the CI=1 test suite in this run''s forced-suite matrix jobs (coding-agent shards, rest) instead of waiting for the release commit''s green "Check and test" CI run (use when CI runners are backlogged).'
         required: false
         type: boolean
         default: false
@@ -82,11 +82,11 @@ jobs:
       ref: refs/tags/v${{ inputs.version }}
 
   release:
-    needs: [native-prebuilds, prepare, forced-rest, forced-shard]
+    needs: [native-prebuilds, preflight, forced-rest, forced-shard]
     # native-prebuilds reuses prebuilt targets and then skips its build jobs (senpi#6622), so its readiness
-    # is read from the output its ready job sets, not from the call's result. With force_tests (and not publish-only)
-    # prepare, forced-rest and every forced-shard must each have succeeded (senpi#6642); otherwise they are skipped.
-    if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.outputs.ready == 'true') && (inputs.publish-only == true || inputs.force_tests != true || (needs.prepare.result == 'success' && needs.forced-rest.result == 'success' && needs.forced-shard.result == 'success')) }}
+    # is read from the output its ready job sets, not from the call's result. Outside publish-only the first-minute
+    # preflight must have succeeded, and with force_tests forced-rest and every forced-shard too (senpi#6642).
+    if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.outputs.ready == 'true') && (inputs.publish-only == true || (needs.preflight.result == 'success' && (inputs.force_tests != true || (needs.forced-rest.result == 'success' && needs.forced-shard.result == 'success')))) }}
     runs-on: ubuntu-latest
     # The release never re-runs the test suite (senpi#2943): its test evidence is the release
     # commit's green sharded CI run ("Check and test"), which tested the model catalog that commit
@@ -94,7 +94,7 @@ jobs:
     # measured at 7-22 min), plus about 10 min of install, build and push, so 60 min clears it.
     # A release whose HEAD already has green CI finishes in a few minutes.
     # force_tests runs the suite in the matrix jobs above (senpi#6642), so this job only checks, stamps and pushes (about
-    # 15 min in the 2026-11 forced cuts): 45 min, keeping prepare 5 + shards 40 + release 45 within 110 min.
+    # 15 min in the 2026-11 forced cuts): 45 min, keeping preflight 5 + shards 40 + release 45 within 110 min.
     timeout-minutes: ${{ inputs.force_tests && (inputs.publish-only && 180 || 45) || 60 }}
     steps:
       # senpi#6645: a dispatch on any other ref runs that ref's YAML with the push token and id-token: write, even when
@@ -186,7 +186,7 @@ jobs:
       - name: Check out the tested commit
         if: inputs.force_tests == true && inputs.publish-only != true
         env:
-          TESTED_SHA: ${{ needs.prepare.outputs.base_sha }}
+          TESTED_SHA: ${{ needs.preflight.outputs.base_sha }}
         run: |
           set -euo pipefail
           git checkout -B main "$TESTED_SHA"
@@ -320,10 +320,10 @@ jobs:
           RELEASE_SHA: ${{ inputs.sha }}
           # senpi#6859: set only after the Accept or refuse the CI-basis receipt step accepted it.
           CI_BASIS_RECEIPT: ${{ inputs.ci_basis_receipt }}
-          # force_tests (senpi#6642): prepare fixed the version and the base commit before the suite ran; that commit and
-          # the matrix jobs' result files are what release.mjs --sha ... --shard-results verifies.
-          RELEASE_VERSION: ${{ inputs.version || needs.prepare.outputs.version }}
-          TESTED_SHA: ${{ needs.prepare.outputs.base_sha }}
+          # preflight fixed the version (and, for force_tests, the base commit the suite ran on) in the first minute;
+          # with force_tests that commit and the matrix jobs' result files are what release.mjs --shard-results verifies.
+          RELEASE_VERSION: ${{ inputs.version || needs.preflight.outputs.version }}
+          TESTED_SHA: ${{ needs.preflight.outputs.base_sha }}
           FORCED_SUITE_RESULTS: ${{ runner.temp }}/forced-suite-results
           # The release runs the same `npm run check` as CI, so it needs CI's TypeScript heap (ci.yml Check,
           # senpi#4022): on the default ~4 GB heap the check ran out of memory in the 2026.10.23-1 release.
@@ -346,7 +346,7 @@ jobs:
             ARGS+=(--dry-run)
           fi
           if [ "${{ inputs.force_tests }}" = "true" ]; then
-            # prepare resolved the base once (the dispatch's sha input, else its commit) and every job since used that
+            # preflight resolved the base once (the dispatch's sha input, else its commit) and every job since used that
             # output; the release takes it too and never resolves main or the sha input again (senpi#6642).
             ARGS+=(--sha "$TESTED_SHA" --shard-results "$FORCED_SUITE_RESULTS")
           elif [ -n "$RELEASE_SHA" ]; then
@@ -387,7 +387,7 @@ jobs:
           if [ "${{ inputs.publish-only }}" = true ]; then
             commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
           else
-            commit="${{ inputs.force_tests && needs.prepare.outputs.base_sha || inputs.sha || github.sha }}"
+            commit="${{ inputs.force_tests && needs.preflight.outputs.base_sha || inputs.sha || github.sha }}"
           fi
           {
             echo "## Release"
@@ -435,21 +435,27 @@ jobs:
           PUBLISH_RUN_ID: ${{ github.run_id }}
         run: node scripts/release-finalize.mjs
 
-  # force_tests (senpi#6642): the suite runs as matrix jobs of this run, each on its own runner, instead of inside the
-  # release job (a forced cut spent 74.6 of 89.6 min there in one job). prepare resolves the base commit once and fixes
-  # the version; forced-shard runs coding-agent shards 1..N (FORCED_SHARD_JOBS in scripts/release-forced-test-suite.mjs)
-  # and forced-rest every other workspace, all on prepare's base_sha, the commit the release tags. Nothing is regenerated
-  # (senpi#2287), so prepare needs no install or build. None of these jobs can write or publish.
-  prepare:
-    name: Forced suite (prepare)
-    if: ${{ inputs.force_tests == true && inputs.publish-only != true }}
+  # The first minute of every dispatch that is not publish-only: everything knowable before an install, a build or a test
+  # is checked here (scripts/release-preflight.mjs), so a release never fails late on something known at dispatch. It
+  # resolves the base commit once and fixes the version for every later job. force_tests (senpi#6642): the suite then
+  # runs as matrix jobs of this run, each on its own runner, instead of inside the release job (a forced cut spent 74.6
+  # of 89.6 min there in one job): forced-shard runs coding-agent shards 1..N (FORCED_SHARD_JOBS in
+  # scripts/release-forced-test-suite.mjs) and forced-rest every other workspace, all on preflight's base_sha, the commit
+  # the release tags. None of these jobs can write or publish; preflight reads checks and runs, and only learns whether
+  # the push token is set, never its value.
+  preflight:
+    name: Release preflight
+    if: ${{ inputs.publish-only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read
+      checks: read
       contents: read
+      pull-requests: read
     outputs:
-      base_sha: ${{ steps.prepare.outputs.base_sha }}
-      version: ${{ steps.prepare.outputs.version }}
+      base_sha: ${{ steps.preflight.outputs.base_sha }}
+      version: ${{ steps.preflight.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -464,12 +470,20 @@ jobs:
           registry-url: 'https://registry.npmjs.org/'
           package-manager-cache: false
 
-      - name: Resolve the base commit and the version
-        id: prepare
+      - name: Run the first-minute checks
+        id: preflight
         env:
+          GH_TOKEN: ${{ github.token }}
+          PUSH_TOKEN_SET: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN != '' }}
           RELEASE_SHA: ${{ inputs.sha }}
           RELEASE_VERSION: ${{ inputs.version }}
+          FORCE_TESTS: ${{ inputs.force_tests }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
+          if [ "$GITHUB_REF" = "refs/heads/main" ] && [ "$DRY_RUN" != "true" ] && [ "$PUSH_TOKEN_SET" != "true" ]; then
+            echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
+            exit 1
+          fi
           ARGS=(--github-output "$GITHUB_OUTPUT")
           if [ -n "$RELEASE_SHA" ]; then
             ARGS+=(--sha "$RELEASE_SHA")
@@ -477,13 +491,20 @@ jobs:
           if [ -n "$RELEASE_VERSION" ]; then
             ARGS+=(--version "$RELEASE_VERSION")
           fi
-          node scripts/release-forced-prepare.mjs "${ARGS[@]}"
+          if [ "$FORCE_TESTS" = "true" ]; then
+            ARGS+=(--force-tests)
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          node scripts/release-preflight.mjs "${ARGS[@]}"
 
   # Every setup step below is a byte copy of the release job's step of the same name (scripts/publish-forced-suite-workflow.test.mjs
   # fails on drift), so the matrix tests the tree the release job builds, with the same toolchain and the native grep addon.
   forced-rest:
     name: Forced suite (rest)
-    needs: prepare
+    needs: preflight
+    if: ${{ inputs.force_tests == true && inputs.publish-only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -493,12 +514,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ needs.prepare.outputs.base_sha }}
+          ref: ${{ needs.preflight.outputs.base_sha }}
 
       - name: Check out the tested commit
         if: inputs.force_tests == true && inputs.publish-only != true
         env:
-          TESTED_SHA: ${{ needs.prepare.outputs.base_sha }}
+          TESTED_SHA: ${{ needs.preflight.outputs.base_sha }}
         run: |
           set -euo pipefail
           git checkout -B main "$TESTED_SHA"
@@ -559,7 +580,7 @@ jobs:
 
       - name: Run the forced-suite part
         env:
-          TESTED_SHA: ${{ needs.prepare.outputs.base_sha }}
+          TESTED_SHA: ${{ needs.preflight.outputs.base_sha }}
         run: node scripts/release-forced-test-part.mjs --part rest --tested-sha "$TESTED_SHA" --out-dir "$RUNNER_TEMP/forced-suite-results"
 
       - name: Upload the result
@@ -573,7 +594,8 @@ jobs:
 
   forced-shard:
     name: Forced suite (coding-agent ${{ matrix.shard }}/6)
-    needs: prepare
+    needs: preflight
+    if: ${{ inputs.force_tests == true && inputs.publish-only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -587,12 +609,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ needs.prepare.outputs.base_sha }}
+          ref: ${{ needs.preflight.outputs.base_sha }}
 
       - name: Check out the tested commit
         if: inputs.force_tests == true && inputs.publish-only != true
         env:
-          TESTED_SHA: ${{ needs.prepare.outputs.base_sha }}
+          TESTED_SHA: ${{ needs.preflight.outputs.base_sha }}
         run: |
           set -euo pipefail
           git checkout -B main "$TESTED_SHA"
@@ -653,7 +675,7 @@ jobs:
 
       - name: Run the forced-suite part
         env:
-          TESTED_SHA: ${{ needs.prepare.outputs.base_sha }}
+          TESTED_SHA: ${{ needs.preflight.outputs.base_sha }}
         run: node scripts/release-forced-test-part.mjs --part "${{ matrix.shard }}" --tested-sha "$TESTED_SHA" --out-dir "$RUNNER_TEMP/forced-suite-results"
 
       - name: Upload the result

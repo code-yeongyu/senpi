@@ -12,7 +12,8 @@ import { assertForcedSuiteResults } from "./release-forced-suite-results.mjs";
 import { assertReleasableCommit } from "./release-pin.mjs";
 import { awaitCiEvidence, planCiEvidence, REQUIRED_CHECK_NAME } from "./release-test-gate.mjs";
 
-function lookupCiCheckRuns(sha) {
+/** The "Check and test" check runs GitHub reports for `sha`, or null when the lookup failed. */
+export function lookupCiCheckRuns(sha) {
 	try {
 		const raw = captureOutput("gh", [
 			"api",
@@ -157,13 +158,18 @@ export function verifyTestedRelease({ sha, shardResults }) {
 	log(`test gate: ${parts.length} forced-suite matrix jobs passed on ${sha.slice(0, 12)}`);
 }
 
+/** Each red macOS/Windows job in the latest settled main runs, one line per job (senpi#6834). */
+export function platformBlockers() {
+	return releaseBlockers(latestPlatformResults((args) => captureOutput("gh", args)));
+}
+
 /**
  * Pull requests run Linux only (senpi#6834), so macOS and Windows are tested on main after each merge. Whatever its
  * test evidence, a release refuses while the latest settled main run of any workflow with macOS/Windows legs has a
  * failed macOS/Windows job (platform-red.yml has filed the tracking issue for it). A dry run only reports it.
  */
 export function assertPlatformsGreen(dryRun) {
-	const blockers = releaseBlockers(latestPlatformResults((args) => captureOutput("gh", args)));
+	const blockers = platformBlockers();
 	if (blockers.length === 0) {
 		(dryRun ? dryRunLog : log)("platform gate: no macOS/Windows job is red in the latest main runs");
 		return;
