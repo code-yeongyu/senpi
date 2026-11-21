@@ -165,9 +165,7 @@ mod windows {
         if registry()
             .lock()
             .unwrap()
-            .release_after_quiescence(QuiescenceReceipt {
-                presence_id: receipt.presence_id,
-            })
+            .release_after_quiescence(QuiescenceReceipt::new(receipt.presence_id))
         {
             result("released", None, None)
         } else {
@@ -209,7 +207,8 @@ pub fn presence_probe(request: PresenceProbe) -> PresenceResult {
 /// Applies the admissibility rules to a guard this process already retains, the one a blocking wait
 /// acquired (design Revision 8, r7 note 4), through that handle: `acquired` keeps it as the recovery
 /// guard, an inadmissible handle is released at once (`unknown`, `inadmissible`), and a guard not
-/// held under that ID and path is `unknown`, `not_held`. The handle is never closed and reacquired.
+/// held under that ID and path, or one already admitted (it leaves only with a receipt), is `unknown`,
+/// `not_held`. The handle is never closed and reacquired.
 #[napi(js_name = "presenceProbeRetained")]
 pub fn presence_probe_retained(request: PresenceProbe) -> PresenceResult {
     #[cfg(windows)]
@@ -437,9 +436,7 @@ mod tests {
         started_rx
             .recv_timeout(std::time::Duration::from_secs(30))
             .unwrap();
-        holder.release_after_quiescence(QuiescenceReceipt {
-            presence_id: "holder".into(),
-        });
+        holder.release_after_quiescence(QuiescenceReceipt::new("holder".into()));
         waiter.join().unwrap()
     }
 
@@ -458,9 +455,7 @@ mod tests {
         assert!(!windows::registry().lock().unwrap().holds(id));
         // Released at once: a fresh acquisition succeeds without any quiescence receipt for `id`.
         assert_eq!(holder.acquire("holder", &path), LockAttempt::Acquired);
-        holder.release_after_quiescence(QuiescenceReceipt {
-            presence_id: "holder".into(),
-        });
+        holder.release_after_quiescence(QuiescenceReceipt::new("holder".into()));
     }
 
     #[test]
@@ -483,9 +478,7 @@ mod tests {
             "released"
         );
         assert_eq!(holder.acquire("holder", &path), LockAttempt::Acquired);
-        holder.release_after_quiescence(QuiescenceReceipt {
-            presence_id: "holder".into(),
-        });
+        holder.release_after_quiescence(QuiescenceReceipt::new("holder".into()));
     }
 
     #[test]
@@ -589,9 +582,7 @@ mod tests {
         started_rx
             .recv_timeout(std::time::Duration::from_secs(30))
             .unwrap();
-        holder.release_after_quiescence(QuiescenceReceipt {
-            presence_id: "holder".into(),
-        });
+        holder.release_after_quiescence(QuiescenceReceipt::new("holder".into()));
         assert_eq!(waiter.join().unwrap().status, "acquired");
         assert!(windows::registry().lock().unwrap().holds(&id));
         assert_eq!(holder.acquire("holder", &path), LockAttempt::Occupied);

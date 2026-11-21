@@ -9,10 +9,19 @@ export interface NativeLeftBehindStaging {
 	readonly windowsError: number;
 }
 
-/** `publishNoReplace` result. napi-rs leaves an absent optional field `undefined`. */
+/** The bridge's `#[napi(string_enum = "lowercase")] PublishResultOutcome`: exactly these three strings. */
+type NativePublishOutcome = "published" | "collision" | "failed";
+
+/** The one failure step where no Windows call failed, so the bridge sends no `code`. */
+const NO_WINDOWS_ERROR_STEP = "owner_sid_utf16";
+
+/**
+ * `publishNoReplace` result. napi-rs leaves an absent optional field `undefined`. `failure.code` is the failed call's
+ * Windows error, absent only for `owner_sid_utf16`, where no Windows call failed.
+ */
 export interface NativePublishResult {
-	readonly outcome: "published" | "collision" | "failed";
-	readonly failure?: { readonly step: string; readonly code: number } | null;
+	readonly outcome: NativePublishOutcome;
+	readonly failure?: { readonly step: string; readonly code?: number | null } | null;
 	readonly stagingLeftBehind?: NativeLeftBehindStaging | null;
 }
 
@@ -90,10 +99,18 @@ export function publishSocketSecretNoReplace(
 	if (outcome !== "failed") {
 		throw new SocketSecretPublishError(`unexpected bridge outcome ${String(outcome)}`, null, stagingLeftBehind);
 	}
-	if (!isRecord(failure) || typeof failure.step !== "string" || typeof failure.code !== "number") {
+	if (!isRecord(failure) || typeof failure.step !== "string") {
 		throw new SocketSecretPublishError("unexpected bridge result: malformed failure", null, stagingLeftBehind);
 	}
-	throw new SocketSecretPublishError(failure.step, failure.code, stagingLeftBehind);
+	const code = failure.code ?? null;
+	if (typeof code === "number") {
+		throw new SocketSecretPublishError(failure.step, code, stagingLeftBehind);
+	}
+	// Only `owner_sid_utf16` may omit its Windows error; any other step without a numeric code is malformed.
+	if (code === null && failure.step === NO_WINDOWS_ERROR_STEP) {
+		throw new SocketSecretPublishError(failure.step, null, stagingLeftBehind);
+	}
+	throw new SocketSecretPublishError("unexpected bridge result: malformed failure", null, stagingLeftBehind);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

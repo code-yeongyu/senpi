@@ -87,7 +87,8 @@ export interface NativePresenceBinding {
 	/**
 	 * The probe's admissibility rules applied to a guard this process already retains, the one a blocking wait acquired
 	 * (design Revision 8, r7 note 4): `acquired` keeps it, an inadmissible handle is released at once (`unknown`,
-	 * `inadmissible`), and a guard not held is `unknown` (`not_held`). The handle is never closed and reacquired.
+	 * `inadmissible`), and a guard not held, or one already admitted (it leaves only with a receipt), is `unknown`
+	 * (`not_held`). The handle is never closed and reacquired.
 	 */
 	presenceProbeRetained(request: NativePresenceProbe): NativePresenceResult;
 	presencePreActionCheck(presenceId: string): NativePresenceResult;

@@ -51,6 +51,16 @@ describe("publishSocketSecretNoReplace", () => {
 		expect(String((failure as Error).message)).not.toContain(secret.toString());
 	});
 
+	// senpi#4310 review LOW (audit #8): an owner SID that is not UTF-16 fails with its own step and no invented Windows error.
+	it("throws a typed failure without a Windows error when no Windows call failed", () => {
+		const binding = bridge({ outcome: "failed", failure: { step: "owner_sid_utf16" } });
+		const failure = thrown(() => publishSocketSecretNoReplace(binding, staging, finalPath, secret));
+		expect(failure).toBeInstanceOf(SocketSecretPublishError);
+		expect(failure).toMatchObject({ step: "owner_sid_utf16", windowsError: null, stagingLeftBehind: null });
+		// The step name ends the message; a literal "secret failed: <word>" reads as a key to the secret scanner.
+		expect((failure as Error).message).toMatch(/^Publishing the socket .+: owner_sid_utf16$/);
+	});
+
 	it("reports no leftover after a clean publication", () => {
 		const result = publishSocketSecretNoReplace(bridge({ outcome: "published" }), staging, finalPath, secret);
 		expect(result).toEqual({ outcome: "published", stagingLeftBehind: null });
