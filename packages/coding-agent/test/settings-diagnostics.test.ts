@@ -36,6 +36,29 @@ describe("settings diagnostics", () => {
 		expect(diagnostics).toEqual([{ type: "warning", message: "Invalid global settings: backend failed" }]);
 	});
 
+	// Config contract (senpi#6673): only `retry.fallbackChains` is read, so a top-level key must not pass silently.
+	it("warns about a top-level fallbackChains and stays quiet for retry.fallbackChains", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-settings-diagnostics-"));
+		const agentDir = join(tempDir, "agent");
+		mkdirSync(agentDir);
+		const chains = { "claude-opus-5-5": ["chatgpt-subscription/gpt-6.1-sol"] };
+
+		try {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ fallbackChains: chains }));
+			expect(collectSettingsDiagnostics(SettingsManager.create(tempDir, agentDir))).toEqual([
+				{
+					type: "warning",
+					message: 'Ignored top-level "fallbackChains" in global settings: did you mean "retry.fallbackChains"?',
+				},
+			]);
+
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { fallbackChains: chains } }));
+			expect(collectSettingsDiagnostics(SettingsManager.create(tempDir, agentDir))).toEqual([]);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("deduplicates diagnostics by type and message", () => {
 		const warning = { type: "warning" as const, message: "Invalid settings file /tmp/settings.json" };
 
