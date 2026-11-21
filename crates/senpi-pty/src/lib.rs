@@ -193,9 +193,14 @@ impl NativePtySessionOptions {
         if let Some(cwd) = self.cwd {
             options = options.cwd(PathBuf::from(cwd));
         }
-        for (key, value) in self.env.unwrap_or_default() {
-            if let Some(value) = value {
-                options = options.env(key, value);
+        // A JS caller's env is the complete child environment: the OS environment of a Bun process still holds
+        // what JS deleted from process.env (omo#12157), and a None value is a deletion, never an inheritance.
+        if let Some(env) = self.env {
+            options = options.exact_env();
+            for (key, value) in env {
+                if let Some(value) = value {
+                    options = options.env(key, value);
+                }
             }
         }
         if let Some(timeout_ms) = self.timeout_ms {
