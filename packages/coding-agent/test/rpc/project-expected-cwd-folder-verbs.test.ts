@@ -47,4 +47,19 @@ describe("a folder write that states its folder", () => {
 		});
 		expect(answer).toMatchObject({ success: true, data: { exists: true } });
 	});
+
+	it("writes the skill file when the stated folder is the session's", async () => {
+		const host = await startFolderHost();
+		await host.trust();
+		const read = await host.call("read_project_skill_file", { skill: SKILL_NAME });
+		const etag = (read.data as { etag: string | null }).etag;
+		const answer = await host.call("write_project_skill_file", {
+			skill: SKILL_NAME,
+			content: "edited",
+			ifEtag: etag,
+			expectedCwd: `${host.cwd}/`,
+		});
+		expect(answer).toMatchObject({ success: true, data: { exists: true } });
+		expect(readFileSync(join(host.cwd, PROJECT_CONFIG_DIR, "skills", SKILL_NAME, "SKILL.md"), "utf8")).toBe("edited");
+	});
 });
