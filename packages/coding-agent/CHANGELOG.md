@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.21-2] - 2026-11-21
 
 ### Breaking Changes
 
@@ -9,6 +9,8 @@
 ### Changed
 
 ### Fixed
+
+- A tool call naming a path below a wedged mount (on macOS any `/home/<user>/...` path when the automounter does not answer) no longer freezes the session. The `external_directory` permission check no longer opens a directory to recover a component's case unless that case can differ ([#7151](https://github.com/code-yeongyu/senpi/pull/7151)).
 
 ### Removed
 
