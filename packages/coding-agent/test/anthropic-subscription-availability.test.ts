@@ -52,6 +52,7 @@ describe("readAmbientClaudeAuthStatus", () => {
 
 		await expect(probeAmbientClaudeAuthStatus()).resolves.toBe(true);
 		expect(spawnMock).toHaveBeenCalledWith(executable, ["auth", "status"], {
+			env: expect.any(Object),
 			stdio: "ignore",
 			windowsHide: true,
 		});
