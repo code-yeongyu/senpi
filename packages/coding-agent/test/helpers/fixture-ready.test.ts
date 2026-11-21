@@ -28,6 +28,11 @@ function scratch(): string {
 	return root;
 }
 
+/** Resolves at the fixture's first stderr write, so a short bound below measures the wait, not a slow spawn. */
+async function wrote(child: ChildProcess): Promise<void> {
+	if (child.stderr) await once(child.stderr, "data");
+}
+
 function fixture(script: string): { child: ChildProcess; output: () => string; gone: Promise<unknown> } {
 	const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "ignore", "pipe"] });
 	children.push(child);
@@ -71,7 +76,8 @@ describe("waitForFixtureFile", () => {
 
 	it("still fails at its bound, with the output, when a live fixture never writes", async () => {
 		const ready = join(scratch(), "ready");
-		const { output, gone } = fixture(`process.stderr.write("still booting\\n"); setInterval(() => {}, 1000);`);
+		const { child, output, gone } = fixture(`process.stderr.write("still booting\\n"); setInterval(() => {}, 1000);`);
+		await wrote(child);
 		await expect(waitForFixtureFile(ready, { timeoutMs: 500, output, gone })).rejects.toThrow(
 			/was not written within 500ms[\s\S]*still booting/,
 		);
@@ -93,6 +99,7 @@ describe("waitForFixtureExit", () => {
 
 	it("fails at its bound with the fixture's output when it never exits", async () => {
 		const { child, output } = fixture(`process.stderr.write("holding\\n"); setInterval(() => {}, 1000);`);
+		await wrote(child);
 		await expect(waitForFixtureExit(child, { timeoutMs: 500, output }, "owner")).rejects.toThrow(
 			/owner did not exit within 500ms[\s\S]*holding/,
 		);
@@ -147,6 +154,7 @@ describe("waitForFixtureMessage", () => {
 
 	it("fails at its bound, with the output, when a live fixture never reports", async () => {
 		const { child, output } = reporter(`process.stderr.write("still booting\\n"); setInterval(() => {}, 1000);`);
+		await wrote(child);
 		await expect(waitForFixtureMessage(child, readyType, { timeoutMs: 500, output }, "caller")).rejects.toThrow(
 			/caller did not report within 500ms[\s\S]*still booting/,
 		);
