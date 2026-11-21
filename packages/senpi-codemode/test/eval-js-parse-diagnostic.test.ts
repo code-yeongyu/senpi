@@ -29,6 +29,8 @@ it("locates malformed shell interpolation in the submitted JS cell without runni
 			text: expect.stringContaining(`line 3, column 16:\n${shellLine}\n               ^`),
 		});
 		expect(failed.content[0]).toMatchObject({ text: expect.stringContaining("shell heredoc") });
+		const nested = await run("const args = { command: `python3 - <<'PY'\n# sql`...` -> sql.exec(`...`)\nPY` };");
+		expect(nested.content[0]).toMatchObject({ text: expect.stringContaining("line 2, column 7:") });
 		expect((await run("typeof globalThis.ranBrokenCell")).content[0]).toMatchObject({
 			text: expect.stringContaining("undefined"),
 		});
