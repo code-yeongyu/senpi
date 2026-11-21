@@ -7,6 +7,7 @@ export {
 	RULE_ACTIVATION_ENTRY_TYPE,
 	type RuleActivationDetails,
 	type TtsrActivationDetails,
+	type TtsrDetectionDetail,
 } from "./types.ts";
 
 export function registerRuleActivationRenderer(pi: ExtensionAPI): void {
