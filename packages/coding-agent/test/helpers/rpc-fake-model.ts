@@ -19,10 +19,14 @@ export interface FakeModelRequest {
 export interface FakeModelServer {
 	readonly origin: string;
 	readonly requests: readonly FakeModelRequest[];
-	/** Resolves with the first request (already received or later) that matches; rejects after `timeoutMs`. */
+	/**
+	 * Resolves with the first request (already received or later) that matches; rejects after `timeoutMs`, or with
+	 * `signal`'s reason once it aborts (the wait's timer and subscription end with it).
+	 */
 	waitForRequest(
 		match: (request: FakeModelRequest, index: number) => boolean,
 		timeoutMs: number,
+		signal?: AbortSignal,
 	): Promise<FakeModelRequest>;
 	/** Answers every request `holdOnLastMessage` is holding, and holds none from here on. */
 	releaseHeld(): void;
@@ -236,21 +240,28 @@ export async function startFakeModelServer(
 	return {
 		origin: `http://127.0.0.1:${port}`,
 		requests,
-		waitForRequest: (match, timeoutMs) => {
+		waitForRequest: (match, timeoutMs, signal) => {
 			const seen = requests.find((request, index) => match(request, index));
 			if (seen !== undefined) return Promise.resolve(seen);
+			if (signal?.aborted) return Promise.reject(signal.reason);
 			return new Promise((resolve, reject) => {
-				const timer = setTimeout(() => {
-					waiters.delete(waiter);
-					reject(new Error(`no model request matched within ${timeoutMs} ms`));
-				}, timeoutMs);
-				const waiter = (request: FakeModelRequest): void => {
-					if (!match(request, requests.indexOf(request))) return;
+				const settle = (outcome: { request: FakeModelRequest } | { error: unknown }): void => {
 					clearTimeout(timer);
 					waiters.delete(waiter);
-					resolve(request);
+					signal?.removeEventListener("abort", onAbort);
+					if ("error" in outcome) reject(outcome.error);
+					else resolve(outcome.request);
+				};
+				const timer = setTimeout(
+					() => settle({ error: new Error(`no model request matched within ${timeoutMs} ms`) }),
+					timeoutMs,
+				);
+				const onAbort = (): void => settle({ error: signal?.reason });
+				const waiter = (request: FakeModelRequest): void => {
+					if (match(request, requests.indexOf(request))) settle({ request });
 				};
 				waiters.add(waiter);
+				signal?.addEventListener("abort", onAbort, { once: true });
 			});
 		},
 		releaseHeld: () => {
