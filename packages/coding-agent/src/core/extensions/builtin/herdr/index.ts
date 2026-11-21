@@ -3,7 +3,7 @@ import { createConnection, type Socket } from "node:net";
 import { join, win32 } from "node:path";
 import { debuglog } from "node:util";
 import { APP_COMMAND } from "../../../../config.ts";
-import type { ExtensionAPI, ExtensionContext, ProgramStatus } from "../../types.ts";
+import type { AgentEndEvent, ExtensionAPI, ExtensionContext } from "../../types.ts";
 import {
 	isTerminalMonitorStateEvent,
 	isWakeSourceStateEvent,
@@ -12,12 +12,13 @@ import {
 } from "../monitor-state-event.ts";
 import { HerdrClient, type HerdrMethod } from "./herdr-client.ts";
 import {
+	type HerdrTurnOutcome,
 	initialHerdrState,
 	isHerdrBlockedEvent,
 	openEndedMonitors,
 	reduceHerdrState,
-	selectHerdrBlockedKind,
 	selectHerdrReport,
+	selectProgramStatus,
 } from "./herdr-state.ts";
 
 /**
@@ -86,13 +87,8 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			void work.then(() => pending.delete(work));
 			return work;
 		}
-		function reportProgramStatus(report: ReturnType<typeof selectHerdrReport>): void {
-			const kind = report.state === "blocked" ? selectHerdrBlockedKind(state) : undefined;
-			const status: ProgramStatus = {
-				state: report.state,
-				...(kind === undefined ? {} : { kind }),
-				...(report.message === undefined ? {} : { message: report.message }),
-			};
+		function reportProgramStatus(): void {
+			const status = selectProgramStatus(state);
 			const key = JSON.stringify(status);
 			if (lastProgramStatus === key) return;
 			lastProgramStatus = key;
@@ -102,7 +98,7 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 		async function publish(): Promise<void> {
 			if (!bound || stopped) return;
 			const report = selectHerdrReport(state);
-			reportProgramStatus(report);
+			reportProgramStatus();
 			if (!client) return;
 			const key = JSON.stringify(report);
 			if (lastReport === key) return;
@@ -186,8 +182,23 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			state = reduceHerdrState(state, { type: "turn", active: true });
 			return publish();
 		});
-		pi.on("agent_settled", (_event, ctx) => {
+		pi.on("agent_end", (event, ctx) => {
 			if (!owns(ctx)) return;
+			state = reduceHerdrState(state, { type: "outcome", outcome: classifyTurnOutcome(event) });
+		});
+		pi.on("session_abort", (_event, ctx) => {
+			if (!owns(ctx)) return;
+			state = reduceHerdrState(state, { type: "outcome", outcome: { kind: "idle" } });
+			return publish();
+		});
+		pi.on("agent_settled", (event, ctx) => {
+			if (!owns(ctx)) return;
+			if (event.fallbackExhausted !== undefined && state.turnOutcome.kind !== "error") {
+				state = reduceHerdrState(state, {
+					type: "outcome",
+					outcome: { kind: "error", message: "All fallback providers exhausted" },
+				});
+			}
 			state = reduceHerdrState(state, { type: "turn", active: !ctx.isIdle() });
 			refreshChildren(ctx);
 			return publish();
@@ -206,6 +217,51 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			await send("pane.release_agent", { agent: "pi" });
 		});
 	};
+}
+
+function findLastAssistantMessage(
+	messages: AgentEndEvent["messages"] | undefined,
+): { stopReason?: string; errorMessage?: string } | undefined {
+	if (!Array.isArray(messages)) return undefined;
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index];
+		if (message !== undefined && "role" in message && message.role === "assistant") {
+			return {
+				stopReason:
+					"stopReason" in message && typeof message.stopReason === "string" ? message.stopReason : undefined,
+				errorMessage:
+					"errorMessage" in message && typeof message.errorMessage === "string" ? message.errorMessage : undefined,
+			};
+		}
+	}
+	return undefined;
+}
+
+function classifyTurnOutcome(event: AgentEndEvent): HerdrTurnOutcome {
+	if (event.willRetry) return { kind: "idle" };
+	if (event.aborted && event.abortSource === "user") return { kind: "idle" };
+	if (event.deadline !== undefined) {
+		return {
+			kind: "error",
+			message: event.deadline.kind === "inactivity" ? "Turn timed out (inactivity)" : "Turn timed out (max runtime)",
+		};
+	}
+	const lastAssistant = findLastAssistantMessage(event.messages);
+	if (lastAssistant?.stopReason === "error") {
+		const message = lastAssistant.errorMessage?.trim();
+		return message ? { kind: "error", message } : { kind: "error" };
+	}
+	if (event.aborted) {
+		if (event.abortSource === "provider" || event.abortSource === "system") {
+			const message = lastAssistant?.errorMessage?.trim();
+			return {
+				kind: "error",
+				message: message || (event.abortSource === "provider" ? "Provider aborted turn" : "Turn aborted"),
+			};
+		}
+		return { kind: "idle" };
+	}
+	return { kind: "done" };
 }
 
 function hasUserReporter(deps: HerdrDependencies, ctx: ExtensionContext, debug: (message: string) => void): boolean {

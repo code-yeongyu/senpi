@@ -323,6 +323,133 @@ describe("herdr program status without a herdr socket (senpi#5321)", () => {
 		await f.emit("agent_start");
 		expect(f.setProgramStatus.mock.calls).toEqual([[{ state: "idle" }]]);
 	});
+
+	it("reports OSC 7501 done on normal completion and resets to working on the next turn while herdr socket stays idle", async () => {
+		const f = await herdrReporterFixture();
+		await f.start();
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+		f.setIdle(true);
+		await f.emit("agent_settled");
+		f.setIdle(false);
+		await f.emit("agent_start");
+		expect(f.setProgramStatus.mock.calls).toEqual([
+			[{ state: "idle" }],
+			[{ state: "working" }],
+			[{ state: "done" }],
+			[{ state: "working" }],
+		]);
+		expect(f.requests.filter((r) => r.method === "pane.report_agent").map((r) => r.params.state)).toEqual([
+			"idle",
+			"working",
+			"idle",
+			"working",
+		]);
+	});
+
+	it("reports OSC 7501 error for failed turns, deadlines, non-user aborts, and fallback exhaustion", async () => {
+		const f = await herdrReporterFixture();
+		for (const name of ["HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID"]) vi.stubEnv(name, undefined);
+		await f.start();
+
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.emit("agent_end", {
+			messages: [{ role: "assistant", stopReason: "error", errorMessage: "rate limit exceeded" }],
+		});
+		f.setIdle(true);
+		await f.emit("agent_settled");
+
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.emit("agent_end", {
+			messages: [],
+			aborted: true,
+			abortSource: "system",
+			deadline: { kind: "inactivity", limitMs: 60_000, elapsedMs: 60_001 },
+		});
+		f.setIdle(true);
+		await f.emit("agent_settled");
+
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.emit("agent_end", { messages: [], aborted: true, abortSource: "provider" });
+		f.setIdle(true);
+		await f.emit("agent_settled");
+
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.emit("agent_end", { messages: [], willRetry: true });
+		f.setIdle(true);
+		await f.emit("agent_settled", { fallbackExhausted: { resumeAt: 9999 } });
+
+		expect(f.setProgramStatus.mock.calls).toEqual([
+			[{ state: "idle" }],
+			[{ state: "working" }],
+			[{ state: "error", message: "rate limit exceeded" }],
+			[{ state: "working" }],
+			[{ state: "error", message: "Turn timed out (inactivity)" }],
+			[{ state: "working" }],
+			[{ state: "error", message: "Provider aborted turn" }],
+			[{ state: "working" }],
+			[{ state: "error", message: "All fallback providers exhausted" }],
+		]);
+	});
+
+	it("returns OSC 7501 to idle on user abort and late session_abort", async () => {
+		const f = await herdrReporterFixture();
+		for (const name of ["HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID"]) vi.stubEnv(name, undefined);
+		await f.start();
+
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.emit("agent_end", { messages: [], aborted: true, abortSource: "user" });
+		f.setIdle(true);
+		await f.emit("agent_settled");
+
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+		f.setIdle(true);
+		await f.emit("agent_settled");
+		await f.emit("session_abort");
+
+		expect(f.setProgramStatus.mock.calls).toEqual([
+			[{ state: "idle" }],
+			[{ state: "working" }],
+			[{ state: "idle" }],
+			[{ state: "working" }],
+			[{ state: "done" }],
+			[{ state: "idle" }],
+		]);
+	});
+
+	it("reports blocked kind=auth and waits for bounded wake sources before transitioning to done", async () => {
+		const f = await herdrReporterFixture();
+		await f.start();
+		await f.bus("herdr:blocked", { active: true, id: "auth-1", label: "Sign in to Anthropic", kind: "auth" });
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "blocked", message: "Sign in to Anthropic" });
+		expect(f.requests.at(-1)?.params).not.toHaveProperty("kind");
+		await f.bus("herdr:blocked", { active: false, id: "auth-1" });
+
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.bus("wake_source_state", { source: "senpi-task", activeCount: 1 });
+		await f.emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+		f.setIdle(true);
+		await f.emit("agent_settled");
+		await f.bus("wake_source_state", { source: "senpi-task", activeCount: 0 });
+
+		expect(f.setProgramStatus.mock.calls).toEqual([
+			[{ state: "idle" }],
+			[{ state: "blocked", kind: "auth", message: "Sign in to Anthropic" }],
+			[{ state: "idle" }],
+			[{ state: "working" }],
+			[{ state: "working", message: "1 subagent running" }],
+			[{ state: "done" }],
+		]);
+	});
 });
 
 describe("herdr transport and reducer", () => {
