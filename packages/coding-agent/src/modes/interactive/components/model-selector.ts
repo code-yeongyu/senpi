@@ -4,7 +4,7 @@ import { ModelRegistry } from "../../../core/model-registry.ts";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import { createAmbientProviderCheck } from "../../../core/provider-default-selection.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
-import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
+import { describeModelRefreshErrors, refreshModelCatalogsOnRequest } from "../model-catalog-refresh.ts";
 import { rankModelSearchItems } from "../model-search-rank.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -209,16 +209,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				await this.modelRuntime.refresh();
 				result = { aborted: false, errors: new Map() };
 			} else {
-				result = await refreshModelCatalogs(this.modelRuntime, this.refreshAbortController.signal);
+				result = await refreshModelCatalogsOnRequest(this.modelRuntime, this.refreshAbortController.signal);
 			}
 			if (this.closed) return;
 			this.refreshStatusMessage = "";
 			if (result.aborted && timedOut) {
 				this.errorMessage = "Model refresh timed out; showing cached models.";
-			} else if (result.errors.size === 1) {
-				this.errorMessage = `Could not refresh ${result.errors.keys().next().value}; showing cached models.`;
-			} else if (result.errors.size > 1) {
-				this.errorMessage = `Could not refresh ${result.errors.size} model catalogs (${[...result.errors.keys()].join(", ")}); showing cached models.`;
+			} else if (result.errors.size > 0) {
+				this.errorMessage = describeModelRefreshErrors(result.errors);
 			} else {
 				this.errorMessage = this.modelRuntime.getError();
 				if (!this.errorMessage) {
