@@ -30,7 +30,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { onExit } from "signal-exit";
+import onExit from "signal-exit";
 import { DISPLAY_VERSION, VERSION } from "../config.ts";
 
 /** Crash records kept per agent dir. A crash loop rewrites the file down to this many. */

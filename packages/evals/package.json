@@ -15,11 +15,11 @@
 		"@code-yeongyu/senpi": "^2026.11.21-2",
 		"@types/node": "26.6.6",
 		"@vitest-evals/core": "0.18.1",
-		"@vitest/coverage-v8": "5.1.1",
+		"@vitest/coverage-v8": "5.0.1",
 		"autoevals": "0.4.1",
 		"shx": "0.4.0",
 		"typescript": "7.0.2",
-		"vitest": "5.1.1",
+		"vitest": "5.0.1",
 		"vitest-evals": "0.18.1"
 	}
 }

@@ -13,11 +13,17 @@ const sdkLockPaths = [
 	"node_modules/@anthropic-ai/claude-agent-sdk",
 ];
 
+/** The Claude Agent SDK's entry in a parsed root package-lock.json, wherever npm placed it. */
+export function findClaudeAgentSdkLockEntry(lock) {
+	const sdk = sdkLockPaths.map((path) => lock.packages?.[path]).find((entry) => entry !== undefined);
+	if (!sdk) throw new Error(`package-lock.json is missing ${sdkLockPaths.join(" and ")}`);
+	return sdk;
+}
+
 export async function updateClaudeAgentSdkPlatformLock({ check = false } = {}) {
 	const source = readFileSync(lockPath, "utf8");
 	const lock = JSON.parse(source);
-	const sdk = sdkLockPaths.map((path) => lock.packages?.[path]).find((entry) => entry !== undefined);
-	if (!sdk) throw new Error(`package-lock.json is missing ${sdkLockPaths.join(" and ")}`);
+	const sdk = findClaudeAgentSdkLockEntry(lock);
 
 	const missing = Object.entries(sdk.optionalDependencies ?? {}).filter(
 		([name, version]) => lock.packages[`node_modules/${name}`]?.version !== version,

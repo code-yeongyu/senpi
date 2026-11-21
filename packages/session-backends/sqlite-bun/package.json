@@ -25,6 +25,6 @@
 		"@earendil-works/pi-agent-core": "^2026.11.21-2"
 	},
 	"devDependencies": {
-		"vitest": "5.1.1"
+		"vitest": "5.0.1"
 	}
 }
