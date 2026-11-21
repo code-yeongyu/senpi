@@ -49,7 +49,7 @@ export async function dispatchContextMessages(
 		contextHandlers: HandlerSnapshot[];
 		contextWithSystemHandlers: HandlerSnapshot[];
 		createContext: (extensionPath: string) => ExtensionContext;
-		emitError: (error: ExtensionError) => void;
+		emitError: (error: ExtensionError, cause?: unknown) => void;
 		excludeExtensionPath?: string;
 		source: ContextEvent["source"];
 	},
@@ -108,12 +108,15 @@ export async function dispatchContextMessages(
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				const stack = err instanceof Error ? err.stack : undefined;
-				input.emitError({
-					extensionPath: ext.path,
-					event: "context",
-					error: message,
-					stack,
-				});
+				input.emitError(
+					{
+						extensionPath: ext.path,
+						event: "context",
+						error: message,
+						stack,
+					},
+					err,
+				);
 			}
 		}
 	}
@@ -140,12 +143,15 @@ export async function dispatchContextMessages(
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				const stack = err instanceof Error ? err.stack : undefined;
-				input.emitError({
-					extensionPath: ext.path,
-					event: "context_with_system",
-					error: message,
-					stack,
-				});
+				input.emitError(
+					{
+						extensionPath: ext.path,
+						event: "context_with_system",
+						error: message,
+						stack,
+					},
+					err,
+				);
 			}
 		}
 	}
