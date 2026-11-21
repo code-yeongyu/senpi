@@ -15,12 +15,13 @@ export interface ResidentWriter {
 	readonly processStartedAtMs: number;
 }
 
-export function currentResidentWriter(probes: WriterProbes = realWriterProbes): ResidentWriter {
+export async function currentResidentWriter(probes: WriterProbes = realWriterProbes): Promise<ResidentWriter> {
+	const bootAtMs = await probes.bootAtMs();
 	const self = probes.self();
 	return {
 		host: probes.host(),
 		pid: self.pid,
-		bootAtMs: probes.bootAtMs(),
+		bootAtMs,
 		processStartedAtMs: self.processStartedAtMs,
 	};
 }
@@ -47,10 +48,15 @@ export function residentWriterProbe(
 	const gone = new Set<string>();
 	const verified = new Set<string>();
 	return async (writer) => {
+		// Resolved first, so nothing yields between reading the verdict cache and recording a new verdict; a writer that
+		// looks like another boot is checked against a fresh read, since a wall-clock step makes the cached record stale.
+		let bootAtMs = await probes.bootAtMs();
+		if (writer.host === probes.host() && !sameBoot(bootAtMs, writer.bootAtMs))
+			bootAtMs = await probes.bootAtMs({ fresh: true });
 		const key = `${writer.host}:${writer.pid}:${writer.processStartedAtMs}`;
 		if (gone.has(key)) return false;
 		if (writer.host !== probes.host()) return true;
-		if (!sameBoot(probes.bootAtMs(), writer.bootAtMs) || !probes.pidAlive(writer.pid)) {
+		if (!sameBoot(bootAtMs, writer.bootAtMs) || !probes.pidAlive(writer.pid)) {
 			gone.add(key);
 			return false;
 		}
