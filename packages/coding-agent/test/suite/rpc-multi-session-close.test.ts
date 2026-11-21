@@ -27,6 +27,7 @@ describe("multi-session RPC close routing", () => {
 		const closeCompletion = Promise.resolve();
 		let closeCalls = 0;
 		const registry = {
+			closeGraceMs: 2_000,
 			openSession: async () => ({ sessionId: "rpc-session" }),
 			getForCommand: () => entry,
 			list: () => [],
@@ -72,6 +73,7 @@ describe("multi-session RPC close routing", () => {
 		let closeCalls = 0;
 		const closeMarked = vi.fn(async () => {});
 		const registry = {
+			closeGraceMs: 2_000,
 			openSession: async () => ({ sessionId: "rpc-session" }),
 			getForCommand: () => entry,
 			list: () => [],
@@ -123,6 +125,7 @@ describe("multi-session RPC close routing", () => {
 		const entry: { state: "open" | "closing"; runtime: object } = { state: "open", runtime: { session: {} } };
 		let closeCalls = 0;
 		const registry = {
+			closeGraceMs: 2_000,
 			openSession: async () => ({ sessionId: "rpc-session" }),
 			getForCommand: () => entry,
 			list: () => [],
@@ -181,6 +184,7 @@ describe("multi-session RPC close routing", () => {
 			releaseDispose = resolve;
 		});
 		const registry = {
+			closeGraceMs: 2_000,
 			openSession: async () => ({ sessionId: "known" }),
 			getForCommand: () => entry,
 			list: () => [{ sessionId: "known", status: entry.state }],
