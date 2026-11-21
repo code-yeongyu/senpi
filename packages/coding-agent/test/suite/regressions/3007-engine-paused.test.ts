@@ -201,6 +201,7 @@ describe("senpi#3007 durable engine pause signals", () => {
 						consecutiveLengthRecoveries: 0,
 						recentNormalizedOutputHashes: [],
 						toollessContinuationStreak: 0,
+						liveChannelToollessStreak: 0,
 						continuationPending: false,
 						lastTurnStuckOnContextOverflow: false,
 					},

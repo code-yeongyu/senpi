@@ -6,6 +6,10 @@ type ToolResultAgentMessage = Extract<AgentMessage, { role: "toolResult" }>;
 
 export const GOAL_CONTINUATION_CAP = 8;
 export const GOAL_STALL_TOOLLESS_THRESHOLD = 3;
+// A resumption channel that stays live but never delivers (a hung monitor, a dead child) must
+// still surface as a stall, but only after more turns than a genuinely toolless wait: live waits
+// are progress by design, so they get a separate, higher bound.
+export const GOAL_STALL_LIVE_CHANNEL_THRESHOLD = 4;
 export const GOAL_REPETITION_HASH_STREAK = 3;
 export const GOAL_LENGTH_RECOVERY_LIMIT = 1;
 /**
@@ -39,6 +43,7 @@ export type GoalContinuationInput = {
 	readonly consecutiveLengthRecoveries: number;
 	readonly recentNormalizedOutputHashes: readonly string[];
 	readonly toollessContinuationStreak: number;
+	readonly liveChannelToollessStreak: number;
 	readonly continuationPending: boolean;
 	/** The last turn was rejected (or silently starved) by context size and recovery did not shrink it. */
 	readonly lastTurnStuckOnContextOverflow: boolean;
@@ -278,5 +283,8 @@ function hasRepeatedNormalizedOutputHash(hashes: readonly string[]): boolean {
 }
 
 function shouldShowStallNotice(input: GoalContinuationInput): boolean {
-	return input.toollessContinuationStreak >= GOAL_STALL_TOOLLESS_THRESHOLD;
+	if (input.toollessContinuationStreak >= GOAL_STALL_TOOLLESS_THRESHOLD) return true;
+	// A permanently live channel still surfaces, but on a separate, higher bound so a healthy
+	// wait does not trip the stall check prematurely.
+	return input.liveChannelToollessStreak >= GOAL_STALL_LIVE_CHANNEL_THRESHOLD;
 }

@@ -39,8 +39,9 @@ Admission guards: consecutive-continuation cap of 8 (persisted), stale-signature
 immediate re-entry, single-flight latch, and the no-progress guard (60 counted continuations
 without a new successful tool effect (a call/result fingerprint unlike the last 256; results mask timestamps/durations/ids, non-mutating calls mask argument numbers), a todo change, or human input — typed or from a `human_input`
 monitor; persisted, monitor-delayed exempt). There is no fixed total cap (omo#10280). From the 3rd consecutive toolless turn the prompt
-gains a `<goal_stall_check>` prefix — monitor-flavored bullets while monitors are active,
-generic recovery bullets otherwise. Accepted direct input disarms a pending continuation; a
+gains a `<goal_stall_check>` prefix — monitor-flavored bullets while monitors are active
+(a permanently live channel trips a separate, higher bound of 4 turns), generic recovery
+bullets otherwise. Accepted direct input disarms a pending continuation; a
 clean accepted user turn arms a visible 10-second grace countdown before the Goal resumes.
 Mechanically blocked Goals reactivate on accepted input, including admitted steering. A
 `length` stop gets exactly one truncation recovery, then blocks.

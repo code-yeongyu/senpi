@@ -91,6 +91,7 @@ export async function queueGoalContinuation(
 			consecutiveLengthRecoveries: 0,
 			recentNormalizedOutputHashes: [],
 			toollessContinuationStreak: 0,
+			liveChannelToollessStreak: 0,
 			continuationPending: options.continuationPending,
 			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(ctx, lastAssistant),
 			...(options.limitWait === true ? { limitWait: true } : {}),
