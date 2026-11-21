@@ -79,6 +79,7 @@ describe("every extension event has a placement (RT11)", () => {
 				"session_resumed",
 				"session_shutdown",
 				"session_start",
+				"session_stop",
 				"turn_start",
 			].sort(),
 		);

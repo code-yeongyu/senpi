@@ -32,6 +32,7 @@ import { createBashInputTool } from "./tools/bash-input.ts";
 import { createBashOutputTool } from "./tools/bash-output.ts";
 import { createBashResizeTool } from "./tools/bash-resize.ts";
 import { TERMINAL_CHILD_JOB_KINDS, terminalChildJob } from "./tools/child-placement.ts";
+import { stopAllTerminalWork } from "./stop-all.ts";
 import { createKillBashTool } from "./tools/kill-bash.ts";
 import { resolveForegroundWindowSeconds } from "./tools/foreground-window.ts";
 import { bindTerminalManifestWriter, createMonitorTool } from "./tools/monitor.ts";
@@ -174,6 +175,16 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	pi.registerTool(onChild(createKillBashTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.kill));
 	pi.registerTool(createMonitorTool(toolCtx));
 	registerRestoreDigestRenderer(pi);
+
+	// A full stop (oh-my-openagent#14390): every session and watch ends, and the restore manifest is emptied so a
+	// reopen brings none of them back (the same record a graceful close leaves).
+	pi.on("session_stop", async () => {
+		const described = new Map(state.bundle?.backgroundSnapshot().map((entry) => [entry.id, entry.description]));
+		const { monitors, shells } = await stopAllTerminalWork(toolCtx);
+		await state.manifestWriter?.recordClosed();
+		const named = shells.map((shell) => ({ ...shell, label: described.get(shell.id) ?? shell.label }));
+		return { stopped: [...monitors, ...named], failed: [] };
+	});
 
 	pi.on("session_start", async (event, ctx) => {
 		state.ctx = ctx;

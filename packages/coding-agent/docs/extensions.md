@@ -780,6 +780,23 @@ Import handlers must be idempotent: a handler that already applied the state, or
 
 Setting `sessionShutdownHandlerTimeoutMs` to `0` removes the cap for move handlers too: a hung `session_move_export` handler then holds the `move` release (and, on its `interrupt` path, the session's closed admission) until it returns, and a hung `session_move_import` handler holds the session open.
 
+#### session_stop
+
+Fired by a full stop of the session: `/stop all`, the model's `stop_session` tool, or `ctx.stopSession()`. Stop every piece of work your extension owns for the session for good, so none of it continues, wakes the session, or comes back on the next open, and return what you stopped and what you could not. Return `undefined` when you own nothing a stop ends. A stop with nothing armed must succeed.
+
+```typescript
+pi.on("session_stop", async (event, ctx) => {
+  // event.requestedBy: "user" | "agent"; event.signal aborts at the handler budget's hard cap
+  const ended = await myWorker.cancelAll(event.signal);
+  return {
+    stopped: ended.map((job) => ({ kind: "job", id: job.id, label: job.name })),
+    failed: [],
+  };
+});
+```
+
+Each handler runs under the `session_shutdown` handler budget. A handler that throws, answers something that is not `{ stopped, failed }`, or is still running at the hard cap is reported under `failed` with the reason, and the stop moves on to the next extension. The builtins answer it too: `goal` clears the goal (it does not pause it) and cancels any scheduled continuation, and `terminal` kills every background shell and monitor (persistent ones included) and empties its restore record, so a restart restores none of them.
+
 ### Agent Events
 
 #### before_agent_start
@@ -1516,6 +1533,10 @@ pi.on("tool_call", (event, ctx) => {
   }
 });
 ```
+
+### ctx.stopSession()
+
+`ctx.stopSession(requestedBy)` stops everything the session owns: it emits [`session_stop`](#session_stop) to every extension and resolves with `{ owners }`, one `{ extensionPath, stopped, failed }` report per extension that answered. `/stop all` and the `stop_session` tool call it. Safe to call when nothing is running.
 
 ### ctx.getContextUsage()
 
