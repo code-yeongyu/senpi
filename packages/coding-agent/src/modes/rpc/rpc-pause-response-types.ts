@@ -23,7 +23,7 @@ export type RpcPauseResponse =
 			success: true;
 			data?: {
 				resumed: boolean;
-				reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped";
+				reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped" | "held_command";
 				parentSessionId?: string;
 				pauseSeq: number;
 				turnStarted: boolean;

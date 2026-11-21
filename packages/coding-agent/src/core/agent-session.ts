@@ -1229,7 +1229,7 @@ const resumeEffectHistory: HistoryReducer<Map<string, ResumeSessionAnswer>> = {
 
 export interface ResumeSessionRequest {
 	readonly expectedSeq?: number;
-	readonly mode?: "continue" | "release";
+	readonly mode?: "continue" | "release" | "interrupted";
 	readonly message?: string;
 	readonly effectId?: string;
 	/** Resume nothing while a person's Stop or a parent's run hold is live: a resume a peer asks for (senpi#7016). */
@@ -1238,7 +1238,7 @@ export interface ResumeSessionRequest {
 
 export interface ResumeSessionAnswer {
 	readonly resumed: boolean;
-	readonly reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped";
+	readonly reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped" | "held_command";
 	readonly parentSessionId?: string;
 	readonly pauseSeq: number;
 	readonly turnStarted: boolean;
@@ -8032,7 +8032,12 @@ export class AgentSession {
 					} else if (!releasedWake) this._noteHeldWake(appMessage, options.ticket);
 					return;
 				}
-				if (releasedWake && !releasedWake()) return;
+				if (releasedWake && !releasedWake()) {
+					// The refused release still lives in the hold ledger. Its synthetic carrier must not
+					// remain queued for replay independently of that ledger after a restart.
+					if (options.ticket && this._isEngineDelivery(options.ticket)) this._retireLifecycleDelivery(options.ticket, false);
+					return;
+				}
 				const inputOrigin = customTurnOrigin(message.customType);
 				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
 				await this._promptAgent(messages, {
@@ -8142,7 +8147,7 @@ export class AgentSession {
 	 * admitted; `settled` resolves when the resumed work has settled. Every request field is optional.
 	 */
 	async beginResume(request: ResumeSessionRequest): Promise<{ answer: ResumeSessionAnswer; settled: Promise<void> }> {
-		this._humanInputAdmitted("resume");
+		if (request.mode !== "interrupted" && !request.unlessStopped) this._humanInputAdmitted("resume");
 		const replayed = request.effectId === undefined ? undefined : this._resumeEffects.get(request.effectId);
 		if (replayed !== undefined) return { answer: { ...replayed, replayed: true }, settled: Promise.resolve() };
 		// A resume is a person's input (senpi#3864): no external delivery overtakes it until its turn is queued.
@@ -8175,6 +8180,8 @@ export class AgentSession {
 		const holds = this._engineTurnHold.holds;
 		const idle = { pauseSeq, turnStarted: false, deliveredNotices: 0, deliveredHeldInputs: 0 };
 		const answered = (answer: ResumeSessionAnswer) => ({ answer, settled: Promise.resolve() });
+		if (request.mode === "interrupted" && (request.unlessStopped !== true || request.expectedSeq === undefined))
+			return answered({ resumed: false, reason: "stale", ...idle });
 		if (holds.length === 0 && !this._engineTurnHold.awaitingInput)
 			return answered({ resumed: false, reason: "not_paused", ...idle });
 		const inherited = this._runHolds.inheritedOwner();
@@ -8189,6 +8196,26 @@ export class AgentSession {
 			return answered({ resumed: false, reason: "stopped", ...idle });
 		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
+		if (request.mode === "interrupted" && !holds.some((hold) => hold.key === "interrupted-run" && hold.kind === "session_hold"))
+			return answered({ resumed: false, reason: "not_paused", ...idle });
+		let refusal: "stopped" | "stale" | "held_command" | undefined;
+		const guard = request.unlessStopped
+			? () => {
+					// A Stop added and removed during preparation is still newer than this request.
+					if (this.automaticInputHoldLive()) refusal ??= "stopped";
+					else if (!this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq ?? pauseSeq)) refusal ??= "stale";
+					// A held slash command runs *before* the turn and its effects cannot be rolled back.
+					// Leave it for human Resume instead of executing it on behalf of a peer.
+					else if (this._heldInputs.pending().some((input) => input.prepare && this._isExtensionCommandText(input.text)))
+						refusal ??= "held_command";
+					return refusal === undefined;
+				}
+			: undefined;
+		if (guard) {
+			if (!guard()) return answered({ resumed: false, reason: refusal, ...idle });
+			if (this._engineTurnHold.releasing) return answered({ resumed: false, reason: "not_paused", ...idle });
+			this._humanInputAdmitted("resume");
+		}
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
 			// A person's resume attends the session like their input does, so an unattended hold it frees stays freed.
@@ -8213,7 +8240,9 @@ export class AgentSession {
 			this._stopHoldLive() &&
 			(this._resumeCause() === "stop" || deliveredNotices === 0 || this._engineTurnHold.messages().length > 0);
 		if (resumeHeldTurn || this._engineTurnHold.fences.length > 0 || deliveredHeldInputs > 0) {
-			const { turnStarted, settled } = await this._resumeAfterStop(onQueued);
+			const { turnStarted, settled } = await this._resumeAfterStop(onQueued, guard);
+			if (guard && !turnStarted && !guard())
+				return { answer: { ...idle, resumed: false, reason: refusal, pauseSeq: this._engineTurnHold.currentPauseSeq }, settled };
 			return {
 				answer: { resumed: true, pauseSeq, turnStarted, deliveredNotices, deliveredHeldInputs },
 				settled,
@@ -8225,7 +8254,7 @@ export class AgentSession {
 				const generation = this._userAbortGeneration;
 				await this.waitForIdle();
 				const claim = new DeferredTurnClaim();
-				await this.sendCustomMessage(message, { triggerTurn: true }, claim, admit, undefined, onQueued);
+				await this.sendCustomMessage(message, { triggerTurn: true }, claim, () => (guard?.() ?? true) && admit(), undefined, onQueued);
 				if ((await claim.disposition) !== "started") return false;
 				await this.waitForIdle();
 				if (generation !== this._userAbortGeneration) {
@@ -8254,13 +8283,14 @@ export class AgentSession {
 	 * once its send settled without one) and returns its settlement, which finishes the release only if the shared
 	 * resume settlement delivered the turn.
 	 */
-	private async _resumeAfterStop(onQueued?: () => void): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
+	private async _resumeAfterStop(onQueued?: () => void, guard?: () => boolean): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
 		const resumeCause = this._resumeCause();
 		const sources = this._engineTurnHold.releaseAll("resume_session");
-		const { turnId, delivered } = await this._startResumeTurn(onQueued, resumeCause);
+		const { turnId, delivered } = await this._startResumeTurn(onQueued, resumeCause, guard);
 		const settled = (async () => {
 			if (!(await delivered)) {
-				this._engineTurnHold.rejectInput();
+				if (guard && !guard()) this._engineTurnHold.abandonRelease();
+				else this._engineTurnHold.rejectInput();
 				return;
 			}
 			const remaining = this._engineTurnHold.finish();
@@ -8284,6 +8314,7 @@ export class AgentSession {
 	private async _startResumeTurn(
 		onQueued?: () => void,
 		resumeCause: "stop" | "interrupted" = "stop",
+		guard?: () => boolean,
 	): ReturnType<typeof startRunResumeTurn> {
 		const settlement = Promise.withResolvers<void>();
 		this._resumeSettlement = settlement.promise;
@@ -8294,7 +8325,7 @@ export class AgentSession {
 			let heldInputs: HeldInput[];
 			for (;;) {
 				// A parent's pause can arrive during a read. Leave all input in custody for its run Resume.
-				if (this._runHolds.inheritedOwner() !== undefined) {
+				if ((guard && !guard()) || this._runHolds.inheritedOwner() !== undefined) {
 					settlement.resolve();
 					return { turnId: undefined, delivered: Promise.resolve(false) };
 				}
@@ -8317,7 +8348,7 @@ export class AgentSession {
 				);
 				// The hold is already released: include new or re-held input before sending, and omit withdrawals.
 			}
-			const started = await this._startResumeTurnWith(generation, continues, heldInputs, onQueued, resumeCause);
+			const started = await this._startResumeTurnWith(generation, continues, heldInputs, onQueued, resumeCause, guard);
 			started.delivered.then(
 				() => settlement.resolve(),
 				() => settlement.resolve(),
@@ -8335,20 +8366,26 @@ export class AgentSession {
 		heldInputs: HeldInput[],
 		onQueued?: () => void,
 		resumeCause: "stop" | "interrupted" = "stop",
+		guard?: () => boolean,
 	): ReturnType<typeof startRunResumeTurn> {
+		// An unrelated agent_start is not admission of this guarded carrier. Its claim belongs to this send.
+		const claim = guard ? new DeferredTurnClaim() : undefined;
+		const wakes = this._engineTurnHold.messages();
 		return startRunResumeTurn({
 			resumeCause,
 			heldInputs: () => heldInputs,
 			continueInputs: () => [...continues],
-			heldWakes: () => this._engineTurnHold.messages(),
+			heldWakes: () => wakes,
 			send: (message) =>
-				this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true, undefined, onQueued),
-			turnStarted: (until) => this._nextTurnStart(until),
+				this.sendCustomMessage(message, { triggerTurn: true }, claim, guard ?? (() => true), undefined, onQueued),
+			turnStarted: (until) => claim
+				? Promise.race([claim.disposition.then((result) => result === "started" ? String(this.externalAdmission.turnEpoch) : undefined), until.then(() => undefined)])
+				: this._nextTurnStart(until),
 			idle: () => this.waitForIdle(),
 			current: () => generation === this._userAbortGeneration,
-			consume: (inputIds, sources) => {
+			consume: (inputIds) => {
 				this._heldInputs.consume(inputIds);
-				for (const source of sources) this._engineTurnHold.consume(source);
+				for (const wake of wakes) this._engineTurnHold.consume(wake.source, wake.noticeIds);
 			},
 			sendFailed: (error) => this._sessionLogger.warn("resume_turn_send_failed", { error: String(error) }),
 		});
@@ -8598,10 +8635,12 @@ export class AgentSession {
 	}
 
 	get pauseView(): {
+		guardedResumeAdmission: 1;
 		pauseSeq: number;
 		records: { kind: string; key: string; runRef?: { kind: string; id: string }; parentSessionId?: string }[];
 	} {
 		return {
+			guardedResumeAdmission: 1,
 			pauseSeq: this._engineTurnHold.currentPauseSeq,
 			records: this._engineTurnHold.holds.map(({ kind, key, data }) => {
 				const value = (data ?? {}) as { runRef?: { kind: string; id: string }; parentSessionId?: string };

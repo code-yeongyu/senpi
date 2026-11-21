@@ -91,7 +91,15 @@ reopen. A session with nothing held answers
 Stop or a parent's run hold is live it answers `resumed: false, reason: "stopped"` and releases nothing, so only the
 person resumes their Stop. Otherwise it resumes exactly as the bare form does. This is the sanctioned remote resume of
 a session reopened after an interrupted run: open it (`open_session`), then send
-`{"type":"resume_session","sessionId":"...","expectedSeq":<pauseSeq from open_session.state>,"unlessStopped":true}`.
+`{"type":"resume_session","sessionId":"...","mode":"interrupted","expectedSeq":3,"unlessStopped":true,"effectId":"resume-7"}`.
+
+Peer clients must see `resume_session_guarded_admission_v1` in the target host's capabilities **and**
+`pause.guardedResumeAdmission: 1` beside `pause.pauseSeq` in that target session's state. Older hosts can echo
+negotiated capability strings; neither the string alone nor a version comparison proves the session implements
+the guard. Bind the read and command to the same host incarnation and session. Without proof, send no resume.
+`mode: "interrupted"` requires both guards and releases nothing if the interruption disappeared. A Stop or parent
+hold overtaking preparation prevents the turn and leaves the inputs and notices in custody. A held extension
+command needs human Resume (`held_command`): its pre-turn effects cannot be rolled back if a Stop arrives.
 
 A reopened session is held as interrupted only when its file shows a run that was still in flight: a run recorded
 active whose transcript does not end in an assistant answer that asks for no tool call (a tool call without its result,

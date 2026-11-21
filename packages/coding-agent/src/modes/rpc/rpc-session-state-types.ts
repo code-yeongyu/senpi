@@ -199,6 +199,8 @@ export interface RpcSessionState extends Partial<PermissionMode> {
 	runPaused?: boolean;
 	/** The pause seq to send as `resume_session.expectedSeq`, and the live hold records (senpi#3811). */
 	pause?: {
+		/** Target session's own guarantee, never a reflected client capability. */
+		guardedResumeAdmission?: 1;
 		pauseSeq: number;
 		records: { kind: string; key: string; runRef?: { kind: string; id: string }; parentSessionId?: string }[];
 	};
