@@ -57,13 +57,18 @@ const NODE_CHILD_PROCESS_CELL =
 const NODE_CHILD_PROCESS_DETACHED_CELL =
 	'import { spawn } from "node:child_process"; const child = spawn("tail", ["-f", "/dev/null"], { detached: true, stdio: "ignore" }); child.unref(); print("MARK=" + child.pid); return "done"';
 
+// A survivor is read after two settle events: the target cell's run() resolves only once its retirement is done,
+// and the barrier cell's settle awaits any retirement still in flight. No wall clock decides its liveness.
+const SETTLE_BARRIER_CELL = "return 0";
 // The exit poll waits on process state and ends as soon as the tree is gone; its bound is only a circuit breaker.
 const CHILD_EXIT_POLL_MS = 25;
 const CHILD_EXIT_POLL_ROUNDS = 400;
 const DRIVER_TIMEOUT_MS = 90_000;
 const TEST_TIMEOUT_MS = 120_000;
 
-function driverSource(cell: string, probe: string | null): string {
+type Expectation = "exits" | "survives";
+
+function driverSource(cell: string, probe: string | null, expectation: Expectation): string {
 	return [
 		'import { writeFile } from "node:fs/promises";',
 		`import { JavaScriptKernel } from ${JSON.stringify(kernelModulePath)};`,
@@ -85,7 +90,9 @@ function driverSource(cell: string, probe: string | null): string {
 		"});",
 		// A zombie (defunct) child is terminated, awaiting reap by its owner; treat it as not running.
 		'const isAlive = (target) => { if (target === 0) return false; try { process.kill(target, 0); } catch { return false; } const stat = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(target)]).stdout.toString().trim(); return stat.length > 0 && !stat.startsWith("Z"); };',
-		`for (let round = 0; round < ${CHILD_EXIT_POLL_ROUNDS} && (isAlive(pid) || isAlive(grandchildPid)); round += 1) await Bun.sleep(${CHILD_EXIT_POLL_MS});`,
+		expectation === "survives"
+			? `await kernel.run({ cellId: "settle-barrier", code: ${JSON.stringify(SETTLE_BARRIER_CELL)}, timeoutMs: 60_000 });`
+			: `for (let round = 0; round < ${CHILD_EXIT_POLL_ROUNDS} && (isAlive(pid) || isAlive(grandchildPid)); round += 1) await Bun.sleep(${CHILD_EXIT_POLL_MS});`,
 		"const aliveAfterSettle = isAlive(pid);",
 		"const grandchildAliveAfterSettle = isAlive(grandchildPid);",
 		'for (const target of [pid, grandchildPid]) { if (isAlive(target)) { try { process.kill(target, "SIGKILL"); } catch {} } }',
@@ -95,12 +102,16 @@ function driverSource(cell: string, probe: string | null): string {
 	].join("\n");
 }
 
-async function runCellEndDriver(cell: string, probe: string | null = null): Promise<DriverReport> {
+async function runCellEndDriver(
+	cell: string,
+	probe: string | null = null,
+	expectation: Expectation = "exits",
+): Promise<DriverReport> {
 	const root = await mkdtemp(join(tmpdir(), "senpi-cell-end-children-"));
 	try {
 		const driverPath = join(root, "driver.ts");
 		const reportPath = join(root, "report.json");
-		await writeFile(driverPath, driverSource(cell, probe), "utf8");
+		await writeFile(driverPath, driverSource(cell, probe, expectation), "utf8");
 		const run = spawnSync("bun", [driverPath, reportPath], {
 			encoding: "utf8",
 			cwd: root,
@@ -137,7 +148,7 @@ describe.skipIf(!bunAvailable)(
 		it("Given a cell that spawned a detached child when the cell settles then the child is left running", async () => {
 			// `detached: true` is the cell asking for a process that outlives it, so
 			// cleanup must not treat it as abandoned.
-			const report = await runCellEndDriver(DETACHED_CHILD_CELL);
+			const report = await runCellEndDriver(DETACHED_CHILD_CELL, null, "survives");
 
 			expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
 			expect(report.aliveAfterSettle).toBe(true);
@@ -171,7 +182,7 @@ describe.skipIf(!bunAvailable)(
 		});
 
 		it("Given a detached node:child_process child when the cell settles then the child is left running", async () => {
-			const report = await runCellEndDriver(NODE_CHILD_PROCESS_DETACHED_CELL);
+			const report = await runCellEndDriver(NODE_CHILD_PROCESS_DETACHED_CELL, null, "survives");
 
 			expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
 			expect(report.aliveAfterSettle).toBe(true);
