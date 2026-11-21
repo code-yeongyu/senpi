@@ -130,6 +130,8 @@ export function mapToolArgs(
 			return {
 				command: input.command,
 				timeout: typeof input.timeout === "number" ? input.timeout / 1_000 : input.timeout,
+				// A deliberately backgrounded command must not become a foreground call (oh-my-openagent#8765).
+				...(typeof input.run_in_background === "boolean" ? { run_in_background: input.run_in_background } : {}),
 			};
 		case "grep":
 			return {
