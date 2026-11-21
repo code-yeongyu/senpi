@@ -1332,6 +1332,8 @@
       "packages/senpi-codemode/src/tool/render-live.ts": ["LIVE_CODE_WINDOW_LINES", "isLiveCellStatus"],
       // pre-existing at origin main aceb1cc1d9: unused exports TERMINAL_SNAPSHOT_CAP, estimateSnapshotBytes
       "packages/senpi-codemode/src/tool/terminal-snapshot-store.ts": ["TERMINAL_SNAPSHOT_CAP", "estimateSnapshotBytes"],
+      // default export is the globalSetup vitest.config.ts loads by path, not an import (entry, export-checked; #7147)
+      "packages/senpi-codemode/test/eval/webview-warm-up-global-setup.ts": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused exports TestHarness
       "packages/server/src/testing/index.ts": ["TestHarness"],
       // pre-existing at origin main aceb1cc1d9: unused exports createUnixListener
