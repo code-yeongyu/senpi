@@ -20,8 +20,10 @@ import { MOVE, setup } from "./session-move-fixture.ts";
 type World = Awaited<ReturnType<typeof setup>>;
 
 const afterRename = vi.hoisted(() => new Map<string, () => Promise<void>>());
+const afterRead = vi.hoisted(() => new Map<string, () => Promise<void>>());
 
 // A rename is durable once it returns. A test holds a caller right after one, where a stalled process would be held.
+// A read is awaited too: a test acts right after one has its bytes, before its caller sees them.
 vi.mock("node:fs/promises", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs/promises")>();
 	return {
@@ -29,6 +31,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 		rename: async (...args: Parameters<typeof actual.rename>) => {
 			await actual.rename(...args);
 			await afterRename.get(String(args[1]))?.();
+		},
+		readFile: async (...args: Parameters<typeof actual.readFile>) => {
+			const read = await actual.readFile(...args);
+			await afterRead.get(String(args[0]))?.();
+			return read;
 		},
 	};
 });
@@ -46,6 +53,7 @@ afterEach(() => {
 	vi.restoreAllMocks();
 	setMoveStepHook(undefined);
 	afterRename.clear();
+	afterRead.clear();
 });
 
 function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
@@ -389,6 +397,69 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 			landed: existsSync(landingOf(world)),
 			rewrittenCopies: readdirSync(dirname(landingOf(world))).filter((name) => name.includes(".rebind-")),
 		}).toEqual({ answer: { refused: "ELOCKLOST" }, landed: false, rewrittenCopies: [] });
+	});
+
+	// `commit` runs the stamp check itself before it calls the landing, and that check reads the record too. A landing that
+	// ignores the check it is handed must still never start for a holder told during that read that its lock is gone.
+	it("#given a holder told, while commit's own stamp check reads the record, that its lock was taken #when its landing would ignore the check it is handed #then the landing is never called and the commit fails", async () => {
+		const world = await setup();
+		const lock = stallHolderOf(recordOf(world));
+		await world.ledger.beginReceive(MOVE, landingOf(world));
+		setMoveStepHook((step) => {
+			if (step !== "import:stamped") return;
+			// The stamp is written: the next read of the record is commit's own stamp check.
+			afterRead.set(recordOf(world), async () => {
+				afterRead.delete(recordOf(world));
+				lock.taken();
+			});
+		});
+		let landings = 0;
+
+		const ended = await world.ledger
+			.commit(MOVE, landingOf(world), () => {
+				landings += 1;
+			})
+			.then(
+				() => "committed",
+				(error: unknown) =>
+					typeof error === "object" && error !== null && "code" in error ? String(error.code) : String(error),
+			);
+
+		expect({ ended, landings, readsLeftToHook: afterRead.size }).toEqual({
+			ended: "ELOCKLOST",
+			landings: 0,
+			readsLeftToHook: 0,
+		});
+	});
+
+	// The stamp check's own read is awaited: a lock taken while that read is in flight shows only after it.
+	it("#given a holder whose stamp is unchanged, told while the landing's stamp check reads the record that its lock was taken #then it is refused ELOCKLOST, lands nothing and leaves no rewritten copy", async () => {
+		const world = await setup();
+		const lock = stallHolderOf(recordOf(world));
+		const holder = new HoldsCommitBeforeRename(world.ledger.dir);
+		const importing = settled(importWith(world, holder));
+		await holder.stamped.promise;
+		// The holder is past `commit`'s own checks: the next read of the record is the landing's stamp check.
+		afterRead.set(recordOf(world), async () => {
+			afterRead.delete(recordOf(world));
+			lock.taken();
+		});
+
+		holder.gate.resolve();
+
+		expect({
+			answer: await importing,
+			landed: existsSync(landingOf(world)),
+			rewrittenCopies: readdirSync(dirname(landingOf(world))).filter((name) => name.includes(".rebind-")),
+			readsLeftToHook: afterRead.size,
+			stampStillItsOwn: readFileSync(recordOf(world), "utf8").includes('"committing":true'),
+		}).toEqual({
+			answer: { refused: "ELOCKLOST" },
+			landed: false,
+			rewrittenCopies: [],
+			readsLeftToHook: 0,
+			stampStillItsOwn: true,
+		});
 	});
 
 	it("#given a holder told during its commit's prepare that its lock was taken #then it stamps nothing, lands nothing and its import fails", async () => {
