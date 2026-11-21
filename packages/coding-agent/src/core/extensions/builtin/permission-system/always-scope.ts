@@ -35,7 +35,7 @@ const NEVER_WIDENED = new Set([
  * dots, dashes; no trailing dot), an optional port, then `/`, `?`, `#` or the end. No userinfo, no
  * percent-escape, no IPv6 brackets.
  */
-const UNAMBIGUOUS_URL = /^(https?):\/\/([A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::([0-9]{1,5}))?(?:[/?#]|$)/;
+const UNAMBIGUOUS_URL = /^(https?):\/\/([A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::([0-9]{1,5}))?(?:[/?#]|$)/i;
 /** Characters that let one parser read another host than the next: backslash, `@`, `%`, whitespace, controls. */
 const AMBIGUOUS_CHARACTER = /[\\@%\s\u0000-\u001f\u007f]/;
 const DEFAULT_PORTS: Record<string, string> = { http: "80", https: "443" };
@@ -54,7 +54,8 @@ export function canonicalUrlOrigin(raw: string): string | undefined {
 	if (match === null) return undefined;
 	const scheme = match[1].toLowerCase();
 	const host = match[2].toLowerCase();
-	const port = match[3] === undefined || match[3] === DEFAULT_PORTS[scheme] ? "" : String(Number(match[3]));
+	const numericPort = match[3] === undefined ? "" : String(Number(match[3]));
+	const port = numericPort === DEFAULT_PORTS[scheme] ? "" : numericPort;
 	let url: URL;
 	try {
 		url = new URL(raw);
