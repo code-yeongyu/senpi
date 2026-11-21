@@ -33,7 +33,8 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { type FSWatcher, watch } from "node:fs";
-import { mkdir, open, rename, rm, stat } from "node:fs/promises";
+import * as nodeFs from "node:fs";
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -149,15 +150,7 @@ export class GrantsLockLostError extends Error {
 }
 async function update(path: string, mutate: (grants: Record<string, Grant>) => void): Promise<GrantSnapshot> {
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-	let lost: Error | undefined;
-	const release = await lockfile.lock(path, {
-		realpath: false,
-		stale: 30_000,
-		retries: { retries: 100, factor: 1.2, minTimeout: 20, maxTimeout: 200 },
-		onCompromised: (error: Error) => {
-			lost ??= error;
-		},
-	});
+	const lock = await lockGrantsFile(path);
 	const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
 	try {
 		const previous = await read(path);
@@ -174,6 +167,7 @@ async function update(path: string, mutate: (grants: Record<string, Grant>) => v
 		}
 		for (let attempt = 0; ; attempt++) {
 			try {
+				const lost = lock.lost();
 				if (lost !== undefined) throw new GrantsLockLostError(lost);
 				await rename(temporary, path);
 				break;
@@ -202,7 +196,7 @@ async function update(path: string, mutate: (grants: Record<string, Grant>) => v
 		try {
 			await rm(temporary, { force: true });
 		} finally {
-			if (lost === undefined) await release();
+			await lock.release();
 		}
 	}
 }
@@ -295,5 +289,114 @@ export async function observe(path: string, listener: (event: GrantObservation) 
 		closed = true;
 		watcher?.close();
 		clearInterval(timer);
+	};
+}
+
+/**
+ * The lock library removes a lock directory by path, on release and on a stale takeover alike, and never checks that
+ * it is still the directory this writer created (senpi#6431, the race #6430 fixed in senpi's own lock wrapper; this
+ * file is vendored and may not import it). A writer that stalled past the stale bound and was taken over would delete
+ * the next writer's lock on release. So each writer puts a random owner token beside the lock directory right after
+ * acquiring, and its removal goes ahead only while that token is still its own; otherwise it removes nothing and the
+ * lock reads as lost. Before the token exists (the library's own takeover of a stale lock) removal is plain, after the
+ * stale token. The library's exit-time removal (rmdirSync, an exit handler cannot await) is checked the same way.
+ */
+function ownerCheckedFs(ownToken: () => string | undefined, onForeign: () => void): typeof nodeFs {
+	const foreign = (token: string, current: string | undefined, readError: NodeJS.ErrnoException | null): boolean =>
+		readError?.code === "ENOENT" || (readError === null && current !== token);
+	const rmdir = (lockDir: string, callback: (error: NodeJS.ErrnoException | null) => void): void => {
+		const token = ownToken();
+		if (token === undefined) {
+			nodeFs.unlink(`${lockDir}.owner`, () => nodeFs.rmdir(lockDir, callback));
+			return;
+		}
+		nodeFs.readFile(`${lockDir}.owner`, "utf8", (readError, current) => {
+			if (foreign(token, current, readError)) {
+				onForeign();
+				callback(null);
+				return;
+			}
+			nodeFs.unlink(`${lockDir}.owner`, () => nodeFs.rmdir(lockDir, callback));
+		});
+	};
+	const rmdirSync = (lockDir: string): void => {
+		const token = ownToken();
+		if (token !== undefined) {
+			let current: string | undefined;
+			let readError: NodeJS.ErrnoException | null = null;
+			try {
+				current = nodeFs.readFileSync(`${lockDir}.owner`, "utf8");
+			} catch (error) {
+				readError = error as NodeJS.ErrnoException;
+			}
+			if (foreign(token, current, readError)) {
+				onForeign();
+				return;
+			}
+		}
+		try {
+			nodeFs.unlinkSync(`${lockDir}.owner`);
+		} catch {
+			// No token file: nothing to remove beside the directory.
+		}
+		nodeFs.rmdirSync(lockDir);
+	};
+	// Deliberately plain node:fs, not the library's default graceful-fs: a grants write takes one lock at a time, so
+	// graceful-fs's EMFILE retry buys nothing here. A plain object, never a prototype write: under Bun the node:fs
+	// namespace is frozen.
+	const copy: Record<string, unknown> = {};
+	for (const key in nodeFs) copy[key] = (nodeFs as unknown as Record<string, unknown>)[key];
+	return Object.assign(copy, { rmdir, rmdirSync }) as unknown as typeof nodeFs;
+}
+
+/** The grants file's lock, released only while it is still this writer's (exported for its test). */
+export async function lockGrantsFile(
+	path: string,
+	options: { stale?: number; lockfilePath?: string } = {},
+): Promise<{ release: () => Promise<void>; lost: () => Error | undefined }> {
+	let lost: Error | undefined;
+	let token: string | undefined;
+	const lockDir = options.lockfilePath ?? `${path}.lock`;
+	const release = await lockfile.lock(path, {
+		realpath: false,
+		stale: options.stale ?? 30_000,
+		...(options.lockfilePath === undefined ? {} : { lockfilePath: options.lockfilePath }),
+		retries: { retries: 100, factor: 1.2, minTimeout: 20, maxTimeout: 200 },
+		fs: ownerCheckedFs(
+			() => token,
+			() => {
+				lost ??= Object.assign(new Error("MCP grants lock was taken over by another writer before release"), {
+					code: "ECOMPROMISED",
+				});
+			},
+		),
+		onCompromised: (error: Error) => {
+			lost ??= error;
+		},
+	});
+	// Residual (tracked in #6431): a writer that stalls past the stale bound between the library's mkdir and this
+	// token write can still overwrite the next writer's token; the same suspend-class stall as the lockSync callers.
+	try {
+		const next = randomUUID();
+		await writeFile(`${lockDir}.owner`, next, { mode: 0o600 });
+		token = next;
+	} catch {
+		// No token: release falls back to the library's plain removal, never worse than before.
+	}
+	return {
+		release: async () => {
+			if (lost === undefined) {
+				await release();
+				return;
+			}
+			// A lost lock is not released, but this writer's own token beside it goes, and only while it is still ours.
+			if (token === undefined) return;
+			try {
+				if ((await readFile(`${lockDir}.owner`, "utf8")) === token) await rm(`${lockDir}.owner`, { force: true });
+			} catch {
+				// Already gone or replaced: nothing of ours to remove.
+			}
+		},
+		lost: () => lost,
 	};
 }
