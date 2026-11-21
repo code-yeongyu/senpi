@@ -156,6 +156,13 @@ for platform in "${PLATFORMS[@]}"; do
             codesign --force --sign - "$OUTPUT_DIR/$platform/pi"
         fi
     fi
+
+    # senpi#6497: the compiled binary embeds its own zod copies; refuse a stale one (lockfile pins are not enough).
+    if [[ "$platform" == windows-* ]]; then
+        node "../../scripts/assert-binary-zod-cores.mjs" "$OUTPUT_DIR/$platform/pi.exe"
+    else
+        node "../../scripts/assert-binary-zod-cores.mjs" "$OUTPUT_DIR/$platform/pi"
+    fi
 done
 
 echo "==> Creating release archives..."

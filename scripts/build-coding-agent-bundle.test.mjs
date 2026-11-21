@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { commonBuildOptions, findContainingOutput, validateExternalImports } from "./build-coding-agent-bundle.mjs";
 import { lazyEntryPoints } from "./bundle-entry-points.mjs";
-import { assertBundleZodCores } from "./bundle-zod-core-guard.mjs";
+import { assertBundleZodCores, describeStaleZodAllowances, STALE_ZOD_ALLOWANCE } from "./bundle-zod-core-guard.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const permissionSystemSrc = join(repoRoot, "packages", "coding-agent", "src", "core", "extensions", "builtin", "permission-system");
@@ -91,10 +91,19 @@ describe("built bundle zod cores", () => {
 		// a missing or empty bundle is a failed scan, not a skipped one (senpi#6497 review).
 		const bundleDir = join(repoRoot, "packages", "coding-agent", "dist", "bundle");
 
-		// When / Then: exactly one 4.6.2 in the SDK's chunk and one in the session worker, nothing else stale
+		// When / Then: one 4.6.2 core and one zod/v3 layer in the SDK's chunk and in the session worker, nothing else
+		// stale, and the report names the pinned SDK version and source hashes.
+		const report = describeStaleZodAllowances(assertBundleZodCores(bundleDir)).map((line) => line.replace(/chunks\/sdk-[^/ ]+\.js/, "chunks/sdk-*.js"));
+		const sdk = `@anthropic-ai/claude-agent-sdk ${STALE_ZOD_ALLOWANCE.sdkVersion}`;
+		assert.deepEqual(report.slice(STALE_ZOD_ALLOWANCE.sources.length), [
+			`allowed stale zod copy: ${sdk} chunks/sdk-*.js zod 4.6.2 core`,
+			`allowed stale zod copy: ${sdk} chunks/sdk-*.js zod/v3 layer`,
+			`allowed stale zod copy: ${sdk} chunks/session-worker.js zod 4.6.2 core`,
+			`allowed stale zod copy: ${sdk} chunks/session-worker.js zod/v3 layer`,
+		]);
 		assert.deepEqual(
-			assertBundleZodCores(bundleDir).map((entry) => `${entry.file.replace(/^chunks\/sdk-[^/]+\.js$/, "chunks/sdk-*.js")} ${entry.version}`),
-			["chunks/sdk-*.js 4.6.2", "chunks/session-worker.js 4.6.2"],
+			report.slice(0, STALE_ZOD_ALLOWANCE.sources.length),
+			STALE_ZOD_ALLOWANCE.sources.map((source) => `pinned stale zod source: ${sdk} ${source.path} sha256:${source.sha256} (${source.stale.map((version) => (version === "3.x" ? "zod/v3 layer" : `zod ${version} core`)).join(", ")})`),
 		);
 	});
 });
