@@ -12,6 +12,8 @@ import { type WebViewClientGrant, WebViewService } from "../../coding-agent/src/
 import {
 	bunChromeChildren,
 	bunWebViewAvailable,
+	CHROME_WARM_UP_SLOT_WAIT_MS,
+	oneChromeWarmUpAtATime,
 	serveFixturePage,
 	type WebViewFixturePage,
 } from "./eval/webview-fixtures.ts";
@@ -123,7 +125,8 @@ async function greetingAfterNavigate(port: MessagePort, viewId: string): Promise
 // product's own readiness policy (a bounded attach, one relaunch). Like the product, the warm-up
 // tolerates one stalled launch; that stall, the attach that served the view, and the retire time
 // all go to the readiness log, and a create that fails every launch fails here with its phase.
-// Two bounded launches, their retirements and the fixture navigation fit this hook budget.
+// Two bounded launches, their retirements and the fixture navigation fit this budget; the hook adds the wait
+// for another file's warm-up to finish (senpi#7147).
 const WARM_UP_TIMEOUT_MS = 120_000;
 
 async function warmUpChrome(): Promise<void> {
@@ -158,8 +161,8 @@ async function warmUpChrome(): Promise<void> {
 describe.skipIf(!bunWebViewAvailable)("a Chrome launch that never becomes ready", { timeout: 60_000 }, () => {
 	beforeAll(async () => {
 		page = await serveFixturePage();
-		await warmUpChrome();
-	}, WARM_UP_TIMEOUT_MS);
+		await oneChromeWarmUpAtATime(warmUpChrome);
+	}, CHROME_WARM_UP_SLOT_WAIT_MS + WARM_UP_TIMEOUT_MS);
 
 	// Release resolves once the service's Chrome retirement ended; anything left is a leak.
 	afterEach(async () => {
