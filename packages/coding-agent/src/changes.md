@@ -1,3 +1,21 @@
+## 2026-11-20 - Use loaded flag declarations to identify positional messages (#7116)
+
+### What changed
+
+- `main.ts` recovers positional messages in their original order after loading an extension with a boolean flag used in the invocation.
+
+### Why
+
+- A string option consumes its following value; a boolean option must not consume the next message.
+
+### Why an extension could not handle it
+
+- The CLI owns the positional message list passed to the interactive session.
+
+### Expected merge conflict zones
+
+- Startup immediately after collecting extension flag declarations.
+
 ## 2026-11-05 - Root exports for the resolver and the credential store (custody CK18, senpi#5865)
 
 ### What changed

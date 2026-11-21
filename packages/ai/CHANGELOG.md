@@ -1,12 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.21] - 2026-11-21
 
 ### Breaking Changes
 
 ### Added
 
 ### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`, `venice`, `vercel-ai-gateway`).
 
 ### Fixed
 

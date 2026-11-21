@@ -1,3 +1,24 @@
+## 2026-11-20 - parked follow-ups join the next run's first turn; `all` lists every queued message (oh-my-openagent#14428)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: a run that ends in a provider error with follow-ups still queued marks them parked, whoever owns that run's post-run decision (a retry, a compaction or `agent_before_settle`, which suppress the core's own drain). The next run started from new input (a prompt, a started delivery, a goal continuation's message) sets `takeFollowUpsAtStart`, so those follow-ups enter it at its first turn boundary instead of only after its first response; a retry or other `continue()` leaves the mark for that run, so follow-up work still waits behind a retry. A run that starts from the follow-up queue itself clears the mark. `peekQueuedMessages({ all: true })` returns every queued steering and follow-up message (new `PendingMessageQueue.all()`); in `one-at-a-time` mode it returned only each queue's next drain.
+- `packages/agent/src/agent-loop.ts`: the loop's first queue poll also drains follow-ups when `takeFollowUpsAtStart` is set and no steering is queued.
+- `packages/agent/src/internal-events.ts`: `InternalLoopConfig` carries the internal `takeFollowUpsAtStart` flag; the public `AgentLoopConfig` is unchanged.
+
+### Why
+
+- oh-my-openagent#14428: follow-ups another session queued while a run was failing were parked, and every later run whose request failed too (a started delivery, a goal continuation) settled without writing them, so they stayed pending for hours. The transcript entry is the delivery: the next run writes them before its request, whatever that request returns.
+- `takeQueuedDeliveries()`, `clearQueue()` and the ticket lookups used `peekQueuedMessages({ all: true })` as "every queued message". With user input queued ahead of a delivery, an interrupt dropped the delivery from the admission ledger while it stayed queued, so the sender's redelivery was written twice.
+
+### Why an extension could not handle it
+
+- Queue polling inside a run and the queue snapshot are agent-loop internals; no extension hook runs at a run's first turn boundary or owns the native queues.
+
+### Expected merge conflict zones
+
+- LOW: `runWithLifecycle()`, `createLoopConfig()` and `peekQueuedMessages()` in `agent.ts`; the first steering poll in `runLoop()` in `agent-loop.ts`.
+
 ## 2026-11-15 - What a closed hand link suppresses, stated exactly (senpi#6777, PR #6801)
 
 ### What changed

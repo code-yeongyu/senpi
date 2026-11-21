@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.21] - 2026-11-21
 
 ### Breaking Changes
 
@@ -9,6 +9,8 @@
 ### Changed
 
 ### Fixed
+
+- Follow-ups parked by a run that ended in a provider error are written at the next run's first turn, even when that run's request fails too, and `peekQueuedMessages({ all: true })` lists every queued message in `one-at-a-time` mode ([oh-my-openagent#14428](https://github.com/code-yeongyu/oh-my-openagent/issues/14428))
 
 ### Removed
 

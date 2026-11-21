@@ -1,3 +1,76 @@
+## 2026-11-20 - every announced queued-drain wait is closed (oh-my-openagent#14428)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_drainQueueAfterProviderBackoff()` closes the `auto_retry_start` it announces with exactly one `auto_retry_end`: `success: true` when it hands the queue to a run or the queue was taken back meanwhile, `success: false` with "Retry cancelled" when it was cancelled.
+
+### Why
+
+- oh-my-openagent#14428 (#7124 review): on the path that hands the queue to a run the wait was never closed, so an extension or RPC client that pairs retry starts and ends was left with an open retry. A wait whose queue the user took back to edit reported a failed retry with no error, which interactive mode showed as "Retry failed ... Unknown error".
+- Correction to the #7124 entry: a queue of a person's own input alone still waits for their next prompt (#4036), but a queue that holds both such input and another session's delivery drains whole, in queue order, after the wait. The code comment at the drain now says so.
+
+### Why an extension could not handle it
+
+- The drain wait and its events are emitted by the session core; an extension only observes them.
+
+### Expected merge conflict zones
+
+- LOW: the end of `_drainQueueAfterProviderBackoff()` in `agent-session.ts`.
+
+## 2026-11-20 - queued input waits out a rate-limited provider instead of parking (oh-my-openagent#14428)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: when the retry owner gives up on a retryable failure (rate limit, overload, transient server error) and the queue holds a delivery from another session, `_drainQueueAfterProviderBackoff()` waits (the longer of the provider's stated delay and the retry profile's backoff for a counter that grows with each such wait and resets after a run that ends without an error, never longer than the agent delay ceiling) and then runs the queue through the scheduled continuation. The ceiling is the one the retry backoff applies (new `_agentDelayCeilingMs()`: a configured `retry.maxAgentDelayMs`, else the profile's override-mode ceiling, else the settings default), and the drain never waits uncapped, so a provider asking for an hour is retried within the ceiling. The wait is announced with `auto_retry_start` (so the UI and `list_sessions` show it) and ends with `auto_retry_end` when it is cancelled or the queue emptied; it uses the retry abort controller, so Esc or `abort()` cancels it like a retry backoff and the run settles.
+
+### Why
+
+- oh-my-openagent#14428: after a night of rate-limited requests the queued cross-session follow-ups stayed parked until an unrelated prompt arrived, while the provider was answering again. Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again, while a person's own input queued behind a failed response still waits for their next prompt (#4036).
+
+### Why an extension could not handle it
+
+- The retry owner's exhaustion and the agent_end continuation decision are session-core state; an extension sees the settle only after the queue has already been parked.
+
+### Expected merge conflict zones
+
+- LOW: the agent_end continuation block in `_handleAgentEvent()` (next to `retryExhaustionAllowsQueuedContinuation`) and the new method next to `abortRetry()`.
+
+## 2026-11-20 - a compaction no longer detaches the session from its agent's events (oh-my-openagent#14428)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `compact()` and the extension `ctx.compact()` keep the session subscribed to its agent while the summary is prepared. `_reconnectToAgent()` is removed and `_disconnectFromAgent()` is called by `dispose()` only. Upstream removed the same detach in e56893f4cd (pi-mono #7253); the fork still carried it.
+
+### Why
+
+- oh-my-openagent#14428: the abort that precedes a compaction does not always leave the agent quiet. It returns at once when the run is already ending (an open `agent_end` boundary) or is a run the session does not own, and that run's own continuation, retry or queue drain then ran with no subscriber. Every message such a run emitted was lost. Queued cross-session deliveries it took were never written and stayed `pending` in the admission ledger for the life of the process, so their sender never delivered them again, and the unheard `agent_end` left the session marked busy.
+
+### Why an extension could not handle it
+
+- The agent subscription and both compaction entry points are session core; an extension cannot observe events the session itself does not receive.
+
+### Expected merge conflict zones
+
+- LOW: the `try`/`finally` of `compact()` and of the extension `compact` action in `agent-session.ts`. Upstream has no detach there either; take upstream's shape.
+
+## 2026-11-20 - The brand profile names the distribution's own extensions (#7118, oh-my-openagent#14465)
+
+### What changed
+
+- `packages/coding-agent/src/core/brand.ts`: `BrandProfile.extensions`, read from `SENPI_BRAND`: the absolute paths of the extensions the distribution's launcher passes with `--extension` on every start. Relative, non-string or NUL-carrying entries are dropped; an empty result leaves the field absent.
+
+### Why
+
+- The attaching start needs to tell the launcher's own plugin from a user flag (see the `cli/changes.md` entry of the same PR).
+
+### Why an extension could not handle it
+
+- The brand profile is parsed before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `BrandProfile` interface and the `parseBrandProfile` return literal in `brand.ts` (fork-only).
+
 ## 2026-11-20 - `getTodoFirstTurnPlan` takes the preset's default (#7110, senpi#7101)
 
 ### What changed
