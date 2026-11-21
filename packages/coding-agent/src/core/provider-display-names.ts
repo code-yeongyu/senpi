@@ -9,6 +9,7 @@ export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	"cloudflare-workers-ai": "Cloudflare Workers AI",
 	cursor: "Cursor",
 	"cursor-cli-oauth": "Cursor CLI (OAuth)",
+	"cmd-cli": "Command Code CLI",
 	deepseek: "DeepSeek",
 	fireworks: "Fireworks",
 	google: "Google Gemini",
