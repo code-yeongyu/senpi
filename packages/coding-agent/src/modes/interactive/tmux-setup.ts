@@ -28,7 +28,9 @@ interface TmuxRecommendation {
 export function buildTmuxSetupWarning(check: TmuxSetupCheck): string | undefined {
 	const recommendations: TmuxRecommendation[] = [];
 
-	if (check.extendedKeys !== "on" && check.extendedKeys !== "always") {
+	// Real tmux always prints on/off/always. An empty read means the multiplexer does not register the
+	// option at all (psmux 3.4), so setting it cannot change anything and recommending it never clears.
+	if (check.extendedKeys !== "" && check.extendedKeys !== "on" && check.extendedKeys !== "always") {
 		recommendations.push({
 			setting: "set -g extended-keys on",
 			reason: "modified Enter keys (Shift+Enter, ...)",

@@ -39,6 +39,18 @@ describe("buildTmuxSetupWarning", () => {
 		expect(warning).toBeUndefined();
 	});
 
+	it("does not recommend extended-keys when the multiplexer does not register that option", () => {
+		// A tmux-compatible multiplexer without the option (psmux 3.4) answers `show -gv extended-keys`
+		// with exit 0 and an empty value; real tmux always prints on/off/always.
+		const warning = buildTmuxSetupWarning({
+			extendedKeys: "",
+			extendedKeysFormat: "",
+			imagesEnabled: true,
+			outerKittyCapable: true,
+		});
+		expect(warning).toBeUndefined();
+	});
+
 	it("only warns about extended-keys-format when it is xterm", () => {
 		const warning = buildTmuxSetupWarning({
 			extendedKeys: "off",
