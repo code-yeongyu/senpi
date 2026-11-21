@@ -32,7 +32,7 @@ const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 const DAY_MS = 86_400_000;
 
 /** Each catalog refresh branch and its workflow's MAX_STALE_DAYS (model-catalog-refresh.yml, opengateway-catalog-refresh.yml). */
-export const CATALOG_REFRESH_BRANCHES = [
+const CATALOG_REFRESH_BRANCHES = [
 	{ branch: "automation/model-catalog-refresh", maxStaleDays: 3 },
 	{ branch: "automation/opengateway-catalog-refresh", maxStaleDays: 14 },
 ];
@@ -57,7 +57,7 @@ export function staleCatalogNotices(open, now) {
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
 /** `$GITHUB_OUTPUT` lines for the preflight job's outputs. */
-export function formatPreflightOutputs({ baseSha, version }) {
+function formatPreflightOutputs({ baseSha, version }) {
 	return `base_sha=${baseSha}\nversion=${version}\n`;
 }
 
