@@ -207,7 +207,36 @@ describe("tool-call name alias resolution", () => {
 		expect(first).not.toHaveBeenCalled();
 		expect(second).not.toHaveBeenCalled();
 		expect(result.isError).toBe(true);
-		expect(textOf(result)).toBe("Tool mcp__686f__FooBar not found");
+		// The call cannot run, but the error names both candidates so the next turn can pick one.
+		expect(textOf(result)).toBe("Tool mcp__686f__FooBar not found. Did you mean foo-bar, foo_bar?");
+	});
+
+	it("suggests the likely intended tool on a near-miss typo", async () => {
+		const { result } = await callOnce("lazy_wether", [weatherTool("lazy_weather")]);
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toBe("Tool lazy_wether not found. Did you mean lazy_weather?");
+	});
+
+	it("suggests the registered name behind a typo'd gateway call", async () => {
+		const { result } = await callOnce("mcp__github__creat_issu", [weatherTool("mcp__github__create_issue")]);
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toBe("Tool mcp__github__creat_issu not found. Did you mean mcp__github__create_issue?");
+	});
+
+	it("orders suggestions by proximity, not by registration order", async () => {
+		const { result } = await callOnce("lazy_wether", [weatherTool("lazy_weathr"), weatherTool("lazy_weather")]);
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toBe("Tool lazy_wether not found. Did you mean lazy_weather, lazy_weathr?");
+	});
+
+	it("falls back to the bare error when nothing is close", async () => {
+		const { result } = await callOnce("billing_report", [weatherTool("lazy_weather"), weatherTool("read")]);
+
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toBe("Tool billing_report not found");
 	});
 
 	it("uses the canonical name of a tool the host resolver activates for a namespaced call", async () => {
