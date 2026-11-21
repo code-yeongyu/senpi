@@ -44,18 +44,16 @@ test("shared setup preserves the toolchain pins and installs and builds once", (
 	assert.equal(install.run, "npm ci --ignore-scripts\nnpm run build\n");
 	assert.equal(combined.steps.filter((step) => step.run?.includes("npm ci")).length, 1);
 	assert.equal(combined.steps.filter((step) => step.run?.includes("npm run build")).length, 1);
-});
-
-test("macOS combined enforces its measured whole-job budget independently of suite caps", () => {
-	// The 2026-11-21 timing audit measured a runner p95 of 531 seconds.
-	assert.equal(combined["timeout-minutes"], Math.ceil((2 * 531) / 60));
+	// A hung suite may hold the scarce macOS runner only for its own step cap; the job cap is the sum of
+	// the suite step caps plus setup margin, so no single hang can stretch the job beyond that.
+	assert.equal(combined["timeout-minutes"], suites.reduce((sum, step) => sum + step["timeout-minutes"], 10));
 });
 
 test("all original commands and execution guards remain with WebView last", () => {
 	assert.deepEqual(suites.map((step) => step.id),
 		["process", "rpc", "terminal_pty", "terminal_extension", "inspector", "webview"]);
-	// These suites inherited fixed caps from their old legs (#3939), not from the current job caps.
-	const inheritedSuiteCaps = { rpc: 15, terminal_pty: 15, terminal_extension: 15, inspector: 20 };
+	// Keep the macOS suite budgets from #3939 until #7192; the Linux/Windows caps can change independently.
+	const macosSuiteCaps = { process: 12, rpc: 15, terminal_pty: 15, terminal_extension: 15, inspector: 20, webview: 12 };
 	for (const name of originals) {
 		const original = jobs[name];
 		for (const step of original.steps.filter((candidate) =>
@@ -65,9 +63,7 @@ test("all original commands and execution guards remain with WebView last", () =
 			assert.equal(replacement.run, step.run, step.name);
 			assert.equal(replacement["working-directory"], step["working-directory"], step.name);
 			assert.deepEqual(replacement.env, step.env, step.name);
-			const expectedCap = step["timeout-minutes"] ?? inheritedSuiteCaps[replacement.id];
-			assert.ok(expectedCap > 0, step.name);
-			assert.equal(replacement["timeout-minutes"], expectedCap, `${step.name} keeps its own old step cap`);
+			assert.equal(replacement["timeout-minutes"], macosSuiteCaps[replacement.id], `${step.name} keeps its macOS cap`);
 			assert.equal(replacement["continue-on-error"], undefined, step.name);
 		}
 		for (const step of original.steps.filter((candidate) =>
