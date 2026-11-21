@@ -23,6 +23,7 @@ import {
 	openedSessionId,
 	supervisorLaunch,
 } from "../../helpers/rpc-generation-support.ts";
+import { captureStderr } from "../../helpers/fixture-ready.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { EXIT_BOUND_MS, RpcOwnerProcesses } from "../../helpers/rpc-owner-processes.ts";
 import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
@@ -70,23 +71,16 @@ async function caller(
 	const child = spawn(runtime === "bun" ? "bun" : process.execPath, args, {
 		cwd: qa.cwd,
 		env: { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_RUNTIME: runtime, SENPI_CODING_AGENT_DIR: qa.agentDir },
-		stdio: ["ignore", "ignore", "inherit", "ipc"],
+		stdio: ["ignore", "ignore", "pipe", "ipc"],
 	});
+	const output = captureStderr(child);
 	processes.owner(child);
-	const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error("caller readiness timeout")), CALLER_READINESS_MS);
-		child.on("message", (message, handle) => {
-			if (typeof message !== "object" || message === null || !("type" in message)) return;
-			if (message.type === "supervisor" && "pid" in message && typeof message.pid === "number") {
-				if (!(handle instanceof Socket) && runtime !== "bun")
-					return reject(new Error("missing transferred exit pipe"));
-				processes.supervisor(message.pid, handle instanceof Socket ? handle : undefined);
-				return;
-			}
-			clearTimeout(timer);
-			resolve({ ...message });
-		});
-	});
+	// A caller that dies before reporting fails here with its exit status and stderr, not after the whole bound.
+	const ready = await processes.callerReport(
+		child,
+		{ timeoutMs: CALLER_READINESS_MS, output },
+		runtime !== "bun",
+	);
 	if (failure) {
 		expect(ready).toMatchObject({ type: "failure", error: expect.stringContaining(failure) });
 		return child;

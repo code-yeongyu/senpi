@@ -2,7 +2,6 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
@@ -73,21 +72,10 @@ async function caller(qa: GenerationScratch, ownership: "caller" | "none", exten
 		env: { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
 		stdio: ["ignore", "ignore", "pipe", "ipc"],
 	});
-	ownerOutput.set(child, captureStderr(child));
+	const output = captureStderr(child);
+	ownerOutput.set(child, output);
 	processes.owner(child);
-	const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error("caller readiness timeout")), 30_000);
-		child.on("message", (message, handle) => {
-			if (typeof message !== "object" || message === null || !("type" in message)) return;
-			if (message.type === "supervisor" && "pid" in message && typeof message.pid === "number") {
-				if (!(handle instanceof Socket)) return reject(new Error("missing transferred exit pipe"));
-				processes.supervisor(message.pid, handle);
-				return;
-			}
-			clearTimeout(timer);
-			resolve({ ...message });
-		});
-	});
+	const ready = await processes.callerReport(child, { timeoutMs: budget(CASE_TIMEOUT_MS), output });
 	expect(ready, JSON.stringify(ready)).toMatchObject({ type: "ready" });
 	const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
 	const registration = await readHostRegistration(paths);
