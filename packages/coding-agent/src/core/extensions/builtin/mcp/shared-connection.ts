@@ -4,6 +4,8 @@ import { McpConfigGenerationChangedError } from "./config-generation.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
 import type { ServerConnectionOptions } from "./connection-types.ts";
+import { AuthError } from "./errors.ts";
+import { probeMcpHealth, UnsupportedMcpHealthVersionError } from "./health-probe.ts";
 import { MCP_KEEP_ALIVE_INTERVAL_MS } from "./idle.ts";
 import type { McpLogger } from "./log.ts";
 import { configureMcpReconnect, disposeMcpReconnect } from "./reconnect.ts";
@@ -135,7 +137,8 @@ export class SharedMcpConnection {
 		configureMcpReconnect({
 			connection: this.connection,
 			logger,
-			shouldReconnect: () => !this.#disposed && (this.leases.size > 0 || this.#calls.size > 0),
+			shouldReconnect: () =>
+				!this.#disposed && this.connection.state !== "needs_auth" && (this.leases.size > 0 || this.#calls.size > 0),
 			reconnect: async () => {
 				await this.#renew();
 			},
@@ -292,8 +295,16 @@ export class SharedMcpConnection {
 				"mcp.shared.keepAlive",
 				MCP_KEEP_ALIVE_INTERVAL_MS,
 				async () => {
-					if (this.connection.state === "connected") await this.connection.client.ping({ timeout: 2_000 });
-					else await this.connect();
+					if (this.connection.state === "connected") {
+						const generation = this.connection.generation;
+						try {
+							await probeMcpHealth(this.connection.client, 2_000);
+						} catch (error) {
+							if (this.connection.generation !== generation || this.connection.state !== "connected") return;
+							if (error instanceof UnsupportedMcpHealthVersionError || error instanceof AuthError) throw error;
+							this.connection.markDegraded(error instanceof Error ? error : new Error(String(error)));
+						}
+					} else await this.connect();
 				},
 				{ logger: this.#options.logger },
 			);
