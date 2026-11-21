@@ -6,7 +6,7 @@
   // session-of-pid is a senpi subcommand a test runs as `bun <cli> session-of-pid`, which knip reads as a binary.
   "ignoreBinaries": [
     "cc", "hdiutil", "julia", "mkfifo", "mount", "ollama", "openssl", "perl", "pgrep", "rg", "ruby", "script",
-    "senpi-deliberately-missing-probe-command", "session-of-pid", "taskkill.exe", "tasklist", "trash", "vmmap", "where",
+    "senpi-deliberately-missing-probe-command", "session-of-pid", "systemd-run", "taskkill.exe", "tasklist", "trash", "vmmap", "where",
     "xclip",
   ],
   // Findings marked "pre-existing at origin main aceb1cc1d9" were already present when this check was added. Each
@@ -1102,8 +1102,6 @@
       "packages/coding-agent/src/modes/provider-native-rendering.ts": ["stringifyProviderNative"],
       // pre-existing at origin main aceb1cc1d9: unused exports isHostMintedId
       "packages/coding-agent/src/modes/rpc/client-admission-record.ts": ["isHostMintedId"],
-      // pre-existing at origin main aceb1cc1d9: unused exports CONNECTION_ROLE_CAPABILITIES
-      "packages/coding-agent/src/modes/rpc/connection-roles.ts": ["CONNECTION_ROLE_CAPABILITIES"],
       // pre-existing at origin main aceb1cc1d9: unused exports UNLOAD_SESSION_CAPABILITY, SUBSCRIPTION_LIMITS_CAPABILITY, RESOLVE_PATH_CAPABILITY
       "packages/coding-agent/src/modes/rpc/host-capabilities.ts": ["RESOLVE_PATH_CAPABILITY", "SUBSCRIPTION_LIMITS_CAPABILITY", "UNLOAD_SESSION_CAPABILITY"],
       // pre-existing at origin main aceb1cc1d9: unused exports readHostHolder, publicEndpointAccepts

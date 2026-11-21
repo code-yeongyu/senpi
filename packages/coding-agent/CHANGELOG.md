@@ -12,6 +12,34 @@
 
 ### Removed
 
+## [2026.11.21] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `session_status` snapshots use the holder's last known activity when no status change has been recorded, so subscribing no longer makes those idle sessions look active ([#6418](https://github.com/code-yeongyu/senpi/pull/6418)).
+- `find_session` now finds a session file kept directly in `<agentDir>/sessions/`, not only one in a folder under it, so a closed session started with that folder as its session dir can be found by its durable id and reopened ([#7021](https://github.com/code-yeongyu/senpi/pull/7021))
+- A session still running on the previous host generation during a handoff is never opened a second time: the successor routes commands to it and takes it over under the same handle when it parks; `list_sessions` on the successor still answers when the previous generation exits or stalls mid-listing ([#7098](https://github.com/code-yeongyu/senpi/issues/7098))
+- A handoff drain parks every session, attached ones too, at its next turn boundary, so the superseded generation exits; a drain past its grace writes a `rpc-host-drain-overdue` record ([#7098](https://github.com/code-yeongyu/senpi/issues/7098))
+- On Linux with a user systemd manager, a shared host started by `host ensure` / `host handoff` runs in its own `senpi-host-<instanceId>.scope` and no longer dies when the caller's unit stops; `host ensure` / `host status` report the unit each generation runs in ([#7099](https://github.com/code-yeongyu/senpi/issues/7099))
+- Claude Opus 5.5 and Fable 5.2 prompts: do the wait-shortening work before ending a turn to wait, keep earlier instructions the latest turn does not override, write every reply in the user's language, a one-line progress update between handoffs on Opus 5.5, and Fable 5.2 no longer treats a necessary question to the user as a defect ([#7114](https://github.com/code-yeongyu/senpi/pull/7114))
+- A positional prompt after a boolean extension flag now reaches the session instead of being consumed as an option value ([#7116](https://github.com/code-yeongyu/senpi/pull/7116)).
+- For a registered boolean flag, `--bool-ext false` enables the flag and submits `false` as a positional message; omit the flag to leave it unset.
+- A terminal start that attaches to a host-held session no longer refuses the extension a repackaging distribution's launcher prepends, when the brand profile names it ([#7118](https://github.com/code-yeongyu/senpi/pull/7118))
+- Cross-session follow-ups queued behind rate-limited or overloaded requests are delivered once the provider answers again, with no new prompt, and an interrupt that drops a delivery queued behind user input no longer leaves a copy that is written again on redelivery ([oh-my-openagent#14428](https://github.com/code-yeongyu/oh-my-openagent/issues/14428))
+- A run that overlaps a manual or extension-requested compaction is recorded like any other: the cross-session deliveries and queued input it takes are written to the session instead of being lost, which had left those deliveries pending forever and the session marked busy ([oh-my-openagent#14428](https://github.com/code-yeongyu/oh-my-openagent/issues/14428))
+- A wait for a rate-limited provider before delivering queued cross-session messages now always ends with a matching retry-end event, and a wait whose queue was taken back no longer shows as a failed retry ([oh-my-openagent#14428](https://github.com/code-yeongyu/oh-my-openagent/issues/14428))
+- A successor host that stops routing a session to its draining predecessor (for example after a failed switch) now closes that route's connections to the predecessor too, instead of leaving them open and still forwarding the predecessor's events for a handle it no longer routes ([#7146](https://github.com/code-yeongyu/senpi/pull/7146))
+
+### Removed
+
+- The hidden context budget notice before automatic compaction and its `compaction.reminderEnabled` setting; background compaction no longer tells the model to wrap up, and the prompt cache is no longer re-written by a changing notice near the threshold ([#7114](https://github.com/code-yeongyu/senpi/pull/7114), #3241)
+
 ## [2026.11.20] - 2026-11-20
 
 ### Breaking Changes

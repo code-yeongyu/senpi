@@ -1,3 +1,37 @@
+## 2026-11-20 - Five sentence fixes in the Claude Opus 5.5 and Fable 5.2 cores (#7114, senpi#7113)
+
+### What changed
+
+- `claude-opus-5-5.ts`, `claude-fable-5-2.ts`: before ending a turn to wait on something outside the session, the model first does the work that shortens or removes the wait, then says in one line what it waits for (beside the blocked-work sentence).
+- Both cores: the latest user turn overrides earlier instructions only where they conflict; instructions it does not touch still hold (was "Derive intent from the latest user turn alone").
+- Both cores: the reply language is stated in Style (`REPLY_LANGUAGE_RULE`) on terminal and app, and the Handoff block keeps only the label rule (`languageRuleStatedElsewhere`). Chat already states the language in its Replies rule.
+- `claude-opus-5-5.ts`: renders the between-handoff progress sentence (`briefUpdatesBetweenHandoffs`) that Fable 5.1 and 5.2 already render, instead of "Between handoffs, work without narration".
+- `claude-fable-5-2.ts`: the last-paragraph check names "a question you could settle yourself" instead of every question.
+- `test/suite/prompt-presets-native-baseline.json`, `test/suite/prompt-presets-shared-sections.test.ts`: the Opus 5.5 and Fable 5.2 hashes are recaptured in each commit. No other preset's hash changes.
+
+Prompt tokens (`o200k_base`, whole rendered prompt with the baseline fixture tools, `sharedSections: "full"`):
+
+| Preset:surface | before | after | delta |
+|---|---|---|---|
+| claude-opus-5-5:terminal | 2,585 | 2,686 | +101 |
+| claude-opus-5-5:app | 2,611 | 2,711 | +100 |
+| claude-opus-5-5:chat | 2,424 | 2,489 | +65 |
+| claude-fable-5-2:terminal | 2,493 | 2,568 | +75 |
+| claude-fable-5-2:app | 2,519 | 2,593 | +74 |
+| claude-fable-5-2:chat | 2,302 | 2,371 | +69 |
+
+### Why
+
+- senpi#7113: each sentence produced avoidable behavior: turns ended on "waiting for X" with the wait-shortening work undone; earlier instructions were dropped; non-handoff replies drifted into English; Opus 5.5 was told to stay silent and to post status notes; Fable 5.2 counted the necessary question to the user as a defect.
+
+### Why an extension could not handle it
+
+- The cores are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: the Intent Gate, Scope and Style paragraphs of `claude-opus-5-5.ts` and `claude-fable-5-2.ts`, and their `buildHandoffSection` calls.
+
 ## 2026-11-20 - gpt-6.2 core, second edition: goal first, plan after reading, the core owns the todo rules (#7110, senpi#7101)
 
 ### What changed
