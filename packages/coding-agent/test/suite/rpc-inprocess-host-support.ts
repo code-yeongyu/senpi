@@ -94,7 +94,7 @@ export function inProcessRuntimeFactory(): {
 		},
 	};
 	const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		const manager = options.sessionManager;
 		const file = manager.getSessionFile();
 		const hold =

@@ -2,8 +2,21 @@ import { projectKernelPrelude } from "./extensions/kernel-prelude.ts";
 import { normalizeToolExposure, type ToolInfo } from "./extensions/types.ts";
 import type { ToolDefinitionEntry } from "./runtime/bootstrap.ts";
 
-/** What `pi.getAllTools()` reports for one registered tool: a session and a loopless runtime project it the same way. */
-export function toolInfoOf({ definition, sourceInfo }: ToolDefinitionEntry): ToolInfo {
+/**
+ * What `pi.getAllTools()` reports for a registry: every tool projected, and those the armed eval-only routing
+ * withholds from the model marked `evalOnly`. A session and a loopless runtime project it the same way.
+ */
+export function toolInfosOf(
+	definitions: ReadonlyMap<string, ToolDefinitionEntry>,
+	evalOnly: ReadonlySet<string>,
+): ToolInfo[] {
+	return Array.from(definitions.values(), (entry) => {
+		const info = toolInfoOf(entry);
+		return evalOnly.has(info.name) ? { ...info, evalOnly: true } : info;
+	});
+}
+
+function toolInfoOf({ definition, sourceInfo }: ToolDefinitionEntry): ToolInfo {
 	return {
 		name: definition.name,
 		label: definition.label,
@@ -12,6 +25,10 @@ export function toolInfoOf({ definition, sourceInfo }: ToolDefinitionEntry): Too
 		promptGuidelines: definition.promptGuidelines,
 		kernelPrelude: projectKernelPrelude(definition.name, definition.kernelPrelude),
 		permissionParser: definition.permissionParser,
+		// A tool's own row renderers, so a host that draws its calls elsewhere (an eval cell's nested calls) draws
+		// them the way the tool's direct row does.
+		...(definition.renderCall ? { renderCall: definition.renderCall } : {}),
+		...(definition.renderResult ? { renderResult: definition.renderResult } : {}),
 		...(definition.namespace ? { namespace: definition.namespace } : {}),
 		...(definition.annotations ? { annotations: { ...definition.annotations } } : {}),
 		sourceInfo,

@@ -1,50 +1,20 @@
+import childProcess from "node:child_process";
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
+import os from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 // senpi#3152 / senpi#4301: the boot instant was `now - os.uptime()` rounded, and os.uptime() counts whole seconds, so
 // two reads straddling an uptime tick computed instants a second apart. It is read from the kernel's boot record now:
 // `btime` in /proc/stat on Linux, `kern.boottime` from sysctl on macOS. Both sources are mocked and the platform is
 // passed in, so every case runs on every host.
-const kernel = vi.hoisted(() => ({
+const kernel = {
 	uptimeSeconds: 4_000,
 	btime: 1_000,
 	sysctlCalls: 0,
 	procStatReads: 0,
 	sysctlThrowsOnce: false,
-}));
-vi.mock("node:os", async (importOriginal) => ({
-	...(await importOriginal<typeof import("node:os")>()),
-	uptime: () => kernel.uptimeSeconds,
-}));
-vi.mock("node:fs/promises", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("node:fs/promises")>();
-	return {
-		...actual,
-		readFile: (async (path: unknown, ...rest: unknown[]) => {
-			if (path !== "/proc/stat") return Reflect.apply(actual.readFile, actual, [path, ...rest]);
-			kernel.procStatReads++;
-			return `cpu 1 2 3\nbtime ${kernel.btime}\nprocesses 1\n`;
-		}) as typeof actual.readFile,
-	};
-});
-vi.mock("node:child_process", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("node:child_process")>();
-	return {
-		...actual,
-		execFile: ((file: unknown, ...rest: unknown[]) => {
-			if (file !== "/usr/sbin/sysctl") return Reflect.apply(actual.execFile, actual, [file, ...rest]);
-			const callback = rest.at(-1);
-			if (typeof callback !== "function") throw new Error("the boot read passes a callback");
-			kernel.sysctlCalls++;
-			if (kernel.sysctlThrowsOnce) {
-				kernel.sysctlThrowsOnce = false;
-				queueMicrotask(() => callback(new Error("sysctl: unavailable"), ""));
-			} else {
-				queueMicrotask(() => callback(null, `{ sec = ${kernel.btime}, usec = 123456 } Thu Jan  1 00:16:40 1970\n`));
-			}
-			return undefined;
-		}) as typeof actual.execFile,
-	};
-});
+};
 
 // Each case imports a fresh copy of the module, so the per-process memo of the kernel record starts empty.
 async function freshProcessBootAtMs(): Promise<
@@ -55,14 +25,45 @@ async function freshProcessBootAtMs(): Promise<
 }
 
 beforeEach(() => {
+	kernel.uptimeSeconds = 4_000;
 	kernel.btime = 1_000;
 	kernel.sysctlCalls = 0;
 	kernel.procStatReads = 0;
 	kernel.sysctlThrowsOnce = false;
+	const readFile = fs.readFile;
+	const execFile = childProcess.execFile;
+	vi.spyOn(os, "uptime").mockImplementation(() => kernel.uptimeSeconds);
+	vi.spyOn(fs, "readFile").mockImplementation(async (path, ...rest) => {
+		if (path !== "/proc/stat") return Reflect.apply(readFile, fs, [path, ...rest]);
+		kernel.procStatReads++;
+		return `cpu 1 2 3\nbtime ${kernel.btime}\nprocesses 1\n`;
+	});
+	vi.spyOn(childProcess, "execFile").mockImplementation((file, ...rest) => {
+		if (file !== "/usr/sbin/sysctl") return Reflect.apply(execFile, childProcess, [file, ...rest]);
+		const callback = rest.at(-1);
+		if (typeof callback !== "function") throw new Error("the boot read passes a callback");
+		kernel.sysctlCalls++;
+		if (kernel.sysctlThrowsOnce) {
+			kernel.sysctlThrowsOnce = false;
+			queueMicrotask(() => Reflect.apply(callback, undefined, [new Error("sysctl: unavailable"), ""]));
+		} else {
+			queueMicrotask(() =>
+				Reflect.apply(callback, undefined, [
+					null,
+					`{ sec = ${kernel.btime}, usec = 123456 } Thu Jan  1 00:16:40 1970\n`,
+				]),
+			);
+		}
+		// Return a real ChildProcess-shaped handle without spawning a command.
+		return new childProcess.ChildProcess();
+	});
+	syncBuiltinESMExports();
 });
 
 afterEach(() => {
 	vi.useRealTimers();
+	vi.restoreAllMocks();
+	syncBuiltinESMExports();
 });
 
 for (const platform of ["linux", "darwin"] as const) {
@@ -75,6 +76,7 @@ for (const platform of ["linux", "darwin"] as const) {
 		vi.setSystemTime(5_001_400);
 		kernel.uptimeSeconds = 4_001;
 		expect(await processBootAtMs(Date.now, platform)).toBe(first);
+		expect(first).toBe(1_000_000);
 	});
 
 	it(`gives two readers the same moved instant after a wall-clock step (${platform})`, async () => {

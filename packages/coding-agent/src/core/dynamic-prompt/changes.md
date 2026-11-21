@@ -1,5 +1,23 @@
 # changes.md — dynamic-prompt
 
+## 2026-11-20 - Handoff language rule can leave the reply language to the core (#7114, senpi#7113)
+
+### What changed
+
+- `handoff.ts`: `buildHandoffSection` takes `languageRuleStatedElsewhere`; with it the block renders only the label rule (diet and full wording). `REPLY_LANGUAGE_RULE` (terminal and app) is the reply-language sentence a core states in its Style section. Callers that do not pass the option render byte-identical text.
+
+### Why
+
+- Inside the Handoff section the whole language rule read as a rule for the handoff block only, so replies outside a handoff drifted into English (senpi#7113).
+
+### Why an extension could not handle it
+
+- The shared handoff block is assembled here for every core.
+
+### Expected merge conflict zones
+
+- LOW: `HandoffSectionOptions` and the `languageRule` lines of both builders in `handoff.ts`.
+
 ## 2026-11-10 - The code is the model's own; the smallest-change rule is gone (senpi#6358)
 
 ### What changed

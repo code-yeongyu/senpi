@@ -1,5 +1,23 @@
 # changes
 
+## 2026-11-11 - Test alias for the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/server/vitest.config.ts`: aliases `@earendil-works/pi-realm-registry` to its source.
+
+### Why
+
+- pi-ai imports the helper, and this package's tests load pi-ai from source.
+
+### Why an extension could not handle it
+
+- Test configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the alias list.
+
 ## 2026-10-29 - Run certified Vitest suites on Bun (senpi#4763)
 
 ### What changed

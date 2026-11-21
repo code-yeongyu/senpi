@@ -547,7 +547,8 @@ export class AgentSessionRuntime {
 
 		const previousSessionFile = this.session.sessionFile;
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
-		assertSessionCwdExists(sessionManager, this.cwd);
+		await sessionManager.adoptHomeSessionDir();
+		await assertSessionCwdExists(sessionManager, this.cwd);
 		// Held before the current session is torn down: a session being moved fails the switch here.
 		const hold = await holdActiveSession(
 			sessionManager,
@@ -589,7 +590,7 @@ export class AgentSessionRuntime {
 		}
 
 		const previousSessionFile = this.session.sessionFile;
-		const sessionDir = this.session.sessionManager.getSessionDir();
+		const sessionDir = this.session.sessionManager.getHomeSessionDir();
 		const sessionManager = this.session.sessionManager.isPersisted()
 			? SessionManager.create(this.cwd, sessionDir)
 			: SessionManager.inMemory(this.cwd);
@@ -648,7 +649,7 @@ export class AgentSessionRuntime {
 			if (!currentSessionFile) {
 				throw new Error("Persisted session is missing a session file");
 			}
-			const sessionDir = this.session.sessionManager.getSessionDir();
+			const sessionDir = this.session.sessionManager.getHomeSessionDir();
 			if (!targetLeafId) {
 				const sessionManager = SessionManager.create(this.cwd, sessionDir);
 				sessionManager.newSession({ parentSession: currentSessionFile });
@@ -723,7 +724,7 @@ export class AgentSessionRuntime {
 			throw new SessionImportFileNotFoundError(resolvedPath);
 		}
 
-		const sessionDir = this.session.sessionManager.getSessionDir();
+		const sessionDir = this.session.sessionManager.getHomeSessionDir();
 		if (!existsSync(sessionDir)) {
 			mkdirSync(sessionDir, { recursive: true });
 		}
@@ -749,7 +750,7 @@ export class AgentSessionRuntime {
 		}
 
 		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
-		assertSessionCwdExists(sessionManager, this.cwd);
+		await assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent("resume", sessionManager.getSessionFile(), sessionManager.getSessionId());
 		await this.apply(
 			await this.createRuntime({
@@ -800,7 +801,7 @@ export class AgentSessionRuntime {
 		if (options.endActiveRun === true) await this.endActiveRunWithinQuitBudget(options.processExit === true);
 		await emitSessionShutdownEvent(
 			this.session.extensionRunner,
-			{ type: "session_shutdown", reason: "quit" },
+			{ type: "session_shutdown", reason: "quit", ...(this.session.closedOnRequest ? { closed: true } : {}) },
 			options,
 		);
 		this.beforeSessionInvalidate?.();
@@ -846,7 +847,7 @@ export async function createAgentSessionRuntime(
 		launchProfile?: Readonly<AgentSessionLaunchProfile>;
 	},
 ): Promise<AgentSessionRuntime> {
-	assertSessionCwdExists(options.sessionManager, options.cwd);
+	await assertSessionCwdExists(options.sessionManager, options.cwd);
 	const result = await createRuntime(options);
 	const hold = await holdRuntimeSession(result.session.sessionManager, options.launchProfile?.holderEndpoint);
 	try {

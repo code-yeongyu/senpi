@@ -25,6 +25,7 @@ import {
 	type SessionControlDeliveryDetails,
 	type SessionControlRemoteOrigin,
 } from "./extensions/session-control-types.ts";
+import type { HoldKind } from "./engine-turn-hold.ts";
 import type { CustomMessage } from "./messages.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
@@ -34,6 +35,8 @@ export type SessionControlDeliveryMessage = CustomMessage<SessionControlDelivery
 export interface ExternalAdmissionPort {
 	/** A run is active, or a prompt has claimed its start: new input queues behind it. */
 	readonly isBusy: () => boolean;
+	/** The holds a delivery cannot release, so a start is kept as a held notice instead (senpi#6490); empty when none. */
+	readonly heldBy: () => readonly HoldKind[];
 	/** Synchronously enqueues into the runtime's own queue for `lane`. */
 	readonly enqueue: (message: SessionControlDeliveryMessage, lane: ExternalDeliverAs) => void;
 	/** Starts a turn carrying `message`; settles when that run is over, whether or not it wrote the entry. */
@@ -79,6 +82,11 @@ export class ExternalAdmission {
 		return this.turnEpochValue;
 	}
 
+	/** Why admission is closed (a release or a graceful close took the session); `undefined` while it admits. */
+	get closed(): string | undefined {
+		return this.closedReason;
+	}
+
 	get hasInputWork(): boolean {
 		return this.inputHolds.size > 0;
 	}
@@ -88,7 +96,7 @@ export class ExternalAdmission {
 		this.turnEpochValue += 1;
 	}
 
-	/** The composer whose draft holds admissions; `undefined` detaches it (no composer = never held). */
+	/** The terminal whose submitted-but-untaken input holds admissions; `undefined` detaches it (never held). */
 	setEditorSource(source: (() => EditorHoldState) | undefined): void {
 		this.editorSource = source;
 	}
@@ -167,13 +175,15 @@ export class ExternalAdmission {
 		}
 		const message = deliveryMessage(input, stamp);
 		if (!this.isBusy() && input.whenIdle !== "queue") {
+			const holds = this.port.heldBy();
 			this.pending.set(id, "start");
 			// A start that settles without writing the entry left it queued for later (the runtime's
 			// admission-retention path): from then on it is held like any queued delivery.
 			void this.port.start(message).finally(() => {
 				if (this.pending.get(id) === "start") this.pending.set(id, "followUp");
 			});
-			return { kind: "started", turn_epoch };
+			// A held start is kept as a notice and starts once its hold is released: the sender is told it waits (senpi#6490).
+			return holds.length > 0 ? { kind: "held", holds: [...holds], turn_epoch } : { kind: "started", turn_epoch };
 		}
 		if (input.deliverAs === "steer" && this.isBusy()) {
 			if (input.expected_turn_id === undefined) return { kind: "turn_conflict", turn_epoch };

@@ -28,7 +28,7 @@ const SESSION_ID = "0199f0d4-1c3a-7bb1-9d2e-0a1b2c3d4e5f";
 
 function recordingFactory(cwds: string[]): CreateAgentSessionRuntimeFactory {
 	return async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		cwds.push(options.cwd);
 		return {
 			session: {

@@ -1,6 +1,13 @@
 import { isAbsolute } from "node:path";
-import type { AgentToolResult, ExecutionScope, HandScope, OpenHandScope } from "@earendil-works/pi-agent-core";
+import type {
+	AgentToolResult,
+	ExecutionScope,
+	HandCall,
+	HandScope,
+	OpenHandScope,
+} from "@earendil-works/pi-agent-core";
 import type { JsonValue } from "@earendil-works/pi-ai";
+import type { HandWake } from "../../core/execution/hand-wake-route.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
@@ -9,21 +16,41 @@ import { loadFlock } from "./hand-flock-binding.ts";
 import type { HandRunContext } from "./hand-run-allowlist.ts";
 import { grantLooplessExecuteToRemoteExecutor } from "./loopless-execute-grant.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
-import { createLooplessRuntimeFactory, type LooplessRuntime } from "./runtime-factory-loopless.ts";
+import type { LooplessCallFacts } from "./loopless-brain-calls.ts";
+import type { LooplessRuntime } from "./loopless-runtime.ts";
+import { createLooplessRuntimeFactory } from "./runtime-factory-loopless.ts";
 
 const handRun: { readonly context: HandRunContext; readonly flock: ReturnType<typeof loadFlock> } = {
 	context: { uid: process.getuid?.() ?? -1, platform: process.platform, ownEnv: process.env },
 	flock: loadFlock(),
 };
 
+/** What the issuing session sent with a call; an unknown surface is dropped, never read as another one. */
+function callFacts(call: HandCall): LooplessCallFacts {
+	const surface = call.promptSurface;
+	return surface === "terminal" || surface === "app" || surface === "chat" ? { promptSurface: surface } : {};
+}
+
 function notFound(name: string): AgentToolResult<unknown> {
 	return { content: [{ type: "text", text: `Tool ${name} not found` }], details: {}, isError: true };
+}
+
+/**
+ * A hand's durable wake outbox, per scope (brain/hand split H3): what a scope's work produces for the loop after the call
+ * that started it ended. A scope's runtime is that scope's alone, so the scope that owns a late effect is the runtime it
+ * came from.
+ */
+export interface HandWakes {
+	offer(scope: string, wake: HandWake): void;
+	/** The scope was disposed: its un-acked wakes are kept for the retention, then reported dropped to the loop. */
+	closeScope(scope: string): void;
 }
 
 export interface LooplessHandOptions {
 	extensionFactories?: InlineExtension[];
 	startupSettingsManager?: SettingsManager;
 	twoSidedHome?: TwoSidedHome;
+	wakes?: HandWakes;
 }
 
 /** A hand on loopless runtimes: its scopes for the remote executor, and its loop hooks for a loop that runs elsewhere. */
@@ -94,7 +121,11 @@ export function createLooplessHand(
 				new Error(`scope ${JSON.stringify(scope.id)} was disposed; its extensions' loop-hook state is gone`),
 			);
 		disposed.delete(scope.id);
-		const opened = factory({ cwd: scope.root });
+		const { wakes } = local;
+		const opened = factory({
+			cwd: scope.root,
+			...(wakes === undefined ? {} : { wake: (wake: HandWake) => wakes.offer(scope.id, wake) }),
+		});
 		runtimes.set(scope.id, { root: scope.root, runtime: opened });
 		opened.catch(() => runtimes.delete(scope.id));
 		return opened;
@@ -105,7 +136,14 @@ export function createLooplessHand(
 			return {
 				run: (call) =>
 					runtime.definitions.has(call.name)
-						? runtime.execute(call.name, call.toolCallId, call.arguments, call.signal, call.nested)
+						? runtime.execute(
+								call.name,
+								call.toolCallId,
+								call.arguments,
+								call.signal,
+								call.nested,
+								callFacts(call),
+							)
 						: Promise.resolve(notFound(call.name)),
 				isSequential: (name) => runtime.definitions.get(name)?.definition.executionMode === "sequential",
 				...(runtime.fileGuards === undefined
@@ -114,6 +152,7 @@ export function createLooplessHand(
 				dispose: () => {
 					runtimes.delete(scope.id);
 					disposed.add(scope.id);
+					local.wakes?.closeScope(scope.id);
 					return disposeOnce(runtime);
 				},
 			};

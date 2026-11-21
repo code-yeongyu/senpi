@@ -14,8 +14,8 @@ export type TurnOrigin = "local" | "delegated" | "engine";
 export type InputTurnMark = TurnOrigin | "join";
 export type ConnectionOrigin = "local" | "delegated";
 
-const inputMarks = new WeakMap<object, InputTurnMark>();
-const currentOrigins = new WeakMap<object, TurnOrigin>();
+const inputMarks = new WeakMap<object, { origin: InputTurnMark; personStarted: boolean }>();
+const currentOrigins = new WeakMap<object, { origin: TurnOrigin; personTurn?: object }>();
 const continuingTurns = new WeakSet<object>();
 
 /**
@@ -69,8 +69,8 @@ export function inputTurnMark(input: {
 	return input.source === undefined || input.source === "interactive" ? "local" : "engine";
 }
 
-export function markInputTurnOrigin(message: object, mark: InputTurnMark): void {
-	inputMarks.set(message, mark);
+export function markInputTurnOrigin(message: object, mark: InputTurnMark, personStarted = false): void {
+	inputMarks.set(message, { origin: mark, personStarted });
 }
 
 /** Carries `from`'s origin mark onto `to`, a copy of the same input: a copy without it would open or join a turn unmarked. */
@@ -99,11 +99,11 @@ export function recordIsDelegated(): boolean {
  * the turn it continues. The user message that opens a turn sets its origin, a steer keeps it.
  */
 export function noteRunStart(sessionManager: object): void {
-	if (continuingTurns.has(sessionManager)) return;
-	currentOrigins.set(sessionManager, recordScope.closeAtRunStart() === true ? "delegated" : "engine");
+	if (continuingTurns.delete(sessionManager)) return;
+	currentOrigins.set(sessionManager, { origin: recordScope.closeAtRunStart() === true ? "delegated" : "engine" });
 }
 
-/** A retry or recovery run repeats the turn it continues, so it keeps that turn's origin until the continuation ends. */
+/** The next retry or recovery run repeats this turn; its start consumes the continuation mark. */
 export function noteTurnContinuation(sessionManager: object): void {
 	continuingTurns.add(sessionManager);
 }
@@ -114,11 +114,19 @@ export function endTurnContinuation(sessionManager: object): void {
 
 export function noteUserMessageStart(sessionManager: object, message: object): void {
 	const mark = inputMarks.get(message);
-	if (mark === "join") return;
-	currentOrigins.set(sessionManager, mark ?? "engine");
+	if (mark?.origin === "join") return;
+	currentOrigins.set(sessionManager, {
+		origin: mark?.origin ?? "engine",
+		personTurn: mark?.personStarted ? {} : undefined,
+	});
+}
+
+/** A person's admitted message owns this identity; only an explicit continuation preserves it across run starts. */
+export function currentPersonTurn(sessionManager: object): object | undefined {
+	return currentOrigins.get(sessionManager)?.personTurn;
 }
 
 /** Whether the deciding turn counts as delegated-origin: a cross-account device started this turn or this run. */
 export function decidingTurnIsDelegated(sessionManager: object): boolean {
-	return currentOrigins.get(sessionManager) === "delegated";
+	return currentOrigins.get(sessionManager)?.origin === "delegated";
 }

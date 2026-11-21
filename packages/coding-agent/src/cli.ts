@@ -14,6 +14,7 @@ import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
 import { isFifoMode } from "./utils/inherited-duplex.ts";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
+import { dispatchSessionOfPidCommand } from "./cli/session-of-pid-command.ts";
 import { dispatchKillGuardCommand } from "./cli/kill-guard-command.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import {
@@ -127,6 +128,7 @@ if (reexecUnderBunIfNeeded()) {
 
 const args = process.argv.slice(2);
 await dispatchAgentDirectoryCommand(args);
+await dispatchSessionOfPidCommand(args);
 
 // Must run before cli-main is loaded, by either path: it caches the engine graph this process
 // imports on the fast path below, and it publishes NODE_COMPILE_CACHE so a spawned cli-main child

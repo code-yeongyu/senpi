@@ -110,6 +110,16 @@ export async function attachToOpenSession(
 		});
 	}
 	const [handle, entry] = existing;
+	if (options?.unattached === true) {
+		// A restore that finds the session already open has nothing to add: no client, no attachment.
+		if (!entry.durableSessionId) throw new RpcSessionRegistryError("session_path_in_use");
+		return {
+			sessionId: handle,
+			durableSessionId: entry.durableSessionId,
+			sessionPath: entry.sessionPath,
+			attached: true,
+		};
+	}
 	const wasParked = entry.retainOnDisconnect === true && entry.attachments === 0;
 	entry.attachments += 1;
 	entry.detachedAt = undefined;
