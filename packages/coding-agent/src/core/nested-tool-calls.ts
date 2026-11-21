@@ -158,7 +158,6 @@ export interface NestedToolCallHost {
 /** Calls below one model-issued call share its recorder. */
 interface CallScope {
 	recorder: NestedCallRecorder;
-	nextId: number;
 	/** Set inside a call that holds the exclusive queue, so its own nested calls do not wait on it. */
 	holdsQueue: boolean;
 }
@@ -180,11 +179,24 @@ export class NestedToolCallRunner {
 	private readonly host: NestedToolCallHost;
 	/** Scopes by the id of the calling tool call. */
 	private readonly scopes = new Map<string, CallScope>();
+	/**
+	 * Last id handed out per caller. Kept after the caller's scope is taken or deleted, because a
+	 * caller's work can outlive its result message: a late nested call must not reuse an id that
+	 * callers keyed state by. Reset with the scopes in clear().
+	 */
+	private readonly lastIds = new Map<string, number>();
 	/** Serializes nested calls that must not run concurrently. */
 	private queueTail: Promise<void> = Promise.resolve();
 
 	constructor(host: NestedToolCallHost) {
 		this.host = host;
+	}
+
+	/** `<callerId>/<n>` unique for the runner's lifetime, whatever happens to the caller's scope. */
+	private nextNestedId(callerId: string): string {
+		const last = (this.lastIds.get(callerId) ?? 0) + 1;
+		this.lastIds.set(callerId, last);
+		return `${callerId}/${last}`;
 	}
 
 	/**
@@ -199,12 +211,12 @@ export class NestedToolCallRunner {
 	): Promise<AgentToolCallOutcome> {
 		let scope = this.scopes.get(callerId);
 		if (!scope) {
-			scope = { recorder: new NestedCallRecorder(), nextId: 1, holdsQueue: false };
+			scope = { recorder: new NestedCallRecorder(), holdsQueue: false };
 			this.scopes.set(callerId, scope);
 		}
 		const toolCall: AgentToolCall = {
 			type: "toolCall",
-			id: `${callerId}/${scope.nextId++}`,
+			id: this.nextNestedId(callerId),
 			name,
 			arguments: (args ?? {}) as AgentToolCall["arguments"],
 		};
@@ -231,7 +243,6 @@ export class NestedToolCallRunner {
 		}
 		this.scopes.set(toolCall.id, {
 			recorder: scope.recorder,
-			nextId: 1,
 			holdsQueue: scope.holdsQueue || exclusive,
 		});
 		let outcome: AgentToolCallOutcome;
@@ -282,5 +293,6 @@ export class NestedToolCallRunner {
 
 	clear(): void {
 		this.scopes.clear();
+		this.lastIds.clear();
 	}
 }
