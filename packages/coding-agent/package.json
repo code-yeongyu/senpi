@@ -78,7 +78,8 @@
 		"examples",
 		"native/socket-secret",
 		"containerization.md",
-		"CHANGELOG.md"
+		"CHANGELOG.md",
+		"vendor"
 	],
 	"scripts": {
 		"check:provider-defaults": "vitest run test/model-resolver.test.ts -t \"default model selection\"",
@@ -95,12 +96,10 @@
 	},
 	"dependencies": {
 		"@earendil-works/chord": "0.99.1",
-		"@earendil-works/pi-agent-core": "^2026.11.18",
-		"@earendil-works/pi-ai": "^2026.11.18",
-		"@earendil-works/pi-client": "^2026.11.18",
-		"@earendil-works/pi-protocol": "^2026.11.18",
-		"@earendil-works/pi-realm-registry": "^2026.11.18",
-		"@earendil-works/pi-tui": "^2026.11.18",
+		"@earendil-works/pi-agent-core": "npm:@code-yeongyu/senpi-agent-core@2026.11.18",
+		"@earendil-works/pi-ai": "npm:@code-yeongyu/senpi-ai@2026.11.18",
+		"@earendil-works/pi-realm-registry": "npm:@code-yeongyu/senpi-realm-registry@2026.11.18",
+		"@earendil-works/pi-tui": "npm:@code-yeongyu/senpi-tui@2026.11.18",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"ajv": "8.20.0",
 		"chalk": "6.0.0",
@@ -121,9 +120,8 @@
 		"yaml": "2.9.1",
 		"@anthropic-ai/claude-agent-sdk": "0.3.321",
 		"@anthropic-ai/sdk": "0.127.0",
-		"@code-yeongyu/senpi-codemode": "^2026.11.18",
-		"@code-yeongyu/senpi-machine-ops": "^2026.11.18",
-		"@earendil-works/pi-pty": "^2026.11.18",
+		"@code-yeongyu/senpi-codemode": "2026.11.18",
+		"@earendil-works/pi-pty": "npm:@code-yeongyu/senpi-pty@2026.11.18",
 		"@modelcontextprotocol/sdk": "1.32.1",
 		"@mozilla/readability": "0.6.0",
 		"linkedom": "0.18.13",
