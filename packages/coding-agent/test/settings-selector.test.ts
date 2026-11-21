@@ -18,9 +18,11 @@ describe("SettingsSelectorComponent", () => {
 	it("cycles through fullscreen settings", () => {
 		const onExitOutputChange = vi.fn();
 		const onScrollbarChange = vi.fn();
+		const onShowMessageTimestampsChange = vi.fn();
 		const onCopyOnSelectChange = vi.fn();
 		const onWheelScrollLinesChange = vi.fn();
 		const config = {
+			showMessageTimestamps: false,
 			fullscreenExitOutput: "transcript",
 			fullscreenScrollbar: "auto",
 			fullscreenCopyOnSelect: true,
@@ -35,6 +37,7 @@ describe("SettingsSelectorComponent", () => {
 		const callbacks = {
 			onFullscreenExitOutputChange: onExitOutputChange,
 			onFullscreenScrollbarChange: onScrollbarChange,
+			onShowMessageTimestampsChange,
 			onFullscreenCopyOnSelectChange: onCopyOnSelectChange,
 			onFullscreenWheelScrollLinesChange: onWheelScrollLinesChange,
 		} as unknown as SettingsCallbacks;
@@ -49,6 +52,8 @@ describe("SettingsSelectorComponent", () => {
 		expect(onExitOutputChange.mock.calls.flat()).toEqual(["resume-hint", "transcript"]);
 		cycle("Fullscreen scrollbar", 3);
 		expect(onScrollbarChange.mock.calls.flat()).toEqual(["always", "hidden", "auto"]);
+		cycle("Message timestamps", 2);
+		expect(onShowMessageTimestampsChange.mock.calls.flat()).toEqual([true, false]);
 		cycle("Fullscreen copy on select", 2);
 		expect(onCopyOnSelectChange.mock.calls.flat()).toEqual([false, true]);
 		// #9758: custom values from settings.json stay in the cycle.

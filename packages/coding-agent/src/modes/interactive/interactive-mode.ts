@@ -1122,6 +1122,7 @@ export class InteractiveMode {
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
+	private showMessageTimestamps = false;
 	private outputPad = 1;
 	private readonly mermaidMarkdownTransformer: MarkdownTransformer = createMermaidMarkdownTransformer({
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
@@ -1341,6 +1342,7 @@ export class InteractiveMode {
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.showMessageTimestamps = this.settingsManager.getShowMessageTimestamps();
 		this.outputPad = this.settingsManager.getOutputPad();
 
 		// Register themes from resource loader and initialize
@@ -2972,6 +2974,7 @@ export class InteractiveMode {
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.showMessageTimestamps = this.settingsManager.getShowMessageTimestamps();
 		this.outputPad = this.settingsManager.getOutputPad();
 		this.applySmoothStreamingRenderFps();
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
@@ -5569,6 +5572,7 @@ export class InteractiveMode {
 						this.hiddenThinkingLabel,
 						this.outputPad,
 						this.getMarkdownTransformers(),
+						this.showMessageTimestamps,
 					);
 					this.streamingComponent.setExpanded(this.toolOutputExpanded);
 					this.streamingMessage = event.message;
@@ -6480,6 +6484,7 @@ export class InteractiveMode {
 					this.hiddenThinkingLabel,
 					this.outputPad,
 					this.getMarkdownTransformers(),
+					this.showMessageTimestamps,
 				);
 				assistantComponent.setExpanded(this.toolOutputExpanded);
 				assistantComponent.setProviderErrorOwned(isRetryableProviderMessage(message, this.session));
@@ -6520,6 +6525,7 @@ export class InteractiveMode {
 		const firstToolIndex = content.findIndex((block) => block.type === "toolCall");
 		if (firstToolIndex === -1) {
 			this.detachAssistantTextSegments();
+			this.syncStreamingMessageTimestampEligibility();
 			return;
 		}
 		let index = firstToolIndex + 1;
@@ -6551,6 +6557,8 @@ export class InteractiveMode {
 				this.hiddenThinkingLabel,
 				this.outputPad,
 				this.getMarkdownTransformers(),
+				this.showMessageTimestamps,
+				{ eligible: false, arrivedAt: this.streamingComponent.getArrivedAt() },
 			);
 			segment.setExpanded(this.toolOutputExpanded);
 			segment.setProviderErrorOwned(errorShownElsewhere);
@@ -6568,6 +6576,17 @@ export class InteractiveMode {
 				this.assistantTextSegments.delete(runStart);
 			}
 		}
+		this.syncStreamingMessageTimestampEligibility();
+	}
+
+	private syncStreamingMessageTimestampEligibility(): void {
+		if (!this.streamingComponent) return;
+		const segments = [...this.assistantTextSegments.entries()]
+			.sort(([left], [right]) => left - right)
+			.map(([, segment]) => segment);
+		const components = [this.streamingComponent, ...segments];
+		const timestampOwner = components.find((component) => component.hasVisibleContent()) ?? this.streamingComponent;
+		for (const component of components) component.setTimestampEligible(component === timestampOwner);
 	}
 
 	private detachAssistantTextSegments(): void {
@@ -8017,6 +8036,7 @@ export class InteractiveMode {
 					terminalTheme: this.themeController.getTerminalTheme(),
 					availableThemes: getAvailableThemes(),
 					hideThinkingBlock: this.hideThinkingBlock,
+					showMessageTimestamps: this.showMessageTimestamps,
 					smoothStreaming: this.settingsManager.getSmoothStreaming(),
 					smoothStreamingFps: this.settingsManager.getSmoothStreamingFps(),
 					mermaidRenderingMode: this.settingsManager.getMermaidRenderingMode(),
@@ -8103,6 +8123,24 @@ export class InteractiveMode {
 						this.themeController.setThemeSetting(themeSetting);
 					},
 					onThemePreview: (themeName) => this.themeController.preview(themeName),
+					onShowMessageTimestampsChange: (show) => {
+						this.showMessageTimestamps = show;
+						this.settingsManager.setShowMessageTimestamps(show);
+						// Only the rendered prefix changes, so unlike the thinking-block
+						// toggle this needs no chat rebuild: each component re-renders
+						// itself from the arrival time it already recorded.
+						for (const child of this.chatContainer.children) {
+							if (child instanceof AssistantMessageComponent) {
+								child.setShowTimestamps(show);
+							}
+						}
+						this.streamingComponent?.setShowTimestamps(show);
+						for (const segment of this.assistantTextSegments.values()) {
+							segment.setShowTimestamps(show);
+						}
+						this.syncStreamingMessageTimestampEligibility();
+						this.ui.requestRender();
+					},
 					onHideThinkingBlockChange: (hidden) => {
 						this.hideThinkingBlock = hidden;
 						this.settingsManager.setHideThinkingBlock(hidden);
@@ -9850,6 +9888,7 @@ export class InteractiveMode {
 			// self-repainting until an input event forced a frame.
 			this.resetExtensionUI();
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+			this.showMessageTimestamps = this.settingsManager.getShowMessageTimestamps();
 			this.outputPad = this.settingsManager.getOutputPad();
 			// Reload replaces the session runner: a genuine ownership boundary, so the
 			// external-owner delegation episode ends here (settings-only rebuilds below
