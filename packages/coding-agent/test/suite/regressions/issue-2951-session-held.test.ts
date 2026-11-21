@@ -160,7 +160,7 @@ it("opens when a crashed holder leaves a dead-pid record", async () => {
 });
 
 it("does not block its own process holder", async () => {
-	const hold = holdSessionFile(sessionFile, SESSION_ID, { cwd: root, expectExisting: true });
+	const hold = await holdSessionFile(sessionFile, SESSION_ID, { cwd: root, expectExisting: true });
 	try {
 		await using rig = createInProcessRig(root);
 		expect(await rig.open("client", { sessionPath: sessionFile })).toMatchObject({ success: true });

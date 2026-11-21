@@ -50,7 +50,7 @@ test/               telemetry + conformance Vitest files
 
 ## COMMANDS
 
-- `bun run test` (vitest --run), `bun run build` (`tsgo -p tsconfig.build.json`), `bun run clean`.
+- `bun run test` (native Bun with per-file isolation), `bun run build`, `bun run clean`.
 - Repository-wide `bun run check` from root after changes.
 
 ---

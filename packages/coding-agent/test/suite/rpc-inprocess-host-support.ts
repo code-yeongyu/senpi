@@ -100,7 +100,7 @@ export function inProcessRuntimeFactory(): {
 		const hold =
 			file === undefined
 				? undefined
-				: holdSessionFile(file, manager.getSessionId(), {
+				: await holdSessionFile(file, manager.getSessionId(), {
 						cwd: options.cwd,
 						expectExisting: false,
 					});
