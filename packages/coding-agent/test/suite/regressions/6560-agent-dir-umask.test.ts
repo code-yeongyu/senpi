@@ -49,7 +49,11 @@ function underUmask<T>(umask: number, run: () => T): T {
 }
 
 /** Runs the real CLI with `umask` as its process umask (a child inherits it at spawn) and a fresh agent dir. */
-function runCliUnderUmask(umask: number, agentDir: string, home: string): Promise<{ code: number | null; stderr: string }> {
+function runCliUnderUmask(
+	umask: number,
+	agentDir: string,
+	home: string,
+): Promise<{ code: number | null; stderr: string }> {
 	return new Promise((resolvePromise, reject) => {
 		const child = underUmask(umask, () =>
 			spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, "--help"], {
