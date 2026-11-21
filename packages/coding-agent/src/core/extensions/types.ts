@@ -1796,9 +1796,10 @@ export type ExtensionSide = "brain" | "hand";
 export interface HandlerRegistrationOptions {
 	/**
 	 * The side this handler runs on when a session's agent loop (`"brain"`) and its tool execution (`"hand"`)
-	 * run as separate processes: the extension generation loaded for the other side does not register it.
-	 * Omitted, the handler registers wherever the extension loads, as before `runs` existed. A fused session,
-	 * where one process is both sides, registers every handler whatever this says.
+	 * run as separate processes: a split-local hand (`pi.placement === "hand"`) does not register a `"brain"`
+	 * handler, because its loop runs that one. Omitted, the handler registers wherever the extension loads, as before
+	 * `runs` existed. A fused session, where one process is both sides, and a hosted hand, the home of the loop's
+	 * extension hooks, register every handler whatever this says.
 	 */
 	runs?: ExtensionSide;
 }
@@ -2647,18 +2648,27 @@ export type SessionContext = Readonly<Record<string, string>>;
 /** What a session opened without `context` sees - shared so no caller invents its own. */
 export const EMPTY_SESSION_CONTEXT: SessionContext = Object.freeze({});
 
+/**
+ * Where an extension generation runs, set by the host that builds its runtime: `"fused"` (one process is both the agent
+ * loop and tool execution), `"hand"` (the tool side of a split-local session, whose loop runs elsewhere on the same
+ * machine and runs the loop-side handlers), or `"hosted-hand"` (the tool side of a hosted session: the loop runs
+ * remotely and this machine is the extensions' home, so their loop-side handlers run here too).
+ */
+export type ExtensionPlacement = "fused" | "hand" | "hosted-hand";
+
 /** The per-session facts an extension factory may branch on at registration time. */
 export interface ExtensionSessionProfile {
 	readonly sessionKind: SessionKind;
 	readonly sessionContext: SessionContext;
-	/** The side of a split session this extension generation is loaded for; absent on a fused session. Not exposed on `pi`. */
-	readonly side?: ExtensionSide;
+	/** Where this extension generation runs; decides which `runs` declarations it registers. */
+	readonly placement: ExtensionPlacement;
 }
 
 /** The profile a classic launch (and any caller that names none) loads extensions with. */
 export const DEFAULT_EXTENSION_SESSION_PROFILE: ExtensionSessionProfile = Object.freeze({
 	sessionKind: "interactive",
 	sessionContext: EMPTY_SESSION_CONTEXT,
+	placement: "fused",
 });
 
 // ============================================================================
@@ -2693,6 +2703,12 @@ export interface ExtensionAPI {
 	 * of a shared host and still gate itself per session.
 	 */
 	readonly sessionContext: SessionContext;
+	/**
+	 * Where this extension instance runs (`"fused"`, `"hand"` or `"hosted-hand"`), fixed for its life, so a factory can
+	 * compose by placement before it registers anything. A `"hand"` generation does not register handlers declared
+	 * `runs: "brain"`; `"fused"` and `"hosted-hand"` register every handler.
+	 */
+	readonly placement: ExtensionPlacement;
 	/**
 	 * The engine this extension is running in: the namespace the loader serves for `@code-yeongyu/senpi`. An extension
 	 * that needs the running engine's exports reads them here instead of importing that specifier, because on some

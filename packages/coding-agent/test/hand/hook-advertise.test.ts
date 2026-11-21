@@ -105,9 +105,9 @@ describe("CK21: provider access declarations", () => {
 
 	it("refuses a malformed declaration at registration also when its handler declares the other side", async () => {
 		const registrations: ExtensionFactory[] = [
-			(pi) => void pi.on("before_provider_request", () => undefined, { runs: "hand", providers: [] }),
-			(pi) => void pi.on("provider_stream_event", () => undefined, { runs: "hand", providers: [] }),
-			(pi) => void pi.on("after_provider_response", () => undefined, { runs: "hand", providers: [] }),
+			(pi) => void pi.on("before_provider_request", () => undefined, { runs: "brain", providers: [] }),
+			(pi) => void pi.on("provider_stream_event", () => undefined, { runs: "brain", providers: [] }),
+			(pi) => void pi.on("after_provider_response", () => undefined, { runs: "brain", providers: [] }),
 		];
 		for (const register of registrations)
 			await expect(
@@ -117,7 +117,7 @@ describe("CK21: provider access declarations", () => {
 					createEventBus(),
 					createExtensionRuntime(),
 					"/user/bad.ts",
-					{ ...DEFAULT_EXTENSION_SESSION_PROFILE, side: "brain" },
+					{ ...DEFAULT_EXTENSION_SESSION_PROFILE, placement: "hand" },
 				),
 			).rejects.toThrow(/providers/);
 	});

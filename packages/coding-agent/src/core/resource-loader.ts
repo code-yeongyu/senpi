@@ -44,6 +44,7 @@ import {
 import type {
 	Extension,
 	ExtensionFactory,
+	ExtensionPlacement,
 	ExtensionRuntime,
 	ExtensionSessionProfile,
 	InlineExtension,
@@ -403,6 +404,8 @@ export interface DefaultResourceLoaderOptions {
 	sessionKind?: SessionKind;
 	/** Opaque labels the session was opened with; defaults to `{}`. */
 	sessionContext?: SessionContext;
+	/** Where the extensions run (`pi.placement`); defaults to `fused`. */
+	placement?: ExtensionPlacement;
 	eventBus?: EventBus;
 	additionalExtensionPaths?: string[];
 	additionalSkillPaths?: string[];
@@ -510,6 +513,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.extensionSession = {
 			sessionKind: options.sessionKind ?? "interactive",
 			sessionContext: options.sessionContext ?? EMPTY_SESSION_CONTEXT,
+			placement: options.placement ?? "fused",
 		};
 		this.eventBus = options.eventBus ?? createEventBus();
 		const factories = options.extensionFactories ?? [];

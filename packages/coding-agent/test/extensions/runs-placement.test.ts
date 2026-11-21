@@ -7,6 +7,7 @@ import type {
 	Extension,
 	ExtensionAPI,
 	ExtensionFactory,
+	ExtensionPlacement,
 	ExtensionSide,
 	HandlerRegistrationOptions,
 } from "../../src/core/extensions/types.ts";
@@ -20,8 +21,8 @@ afterEach(() => {
 	for (const harness of harnesses.splice(0)) harness.cleanup();
 });
 
-/** `undefined` is a fused session: the caller names no side, as every caller does today. */
-type LoadSide = ExtensionSide | undefined;
+/** `undefined` is a fused session: the caller names no placement, as every classic launch does. */
+type LoadPlacement = ExtensionPlacement | undefined;
 
 /**
  * Registers one `tool_call` handler on the hand, one `before_agent_start` handler on the brain and one
@@ -60,9 +61,9 @@ function placementFixture(fired: string[], declare: boolean): ExtensionFactory {
 	};
 }
 
-async function load(factory: ExtensionFactory, side: LoadSide): Promise<Extension> {
+async function load(factory: ExtensionFactory, placement: LoadPlacement): Promise<Extension> {
 	const result = await loadExtensions(["<runs-fixture>"], process.cwd(), undefined, undefined, {
-		...(side === undefined ? {} : { side }),
+		...(placement === undefined ? {} : { placement }),
 		factoryResolver: () => factory,
 	});
 	expect(result.errors).toEqual([]);
@@ -71,7 +72,7 @@ async function load(factory: ExtensionFactory, side: LoadSide): Promise<Extensio
 	return extension;
 }
 
-async function runOneTurn(declare: boolean, side: LoadSide): Promise<string[]> {
+async function runOneTurn(declare: boolean, placement: LoadPlacement): Promise<string[]> {
 	const fired: string[] = [];
 	const echoTool: AgentTool = {
 		name: "echo",
@@ -84,7 +85,7 @@ async function runOneTurn(declare: boolean, side: LoadSide): Promise<string[]> {
 		}),
 	};
 	const extensionsResult = await loadExtensions(["<runs-fixture>"], process.cwd(), undefined, undefined, {
-		...(side === undefined ? {} : { side }),
+		...(placement === undefined ? {} : { placement }),
 		factoryResolver: () => placementFixture(fired, declare),
 	});
 	expect(extensionsResult.errors).toEqual([]);
@@ -107,19 +108,19 @@ function registeredEvents(extension: Extension): Array<[string, number]> {
 }
 
 describe("runs: placement of extension registrations (R24.a)", () => {
-	it("a handler declared runs: hand fires only in the hand's generation, one declared runs: brain only in the brain's", async () => {
+	it("a split-local hand's generation drops a handler declared runs: brain; a hosted hand's registers both sides", async () => {
 		// Given one extension with a hand tool_call handler, a brain before_agent_start handler and an undeclared tool_result handler.
-		// When each side's generation runs the same turn that calls echo once.
+		// When each hand placement's generation runs the same turn that calls echo once.
 		const onHand = await runOneTurn(true, "hand");
-		const onBrain = await runOneTurn(true, "brain");
+		const onHostedHand = await runOneTurn(true, "hosted-hand");
 
-		// Then each declared handler fires only on its own side, and the undeclared one fires on both, as today.
+		// Then the split-local hand leaves the brain handler to its loop, and the hosted hand, the extensions' home, keeps it.
 		expect(onHand).toEqual(["tool_call echo", "tool_result echo"]);
-		expect(onBrain).toEqual(["before_agent_start", "tool_result echo"]);
+		expect(onHostedHand).toEqual(["before_agent_start", "tool_call echo", "tool_result echo"]);
 	});
 
-	it("a fused session (no side named) fires every handler exactly as an extension that declares nothing", async () => {
-		// Given the same extension with and without runs declarations, loaded with no side named.
+	it("a fused session (no placement named) fires every handler exactly as an extension that declares nothing", async () => {
+		// Given the same extension with and without runs declarations, loaded with no placement named.
 		const declared = await runOneTurn(true, undefined);
 		const undeclared = await runOneTurn(false, undefined);
 
@@ -128,18 +129,18 @@ describe("runs: placement of extension registrations (R24.a)", () => {
 		expect(declared).toEqual(undeclared);
 	});
 
-	it("an extension that declares nothing registers the same handlers and tools on brain, hand and fused", async () => {
+	it("an extension that declares nothing registers the same handlers and tools on every placement", async () => {
 		const fused = await load(placementFixture([], false), undefined);
-		const brain = await load(placementFixture([], false), "brain");
 		const hand = await load(placementFixture([], false), "hand");
+		const hostedHand = await load(placementFixture([], false), "hosted-hand");
 
-		expect(registeredEvents(brain)).toEqual(registeredEvents(fused));
 		expect(registeredEvents(hand)).toEqual(registeredEvents(fused));
-		expect([...brain.tools.keys()]).toEqual([...fused.tools.keys()]);
+		expect(registeredEvents(hostedHand)).toEqual(registeredEvents(fused));
 		expect([...hand.tools.keys()]).toEqual([...fused.tools.keys()]);
+		expect([...hostedHand.tools.keys()]).toEqual([...fused.tools.keys()]);
 		expect(fused.handlerSides).toBeUndefined();
-		expect(brain.handlerSides).toBeUndefined();
 		expect(hand.handlerSides).toBeUndefined();
+		expect(hostedHand.handlerSides).toBeUndefined();
 	});
 
 	it("records the declared side of each handler and keeps registration order among one side's handlers", async () => {
@@ -153,13 +154,13 @@ describe("runs: placement of extension registrations (R24.a)", () => {
 
 		const fused = await load(factory, undefined);
 		const hand = await load(factory, "hand");
-		const brain = await load(factory, "brain");
+		const hostedHand = await load(factory, "hosted-hand");
 
 		const sides = (extension: Extension) =>
 			(extension.handlers.get("tool_call") ?? []).map((handler) => extension.handlerSides?.get(handler) ?? "-");
 		expect(sides(fused)).toEqual(["hand", "-", "brain", "hand"]);
 		expect(sides(hand)).toEqual(["hand", "-", "hand"]);
-		expect(sides(brain)).toEqual(["-", "brain"]);
+		expect(sides(hostedHand)).toEqual(["hand", "-", "brain", "hand"]);
 
 		const event = { type: "tool_call", toolCallId: "t1", toolName: "echo", input: {} };
 		for (const handler of hand.handlers.get("tool_call") ?? []) await handler(event, undefined);
@@ -167,8 +168,8 @@ describe("runs: placement of extension registrations (R24.a)", () => {
 	});
 
 	it("runs on a tool never changes its child placement, and the tool registers on every side", async () => {
-		for (const side of [undefined, "brain", "hand"] as const) {
-			const extension = await load(placementFixture([], true), side);
+		for (const placement of [undefined, "hand", "hosted-hand"] as const) {
+			const extension = await load(placementFixture([], true), placement);
 			const definition = extension.tools.get("child_echo")?.definition;
 			expect(definition?.placement).toBe("child");
 			expect(definition?.runs).toBe("hand");

@@ -73,6 +73,7 @@ export function createLooplessRuntimeFactory(
 			resourceLoaderOptions: {
 				sessionKind: profile.launchProfile?.sessionKind,
 				sessionContext: profile.launchProfile?.sessionContext,
+				placement: local.twoSidedHome === "hand" ? "hosted-hand" : "hand",
 				additionalExtensionPaths: resolveCliPaths(cwd, parsed.extensions),
 				additionalSkillPaths: resolveCliPaths(cwd, parsed.skills),
 				additionalPromptTemplatePaths: resolveCliPaths(cwd, parsed.promptTemplates),
