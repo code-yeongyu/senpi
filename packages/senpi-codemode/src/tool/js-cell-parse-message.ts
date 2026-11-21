@@ -21,7 +21,7 @@ export function jsCellParseMessage(code: string, message: string): string {
 		const excerpt = line.slice(start, loc.column + 60);
 		const caret = excerpt.slice(0, loc.column - start).replace(/[^\t]/gu, " ");
 		const hint =
-			/<<-?\s*['"]?[A-Za-z_]\w*['"]?[^\S\r\n]*(?:\r?\n|$)/u.test(code) && code.includes("`")
+			/<<-?[ \t]*(['"])[A-Za-z_]\w*\1[ \t]*(?:\r?\n|$)/u.test(code) && code.includes("`")
 				? "\nFor a shell heredoc in a JS template literal, escape literal backticks and ${ with a backslash, or use ordinary quoted JS strings."
 				: "";
 		return `${message}\nJS cell line ${loc.line}, column ${loc.column + 1}:\n${excerpt}\n${caret}^${hint}`;
