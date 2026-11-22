@@ -55,6 +55,9 @@ describe("risky main-model warning", () => {
 		model({ id: "acqwenetwork" }),
 		model({ provider: "notminimaximal" }),
 		model({ name: "Qwench Analytics" }),
+		model({ name: "Éqwen Studio" }),
+		model({ id: "qwenä-labs" }),
+		model({ provider: "дminimax" }),
 	])("does not match unrelated words containing a family name (#2753)", (selectedModel) => {
 		expect(isRiskyMainModel(selectedModel)).toBe(false);
 	});
