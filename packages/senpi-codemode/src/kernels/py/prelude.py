@@ -2265,7 +2265,7 @@ def _enter_source_file(source_file: str | None) -> Callable[[], None]:
 
 def run_cell(
     cell_id: str, code: str, preludes: Any = None, source_file: str | None = None, cell_token: str | None = None,
-    authority: Any = None,
+    authority: Any = None, env_root: str | None = None,
 ) -> None:
     start = time.monotonic()
     stdout = io.StringIO()
@@ -2280,6 +2280,8 @@ def run_cell(
     try:
         KERNEL_TOOL_TOKEN.acquire()
         with capture_streams(KERNEL_TOOL_STREAMS, (stdout, stderr), cell=True):
+            if env_root is not None:
+                _activate_env_root(env_root)
             apply_preludes(preludes)
             leave_source_file = _enter_source_file(source_file)
             body, expression = compile_cell(code, source_file or "<cell>")
@@ -2366,8 +2368,6 @@ def _handle_message(message: dict[str, Any]) -> bool:
         return True
     if message_type == "run":
         env_root = message.get("envRoot")
-        if isinstance(env_root, str):
-            _activate_env_root(env_root)
         source_file = message.get("sourceFile")
         token = message.get("bridgeCellToken")
         run_cell(
@@ -2377,6 +2377,7 @@ def _handle_message(message: dict[str, Any]) -> bool:
             source_file if isinstance(source_file, str) and source_file else None,
             token if isinstance(token, str) else None,
             message.get("authority"),
+            env_root if isinstance(env_root, str) else None,
         )
         return True
     if message_type == "close":

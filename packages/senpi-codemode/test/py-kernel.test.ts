@@ -57,6 +57,29 @@ describe("PythonKernel transport", () => {
 });
 
 describe.skipIf(!(await hasPython3()))("PythonKernel live", () => {
+	// senpi#6583: an environment preparation failure belongs to the run, not kernel startup.
+	it("reports a run preparation error without resetting earlier globals", async () => {
+		const kernel = await liveKernel();
+		try {
+			expect(
+				await runCell(
+					kernel,
+					"import importlib\nsaved = 42\ndef fail():\n    raise RuntimeError('prepare failed')\nimportlib.invalidate_caches = fail",
+				),
+			).toMatchObject({ ok: true });
+			const result = await kernel.run({
+				cellId: "prep-error",
+				envRoot: () => "/fixture-py-env",
+				code: "saved = 0",
+				timeoutMs: 5000,
+			});
+			expect(result).toMatchObject({ ok: false, error: { message: "prepare failed" } });
+			await expect(runCell(kernel, "saved")).resolves.toMatchObject({ ok: true, valueRepr: "42" });
+		} finally {
+			await kernel.close();
+		}
+	});
+
 	it("persists state across cells and reset clears it", async () => {
 		const kernel = await liveKernel();
 		try {
