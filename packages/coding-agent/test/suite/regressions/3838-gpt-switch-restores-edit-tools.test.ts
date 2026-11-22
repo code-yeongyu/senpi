@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -5,7 +6,9 @@ import { makeTempDir } from "../../../../../scripts/vitest-temp.ts";
 import registerApplyPatchExtension from "../../../src/core/extensions/builtin/gpt-apply-patch/index.ts";
 import type { ApplyPatchExtensionAPI } from "../../../src/core/extensions/builtin/gpt-apply-patch/types.ts";
 import type { LazyToolActivator } from "../../../src/core/extensions/types.ts";
+import { createAgentSession } from "../../../src/core/sdk.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
+import { createHarness } from "../harness.ts";
 
 type StubModel = { api: string; id: string };
 type StubContext = { model: StubModel; sessionManager: SessionManager };
@@ -48,7 +51,93 @@ function toolsHost(active: string[], sessionManager = SessionManager.inMemory())
 	return { registered: new Set(["read", "edit", "write"]), active, sessionManager };
 }
 
+async function withToolSelection(
+	selection: { tools?: string[]; defaultTools?: string[] },
+	run: (fixture: {
+		session: Awaited<ReturnType<typeof createAgentSession>>["session"];
+		leaveGpt: () => Promise<unknown>;
+		reloadDefaults: (defaultTools: string[]) => Promise<unknown>;
+	}) => Promise<void>,
+) {
+	const settings = { enabledBuiltinExtensions: ["gpt-apply-patch"], defaultTools: selection.defaultTools };
+	const harness = await createHarness({
+		api: "openai-responses",
+		models: [{ id: gpt.id }, { id: claude.id }],
+		fileSettings: true,
+		settings,
+	});
+	try {
+		const agentDir = join(harness.tempDir, "agent");
+		const { session } = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir,
+			model: harness.getModel(),
+			modelRegistry: harness.modelRegistry,
+			settingsManager: harness.settingsManager,
+			sessionManager: SessionManager.inMemory(harness.tempDir),
+			tools: selection.tools,
+		});
+		try {
+			await session.bindExtensions({ shutdownHandler: () => {} });
+			const otherModel = harness.getModel(claude.id);
+			if (!otherModel) throw new Error("Missing non-GPT fixture model");
+			await run({
+				session,
+				leaveGpt: () => session.setSessionModel(otherModel),
+				reloadDefaults: (defaultTools) => {
+					writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ ...settings, defaultTools }));
+					return session.reload();
+				},
+			});
+		} finally {
+			session.dispose();
+		}
+	} finally {
+		harness.cleanup();
+	}
+}
+
 describe("leaving GPT restores the edit tools apply_patch stood in for (senpi#3838)", () => {
+	it("keeps the allowed edit tools and records no swap when the explicit allowlist excludes apply_patch", async () => {
+		await withToolSelection({ tools: ["read", "edit", "write"] }, async ({ session }) => {
+			expect.soft(session.getActiveToolNames()).toEqual(["read", "edit", "write"]);
+			expect(
+				session.sessionManager
+					.getEntries()
+					.filter((entry) => entry.type === "custom" && entry.customType === "gpt-apply-patch:edit-tool-swap"),
+			).toEqual([]);
+		});
+	});
+
+	it("restores both edit tools when a settings reload adds write during an existing swap", async () => {
+		await withToolSelection(
+			{ defaultTools: ["read", "edit", "apply_patch"] },
+			async ({ session, reloadDefaults, leaveGpt }) => {
+				expect(session.getActiveToolNames()).toEqual(["read", "apply_patch"]);
+
+				await reloadDefaults(["read", "edit", "write", "apply_patch"]);
+				expect(session.getActiveToolNames()).toEqual(["read", "apply_patch"]);
+				await leaveGpt();
+
+				expect(session.getActiveToolNames()).toEqual(["read", "edit", "write"]);
+			},
+		);
+	});
+
+	it("does not restore edit when a settings reload removes it from the tool selection", async () => {
+		await withToolSelection(
+			{ defaultTools: ["read", "edit", "write", "apply_patch"] },
+			async ({ session, reloadDefaults, leaveGpt }) => {
+				expect(session.getActiveToolNames()).toEqual(["read", "apply_patch"]);
+
+				await reloadDefaults(["read", "write", "apply_patch"]);
+				await leaveGpt();
+
+				expect(session.getActiveToolNames()).toEqual(["read", "write"]);
+			},
+		);
+	});
+
 	it("keeps edit and write inactive after lazy apply_patch activation on a read-only GPT toolset", async () => {
 		const tools = toolsHost(["read"]);
 		const extension = attach(tools);

@@ -3216,8 +3216,10 @@ export interface ExtensionAPI {
 	/**
 	 * Set the active tools by name. Unknown and `hidden` tools are ignored. Tools with `codemode` or
 	 * `deferred` exposure stay callable from codemode scripts whether active or not.
+	 * With `respectDefaultTools`, newly activated built-in tools must also be in the current
+	 * `defaultTools` setting when the session uses that setting for tool selection.
 	 */
-	setActiveTools(toolNames: string[]): void;
+	setActiveTools: SetActiveToolsHandler;
 
 	/** Get available slash commands in the current session. */
 	getCommands(): SlashCommandInfo[];
@@ -3758,7 +3760,7 @@ export type GetSettingsHandler = () => Settings;
 
 export type GetCommandsHandler = () => SlashCommandInfo[];
 
-export type SetActiveToolsHandler = (toolNames: string[]) => void;
+export type SetActiveToolsHandler = (toolNames: string[], options?: { respectDefaultTools?: boolean }) => void;
 
 export type RefreshToolsHandler = () => void;
 

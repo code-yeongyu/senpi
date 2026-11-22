@@ -32,23 +32,16 @@ export function isOpenAIGptModel(model: Pick<Model<string>, "api" | "id"> | unde
 	return getApplyPatchWireMode(model) === "freeform";
 }
 
-function hasEditTools(toolNames: string[]): boolean {
-	return toolNames.some((toolName) => EDIT_TOOL_NAMES.has(toolName));
-}
-
 function withoutApplyPatch(toolNames: string[]): string[] {
 	return toolNames.filter((toolName) => toolName !== APPLY_PATCH_NAME);
 }
 
 function replaceEditToolsWithApplyPatch(toolNames: string[]): string[] {
-	const hadApplyPatch = toolNames.includes(APPLY_PATCH_NAME);
 	const insertIndex = toolNames.findIndex(
 		(toolName) => EDIT_TOOL_NAMES.has(toolName) || toolName === APPLY_PATCH_NAME,
 	);
 	const filteredToolNames = withoutApplyPatch(toolNames).filter((toolName) => !EDIT_TOOL_NAMES.has(toolName));
-	if (!hasEditTools(toolNames) && !hadApplyPatch) return filteredToolNames;
-	const at = insertIndex === -1 ? filteredToolNames.length : Math.min(insertIndex, filteredToolNames.length);
-	return [...filteredToolNames.slice(0, at), APPLY_PATCH_NAME, ...filteredToolNames.slice(at)];
+	return [...filteredToolNames.slice(0, insertIndex), APPLY_PATCH_NAME, ...filteredToolNames.slice(insertIndex)];
 }
 
 function hasApplyPatchFailures(details: unknown): boolean {
@@ -70,29 +63,36 @@ function syncToolset(
 ): void {
 	const mode = getApplyPatchWireMode(model);
 	state.wireMode = mode;
-	const currentToolNames = pi.getActiveTools();
-	const hasApplyPatch = currentToolNames.includes(APPLY_PATCH_NAME);
 	const replaced = state.removedEditToolNames;
 	if (mode !== "none") {
 		if (state.activeVariant !== mode) {
 			pi.registerTool(variants[mode]);
 			state.activeVariant = mode;
 		}
+		const currentToolNames = pi.getActiveTools();
 		const activeEdit = currentToolNames.filter((toolName) => EDIT_TOOL_NAMES.has(toolName));
+		if (activeEdit.length === 0) return;
+		if (!currentToolNames.includes(APPLY_PATCH_NAME)) {
+			// Let the host apply its activation policy before removing any edit tools.
+			pi.setActiveTools([...currentToolNames, APPLY_PATCH_NAME], { respectDefaultTools: true });
+			if (!pi.getActiveTools().includes(APPLY_PATCH_NAME)) return;
+		}
 		pi.setActiveTools(replaceEditToolsWithApplyPatch(currentToolNames));
-		if (activeEdit.length > 0 || (!hasApplyPatch && replaced.length > 0)) {
-			state.removedEditToolNames = activeEdit;
-			pi.appendEntry(EDIT_TOOL_SWAP_ENTRY, activeEdit, { startupBookkeeping: true });
+		const removed = [...new Set([...replaced, ...activeEdit])];
+		if (removed.length > replaced.length) {
+			state.removedEditToolNames = removed;
+			pi.appendEntry(EDIT_TOOL_SWAP_ENTRY, removed, { startupBookkeeping: true });
 		}
 		return;
 	}
-	if (hasApplyPatch) {
+	const currentToolNames = pi.getActiveTools();
+	if (currentToolNames.includes(APPLY_PATCH_NAME)) {
 		const registeredNames = new Set(pi.getAllTools().map((tool) => tool.name));
 		const restored = [
 			...withoutApplyPatch(currentToolNames),
 			...replaced.filter((name) => registeredNames.has(name)),
 		];
-		pi.setActiveTools([...new Set(restored)]);
+		pi.setActiveTools([...new Set(restored)], { respectDefaultTools: true });
 	}
 	if (replaced.length > 0) {
 		state.removedEditToolNames = [];
@@ -108,8 +108,8 @@ function registerApplyPatchLazyActivator(
 		if (toolName !== APPLY_PATCH_NAME || state.wireMode === "none") return false;
 		const activeToolNames = pi.getActiveTools();
 		if (activeToolNames.includes(APPLY_PATCH_NAME)) return false;
-		pi.setActiveTools([...activeToolNames, APPLY_PATCH_NAME]);
-		return true;
+		pi.setActiveTools([...activeToolNames, APPLY_PATCH_NAME], { respectDefaultTools: true });
+		return pi.getActiveTools().includes(APPLY_PATCH_NAME);
 	});
 }
 
