@@ -5,9 +5,12 @@
  * Registration runs under the endpoint's ensure lock (the lock `host gc` takes) and writes the
  * generation record BEFORE `endpoint.json`: a reader that can see the endpoint can always see a
  * live generation behind it, so the endpoint is never judged `dead` while it is being registered.
- * The directory is named by a socket built from a fresh instance id, so it never holds an earlier
- * generation and the registration skips the dead-generation prune a host's directory needs.
- * A TUI endpoint has nothing to reattach to, so a clean exit removes its whole directory.
+ * The same locked step writes the session record (`tui-session.json`, senpi#2680): after an unclean
+ * exit it is the only thing that names the session the terminal held, read by `host status --all`
+ * under a pid + processStartTime guard. The directory is named by a socket built from a fresh
+ * instance id, so it never holds an earlier generation and the registration skips the
+ * dead-generation prune a host's directory needs. A TUI endpoint has nothing to reattach to, so a
+ * clean exit removes its whole directory.
  */
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
@@ -18,6 +21,7 @@ import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { createDaemonDirectories, createHostDaemonPaths, type HostDaemonPaths } from "../rpc/host-daemon-paths.ts";
 import { thisProcessStartTime, writeHostRegistration } from "../rpc/host-daemon-registration.ts";
 import { acquireHostEnsureLock } from "../rpc/host-ensure-lock.ts";
+import { type TuiEndpointSession, writeTuiSessionRecord } from "../rpc/host-tui-session-record.ts";
 import { MAX_SOCKET_PATH_BYTES } from "../rpc/socket-ownership.ts";
 import { socketSecretPath } from "../rpc/socket-transport.ts";
 import { tuiSocketName } from "../rpc/tui-socket.ts";
@@ -79,6 +83,8 @@ export async function registerTuiEndpoint(options: {
 	readonly agentDir: string;
 	readonly socket: string;
 	readonly instanceId: string;
+	/** The session the terminal holds, recorded for readers after an unclean exit (senpi#2680). */
+	readonly session?: TuiEndpointSession;
 }): Promise<TuiRegistryEntry> {
 	const paths = createHostDaemonPaths({ socket: options.socket, agentDir: options.agentDir });
 	const release = await acquireHostEnsureLock(options.socket, REGISTRY_LOCK_WAIT_MS);
@@ -96,6 +102,12 @@ export async function registerTuiEndpoint(options: {
 			{ fresh: true },
 		);
 		await createDaemonDirectories(paths, { kind: "tui" });
+		if (options.session !== undefined) {
+			await writeTuiSessionRecord(paths, options.session, {
+				pid: process.pid,
+				processStartTime: await thisProcessStartTime(),
+			});
+		}
 	} finally {
 		await release();
 	}
