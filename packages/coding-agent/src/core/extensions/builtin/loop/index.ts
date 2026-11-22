@@ -840,11 +840,12 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			else await pauseAttributedLoop();
 		}
 
-		pi.on("session_shutdown", async () => {
+		pi.on("session_shutdown", async (event) => {
 			const active = scheduler;
 			if (active !== undefined) {
-				// Shutdown SUSPENDS: every senpi shutdown reason leaves the session resumable,
-				// so the snapshot must carry no terminal reason.
+				// Shutdown SUSPENDS: every senpi shutdown reason leaves the session resumable, so the snapshot
+				// carries no terminal reason. A graceful close ends them "stopped" instead (oh-my-openagent#14313).
+				if (event.closed === true) active.stop("all", "the session was closed on request");
 				active.onShutdown();
 				await persist();
 			}

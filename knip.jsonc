@@ -2,10 +2,12 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   // Exported types are part of our contracts even before they have consumers.
   "rules": { "types": "off", "nsTypes": "off" },
-  // These executables are supplied by the OS, a language toolchain, or a test that expects a missing command.
+  // These executables are supplied by the OS, a language toolchain, or a test that expects a missing command;
+  // session-of-pid is a senpi subcommand a test runs as `bun <cli> session-of-pid`, which knip reads as a binary.
   "ignoreBinaries": [
     "cc", "hdiutil", "julia", "mkfifo", "mount", "ollama", "openssl", "perl", "pgrep", "rg", "ruby", "script",
-    "senpi-deliberately-missing-probe-command", "taskkill.exe", "tasklist", "trash", "vmmap", "where", "xclip",
+    "senpi-deliberately-missing-probe-command", "session-of-pid", "systemd-run", "taskkill.exe", "tasklist", "trash", "vmmap", "where",
+    "xclip",
   ],
   // Findings marked "pre-existing at origin main aceb1cc1d9" were already present when this check was added. Each
   // ignore is scoped to one file or one dependency, so new dead code anywhere else still fails the check. Remove an
@@ -706,8 +708,8 @@
       "packages/coding-agent/src/core/extensions/builtin/hooks/trust.ts": ["hashCommandHook"],
       // pre-existing at origin main aceb1cc1d9: unused exports UNSUPPORTED_HANDLER_TYPES
       "packages/coding-agent/src/core/extensions/builtin/hooks/types.ts": ["UNSUPPORTED_HANDLER_TYPES"],
-      // pre-existing at origin main aceb1cc1d9: unused exports HtmlRenderImagesNotFoundError, HtmlRenderImageTooLargeError, HtmlRenderPageTooLargeError
-      "packages/coding-agent/src/core/extensions/builtin/html-render/images.ts": ["HtmlRenderImageTooLargeError", "HtmlRenderImagesNotFoundError", "HtmlRenderPageTooLargeError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HtmlRenderImageTooLargeError, HtmlRenderPageTooLargeError
+      "packages/coding-agent/src/extensions/html-render/images.ts": ["HtmlRenderImageTooLargeError", "HtmlRenderPageTooLargeError"],
       // pre-existing at origin main aceb1cc1d9: unused exports LOOK_AT_USAGE
       "packages/coding-agent/src/core/extensions/builtin/look-at/arguments.ts": ["LOOK_AT_USAGE"],
       // pre-existing at origin main aceb1cc1d9: unused exports IMAGE_ATTACHMENT_REFERENCE_REGEX
@@ -932,6 +934,8 @@
       "packages/coding-agent/src/core/held-inputs.ts": ["HELD_INPUTS_CONSUMED_ENTRY", "HELD_INPUT_WITHDRAWN_ENTRY"],
       // pre-existing at origin main aceb1cc1d9: unused exports INTERRUPTED_TOOL_TEXT
       "packages/coding-agent/src/core/interrupted-tool-result.ts": ["INTERRUPTED_TOOL_TEXT"],
+      // a test imports it by URL in a child process pinned to a time zone, not an import
+      "packages/coding-agent/src/core/kernel-process-identity.ts": ["parseDarwinPsIdentity"],
       // pre-existing at origin main aceb1cc1d9: unused exports KERNEL_REGISTRY_KEY
       "packages/coding-agent/src/core/memory-report/kernel-registry-read.ts": ["KERNEL_REGISTRY_KEY"],
       // pre-existing at origin main aceb1cc1d9: unused exports MEMORY_REPORT_ENV, MEMORY_REPORT_SNAPSHOT_ENV
@@ -1024,8 +1028,6 @@
       "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": ["wrapToolDefinitions"],
       // pre-existing at origin main aceb1cc1d9: unused exports truncateMiddle
       "packages/coding-agent/src/core/tools/truncate.ts": ["truncateMiddle"],
-      // pre-existing at origin main aceb1cc1d9: unused exports getProjectTrustParentPath
-      "packages/coding-agent/src/core/trust-manager.ts": ["getProjectTrustParentPath"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_TURN_INACTIVITY_MS, MIN_TURN_INACTIVITY_MS, DEFAULT_TURN_MAX_RUNTIME_MS
       "packages/coding-agent/src/core/turn-deadline.ts": ["DEFAULT_TURN_INACTIVITY_MS", "DEFAULT_TURN_MAX_RUNTIME_MS", "MIN_TURN_INACTIVITY_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports VIRTUAL_MODEL_API
@@ -1102,8 +1104,6 @@
       "packages/coding-agent/src/modes/provider-native-rendering.ts": ["stringifyProviderNative"],
       // pre-existing at origin main aceb1cc1d9: unused exports isHostMintedId
       "packages/coding-agent/src/modes/rpc/client-admission-record.ts": ["isHostMintedId"],
-      // pre-existing at origin main aceb1cc1d9: unused exports CONNECTION_ROLE_CAPABILITIES
-      "packages/coding-agent/src/modes/rpc/connection-roles.ts": ["CONNECTION_ROLE_CAPABILITIES"],
       // pre-existing at origin main aceb1cc1d9: unused exports UNLOAD_SESSION_CAPABILITY, SUBSCRIPTION_LIMITS_CAPABILITY, RESOLVE_PATH_CAPABILITY
       "packages/coding-agent/src/modes/rpc/host-capabilities.ts": ["RESOLVE_PATH_CAPABILITY", "SUBSCRIPTION_LIMITS_CAPABILITY", "UNLOAD_SESSION_CAPABILITY"],
       // pre-existing at origin main aceb1cc1d9: unused exports readHostHolder, publicEndpointAccepts
@@ -1144,12 +1144,10 @@
       "packages/coding-agent/src/modes/rpc/multi-session-host.ts": ["DEFAULT_HOST_EMPTY_EXIT_MS", "DEFAULT_SESSION_IDLE_EVICTION_MS", "RPC_HOST_EMPTY_EXIT_MS_ENV", "RPC_SESSION_IDLE_EVICTION_MS_ENV", "resolveHostIdlePolicy"],
       // pre-existing at origin main aceb1cc1d9: unused exports HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV
       "packages/coding-agent/src/modes/rpc/protocol-identity.ts": ["HOST_GENERATION_ENV", "HOST_INSTANCE_ID_ENV"],
-      // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_SESSION_IDENTITY_MISMATCH, RPC_ERROR_SESSION_BUSY_LIFECYCLE, RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_SESSION_PATH_IN_USE, RPC_ERROR_SESSION_RESERVATION_LIMIT, RPC_ERROR_SESSION_NOT_HELD (+7 more)
-      "packages/coding-agent/src/modes/rpc/rpc-error-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STALE_LEAF", "RPC_ERROR_STREAMING"],
-      // pre-existing at origin main aceb1cc1d9: unused exports checkRpcKeyDirectory
-      "packages/coding-agent/src/modes/rpc/rpc-public-key.ts": ["checkRpcKeyDirectory"],
-      // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_EMPTY_TEXT, RPC_ERROR_HOST_MEMORY_PRESSURE, RPC_ERROR_HOST_STOPPING, RPC_ERROR_INVALID_SESSION_ID, RPC_ERROR_SESSION_BUSY_LIFECYCLE (+7 more)
-      "packages/coding-agent/src/modes/rpc/rpc-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STALE_LEAF", "RPC_ERROR_STREAMING"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_SESSION_IDENTITY_MISMATCH, RPC_ERROR_SESSION_BUSY_LIFECYCLE, RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_SESSION_PATH_IN_USE, RPC_ERROR_SESSION_RESERVATION_LIMIT, RPC_ERROR_SESSION_NOT_HELD (+6 more)
+      "packages/coding-agent/src/modes/rpc/rpc-error-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STREAMING"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_EMPTY_TEXT, RPC_ERROR_HOST_MEMORY_PRESSURE, RPC_ERROR_HOST_STOPPING, RPC_ERROR_INVALID_SESSION_ID, RPC_ERROR_SESSION_BUSY_LIFECYCLE (+6 more)
+      "packages/coding-agent/src/modes/rpc/rpc-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STREAMING"],
       // pre-existing at origin main aceb1cc1d9: unused exports loadedRuntimeSource
       "packages/coding-agent/src/modes/rpc/runtime-build-id.ts": ["loadedRuntimeSource"],
       // pre-existing at origin main aceb1cc1d9: unused exports SESSION_CONTEXT_PATCH_LIMITS, RESERVED_SESSION_CONTEXT_KEYS
@@ -1374,8 +1372,8 @@
       "scripts/check-pr-changelog-facts.mjs": ["CHANGELOG_PATTERN"],
       // pre-existing at origin main aceb1cc1d9: unused exports validateGitRevision, isRuntimeSourceChange, main (run-by-path entry, newly export-checked)
       "scripts/check-pr-changelog.mjs": ["isRuntimeSourceChange", "main", "validateGitRevision"],
-      // pre-existing at origin main aceb1cc1d9: unused export PR_FILES_API_LIMIT (run-by-path entry, newly export-checked)
-      "scripts/ci-platform-scope.mjs": ["PR_FILES_API_LIMIT"],
+      // default export is the config the coding-agent CI test step loads by path (--config=), not an import (entry, export-checked)
+      "scripts/ci-coding-agent-vitest.config.mjs": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused export updateClaudeAgentSdkPlatformLock (run-by-path entry, newly export-checked)
       "scripts/generate-claude-agent-sdk-platform-lock.mjs": ["updateClaudeAgentSdkPlatformLock"],
       // pre-existing at origin main aceb1cc1d9: unused export RATCHET_RULES (run-by-path entry, newly export-checked)
@@ -1400,6 +1398,8 @@
       // jsPlugins entry loaded by oxlint from .oxlintrc.json, not imported (same shape as copy.mjs above)
       "scripts/oxlint/egress.mjs": ["default"],
       "scripts/oxlint/model-type-comparison.ts": ["default"],
+      // jsPlugins entry loaded by oxlint from scripts/lint-ratchet.oxlintrc.json, not imported (#7000)
+      "scripts/oxlint/testing.mjs": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused export pinSenpiPeerDependency (run-by-path entry, newly export-checked)
       "scripts/publish-manifest.mjs": ["pinSenpiPeerDependency"],
       // pre-existing at origin main aceb1cc1d9: unused export default (run-by-path entry, newly export-checked)

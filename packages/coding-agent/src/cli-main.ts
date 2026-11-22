@@ -16,8 +16,10 @@ import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { installStaleExtensionContainment } from "./core/stale-extension-containment.ts";
 import { installEarlyInspectorVmImportRecovery } from "./inspector-policy.ts";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
+import { dispatchSessionOfPidCommand } from "./cli/session-of-pid-command.ts";
 
 await dispatchAgentDirectoryCommand(process.argv.slice(2));
+await dispatchSessionOfPidCommand(process.argv.slice(2));
 
 // A direct `cli-main` invocation (the bun binary, `--inspect` runs, tests) has no launcher parent to
 // inherit the cache from. Enabling it here is a no-op when cli.ts already published the directory.
