@@ -236,6 +236,22 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 			},
 		);
 
+		// senpi#4853: a deadline Worker that never starts cannot bound the key read, so readiness is required before it.
+		it(`${runtime} refuses an unready Worker before reading a key that never arrives`, async () => {
+			const { child, stderr } = start(runtime, ["readiness-unready-timed-out"]);
+			const report = message(child, stderr);
+			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
+			// stdin stays open and sends nothing: only the readiness check can end this start.
+			expect(await report).toMatchObject({
+				type: "failure",
+				error: expect.stringContaining("deadline worker not ready"),
+				startupSignal: 0,
+				applicationStarted: false,
+			});
+			child.stdin?.end();
+			expect((await exit)[0]).toBe(1);
+		});
+
 		it.each(["timed-out", "ok"])(`${runtime} accepts actual Worker readiness after %s wait`, async (result) => {
 			const { child, stderr } = start(runtime, [`readiness-ready-${result}`]);
 			const report = message(child, stderr);
