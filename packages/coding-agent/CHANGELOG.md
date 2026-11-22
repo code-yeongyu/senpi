@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.22] - 2026-11-22
 
 ### Breaking Changes
 
@@ -9,6 +9,8 @@
 ### Changed
 
 ### Fixed
+
+- `find_session` reads the session files named for the durable id before reading every header, and lists the session folders 16 at a time, so a device with thousands of session files answers a closed-session lookup in about 0.1 s instead of about a second; a file under a caller-chosen name is still found ([#7137](https://github.com/code-yeongyu/senpi/pull/7137))
 
 ### Removed
 
