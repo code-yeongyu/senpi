@@ -79,6 +79,7 @@ import {
 import { APP_NAME, BRAND, getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
+import { fullySignedOutOAuthCredential } from "./auth-credential-values.ts";
 import { envValue } from "./brand.ts";
 import { signOutClaudeCliSlotsForLogout } from "./credential-accounts-logout.lazy.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
@@ -1496,7 +1497,8 @@ export class ModelRuntime implements Models {
 	 * {@link logout}, answering what the user should know: an Anthropic Subscription `claude-cli` account is signed out
 	 * of the Claude CLI's own store before the credential is deleted (senpi#4436), and `notices` names any account that
 	 * could not be signed out cleanly. `revocation` reports a ChatGPT OAuth remote revocation; `slotId` signs out one
-	 * stored account and keeps its registration and signed-in siblings.
+	 * stored account and keeps its registration and signed-in siblings. A full logout also drops a credential left
+	 * fully signed out by revocation, so no picker lists the provider as stored again (senpi#6644).
 	 */
 	logoutProvider(
 		providerId: string,
@@ -1505,17 +1507,30 @@ export class ModelRuntime implements Models {
 		const signal = operationSignal(options.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
 			const storage = this.authStorage;
+			const before = await this.credentials.read(providerId, { signal });
 			// With `slotId` only that account leaves the Claude CLI store; its signed-in siblings stay.
 			const notices =
 				storage === undefined
 					? []
 					: await signOutClaudeCliSlotsForLogout(storage, providerId, process.env, signal, options.slotId);
 			const result = await this.models.logout(providerId, { ...options, signal });
-			const surviving = await this.credentials.read(providerId, { signal });
+			let surviving = await this.credentials.read(providerId, { signal });
+			// A revoke-capable OAuth provider's logout clears tokens but retains the registration (pi-ai's
+			// contract). A retained entry with no session material left anywhere is no longer a sign-in, so
+			// a full logout drops it: reads, the /logout picker and a restart all report the provider gone.
+			if (options.slotId === undefined && fullySignedOutOAuthCredential(surviving)) {
+				await this.credentials.delete(providerId, { signal });
+				surviving = undefined;
+			}
 			await this.synchronizeCredentialState(providerId, "logout", surviving, signal);
+			if (this.poolStatePath !== undefined) {
+				const { retireSignedOutSlotHealth } = await import("./credential-pool/login-health.ts");
+				await retireSignedOutSlotHealth(this.poolStatePath, providerId, before, surviving);
+			}
 			for (const key of this.activeCredentialAccounts.keys()) {
 				if (key.startsWith(`${providerId}\0`)) this.activeCredentialAccounts.delete(key);
 			}
+			emitProviderAccountsChanged(providerId);
 			return result === undefined ? { notices } : { notices, revocation: result };
 		});
 	}

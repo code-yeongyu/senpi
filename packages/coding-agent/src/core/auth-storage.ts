@@ -16,7 +16,7 @@ import type {
 	OAuthCredential,
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
-import { findEnvKeys, getEnvApiKey, readByProviderId, refreshOAuthCredential } from "@earendil-works/pi-ai";
+import { findEnvKeys, getEnvApiKey, legacyProviderIdsFor, normalizeProviderId, readByProviderId, refreshOAuthCredential } from "@earendil-works/pi-ai";
 import { type CredentialKind, slotKind, unusedSlotKinds } from "@earendil-works/pi-ai/auth/pool/kinds";
 import { stampLogin } from "@earendil-works/pi-ai/auth/pool/login-id";
 import {
@@ -71,6 +71,24 @@ import {
 } from "./lockfile-policy.ts";
 
 type AuthStorageData = Record<string, Credential>;
+
+/**
+ * Every stored spelling of a provider id: the canonical key and the legacy spellings that normalize
+ * to it. Reads already fall back to the legacy spelling (senpi#1989); removal and lookup reach it
+ * too, so a readable credential can never survive removal (senpi#6644).
+ */
+function providerKeySpellings(provider: string): string[] {
+	const canonical = normalizeProviderId(provider);
+	return [canonical, ...legacyProviderIdsFor(canonical)];
+}
+
+/** The key a provider's credential is stored under: canonical first, then legacy spellings. */
+function storedProviderKey(data: AuthStorageData, provider: string): string | undefined {
+	for (const key of providerKeySpellings(provider)) {
+		if (data[key] !== undefined) return key;
+	}
+	return undefined;
+}
 
 /**
  * Heals pools poisoned by a shipped build that stored a provider-owned pool's
@@ -951,7 +969,7 @@ export class AuthStorage implements CredentialStore {
 	remove(provider: string): void {
 		this.writeLocked((content) => {
 			const nextData = { ...this.parseStorageData(content) };
-			delete nextData[provider];
+			for (const key of providerKeySpellings(provider)) delete nextData[key];
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
@@ -978,17 +996,21 @@ export class AuthStorage implements CredentialStore {
 	removeSlot(provider: string, name: string): void {
 		this.writeLocked((content) => {
 			const currentData = this.parseStorageData(content);
-			const next = removeSlot(currentData[provider] as PooledCredential | undefined, name);
+			const key = storedProviderKey(currentData, provider);
+			const next = key === undefined ? undefined : removeSlot(currentData[key], name);
 			const nextData = { ...currentData };
-			if (next === undefined) delete nextData[provider];
-			else nextData[provider] = next;
+			if (next === undefined) {
+				if (key !== undefined) delete nextData[key];
+			} else if (key !== undefined) {
+				nextData[key] = next;
+			}
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
 	}
 
 	has(provider: string): boolean {
-		return provider in this.data;
+		return readByProviderId(this.data, provider) !== undefined;
 	}
 
 	hasAuth(provider: string): boolean {
@@ -1147,7 +1169,7 @@ export class AuthStorage implements CredentialStore {
 		let latestData = this.readState.data;
 		await this.storage.withLockAsync(async (content) => {
 			const currentData = this.parseStorageData(content);
-			delete currentData[provider];
+			for (const key of providerKeySpellings(provider)) delete currentData[key];
 			latestData = currentData;
 			return { result: undefined, next: JSON.stringify(currentData, null, 2) };
 		}, options);

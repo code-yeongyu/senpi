@@ -38,3 +38,29 @@ export async function retireLoginSlotHealth(
 		);
 	}
 }
+
+/**
+ * The stored slots a sign-out ended: every slot whose material is gone or replaced. Pool health is
+ * keyed to the account that earned it, so a verdict must not outlive the sign-in it judged: a full
+ * provider logout drops the credential, and a one-account sign-out clears that account in place
+ * (senpi#6644). Like a login, the next sign-in under the same slot name starts with clean health.
+ */
+export async function retireSignedOutSlotHealth(
+	statePath: string,
+	providerId: string,
+	before: Credential | undefined,
+	after: Credential | undefined,
+): Promise<void> {
+	const remaining = new Map(listSlots(after as PooledCredential | undefined).map((slot) => [slot.name, slot]));
+	const ended = listSlots(before as PooledCredential | undefined).filter((slot) => {
+		const next = remaining.get(slot.name);
+		return next === undefined || !sameMaterial(next, slot);
+	});
+	if (ended.length === 0) return;
+	const repository = new CredentialSlotRepository(statePath);
+	for (const slot of ended) {
+		await writeHealthUnlessStoreBusy(`sign-out of ${slot.name}`, () =>
+			repository.mutateSlotState(providerId, "stored", slot.name, () => undefined),
+		);
+	}
+}
