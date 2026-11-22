@@ -47,6 +47,7 @@ import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath 
 import { envValue } from "./brand.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import { readPiManifest } from "./pi-manifest.ts";
+import { isExtensionSource } from "./extensions/extension-source.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
 import { insideSkillRoot, type SkillProvenance, skillProjectRoot } from "./skill-access.ts";
 import { collectAutoSkillEntries, collectSkillEntries } from "./skill-discovery.ts";
@@ -86,6 +87,7 @@ export interface ResolvedResource {
 }
 
 export interface ResolvedPaths {
+	unsupportedExtensionFiles?: readonly string[];
 	skillRoots?: readonly SkillProvenance[];
 	/** SKILL.md files of auto-discovered skill folders that an ignore file hid (senpi#5060). */
 	ignoredSkills?: readonly string[];
@@ -180,6 +182,7 @@ interface GitUpdateTarget extends ConfiguredUpdateSource {
 }
 
 interface ResourceAccumulator {
+	unsupportedExtensionFiles: Set<string>;
 	extensions: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	skills: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	prompts: Map<string, { metadata: PathMetadata; enabled: boolean }>;
@@ -221,9 +224,7 @@ type ResourceType = "extensions" | "skills" | "prompts" | "themes" | "hooks";
 
 const RESOURCE_TYPES: ResourceType[] = ["extensions", "skills", "prompts", "themes", "hooks"];
 
-const FILE_PATTERNS: Record<ResourceType, RegExp> = {
-	extensions: /\.(ts|js)$/,
-	skills: /\.md$/,
+const FILE_PATTERNS: Record<Exclude<ResourceType, "extensions" | "skills">, RegExp> = {
 	prompts: /\.md$/,
 	themes: /\.json$/,
 	hooks: /\.json$/,
@@ -488,7 +489,7 @@ function resolveExtensionEntries(dir: string): string[] | null {
 	return null;
 }
 
-function collectAutoExtensionEntries(dir: string): string[] {
+function collectAutoExtensionEntries(dir: string, unsupported?: Set<string>): string[] {
 	const entries: string[] = [];
 	if (!existsSync(dir)) return entries;
 
@@ -526,8 +527,10 @@ function collectAutoExtensionEntries(dir: string): string[] {
 			const ignorePath = isDir ? `${relPath}/` : relPath;
 			if (ig.ignores(ignorePath)) continue;
 
-			if (isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".js"))) {
+			if (isFile && isExtensionSource(entry.name)) {
 				entries.push(fullPath);
+			} else if (isFile) {
+				unsupported?.add(fullPath);
 			} else if (isDir) {
 				const resolvedEntries = resolveExtensionEntries(fullPath);
 				if (resolvedEntries) {
@@ -2426,7 +2429,7 @@ export class DefaultPackageManager implements PackageManager {
 			// Project extensions from .pi/
 			addResources(
 				"extensions",
-				collectAutoExtensionEntries(projectDirs.extensions),
+				collectAutoExtensionEntries(projectDirs.extensions, accumulator.unsupportedExtensionFiles),
 				projectMetadata,
 				projectOverrides.extensions,
 				projectBaseDir,
@@ -2478,7 +2481,7 @@ export class DefaultPackageManager implements PackageManager {
 
 			addResources(
 				"extensions",
-				collectAutoExtensionEntries(legacyProjectDirs.extensions),
+				collectAutoExtensionEntries(legacyProjectDirs.extensions, accumulator.unsupportedExtensionFiles),
 				legacyProjectMetadata,
 				projectOverrides.extensions,
 				legacyProjectBaseDir,
@@ -2516,7 +2519,7 @@ export class DefaultPackageManager implements PackageManager {
 		// User extensions from ~/.pi/agent/
 		addResources(
 			"extensions",
-			collectAutoExtensionEntries(userDirs.extensions),
+			collectAutoExtensionEntries(userDirs.extensions, accumulator.unsupportedExtensionFiles),
 			userMetadata,
 			userOverrides.extensions,
 			globalBaseDir,
@@ -2644,6 +2647,7 @@ export class DefaultPackageManager implements PackageManager {
 			themes: new Map(),
 			hooks: new Map(),
 			ignoredSkills: new Set(),
+			unsupportedExtensionFiles: new Set(),
 		};
 	}
 
@@ -2677,6 +2681,9 @@ export class DefaultPackageManager implements PackageManager {
 			themes: mapToResolved(accumulator.themes),
 			hooks: mapToResolved(accumulator.hooks),
 			ignoredSkills: [...accumulator.ignoredSkills].sort(),
+			...(accumulator.unsupportedExtensionFiles.size
+				? { unsupportedExtensionFiles: [...accumulator.unsupportedExtensionFiles].sort() }
+				: {}),
 		};
 	}
 

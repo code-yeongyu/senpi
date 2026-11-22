@@ -1513,14 +1513,14 @@ describe("config reload builtin extension", () => {
 		expect(reload).toHaveBeenCalledTimes(1);
 	});
 
-	it("still reloads when a real extension entry under the extensions directory changes", async () => {
+	it.each(["diff.js", "diff.mjs", "diff.mts"])("reloads once when the extension entry %s changes", async (name) => {
 		vi.useFakeTimers();
 		const agentDir = mkdtempSync(join(tmpdir(), "senpi-config-reload-ext-entry-"));
 		agentDirs.push(agentDir);
 		writeFileSync(join(agentDir, "settings.json"), '{"theme":"dark"}\n', "utf-8");
 		const extensionsDir = join(agentDir, "extensions");
 		mkdirSync(extensionsDir, { recursive: true });
-		const entryPath = join(extensionsDir, "diff.js");
+		const entryPath = join(extensionsDir, name);
 		writeFileSync(entryPath, "export default () => {};\n", "utf-8");
 
 		const watches = createWatchProbe();
@@ -1535,7 +1535,7 @@ describe("config reload builtin extension", () => {
 		);
 
 		writeFileSync(entryPath, "export default () => { /* changed */ };\n", "utf-8");
-		watches.emit(extensionsDir, "diff.js");
+		watches.emit(extensionsDir, name);
 		await vi.advanceTimersByTimeAsync(200);
 		await Promise.resolve();
 		await Promise.resolve();

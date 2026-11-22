@@ -25,6 +25,8 @@ describe("config reload extension watch scope", () => {
 		it("#then treats extension sources as loadable", () => {
 			expect(isLoadableExtensionEntry(dir, "diff.js")).toBe(true);
 			expect(isLoadableExtensionEntry(dir, "tps.ts")).toBe(true);
+			expect(isLoadableExtensionEntry(dir, "alpha.mjs")).toBe(true);
+			expect(isLoadableExtensionEntry(dir, "beta.mts")).toBe(true);
 		});
 
 		it("#then ignores non-source files", () => {
