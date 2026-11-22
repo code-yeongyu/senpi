@@ -17,6 +17,7 @@ export type LoopHookMessage =
 	| LoopHookHello
 	| LoopHookStarted
 	| LoopHookReply
+	| LoopHookAck
 	| LoopHookFailed;
 
 /** Loop host to hand: run the hooks for `event`. A re-send after a hand restart carries the same `callId`. */
@@ -30,7 +31,8 @@ export interface LoopHookCall {
 /**
  * Loop host to hand: the caller stopped waiting for `callId`, so the hooks still running for it are told to stop (their
  * signal aborts). Same lane as the call, so it never overtakes it. Nothing answers it; the call's own answer, if the hooks
- * still send one, is dropped by the host.
+ * still send one, is dropped by the host. The host settles each call once, so a cancel the hand receives after it replied
+ * means that reply was dropped: the hand aborts the hooks' signal then too, and their effects reach the loop another way.
  */
 export interface LoopHookCancel {
 	readonly kind: "hook.cancel";
@@ -56,6 +58,15 @@ export interface LoopHookReply {
 	readonly result: JsonValue;
 }
 
+/**
+ * Loop host to hand: the host consumed the reply to `callId`, so no cancel will follow it and the hand stops keeping the
+ * call's signal for one (#6808 review L1). A host that sends none leaves the hand keeping it, as it keeps its answers.
+ */
+export interface LoopHookAck {
+	readonly kind: "hook.ack";
+	readonly callId: string;
+}
+
 /** The hooks ran and failed; the message is the hook's own. */
 export interface LoopHookFailed {
 	readonly kind: "hook.failed";
@@ -69,6 +80,7 @@ const KINDS: readonly LoopHookMessage["kind"][] = [
 	"hook.hello",
 	"hook.started",
 	"hook.reply",
+	"hook.ack",
 	"hook.failed",
 ];
 const encoder = new TextEncoder();
@@ -107,6 +119,8 @@ export function decodeLoopHookMessage(payload: Uint8Array): LoopHookMessage | un
 			return isId(value.callId) && "result" in value
 				? { kind: "hook.reply", callId: value.callId, result: value.result as JsonValue }
 				: undefined;
+		case "hook.ack":
+			return isId(value.callId) ? { kind: "hook.ack", callId: value.callId } : undefined;
 		default:
 			return isId(value.callId) && typeof value.error === "string"
 				? { kind: "hook.failed", callId: value.callId, error: value.error }

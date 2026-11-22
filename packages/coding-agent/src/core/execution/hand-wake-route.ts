@@ -32,13 +32,33 @@ export function loopWakeRoute(offer: (wake: HandWake) => void, sessionId?: strin
 
 /**
  * Where a loop-hook call's effects go once the call ended: its runtime's wake outbox, or, on a runtime without one,
- * nowhere, and `dropped` reports each one so it is never lost silently.
+ * nowhere, and `dropped` reports each one so it is never lost silently. Its sends never throw: one whose value cannot
+ * travel to the loop (a cycle, a BigInt) is reported to `dropped` too, so a flush of several goes on past it.
  */
 export function lateLoopRoute(
 	wake: ((wake: HandWake) => void) | undefined,
 	dropped: (error: string) => void,
 ): (sessionId: string) => LoopWakeRoute {
-	if (wake !== undefined) return (sessionId) => loopWakeRoute(wake, sessionId);
+	if (wake !== undefined)
+		return (sessionId) => {
+			const route = loopWakeRoute(wake, sessionId);
+			const guarded = (what: string, send: () => void): void => {
+				try {
+					send();
+				} catch (error) {
+					dropped(
+						`A ${what} from loop session ${sessionId}'s hook work could not travel to the loop and was dropped: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+			};
+			return {
+				sendMessage: (message, options) => guarded("message", () => route.sendMessage(message, options)),
+				sendUserMessage: (content, options) =>
+					guarded("user message", () => route.sendUserMessage(content, options)),
+				appendEntry: (customType, data) => guarded("session entry", () => route.appendEntry(customType, data)),
+				notify: (message, type) => guarded("notice", () => route.notify(message, type)),
+			};
+		};
 	return (sessionId) => {
 		const drop = (what: string) =>
 			dropped(

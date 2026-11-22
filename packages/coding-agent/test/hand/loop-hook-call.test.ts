@@ -1,6 +1,7 @@
 // A loop-hook call's facts on a hand (S33): the session it binds, what its work keeps after it ended, and the late
 // effects that go to its session's late route. Split from loop-hook-host.test.ts, which drives a real hand.
 import { describe, expect, it } from "vitest";
+import { type HandWake, lateLoopRoute } from "../../src/core/execution/hand-wake-route.ts";
 import { createLoopHookCall, type LateLoopRoute, LoopHookCallEndedError } from "../../src/modes/rpc/loop-hook-call.ts";
 
 /** A late route that records what reaches it, as `[sessionId, kind, what]`. */
@@ -104,6 +105,80 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 			["loop-session-6", "user_message", "u-after"],
 		]);
 		expect(reply).toEqual({ sent: [], notices: [], entries: [], userMessages: [] });
+	});
+
+	it("sends a cancelled call's effects to the late route in the order its work made them (#6808 review L3)", async () => {
+		const { late, route } = recordingRoute();
+		const call = createLoopHookCall(route);
+		const cancel = new AbortController();
+		await call.run({ sessionId: "s", cwd: "/work", idle: false, cancel: cancel.signal }, async (effects) => {
+			const facts = call.current();
+			facts?.notify("n1");
+			facts?.sendMessage({ customType: "c", content: "m1", display: false });
+			facts?.appendEntry("e1");
+			facts?.notify("n2");
+			facts?.sendUserMessage("u1");
+			cancel.abort();
+			return effects;
+		});
+
+		expect(late).toEqual([
+			["s", "notice", "n1"],
+			["s", "message", "m1"],
+			["s", "entry", "e1"],
+			["s", "notice", "n2"],
+			["s", "user_message", "u1"],
+		]);
+	});
+
+	it("sends its reply's effects to the late route when the loop cancels after it returned: the host dropped that reply (#6808 review L1)", async () => {
+		const { late, route } = recordingRoute();
+		const call = createLoopHookCall(route);
+		const cancel = new AbortController();
+		const reply = await call.run(
+			{ sessionId: "s", cwd: "/work", idle: false, cancel: cancel.signal },
+			async (effects) => {
+				call.current()?.sendMessage({ customType: "c", content: "m1", display: false });
+				call.current()?.appendEntry("e1");
+				return structuredClone(effects);
+			},
+		);
+
+		expect(late).toEqual([]);
+		cancel.abort();
+
+		expect(reply.sent.map((entry) => entry.message.content)).toEqual(["m1"]);
+		expect(late).toEqual([
+			["s", "message", "m1"],
+			["s", "entry", "e1"],
+		]);
+	});
+
+	it("reports an effect that cannot travel to the loop and still sends the rest, aborting the call first (#6808 review L2)", async () => {
+		const wakes: HandWake[] = [];
+		const dropped: string[] = [];
+		const call = createLoopHookCall(
+			lateLoopRoute(
+				(wake) => void wakes.push(wake),
+				(error) => void dropped.push(error),
+			),
+		);
+		const cancel = new AbortController();
+		let signal: AbortSignal | undefined;
+		await call.run(
+			{ sessionId: "s", cwd: "/work", idle: false, cancel: cancel.signal },
+			async (effects, callSignal) => {
+				signal = callSignal;
+				call.current()?.sendMessage({ customType: "c", content: "big", display: false, details: { size: 1n } });
+				call.current()?.notify("after");
+				cancel.abort();
+				return effects;
+			},
+		);
+
+		expect(signal?.aborted).toBe(true);
+		expect(wakes.map((wake) => wake.source)).toEqual(["notice"]);
+		expect(dropped).toEqual([expect.stringMatching(/message from loop session s.*could not travel to the loop/)]);
 	});
 
 	it("has pending messages only for user messages it sent; a late one goes to the late route (#6751 review L2)", async () => {
