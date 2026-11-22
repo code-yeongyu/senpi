@@ -1,7 +1,6 @@
 import type { McpListedTool as ListedTool } from "./tool-contracts.ts";
 import { listMcpTools } from "./tool-client.ts";
 import { isModernMcpClient } from "./modern/request.ts";
-import { hasSupportedModernToolSchemas } from "./modern/tool-schema.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { McpServerDeclaredConfig, McpSettings } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
@@ -93,24 +92,22 @@ export function cachedToolsToCatalogEntries(
 	options: McpToolCatalogOptions = {},
 ): McpToolCatalogEntry[] {
 	const modern = connection.state === "connected" ? isModernMcpClient(connection.client) || undefined : catalog.modern;
-	return catalog.tools
-		.filter((tool) => !modern || hasSupportedModernToolSchemas(tool))
-		.map((tool) => ({
-			requestOrigin: options.requestOrigin,
-			annotations: tool.annotations,
-			agentDir: options.agentDir,
-			artifacts: options.artifacts,
-			connection,
-			description: tool.description,
-			ensureConnected,
-			ensureFresh: options.ensureFresh,
-			invocation: options.invocation,
-			outputGuard: options.outputGuard,
-			requestTimeoutMs,
-			schema: tool.inputSchema,
-			outputSchema: tool.outputSchema,
-			modern,
-			server,
-			tool: tool.name,
-		}));
+	return catalog.tools.map((tool) => ({
+		requestOrigin: options.requestOrigin,
+		annotations: tool.annotations,
+		agentDir: options.agentDir,
+		artifacts: options.artifacts,
+		connection,
+		description: tool.description,
+		ensureConnected,
+		ensureFresh: options.ensureFresh,
+		invocation: options.invocation,
+		outputGuard: options.outputGuard,
+		requestTimeoutMs,
+		schema: tool.inputSchema,
+		outputSchema: tool.outputSchema,
+		modern,
+		server,
+		tool: tool.name,
+	}));
 }

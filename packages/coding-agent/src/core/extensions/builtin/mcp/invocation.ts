@@ -129,7 +129,7 @@ export function createMcpInvocationResolver(scope: InvocationScope): McpInvocati
 			let validate: (value: unknown) => boolean;
 			try {
 				validate = current.modern
-					? compileModernSchema(current.schema)
+					? compileModernSchema(current.schema, current.tool)
 					: (value: unknown) => Check(Type.Unsafe(current.schema), value);
 			} catch (error) {
 				if (!(error instanceof McpToolSchemaError)) throw error;

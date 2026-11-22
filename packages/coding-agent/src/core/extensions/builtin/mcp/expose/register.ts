@@ -60,7 +60,7 @@ export function buildMcpToolDefinitions(entries: readonly McpToolCatalogEntry[],
 }
 
 function createMcpToolDefinition(entry: McpToolCatalogEntry, name: string): McpToolDefinition {
-	const converted = convertJsonSchemaToTypeBox(entry.schema, entry.modern);
+	const converted = convertJsonSchemaToTypeBox(entry.schema, entry.modern, entry.tool);
 	const label = `${entry.server}/${entry.tool}`;
 	registerDispatchIdentity(converted.schema, () => entry.invocation?.identity(entry));
 	return {
