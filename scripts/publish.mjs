@@ -6,11 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
 import { rewriteOwnedRegistryAliases } from "./prepare-senpi-publish-manifest.mjs";
-import { buildPublishArgs } from "./publish-command.mjs";
+import { buildPublishArgs, publishPackage } from "./publish-command.mjs";
+import { assertLiveRunOnMain } from "./release-ref-guard.mjs";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
 import { parseNpmPackJson } from "./npm-pack-json.mjs";
 import { assertPublishedWorkspacePackFiles, assertSenpiPackedWorkspaceFiles } from "./senpi-publish-pack-checks.mjs";
-import { queryNpmRegistry } from "./npm-registry.mjs";
+import { assertRegistryPackagesKnown, queryNpmRegistry, queryWithRetry } from "./npm-registry.mjs";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 import { registryPackageNames } from "./registry-packages.mjs";
 
@@ -42,17 +43,25 @@ const requiredNativePrebuildTargets = process.argv
 	.flatMap((arg) => arg.slice(arg.indexOf("=") + 1).split(","))
 	.map((target) => target.trim())
 	.filter((target) => target.length > 0);
+const requiredSocketSecretFlag = "--require-socket-secret-bridge=";
+const requiredSocketSecretTargets = process.argv
+	.slice(2)
+	.filter((arg) => arg.startsWith(requiredSocketSecretFlag))
+	.flatMap((arg) => arg.slice(requiredSocketSecretFlag.length).split(","))
+	.map((target) => target.trim())
+	.filter((target) => target.length > 0);
 const unknownArgs = process.argv
 	.slice(2)
 	.filter(
 		(arg) =>
 			arg !== "--dry-run" &&
 			!arg.startsWith(requiredNativePrebuildFlag) &&
-			!arg.startsWith(legacyRequiredNativePrebuildFlag),
+			!arg.startsWith(legacyRequiredNativePrebuildFlag) &&
+			!arg.startsWith(requiredSocketSecretFlag),
 	);
 
 if (unknownArgs.length > 0) {
-	console.error(`Usage: node scripts/publish.mjs [--dry-run] [--require-native-prebuilds=<platform>-<arch>[,...]]`);
+	console.error(`Usage: node scripts/publish.mjs [--dry-run] [--require-native-prebuilds=<platform>-<arch>[,...]] [--require-socket-secret-bridge=win32-<arch>[,...]]`);
 	process.exit(1);
 }
 
@@ -118,7 +127,7 @@ function validatePack(pkg) {
 	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: pkg.publishDirectory });
 	const packed = parseNpmPackJson(result.stdout)[0];
 	if (pkg.directory === "packages/coding-agent") {
-		assertSenpiPackedWorkspaceFiles(packed, readPackageJson(pkg.publishDirectory));
+		assertSenpiPackedWorkspaceFiles(packed, readPackageJson(pkg.publishDirectory), { requiredSocketSecretTargets });
 	} else {
 		assertPublishedWorkspacePackFiles(packed, readPackageJson(pkg.directory).name, { requiredNativePrebuildTargets });
 	}
@@ -143,7 +152,13 @@ if (versions.length !== 1) {
 	throw new Error(`Publish packages are not lockstep versioned: ${versions.join(", ")}`);
 }
 
+// senpi#6645: on a ref other than main the publish-only job still holds id-token: write; refuse a live publish there.
+assertLiveRunOnMain({ dryRun, env: process.env, what: "npm publish" });
 const publishArgs = dryRun ? undefined : buildPublishArgs({ githubActions: process.env.GITHUB_ACTIONS === "true" });
+
+// Before any package is staged or published: a name npm does not know would publish part of the set (senpi#6636). This
+// runs after the tag is pushed, so a registry hiccup is retried rather than failing the publish.
+assertRegistryPackagesKnown(publishOrder, (name) => queryWithRetry(() => queryNpmRegistry(name, "name")));
 
 console.log(`Publishing senpi packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
 
@@ -183,9 +198,24 @@ try {
 			continue;
 		}
 
-		run("npm", publishArgs, {
-			cwd: pkg.publishDirectory,
-		});
+		const outcome = publishPackage(
+			pkg,
+			() => {
+				const { stdout, stderr } = run("npm", publishArgs, { capture: true, cwd: pkg.publishDirectory });
+				if (stdout) process.stdout.write(stdout);
+				if (stderr) process.stderr.write(stderr);
+			},
+			(spec) =>
+				queryWithRetry(() => {
+					const result = queryNpmRegistry(spec, "version");
+					// After a duplicate-version conflict, a 404 may still be registry propagation lag.
+					if (result === null) throw new Error(`${spec} is not yet visible on npm`);
+					return JSON.parse(result);
+				}),
+		);
+		if (outcome === "already-published") {
+			console.log(`Skipping ${pkg.name}@${pkg.version}: a concurrent run already published this version.`);
+		}
 		console.log();
 	}
 } finally {

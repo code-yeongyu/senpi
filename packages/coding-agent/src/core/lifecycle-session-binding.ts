@@ -10,7 +10,7 @@ import type { AgentEndEvent } from "./extensions/types.ts";
 import { deliveryIdOf } from "./external-admission.ts";
 import { consumeLifecycleDelivery, lifecycleDeliveryEntries, messageTicket } from "./lifecycle-delivery.ts";
 import { readLifecycleGoal } from "./lifecycle-goal.ts";
-import { lifecycleHistory } from "./lifecycle-history.ts";
+import { lastRunEnd, lifecycleHistory } from "./lifecycle-history.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
 import { readLifecycleRuntimeFacts } from "./lifecycle-runtime-facts.ts";
@@ -55,7 +55,9 @@ export class LifecycleSessionBinding {
 		this.session = session;
 		this.host = host;
 		this.sessionId = session.sessionId;
+		const runEnd = session.sessionManager.reduceHistory(lastRunEnd);
 		this.controller = new SessionLifecycleController({
+			...(runEnd.ended && runEnd.runId !== undefined ? { endedRunId: runEnd.runId } : {}),
 			sessionId: session.sessionId,
 			spawnedBy: session.sessionManager.getHeader()?.spawnedBy,
 			entries: session.sessionManager
@@ -254,9 +256,12 @@ export class LifecycleSessionBinding {
 		// dispose() may land while the facts are read; a disposed binding restores nothing.
 		if (this.disposed) return;
 		const entries = this.session.sessionManager.reduceHistory(lifecycleHistory);
-		const active = this.controller.obligations.active;
-		for (const record of active) {
+		// A run this process started (a restored monitor's wake that ran while the extensions bound, senpi#7033) is live:
+		// only work of a run from before the restart can have been interrupted by it.
+		const liveRun = this.controller.runStartedHere;
+		for (const record of this.controller.obligations.active) {
 			if (!record.ticketId) continue;
+			if (liveRun !== undefined && record.runId === liveRun) continue;
 			const ticketId = record.ticketId;
 			const entryId = this.session.sessionManager.reduceHistory(lifecycleDeliveryEntries).get(ticketId);
 			const transcript = entryId ? this.session.sessionManager.getEntry(entryId) : undefined;

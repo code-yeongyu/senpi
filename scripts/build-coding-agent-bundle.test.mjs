@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { commonBuildOptions, findContainingOutput, validateExternalImports } from "./build-coding-agent-bundle.mjs";
 import { lazyEntryPoints } from "./bundle-entry-points.mjs";
+import { assertBundleZodCores } from "./bundle-zod-core-guard.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const permissionSystemSrc = join(repoRoot, "packages", "coding-agent", "src", "core", "extensions", "builtin", "permission-system");
@@ -81,5 +82,19 @@ describe("build-coding-agent-bundle", () => {
 		} finally {
 			rmSync(scratch, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("built bundle zod cores", () => {
+	it("ships no zod core older than 4.6.6 beyond the pinned Claude agent SDK copies", () => {
+		// Given: the built bundle. CI builds it before the script tests (release-graph-codemode, node-bundle-smoke);
+		// a missing or empty bundle is a failed scan, not a skipped one (senpi#6497 review).
+		const bundleDir = join(repoRoot, "packages", "coding-agent", "dist", "bundle");
+
+		// When / Then: exactly one 4.6.2 in the SDK's chunk and one in the session worker, nothing else stale
+		assert.deepEqual(
+			assertBundleZodCores(bundleDir).map((entry) => `${entry.file.replace(/^chunks\/sdk-[^/]+\.js$/, "chunks/sdk-*.js")} ${entry.version}`),
+			["chunks/sdk-*.js 4.6.2", "chunks/session-worker.js 4.6.2"],
+		);
 	});
 });

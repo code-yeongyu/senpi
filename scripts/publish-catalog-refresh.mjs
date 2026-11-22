@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fragmentPath, parseFragment } from "./changes-fragments.mjs";
+import { FULL_CI_LABEL } from "./ci-platform-scope.mjs";
 
 const args = process.argv.slice(2);
 const option = (name) => args[args.indexOf(name) + 1];
@@ -78,7 +79,12 @@ try {
 		gh("pr", "edit", String(pr.number), "--repo", repo, "--body-file", summary);
 	}
 	if (pr.isDraft) gh("pr", "ready", String(pr.number), "--repo", repo);
-	if (args.includes("--auto-merge")) gh("pr", "merge", String(pr.number), "--repo", repo, "--auto", "--merge");
+	if (args.includes("--auto-merge")) {
+		// A pull request gets hosted CI, and so the required `ci / Check and test`, only with this label (senpi#4968,
+		// senpi#5444); without it auto-merge waits forever. Adding it after the last push runs CI on the final head.
+		gh("pr", "edit", String(pr.number), "--repo", repo, "--add-label", FULL_CI_LABEL);
+		gh("pr", "merge", String(pr.number), "--repo", repo, "--auto", "--merge");
+	}
 } catch (error) {
 	console.error(`catalog-refresh: ${error instanceof Error ? error.message : String(error)}`);
 	process.exitCode = 1;

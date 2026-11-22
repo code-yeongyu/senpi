@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
@@ -37,7 +38,24 @@ const formatCheckScript = () => {
 	return script;
 };
 
+// A copy of .oxfmtrc.json under the OS temp root, so a fixture at packages/coding-agent/src inside it is
+// in the formatter's scope; a directory inside the real packages/*/src would race every scripts test that
+// walks that tree (#5305).
+const fixtureFile = (t, name) => {
+	const dir = realpathSync(mkdtempSync(join(tmpdir(), "ci-format-gate-fixture-")));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	copyFileSync(join(root, ".oxfmtrc.json"), join(dir, ".oxfmtrc.json"));
+	const file = join(dir, "packages", "coding-agent", "src", "ci-format-gate-fixture", name);
+	mkdirSync(dirname(file), { recursive: true });
+	return { dir, file };
+};
+
 describe("CI format gate", () => {
+	it("keeps its formatter fixtures outside the repository, so no source scan can meet them", (t) => {
+		const { dir } = fixtureFile(t, "probe.ts");
+		assert.ok(relative(realpathSync(root), dir).startsWith(".."), dir);
+	});
+
 	it("runs bun fmt in a form that reports drift instead of rewriting it", () => {
 		// Given: the format script the Static checks job's check script runs.
 		const script = formatCheckScript();
@@ -50,9 +68,7 @@ describe("CI format gate", () => {
 
 	it("fails on unformatted input with the CI bun fmt invocation", (t) => {
 		// Given: a drifted file under a path .oxfmtrc.json actually includes.
-		const fixture = mkdtempSync(join(root, "packages", "coding-agent", "src", "ci-format-gate-fixture-"));
-		t.after(() => rmSync(fixture, { recursive: true, force: true }));
-		const drifted = join(fixture, "drifted.ts");
+		const { dir, file: drifted } = fixtureFile(t, "drifted.ts");
 		writeFileSync(drifted, "export const value   =    1;\n");
 		const flags = formatCheckScript()
 			.replace(FMT_WRAPPER_COMMAND, "")
@@ -62,7 +78,7 @@ describe("CI format gate", () => {
 
 		// When: the CI script's own argv runs against the drifted file.
 		const result = spawnSync(process.execPath, [fmtWrapper, ...flags, drifted], {
-			cwd: root,
+			cwd: dir,
 			timeout: 60000,
 			encoding: "utf8",
 		});
@@ -75,14 +91,12 @@ describe("CI format gate", () => {
 
 	it("passes on formatted input with the CI bun fmt invocation", (t) => {
 		// Given: the same fixture path, already formatted.
-		const fixture = mkdtempSync(join(root, "packages", "coding-agent", "src", "ci-format-gate-fixture-"));
-		t.after(() => rmSync(fixture, { recursive: true, force: true }));
-		const formatted = join(fixture, "formatted.ts");
+		const { dir, file: formatted } = fixtureFile(t, "formatted.ts");
 		writeFileSync(formatted, "export const value = 1;\n");
 
 		// When: the wrapper checks it.
 		const result = spawnSync(process.execPath, [fmtWrapper, "--check", formatted], {
-			cwd: root,
+			cwd: dir,
 			timeout: 60000,
 			encoding: "utf8",
 		});

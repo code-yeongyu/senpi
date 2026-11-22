@@ -1,5 +1,8 @@
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import type { AgentToolResult } from "../types.ts";
+import { FILE_CHANNEL, RUN_CHANNEL } from "./device-files.ts";
+import { createPlaneClient, decodePlaneMessage, type NestedRequest } from "./plane.ts";
+import { fileCall, fileRefusal, fileStopped } from "./remote-file-call.ts";
 import {
 	decodeRemoteMessage,
 	encodeRemoteMessage,
@@ -8,6 +11,8 @@ import {
 	type RemoteInvoke,
 	toRemoteToolResult,
 } from "./remote-protocol.ts";
+import { authorize, type HandAuthority } from "./grant-verify.ts";
+import { answerFloor, HAND_SELF_SENDER, type HandEpochFence } from "./remote-epoch.ts";
 import type { HandLedger } from "./remote-hand-ledger.ts";
 import type { ExecutionScope } from "./tool-host.ts";
 
@@ -17,6 +22,10 @@ export interface HandCall {
 	readonly name: string;
 	readonly arguments: unknown;
 	readonly signal: AbortSignal;
+	/** Asks the brain that owns this call (a model-backed tool's completion, S31); fails once the call has ended. */
+	readonly nested: NestedRequest;
+	/** The issuing session's prompt surface, when it sent one (see `RemoteInvoke.promptSurface`). */
+	readonly promptSurface?: string;
 }
 
 /**
@@ -27,6 +36,11 @@ export interface HandScope {
 	run(call: HandCall): Promise<AgentToolResult<unknown>>;
 	/** A tool that must not overlap other calls of its scope (`executionMode: "sequential"`). */
 	isSequential(name: string): boolean;
+	/**
+	 * Runs one device file operation (S40) after its grant was checked: the scope's `tool_call` handlers, filesystem
+	 * policy and the operation itself, the outcome in `details.file`. Absent: the scope serves no file channel.
+	 */
+	file?(op: string, args: unknown, signal: AbortSignal, nested: NestedRequest): Promise<AgentToolResult<unknown>>;
 	dispose(): Promise<void>;
 }
 
@@ -35,16 +49,29 @@ export type OpenHandScope = (scope: ExecutionScope) => Promise<HandScope>;
 export interface RemoteExecutorOptions {
 	/** The hand's end of the link; lanes are execution scope IDs. */
 	readonly transport: Transport;
-	/** Opens a scope lazily on its first call, bound to the scope's root. */
+	/** Opens a scope lazily on its first call, bound to the scope's root (the canonical one a peer's grant check resolved). */
 	readonly openScope: OpenHandScope;
+	/**
+	 * Whose calls this executor runs. A peer's call is checked against its grant before anything of it is recorded or
+	 * opened, and a replaced grant snapshot re-checks every running call, aborting the ones it no longer allows (S27b).
+	 */
+	readonly authority: HandAuthority;
 	/**
 	 * The hand's durable record of its calls. With it, a call is recorded as dispatched before it runs, a restarted hand
 	 * answers its interrupted calls `hand_restarted` without running them again, and a re-delivered invoke gets the
 	 * recorded outcome. Without it, the hand remembers execution IDs only while it lives.
 	 */
 	readonly ledger?: HandLedger;
+	/**
+	 * The hand's epoch floors (S35), shared by every link's executor in this process. With it, a scope's owner raises the
+	 * floor before it dispatches, and an invoke, abort or ack below the floor is refused or ignored. Without it, a floor
+	 * is refused `epoch_unsupported`, so a session that moves never dispatches to this hand.
+	 */
+	readonly fence?: HandEpochFence;
 	/** This hand process's identity in its `hello`; a fresh one per start by default. */
 	readonly instance?: string;
+	/** Announce the device file channel (S40) in `hello`; its scopes then serve `HandScope.file`. */
+	readonly fileChannel?: boolean;
 	/**
 	 * A call the hand could not record or answer (its durable record failed): the call gets no reply from this process,
 	 * as from a hand that died, and a restarted hand answers it from the record. A failed restart recovery is reported
@@ -76,12 +103,23 @@ interface ScopeState {
  * passed on: the hand keys on the scope and does not know the session (R16).
  */
 export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExecutor {
-	const { transport, openScope, ledger } = options;
+	const { transport, openScope, ledger, authority, fence } = options;
+	const sender = authority.kind === "peer" ? authority.peer : HAND_SELF_SENDER;
+	const admits = (lane: string, epoch: number | undefined): boolean =>
+		fence === undefined || fence.admits(lane, epoch, sender);
 	const scopes = new Map<string, ScopeState>();
 	const accepted: string[] = [];
 	const seen = new Set<string>();
-	const running = new Map<string, AbortController>();
+	const running = new Map<string, { readonly controller: AbortController; readonly root: string }>();
+	const planes = createPlaneClient({ transport });
 	let closed = false;
+	const stopWatching =
+		authority.kind === "peer"
+			? authority.verifier.onReplace(() => {
+					for (const { controller, root } of running.values())
+						if (!authority.verifier.verify(authority.peer, root).ok) controller.abort();
+				})
+			: () => {};
 
 	const reply = (lane: string, message: RemoteHandMessage): void => {
 		void transport.send(lane, encodeRemoteMessage(message)).catch(() => undefined);
@@ -99,13 +137,16 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		return state;
 	};
 
-	const invoke = async (lane: string, call: RemoteInvoke): Promise<void> => {
+	const invoke = async (lane: string, call: RemoteInvoke, file?: { readonly op: string }): Promise<void> => {
 		if (closed) return refuse(lane, call.executionId, "hand_closed");
 		if (lane !== call.scope.id) return refuse(lane, call.executionId, "scope_lane_mismatch");
+		const verdict = authorize(authority, call.scope.root);
+		if (!verdict.ok) return refuse(lane, call.executionId, verdict.reason);
+		if (!admits(lane, call.epoch)) return refuse(lane, call.executionId, "epoch_fenced");
 		if (ledger === undefined && seen.has(call.executionId))
 			return refuse(lane, call.executionId, "duplicate_execution");
 		seen.add(call.executionId);
-		const state = stateOf(call.scope);
+		const state = stateOf({ id: call.scope.id, root: verdict.root });
 		if (typeof state === "string") return refuse(lane, call.executionId, state);
 		let scope: HandScope;
 		try {
@@ -115,14 +156,14 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 			return refuse(lane, call.executionId, `scope_unavailable: ${reason}`);
 		}
 		if (ledger !== undefined) {
-			const admission = await ledger.admit(call);
+			const admission = await ledger.admit(call, () => admits(lane, call.epoch));
 			if (admission.kind === "reply") return reply(lane, admission.message);
 			if (admission.kind === "in_flight") return;
 		}
 		accepted.push(call.executionId);
 		const controller = new AbortController();
-		running.set(call.executionId, controller);
-		const sequential = scope.isSequential(call.name);
+		running.set(call.executionId, { controller, root: verdict.root });
+		const sequential = file !== undefined || scope.isSequential(call.name);
 		const dependencies = sequential
 			? [...(state.lastSequential ? [state.lastSequential] : []), ...state.wave]
 			: state.lastSequential
@@ -130,19 +171,54 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 				: [];
 		const done = (async () => {
 			await Promise.allSettled(dependencies);
+			// Without a ledger this is the call's dispatch point: a floor raised while its scope opened or it waited on
+			// earlier calls fences it here. With a ledger, the guarded `dispatch` step already decided it atomically.
+			if (ledger === undefined && !admits(lane, call.epoch)) {
+				running.delete(call.executionId);
+				return refuse(lane, call.executionId, "epoch_fenced");
+			}
 			let result: AgentToolResult<unknown>;
 			try {
-				result = await scope.run({
-					toolCallId: call.toolCallId,
-					name: call.name,
-					arguments: call.arguments,
-					signal: controller.signal,
-				});
+				// The grant must still hold when the call starts: a snapshot installed while it waited (scope opening,
+				// durable admission, earlier calls of its scope) may have revoked it, and then the tool never runs.
+				if (controller.signal.aborted || !authorize(authority, call.scope.root).ok)
+					throw new Error("The call's grant was revoked before it ran");
+				result =
+					file === undefined
+						? await scope.run({
+								toolCallId: call.toolCallId,
+								name: call.name,
+								arguments: call.arguments,
+								signal: controller.signal,
+								nested: planes.requestFor(call.executionId, lane, controller.signal),
+								...(call.promptSurface === undefined ? {} : { promptSurface: call.promptSurface }),
+							})
+						: scope.file === undefined
+							? fileRefusal("unsupported", "this hand serves no file channel")
+							: await scope.file(
+									file.op,
+									call.arguments,
+									controller.signal,
+									// Only planes the brain lets file operations host answer it (a two-sided extension's forwarded tool events).
+									planes.requestFor(call.executionId, lane, controller.signal),
+								);
+				// A file operation that ended aborted ships no payload: a revoked grant is a refusal (R7), never data.
+				if (file !== undefined && controller.signal.aborted)
+					result = fileStopped(authorize(authority, call.scope.root).ok);
 			} catch (error) {
-				const text = error instanceof Error ? error.message : String(error);
-				result = { content: [{ type: "text", text }], details: {}, isError: true };
+				if (file !== undefined) {
+					const granted = authorize(authority, call.scope.root).ok;
+					result =
+						controller.signal.aborted || !granted
+							? fileStopped(granted)
+							: fileRefusal("io", error instanceof Error ? error.message : String(error));
+				} else {
+					const text = error instanceof Error ? error.message : String(error);
+					result = { content: [{ type: "text", text }], details: {}, isError: true };
+				}
 			} finally {
 				running.delete(call.executionId);
+				planes.parentEnded(call.executionId);
 			}
 			const settled = toRemoteToolResult(result);
 			reply(
@@ -159,10 +235,17 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		} else state.wave.push(done);
 	};
 
+	// The connect hook: one `hello` per hand start, after recovery. The reliable transport re-delivers it across carrier
+	// re-attaches, so only a new hand process announces a new identity.
 	const ready = (async () => {
-		if (ledger === undefined) return;
-		for (const { lane, message } of await ledger.recover()) reply(lane, message);
-		reply(HAND_CONTROL_LANE, { kind: "hello", instance: options.instance ?? crypto.randomUUID() });
+		await fence?.ready;
+		if (ledger !== undefined) for (const { lane, message } of await ledger.recover()) reply(lane, message);
+		reply(HAND_CONTROL_LANE, {
+			kind: "hello",
+			instance: options.instance ?? crypto.randomUUID(),
+			durable: ledger !== undefined,
+			ops: options.fileChannel === true ? [FILE_CHANNEL, RUN_CHANNEL] : [],
+		});
 	})();
 	ready.catch((error: unknown) => options.onFault(error));
 
@@ -172,6 +255,8 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		} catch {
 			return;
 		}
+		const nested = decodePlaneMessage(frame.payload);
+		if (nested !== undefined) return planes.receive(nested);
 		let message: RemoteHandMessage;
 		try {
 			message = decodeRemoteMessage(frame.payload);
@@ -180,8 +265,13 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		}
 		try {
 			if (message.kind === "invoke") await invoke(frame.lane, message);
-			else if (message.kind === "abort") running.get(message.executionId)?.abort();
-			else if (message.kind === "ack") await ledger?.ack(message.executionId);
+			else if (message.kind === "floor")
+				reply(frame.lane, await answerFloor(fence, frame.lane, message.epoch, sender));
+			else if ((message.kind === "abort" || message.kind === "ack") && !admits(frame.lane, message.epoch)) return;
+			else if (message.kind === "file") await invoke(frame.lane, fileCall(message), { op: message.op });
+			else if (message.kind === "abort") running.get(message.executionId)?.controller.abort();
+			else if (message.kind === "ack")
+				await ledger?.ack(message.executionId, () => admits(frame.lane, message.epoch));
 		} catch (error) {
 			options.onFault(error);
 		}
@@ -192,7 +282,8 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		ready,
 		async close() {
 			closed = true;
-			for (const controller of running.values()) controller.abort();
+			stopWatching();
+			for (const { controller } of running.values()) controller.abort();
 			const opened = await Promise.allSettled([...scopes.values()].map((state) => state.opened));
 			scopes.clear();
 			await Promise.allSettled(

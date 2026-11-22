@@ -3,7 +3,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import { CanonicalPairing } from "../../../src/modes/rpc/compact-canonical-pairing.ts";
 import type { CanonicalRecord } from "../../../src/modes/rpc/compact-lane-transitions.ts";
 import { COMPACT_PROTOCOL_MAX_DEPTH } from "../../../src/modes/rpc/compact-protocol-depth.ts";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-client.ts";
 import { type SessionWorkerToHost, WORKER_CREDIT_CODES } from "../../../src/modes/rpc/session-worker-protocol.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
@@ -14,6 +13,7 @@ import {
 	within,
 	workerAcceptanceHost,
 } from "./4272-worker-acceptance-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
 /** A canonical record as a worker frame could carry it: parsed JSON the lane's transition mapping cannot read. */
@@ -29,12 +29,10 @@ afterEach(() => {
 it("in process: a malformed canonical record leaves compact unavailable and its legacy record delivered", async () => {
 	vi.stubEnv(FLAG, "1");
 	await using host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const client = host.client("fold");
 	const sessionId = String(dataOf(await client.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
+	const entry = admissions.entryFor(sessionId);
 	const lane = entry?.acceptance;
 	if (!lane) throw new Error("no real lane");
 	let poisoned: object | undefined;

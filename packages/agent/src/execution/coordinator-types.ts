@@ -47,6 +47,8 @@ export type PrepareRequest = {
 	readonly leaseUntil: number;
 	readonly requestDigest: string;
 	readonly call: { readonly name: string; readonly args: StoreValue };
+	/** Gate A approved this raw request digest (design 5.6.1); the executor asks again only for a different frozen call. */
+	readonly authorizedDigest?: string;
 };
 
 export type ExecutionRef = { readonly issuer: string; readonly executionId: string; readonly generation: number };
@@ -60,6 +62,8 @@ export type ExecutionRef = { readonly issuer: string; readonly executionId: stri
  */
 export type PrepareReply =
 	| { readonly kind: "prepared"; readonly frozenDigest: string }
+	/** Gate B: the frozen call differs from what Gate A authorized and needs consent; the approval binds this digest. */
+	| { readonly kind: "prepared_awaiting_consent"; readonly frozenDigest: string }
 	| { readonly kind: "blocked"; readonly result: StoreValue }
 	| { readonly kind: "batch_abort" }
 	| { readonly kind: "settled"; readonly outcome: ExecutionOutcome };
@@ -75,7 +79,42 @@ export interface BatchExecutor {
 	/** Resolves once the released call has settled. */
 	release(ref: ExecutionRef): Promise<SettleReply>;
 	abort(ref: ExecutionRef): Promise<SettleReply>;
+	/**
+	 * Applies an approval to a call awaiting consent on `frozenDigest`: `prepared`, or the call's terminal outcome (a
+	 * lease that expired while it waited rejects the approval). Only cross-machine executors gate consent.
+	 */
+	consent?(ref: ExecutionRef, frozenDigest: string): Promise<{ readonly kind: "prepared" } | SettleReply>;
 }
+
+/** What an approver answered; `expired` is the call's lease running out first. */
+export type ConsentAnswer = "approved" | "denied" | "expired";
+
+export type ConsentRequest = ExecutionRef & {
+	readonly gate: "raw" | "frozen";
+	readonly digest: string;
+	readonly name: string;
+	readonly leaseUntil: number;
+};
+
+/**
+ * Consent for cross-machine executions (design 5.6.1 Gate A and Gate B). Any RPC-authorized party may answer through
+ * `approve`; the device is not the only approver (K2). Fused and split-local sessions configure none (K3).
+ */
+export interface BatchConsent {
+	/**
+	 * Gate A: the engine's built-in permission classification of the raw call, before any extension callback. A call that
+	 * classifies as denied is not consent: it is prepared and the hand's own `tool_call` chain refuses it, as today.
+	 */
+	needsConsent(call: { readonly name: string; readonly args: StoreValue }): boolean;
+	approve(request: ConsentRequest): Promise<ConsentAnswer>;
+}
+
+/** One answered consent of a call, durable before the step it decides. */
+export type ConsentRecord = {
+	readonly gate: "raw" | "frozen";
+	readonly digest: string;
+	readonly answer: ConsentAnswer;
+};
 
 export type BatchDecision = "RELEASE" | "ABORT";
 
@@ -97,6 +136,8 @@ export type BatchRecord = {
 	readonly decision: BatchDecision | null;
 	readonly released: readonly boolean[];
 	readonly outcomes: readonly (CallOutcome | null)[];
+	/** Answered consents per call; absent on a record written before consent gating. */
+	readonly consents?: readonly (ConsentRecord | null)[];
 };
 
 export type BatchResult = {

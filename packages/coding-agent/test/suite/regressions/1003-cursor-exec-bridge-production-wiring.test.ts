@@ -125,6 +125,7 @@ describe("cursor exec bridge production wiring (issue #1003)", () => {
 			getRegisteredTool: (name) => (name === "read" ? tool : name === "grep" ? grepTool : undefined),
 			preflightToolCall: async () => undefined,
 			emitExecBridgeToolResult: async () => undefined,
+			releaseExecBridgeToolCall: () => undefined,
 		};
 		const sessionRef = { current: session };
 

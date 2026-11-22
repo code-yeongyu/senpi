@@ -246,6 +246,7 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 			"pane.report_agent_session",
 			"pane.report_agent",
 			"pane.report_agent",
+			"pane.report_metadata",
 			"pane.release_agent",
 		]);
 	});

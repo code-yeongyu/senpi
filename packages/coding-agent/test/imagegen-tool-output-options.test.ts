@@ -60,8 +60,8 @@ beforeEach(async () => {
 	registerImagesApiProvider({ api: "openai-images", generateImages: generate }, STUB_SOURCE_ID);
 	harness = await createHarness({ extensionFactories: [(pi) => pi.registerTool(generateImageTool)] });
 	await harness.session.bindExtensions({});
-	// generate_image is search-exposed: these tests exercise the tool body directly, so they opt
-	// into the same active set the by-name call would have produced.
+	// generate_image is eval-exposed and this harness registers no eval tool, so it is a direct tool;
+	// these tests exercise the tool body and keep it in the active set explicitly.
 	harness.session.setActiveToolsByName([...harness.session.getActiveToolNames(), "generate_image"]);
 });
 
@@ -85,10 +85,10 @@ describe("generate_image output options", () => {
 		const result = await execute({ prompt: "a red fox" });
 
 		expect(generate.mock.calls[0]?.[0]).toMatchObject({
-			id: "gpt-image-2.5-sunburst",
+			id: "gpt-image-2.6-sunburst",
 			cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
 		});
-		expect(result.details.model).toBe("gpt-image-2.5-sunburst");
+		expect(result.details.model).toBe("gpt-image-2.6-sunburst");
 	});
 
 	it("forwards background, format, compression, and moderation and labels the result with the format", async () => {

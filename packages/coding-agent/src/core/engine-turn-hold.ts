@@ -4,7 +4,13 @@ import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
 export type HoldKind = "unattended" | "session_hold" | "run_fence" | "inherited_hold";
-export type HoldReleaseCause = "input" | "resume_session" | "run_resume" | "run_cancelled" | "node_cancelled";
+export type HoldReleaseCause =
+	| "input"
+	| "resume_session"
+	| "run_resume"
+	| "run_cancelled"
+	| "node_cancelled"
+	| "session_close";
 export interface SessionHold {
 	kind: HoldKind;
 	key: string;
@@ -50,6 +56,8 @@ export class EngineTurnHold {
 	private records = new Map<string, SessionHold>();
 	private readonly notices: EngineTurnHoldNotices;
 	private pauseSeq = 0;
+	/** The seq of the newest hold that pauses the session, which `session_paused` announced (senpi#6900). */
+	private announcedSeq = 0;
 	private released: SessionHold[] = [];
 	private releaseBarrier = false;
 	private goalDeferred = false;
@@ -78,6 +86,7 @@ export class EngineTurnHold {
 			const data = entry.data as HoldEntry;
 			if (data.op === "add") {
 				this.pauseSeq = Math.max(this.pauseSeq, data.pauseSeq);
+				if (data.kind !== "run_fence") this.announcedSeq = Math.max(this.announcedSeq, data.pauseSeq);
 				this.records.set(data.key, {
 					kind: data.kind,
 					key: data.key,
@@ -135,6 +144,14 @@ export class EngineTurnHold {
 		return this.pauseSeq;
 	}
 
+	/**
+	 * Whether a Resume quoting `expectedSeq` has seen every hold that pauses the session. Run fences raise the seq
+	 * without pausing anything, so a seq from before a fence, up to the current one, is still current (senpi#6900).
+	 */
+	isCurrentPauseSeq(expectedSeq: number): boolean {
+		return expectedSeq >= this.announcedSeq && expectedSeq <= this.pauseSeq;
+	}
+
 	getHold(key: string): SessionHold | undefined {
 		const hold = this.records.get(key);
 		return hold ? { ...hold, sourceCounts: this.sources } : undefined;
@@ -173,8 +190,11 @@ export class EngineTurnHold {
 		} catch (error) {
 			this.writeFailed(error);
 		} finally {
-			// A run fence alone does not pause the session, so it emits no `session_paused` (senpi#3811).
-			if (!this.pauseOpen && this.isHeld()) {
+			// A run fence alone does not pause the session, so it emits no `session_paused` (senpi#3811). Any other hold
+			// announces its seq, even while already paused: Resume quotes that seq, so an unannounced one could never
+			// be released (senpi#6900).
+			if (kind !== "run_fence" && this.isHeld()) {
+				this.announcedSeq = this.pauseSeq;
 				this.pauseOpen = true;
 				this.emit({
 					type: "session_paused",
@@ -201,7 +221,8 @@ export class EngineTurnHold {
 			at,
 		} satisfies HoldEntry);
 		for (const key of present) this.records.delete(key);
-		// Each `session_paused` gets one `session_resumed`; a fence that outlives the pause resumes nothing (senpi#3811).
+		// A pause emits one `session_resumed` when it ends, however many `session_paused` it announced (senpi#6900); a
+		// fence that outlives the pause resumes nothing (senpi#3811).
 		if (this.pauseOpen && !this.isHeld()) {
 			this.pauseOpen = false;
 			this.emit({ type: "session_resumed", pauseSeq: this.pauseSeq, cause, at });

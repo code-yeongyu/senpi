@@ -23,15 +23,20 @@ describe("publish-only workflow", () => {
 
 	it("calls native prebuilds and stages their consumer-ready artifacts before building", () => {
 		assert.match(nativePrebuildWorkflow, /workflow_call:/);
+		// The call's readiness is an output of the always-running ready job, not needs.<call>.result.
+		assert.match(nativePrebuildWorkflow, /    outputs:\n      ready:\n[\s\S]*?value: \$\{\{ jobs\.ready\.outputs\.ready \}\}/);
+		assert.doesNotMatch(workflow, /needs\.native-prebuilds\.result/);
 		assert.match(
 			nativePrebuildWorkflow,
 			/path: \$\{\{ runner\.temp \}\}\/native-prebuild-artifact\s*$/m,
 		);
 		assert.match(workflow, /native-prebuilds:\s+(?:needs: require-version\s+)?(?:if: [^\n]+\s+)?uses: \.\/\.github\/workflows\/native-prebuilds\.yml/);
 		assert.match(workflow, /native-prebuilds:\s+needs: require-version\s+if: \$\{\{ inputs\.publish-only == true \}\}\s+uses:/);
+		// senpi#6642 added the forced-suite jobs to the release job's needs; publish-only still gates on the ready output
+		// (scripts/publish-forced-suite-workflow.test.mjs evaluates the whole condition).
 		assert.match(
 			workflow,
-			/needs: native-prebuilds\s+if: \$\{\{ always\(\) && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.result == 'success'\) \}\}/,
+			/needs: \[native-prebuilds, [^\]\n]*\]\s+(?:#[^\n]*\s+)*if: \$\{\{ always\(\) && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.outputs\.ready == 'true'\) && /,
 		);
 		const nativeDownload = workflow.match(/- name: Download native prebuilds[\s\S]*?(?=\n      - name: Build all workspaces)/)?.[0];
 		assert.ok(nativeDownload, "expected native prebuild download before workspace builds");
@@ -70,9 +75,11 @@ describe("publish-only workflow", () => {
 		const publishStep = workflow.match(/- name: Publish prepared version[\s\S]*?(?=\n      - name: Workflow summary)/)?.[0];
 		assert.ok(publishStep, "expected publish-only step");
 		assert.match(publishStep, /node scripts\/publish\.mjs/);
-		// Every non-best-effort target is required; win32-arm64 stays best-effort.
-		assert.match(publishStep, /--require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64/);
-		assert.doesNotMatch(publishStep, /win32-arm64/);
+		// Every non-best-effort PTY target is required; win32-arm64 stays best-effort for the PTY (pipe fallback).
+		assert.match(publishStep, /--require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64(?=\s)/);
+		assert.doesNotMatch(publishStep, /--require-native-prebuilds=[^\s]*win32-arm64/);
+		// The socket-secret bridge has no fallback (sisyphuslabs/omo-desktop-app#4199): both Windows targets are required.
+		assert.match(publishStep, /--require-socket-secret-bridge=win32-x64,win32-arm64/);
 		assert.doesNotMatch(publishStep, /npm run check|npm test/);
 	});
 

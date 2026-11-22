@@ -2,7 +2,15 @@ import { randomBytes } from "node:crypto";
 import type { Socket } from "node:net";
 import { Duplex, PassThrough } from "node:stream";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
-import { authRecord, RPC_AUTH_CAPABILITY, RPC_AUTH_HEX, rpcAuthProof, rpcProofMatches } from "./rpc-auth-proof.ts";
+import {
+	authRecord,
+	launchProofRecordRefusal,
+	RPC_AUTH_CAPABILITY,
+	RPC_AUTH_HEX,
+	RPC_LAUNCH_PROOF_RECORD,
+	rpcAuthProof,
+	rpcProofMatches,
+} from "./rpc-auth-proof.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import { SOCKET_HANDSHAKE_TIMEOUT_MS } from "./socket-transport.ts";
 
@@ -125,6 +133,15 @@ export class PublicRpcConnection {
 		} catch {
 			// Malformed JSON is left to the existing router only after admission.
 		}
+		if (request?.type === RPC_LAUNCH_PROOF_RECORD) {
+			if (!this.active && this.requireToken) {
+				this.refuse(request, "auth_required");
+				return;
+			}
+			this.first = false;
+			this.socket.write(serializeJsonLine(launchProofRecordRefusal(request.id)));
+			return;
+		}
 		if (!this.active) {
 			if (this.first && request?.type === "get_protocol_info") {
 				this.first = false;
@@ -162,6 +179,8 @@ export class PublicRpcConnection {
 				this.socket.write(
 					serializeJsonLine({ id: request.id, type: "response", command: "authenticate", success: true }),
 				);
+				// The host core learns the proof in order, before the client's next record (senpi#5632).
+				this.forward(JSON.stringify({ type: RPC_LAUNCH_PROOF_RECORD }));
 				return;
 			}
 			if (this.requireToken) {

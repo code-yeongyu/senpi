@@ -2,6 +2,7 @@ import { deadlineStopPendingSinceLastTurn } from "../../../turn-deadline.ts";
 import type { ExtensionContext } from "../../types.ts";
 import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import type { MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
+import type { TrailingGoalContinuations } from "./session-start-continuation.ts";
 import type { Goal } from "./types.ts";
 
 export type ReloadReengagementOutcome =
@@ -32,8 +33,8 @@ export async function reengageGoalAfterReload(options: {
 	readonly ctx: ExtensionContext;
 	readonly goal: Goal;
 	readonly monitor: MonitorAwareGoalContinuation;
-	readonly countTrailingContinuations: () => number;
-	readonly queueContinuation: () => Promise<void>;
+	readonly readTrailingContinuations: () => TrailingGoalContinuations;
+	readonly queueContinuation: (limitWait: boolean) => Promise<void>;
 }): Promise<ReloadReengagementOutcome> {
 	const { ctx, goal, monitor } = options;
 	if (goal.status !== "active") return "skipped-inactive";
@@ -45,14 +46,14 @@ export async function reengageGoalAfterReload(options: {
 		monitor.rearmMonitorBackstop(goal);
 		return "backstop-rearmed";
 	}
-	const trailingContinuations = options.countTrailingContinuations();
-	if (trailingContinuations >= GOAL_CONTINUATION_CAP) {
+	const trailing = options.readTrailingContinuations();
+	if (trailing.counted >= GOAL_CONTINUATION_CAP) {
 		ctx.ui.notify(
-			`Goal auto-continuation suppressed for this resumed session (${trailingContinuations} historical continuations). Send a message to resume.`,
+			`Goal auto-continuation suppressed for this resumed session (${trailing.counted} historical continuations). Send a message to resume.`,
 			"info",
 		);
 		return "suppressed-flood";
 	}
-	await options.queueContinuation();
+	await options.queueContinuation(trailing.waitingOutLimit);
 	return "continuation-queued";
 }

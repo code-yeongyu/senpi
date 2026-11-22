@@ -1,3 +1,5 @@
+import { decodeBase64UrlUtf8 } from "./encoding.ts";
+
 const REDACTED = "<redacted>";
 const TOKEN_CHAR = /[A-Za-z0-9_./+~=-]/;
 const SECRET_KEY = /(?:^|_)(?:KEY|TOKEN|SECRET|AUTH|AUTHORIZATION)$|PASSWORD/i;
@@ -32,7 +34,7 @@ function isJwt(token: string): boolean {
 	const header = JWT.exec(token)?.[1];
 	if (!header) return false;
 	try {
-		const value: unknown = JSON.parse(Buffer.from(header, "base64url").toString("utf8"));
+		const value: unknown = JSON.parse(decodeBase64UrlUtf8(header));
 		return typeof value === "object" && value !== null && "alg" in value && typeof value.alg === "string";
 	} catch {
 		return false;

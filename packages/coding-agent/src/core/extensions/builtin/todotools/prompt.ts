@@ -56,3 +56,17 @@ Request with 3+ distinct steps -> phased todo in the todo tool before first edit
 - Test run: passing output, or state the pre-existing failure.
 </Task_Management>
 `;
+
+/** `TASK_MANAGEMENT_SECTION` as worded before the senpi#5335 diet, for presets that render full shared sections (senpi#5665). */
+export const FULL_TASK_MANAGEMENT_SECTION = `
+<Task_Management>
+## Todo Management
+
+A request with three or more distinct steps gets a phased todo before the first edit - investigation, implementation, verification, final report - in the todo tool; its description carries the operations, anatomy, and rules. Mark each item done the moment it finishes and reconcile the list against the newest user message before ending a turn.
+
+## Evidence
+- File edit: inspect the changed files and diagnostics.
+- Build command: require exit code 0.
+- Test run: require passing output, or state the pre-existing failure.
+</Task_Management>
+`;

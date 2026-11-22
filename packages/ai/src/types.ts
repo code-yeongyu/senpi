@@ -25,8 +25,9 @@ export type { SessionAffinityFormat } from "./openai-responses-compat.ts";
 export type OpenAIResponsesCompat = BaseOpenAIResponsesCompat & {
 	/**
 	 * The selected credential uses Sign in with ChatGPT plan usage on the public Responses API.
-	 * Set per credential route, not by token prefix or provider id. Never set for API keys
-	 * or the ChatGPT backend/Codex route.
+	 * Set per credential route, not by token prefix or provider id. Forces HTTP/SSE and SIWC
+	 * request restrictions; deferred tools use additional_tools when supported, otherwise eager tools.
+	 * Default: false. Never set for API keys or the ChatGPT backend/Codex route.
 	 */
 	siwc?: boolean;
 	/**

@@ -1,5 +1,6 @@
 import { getAgentDir } from "../../../../config.ts";
 import { getFileContentRevision } from "../../../../utils/paths.ts";
+import { type AccountStrategy, parseAccountStrategy } from "../../../credential-pool/selection-order.ts";
 import { getSettingsPath, type Settings, SettingsManager } from "../../../settings-manager.ts";
 import type { SettingSource } from "./sdk-boundary.ts";
 import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
@@ -35,6 +36,7 @@ export interface AnthropicSubscriptionProviderSettings {
 	readonly pinnedAccount?: string;
 	/** Allow automatic switching to another managed account after failure. Defaults to true. */
 	readonly accountFallback?: boolean;
+	readonly accountStrategy?: AccountStrategy;
 	readonly tokenInjection?: AnthropicSubscriptionTokenInjection;
 	readonly compactionOwner?: AnthropicSubscriptionCompactionOwner;
 }
@@ -128,6 +130,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 	const strictMcpConfig = typeof value.strictMcpConfig === "boolean" ? value.strictMcpConfig : undefined;
 	const pinnedAccount = parseNonEmptyString(value.pinnedAccount);
 	const accountFallback = typeof value.accountFallback === "boolean" ? value.accountFallback : undefined;
+	const accountStrategy = parseAccountStrategy(value.accountStrategy, "anthropicSubscriptionProvider.accountStrategy");
 	const tokenInjection = parseTokenInjection(value.tokenInjection);
 	const compactionOwner = parseCompactionOwner(value.compactionOwner);
 	return {
@@ -140,6 +143,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 		...(strictMcpConfig !== undefined ? { strictMcpConfig } : {}),
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
 		...(accountFallback !== undefined ? { accountFallback } : {}),
+		...(accountStrategy !== undefined ? { accountStrategy } : {}),
 		...(tokenInjection !== undefined ? { tokenInjection } : {}),
 		...(compactionOwner !== undefined ? { compactionOwner } : {}),
 	};

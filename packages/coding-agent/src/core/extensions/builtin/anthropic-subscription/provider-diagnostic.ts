@@ -35,20 +35,28 @@ function poolRefusal(error: unknown): AllAccountsBlockedError | undefined {
 /**
  * The providerDiagnostic for an Anthropic Subscription turn failure (senpi#4672), mirroring the
  * chatgpt-subscription adapter (senpi#3771). A pool the extension refused locally is `auth` when every
- * account waits on a new login, otherwise `rate_limit` with the soonest retry; a classified SDK failure maps
- * to its provider token. The result is revalidated against the closed vocabulary, so nothing else escapes.
+ * account waits on a new login, and `rate_limit` with the soonest reset only when every account that can
+ * come back on its own is rate-limited (senpi#3975); a pool held by billing, organization, or unknown blocks
+ * gets no diagnostic, so a goal never parks on it. A classified SDK failure maps to its provider token. The result is revalidated against the closed vocabulary, so nothing else escapes.
  */
 export function anthropicSubscriptionDiagnostic(error: unknown): ProviderDiagnostic | undefined {
 	const pool = poolRefusal(error);
 	if (pool !== undefined) {
 		// A pin to an account that is no longer configured is a configuration error, not a limit: no diagnostic.
 		if (pool.unavailableAccount?.configured === false) return undefined;
-		const auth = pool.blockReason === "auth_error";
+		if (pool.blockReason === "auth_error") {
+			return sanitizeProviderDiagnostic({
+				category: "auth",
+				code: "account_pool_auth_blocked",
+				evidence: "structured_code",
+			});
+		}
+		if (pool.rateLimitedUntil === undefined) return undefined;
 		return sanitizeProviderDiagnostic({
-			category: auth ? "auth" : "rate_limit",
-			code: auth ? "account_pool_auth_blocked" : "account_pool_blocked",
+			category: "rate_limit",
+			code: "account_pool_blocked",
 			evidence: "structured_code",
-			...(auth || pool.soonestUnblockAt === undefined ? {} : { resetsAt: pool.soonestUnblockAt }),
+			resetsAt: pool.rateLimitedUntil,
 		});
 	}
 	const original = error instanceof ClassifiedSdkError ? error.original : error;
