@@ -9944,6 +9944,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/machine-ops/src/files/automount-trigger.ts#active": {
+			"class": "per-copy-safe",
+			"reason": "trigger lookup holding a derived-value cache of the mount table, plus the child-resolver options (swapped only by tests); a split only re-reads the table"
+		},
 		"packages/machine-ops/src/files/bounded-realpath.ts#RESOLUTION_TIMED_OUT": {
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
