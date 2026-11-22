@@ -14,7 +14,7 @@ export function deriveOpenAIPromptCacheKey(modelId: string, context: TranscriptC
 	const prefix = JSON.stringify([
 		PREFIX_VERSION,
 		modelId,
-		initial === undefined ? "" : getSystemMessageText(initial),
+		initial === undefined ? "" : (initial.stablePrefix ?? getSystemMessageText(initial)),
 		tools.map(({ name, description, parameters, freeform, constrainedSampling }) => ({
 			name,
 			description,

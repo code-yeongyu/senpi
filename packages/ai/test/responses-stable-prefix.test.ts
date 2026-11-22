@@ -86,6 +86,21 @@ describe.each(routes)("%s stable Responses prefix", (route) => {
 		expect(first.key).toEqual(second.key);
 	});
 
+	it("keys on the marked stable text without removing the volatile instructions (#5127)", async () => {
+		const marked = (stable: string, tail: string) => ({
+			...prefix,
+			systemPrompt: `${stable}\n${tail}`,
+			systemPromptStablePrefix: stable,
+		});
+		const first = await capture(route, marked("Shared instructions", "Tail A"));
+		const second = await capture(route, marked("Shared instructions", "Tail B"));
+		const different = await capture(route, marked("Other instructions", "Tail B"));
+		expect(JSON.stringify(first.payload)).toContain("Tail A");
+		expect(JSON.stringify(second.payload)).toContain("Tail B");
+		expect(second.key).toBe(first.key);
+		expect(different.key).not.toBe(first.key);
+	});
+
 	it.each(["prompt", "tools", "model"] as const)("changes its key for a different %s", async (change) => {
 		const first = await capture(route, prefix, "same-session");
 		const changed = {
