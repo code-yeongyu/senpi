@@ -35,11 +35,16 @@ function personInputQueued(ctx: ExtensionContext): boolean {
 	return ctx.hasQueuedPersonInput?.() === true;
 }
 
-/** senpi#3860's hold ledger, when the engine exposes it: true while every engine-originated wake is held. */
-function engineTurnsHeld(ctx: ExtensionContext): boolean {
-	if (!("engineTurnsHeld" in ctx)) return false;
-	const probe = ctx.engineTurnsHeld;
-	return typeof probe === "function" && probe.call(ctx) === true;
+function ledgerHold(ctx: ExtensionContext): TurnEndLivenessInput["ledgerHold"] {
+	// A run fence alone does not hold the session. Classify the reason only after the engine reports a hold.
+	if (!ctx.engineTurnsHeld?.()) return undefined;
+	const holds = ctx.getPauseState?.().holds;
+	// Prefer a person's Stop, then an inherited Stop, over a fence or the unattended fallback.
+	return (
+		(["session_hold", "inherited_hold", "run_fence"] as const).find((kind) =>
+			holds?.some((hold) => hold.kind === kind),
+		) ?? "unattended"
+	);
 }
 
 /** Builds the decision input from session state; shared with lifecycle consumers so there is one collector. */
@@ -69,7 +74,7 @@ export function collectTurnEndLivenessInput(
 	return {
 		isChildSession: ctx.sessionManager.getHeader?.()?.parentSession !== undefined,
 		mode: ctx.mode,
-		ledgerHold: engineTurnsHeld(ctx) ? "unattended" : undefined,
+		ledgerHold: ledgerHold(ctx),
 		endedBy: classifyTurnEnd(event),
 		willRetry: event.willRetry === true,
 		deadlineStop: state.deadlineStop,

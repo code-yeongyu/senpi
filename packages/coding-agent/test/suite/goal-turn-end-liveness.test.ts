@@ -458,6 +458,30 @@ describe("collectTurnEndLivenessInput reads the hold ledger (#3863, senpi#3860)"
 		expect(collected.ledgerHold).toBe(ledgerHold);
 		expect(evaluateTurnEndLiveness(collected).kind).toBe(ledgerHold === undefined ? "waiting" : "held");
 	});
+
+	it.each([
+		[["unattended", "session_hold"], "session_hold"],
+		[["inherited_hold"], "inherited_hold"],
+		[["run_fence"], "run_fence"],
+		[["unattended"], "unattended"],
+	] as const)("reports the live hold reason for %j", (kinds, reason) => {
+		const ctx = ctxWith({
+			engineTurnsHeld: () => true,
+			getPauseState: () => ({ pauseSeq: 1, holds: kinds.map((kind) => ({ kind, key: kind })) }),
+		});
+		expect(evaluateTurnEndLiveness(collectTurnEndLivenessInput(ctx, event, state))).toEqual({
+			kind: "held",
+			reason,
+		});
+	});
+
+	it("does not turn a fence on one run into a session-wide hold", () => {
+		const ctx = ctxWith({
+			engineTurnsHeld: () => false,
+			getPauseState: () => ({ pauseSeq: 1, holds: [{ kind: "run_fence", key: "run" }] }),
+		});
+		expect(evaluateTurnEndLiveness(collectTurnEndLivenessInput(ctx, event, state)).kind).toBe("waiting");
+	});
 });
 
 describe("the queued-message wake follows the session's per-entry origin tag (#3863)", () => {
