@@ -20,6 +20,7 @@ import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
+import { createHostDaemonPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
 import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
@@ -45,6 +46,8 @@ export interface ReleaseHostOptions {
 	readonly capabilities?: readonly string[];
 	/** Every record, with the connection whose socket received it (`undefined`: the host's default output). */
 	readonly onRecord?: (record: WireRecord, connection: string | undefined) => void;
+	/** Keep the endpoint's handover-parked record in its daemon directory, as a daemon does (senpi#3282). */
+	readonly handoverParked?: boolean;
 }
 
 export async function startReleaseHost(extension: ExtensionFactory, options: ReleaseHostOptions = {}) {
@@ -104,10 +107,16 @@ export async function startReleaseHost(extension: ExtensionFactory, options: Rel
 		waitForBackpressure: async () => {},
 	});
 	writer.registerConnection("driver", sink("driver"));
-	const router = new SessionCommandRouter(registry, writer, {
-		cwd,
-		hostContext: { host_socket: join(dir, "host.sock"), host_instance: "release-test-host" },
-	});
+	const socket = join(dir, "host.sock");
+	const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
+	const router = new SessionCommandRouter(
+		registry,
+		writer,
+		{ cwd, hostContext: { host_socket: socket, host_instance: "release-test-host" } },
+		undefined,
+		undefined,
+		options.handoverParked === true ? { handoverParkedDir: daemonDir } : undefined,
+	);
 	let serial = 0;
 
 	const connections = new Set(["driver"]);
@@ -129,6 +138,9 @@ export async function startReleaseHost(extension: ExtensionFactory, options: Rel
 		faux,
 		router,
 		send,
+		agentDir,
+		socket,
+		daemonDir,
 		async open(name: string): Promise<OpenedSession> {
 			const connection = `open-${name}`;
 			writer.registerConnection(connection, sink(connection));

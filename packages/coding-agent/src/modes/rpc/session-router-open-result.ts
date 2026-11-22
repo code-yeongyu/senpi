@@ -2,6 +2,7 @@ import { openReplyPermissionMode } from "../../core/permission-mode.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import type { OpenRpcSession, RpcSessionEntry } from "./session-registry.ts";
 import type { RouterContext } from "./session-router-context.ts";
+import { parkedEntryFromProfile } from "./host-handover-parked-open.ts";
 
 /** A dropped opener waits until its open or claim has either transferred or released ownership. */
 export function holdOpenConnection(host: RouterContext, owner: string): () => void {
@@ -47,12 +48,22 @@ export function publishOpen(host: RouterContext, opened: OpenRpcSession, entry: 
 	}
 }
 
+/**
+ * An open whose reply is another command's answer (senpi#6267: a `move_session import` that opens what it landed): the
+ * reply goes out under that command, with `data` beside the open's own.
+ */
+export interface OpenReplyAs {
+	readonly command: { readonly type: "move_session"; readonly id?: string };
+	readonly data: Readonly<Record<string, unknown>>;
+}
+
 export function replyOpen(
 	host: RouterContext,
 	opened: OpenRpcSession,
 	entry: RpcSessionEntry,
-	command: { readonly type: "open_session" | "claim_session"; readonly id?: string },
+	command: { readonly type: "open_session" | "claim_session" | "move_session"; readonly id?: string },
 	reply = true,
+	beside: Readonly<Record<string, unknown>> = {},
 ): void {
 	const state =
 		entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
@@ -64,8 +75,22 @@ export function replyOpen(
 			command: command.type,
 			success: true,
 			data: {
+				...beside,
 				sessionId: opened.sessionId,
 				state,
+				...(host.writer.currentConnection()?.startsWith("generation-route-") && opened.sessionPath
+					? {
+							routeRow: host.registry.list().find((row) => row.sessionId === opened.sessionId),
+							routePark: {
+								...parkedEntryFromProfile(
+									{ ...opened, sessionPath: opened.sessionPath, contextOverlay: entry.contextOverlay },
+									entry.profile,
+									Object.keys(host.defaults.hostContext ?? {}),
+								),
+								retainOnDisconnect: entry.retainOnDisconnect === true,
+							},
+						}
+					: {}),
 				...openReplyPermissionMode(state),
 				...(opened.attached ? { attached: true } : {}),
 				...(host.defaults.sessionPresence ? { presence: host.defaults.sessionPresence.view(state.sessionId) } : {}),

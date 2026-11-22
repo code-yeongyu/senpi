@@ -1,3 +1,60 @@
+## 2026-11-20 - Bedrock Haiku 5.5 on-demand route priced at its own band (senpi#7121)
+
+### What changed
+
+- `packages/ai/src/providers/data/amazon-bedrock.json` (+ `.manifest.json`): regenerated with a provider-scoped run (`generate-models.ts --strict --providers amazon-bedrock`). The on-demand id `anthropic.claude-haiku-5-5` now carries its own band ($0.11/$0.55 in/out, $0.011/$0.1375 cache, 5x long-context tier 0.55/2.75/0.055/0.6875) instead of the global profile's ($0.10/$0.50/$0.01/$0.125, tier 0.50/2.50/0.05/0.625). models.dev corrected the whole provider's standard-vs-global split in the same pass, so the sibling bare Anthropic ids (`claude-fable-5`, `-5-1`, `-5-2`, `claude-haiku-4-5`, `claude-opus-4-5/-4-7/-4-8`, `claude-sonnet-4-5/-5/-5-5`) move to their standard bands (uniformly x1.1) and Nova `cacheWrite` becomes 0 (AWS bills Nova prompt-cache writes at $0.00 in us-east-1 per the AmazonBedrock offer index; the previous values equaled input price and overestimated cache-write cost). Every Anthropic value was verified cent-exact against the AWS us-east-1 price list; the resulting file is canonically identical to the daily refresh branch's version (#6666). No other provider file changes.
+- `packages/ai/test/anthropic-haiku-5-5.test.ts`: the Bedrock row test asserts each route's cost object strictly (cache rates and tiers included); the shared-contract assertions are unchanged for both ids.
+
+### Why
+
+- AWS bills the two routes under different SKUs (us-east-1 price list) and models.dev carries the same per-id split. The stale row plus the shared assertion made every catalog refresh fail `ci / Test (workspaces ai)` (#6666 red since 2026-11-14, past the refresh workflow's MAX_STALE_DAYS), so catalog drift could not land for releases.
+
+### Why an extension could not handle it
+
+- The bundled catalog ships for every installation; a local extension cannot correct shipped cost metadata or the test that pins it.
+
+### Expected merge conflict zones
+
+- LOW: the Anthropic and Nova rows inside `packages/ai/src/providers/data/amazon-bedrock.json` and its manifest hash - regenerate rather than hand-merge; the daily catalog refresh rewrites this file.
+
+## 2026-11-18 - GPT-6.2 Astra and GPT-6.2 Sol catalog rows (senpi#6948, senpi#6942)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the ChatGPT subscription catalog gains `gpt-6.2-astra` and `gpt-6.2-sol`. Every GPT-6 id table (tool search, additional tools, short-context cap, long-context pricing, priority tier on both lanes, subscription `configuration_update`, standard costs, flagship and family context windows, the no-`none` effort markers, the thinking-level pass and the subscription Ultrafast clone) now lists both ids. The dotless Venice spellings (`gpt-62-astra`, `gpt-62-sol`) are listed as family markers. `isGpt61SolId` became `isGpt6NoNoneEffortId`, which covers every GPT-6 id that rejects effort `none`.
+
+### Why
+
+- OpenAI released both models on 2026-11-17 (developers.openai.com/api/docs/models/gpt-6.2-astra, gpt-6.2-sol). The subscription had no row for either id, and the API rows from models.dev carried the raw 922k window with no long-context tiers, Fast rows or tool flags. Astra follows gpt-6-astra's 600k budget. Sol follows gpt-6.1-sol: 400k on the API and 500k on the subscription, which openai/codex's models.json also uses. Both reject effort `none` and are flagged `supports_reasoning_effort_updates` in openai/codex.
+
+### Why an extension could not handle it
+
+- The bundled catalog and its per-id metadata passes are generated here. An extension can register a custom provider, but it cannot add rows or capability flags to the built-in `chatgpt-subscription` and `openai` catalogs.
+
+### Expected merge conflict zones
+
+- LOW: the GPT-6 id sets and context-window tables near the top of the file, and the Codex model list. Upstream pi adding its own 6.2 rows would touch the same lists.
+
+## 2026-11-11 - pi-ai depends on the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/ai/package.json`: adds the `@earendil-works/pi-realm-registry` workspace dependency.
+- `packages/ai/tsconfig.build.json`: maps that package to its built declarations.
+- `packages/ai/vitest.config.ts`: aliases that package to its source, like telemetry.
+
+### Why
+
+- Provider strict mode and scope moved into a realm registry built by the shared helper (see `packages/ai/src/changes.md`).
+
+### Why an extension could not handle it
+
+- Package manifests and build configuration are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the dependency list in `package.json` and the alias list in `vitest.config.ts`.
+
 ## 2026-11-10 - Claude Fable 5.2 is a released model (senpi#3893)
 
 ### What changed

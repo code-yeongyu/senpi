@@ -1,3 +1,76 @@
+## 2026-11-20 - `todo.firstTurnPlan` documents its per-preset default (#7110, senpi#7101)
+
+### What changed
+
+- `packages/coding-agent/docs/settings.md`: the `todo.firstTurnPlan` row gives the default as `"force"`, and `"off"` under a GPT prompt preset.
+
+### Why
+
+- The default changed for GPT presets (senpi#7101).
+
+### Why an extension could not handle it
+
+- Documentation of a core setting.
+
+### Expected merge conflict zones
+
+- LOW: one table row.
+
+## 2026-11-15 - New worker-safe tools-core entry (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new `./tools-core` export (`src/tools-core.ts`): the core bash/read/write/edit factories, `createCoreCodingTools`, `createToolMachine`, `ToolMachine` and the MachineOps types.
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- Package exports are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one added entry in the `exports` map.
+
+## 2026-11-13 - The install lock's @hono/node-server override matches the root pin (senpi#6624)
+
+### What changed
+
+- `packages/coding-agent/package.json` `overrides`: `@hono/node-server` 2.1.1 -> 2.1.8, the same version as the root override; `packages/coding-agent/install-lock/package.json` follows. `packages/coding-agent/install-lock/package-lock.json` is regenerated to match.
+
+### Why
+
+- The engine tarball installs one copy of `@hono/node-server`; a pin older than the root's re-introduced the vulnerable 2.1.x range the audit flags (GHSA-qv5m-9pm6-hqp3, GHSA-jpvv-r467-5p4w). hono itself only enters through `@modelcontextprotocol/sdk`; no first-party source imports hono APIs, so nothing can depend on an API the bump removes.
+
+### Why an extension could not handle it
+
+- The install lock and its manifest are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the `@hono/node-server` line in the `overrides` block of `packages/coding-agent/package.json`.
+
+## 2026-11-11 - coding-agent depends on the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/coding-agent/package.json`: adds the `@earendil-works/pi-realm-registry` workspace dependency.
+- `packages/coding-agent/tsconfig.build.json`: maps that package to its built declarations.
+
+### Why
+
+- The tables one engine copy writes and another reads (`core/permission-decision.ts`, `core/turn-origin.ts`, `core/kill-guard/runtime.ts`, `core/session-write-reservation.ts`, `core/extensions/kernel-tools-context.ts`, `core/config-reference-redaction.ts`) are built through the shared helper.
+
+### Why an extension could not handle it
+
+- Package manifests and build configuration are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the dependency list in `package.json` and the `paths` map in `tsconfig.build.json`.
+
 ## 2026-11-11 - zod 4.6.7 (senpi#6402)
 
 ### What changed

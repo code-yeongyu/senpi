@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
@@ -207,8 +208,8 @@ describe("credential-pool rotation through the PoolState port (senpi#5835, Z1)",
 		dir = mkdtempSync(join(tmpdir(), "z1-pool-state-"));
 	});
 
-	afterEach(() => {
-		rmSync(dir, { recursive: true, force: true });
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
 	});
 
 	async function fileSequence(lane: Lane) {

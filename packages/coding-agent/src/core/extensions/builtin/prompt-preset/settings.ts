@@ -34,7 +34,8 @@ export type PromptPresetName =
 	| "gpt-5.4"
 	| "gpt-5.5"
 	| "gpt-5.6"
-	| "gpt-6-astra";
+	| "gpt-6-astra"
+	| "gpt-6.2";
 
 export interface PromptPresetSettings {
 	promptPreset: PromptPresetName;
@@ -77,6 +78,7 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"gpt-5.5",
 	"gpt-5.6",
 	"gpt-6-astra",
+	"gpt-6.2",
 ]);
 
 export function parsePromptPreset(value: string | undefined): PromptPresetName | undefined {

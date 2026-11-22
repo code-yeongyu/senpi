@@ -1,5 +1,24 @@
 # core/tools/renderers changes
 
+## 2026-11-15 - Renderers follow the moved bash throttle and edit preview (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/renderers/bash.ts`: `BASH_UPDATE_THROTTLE_MS` moves to `shell-output.ts`, which owns the throttled updates.
+- `packages/coding-agent/src/core/tools/renderers/edit.ts`: imports `computeEditsDiff` from `edit-preview.ts`.
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- The renderers are part of the built-in tool definitions.
+
+### Expected merge conflict zones
+
+- LOW: the constant line in `renderers/bash.ts` and the imports of `renderers/edit.ts`.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tools and shell utilities
 
 ### What changed

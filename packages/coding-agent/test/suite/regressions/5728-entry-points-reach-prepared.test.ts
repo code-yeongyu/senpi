@@ -87,7 +87,7 @@ it("RPC mode driving that runtime runs on the prepared pipeline", async () => {
 
 it("the shared RPC host (multi-session, the desktop engine's host) opens sessions that run on the prepared pipeline", async () => {
 	const { dir, createRuntime } = await productionFactory(cleanups);
-	new ProjectTrustStore(dir).set(dir, true);
+	await new ProjectTrustStore(dir).set(dir, true);
 	const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime });
 	const opened = await registry.openSession({ cwd: dir, sessionPath: join(dir, "host-session.jsonl") });
 	cleanups.push(() => registry.close(opened.sessionId));
