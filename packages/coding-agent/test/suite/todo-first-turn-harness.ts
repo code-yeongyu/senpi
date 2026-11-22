@@ -26,7 +26,7 @@ export function model(id: string, api: Api = "anthropic-messages", compat?: Reco
 export const TODO_PAYLOAD = { tools: [{ name: "read" }, { name: "todo" }] };
 
 /** The todotools extension on a captured fake `pi`, with an empty branch; the temp agent dir is pushed to `tempDirs`. */
-export function fauxTodotoolsPi(tempDirs: string[], options: { setting?: string } = {}) {
+export function fauxTodotoolsPi(tempDirs: string[], options: { setting?: string; model?: Model<Api> } = {}) {
 	const handlers = new Map<string, Handler[]>();
 	const pi = {
 		registerTool: () => {},
@@ -47,7 +47,7 @@ export function fauxTodotoolsPi(tempDirs: string[], options: { setting?: string 
 		cwd: root,
 		agentDir,
 		mode: "tui",
-		model: model("claude-opus-5"),
+		model: options.model ?? model("claude-opus-5"),
 		isProjectTrusted: () => false,
 		sessionManager: { getBranch: () => [] },
 		ui: { setWidget: () => {} },
@@ -60,6 +60,7 @@ export function fauxTodotoolsPi(tempDirs: string[], options: { setting?: string 
 	const startTurn = (prompt = "add retries to fetchUser") =>
 		emit("before_agent_start", { prompt, trigger: "prompt", systemPrompt: "base" }) as Promise<{
 			message?: { customType: string };
+			systemPrompt?: string;
 		}>;
 	const providerRequest = (payload: Record<string, unknown>, requestModel: Model<Api> = model("claude-opus-5")) =>
 		emit("before_provider_request", { payload, model: requestModel }) as Promise<

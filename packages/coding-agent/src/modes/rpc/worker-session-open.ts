@@ -104,7 +104,7 @@ export async function openWorkerSession(
 			action: "rediscover_holder",
 		});
 	if (host.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
-	const handle = host.nextHandle();
+	const handle = options?.routedHandle ?? host.nextHandle();
 	const claims = new WorkerSessionClaims(host.options.pathReservations);
 	host.claims.set(handle, claims);
 	const storedProfile = frozenProfile(profile);

@@ -1,3 +1,21 @@
+## 2026-11-12 - The schedule runner awaits the boot instant (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/schedule/runner-lease.ts`: the runner lease, the delivery lock and the orphaned-delivery check await `processBootAtMs()`, which is async now; the lease resolves it before its write.
+
+### Why
+
+- The boot instant is read asynchronously (senpi#3152).
+
+### Why an extension could not handle it
+
+- The builtin schedule extension owns these leases.
+
+### Expected merge conflict zones
+
+- LOW: `runner-lease.ts`.
+
 ## 2026-11-19 - A regression test pins the over-budget sentence first for an older hand's result with no text part (senpi#7062)
 
 ### What changed

@@ -177,6 +177,7 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 			"pid",
 			"rss_mb",
 			"sessions",
+			"unit",
 		]);
 		expect(generation).toMatchObject({
 			instanceId: ensured.instanceId,

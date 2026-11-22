@@ -53,12 +53,7 @@ import {
 	isOpenAiRemoteCompactionModel,
 	openAiRemoteCompactionOrigin,
 } from "./openai-remote-model.ts";
-import {
-	resolveBeforeAgentStartMessage,
-	resolveCompactionGeometry,
-	resolveIdleWarmAction,
-	shouldDeferGraceBand,
-} from "./orchestration.ts";
+import { resolveCompactionGeometry, resolveIdleWarmAction, shouldDeferGraceBand } from "./orchestration.ts";
 import * as cap from "./per-turn-cap.ts";
 import * as policy from "./policy.ts";
 import {
@@ -84,12 +79,6 @@ import { assessWarmCandidateFit, type WarmCandidateFit } from "./warm-candidate.
 import { type CompactionExtensionState, createInitialState, resetTurnCounter } from "./state.ts";
 import { resolveInheritedTaskIntent } from "./task-intent.ts";
 import * as todoBridge from "./todo-bridge.ts";
-import {
-	computeTokenBudgetReminder,
-	createInitialReminderState,
-	getPersistedReminderEpoch,
-	type TokenBudgetReminderState,
-} from "./token-budget-reminder.ts";
 import { isTransientSummarizationFailure } from "./transient-failure.ts";
 
 export { getPromptContextWindow } from "./extension-wiring.ts";
@@ -132,7 +121,6 @@ export default function compactionExtension(
 	const restorationState = state.restoration ?? restoration.createRestorationTrackerState();
 	state = { ...state, restoration: restorationState };
 	let speculativeGeneration = 0;
-	let reminderState: TokenBudgetReminderState = createInitialReminderState();
 	let speculativeJob: SpeculativeJob | undefined;
 	let reusedLoggedGeneration: number | undefined;
 	let warmRegenerations = 0;
@@ -983,7 +971,6 @@ export default function compactionExtension(
 			const keptEntries = firstKeptIndex === -1 ? [] : branchEntries.slice(firstKeptIndex);
 			state = cap.incrementAccepted(state);
 			state = breaker.recordSuccess(state);
-			reminderState = createInitialReminderState();
 			const details = compactEvent.compactionEntry.details as
 				| { structuralYield?: { savedTokens: number; savingsRatio: number } }
 				| undefined;
@@ -1042,7 +1029,7 @@ export default function compactionExtension(
 		event,
 		ctx,
 	) => {
-		// A preview composes a prompt no turn follows: no compaction, reminder, or restoration.
+		// A preview composes a prompt no turn follows: no compaction or restoration.
 		if (event.preview === true) return undefined;
 		sessionIdleSinceAgentEnd = false;
 		cancelIdleWarmupRetry();
@@ -1124,24 +1111,8 @@ export default function compactionExtension(
 			startSpeculativeCompaction(ctx, PROACTIVE_COMPACTION_INSTRUCTIONS);
 		}
 
-		const persistedReminder = getPersistedReminderEpoch(ctx.sessionManager.getBranch());
-		const reminder = computeTokenBudgetReminder({
-			contextTokens: usageWithPendingPrompt?.tokens ?? 0,
-			contextWindow,
-			thresholdTokens,
-			leadTokens,
-			compactionEpoch: speculativeGeneration,
-			state: persistedReminder.delivered ? { lastFiredEpoch: speculativeGeneration } : reminderState,
-		});
-		reminderState = reminder.nextState;
-		const deliveredMessage = resolveBeforeAgentStartMessage({
-			message,
-			reminder: reminder.message,
-			reminderEnabled: settings.reminderEnabled,
-			reminderEpoch: persistedReminder.epoch,
-		});
-		if (!deliveredMessage) return undefined;
-		return { message: deliveredMessage };
+		if (!message) return undefined;
+		return { message };
 	};
 	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 

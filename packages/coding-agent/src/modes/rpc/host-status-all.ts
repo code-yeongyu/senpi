@@ -26,6 +26,7 @@ import { type EndpointKind, hostDaemonDirectoryPaths } from "./host-daemon-paths
 import { type EndpointLiveness, endpointProbeTimeoutMs, judgeEndpointLiveness } from "./host-endpoint-liveness.ts";
 import { type HostEndpointEntry, type HostEndpointIdentitySource, listHostEndpoints } from "./host-endpoints.ts";
 import { readGenerationRows } from "./host-generations.ts";
+import { withHostUnits } from "./host-unit-placement.ts";
 import { judgeStaleEngine, type StaleEngineOptions } from "./host-stale-engine.ts";
 import { type HostStatusReport, probeHostStatus } from "./host-status.ts";
 import { type HostSessionRow, readClaimRows } from "./host-status-rows.ts";
@@ -136,7 +137,7 @@ function livenessFields(verdict: EndpointLiveness): Pick<HostEndpointStatus, "al
 
 async function unaddressableStatus(dir: string): Promise<Omit<HostStatusReport, "socket">> {
 	const paths = hostDaemonDirectoryPaths(dir);
-	const generations = await readGenerationRows(paths, { includeDead: true });
+	const generations = await withHostUnits(await readGenerationRows(paths, { includeDead: true }));
 	const claims = await readClaimRows(paths, generations);
 	// Without the socket no generation can be proven to serve it, so nothing is elected or offered as a candidate.
 	const current = generations.find((generation) => generation.current);

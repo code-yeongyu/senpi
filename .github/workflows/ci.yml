@@ -20,8 +20,10 @@ concurrency:
 
 env:
   SENPI_TEST_TEMP_GUARD: "1"
+  CODING_AGENT_BUN_VERSION: "1.4.4"
 
 jobs:
+  # Measured 2026-11-21 over 51 CI runs: tuned job caps are ceil(2 × runner-duration p95), with a 5-minute floor.
   # Hosted macOS and Windows runners are scarce, so a pull request runs the jobs that need one only with the
   # run-full-ci label (ci-full-label.yml); its diff never turns them on (scripts/ci-platform-scope.mjs, senpi#6834).
   # A push to main always runs the full set, and platform-red.yml files an issue when a macOS/Windows job fails there.
@@ -51,7 +53,7 @@ jobs:
   codemode-gate:
     name: codemode-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 22
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -112,7 +114,7 @@ jobs:
   codemode-tests:
     name: codemode-tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -158,7 +160,7 @@ jobs:
   check:
     name: Static checks
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 6
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -258,17 +260,19 @@ jobs:
   # files (slow to upload one by one) and actions/upload-artifact does not preserve the executable bit that
   # the committed CLI stubs carry.
   #
-  # `node_modules` is NOT shared. Restoring it would mean either an artifact or an actions/cache entry
-  # holding a ~1 GB tree with workspace symlinks and platform-specific optional dependencies, which is both
-  # slower to transfer than this repository's `npm ci --ignore-scripts` (measured 12-13 s per shard with
-  # setup-node's npm cache) and unsafe to reuse across runners. Each shard therefore keeps its own `npm ci`.
+  # Pilot an exact Linux npm-tree cache for this build and its coding-agent shards. Seed it before
+  # building so that it contains only npm ci output, never generated files from a different revision.
   build-coding-agent:
     name: Build (coding-agent shards)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CODING_AGENT_SHARD_COUNT: "10"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: blob:none
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -276,11 +280,46 @@ jobs:
           node-version: "24"
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+      - name: Install dependencies (npm tree cache)
+        uses: ./.github/actions/install-ci-npm-tree
+        with:
+          bun-version: ${{ env.CODING_AGENT_BUN_VERSION }}
+          seed: "true"
 
       - name: Build workspace package entries
         run: npm run build
+
+      # Restore once so concurrent main pushes cannot give different shards different snapshots.
+      - name: Restore coding-agent timings
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: local-ignore/coding-agent-timings.json
+          key: coding-agent-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: coding-agent-timings-v1-
+
+      - name: Snapshot OS temp before discovery
+        id: test_temp_snapshot
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      - name: Plan coding-agent shards
+        working-directory: packages/coding-agent
+        run: |
+          node ../../scripts/run-tests.mjs vitest list --filesOnly --json="$RUNNER_TEMP/coding-agent-files.json"
+          node ../../scripts/ci-coding-agent-shards.mjs plan "$RUNNER_TEMP/coding-agent-files.json" \
+            ../../local-ignore/coding-agent-timings.json "$RUNNER_TEMP/coding-agent-plan.json" "$CODING_AGENT_SHARD_COUNT"
+
+      - name: Check OS temp after discovery
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
+      - name: Upload coding-agent shard plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coding-agent-plan
+          path: ${{ runner.temp }}/coding-agent-plan.json
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
 
       # Every `dist` directory the build writes, including the nested packages/session-backends/* ones.
       - name: Pack the build outputs
@@ -316,6 +355,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: blob:none
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -332,8 +373,10 @@ jobs:
       - name: Link fd
         run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+      - name: Install dependencies (npm tree cache)
+        uses: ./.github/actions/install-ci-npm-tree
+        with:
+          bun-version: ${{ env.CODING_AGENT_BUN_VERSION }}
 
       - name: Download the workspace build
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -345,10 +388,16 @@ jobs:
         shell: bash
         run: tar -xzmf "$RUNNER_TEMP/workspace-dist.tar.gz"
 
+      - name: Download coding-agent shard plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coding-agent-plan
+          path: ${{ runner.temp }}
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.4"
+          bun-version: ${{ env.CODING_AGENT_BUN_VERSION }}
 
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
@@ -361,13 +410,25 @@ jobs:
 
       - name: Test shard
         timeout-minutes: 25
-        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/10
+        env:
+          CODING_AGENT_SHARD_PLAN: ${{ runner.temp }}/coding-agent-plan.json
+          CODING_AGENT_SHARD_REPORT: ${{ runner.temp }}/report-${{ matrix.shard }}.json
+        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/10 --config=../../scripts/ci-coding-agent-vitest.config.mjs
         working-directory: packages/coding-agent
 
       - name: Shard time budget
         env:
           SHARD_LABEL: Test (coding-agent ${{ matrix.shard }}/10)
         run: node scripts/ci-shard-budget.mjs
+
+      - name: Upload coding-agent shard report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coding-agent-report-${{ matrix.shard }}
+          path: ${{ runner.temp }}/report-${{ matrix.shard }}.json
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
 
       - name: Workflow summary
         if: always()
@@ -387,7 +448,7 @@ jobs:
   fused-equivalence:
     name: Fused equivalence (EQ E01-E20, Node smoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -456,7 +517,7 @@ jobs:
           echo "EQ_GONDOLIN_IMAGE_STORE=$GONDOLIN_IMAGE_STORE" >> "$GITHUB_ENV"
 
       - name: EQ compare against the B0 goldens
-        timeout-minutes: 25
+        timeout-minutes: 10
         run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --placement fused --evidence eq-ci
 
       - name: Z1.n Node smoke (node vs bun)
@@ -552,7 +613,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -587,7 +648,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -630,7 +691,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -701,7 +762,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 6
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -876,7 +937,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 14
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -974,7 +1035,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 6
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1043,7 +1104,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1120,7 +1181,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1183,7 +1244,7 @@ jobs:
         # Windows only for a full run (senpi#3957); Linux always.
         os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 7
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1213,7 +1274,7 @@ jobs:
 
       - name: Run eval kernel WebView suites (Bun)
         shell: bash
-        timeout-minutes: 12
+        timeout-minutes: 7
         env:
           SENPI_WEBVIEW_READINESS_LOG: ${{ runner.temp }}/webview-readiness.log
         run: |
@@ -1280,7 +1341,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1317,7 +1378,7 @@ jobs:
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Run the process-mode kernel suite
-        timeout-minutes: 12
+        timeout-minutes: 5
         run: node ../../scripts/run-tests.mjs vitest run test/js-process-kernel.test.ts --reporter=verbose --reporter=json --outputFile=vitest-process.json
         working-directory: packages/senpi-codemode
 
@@ -1358,7 +1419,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -1455,7 +1516,7 @@ jobs:
               --workspace packages/telemetry
               --workspace packages/tui
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 7
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1500,7 +1561,7 @@ jobs:
 
       # The workspace runner is the same code path root `npm run test` / `bun run test` use.
       - name: Workspace tests
-        timeout-minutes: 25
+        timeout-minutes: 7
         run: node scripts/run-workspaces.mjs --if-present ${{ matrix.workspaces }} test
 
       - name: Workflow summary
@@ -1620,7 +1681,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 6
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1700,16 +1761,50 @@ jobs:
       - name: Checkout the gate verifier
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: scripts/ci-platform-scope.mjs
+          sparse-checkout: |
+            scripts/ci-platform-scope.mjs
+            scripts/ci-coding-agent-shards.mjs
           sparse-checkout-cone-mode: false
+
+      - name: Download coding-agent shard plan
+        if: needs.test-coding-agent.result == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coding-agent-plan
+          path: ${{ runner.temp }}
+
+      - name: Download coding-agent shard reports
+        if: needs.test-coding-agent.result == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: coding-agent-report-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/coding-agent-reports
+
+      - name: Verify coding-agent shard coverage
+        id: shard-coverage
+        if: needs.test-coding-agent.result == 'success'
+        run: |
+          mkdir -p local-ignore
+          node scripts/ci-coding-agent-shards.mjs verify "$RUNNER_TEMP/coding-agent-plan.json" \
+            "$RUNNER_TEMP/coding-agent-reports" local-ignore/coding-agent-timings.json
 
       # Every job must succeed; a macOS/Windows-only job may be skipped only when platform-scope decided this run
       # is not full (senpi#3957). A failed or missing scope decision allows no skips.
       - name: Verify all gates
+        if: always()
         shell: bash
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: node scripts/ci-platform-scope.mjs verify --full "${{ needs.platform-scope.outputs.full }}"
+
+      # Default-branch caches are available to PR runs. Save only after all gates succeed, never from a PR.
+      - name: Save verified coding-agent timings
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: local-ignore/coding-agent-timings.json
+          key: coding-agent-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Workflow summary
         if: always()
@@ -1722,6 +1817,7 @@ jobs:
             echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- codemode-tests: ${{ needs.codemode-tests.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
+            echo "- coding-agent shard coverage: ${{ steps.shard-coverage.outcome }}"
             echo "- fused-equivalence: ${{ needs.fused-equivalence.result }}"
             echo "- rpc-owner-lifetime: ${{ needs.rpc-owner-lifetime.result }}"
             echo "- macos-combined: ${{ needs.macos-combined.result }}"
@@ -1748,7 +1844,7 @@ jobs:
     # Each suite step keeps the cap it had on its old leg: its own step timeout where it had one
     # (process and WebView: 12), else its old job cap (the terminal part's two steps share its 30).
     # The job cap is the sum of those step caps plus 10 minutes of shared setup, so one hung suite
-    # holds the macOS runner only for its own budget and the later suites still run.
+    # holds the macOS runner only for its own budget and the later suites still run (#7192).
     timeout-minutes: 99
     steps:
       - name: Checkout
@@ -1995,7 +2091,7 @@ jobs:
         # Windows only for a full run (senpi#3957); Linux always.
         os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2040,7 +2136,7 @@ jobs:
         # Windows only for a full run (senpi#3957); Linux always.
         os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

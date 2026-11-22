@@ -37,6 +37,7 @@ host-handoff.ts, host-successor.ts, host-stop.ts, host-probe.ts, host-launch.ts
 host-daemon-paths.ts, host-daemon-state.ts, host-daemon-registration.ts
                           Per-socket daemon directory, pointer pidfile, generations (I3)
 host-pointer-election.ts  An absent pointer goes back to the ONE proven live generation (link, never replace; senpi#1911)
+host-unit-placement.ts    A generation's supervisor in its own `systemd-run --user --scope` unit (Linux, senpi#7099); the unit/cgroup status reports
 host-launch-spec.ts       `--launch-spec` parse + trust proof; host-daemon-env.ts = env allowlist
 host-runner.ts            The `senpi host` requests -> { payload, exitCode }
 host-session-runner.ts    Short-lived attached clients for `senpi host session`; host-session-ref.ts resolves a
