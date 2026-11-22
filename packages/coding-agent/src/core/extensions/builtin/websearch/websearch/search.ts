@@ -1,4 +1,10 @@
 import { KEYLESS_PROVIDERS } from "./config.ts";
+import {
+	createKeylessAdmission,
+	type EngineCooldown,
+	type KeylessAdmission,
+	type KeylessOutcome,
+} from "./keyless-admission.ts";
 import { searchPublicWeb } from "./providers/public.ts";
 import type { FetchedPage } from "./providers/shared.ts";
 import {
@@ -30,9 +36,7 @@ const MAX_ERROR_DETAIL_LENGTH = 500;
 /** Snippets are capped so a large result count cannot blow up the model context. */
 const MAX_RESULT_SNIPPET_LENGTH = 500;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 60_000;
-/** First cooldown after a keyless engine blocks a search; each consecutive block doubles it up to the cap. */
-export const ENGINE_COOLDOWN_BASE_MS = 60_000;
-export const ENGINE_COOLDOWN_MAX_MS = 15 * 60_000;
+export { ENGINE_COOLDOWN_BASE_MS, ENGINE_COOLDOWN_MAX_MS, type EngineCooldown } from "./keyless-admission.ts";
 
 const ENGINE_NAMES: Partial<Record<SearchProvider, string>> = {
 	"duckduckgo-html": "DuckDuckGo",
@@ -119,24 +123,19 @@ function noResultsMessage(config: SearchProviderEntry, request: SearchRequest): 
 	return `Search provider ${providerEntryLabel(config)} returned no results for "${request.query}".`;
 }
 
-export interface EngineCooldown {
-	failures: number;
-	until: number;
-	reason: SearchBlockReason;
-}
-
 export interface SearchRoutingState {
 	roundRobinCursor: number;
 	successCounts: number[];
-	/** Keyed by provider entry label; carried over when the provider list changes so a block outlives it. */
-	cooldowns: Map<string, EngineCooldown>;
+	/** Shared per-realm cooldown and in-flight bound for keyless engines; every tool's state uses one instance. */
+	admission: KeylessAdmission;
 }
 
-export function createSearchRoutingState(
-	providerCount: number,
-	cooldowns: Map<string, EngineCooldown> = new Map(),
-): SearchRoutingState {
-	return { roundRobinCursor: 0, successCounts: Array.from({ length: providerCount }, () => 0), cooldowns };
+export function createSearchRoutingState(providerCount: number, admission?: KeylessAdmission): SearchRoutingState {
+	return {
+		roundRobinCursor: 0,
+		successCounts: Array.from({ length: providerCount }, () => 0),
+		admission: admission ?? createKeylessAdmission(),
+	};
 }
 
 export { providerEntryLabel };
@@ -366,8 +365,15 @@ function activeCooldown(
 	now: number,
 ): EngineCooldown | undefined {
 	if (!KEYLESS_PROVIDERS.has(provider.provider)) return undefined;
-	const cooldown = state.cooldowns.get(providerEntryLabel(provider));
-	return cooldown && cooldown.until > now ? cooldown : undefined;
+	return state.admission.cooldown(providerEntryLabel(provider), now);
+}
+
+function keylessOutcome(details: SearchDetails): KeylessOutcome {
+	if (!details.error) return { kind: "success" };
+	if (!details.blocked) return { kind: "failed" };
+	return details.retryAfterSeconds === undefined
+		? { kind: "blocked", reason: details.blocked }
+		: { kind: "blocked", reason: details.blocked, retryAfterSeconds: details.retryAfterSeconds };
 }
 
 function skippedAttempt(provider: SearchProviderEntry, cooldown: EngineCooldown, now: number): SearchAttempt {
@@ -384,19 +390,9 @@ function skippedAttempt(provider: SearchProviderEntry, cooldown: EngineCooldown,
 	return attempt;
 }
 
-/** Exponential backoff per keyless engine: a block starts or doubles its cooldown, a success clears it. */
 function recordEngineOutcome(state: SearchRoutingState, provider: SearchProviderEntry, details: SearchDetails): void {
 	if (!KEYLESS_PROVIDERS.has(provider.provider)) return;
-	const key = providerEntryLabel(provider);
-	if (!details.error) {
-		state.cooldowns.delete(key);
-		return;
-	}
-	if (!details.blocked) return;
-	const failures = (state.cooldowns.get(key)?.failures ?? 0) + 1;
-	const backoff = Math.min(ENGINE_COOLDOWN_MAX_MS, ENGINE_COOLDOWN_BASE_MS * 2 ** (failures - 1));
-	const requested = Math.min(ENGINE_COOLDOWN_MAX_MS, (details.retryAfterSeconds ?? 0) * 1000);
-	state.cooldowns.set(key, { failures, until: Date.now() + Math.max(backoff, requested), reason: details.blocked });
+	state.admission.record(providerEntryLabel(provider), keylessOutcome(details), Date.now());
 }
 
 export type SearchAttemptListener = (
@@ -457,9 +453,18 @@ export async function performSearch(
 			if (!config.fallback) break;
 			continue;
 		}
-		const details = await searchRoute(provider, request, signal, attempts, (label) =>
-			onAttempt?.(label, attempts, routeLabels),
-		);
+		// One in-flight slot per engine across every caller sharing the admission (senpi#4178).
+		const release = KEYLESS_PROVIDERS.has(provider.provider)
+			? await state.admission.acquire(providerEntryLabel(provider), signal)
+			: undefined;
+		let details: SearchDetails;
+		try {
+			details = await searchRoute(provider, request, signal, attempts, (label) =>
+				onAttempt?.(label, attempts, routeLabels),
+			);
+		} finally {
+			release?.();
+		}
 		recordEngineOutcome(state, provider, details);
 
 		if (details.error) {

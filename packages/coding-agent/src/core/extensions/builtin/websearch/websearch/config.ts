@@ -333,15 +333,20 @@ async function fileExists(path: string): Promise<boolean> {
 	}
 }
 
-export async function loadWebsearchConfig(options: ConfigLoadOptions): Promise<ConfigLoadResult> {
-	const home = options.homeDir ?? homedir();
-	const paths = [
-		join(options.cwd, CONFIG_DIR_NAME, "websearch.json"),
-		join(options.cwd, ".pi", "websearch.json"),
+/** Every location the loader reads, in order (senpi#4178: the exhaustion guidance names exactly these). */
+export function websearchConfigPaths(cwd: string, home: string): string[] {
+	return [
+		join(cwd, CONFIG_DIR_NAME, "websearch.json"),
+		join(cwd, ".pi", "websearch.json"),
 		join(home, "websearch.json"),
 		join(home, CONFIG_DIR_NAME, "websearch.json"),
 		join(home, ".pi", "websearch.json"),
 	].filter((path, index, all) => all.indexOf(path) === index);
+}
+
+export async function loadWebsearchConfig(options: ConfigLoadOptions): Promise<ConfigLoadResult> {
+	const home = options.homeDir ?? homedir();
+	const paths = websearchConfigPaths(options.cwd, home);
 
 	for (const path of paths) {
 		if (!(await fileExists(path))) continue;

@@ -1,6 +1,10 @@
+import { homedir } from "node:os";
 import { Type } from "typebox";
 import { defineTool, type ExtensionContext } from "../../../types.ts";
 
+import { websearchConfigPaths } from "./config.ts";
+import { sharedKeylessAdmission } from "./keyless-admission.ts";
+import { attemptRouteLabel } from "./route-attempts.ts";
 import { buildNativeEntries, type NativeModelInfo, type NativeModelRegistry } from "./native.ts";
 import { renderSearchCall, renderSearchResult } from "./renderers.ts";
 import {
@@ -92,6 +96,7 @@ export interface WebSearchToolOptions {
 export const WEB_SEARCH_CITE_GUIDELINE = "web_search used -> cite returned URLs in final answer.";
 
 export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearchToolOptions = {}): WebSearchTool {
+	const admission = sharedKeylessAdmission();
 	let routingState: SearchRoutingState | undefined;
 	let routingKey = "";
 
@@ -148,7 +153,7 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 				routingKey !== nextRoutingKey ||
 				routingState.successCounts.length !== config.providers.length
 			) {
-				routingState = createSearchRoutingState(config.providers.length, routingState?.cooldowns);
+				routingState = createSearchRoutingState(config.providers.length, admission);
 				routingKey = nextRoutingKey;
 			}
 			const request = {
@@ -177,11 +182,29 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 				},
 			);
 			options.onSearchComplete?.(details);
-			return { content: [{ type: "text", text: formatSearchText(details) }], details };
+			const text = details.error
+				? withFreeChainGuidance(formatSearchText(details), details, ctx)
+				: formatSearchText(details);
+			return { content: [{ type: "text", text }], details };
 		},
 		renderCall: (args, theme) => renderSearchCall(args, theme),
 		renderResult: (result, options, theme) => renderSearchResult(result, options, theme),
 	});
+}
+
+function withFreeChainGuidance(text: string, details: SearchDetails, ctx: ExtensionContext): string {
+	const blocked = (details.attempts ?? []).filter((attempt) => attempt.blocked || attempt.skipped);
+	if (blocked.length === 0 || !details.error) return text;
+	const paths = websearchConfigPaths(ctx.cwd ?? process.cwd(), homedir());
+	return [
+		text,
+		"",
+		`Free search routes are blocked or rate-limited right now (${blocked
+			.map((attempt) => attemptRouteLabel(attempt))
+			.join(", ")}). Configure a keyed provider (exa, brave, kagi, ...) or a self-hosted SearXNG in websearch.json: ${paths.join(
+			", ",
+		)}.`,
+	].join("\n");
 }
 
 export const web_search = createWebSearchTool(() => ({
