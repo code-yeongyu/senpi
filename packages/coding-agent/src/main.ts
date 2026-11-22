@@ -47,7 +47,7 @@ import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
 import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
 import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
-import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
+import { captureStdoutWhenDroppable, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { heldSessionAttachPlan } from "./cli/held-session-attach.ts";
 import { admitStartupSession, prepareSessionOpening, SESSION_HELD_EXIT_CODE } from "./cli/session-opening.ts";
@@ -1277,7 +1277,8 @@ export async function main(args: string[], options?: MainOptions) {
 	applyHttpProxySettings(bootstrapSettingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher();
 
-	if (await dispatchPackageCommand(args, { extensionFactories })) {
+	const packageRun = await captureStdoutWhenDroppable(() => dispatchPackageCommand(args, { extensionFactories }));
+	if (packageRun.result) {
 		const exitCode = process.exitCode ?? 0;
 		if (process.platform === "win32" && exitCode === 0 && args[0] === "update") {
 			// We normally prefer process.exit(0) for package commands so bad extensions cannot keep
@@ -1286,7 +1287,7 @@ export async function main(args: string[], options?: MainOptions) {
 			// https://github.com/nodejs/node/issues/56645
 			return;
 		}
-		await exitAfterOutput("", exitCode);
+		await exitAfterOutput(packageRun.output, exitCode);
 		return;
 	}
 
@@ -1302,9 +1303,9 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	// Durable scheduled prompts: fired out of process, so a job scheduled by an exited --print run still runs.
-	const scheduleExitCode = await dispatchScheduleCommand(args);
-	if (scheduleExitCode !== undefined) {
-		await exitAfterOutput("", scheduleExitCode);
+	const scheduleRun = await captureStdoutWhenDroppable(() => dispatchScheduleCommand(args));
+	if (scheduleRun.result !== undefined) {
+		await exitAfterOutput(scheduleRun.output, scheduleRun.result);
 	}
 
 	const parsed = parseArgs(args);
