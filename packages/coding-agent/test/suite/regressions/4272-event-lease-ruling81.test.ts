@@ -1,9 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { TransferStaging, TransferStagingError } from "../../../src/modes/rpc/compact-transfer-staging.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { FLAG } from "./4272-construction-host-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 // Part of #4272 (S13, RULING-81): the contract owner's conditions on the event-lease route. Q-A: release_recovery
 // covers event leases only and refuses a checkpoint token, typed. Q-B: `compact_events` is accepted only behind the
@@ -29,13 +29,11 @@ afterEach(() => {
 async function compactHost() {
 	vi.stubEnv(FLAG, "1");
 	const host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const opener = host.client("opener");
 	const routing = String(dataOf(await opener.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
-	admissions.mockRestore();
+	const entry = admissions.entryFor(routing);
+	admissions.restore();
 	const lane = entry?.acceptance ?? expect.unreachable("no acceptance lane with the flag on");
 	const pi = [...host.extensionApis.values()].at(-1) ?? expect.unreachable("no session extension API");
 	const compact = host.client("compact");
@@ -251,11 +249,11 @@ it("RULING-81 measurements: descriptors per record type on the real path, and th
 		process.stdout.write(`S13-MEASURE failure retained-bytes ${retained} refused ${JSON.stringify(after.refused)}\n`);
 		expect(retained, "a refused record retains no staged bytes").toBe(0);
 		expect(after.refused).toMatchObject({ storage_unavailable: 1 });
-		expect(compact.inbox.at(-1)).toEqual({
-			type: "event_lease_refused",
-			sessionId: routing,
-			reason: "storage_unavailable",
-		});
+		// RULING-124 (#5322): the refusal, then the record announcing the close it causes.
+		expect(compact.inbox.slice(-2)).toEqual([
+			{ type: "event_lease_refused", sessionId: routing, reason: "storage_unavailable" },
+			{ type: "socket_closing", code: "event_lease_refused", retryable: true, detail: "storage_unavailable" },
+		]);
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}

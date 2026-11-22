@@ -3,7 +3,7 @@ import { lstat, mkdir, mkdtemp, open, readFile, readdir, rm, symlink, writeFile 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { getAgentDir } from "../../../src/config.ts";
+import { getAgentDir, CONFIG_DIR_NAME } from "../../../src/config.ts";
 import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
 import { type CompactStorageOperation, nodeCompactStorageIo } from "../../../src/modes/rpc/compact-storage-io.ts";
 import { RecoveryStorageHealth } from "../../../src/modes/rpc/compact-storage-health.ts";
@@ -176,19 +176,29 @@ it.each(["corrupt", "symlink"] as const)("repairs a %s revision atomically and c
 it("places the default health store under the agent directory and initializes it only once", async () => {
 	vi.stubEnv("SENPI_CODING_AGENT_DIR", undefined);
 	vi.stubEnv("HOME", base);
-	const mkdir = vi.spyOn(fs, "mkdir");
-	const health = new RecoveryStorageHealth(getAgentDir());
-	const expected = `.senpi-recovery-health-${process.getuid?.() ?? "user"}`;
-	expect(mkdir).not.toHaveBeenCalled();
+	// #6459: resolve from inside the fixture so the parent walk stays under the stubbed
+	// HOME and can never climb into the real account home's agent directory.
+	const originalCwd = process.cwd();
+	process.chdir(base);
+	try {
+		const agentDir = getAgentDir();
+		expect(agentDir).toBe(join(base, CONFIG_DIR_NAME, "agent"));
+		const mkdir = vi.spyOn(fs, "mkdir");
+		const health = new RecoveryStorageHealth(agentDir);
+		const expected = `.senpi-recovery-health-${process.getuid?.() ?? "user"}`;
+		expect(mkdir).not.toHaveBeenCalled();
 
-	await Promise.all([health.revision(), health.revision()]);
-	await health.revision();
-	health.unavailable();
-	await health.recover(repairWrite);
+		await Promise.all([health.revision(), health.revision()]);
+		await health.revision();
+		health.unavailable();
+		await health.recover(repairWrite);
 
-	expect(await readdir(getAgentDir())).toContain(expected);
-	expect(await readdir(base)).not.toContain(expected);
-	expect(mkdir).toHaveBeenCalledExactlyOnceWith(join(getAgentDir(), expected), { mode: 0o700, recursive: true });
+		expect(await readdir(agentDir)).toContain(expected);
+		expect(await readdir(base)).not.toContain(expected);
+		expect(mkdir).toHaveBeenCalledExactlyOnceWith(join(agentDir, expected), { mode: 0o700, recursive: true });
+	} finally {
+		process.chdir(originalCwd);
+	}
 });
 
 // #4272 S14: a host's captured directory wins over session-time environment discovery.

@@ -25,6 +25,7 @@ import {
 	settlePendingRun,
 	timeoutResult,
 } from "./subprocess-run.ts";
+import { attestKernelChild } from "./session-spawn-attestation.ts";
 import { SubprocessStartupWatchdog } from "./subprocess-startup.ts";
 
 export type {
@@ -181,7 +182,9 @@ export class SubprocessKernel {
 		const timeoutMs = run.input.timeoutMs;
 		if (timeoutMs !== undefined) run.timer = setTimeout(() => this.handleTimeout(run, timeoutMs), timeoutMs);
 		try {
-			process.send(encodeBridgeFrame({ type: "run", cellId: run.input.cellId, code: run.input.code, timeoutMs }));
+			const { cellId, code, bridgeCellToken } = run.input;
+			const token = bridgeCellToken === undefined ? {} : { bridgeCellToken };
+			process.send(encodeBridgeFrame({ type: "run", cellId, code, timeoutMs, ...token }));
 		} catch (error) {
 			this.failClosed(new KernelProcessError(error instanceof Error ? error.message : String(error)));
 		}
@@ -222,10 +225,14 @@ export class SubprocessKernel {
 			...this.options,
 			env:
 				this.options.env ??
-				(this.options.sessionEnv
-					? applySessionEnvironment(globalThis.process.env, this.options.sessionEnv)
+				(this.options.sessionEnv || this.options.inheritedEnv
+					? applySessionEnvironment(
+							this.options.inheritedEnv?.() ?? globalThis.process.env,
+							this.options.sessionEnv,
+						)
 					: undefined),
 		});
+		attestKernelChild(this.options.attestSpawn, child);
 		const process = new SubprocessProcess(child, {
 			onLine: (source, line) => this.handleLine(source, line),
 			onStderr: (source, data) => this.handleMessage(source, { type: "text", stream: "stderr", data }),

@@ -1,3 +1,4 @@
+import { isActiveScopeWith, lookupProviderScopeRegistry } from "./provider-scope-registry.ts";
 import type { AssistantImages, ImageApi, ImageModel, ImagesContext, ImagesFunction, ImagesOptions } from "./types.ts";
 
 export type ImagesApiFunction = (
@@ -21,7 +22,7 @@ export type RegisteredImagesApiProvider = {
 	sourceId?: string;
 };
 
-/** Browser-neutral shape installed by the node-only provider-scope subpath. */
+/** Browser-neutral shape of the scope object the node-only provider-scope subpath places in the realm's registry. */
 export interface ImagesProviderScopeAccess {
 	state: "active" | "closed";
 	imagesOverlay: Map<string, RegisteredImagesApiProvider>;
@@ -29,23 +30,34 @@ export interface ImagesProviderScopeAccess {
 
 const imagesApiProviderRegistry = new Map<string, RegisteredImagesApiProvider>();
 const builtinImagesApiProviderRegistry = new Map<string, RegisteredImagesApiProvider>();
-let getImagesProviderScope: () => ImagesProviderScopeAccess | undefined = () => undefined;
-let imagesProviderScopeStrictMode = false;
-
-/** Installs the optional node-only scope lookup without importing node APIs here. */
-export function installImagesProviderScopeAccessor(accessor: () => ImagesProviderScopeAccess | undefined): void {
-	getImagesProviderScope = accessor;
-}
+// Strict mode this copy was given while the realm had no provider-scope instance. It stays in force for this copy
+// until this copy sets it again; once an instance exists, every set goes to the instance (omo#12965).
+let strictModeBeforeRegistry = false;
 
 export function setImagesProviderScopeStrictMode(enabled: boolean): void {
-	imagesProviderScopeStrictMode = enabled;
+	const registry = lookupProviderScopeRegistry();
+	strictModeBeforeRegistry = registry === undefined && enabled;
+	registry?.setImagesStrictMode(enabled);
 }
 
+function isImagesProviderScopeAccess(scope: unknown): scope is ImagesProviderScopeAccess {
+	return isActiveScopeWith(scope, "imagesOverlay");
+}
+
+/**
+ * The active scope any pi-ai copy in this realm entered, read structurally: a closed scope and one whose members
+ * another copy shaped differently both refuse. Outside a scope, a strict mode that is not a boolean reads as on.
+ */
 function getActiveImagesProviderScope(): ImagesProviderScopeAccess | undefined {
-	const scope = getImagesProviderScope();
-	if (scope?.state === "closed") throw new Error("Provider scope is closed");
-	if (!scope && imagesProviderScopeStrictMode) throw new Error("Provider scope is required in strict mode");
-	return scope;
+	const registry = lookupProviderScopeRegistry();
+	const scope: unknown = registry?.current();
+	if (scope !== undefined) {
+		if (!isImagesProviderScopeAccess(scope)) throw new Error("Provider scope is closed");
+		return scope;
+	}
+	const strict = strictModeBeforeRegistry || (registry?.imagesStrictMode() ?? false) !== false;
+	if (strict) throw new Error("Provider scope is required in strict mode");
+	return undefined;
 }
 
 function wrapGenerateImages<TOptions extends ImagesOptions>(

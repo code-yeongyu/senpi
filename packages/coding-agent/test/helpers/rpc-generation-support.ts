@@ -42,7 +42,9 @@ export function generationScratch(label: string): GenerationScratch {
 		cwd: join(root, "w"),
 		socket: join(root, "rpc.sock"),
 	};
-	for (const dir of [scratch.agentDir, scratch.sessionDir, scratch.cwd]) mkdirSync(dir, { recursive: true });
+	// 0700 under any umask: a host refuses to publish its key into a group-writable agent dir (unsafe_key_record).
+	for (const dir of [scratch.agentDir, scratch.sessionDir, scratch.cwd])
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
 	return scratch;
 }
 
@@ -50,9 +52,17 @@ export function hostLifecycleEntry(): string {
 	return join(import.meta.dirname, "..", "..", "src", "modes", "rpc", "host-lifecycle.ts");
 }
 
+/**
+ * Whether a spawn starts a generation's supervisor. Where a user systemd manager answers, the launch is wrapped in
+ * `systemd-run --user --scope ... -- <node> host-lifecycle.ts ...` (senpi#7099), so the entry is not argv[0].
+ */
+export function isSupervisorSpawn(args: readonly string[]): boolean {
+	return args.some((arg) => arg.endsWith("host-lifecycle.ts"));
+}
+
 /** The launch seam both ensure and handoff take: supervisor argv in, spawnable command out. */
-export function supervisorLaunch(args: readonly string[]): { command: string; args: string[] } {
-	return { command: process.execPath, args: [hostLifecycleEntry(), ...args] };
+export function supervisorLaunch(args: readonly string[]): { command: string; args: string[]; reportsStartup: true } {
+	return { command: process.execPath, args: [hostLifecycleEntry(), ...args], reportsStartup: true };
 }
 
 export const GENERATION_HOST_ARGS = ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL] as const;

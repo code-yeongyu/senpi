@@ -16,6 +16,11 @@ const version = z
 // `bin.pi` ships this one file, and whichever runtime installed the package executes it: npm
 // installs run it on Node through its shebang, `bun install -g` runs the same file on Bun.
 const runtimes = ["node", "bun"] as const;
+// Help/extension spawns measured up to ~30 s under load (senpi#5952); the spawn gets this, its test 10 s more.
+const SPAWN_BUDGET_MS = 60_000;
+// The --cpu-prof spawn respawns the bundle and writes a profile: 12-21 s at ~2.6 load per core, 46 s and one
+// 74.5 s overrun at 3-4 (senpi#6013). The spawn gets 2x that overrun, its test 10 s more.
+const PROFILED_SPAWN_BUDGET_MS = 150_000;
 const responseSchema = z.object({
 	type: z.string(), id: z.string().optional(), success: z.boolean().optional(),
 	data: z.unknown().optional(), error: z.unknown().optional(),
@@ -119,7 +124,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		try {
 			// When
 			const result = spawnSync(runtime, ["--cpu-prof", "--cpu-prof-dir", state, cli, "--model", "nope/nope", "-p", "hi"], {
-				encoding: "utf8", env: hermeticEnv(state), timeout: 60_000,
+				encoding: "utf8", env: hermeticEnv(state), timeout: PROFILED_SPAWN_BUDGET_MS,
 			});
 			// Then: the agent ran and rejected the model, rather than the entry failing to resolve itself.
 			const output = `${result.stdout}${result.stderr}`;
@@ -128,21 +133,21 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		} finally {
 			rmSync(state, { recursive: true, force: true });
 		}
-	}, 70_000);
+	}, PROFILED_SPAWN_BUDGET_MS + 10_000);
 
 	test("prints help and exits successfully", () => {
 		// Given
 		const state = createState();
 		try {
 			// When
-			const result = spawnSync(runtime, [cli, "--help"], { encoding: "utf8", env: hermeticEnv(state), timeout: 30_000 });
+			const result = spawnSync(runtime, [cli, "--help"], { encoding: "utf8", env: hermeticEnv(state), timeout: SPAWN_BUDGET_MS });
 			// Then
 			expect(result.status, result.stderr).toBe(0);
 			expect(result.stdout.length).toBeGreaterThan(0);
 		} finally {
 			rmSync(state, { recursive: true, force: true });
 		}
-	});
+	}, SPAWN_BUDGET_MS + 10_000);
 
 	test("loads an external TypeScript extension and lists the flag it registers", () => {
 		// Given: a fresh agent dir, so the help fast path misses its per-extension-set cache and
@@ -154,7 +159,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		try {
 			// When
 			const result = spawnSync(runtime, [cli, "--extension", extension, "--help"], {
-				encoding: "utf8", env: hermeticEnv(state), timeout: 60_000,
+				encoding: "utf8", env: hermeticEnv(state), timeout: SPAWN_BUDGET_MS,
 			});
 			// Then
 			expect(result.status, result.stderr).toBe(0);
@@ -163,7 +168,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 			rmSync(extensionDir, { recursive: true, force: true });
 			rmSync(state, { recursive: true, force: true });
 		}
-	});
+	}, SPAWN_BUDGET_MS + 10_000);
 
 	test("opens and closes a shared session when the bundle receives RPC commands", async () => {
 		// Given: isolated state, with no provider request or user extensions.

@@ -10,11 +10,11 @@ import type {
 } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import { type FrozenRef, TransferStaging } from "../../../src/modes/rpc/compact-transfer-staging.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, type RawClient, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { spoolRoot } from "../compact-storage-support.ts";
 import { FLAG } from "./4272-construction-host-support.ts";
 import { specDigest } from "./4272-frozen-bytes-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 // Part of #4272 (S13, R4.B6, RULING-65 S13-Q1/Q2 = A, RULING-63 acceptance): an ordinary event whose record is larger
 // than F reaches a peer that selected compact events as a bounded envelope naming an event lease at the event's accepted
@@ -55,13 +55,11 @@ const oversized = (callId: string, text: string) => ({
 async function compactHost() {
 	vi.stubEnv(FLAG, "1");
 	const host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const plain = host.client("plain");
 	const routing = String(dataOf(await plain.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
-	admissions.mockRestore();
+	const entry = admissions.entryFor(routing);
+	admissions.restore();
 	const lane = entry?.acceptance ?? expect.unreachable("no real acceptance lane with the flag on");
 	const pi = [...host.extensionApis.values()].at(-1) ?? expect.unreachable("no session extension API");
 	const compact = host.client("compact");
@@ -236,7 +234,11 @@ it("S13-Q1 (2) leases are count-bounded per peer: past the stated bound the peer
 			host.writer.enqueue(routing, oversized(`call-${index}`, String(index % 10).repeat(263_000)));
 		await host.writer.flush();
 		expect(compact.inbox.filter((record) => leaseOf(record) !== undefined)).toHaveLength(bound);
-		expect(compact.inbox.at(-1)).toEqual({ type: "event_lease_refused", sessionId: routing, reason: "lease_limit" });
+		// RULING-124 (#5322): the refusal, then the record announcing the close it causes.
+		expect(compact.inbox.slice(-2)).toEqual([
+			{ type: "event_lease_refused", sessionId: routing, reason: "lease_limit" },
+			{ type: "socket_closing", code: "event_lease_refused", retryable: true, detail: "lease_limit" },
+		]);
 		expect(events.status()).toMatchObject({ open: bound, refused: { lease_limit: 1 } });
 		await host.drop("compact");
 		expect(events.status(), "the peer's end releases all its references").toMatchObject({ open: 0, contentBytes: 0 });
@@ -300,7 +302,9 @@ it("T6 X06 golden: with the flag off a compact_events peer receives the complete
 		const lease = { id: "event:socket-1:1", admissionId: "attach-1" } as LeaseRef;
 		expect(await release(compact, routing, lease)).toMatchObject({
 			success: false,
-			error: "Unknown command: release_recovery",
+			error: "feature_disabled",
+			errorCode: "feature_disabled",
+			errorData: { feature: "compact_updates" },
 		});
 	} finally {
 		await host[Symbol.asyncDispose]();

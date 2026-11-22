@@ -7,7 +7,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AssistantProgress, ImageContent } from "@earendil-works/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
@@ -21,7 +21,7 @@ import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 import { RpcCommandError } from "./rpc-command-error.ts";
-import { handleRpcReply } from "./rpc-client-replies.ts";
+import { handleRpcReply, UnawaitedReplies } from "./rpc-client-replies.ts";
 import {
 	RpcClientAdmissions,
 	type CompactOpenResult,
@@ -29,11 +29,15 @@ import {
 	type RpcOpenOptions,
 } from "./rpc-client-admissions.ts";
 export { RpcCommandError } from "./rpc-command-error.ts";
+export type { RpcClientEvent, RpcEventListener, RpcProviderAccountEvent } from "./rpc-client-events.ts";
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import { isProviderAccountEvent, type RpcClientEvent, type RpcEventListener } from "./rpc-client-events.ts";
+import { childEnvironmentOf } from "./host-identity-env.ts";
 import { connectRpcClientSocket } from "./rpc-client-socket.ts";
 import {
 	armRequestDeadline,
@@ -50,22 +54,14 @@ import {
 import type {
 	EditAssistantMessageResult,
 	EditUserMessageResult,
-	RpcAccountFailoverEvent,
-	RpcAuthAccountsChangedEvent,
 	RpcCommand,
 	RpcEvalCell,
 	RpcEvalCellSnapshot,
-	RpcExtensionEvent,
 	RpcExtensionUIProgress,
-	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
-	RpcOpenQueuedEvent,
 	RpcProviderAccount,
 	RpcResponse,
-	RpcSecretInputSettledEvent,
 	RpcSessionModelEntry,
-	RpcSessionParkedEvent,
-	RpcSessionReplacedEvent,
 	RpcSessionState,
 	RpcSlashCommand,
 	RpcUnloadAnswer,
@@ -122,36 +118,6 @@ type PromptOptions = ClientMessageIdentity & {
 	unknownCommandAsText?: boolean;
 };
 
-export type RpcProviderAccountEvent = RpcAuthAccountsChangedEvent | RpcAccountFailoverEvent;
-export type RpcClientEvent =
-	| RpcSecretInputSettledEvent
-	| (JsonAgentSessionEvent & ClientMessageIdentity & { readonly clientMessages?: readonly ClientMessageIdentity[] })
-	| RpcProviderAccountEvent
-	| RpcExtensionEvent
-	| RpcExtensionUIRequest
-	// The host swapped the live session behind this connection. Part of the public
-	// union so a typed client can discriminate on the type and read the new
-	// `durableSessionId` without casting: the command response carries only
-	// `{ cancelled }`, and a replacement may be driven by another client or an
-	// extension, so this is the only channel delivering the new identity.
-	| RpcSessionReplacedEvent
-	// The host parked a retained session at its idle window. Part of the public union
-	// because it REPLACES `session_closed` for that handle: a client that treats it as
-	// a close loses the session it was told to reopen by path.
-	| RpcSessionParkedEvent
-	// The host accepted an open_session and says where it is queued; the client also uses it to
-	// switch that open to its post-acknowledgement deadline (senpi#2209).
-	| RpcOpenQueuedEvent
-	// A compact recovery cut resets each tool call still open at it (senpi#5298, senpi#5300); listeners receive it as is.
-	| (Extract<AssistantProgress, { type: "message_tool_arguments_reset" }> & { readonly sessionId?: string })
-	| { type: "bash_start" }
-	| { type: "bash_end" };
-export type RpcEventListener = (event: RpcClientEvent) => void;
-
-function isProviderAccountEvent(event: RpcClientEvent): event is RpcProviderAccountEvent {
-	return event.type === "auth_accounts_changed" || event.type === "account_failover";
-}
-
 // ============================================================================
 // RPC Client
 // ============================================================================
@@ -203,6 +169,8 @@ export class RpcClient {
 	private socket: Socket | null = null;
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
+	/** Replies to records this client sent without waiting (senpi#5761), consumed quietly. */
+	private readonly unawaitedReplies = new UnawaitedReplies();
 	private pendingRequests: Map<
 		string,
 		{
@@ -295,7 +263,8 @@ export class RpcClient {
 		const childProcess = spawn("node", [cliPath, ...args], {
 			cwd: this.options.cwd,
 			env: {
-				...process.env,
+				// A stdio child never reads the host's supervisor hand-off (senpi#5635).
+				...childEnvironmentOf(process.env),
 				// The spawned child must BE the process this client signals and reaps. An ambient
 				// SENPI_RUNTIME=bun pin makes the launcher re-exec under Bun via spawnSync, so a
 				// SIGTERM to the wrapper leaves the Bun host running: it keeps the session lease
@@ -1192,6 +1161,20 @@ export class RpcClient {
 	}
 
 	/**
+	 * Archive or unarchive the session; the flag is stored in its session file.
+	 */
+	async setSessionArchived(archived: boolean): Promise<void> {
+		await this.send({ type: "set_session_archived", archived });
+	}
+
+	/**
+	 * Mark the session Done or reopen it; the flag and how it was reached (`by`) are stored in its session file.
+	 */
+	async setSessionSettled(settled: boolean, by?: ThreadSettledBy): Promise<void> {
+		await this.send({ type: "set_session_settled", settled, ...(by !== undefined ? { by } : {}) });
+	}
+
+	/**
 	 * Report that the user started typing a draft, so a first-activity prompt-cache prewarm can run (senpi#3859).
 	 */
 	async recordDraftActivity(): Promise<void> {
@@ -1294,6 +1277,11 @@ export class RpcClient {
 		return data === undefined ? {} : { notice: data.notice };
 	}
 
+	/** Reset one account's local health on a host advertising `account_reset`; rejects with RpcCommandError on failure. */
+	async resetProviderAccount(provider: string, name: string): Promise<void> {
+		this.getData(await this.send({ type: "account_reset", provider, name }));
+	}
+
 	// =========================================================================
 	// Helpers
 	// =========================================================================
@@ -1341,7 +1329,11 @@ export class RpcClient {
 					// Connection-level, not part of the agent's event stream.
 					event.type === "session_replaced" ||
 					event.type === "session_parked" ||
+					event.type === "session_released" ||
+					event.type === "session_archived_changed" ||
+					event.type === "session_settled_changed" ||
 					event.type === "queued" ||
+					event.type === "socket_closing" ||
 					event.type === "message_tool_arguments_reset"
 				)
 					return;
@@ -1371,7 +1363,7 @@ export class RpcClient {
 	private handleLine(line: string): void {
 		try {
 			const data = JSON.parse(line);
-			if (handleRpcReply(data, this.pendingRequests, this.admissions)) return;
+			if (handleRpcReply(data, this.pendingRequests, this.admissions, this.unawaitedReplies)) return;
 			this.admissions.receive(data);
 
 			if (data.type === "queued" && typeof data.for_request === "string")
@@ -1473,6 +1465,7 @@ export class RpcClient {
 		} as RpcCommand;
 
 		if (!expectResponse) {
+			this.unawaitedReplies.note(id);
 			stream.write(serializeJsonLine(fullCommand));
 			return Promise.resolve({ type: "response", command: command.type, success: true } as RpcResponse);
 		}

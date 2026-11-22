@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { estimateTokens, findCutPoint } from "../../../compaction/compaction.ts";
 import { buildSessionContext, type CompactionEntry, type SessionEntry } from "../../../session-manager.ts";
 import type { ModelUsabilityBudgetProjection } from "./model-usability-budget.ts";
@@ -27,6 +28,12 @@ export interface ResumeSlicePlan {
 export interface ResumeSliceInput {
 	readonly entries: readonly SessionEntry[];
 	readonly projection: ModelUsabilityBudgetProjection;
+	/**
+	 * Provider-reported tokens per estimated token (senpi#3447). The projection's
+	 * live context is in reported tokens, so every per-message measure is scaled by
+	 * this before it is compared with the window. Defaults to 1.
+	 */
+	readonly tokenScale?: number;
 }
 
 export function resumeSliceNotice(plan: ResumeSlicePlan): string {
@@ -70,11 +77,36 @@ function buildSliceSummary(entries: readonly SessionEntry[]): string {
 	return `${CHECKPOINT_MARKER}\n\nEarlier checkpoint:\n${bounded}`;
 }
 
+/**
+ * Live context tokens at `tokenScale` reported tokens per estimated token
+ * (senpi#3447). A compaction or branch summary is written fresh and its estimate
+ * is about right, so only the other messages take the reported ratio.
+ */
+export function chargeContextTokens(messages: readonly AgentMessage[], tokenScale: number): number {
+	const { summaryTokens, otherTokens } = contextTokenParts(messages);
+	return Math.ceil(summaryTokens + otherTokens * tokenScale);
+}
+
+export function contextTokenParts(messages: readonly AgentMessage[]): {
+	readonly summaryTokens: number;
+	readonly otherTokens: number;
+} {
+	let summaryTokens = 0;
+	let otherTokens = 0;
+	for (const message of messages) {
+		const tokens = estimateTokens(message);
+		if (message.role === "compactionSummary" || message.role === "branchSummary") summaryTokens += tokens;
+		else otherTokens += tokens;
+	}
+	return { summaryTokens, otherTokens };
+}
+
 function measureSlicedContext(
 	entries: readonly SessionEntry[],
 	firstKeptEntryId: string,
 	summary: string,
 	tokensBefore: number,
+	tokenScale: number,
 ): number {
 	const preview: CompactionEntry = {
 		type: "compaction",
@@ -86,10 +118,7 @@ function measureSlicedContext(
 		tokensBefore,
 		fromHook: false,
 	};
-	return buildSessionContext([...entries, preview], PREVIEW_ENTRY_ID).messages.reduce(
-		(total, message) => total + estimateTokens(message),
-		0,
-	);
+	return chargeContextTokens(buildSessionContext([...entries, preview], PREVIEW_ENTRY_ID).messages, tokenScale);
 }
 
 /**
@@ -97,31 +126,90 @@ function measureSlicedContext(
  * restored session carry an ordinary request. `findCutPoint` owns boundary
  * safety, so a retained tool result always keeps its originating tool call.
  */
-export function planResumeSlice({ entries, projection }: ResumeSliceInput): ResumeSlicePlan | undefined {
+export function planResumeSlice({
+	entries,
+	projection,
+	tokenScale = 1,
+}: ResumeSliceInput): ResumeSlicePlan | undefined {
 	const overhead = fixedOverheadTokens(projection);
 	const keepBudget = projection.contextWindow - overhead;
 	if (keepBudget < MIN_KEEP_TOKENS) return undefined;
+	const toEstimate = (tokens: number) => Math.floor(tokens / tokenScale);
 
 	const entryList = [...entries];
 	const boundaryStart = resolveBoundaryStart(entryList);
 	const summary = buildSliceSummary(entryList);
 	let measuredCutIndex = -1;
 
-	for (let target = keepBudget; target >= MIN_KEEP_TOKENS; target = Math.floor(target / 2)) {
-		const cut = findCutPoint(entryList, boundaryStart, entryList.length, target);
-		if (cut.firstKeptEntryIndex === measuredCutIndex) continue;
-		measuredCutIndex = cut.firstKeptEntryIndex;
-		const firstKeptEntryId = entryList[cut.firstKeptEntryIndex]?.id;
-		if (!firstKeptEntryId) continue;
-		const tokensAfter = measureSlicedContext(entryList, firstKeptEntryId, summary, projection.liveContextTokens);
-		if (tokensAfter + overhead > projection.contextWindow) continue;
+	const planAt = (firstKeptIndex: number): ResumeSlicePlan | undefined => {
+		const firstKeptEntryId = entryList[firstKeptIndex]?.id;
+		if (!firstKeptEntryId) return undefined;
+		const tokensAfter = measureSlicedContext(
+			entryList,
+			firstKeptEntryId,
+			summary,
+			projection.liveContextTokens,
+			tokenScale,
+		);
+		if (tokensAfter + overhead > projection.contextWindow) return undefined;
 		return {
 			firstKeptEntryId,
 			summary,
 			tokensBefore: projection.liveContextTokens,
 			tokensAfter,
-			droppedEntries: Math.max(0, cut.firstKeptEntryIndex - boundaryStart),
+			droppedEntries: Math.max(0, firstKeptIndex - boundaryStart),
 		};
+	};
+
+	const minTarget = Math.max(1, toEstimate(MIN_KEEP_TOKENS));
+	for (let target = toEstimate(keepBudget); target >= minTarget; target = Math.floor(target / 2)) {
+		const cut = findCutPoint(entryList, boundaryStart, entryList.length, target);
+		if (cut.firstKeptEntryIndex === measuredCutIndex) continue;
+		measuredCutIndex = cut.firstKeptEntryIndex;
+		const plan = planAt(cut.firstKeptEntryIndex);
+		if (plan) return plan;
 	}
-	return undefined;
+	return planAtEarliestFittingUserTurn(entryList, boundaryStart, planAt);
+}
+
+/**
+ * `findCutPoint` keeps the entry that crosses its budget, so a single oldest turn
+ * larger than the whole budget is never dropped by the halving above. A cut at a
+ * user turn is always boundary-safe, and the kept context only shrinks as the cut
+ * moves later, so the earliest fitting user turn is found by binary search
+ * (senpi#3447). A cut must keep a completed assistant reply: reducing the
+ * conversation to only the request that just failed is no repair (#1873).
+ */
+function planAtEarliestFittingUserTurn(
+	entries: readonly SessionEntry[],
+	boundaryStart: number,
+	planAt: (firstKeptIndex: number) => ResumeSlicePlan | undefined,
+): ResumeSlicePlan | undefined {
+	const lastCompletedReply = entries.findLastIndex(
+		(entry) =>
+			entry.type === "message" &&
+			entry.message.role === "assistant" &&
+			entry.message.stopReason !== "error" &&
+			entry.message.stopReason !== "aborted",
+	);
+	const userTurns: number[] = [];
+	for (let index = boundaryStart + 1; index < lastCompletedReply; index++) {
+		const entry = entries[index];
+		if (entry?.type === "message" && entry.message.role === "user") userTurns.push(index);
+	}
+	let low = 0;
+	let high = userTurns.length - 1;
+	let best: ResumeSlicePlan | undefined;
+	while (low <= high) {
+		const middle = Math.floor((low + high) / 2);
+		const index = userTurns[middle];
+		const plan = index === undefined ? undefined : planAt(index);
+		if (plan) {
+			best = plan;
+			high = middle - 1;
+		} else {
+			low = middle + 1;
+		}
+	}
+	return best;
 }

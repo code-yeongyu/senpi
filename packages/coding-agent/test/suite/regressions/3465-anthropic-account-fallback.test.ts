@@ -16,7 +16,7 @@ import type { SDKMessage, SdkQuery } from "../../../src/core/extensions/builtin/
 import { loadAnthropicSubscriptionProviderSettings } from "../../../src/core/extensions/builtin/anthropic-subscription/settings.ts";
 import { withAuthGuidance } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../../../src/core/settings-manager.ts";
-import { cliAccountOf, cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
+import { cliAccountOf, cliAuthBlock, cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const now = 1_800_000_000_000;
 const providerId = "anthropic-subscription";
@@ -248,7 +248,7 @@ describe("Anthropic account fallback opt-out", () => {
 	it("points an auth-blocked account at /login and calls its time a re-check, not a wait", async () => {
 		// senpi#3672: an auth block does not clear by waiting; its time is only when the account is checked again.
 		const recheck = now + 60_000;
-		await configure([{ ...primary, blockReason: "auth_error", blockedUntil: recheck }, secondary]);
+		await configure([{ ...primary, ...cliAuthBlock(cliSlot("primary").dirId, recheck, now) }, secondary]);
 		const run = request(settings({ accountFallback: false }), () => undefined);
 		await expect(run.completion).rejects.toMatchObject({ name: "AllAccountsBlockedError" });
 		const shown = await shownGuidance(run.completion);

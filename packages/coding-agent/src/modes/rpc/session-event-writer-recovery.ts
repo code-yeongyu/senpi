@@ -55,17 +55,18 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 					);
 				if (socketEpoch && this.recoveryCheckpoints.stream({ socketEpoch, sessionId })?.routes.includes(id))
 					return true;
-				if (socketEpoch && lane) {
-					const frozen = this.recoveryCheckpoints.freeze(
-						{ socketEpoch, sessionId, peer, admissionId: id, routeKind: "mirror" },
-						lane,
-						true,
-					);
-					if (frozen.ok) return true;
-				}
+				const frozen =
+					socketEpoch && lane
+						? this.recoveryCheckpoints.freeze(
+								{ socketEpoch, sessionId, peer, admissionId: id, routeKind: "mirror" },
+								lane,
+								true,
+							)
+						: undefined;
+				if (frozen?.ok) return true;
 				actor.pendingMirrors.get(id)?.retire("storage_unavailable");
 				process.stderr.write(`senpi rpc mirror checkpoint unavailable (${type}); closing connection\n`);
-				this.fanout.get(peer)?.connection.close?.();
+				this.fanout.get(peer)?.close("checkpoint_unavailable", frozen?.failure.reason);
 				return true;
 			});
 		};

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { type ChildProcessIdentity, processBootAtMs, sameBoot } from "./process-identity.ts";
+import { type ChildProcessIdentity, type OwnBootReader, sameBootAsOwn } from "./process-identity.ts";
 import { readProcessStartMs } from "./process-start-probe.ts";
 
 export type OwnerVerdict = "confirmed" | "dead" | "unverifiable";
@@ -17,7 +17,7 @@ export interface OwnerProbes {
 	readonly platform?: NodeJS.Platform;
 	readonly isProcessAlive?: (pid: number) => boolean;
 	readonly readProcessEvidence?: (pid: number) => Promise<ProcessEvidence | undefined>;
-	readonly bootAtMs?: () => number;
+	readonly bootAtMs?: OwnBootReader;
 }
 
 export interface KillTreeOptions {
@@ -111,7 +111,7 @@ export async function confirmOwner(
 ): Promise<OwnerVerdict> {
 	const platform = probes.platform ?? process.platform;
 	try {
-		if (!sameBoot(runtime.bootAtMs, (probes.bootAtMs ?? processBootAtMs)())) return "dead";
+		if (!(await sameBootAsOwn(runtime.bootAtMs, probes.bootAtMs))) return "dead";
 		if (!(probes.isProcessAlive ?? isProcessAlive)(runtime.pid)) return "dead";
 		const evidence = await (probes.readProcessEvidence ?? defaultEvidenceReader(platform))(runtime.pid);
 		if (evidence?.startedAtMs === undefined || !Number.isFinite(evidence.startedAtMs)) return "unverifiable";

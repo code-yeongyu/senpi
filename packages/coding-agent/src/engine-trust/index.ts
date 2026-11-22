@@ -5,7 +5,7 @@ export {
 	engineTrustAction,
 } from "./actions.ts";
 export { adoptedEngineTrust, recordAdoptedEngineTrust } from "./adopted.ts";
-export { engineTrustHandOffEnvironment } from "./hand-off.ts";
+export { adoptedEngineTrustHandOff, engineTrustHandOffEnvironment } from "./hand-off.ts";
 export {
 	applyEngineTrustRestore,
 	buildTrustLaunchEnvironment,

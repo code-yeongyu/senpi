@@ -1,8 +1,9 @@
 import { Type } from "typebox";
-import type {
-	RelocationRequestResult,
-	RelocationTarget,
-	RelocationTargetsResult,
+import {
+	RELOCATION_TOOL_NAMES,
+	type RelocationRequestResult,
+	type RelocationTarget,
+	type RelocationTargetsResult,
 } from "../../session-control-types.ts";
 import type { AgentToolResult, ExtensionAPI } from "../../types.ts";
 
@@ -42,8 +43,6 @@ export function requestText(result: RelocationRequestResult): string {
 	}
 }
 
-const RELOCATION_TOOLS = ["list_relocation_targets", "relocate_session"];
-
 /**
  * The tools are registered search-exposed with lazy activation off, so a session no host offers relocation for (a
  * plain CLI) never sees them. They are activated at the start of each run while the host offers it, and retired again
@@ -52,8 +51,8 @@ const RELOCATION_TOOLS = ["list_relocation_targets", "relocate_session"];
 function syncActivation(pi: ExtensionAPI): void {
 	const wanted = pi.session.relocationOffered();
 	const active = pi.getActiveTools();
-	const others = active.filter((name) => !RELOCATION_TOOLS.includes(name));
-	const next = wanted ? [...others, ...RELOCATION_TOOLS] : others;
+	const others = active.filter((name) => !RELOCATION_TOOL_NAMES.includes(name));
+	const next = wanted ? [...others, ...RELOCATION_TOOL_NAMES] : others;
 	if (next.length === active.length && next.every((name) => active.includes(name))) return;
 	pi.setActiveTools(next);
 }
@@ -71,6 +70,7 @@ export default function relocateSessionExtension(pi: ExtensionAPI): void {
 	);
 	pi.registerTool({
 		name: "list_relocation_targets",
+		sessionBound: true,
 		label: "Other Computers",
 		description:
 			"List the user's other computers this session could continue on, as offered by the app running it: name, whether it is online, a capacity hint, and whether it is about to sleep. Read-only.",
@@ -85,6 +85,7 @@ export default function relocateSessionExtension(pi: ExtensionAPI): void {
 
 	pi.registerTool({
 		name: "relocate_session",
+		sessionBound: true,
 		label: "Continue on Another Computer",
 		description:
 			"Continue this session on another of the user's computers, for example a stronger one for heavy work or because this one is about to sleep. The current turn is never cut short: the move happens when this turn ends, and the conversation, its id and any queued messages continue there. Name a computer from list_relocation_targets. If the move is not possible, the session stays here and keeps working.",

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { dataOf, type RawClient, statusHost } from "../rpc-session-status-support.ts";
+import { dataOf, type RawClient, receiptLeases, statusHost } from "../rpc-session-status-support.ts";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -24,9 +24,12 @@ it("RULING-118 a socket that attaches and detaches 300 distinct live sessions (p
 	const visited: string[] = [];
 	for (let n = 0; n < VISITS; n++) {
 		const admissionId = `visit-${n}`;
+		const before = peer.inbox.length;
 		const opened = await openRetained(peer, host.cwd, `visit-${n}.jsonl`, admissionId);
 		if (opened.success !== true) expect(opened, `visit ${n}`).toMatchObject({ success: true });
 		const sessionId = String(opened.sessionId);
+		await host.writer.flush();
+		await receiptLeases(peer, sessionId, before);
 		const released = await peer.request({ type: "release_attachment", sessionId, admissionId });
 		if (released.success !== true) expect(released, `detach ${n}`).toMatchObject({ success: true });
 		visited.push(sessionId);

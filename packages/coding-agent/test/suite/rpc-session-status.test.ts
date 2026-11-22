@@ -33,6 +33,20 @@ function nextStatus(client: RawClient, subscriptionId: string, cause: string, se
 }
 
 describe("session_status stream (T1 acceptance)", () => {
+	it("publishes a rename to an unattached subscriber with the new name, so another device's listing shows it", async () => {
+		const rig = await host();
+		const a = rig.client("A");
+		const b = rig.client("B");
+		const sub = await subscribe(b);
+		const s1 = String(dataOf(await a.request({ type: "open_session", cwd: rig.cwd })).sessionId);
+		await nextStatus(b, sub.subscriptionId, "open", s1);
+
+		dataOf(await a.request({ type: "set_session_name", sessionId: s1, name: "renamed lane" }));
+
+		const renamed = await nextStatus(b, sub.subscriptionId, "rename", s1);
+		expect(renamed.name).toBe("renamed lane");
+	});
+
 	it("delivers open, set_model, queue, abort, replace, a second open and a detach to an unattached subscriber in order", async () => {
 		const rig = await host();
 		const a = rig.client("A");

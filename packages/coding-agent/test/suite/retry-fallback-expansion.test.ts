@@ -93,26 +93,37 @@ describe("bare model-id family expansion", () => {
 		expect(Object.keys(chains).sort()).toEqual([`anthropic-subscription/${FABLE}`, `anthropic/${FABLE}`]);
 	});
 
-	it("ranks OAuth-credential providers ahead of API-key providers for bare candidates", () => {
+	it("keeps a session's same-vendor rungs on its own lane even when another lane holds the OAuth credential", () => {
 		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(sdkAndAnthropic, ["anthropic"]));
 
-		// anthropic holds the OAuth credential here, so it outranks the sdk provider
-		// even though the tie-break table would otherwise prefer anthropic-subscription.
-		expect(chains[`anthropic-subscription/${FABLE}`]?.slice(0, 3)).toEqual([
+		// senpi#5518: the API-key lane holding OAuth never pulls a subscription session onto it.
+		expect(chains[`anthropic-subscription/${FABLE}`]).toEqual([
 			"kimi-coding/k3:max",
-			`anthropic/${OPUS5}:xhigh`,
 			`anthropic-subscription/${OPUS5}:xhigh`,
+			`anthropic-subscription/${OPUS48}:xhigh`,
 		]);
 	});
 
+	it("ranks another vendor's OAuth-credential provider ahead of its API-key provider for a bare rung", () => {
+		const registry = [...sdkAndAnthropic, model("kimi-coding", "kimi-k3"), model("moonshotai", "kimi-k3")];
+		const chains = canonicalizeFallbackChains(
+			{ [`anthropic/${FABLE}`]: ["kimi-k3:max"] },
+			lookup(registry, ["moonshotai"]),
+		);
+
+		// moonshotai holds the OAuth credential, so it outranks kimi-coding despite the tie-break table.
+		expect(chains[`anthropic/${FABLE}`]).toEqual(["moonshotai/kimi-k3:max", "kimi-coding/kimi-k3:max"]);
+	});
+
 	it("breaks ties with the fixed provider table when no provider holds OAuth", () => {
+		const registry = [...sdkAndAnthropic, model("kimi-coding", "kimi-k3"), model("moonshotai", "kimi-k3")];
+		const crossVendor = canonicalizeFallbackChains({ [`anthropic/${FABLE}`]: ["kimi-k3:max"] }, lookup(registry));
 		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(sdkAndAnthropic));
 
+		expect(crossVendor[`anthropic/${FABLE}`]).toEqual(["kimi-coding/kimi-k3:max", "moonshotai/kimi-k3:max"]);
 		expect(chains[`anthropic/${FABLE}`]).toEqual([
 			"kimi-coding/k3:max",
-			`anthropic-subscription/${OPUS5}:xhigh`,
 			`anthropic/${OPUS5}:xhigh`,
-			`anthropic-subscription/${OPUS48}:xhigh`,
 			`anthropic/${OPUS48}:xhigh`,
 		]);
 	});
@@ -232,11 +243,8 @@ describe("bare-key opt-out tombstones", () => {
 		const chains = canonicalizeFallbackChains(resolved.chains, lookup(sdkAndAnthropic));
 
 		expect(chains[`anthropic/${FABLE}`]).toEqual([`anthropic/${OPUS48}:max`]);
-		// The other provider variant keeps the shipped ladder, expanded OAuth-tier first.
-		expect(chains[`anthropic-subscription/${FABLE}`]).toEqual([
-			`anthropic-subscription/${OPUS5}:max`,
-			`anthropic/${OPUS5}:max`,
-		]);
+		// The other provider variant keeps the shipped ladder on its own lane (senpi#5518).
+		expect(chains[`anthropic-subscription/${FABLE}`]).toEqual([`anthropic-subscription/${OPUS5}`]);
 	});
 });
 

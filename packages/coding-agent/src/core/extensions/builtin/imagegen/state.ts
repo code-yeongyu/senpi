@@ -29,9 +29,8 @@ export function isNativeBypass(): boolean {
 
 /**
  * Overrides the registry the tool resolves credentials from. Tests and the
- * arbitration suite use this to force a credential direction, because the
- * builtin provider catalog always contains credential-resolvable gateways and
- * the ambient session registry is therefore never credential-free.
+ * arbitration suite use this to force a credential direction independent of
+ * whatever providers the ambient session registry holds.
  */
 export function setImageGenRegistry(registry: ImageGenAuthRegistry | undefined): void {
 	registryOverride = registry;

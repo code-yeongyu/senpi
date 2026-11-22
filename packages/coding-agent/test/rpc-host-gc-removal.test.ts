@@ -42,6 +42,66 @@ describe.skipIf(process.platform === "win32")("gc removal of a dead endpoint", (
 		await expect(readFile(join(foreign, "keep.json"), "utf8")).resolves.toBe("{}\n");
 	});
 
+	it("reclaims a bind directory a crashed bind left beside the socket, and keeps one holding anything else", async () => {
+		const qa = endpointScratch("gcb");
+		const paths = await deadEndpoint(qa.legacy, qa.agentDir);
+		await refusingSocket(qa.legacy);
+		const leftover = siblingPath(qa.legacy, ".bind-0a1b2c3d4e5f");
+		await refusingSocket(join(leftover, "s"));
+		const empty = siblingPath(qa.legacy, ".bind-ffffffffffff");
+		await mkdir(empty, { mode: 0o700 });
+		const foreign = siblingPath(qa.legacy, ".bind-777777777777");
+		await writeJson(join(foreign, "keep.json"), {});
+		// A successor binds `<socket>.next-<gen>` through the same scratch, so its leftover sits beside it too.
+		const successorLeftover = siblingPath(qa.legacy, ".next-2.bind-abcdefabcdef");
+		await refusingSocket(join(successorLeftover, "s"));
+
+		expect(await gcHostEndpoints(qa.agentDir)).toEqual({
+			removed: [
+				{
+					socket: qa.legacy,
+					dir: paths.dir,
+					reason: "socket_refused",
+					skipped: [{ path: foreign, type: "directory" }],
+				},
+			],
+			kept: [],
+		});
+		for (const path of [paths.dir, qa.legacy, leftover, empty, successorLeftover]) {
+			await expect(stat(path)).rejects.toEqual(gone);
+		}
+		await expect(readFile(join(foreign, "keep.json"), "utf8")).resolves.toBe("{}\n");
+	});
+
+	it.skipIf(process.getuid?.() === 0)(
+		"skips and reports a bind directory it cannot read, and still removes the endpoint",
+		async () => {
+			const qa = endpointScratch("gcu");
+			const paths = await deadEndpoint(qa.legacy, qa.agentDir);
+			await refusingSocket(qa.legacy);
+			const unreadable = siblingPath(qa.legacy, ".bind-0123456789ab");
+			await mkdir(unreadable, { mode: 0o700 });
+			await chmod(unreadable, 0o000);
+			try {
+				expect(await gcHostEndpoints(qa.agentDir)).toEqual({
+					removed: [
+						{
+							socket: qa.legacy,
+							dir: paths.dir,
+							reason: "socket_refused",
+							skipped: [{ path: unreadable, type: "directory" }],
+						},
+					],
+					kept: [],
+				});
+				await expect(stat(unreadable)).resolves.toBeDefined();
+				await expect(stat(paths.dir)).rejects.toEqual(gone);
+			} finally {
+				await chmod(unreadable, 0o700);
+			}
+		},
+	);
+
 	it.skipIf(process.getuid?.() === 0)(
 		"keeps an endpoint whose removal fails, with its directory whole, and still removes the others",
 		async () => {

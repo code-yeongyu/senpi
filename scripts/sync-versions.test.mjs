@@ -43,7 +43,9 @@ test("synchronizes private dependencies without touching registry aliases, gener
 			["tui", "@earendil-works/pi-tui"],
 			["pty", "@earendil-works/pi-pty"],
 			["telemetry", "@earendil-works/pi-telemetry"],
+			["realm-registry", "@earendil-works/pi-realm-registry"],
 			["senpi-codemode", "@code-yeongyu/senpi-codemode"],
+			["machine-ops", "@code-yeongyu/senpi-machine-ops"],
 		]) {
 			await writeManifest(root, `packages/${directory}`, {
 				name,

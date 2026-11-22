@@ -154,6 +154,6 @@ describe("senpi#3811 connection roles", () => {
 
 		expect(isolate.has("client", INTERACTIVE_USER_CAPABILITY)).toBe(true);
 		expect(isolate.rolesOf("other")).toEqual([]);
-		expect(isolate.declare("client", [])).toBe(false);
+		expect(isolate.declare("client", [])).toBe("fixed");
 	});
 });

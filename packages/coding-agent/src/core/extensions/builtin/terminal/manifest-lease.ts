@@ -168,7 +168,7 @@ export async function acquireTerminalLease(options: AcquireTerminalLeaseOptions)
 	const now = (options.now ?? Date.now)();
 	const self: LeaseSelfIdentity = options.self ?? {
 		pid: options.pid ?? process.pid,
-		bootAtMs: processBootAtMs(),
+		bootAtMs: await processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 	};
 	const pid = options.pid ?? self.pid;

@@ -85,10 +85,10 @@ function submittedImageCount(submitted: SDKUserMessage | undefined): number {
 }
 
 function readReferences(submitted: SDKUserMessage | undefined): number {
-	const reference = coldSeedImageText.duplicate(
+	const reference = `[tool output] ${coldSeedImageText.duplicate(
 		{ kind: "tool", toolName: READ, toolCallId: "read-0" },
 		{ kind: "user" },
-	);
+	)}`;
 	return frameBlocks(submitted).filter((block) => block.type === "text" && block.text === reference).length;
 }
 
