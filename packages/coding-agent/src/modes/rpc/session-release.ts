@@ -70,6 +70,7 @@ export type ReleaseBusySignal =
 	| "bash"
 	| "compaction"
 	| "session_work"
+	| "background"
 	| "activity"
 	| "request";
 
@@ -109,10 +110,14 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	if (command.reason === "move" && !isPlainId(first.session.sessionManager.getSessionId())) {
 		return refusal(command.id, RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "session_id_not_plain" });
 	}
-	const busy = busySignals(port, command.sessionId, first.session);
+	const busy = busySignals(port, command.sessionId, first.session, true);
 	const interrupted = busy.length > 0;
 	if (interrupted && command.interrupt !== true) {
-		return refusal(command.id, busyCode(busy), { attachments: first.attachments, ...busyData(busy) });
+		return refusal(command.id, busyCode(busy), {
+			attachments: first.attachments,
+			...busyData(busy),
+			...backgroundData(first.session, busy),
+		});
 	}
 	// Admission closes below (for the interrupt, or at the claim). Every answer except a release reopens it
 	// on the session the host keeps, and a throw is answered `release_failed` rather than left unanswered.
@@ -192,7 +197,10 @@ async function claimAndRelease(
 	const taken = interrupted ? { interrupted: true, dropped } : undefined;
 	const ready = releasable(port, command, taken);
 	if (!("session" in ready)) return ready;
-	const stillBusy = busySignals(port, command.sessionId, ready.session);
+	// After an interrupt, live background work (terminal jobs, monitors, detached cells) ends with the teardown below and is
+	// named in the answer and the entry; a quiet release refuses it instead (senpi#6499).
+	const stillBusy = busySignals(port, command.sessionId, ready.session, !interrupted);
+	const ended = interrupted ? [...ready.session.activeWakeSources] : [];
 	if (stillBusy.length > 0) {
 		return refusal(command.id, busyCode(stillBusy), {
 			attachments: ready.attachments,
@@ -219,6 +227,7 @@ async function claimAndRelease(
 					}
 				: {}),
 			interrupted,
+			...(ended.length === 0 ? {} : { ended_background: ended }),
 			attachments: ready.attachments,
 			host_instance: port.hostInstance ?? null,
 			released_at: new Date().toISOString(),
@@ -236,11 +245,22 @@ async function claimAndRelease(
 		type: "response",
 		command: "release_session",
 		success: true,
-		data: { released: true, session_path: ready.sessionPath, attachments: ready.attachments, dropped },
+		data: {
+			released: true,
+			session_path: ready.sessionPath,
+			attachments: ready.attachments,
+			dropped,
+			...(ended.length === 0 ? {} : { ended: { background: ended } }),
+		},
 	};
 }
 
-function busySignals(port: SessionReleasePort, sessionId: string, session: AgentSession): ReleaseBusySignal[] {
+function busySignals(
+	port: SessionReleasePort,
+	sessionId: string,
+	session: AgentSession,
+	background: boolean,
+): ReleaseBusySignal[] {
 	const activity = session.activitySnapshot;
 	const signals: ReleaseBusySignal[] = [];
 	if (activity.isStreaming) signals.push("turn");
@@ -251,6 +271,8 @@ function busySignals(port: SessionReleasePort, sessionId: string, session: Agent
 	if (activity.isBashRunning) signals.push("bash");
 	if (activity.isCompacting) signals.push("compaction");
 	if (activity.hasSessionWork) signals.push("session_work");
+	// A live wake source is work a teardown ends (senpi#6499): the handoff park lets it resume on reopen, a release does not.
+	if (background && activity.hasActiveWakeSource) signals.push("background");
 	// The handoff park's predicate decides; a source added to it later is not missed here.
 	if (signals.length === 0 && isHandoffBusy(activity)) signals.push("activity");
 	if (port.otherRequests(sessionId) > 0) signals.push("request");
@@ -261,6 +283,14 @@ function busyData(signals: readonly ReleaseBusySignal[]): Readonly<Record<string
 	return signals.includes("queued")
 		? { busy: signals, retry_with: { interrupt: true }, hint: RELEASE_QUEUED_HINT }
 		: { busy: signals };
+}
+
+/** The wake sources a `background` refusal names, so the caller knows what a release would end. */
+function backgroundData(
+	session: AgentSession,
+	signals: readonly ReleaseBusySignal[],
+): Readonly<Record<string, unknown>> {
+	return signals.includes("background") ? { background: [...session.activeWakeSources] } : {};
 }
 
 function busyCode(signals: readonly ReleaseBusySignal[]): string {
