@@ -1358,7 +1358,7 @@
     "senpi-testing/no-flake-masking": 4
   },
   "packages/coding-agent/test/bounded-realpath.test.ts": {
-    "senpi-testing/no-flake-masking": 3,
+    "senpi-testing/no-flake-masking": 2,
     "senpi-testing/no-module-mock": 1
   },
   "packages/coding-agent/test/branch-summarization.test.ts": {

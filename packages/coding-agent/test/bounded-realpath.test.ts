@@ -2,11 +2,16 @@ import { vi } from "vitest";
 
 const fsState = vi.hoisted(() => ({
 	hangRealpath: false,
+	holdStat: undefined as ((path: unknown) => Promise<void>) | undefined,
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs/promises")>();
 	return {
 		...actual,
+		lstat: async (...args: Parameters<typeof actual.lstat>) => {
+			await fsState.holdStat?.(args[0]);
+			return actual.lstat(...args);
+		},
 		realpath: async (...args: Parameters<typeof actual.realpath>) => {
 			if (fsState.hangRealpath) return await new Promise<never>(() => {});
 			return actual.realpath(...args);
@@ -31,6 +36,8 @@ let root = "";
 
 afterEach(() => {
 	fsState.hangRealpath = false;
+	fsState.holdStat = undefined;
+	vi.useRealTimers();
 	if (root) {
 		rmSync(root, { recursive: true, force: true });
 		root = "";
@@ -78,18 +85,35 @@ describe("realpathWithoutOpenStrict", () => {
 });
 
 describe("bounded resolution", () => {
-	it("canonicalizes within the deadline when realpath never returns", async () => {
+	it("canonicalizes without synchronous metadata I/O after the realpath deadline (#3404)", async () => {
 		// given
 		const dir = createRoot();
 		mkdirSync(join(dir, "logs"));
 		fsState.hangRealpath = true;
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		fsState.holdStat = async (path) => {
+			if (path === join(dir, "logs")) {
+				entered.resolve();
+				await release.promise;
+			}
+		};
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
 		// when
-		const canonical = await canonicalizeFilesystemPath(join(dir, "logs", "out.log"));
+		const canonical = canonicalizeFilesystemPath(join(dir, "logs", "out.log"));
+		await vi.advanceTimersToNextTimerAsync();
 
 		// then
-		expect(canonical).toBe(join(dir, "logs", "out.log"));
-	}, 20_000);
+		try {
+			expect(await Promise.race([entered.promise.then(() => "waiting"), canonical.then(() => "finished")])).toBe(
+				"waiting",
+			);
+		} finally {
+			release.resolve();
+		}
+		await expect(canonical).resolves.toBe(join(dir, "logs", "out.log"));
+	});
 
 	it("still serializes one file when realpath never returns", async () => {
 		// given
