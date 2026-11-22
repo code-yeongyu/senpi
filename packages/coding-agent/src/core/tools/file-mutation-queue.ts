@@ -4,4 +4,5 @@ export {
 	FileLockedByStuckModuleError,
 	type FileMutationLock,
 	withFileMutationQueue,
+	withFileMutationQueues,
 } from "@code-yeongyu/senpi-machine-ops";

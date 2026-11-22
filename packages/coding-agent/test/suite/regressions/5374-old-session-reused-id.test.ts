@@ -5,11 +5,11 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { readTranscriptRoot } from "../../../src/modes/rpc/accepted-transcript.ts";
 import { type FrozenAcceptedRoot, SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
-import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 import { FLAG } from "./5331-live-identity-support.ts";
 import { writeSession } from "./5374-call-key-fixture-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 // RULING-127 (#5394 conformance): an old session (keyless blocks) continued live, where a new keyed call reuses an old
 // block's toolCallId. A reader rebuilds the old block's row by toolCallId (it has no key) and the new call's row by its
@@ -59,13 +59,11 @@ it("RULING-127 #5374 an old keyless block and a new keyed call reusing its toolC
 	const sessionPath = writeSession(host.cwd, false, "old.jsonl");
 	const isOld = (line: string) => OLD_IDS.includes(String((JSON.parse(line) as Entry).id));
 	const oldBytes = readFileSync(sessionPath, "utf8").trim().split("\n").slice(1).filter(isOld);
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const legacy = host.client("legacy");
 	const routing = String(dataOf(await legacy.request({ type: "open_session", cwd: host.cwd, sessionPath })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
-	admissions.mockRestore();
+	const entry = admissions.entryFor(routing);
+	admissions.restore();
 	const lane = entry?.acceptance ?? expect.unreachable("no acceptance lane with the flag on");
 	const compact = host.client("compact");
 	host.writer.setConnectionCapabilities("compact", ["compact_events"]);

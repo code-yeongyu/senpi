@@ -1,5 +1,7 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { BuildDynamicSystemPromptOptions, FullToolPrompt } from "../../../dynamic-prompt/build.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
+import { isAnthropicWebSearchEnabled, supportsNativeAnthropicWebSearch } from "../anthropic-web-search/index.ts";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -27,9 +29,15 @@ interface SystemPromptOptionsLike {
 	appendSystemPrompt?: string;
 }
 
+/** Whether the model can search through Anthropic-native web search on this request (senpi#2935). */
+function hasNativeAnthropicSearch(model: Model<Api> | undefined): boolean {
+	return model !== undefined && supportsNativeAnthropicWebSearch(model) && isAnthropicWebSearchEnabled();
+}
+
 function eventOptionsToBuilderInput(
 	event: { systemPromptOptions: SystemPromptOptionsLike | undefined },
 	ctx: Pick<ExtensionContext, "cwd">,
+	model: Model<Api> | undefined,
 ): Partial<BuildDynamicSystemPromptOptions> {
 	const options = event.systemPromptOptions ?? {};
 	return {
@@ -41,6 +49,7 @@ function eventOptionsToBuilderInput(
 		contextFiles: options.contextFiles,
 		skills: options.skills,
 		surface: options.surface,
+		nativeSearchAvailable: hasNativeAnthropicSearch(model),
 	};
 }
 
@@ -89,7 +98,7 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		const preset = resolvePreset(model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
+		const preset = resolvePreset(model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx, model));
 		if (!preset) {
 			return undefined;
 		}
@@ -116,7 +125,7 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 		if (hasUserSystemPrompt(event.systemPromptOptions)) {
 			return { systemPrompt: null };
 		}
-		const preset = resolvePreset(event.model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
+		const preset = resolvePreset(event.model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx, event.model));
 		return {
 			systemPrompt: preset ? withUserAppends(preset.prompt, event.systemPromptOptions) : null,
 			systemPromptName: preset?.name,

@@ -39,7 +39,7 @@ packages/*/dist/*
 !packages/ai/dist/cli.js
 !packages/coding-agent/dist/
 !packages/coding-agent/dist/cli.js
-# Publish staging: scripts/prepare-senpi-bundled-workspaces.mjs copies the unpublished client/protocol builds here.
+# Publish staging: scripts/prepare-senpi-bundled-workspaces.mjs copies the unpublished client/protocol/machine-ops builds here.
 packages/coding-agent/vendor/
 packages/*/dist-chrome/
 packages/*/dist-firefox/

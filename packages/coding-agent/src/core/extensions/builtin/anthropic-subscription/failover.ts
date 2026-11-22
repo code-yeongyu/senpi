@@ -11,6 +11,7 @@ import { usageLimitResetMs } from "../../../credential-pool/reset-time.ts";
 import type { AccountSlot, AnthropicSubscriptionCredential } from "./accounts.ts";
 import { logAccountBlocked } from "./account-block-log.ts";
 import { AllAccountsBlockedError, clearExpiredBlocks } from "./affinity.ts";
+import { recheckSelection, unverifiedLimitBlock } from "./limit-recheck.ts";
 import type { SdkErrorClassification } from "./errors.ts";
 import { isConfirmedAccountUsageLimit, usageLimitBlockMs } from "./usage-limit-block.ts";
 
@@ -33,6 +34,8 @@ export type FailoverEvent = {
 
 export type FailoverOptions<TEvent> = {
 	accounts: readonly AccountSlot[];
+	/** Shared across this person's turn, including retries; consumed before an account's first attempt. */
+	recheckedAccounts?: Set<string>;
 	/** When false, only the selected account may be attempted; same-account retries remain enabled. */
 	readonly accountFallback?: boolean;
 	selectFn: (accounts: readonly AccountSlot[]) => AccountSlot;
@@ -226,8 +229,12 @@ function blockedAccount(
 		const blocked = {
 			...account,
 			blockedUntil: now + AUTH_BLOCK_REPROBE_MS,
-			blockReason: "auth_error",
+			blockReason: "auth_error" as const,
 			blockedAt: now,
+			// Only a claude CLI login can be marked for a new sign-in; an env token account has no login to expire (senpi#5350).
+			...(classification.signInRequired !== undefined && account.store === "claude-cli"
+				? { signInRequired: classification.signInRequired }
+				: {}),
 		};
 		// The verdict names the sign-in it is about, so a block another engine writes is told apart (senpi#5623).
 		return blocked.store === "claude-cli" ? { ...blocked, authVerdict: { dirId: blocked.dirId, at: now } } : blocked;
@@ -365,6 +372,9 @@ async function persistBlock(
 						blockedUntil: account.blockedUntil,
 						blockReason: account.blockReason,
 						...(account.blockedAt === undefined ? {} : { blockedAt: account.blockedAt }),
+						...(account.store === "claude-cli" && account.signInRequired !== undefined
+							? { signInRequired: account.signInRequired }
+							: {}),
 						// Only this write's own auth verdict stays with the block (senpi#5623).
 						authVerdict: existing.store === "claude-cli" ? account.authVerdict : undefined,
 						modelBlocks: mergeModelBlocks(existing.modelBlocks, account.modelBlocks, now),
@@ -395,6 +405,14 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	const now = options.now ?? Date.now;
 	const baseBlockMs = options.baseBlockMs ?? DEFAULT_RATE_LIMIT_BLOCK_MS;
 	let accounts = clearExpiredBlocks(withSessionBlocks(options.accounts, options.sessionKey, now()), now());
+	const select = () => {
+		try {
+			return options.selectFn(accounts);
+		} catch (error) {
+			if (!(error instanceof AllAccountsBlockedError) || options.recheckedAccounts === undefined) throw error;
+			return options.selectFn(recheckSelection(accounts, options.recheckedAccounts, now()));
+		}
+	};
 	const attemptLimit = options.accountFallback === false ? Math.min(accounts.length, 1) : accounts.length;
 	let lastError: ClassifiedSdkError | undefined;
 	const retriedOnStoredMaterial = new Set<string>();
@@ -408,7 +426,10 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 		const retrySlot =
 			retryAccountName === undefined ? undefined : accounts.find((slot) => slot.name === retryAccountName);
 		retryAccountName = undefined;
-		const account = { ...(retrySlot ?? options.selectFn(accounts)) };
+		const account = { ...(retrySlot ?? select()) };
+		const held = accounts.find((slot) => slot.name === account.name);
+		const rechecking = held !== undefined && unverifiedLimitBlock(held, now()) && retrySlot === undefined;
+		options.recheckedAccounts?.add(account.name);
 		let visibleDeltaEmitted = false;
 		let completed = false;
 		const startedAt = now();
@@ -426,6 +447,9 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			const classified = new ClassifiedSdkError(classification, error, visibleDeltaEmitted);
 			lastError = classified;
 			if (!classification.retryable) throw classified;
+			// An inconclusive half-open check retains the old block. It must not multiply into same-account retries.
+			if (rechecking && (isTransient(classification) || classification.kind === "long_context_unavailable"))
+				throw classified;
 
 			// A refused 1M window is the account's entitlement, not a limit: never block or rotate it.
 			// Retry once on the same account at the standard window (senpi#3408).
@@ -470,7 +494,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				accounts = replaceAccount(accounts, unreadable);
 				let nextAccount: AccountSlot;
 				try {
-					nextAccount = options.selectFn(accounts);
+					nextAccount = select();
 				} catch (selectError) {
 					if (selectError instanceof AllAccountsBlockedError) throw classified;
 					throw selectError;
@@ -495,6 +519,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				persists && shared ? await persistBlock(options.store, options.providerId, blocked, now()) : undefined;
 			if (
 				superseded &&
+				!rechecking &&
 				!visibleDeltaEmitted &&
 				usable(superseded, now(), options.model) &&
 				!retriedOnStoredMaterial.has(account.name)
@@ -523,7 +548,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			let poolState: AllAccountsBlockedError | undefined;
 			try {
 				if (!visibleDeltaEmitted && attempt + 1 < attemptLimit) {
-					event.nextAccount = options.selectFn(accounts);
+					event.nextAccount = select();
 				}
 			} catch (selectError) {
 				if (!(selectError instanceof AllAccountsBlockedError)) throw selectError;
@@ -554,7 +579,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	// model alone, the pool's refusal (a model-scoped limit) is what the fallback chain must read (senpi#5007).
 	if (lastError !== undefined && lastError.classification.modelFamily === undefined && options.model !== undefined) {
 		try {
-			options.selectFn(accounts);
+			select();
 		} catch (refusal) {
 			if (refusal instanceof AllAccountsBlockedError && refusal.limitedModel !== undefined) throw refusal;
 		}

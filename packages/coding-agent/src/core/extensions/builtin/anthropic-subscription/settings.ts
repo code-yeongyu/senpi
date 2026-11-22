@@ -40,8 +40,7 @@ export interface AnthropicSubscriptionProviderSettings {
 	readonly tokenInjection?: AnthropicSubscriptionTokenInjection;
 	readonly compactionOwner?: AnthropicSubscriptionCompactionOwner;
 	/**
-	 * `false` keeps the user's claude.ai account connectors out of the Claude Code child (oh-my-openagent#12166).
-	 * Absent or `true` leaves Claude Code's own default, which loads them.
+	 * Account connectors stay out of the Claude Code child unless explicitly enabled (oh-my-openagent#12166).
 	 */
 	readonly claudeAiConnectors?: boolean;
 }

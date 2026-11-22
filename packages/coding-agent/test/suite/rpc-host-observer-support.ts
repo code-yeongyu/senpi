@@ -40,6 +40,7 @@ export function unknownSessionRegistry(onCommand: () => void): RouterRegistry {
 		beginClose: unsupported,
 		close: async () => {},
 		closeMarked: async () => {},
+		closeGraceMs: 2_000,
 		list: () => [],
 		size: 0,
 	};
@@ -70,6 +71,7 @@ export function evictionRegistry(entry: RpcSessionEntry, sessionId = "rpc-1"): R
 		closeMarked: async () => {
 			entry.state = "closed";
 		},
+		closeGraceMs: 2_000,
 		list: () =>
 			entry.state === "quarantined"
 				? []
@@ -84,6 +86,9 @@ export function evictionRegistry(entry: RpcSessionEntry, sessionId = "rpc-1"): R
 							kind: entry.kind,
 							context: entry.context,
 							tool_child: { state: "none" },
+							archived: false,
+							settled: false,
+							activity: "idle",
 						},
 					],
 		size: 1,

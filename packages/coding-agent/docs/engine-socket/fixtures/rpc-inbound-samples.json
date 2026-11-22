@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "4df5316e9c2712173b8338fdeb1bb1a78ae1f2c3da8b8ac694e1f3cc7c8382ed",
+	"methodClassesDigest": "27c8b985864be3f3a7d9605f4f8476e423613eb9fa2bba9b6820e0d0c1d3f9a6",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 116,
+	"methodCount": 137,
 	"methods": [
 		{
 			"method": "abort",
@@ -95,6 +95,23 @@
 			}
 		},
 		{
+			"method": "admit_external_message",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "admit_external_message",
+				"deliveryId": "00000000-0000-7000-8000-000000000000",
+				"text": "Sample delivery.",
+				"sender": {
+					"kind": "agent",
+					"session_id": "00000000-0000-7000-8000-000000000000"
+				},
+				"deliverAs": "followUp",
+				"whenIdle": "queue"
+			}
+		},
+		{
 			"method": "append_session_entry",
 			"class": "dynamic",
 			"dynamicVersion": 1,
@@ -163,6 +180,16 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "check_reload_veto"
+			}
+		},
+		{
+			"method": "claim_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "claim_session",
+				"cwd": "/nonexistent/senpi-rpc-inbound-sample/cwd"
 			}
 		},
 		{
@@ -372,6 +399,16 @@
 			}
 		},
 		{
+			"method": "find_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "find_session",
+				"durableSessionId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
 			"method": "follow_up",
 			"class": "dynamic",
 			"dynamicVersion": 1,
@@ -535,6 +572,33 @@
 			}
 		},
 		{
+			"method": "get_project_mcp_servers",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_mcp_servers"
+			}
+		},
+		{
+			"method": "get_project_settings",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_settings"
+			}
+		},
+		{
+			"method": "get_project_trust",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_trust"
+			}
+		},
+		{
 			"method": "get_protocol_info",
 			"class": "observe",
 			"sampleClass": "observe",
@@ -664,6 +728,15 @@
 			}
 		},
 		{
+			"method": "list_hands",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "list_hands"
+			}
+		},
+		{
 			"method": "list_sessions",
 			"class": "observe",
 			"sampleClass": "observe",
@@ -764,6 +837,16 @@
 			}
 		},
 		{
+			"method": "park_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "park_session",
+				"cwd": "/nonexistent/senpi-rpc-inbound-sample/cwd"
+			}
+		},
+		{
 			"method": "pause_for_run",
 			"class": "drive",
 			"sampleClass": "drive",
@@ -787,6 +870,36 @@
 			"sample": {
 				"type": "prompt",
 				"message": "Sample prompt."
+			}
+		},
+		{
+			"method": "read_project_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "read_project_file",
+				"path": "/nonexistent/senpi-rpc-inbound-sample/AGENTS.md"
+			}
+		},
+		{
+			"method": "read_project_skill_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "read_project_skill_file",
+				"skill": "sample-skill"
+			}
+		},
+		{
+			"method": "read_user_skill_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "read_user_skill_file",
+				"skill": "sample-skill"
 			}
 		},
 		{
@@ -933,6 +1046,17 @@
 			}
 		},
 		{
+			"method": "select_hand",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "select_hand",
+				"sessionId": "00000000-0000-7000-8000-000000000000",
+				"device": null
+			}
+		},
+		{
 			"method": "send_custom_message",
 			"class": "device_admin",
 			"sampleClass": "device_admin",
@@ -1017,13 +1141,60 @@
 		},
 		{
 			"method": "set_model",
-			"class": "device_admin",
+			"class": "dynamic",
+			"dynamicVersion": 1,
 			"sampleClass": "device_admin",
 			"connectionLocal": false,
 			"sample": {
 				"type": "set_model",
 				"provider": "rpc-sample-provider",
 				"modelId": "rpc-sample-model"
+			}
+		},
+		{
+			"method": "set_permission_preset",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_permission_preset",
+				"permissionPreset": "ask"
+			}
+		},
+		{
+			"method": "set_project_mcp_servers",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_mcp_servers",
+				"patch": {
+					"sample": {
+						"command": "sample-mcp-server"
+					}
+				},
+				"ifEtag": null
+			}
+		},
+		{
+			"method": "set_project_setting",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_setting",
+				"key": "defaultThinkingLevel",
+				"value": "minimal"
+			}
+		},
+		{
+			"method": "set_project_trust",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_trust",
+				"choice": "trust"
 			}
 		},
 		{
@@ -1054,6 +1225,16 @@
 			}
 		},
 		{
+			"method": "set_session_archived",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_session_archived",
+				"archived": true
+			}
+		},
+		{
 			"method": "set_session_context",
 			"class": "thread",
 			"sampleClass": "thread",
@@ -1074,6 +1255,19 @@
 			"sample": {
 				"type": "set_session_name",
 				"name": "rpc inbound sample"
+			}
+		},
+		{
+			"method": "set_session_settled",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_session_settled",
+				"settled": true,
+				"by": {
+					"kind": "user"
+				}
 			}
 		},
 		{
@@ -1201,6 +1395,42 @@
 			"sample": {
 				"type": "withdraw_held_input",
 				"inputId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "write_project_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "write_project_file",
+				"path": "/nonexistent/senpi-rpc-inbound-sample/AGENTS.md",
+				"content": "# Rules\n",
+				"ifEtag": null
+			}
+		},
+		{
+			"method": "write_project_skill_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "write_project_skill_file",
+				"skill": "sample-skill",
+				"content": "# Skill\n",
+				"ifEtag": null
+			}
+		},
+		{
+			"method": "write_user_skill_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "write_user_skill_file",
+				"skill": "sample-skill",
+				"content": "# Skill\n",
+				"ifEtag": null
 			}
 		}
 	]

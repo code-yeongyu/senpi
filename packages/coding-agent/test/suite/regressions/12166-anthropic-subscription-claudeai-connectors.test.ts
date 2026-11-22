@@ -4,7 +4,7 @@
  * The child runs with `--setting-sources=`, so a user's `~/.claude/settings.json` cannot turn them off, and each
  * attach adds the connectors' tool schemas to the context. `claudeAiConnectors: false` (or
  * `SENPI_CLAUDE_SDK_OAUTH_CLAUDEAI_CONNECTORS=false`) sends Claude Code's own `disableClaudeAiConnectors` setting
- * to the child. Unset keeps Claude Code's default, so the spawn settings stay exactly as before.
+ * to the child. Unset disables the connectors too; an explicit opt-in permits Claude Code's default.
  *
  * Drives a real AgentSession through the real provider stream and the resident session registry against a
  * scripted SDK that records each spawn's options.
@@ -90,13 +90,17 @@ function servingQuery(queries: readonly ScriptedResidentQuery[]): ScriptedReside
 }
 
 describe("oh-my-openagent#12166 claude.ai connectors in the anthropic-subscription child", () => {
-	it("keeps Claude Code's default and the spawn settings unchanged when the setting is unset", async () => {
+	it("disables account connectors on a fresh session when the setting is unset", async () => {
 		await installSingleAccountLane();
 		const { harness, queries } = await session();
 
 		await harness.session.prompt("first");
 
-		expect(servingQuery(queries)?.options?.settings).toEqual({ autoCompactEnabled: false, autoMemoryEnabled: false });
+		expect(servingQuery(queries)?.options?.settings).toEqual({
+			autoCompactEnabled: false,
+			autoMemoryEnabled: false,
+			disableClaudeAiConnectors: true,
+		});
 	}, 30_000);
 
 	it("sends disableClaudeAiConnectors to the managed-lane child when the env opts out", async () => {
@@ -128,14 +132,14 @@ describe("oh-my-openagent#12166 claude.ai connectors in the anthropic-subscripti
 
 		await harness.session.prompt("first");
 		const first = servingQuery(queries);
-		vi.stubEnv(CONNECTORS_ENV, "false");
+		vi.stubEnv(CONNECTORS_ENV, "true");
 		await harness.session.prompt("second");
 
 		const second = servingQuery(queries);
 		expect(second).not.toBe(first);
 		expect(first?.submitted).toHaveLength(1);
-		expect(first?.options?.settings).not.toHaveProperty("disableClaudeAiConnectors");
-		expect(second?.options?.settings).toMatchObject({ disableClaudeAiConnectors: true });
+		expect(first?.options?.settings).toMatchObject({ disableClaudeAiConnectors: true });
+		expect(second?.options?.settings).not.toHaveProperty("disableClaudeAiConnectors");
 	}, 30_000);
 
 	it("reads claudeAiConnectors from settings.json with env precedence and drops invalid values", () => {

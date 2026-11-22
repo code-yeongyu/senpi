@@ -1,4 +1,4 @@
-import { verify, type KeyObject } from "node:crypto";
+import { randomBytes, randomUUID, verify, type KeyObject } from "node:crypto";
 import type { Duplex } from "node:stream";
 import { isRecord } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
 import { attachJsonlLineReader } from "./jsonl.ts";
@@ -14,6 +14,18 @@ export function signed(value: unknown, transcript: string, key: KeyObject): bool
 	)
 		return false;
 	return verify(null, Buffer.from(transcript), key, Buffer.from(value.signature, "hex"));
+}
+
+/** The control challenge each signed command proves; a fresh nonce pair binds it to one exchange. */
+export function challengeTranscript(hostInstance: string, backendGeneration: string, command: unknown): string {
+	return JSON.stringify([
+		"mcp-presenter-control-v1",
+		hostInstance,
+		backendGeneration,
+		randomUUID(),
+		randomBytes(32).toString("hex"),
+		command,
+	]);
 }
 
 export function send(stream: Duplex, value: object): void {

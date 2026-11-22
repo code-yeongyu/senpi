@@ -2,6 +2,7 @@
 import { expect, it } from "vitest";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-client.ts";
+import { WorkerHostSecrets } from "../../../src/modes/rpc/session-worker-host-secrets.ts";
 import { WorkerOwnerGates } from "../../../src/modes/rpc/session-worker-owners.ts";
 
 const sessionId = "synthetic-worker-session";
@@ -31,8 +32,13 @@ async function setup() {
 			return { type: "result" };
 		},
 		post: () => {},
-		secretIds: new Set<string>(),
-		secretRoute: { accepts: () => false },
+		// The client's real secret half (D11 S5-4); it holds no secret id here, so it refuses no grant answer.
+		secrets: new WorkerHostSecrets({
+			post: () => {},
+			request: async () => {
+				throw new Error("no sealed answer is forwarded in this test");
+			},
+		}),
 		// bind captures each command's owner through the client's owner gates (#4728).
 		owners: new WorkerOwnerGates(),
 	} as unknown as SessionWorkerClient;

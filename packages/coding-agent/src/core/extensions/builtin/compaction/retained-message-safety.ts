@@ -161,6 +161,19 @@ function hasSafeToolResultEnvelope(message: Record<string, unknown>): boolean {
 	);
 }
 
+/** Reasoning-effort values a `configuration_update` entry can carry: the producer (`appendConfigurationUpdate`) writes a ThinkingLevel. */
+const CONFIGURATION_UPDATE_EFFORTS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+function hasSafeConfigurationUpdate(message: Record<string, unknown>): boolean {
+	return (
+		typeof message.effort === "string" &&
+		CONFIGURATION_UPDATE_EFFORTS.has(message.effort) &&
+		Array.isArray(message.content) &&
+		message.content.length === 0 &&
+		isFiniteNumber(message.timestamp)
+	);
+}
+
 /** Reject any retained message that cannot be safely replayed through normalized provider conversion. */
 export function hasUnsafeRetainedContent(messages: AgentMessage[]): boolean {
 	for (const value of messages as unknown[]) {
@@ -174,6 +187,11 @@ export function hasUnsafeRetainedContent(messages: AgentMessage[]): boolean {
 				break;
 			case "toolResult":
 				if (!hasSafeToolResultEnvelope(value)) return true;
+				break;
+			case "configurationUpdate":
+				// A reasoning-effort change is a valid runtime message: normal request
+				// conversion accepts it, so a bounded one is replay-safe (senpi#8566).
+				if (!hasSafeConfigurationUpdate(value)) return true;
 				break;
 			case "custom":
 				if (

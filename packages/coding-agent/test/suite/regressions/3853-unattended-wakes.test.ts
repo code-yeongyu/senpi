@@ -91,7 +91,8 @@ it("ten wakes from two sources stay held on attach, then Resume runs one turn pe
 	expect(monitor[0]).toMatchObject({ content: "5 automatic monitor wakes held. Latest event:\nlatest 4" });
 });
 
-it("keeps notice custody when the resume-window cap refuses delivery", async () => {
+// senpi#7020: the resume window bounds the automatic turns after a Resume, never the turn the Resume itself releases.
+it("delivers the held completion on Resume even past a full resume window of earlier engine turns", async () => {
 	const h = await unattended();
 	for (let i = 0; i < 8; i++) {
 		h.sessionManager.appendCustomEntry("engine-turn-start", { customType: "senpi-monitor:event", at: Date.now() });
@@ -101,12 +102,12 @@ it("keeps notice custody when the resume-window cap refuses delivery", async () 
 		{ triggerTurn: true },
 	);
 	await h.session.resumeSession();
-	expect(h.faux.state.callCount).toBe(0);
-	expect(h.session.paused).toBe(true);
-	expect(h.session.pausedNoticeCount).toBe(1);
+	expect(h.faux.state.callCount).toBe(1);
+	expect(h.session.paused).toBe(false);
+	expect(h.session.pausedNoticeCount).toBe(0);
 	expect(
 		h.session.messages.filter((m) => m.role === "custom" && m.customType === "senpi-codemode:notification"),
-	).toEqual([]);
+	).toHaveLength(1);
 });
 
 it("retains the held wake count after a second unattended reopen", async () => {

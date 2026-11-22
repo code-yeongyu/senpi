@@ -66,7 +66,9 @@ export function endpointScratch(
 		shard: shardSocketPath(join(root, "rpc", "shards"), "p", SHARD_OWNER),
 	};
 	scratches.push(qa);
-	for (const dir of [qa.sessionDir, qa.cwd, dirname(qa.shard)]) mkdirSync(dir, { recursive: true });
+	// `rpc/` is part of the host's key root, which it refuses when writable by group or others (senpi#4541).
+	for (const dir of [qa.sessionDir, qa.cwd]) mkdirSync(dir, { recursive: true });
+	mkdirSync(dirname(qa.shard), { recursive: true, mode: 0o700 });
 	writeRpcModelsJson(qa.agentDir, modelOrigin);
 	return qa;
 }
@@ -122,6 +124,8 @@ type RealHostOptions = {
 	env?: Readonly<Record<string, string>>;
 	extension?: string;
 	afterLockAcquired?: () => Promise<void>;
+	/** Runs after the host was spawned and before the ensure registers and probes it. */
+	beforePidFileWrite?: () => Promise<void>;
 	/** Return while the gc pass the ensure scheduled may still run; by default it has finished first. */
 	gcPassInFlight?: boolean;
 };
@@ -149,6 +153,7 @@ export async function heldRealHost(
 			readinessTimeoutMs: 60_000,
 			launch: supervisorLaunch,
 			...(options.afterLockAcquired && { afterLockAcquired: options.afterLockAcquired }),
+			...(options.beforePidFileWrite && { beforePidFileWrite: options.beforePidFileWrite }),
 		},
 	});
 	ensured.push({ socket, agentDir: qa.agentDir });

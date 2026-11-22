@@ -71,7 +71,12 @@ export default function killGuardExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		try {
-			activateKillGuardRuntime({ holder, agentDir: ctx.agentDir, protectedPids: killGuardProtectedPids });
+			activateKillGuardRuntime({
+				holder,
+				agentDir: ctx.agentDir,
+				protectedPids: killGuardProtectedPids,
+				warn: (message) => ctx.ui.notify(message, "warning"),
+			});
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
 			ctx.ui.notify(

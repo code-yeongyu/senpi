@@ -7,11 +7,11 @@ import type { FileEntry } from "../../../src/core/session-manager.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { readTranscriptRoot } from "../../../src/modes/rpc/accepted-transcript.ts";
 import { type FrozenAcceptedRoot, SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
-import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 import { FLAG } from "./5331-live-identity-support.ts";
 import { persistedPartKeys } from "./5374-call-key-fixture-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 // RULING-126 (3) and RULING-127 (i), (d) (senpi#5374): one identity source. The key a compact peer's live record names,
 // the key of the call's settled snapshot row, the key the session file holds on the toolCall part and on the toolResult
@@ -45,13 +45,11 @@ it("RULING-126 (3) #5374 live, snapshot and persisted keys are one key, and a re
 	});
 	await using host = await statusHost();
 	await writeFile(join(host.cwd, "note.txt"), "note body\n");
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const legacy = host.client("legacy");
 	const routing = String(dataOf(await legacy.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
-	admissions.mockRestore();
+	const entry = admissions.entryFor(routing);
+	admissions.restore();
 	const session = entry?.runtime?.session ?? expect.unreachable("no in-process session");
 	const compact = host.client("compact");
 	host.writer.setConnectionCapabilities("compact", ["compact_events"]);

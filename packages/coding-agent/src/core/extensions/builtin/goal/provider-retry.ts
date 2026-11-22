@@ -6,6 +6,8 @@ export const PROVIDER_RETRY_BASE_MS = 15_000;
 export const PROVIDER_RETRY_CAP_MS = 30 * 60_000;
 export const PROVIDER_RETRY_WAKE_CAP_MS = 6 * 60 * 60_000;
 const WAKE_MARGIN_MS = 1_000;
+// setTimeout fires at once for any delay above a signed 32-bit millisecond count.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 const ISO_INSTANT = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
 
@@ -36,6 +38,27 @@ export function providerRetryAt(messages: readonly AgentMessage[], now: number):
 	return instants.length === 0 ? undefined : Math.min(...instants);
 }
 
+/** Re-checks of a limit that never clears before the goal parks until a sign-in, a block reset or input (senpi#4085). */
+export const GOAL_LIMIT_WAIT_WAKE_LIMIT = 48;
+
+/** The shortest wait before the `attempt`-th limit re-check: the provider backoff, 15 s doubling to 30 min. */
+export function limitWaitFloorMs(attempt: number): number {
+	return Math.min(PROVIDER_RETRY_CAP_MS, PROVIDER_RETRY_BASE_MS * 2 ** (Math.max(1, attempt) - 1));
+}
+
+/**
+ * The turn ended on a provider refusing for a usage or rate limit, not on an outage (senpi#4085). An OpenAI-compatible
+ * adapter reports a bare 429 as a status-only diagnostic (`unknown` + 429); that status is still a limit.
+ */
+export function isLimitRefusal(messages: readonly AgentMessage[]): boolean {
+	const diagnostic = lastAssistantMessage(messages)?.providerDiagnostic;
+	return (
+		diagnostic?.category === "rate_limit" ||
+		diagnostic?.category === "quota" ||
+		(diagnostic?.category === "unknown" && diagnostic.httpStatus === 429)
+	);
+}
+
 /**
  * How long to wait before the `attempt`-th consecutive provider-recovery
  * continuation (senpi#3264). A stated unblock time is the wake; otherwise the
@@ -43,6 +66,15 @@ export function providerRetryAt(messages: readonly AgentMessage[], now: number):
  * provider that is certainly down is not hammered and the goal is still there
  * when it comes back.
  */
+/**
+ * The wait before the one resume after an exhausted fallback ladder (senpi#3709). Unlike
+ * `providerRetryDelayMs` it is not capped at the wake cap: an earlier wake would only hit the
+ * same limits again.
+ */
+export function exhaustedLadderResumeDelayMs(resumeAt: number, now: number): number {
+	return Math.min(MAX_TIMER_DELAY_MS, Math.max(0, resumeAt - now) + WAKE_MARGIN_MS);
+}
+
 export function providerRetryDelayMs(attempt: number, retryAt: number | undefined, now: number): number {
 	if (retryAt !== undefined) return Math.min(PROVIDER_RETRY_WAKE_CAP_MS, retryAt - now + WAKE_MARGIN_MS);
 	if (attempt <= 1) return 0;

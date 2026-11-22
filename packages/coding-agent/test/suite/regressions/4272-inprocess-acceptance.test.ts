@@ -152,7 +152,17 @@ it("T5 sequences in-process records in producer order, correlation before its co
 		expect(seen.at(-1)?.turnId, "agent_end closes the turn").toBeNull();
 
 		expectSameBytesExceptDeliveryStamp(actual, expected);
-		expect(actual.some((line) => /"(messageId|turnId|sessionEpoch)":/.test(line))).toBe(false);
+		// The lane's recovery carriers stay off the legacy wire. The one turn id a legacy client reads is the started
+		// prompt's reply naming its engine turn (senpi#5999): the `currentTurnId` epoch, not the lane's minted turn.
+		expect(actual.some((line) => /"(messageId|sessionEpoch)":/.test(line))).toBe(false);
+		const namingTurn = actual.filter((line) => line.includes('"turnId":')).map((line): unknown => JSON.parse(line));
+		expect(namingTurn).toHaveLength(1);
+		expect(namingTurn[0]).toMatchObject({
+			type: "response",
+			id: "p1",
+			command: "prompt",
+			data: { disposition: "started", turnId: "1", admission: { disposition: "started", turnId: "1" } },
+		});
 	} finally {
 		await binding.dispose();
 		writer.unregisterConnection("client");

@@ -1,5 +1,5 @@
 import type { ScopeLifecycle } from "@earendil-works/pi-agent-core/conformance";
-import { toStoreValue } from "./executor-freeze.ts";
+import { toStoreValue } from "@earendil-works/pi-agent-core";
 
 export class LifecycleRefusedError extends Error {
 	readonly reason: string;

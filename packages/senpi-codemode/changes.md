@@ -1,3 +1,276 @@
+## 2026-11-21 - JS eval locates syntax errors in the submitted cell (senpi#7200)
+
+### What changed
+
+- A failed JS cell compilation can report the original line, column and excerpt. A shell heredoc inside a template literal also gets a quoting hint.
+
+### Why
+
+- An unescaped backtick inside a multiline command produced only an engine error. Positions in the generated persistence wrapper do not identify the same column in the submitted cell.
+
+### Why an extension could not handle it
+
+- The codemode extension owns both the compilation step and the eval result; it can distinguish a parse failure from a running cell throwing `SyntaxError`.
+
+### Expected merge conflict zones
+
+- LOW: the JS worker's eval call and the ordinary-cell result path.
+
+## 2026-11-19 - The eval description names eval-only tools first (senpi#7032)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt-template.ts`: the `Eval-only tools (...)` line moves from `<prelude>` to right after the description's first line and says the tools are called inside a cell as `tool.<name>(args)`.
+
+### Why
+
+- A host that caps tool descriptions (Claude Code cuts MCP tool descriptions at 4096 chars) dropped the line, which sat at ~char 4.8k: the one place the thread tools are named (oh-my-openagent#14291).
+
+### Why an extension could not handle it
+
+- The eval description is this extension's own template.
+
+### Expected merge conflict zones
+
+- LOW: the head of `EVAL_PROMPT_TEMPLATE` and the `tool.<name>()` entry of its prelude.
+
+## 2026-11-17 - A nested tool result with isError: true counts as a failure (senpi#6906, senpi#6904)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/tool-result-marshal.ts`: `toolResultIsError` reads the result's own `isError` first and keeps `details.isError` as a fallback.
+
+### Why
+
+- A tool that failed the documented way (`AgentToolResult.isError`, no throw) was a successful nested call: a success tick in the eval cell, its text as the result preview, no `hasError` for the kernel (senpi#6904).
+
+### Why an extension could not handle it
+
+- It is codemode's own reading of nested results.
+
+### Expected merge conflict zones
+
+- LOW: `toolResultIsError`.
+
+## 2026-11-17 - A nested call of a tool with its own renderers is drawn by them (senpi#6903)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/tool-widgets.ts`: `renderToolCallWidget` takes a `renderers` lookup; for a non-core tool it draws the call with the tool's `renderCall` and the result with its `renderResult` (bounded: call 5 lines, result 5 collapsed / 40 expanded), and keeps the generic row when there are none, the args were truncated, no details were kept, or the renderer throws.
+- `packages/senpi-codemode/src/tool/call-capture.ts`, `nested-tool-call.ts`, `cell-handler.ts`: a nested call of a non-core tool with `renderResult` keeps a JSON copy of its result details (at most 16 KiB) on its summary; the six core tools, drawn by codemode's own widgets, keep none.
+- `packages/senpi-codemode/src/tool/tool-widgets.ts`: a tool's renderers keep their `state` and last components per nested call across frames (a `WeakMap` keyed by the call's summary), so a renderer that prefetches (the edit row's diff read) does that work once per call, not on every frame.
+- `packages/senpi-codemode/src/tool/render-detail.ts`, `render-result.ts`, `src/index.ts`, `src/bridges/schema-bridge.ts`: the lookup is passed from the eval tool's result renderer to the widget; it reads `pi.getAllTools()` once per eval result render, on first use.
+
+### Why
+
+- Every non-core `tool.<name>()` call drew as `tool.<name>(<JSON args>)` plus the raw result preview, so eval-only tools that bring a readable row (omo's thread tools) showed raw fields in a cell (oh-my-openagent#12994).
+
+### Why an extension could not handle it
+
+- The nested rows are codemode's own rendering.
+
+### Expected merge conflict zones
+
+- MEDIUM: `renderToolCallWidget` and the context helpers in `tool-widgets.ts`.
+- LOW: `recordToolCall`'s parameter list, `runNestedTool`'s signature, the `renderers` object in `index.ts`.
+
+## 2026-11-17 - The eval description names the eval-only tools (senpi#6886)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/reachable-tools.ts`: `evalOnlyToolNames(pi)` reads `ToolInfo.evalOnly`.
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`, `src/prompt/eval-prompt-template.ts`, `src/tool/eval-tool.ts`, `src/tool/eval-tool-options.ts`: `evalOnlyTools` adds `Eval-only tools (absent from your direct tool list, reachable only here): ...` under the `tool.<name>(args)` prelude entry; the `tool_schema(name?)` entry states the no-name result `{ tools: [every tool name] }`.
+- `packages/senpi-codemode/src/index.ts`, `src/extension/kernel-preludes.ts`: `evalDescriptionKey` covers the prelude docs and the eval-only names, so eval re-registers at turn start when either changes.
+- `packages/senpi-codemode/src/bridges/schema-bridge.ts`: `EvalSchemaToolInfo.evalOnly`.
+
+### Why
+
+- A host may replace the whole system prompt and drop the session's eval-only paragraph; the eval description is always read. The tool_schema() doc said "list tool names" while the call returns `{ tools: [...] }`, and a caller that took the keys saw only `tools`.
+
+### Why an extension could not handle it
+
+- This is the codemode extension's own description.
+
+### Expected merge conflict zones
+
+- LOW: the `tool.<name>` and `tool_schema` prelude lines of the template; `registerEvalForRuntime` and the `turn_start` handler in `index.ts`.
+
+## 2026-11-16 - Null spawn options keep the pinned worker environment (senpi#6830)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js`: `Bun.spawn(cmd, null)` and an explicit `env: null` (array and object forms, and `Bun.spawnSync`) get the worker's pinned environment view like an omitted `env`; before, `null` options threw outside an active cell and `env: null` passed through to the OS environment (review LOW L1 on #6821/#6828).
+- `packages/coding-agent/docs/security.md`: names that only variables whose whole value equals a declared credential are replaced (review LOW L2).
+
+### Why
+
+- senpi#6820: a kernel child must never inherit the OS environment that still holds withheld credentials.
+
+### Why an extension could not handle it
+
+- The spawn capture is this extension's own kernel code.
+
+### Expected merge conflict zones
+
+- LOW: the `env` checks in `capturedSpawn` and `capturedSpawnSync`.
+
+## 2026-11-16 - Kernels never receive a declared credential (senpi#6828)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/runtime-factory.ts`: the kernel session environment includes the placeholder and proxy route for every declared credential (`withCredentialProxy(process.env)` entries that differ from `process.env`). The session environment overrides each kernel's inherited environment (py, rb, jl subprocesses, js worker and process kernels, `%npm`-style installs), so the value never reaches a kernel or its children.
+- `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js`: `Bun.spawn` pins the worker's environment view also when no cell is active, so a spawn from a timer or callback after its cell settled no longer inherits the OS environ that still holds the value (review M1).
+
+### Why
+
+- senpi#6820.
+
+### Why an extension could not handle it
+
+- The kernel environment is built in this extension.
+
+### Expected merge conflict zones
+
+- LOW: the `sessionEnv` line and one new function.
+
+## 2026-11-15 - Detached-cell notices on a hand (senpi#6763, PR #6767)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/eval-notifier.ts`: `EvalNotifierDeps.loopRemote`; on a hand, the session guards (context, mode, model) belong to the receiving loop, so they are skipped here.
+- `packages/senpi-codemode/src/index.ts`: `CodemodeExtensionAPI.isLoopRemote?`, passed to the notifier.
+
+### Why
+
+- A detached eval cell's completion on a hand was dropped: a hand has no session context.
+
+### Why an extension could not handle it
+
+- The notifier guard is inside this extension; the fact that the loop is remote comes from the host's `pi`.
+
+### Expected merge conflict zones
+
+- LOW: the `EvalNotifier` construction in `index.ts`.
+
+## 2026-11-11 - A running eval row never shrinks while nested calls slide through the collapsed window (senpi#6406)
+
+### What changed
+
+- `src/tool/render-blocks.ts`: `PlainTextComponent` keeps a height floor while its cell is live. A render never returns fewer lines than the tallest one so far. The floor resets when the cell stops being live, the width changes, or `syncLiveTicker`'s new layout key changes.
+- `src/tool/render-result.ts`: passes the layout key (expanded or collapsed) to `syncLiveTicker`.
+
+### Why
+
+- The collapsed nested-call block keeps the newest five calls, and each row takes one to four lines. A sliding window changed the block's height while calls streamed, and the TUI below it jumped (senpi#6390).
+
+### Why an extension could not handle it
+
+- The eval row's renderer is the codemode package's own component.
+
+### Expected merge conflict zones
+
+- LOW: `PlainTextComponent`'s fields and the end of its `render()`.
+
+## 2026-11-11 - The Python sqlite guard parses SQLite URIs without urllib.parse (senpi#6377)
+
+### What changed
+
+- `src/kernels/py/sqlite_uri.py` (new): `parse_sqlite_uri(uri)` splits a `file:` URI into the percent-decoded path and every `mode` value, following SQLite's URI rules. A `%00` ends the path, key or value it appears in, as in SQLite, so `mode%00=rw` reads as `mode=rw`. It imports nothing and runs with interpose.py's frozen builtins.
+- `src/kernels/py/interpose.py`: `database_path` uses `parse_sqlite_uri` instead of `urllib.parse`. A URI counts as in-memory only when every `mode` is `memory`, and as read-only only when every `mode` is `ro`.
+
+### Why
+
+- The guard read `urllib.parse` functions, module globals, a shared `lru_cache` and the `SplitResult` class, and cell code could rebind or poison any of them. On Python 3.11.2 that crashed the guard with a `TypeError`. On 3.12, rebinding `unquote_plus` or patching `SplitResult.path` let a read-only open skip the permission check (#6376).
+
+### Why an extension could not handle it
+
+- The guard is the kernel's own permission interposition.
+
+### Expected merge conflict zones
+
+- LOW: `database_path` and the module loaders at the top of `interpose.py`.
+
+## 2026-11-09 - Eval-exposed tools stay reachable for agent(), output() and the kernel preludes (senpi#6276)
+
+### What changed
+
+- `src/extension/reachable-tools.ts` (new): `reachableToolNames(pi)` = `pi.getActiveTools()` plus every `pi.getAllTools()` entry whose `exposure` is `"eval"`.
+- `src/extension/runtime-factory.ts`: `spawns` and `createExecuteTool(...).isToolAvailable` read the reachable set instead of the active list.
+- `src/extension/kernel-preludes.ts`: `activeKernelPreludes` keeps the kernel prelude of a reachable (active or eval-exposed) tool.
+- `src/bridges/schema-bridge.ts`: `EvalSchemaToolInfo.exposure` (optional), the field the host's `getAllTools()` already reports.
+
+### Why
+
+- The session withholds an eval-exposed tool from the model whenever eval is registered, so it is absent from the active list while `executeTool` still reaches it. With the task tool family declaring `exposure: "eval"` (Q 2026-11-09, the omo plugin), `agent()`/`output()` threw `AgentUnavailableError`, the eval prompt lost its spawn helpers and the tool's kernel prelude vanished.
+
+### Why an extension could not handle it
+
+- This is the codemode extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the `activeTools` lines of `createRuntime` and `createExecuteTool` in `runtime-factory.ts`.
+
+## 2026-11-09 - Hide the console window for codemode installer and kernel spawns on Windows (senpi#3965)
+
+### What changed
+
+- `packages/senpi-codemode/src/environments/js-installer.ts`: the installer spawn (npm/pnpm) now passes `windowsHide: true`.
+- `packages/senpi-codemode/src/environments/py-installer.ts`: the interpreter spawn (python/pip) now passes `windowsHide: true`.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-process.ts`: the default kernel subprocess spawn now passes `windowsHide: true`.
+
+### Why
+
+- Installers, interpreters, and kernel children can all be console-subsystem exes on Windows; without `windowsHide` each start flashed a console window.
+
+### Why an extension could not handle it
+
+- The spawns are the codemode package's own environment/kernel lifecycle, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in each of three codemode files.
+
+## 2026-11-09 - A settled nested tool's lines stay in the eval live update until the cell replaces them (senpi#6257)
+
+### What changed
+
+- `src/tool/nested-tool-output.ts`: `drop()` keeps the settled call's last text as the one held text (only the newest settled call is held, so a cell that settles many calls without printing keeps one tail); a live call's next text, `releaseSettled()` and `clear()` remove it; `appendTo`/`appendLines` show it before the live calls.
+- `src/tool/cell-runtime.ts`: the cell's own output chunk releases held nested lines before it is appended; `nestedToolSettled` no longer emits an update of its own (settling changes nothing on screen). `#finish` still clears everything, so the cell's result never contains nested output.
+- `test/eval-nested-tool-updates.test.ts`: 200 settled calls without cell output leave only the last call's tail held; after the last nested tick is live, no update may show the running cell with neither the ticks nor the cell's own output.
+
+### Why
+
+When a nested tool that streamed lines settled, the cell emitted one live update showing only its header (the throttled update scheduled by the last tick, or the settle itself), about 10 ms before the cell's own output or completion. Clients rendering every update showed the lines, an empty running cell for one frame, then the lines again (a desktop client measured the blank at 50-103 ms in 4 of 5 runs).
+
+### Expected merge conflict zones
+
+- LOW: `nested-tool-output.ts` and `cell-runtime.ts` (`nestedToolSettled`, `dropNestedTool`, the collector's `onChunk`).
+
+## 2026-11-06 - JavaScript kernel defaults to process isolation on bun hosts (senpi#6095)
+
+### What changed
+
+- `packages/senpi-codemode/src/config/feature-settings.ts`: `resolveJsIsolation` takes the host (`currentJsIsolationHost`: the runtime name of `process.execPath` and `process.platform`) and, with no file or environment value, returns `defaultJsIsolation(host)`: `process` when the host's executable is `bun` on a non-Windows platform, else `worker`. The environment still wins over the file and the file over the host default.
+- `packages/senpi-codemode/src/kernels/js/runtime-name.ts` (new): `runtimeNameOf` moved out of `process-worker.ts`, which re-exports it, so the settings module does not import the kernel graph.
+- `packages/senpi-codemode/README.md`: the isolation section and the settings table describe the host-dependent default.
+- `.agents/skills/senpi-qa/scenarios/fused-equivalence/golden/{linux-x64,darwin-arm64}/E{08,16,20}.json`: the B0 goldens of the three cases that run eval cells, recorded with a bun child runtime, now carry the new default's shape: every eval `runtime` block gains `isolation: "process"` (124 blocks) and E16's memory readings report `measure: "footprint"` instead of `"heap"` (7 per platform). No other golden field changes.
+- `packages/senpi-codemode/test/gate/allowlist.json`: a `senpi#6095` node records the fourteen new gate keys as reviewed additions (twelve contract titles, the new `runtime-name.ts` module in the extension and firstKernel import maps); the frozen baseline is unchanged.
+
+### Why
+
+- senpi#6094: a bun-hosted TUI session dies with `SIGBUS`/`SIGTRAP`/`SIGSEGV`/`SIGABRT` on its `WebWorker::create` thread, the codemode JavaScript kernel's `Worker`, several times a day; one frame is the cross-thread stack-sanitizer class of code-yeongyu/oh-my-openagent#12369. The class is open upstream (oven-sh/bun#41857, oven-sh/bun#43663) and Bun 1.4.4 is the newest release. A kernel in its own process cannot take the session down, and the opt-in process mode already settles the crashed cell with the signal and restarts the kernel for the next one.
+- A Node.js host keeps the worker thread (its `worker_threads` are not the faulting runtime). A compiled binary keeps it too: its executable cannot run `process-entry.js`, so process mode there needs a `bun` or `node` on `PATH`, which only an explicit setting should ask for. A Windows bun host keeps it as well: the crash evidence is macOS, and the process kernel's Windows channel (no libc; cell output shares the frame channel) has no CI coverage, so the mode stays opt-in there (review finding on this PR).
+- This reverses the 2026-09-30 codemode plan call that kept the worker default with process isolation opt-in; that call predates the production crashes.
+
+### Why an extension could not handle it
+
+- The default is read by the builtin codemode session manager and runtime factory before any session kernel starts; an extension cannot choose the mode a session's `eval` kernel is created with.
+
+### Expected merge conflict zones
+
+- LOW: the `resolveJsIsolation` signature in `feature-settings.ts`; the import block of `process-worker.ts`; the README isolation section and settings table.
+
 ## 2026-11-03 - Full eval guidelines for the Opus and Fable presets (senpi#5665)
 
 ### What changed
