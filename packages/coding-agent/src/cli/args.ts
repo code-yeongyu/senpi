@@ -494,7 +494,8 @@ ${chalk.bold("Options:")}
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
   --print-prompt-sizes           Print first-turn sizes as JSON with zero model calls; MCP attach is skipped
-                                 (servers listed); third-party session_start hooks still run (named)
+                                 (servers listed); third-party session_start hooks (named) and trusted SessionStart command hooks
+                                 (not named) still run
   --list-tips                    List all tips as JSON
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --tui-mode <mode>              TUI mode: regular (default) or fullscreen
