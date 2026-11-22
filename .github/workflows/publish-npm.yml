@@ -270,7 +270,12 @@ jobs:
       # are rate-limited on shared runner egress IPs, which flakes the release
       # gate; provisioning the binaries here keeps the fallback unused.
       - name: Provision ripgrep and fd
-        run: sudo apt-get update && sudo apt-get install -y ripgrep fd-find
+        timeout-minutes: 5
+        # A publish-only retry can check out an older tag without the CI installer action.
+        run: &provision-release-tools |
+          options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=30)
+          sudo apt-get "${options[@]}" -o APT::Update::Error-Mode=any update
+          sudo apt-get "${options[@]}" install -y ripgrep fd-find
 
       - name: Build all workspaces (so husky pre-commit type check resolves)
         run: npm run build
@@ -548,7 +553,8 @@ jobs:
         run: npm install --ignore-scripts --no-audit --no-fund
 
       - name: Provision ripgrep and fd
-        run: sudo apt-get update && sudo apt-get install -y ripgrep fd-find
+        timeout-minutes: 5
+        run: *provision-release-tools
 
       - name: Build all workspaces (so husky pre-commit type check resolves)
         run: npm run build
@@ -643,7 +649,8 @@ jobs:
         run: npm install --ignore-scripts --no-audit --no-fund
 
       - name: Provision ripgrep and fd
-        run: sudo apt-get update && sudo apt-get install -y ripgrep fd-find
+        timeout-minutes: 5
+        run: *provision-release-tools
 
       - name: Build all workspaces (so husky pre-commit type check resolves)
         run: npm run build
