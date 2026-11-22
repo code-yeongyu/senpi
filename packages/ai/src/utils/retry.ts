@@ -216,6 +216,10 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"timed? out",
 	"timeout",
 	"terminated",
+	// HTTP 408 (the gateway's first-byte deadline passed) and a reset socket are transport timeouts the
+	// same model answers on retry (senpi#3251). Digit-bounded so ids and counts containing 408 stay out.
+	"(?:^|[^0-9])408(?:[^0-9]|$)",
+	"ECONNRESET",
 
 	// WebSocket transports can report close/error text instead of HTTP/fetch text.
 	"websocket.?closed",
