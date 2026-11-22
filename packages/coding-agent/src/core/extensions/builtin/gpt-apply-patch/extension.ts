@@ -13,7 +13,7 @@ const APPLY_PATCH_FREEFORM_APIS = new Set<Api>([
 	"openai-codex-responses",
 ]);
 const APPLY_PATCH_JSON_APIS = new Set<Api>(["openai-completions"]);
-const EDIT_TOOL_NAMES = new Set(["write", "edit"]);
+const EDIT_TOOL_NAMES = new Set(["edit", "write"]);
 const APPLY_PATCH_NAME = "apply_patch";
 
 function isGptId(model: Pick<Model<string>, "api" | "id"> | undefined): model is Pick<Model<string>, "api" | "id"> {
@@ -80,12 +80,17 @@ function syncToolset(
 		pi.setActiveTools(replaceEditToolsWithApplyPatch(currentToolNames));
 		return;
 	}
-	if (state.removedEditToolNames.length === 0) {
-		if (currentToolNames.includes(APPLY_PATCH_NAME)) pi.setActiveTools(withoutApplyPatch(currentToolNames));
-		return;
-	}
+	// An active apply_patch stands in for the edit tools it replaced, even when this instance never saw the
+	// replacement: after a reload, resume or restart the active list outlives `removedEditToolNames` (senpi#3838).
+	const replaced =
+		state.removedEditToolNames.length > 0
+			? state.removedEditToolNames
+			: currentToolNames.includes(APPLY_PATCH_NAME)
+				? [...EDIT_TOOL_NAMES]
+				: [];
+	if (replaced.length === 0) return;
 	const registeredNames = new Set(pi.getAllTools().map((tool) => tool.name));
-	const restorable = state.removedEditToolNames.filter((toolName) => registeredNames.has(toolName));
+	const restorable = replaced.filter((toolName) => registeredNames.has(toolName));
 	const restored = [...withoutApplyPatch(currentToolNames), ...restorable];
 	state.removedEditToolNames = [];
 	pi.setActiveTools([...new Set(restored)]);
