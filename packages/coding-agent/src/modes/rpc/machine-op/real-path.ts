@@ -23,7 +23,7 @@ async function bounded(operation: Promise<string>): Promise<Lookup> {
 const linkKind = (path: string): Promise<Lookup> =>
 	bounded(lstat(path).then((info) => (info.isSymbolicLink() ? "link" : "plain")));
 
-export async function realPathUnder(base: string, raw: string): Promise<string | undefined> {
+async function realPathUnder(base: string, raw: string): Promise<string | undefined> {
 	const root = isAbsolute(raw) ? parse(raw).root : base;
 	const start = await bounded(realpath(root));
 	if (start.kind !== "ok") return undefined;
@@ -60,7 +60,7 @@ export async function realPathUnder(base: string, raw: string): Promise<string |
 	return cur;
 }
 
-export const within = (root: string, target: string): boolean => {
+const within = (root: string, target: string): boolean => {
 	const rel = relative(root, target);
 	return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 };

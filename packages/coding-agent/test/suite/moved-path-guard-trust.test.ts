@@ -228,7 +228,7 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 		writeBreadcrumb(moved.oldRoot, breadcrumbBody("C:\\x", [MOVED_WORKTREE]));
 		const cwds: string[] = [];
 		const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
-			new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+			await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 			cwds.push(options.cwd);
 			return {
 				session: {

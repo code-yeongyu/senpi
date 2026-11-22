@@ -119,7 +119,7 @@ export class SessionStatusStream {
 			const view = this.currentView(sessionId);
 			if (view === undefined || !subscriptionMatches(pending.options, sessionId, view.entry)) continue;
 			const derived = this.derive(sessionId, view);
-			yield this.recordFor(pending, sessionId, derived, this.lastChangeOf(sessionId, at));
+			yield this.recordFor(pending, sessionId, derived, this.lastChangeOf(sessionId, view.entry.lastActivityAt, at));
 		}
 	}
 
@@ -285,10 +285,13 @@ export class SessionStatusStream {
 		);
 	}
 
-	private lastChangeOf(sessionId: string, at?: string): LastChange {
+	private lastChangeOf(sessionId: string, lastActivityAt?: number, at?: string): LastChange {
 		return (
 			this.lastChanges.get(sessionId) ?? {
-				at: at ?? (this.delivery.now?.() ?? new Date()).toISOString(),
+				at:
+					lastActivityAt === undefined
+						? (at ?? (this.delivery.now?.() ?? new Date()).toISOString())
+						: new Date(lastActivityAt).toISOString(),
 				cause: "open",
 				by: "host",
 			}
