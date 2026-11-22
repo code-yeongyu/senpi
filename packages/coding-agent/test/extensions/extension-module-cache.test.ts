@@ -13,11 +13,23 @@ import {
 } from "../../src/core/extensions/extension-module-cache.ts";
 
 const fsSpies = vi.hoisted(() => ({ readFileSync: undefined as undefined | { mock: { calls: unknown[][] } } }));
+const remoteSource = vi.hoisted(() => ({ path: "", replacement: "", type: 0 }));
 vi.mock("node:fs", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs")>();
-	const readFileSync = vi.fn(actual.readFileSync);
+	const readFileSync = vi
+		.fn(actual.readFileSync)
+		.mockImplementation((file, options) =>
+			file === remoteSource.path && remoteSource.replacement
+				? remoteSource.replacement
+				: actual.readFileSync(file, options),
+		);
 	fsSpies.readFileSync = readFileSync;
-	return { ...actual, readFileSync };
+	return {
+		...actual,
+		readFileSync,
+		statfsSync: (file: string) =>
+			file === remoteSource.path ? { type: remoteSource.type } : actual.statfsSync(file),
+	};
 });
 
 function readsOf(files: readonly string[]): number {
@@ -88,12 +100,36 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	remoteSource.path = "";
+	remoteSource.replacement = "";
 	vi.useRealTimers();
 	clearExtensionCache();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("extension module cache", () => {
+	it.each([
+		["NFS", 0x6969],
+		["FUSE", 0x65735546],
+	] as const)(
+		"invalidates on the next lookup when %s returns stale attributes but fresh bytes (#6261)",
+		async (_name, type) => {
+			const root = fixtureRoot();
+			const entry = writeSource(join(root, "extension.ts"), "export default 1;\n");
+			Object.assign(remoteSource, { path: entry, type });
+			const { importer } = fakeImporter([entry]);
+			await extensionModuleImporter(async () => importer);
+			const factory = () => undefined;
+			rememberExtensionFactory(entry, factory, importer);
+			vi.useFakeTimers({ toFake: ["Date"] });
+			vi.setSystemTime(Date.now() + 60_000);
+			expect(cachedExtensionFactory(entry)).toBe(factory);
+			// A second client wrote the new bytes. The first client's stat still describes the original.
+			remoteSource.replacement = "export default 2;\n";
+			expect(cachedExtensionFactory(entry)).toBeUndefined();
+		},
+	);
+
 	it("keeps one generation while the compiled sources are unchanged", async () => {
 		// Given: a generation compiled from two source files.
 		const root = fixtureRoot();

@@ -23,7 +23,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statfsSync, statSync } from "node:fs";
 
 export type ExtensionModuleImporter = {
 	import(path: string, options: { default: true }): Promise<unknown>;
@@ -50,6 +50,22 @@ const RACY_TIMESTAMP_MS = 2_000;
 
 /** file -> `<fingerprint>\0<stat identity>` it was last proven to hold. */
 const verifiedSources = new Map<string, string>();
+const trustAttributesByDevice = new Map<bigint, boolean>();
+
+function canRememberIdentity(file: string, device: bigint): boolean {
+	const cached = trustAttributesByDevice.get(device);
+	if (cached !== undefined) return cached;
+	try {
+		const { type } = statfsSync(file);
+		// NFS_SUPER_MAGIC and FUSE_SUPER_MAGIC: on these mounts stat can remain stale after a remote write.
+		const trusted = type !== 0x6969 && type !== 0x65735546;
+		trustAttributesByDevice.set(device, trusted);
+		return trusted;
+	} catch {
+		// A failed mount probe isn't proof that stat is authoritative. Revalidate bytes on this lookup.
+		return false;
+	}
+}
 
 function fingerprintOf(file: string): string | undefined {
 	try {
@@ -66,7 +82,7 @@ function stableIdentityOf(file: string): { readonly key: string; readonly stable
 		const newest = Number((stats.mtimeNs > stats.ctimeNs ? stats.mtimeNs : stats.ctimeNs) / 1_000_000n);
 		return {
 			key: `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`,
-			stable: Date.now() - newest > RACY_TIMESTAMP_MS,
+			stable: Date.now() - newest > RACY_TIMESTAMP_MS && canRememberIdentity(file, stats.dev),
 		};
 	} catch {
 		return undefined;
@@ -77,7 +93,7 @@ function sourceUnchanged(file: string, fingerprint: string): boolean {
 	const identity = stableIdentityOf(file);
 	if (identity === undefined) return false;
 	const proven = `${fingerprint}\0${identity.key}`;
-	if (verifiedSources.get(file) === proven) return true;
+	if (identity.stable && verifiedSources.get(file) === proven) return true;
 	if (fingerprintOf(file) !== fingerprint) return false;
 	// The identity was read BEFORE the hash: a write landing in between moves it, so the next lookup re-hashes.
 	if (identity.stable) verifiedSources.set(file, proven);
@@ -154,6 +170,7 @@ export function rememberExtensionFactory(
 export function clearExtensionCache(): void {
 	dropGeneration();
 	verifiedSources.clear();
+	trustAttributesByDevice.clear();
 }
 
 /** Test seam: how many module generations this process has compiled. */
