@@ -80,17 +80,18 @@ export interface DeviceRunRequest {
 export type DeviceRunTerminationKind = "exited" | "signaled";
 
 /**
- * Timer provenance, kept apart from the observed outcome (senpi#7282): the spawning side's own timer expired while the
- * child was still running, and these are the signals it then delivered. It does not say those signals ended the child:
- * a child can survive them and later end on the same signal for another reason, and nothing observable tells the two
- * apart. A consumer that needs a confirmed timeout cannot derive one from this.
+ * Timer provenance, kept apart from the observed outcome (senpi#7282): the spawning side's own timer expired before
+ * that side had observed the child's exit, and these are the signals it then requested (`kill()` accepted them). It
+ * does not establish that the child was alive or that a signal was delivered or acted on: a child can already be gone,
+ * survive a signal, or later end on the same signal for another reason. A consumer that needs a confirmed timeout cannot
+ * derive one from this.
  */
 export type DeviceRunTimeout = {
 	readonly expired: true;
 	readonly signalsSent: readonly string[];
 };
 
-/** `timeout` is present only when the spawning side's own timer expired before the child was seen to end. */
+/** `timeout` is present only when the spawning side's own timer expired before that side observed the child's exit. */
 export type DeviceRunTermination =
 	| { readonly kind: DeviceRunTerminationKind }
 	| { readonly kind: DeviceRunTerminationKind; readonly timeout: DeviceRunTimeout };

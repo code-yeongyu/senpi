@@ -155,7 +155,10 @@ describe.skipIf(process.platform === "win32")("fused run termination", () => {
 			const dir = mkdtempSync(join(tmpdir(), "run-termination-zombie-"));
 			const marker = join(dir, "pid");
 			const timeoutMs = 1_000;
-			const watcher = watch(dir, () => {
+			// The child publishes its pid atomically (write, then rename); only the final name is acted on, so the
+			// watcher never reads a created-but-empty file.
+			const watcher = watch(dir, (_event, name) => {
+				if (name !== "pid") return;
 				watcher.close();
 				const pid = readFileSync(marker, "utf8").trim();
 				const ready = Date.now() + timeoutMs + 200;
@@ -170,7 +173,7 @@ describe.skipIf(process.platform === "win32")("fused run termination", () => {
 					exe: node,
 					argv: [
 						"-e",
-						`require("fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid)); process.kill(process.pid, "SIGTERM"); setInterval(() => {}, 1000)`,
+						`const fs = require("fs"); fs.writeFileSync(${JSON.stringify(marker + ".tmp")}, String(process.pid)); fs.renameSync(${JSON.stringify(marker + ".tmp")}, ${JSON.stringify(marker)}); process.kill(process.pid, "SIGTERM"); setInterval(() => {}, 1000)`,
 					],
 					cwd: process.cwd(),
 					timeoutMs,

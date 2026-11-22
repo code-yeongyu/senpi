@@ -101,7 +101,7 @@ function runDirect(request: DeviceRunRequest, signal: AbortSignal | undefined): 
 				? undefined
 				: setTimeout(() => {
 						// Timers run before the loop reaps children: a child that ended on its own before the deadline can
-						// still look alive here. One poll phase later its exit is recorded, so only a running child expires.
+						// still look alive here. One poll phase later its exit is recorded, so only a child whose exit has not been observed expires.
 						expiry = setImmediate(() => {
 							if (closed || child.exitCode !== null || child.signalCode !== null) return;
 							timeout.expired = true;

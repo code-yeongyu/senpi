@@ -29,7 +29,7 @@ export interface RunArgs {
 export interface RunOutcome {
 	readonly code: number | null;
 	readonly signal: string | null;
-	/** How the child ended as the hand observed it, plus the hand's own timer provenance when it expired (senpi#7282). */
+	/** How the child ended as the hand observed it, plus, when the hand's own timer expired first, the signals it requested (senpi#7282). */
 	readonly termination: DeviceRunTermination;
 	readonly stdout: string;
 	readonly stderr: string;
@@ -142,7 +142,7 @@ function spawnBounded(
 		const timeout = setTimeout(
 			() => {
 				// Timers run before the loop reaps children: a child that ended on its own before the deadline can still
-				// look alive here. One poll phase later its exit is recorded, so only a child still running expires.
+				// look alive here. One poll phase later its exit is recorded, so only a child whose exit has not been observed expires.
 				expiry = setImmediate(() => {
 					if (closed) return;
 					if (child.exitCode === null && child.signalCode === null) expired.expired = true;

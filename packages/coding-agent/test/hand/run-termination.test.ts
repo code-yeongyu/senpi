@@ -25,7 +25,7 @@ writeFileSync(
 		"    --git-common-dir) exec sleep 600 ;;",
 		'    --verify) kill -TERM "$$"; exec sleep 600 ;;',
 		// Records its pid, then ends on its own SIGTERM.
-		`    -D) echo $$ > "${markers}/pid"; kill -TERM "$$"; exec sleep 600 ;;`,
+		`    -D) echo $$ > "${markers}/pid.tmp"; mv "${markers}/pid.tmp" "${markers}/pid"; kill -TERM "$$"; exec sleep 600 ;;`,
 		// Survives the timer's SIGTERM and exits 0 on its own instead.
 		"    --show-current) trap 'exit 0' TERM; while :; do sleep 1; done ;;",
 		// Survives the timer's SIGTERM, then ends on a SIGTERM of its own.
@@ -94,7 +94,10 @@ describe.skipIf(process.platform === "win32")("hand run termination", () => {
 		"reports signaled for a git that ended on its own SIGTERM but was not yet reaped at the deadline",
 		async () => {
 			const timeoutMs = 1_000;
-			const watcher = watch(markers, () => {
+			// The stub publishes its pid atomically (write, then rename); only the final name is acted on, so the watcher
+			// never reads a created-but-empty file or reacts to another marker in this directory.
+			const watcher = watch(markers, (_event, name) => {
+				if (name !== "pid") return;
 				watcher.close();
 				const pid = readFileSync(join(markers, "pid"), "utf8").trim();
 				const ready = Date.now() + timeoutMs + 200;
