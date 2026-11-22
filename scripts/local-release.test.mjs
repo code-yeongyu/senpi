@@ -160,6 +160,7 @@ function writeLocalReleaseFixture(repoRoot) {
 	writeJson(join(repoRoot, "package.json"), { name: "senpi-monorepo", private: true });
 	for (const [directory, name] of [
 		["packages/chord", "@earendil-works/chord"],
+		["packages/realm-registry", "@earendil-works/pi-realm-registry"],
 		["packages/telemetry", "@earendil-works/pi-telemetry"],
 		["packages/ai", "@earendil-works/pi-ai"],
 		["packages/pty", "@earendil-works/pi-pty"],

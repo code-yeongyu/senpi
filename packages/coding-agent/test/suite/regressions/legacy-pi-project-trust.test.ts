@@ -184,14 +184,14 @@ describe("legacy .pi project resources on launch", { timeout: 60_000 }, () => {
 
 	it("respects a saved decision without asking", async () => {
 		writeLegacyPiResources();
-		new ProjectTrustStore(agentDir).set(cwd, false);
+		await new ProjectTrustStore(agentDir).set(cwd, false);
 
 		const declined = await launchInteractive();
 
 		expect(declined.prompts).toEqual([]);
 		expect(declined.resources).toEqual(NONE);
 
-		new ProjectTrustStore(agentDir).set(cwd, true);
+		await new ProjectTrustStore(agentDir).set(cwd, true);
 
 		const trusted = await launchInteractive();
 

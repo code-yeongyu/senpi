@@ -1,3 +1,21 @@
+## 2026-11-14 - Tracker move for senpi#6663's missing-scope pattern entry
+
+### What changed
+
+- `packages/ai/src/utils/siwc-errors.ts`: records here (its nearest tracker) the change senpi#6663 made, which its fragment filed under `packages/ai/src/api/changes.md`: `isSiwcMissingResponsesScope` matches `api.responses.write` anywhere in the rest of the `Missing scopes:` line.
+
+### Why
+
+- senpi#6663 review: the tracker entry belongs in the file's nearest `changes.md`.
+
+### Why an extension could not handle it
+
+- Tracker bookkeeping only; no behavior change.
+
+### Expected merge conflict zones
+
+- None.
+
 ## 2026-11-09 - OpenAI prompt-cache lanes: ChatGPT subscription is best-effort, long retention is 12 hours (senpi#6292, closes #6290)
 
 ### What changed

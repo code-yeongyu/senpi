@@ -61,12 +61,15 @@ export async function readSessionCwd(sessionFile: string): Promise<string | unde
  * The move runs under the session's cross-process move lock and refuses (`SessionHeldError`) while
  * another live process has the session open. A rebind that finds the same move already done by a
  * concurrent process returns that target.
+ *
+ * `beforeRename` runs right before the rename that lands the file, after the wait for the lock and the rewrite. If it
+ * throws, nothing lands: the rewritten copy is removed, the sidecars already moved go back, and the source stays.
  */
 export async function rebindSessionFile(
 	sourcePath: string,
 	targetCwd: string,
 	sessionDir?: string,
-	options: { readonly moveLockWaitMs?: number } = {},
+	options: { readonly moveLockWaitMs?: number; readonly beforeRename?: () => void | Promise<void> } = {},
 ): Promise<string> {
 	const source = resolvePath(sourcePath);
 	const cwd = resolvePath(targetCwd);
@@ -75,7 +78,7 @@ export async function rebindSessionFile(
 	if (target !== source && (await movedAlready(source, target))) return target;
 	const header = await readHeaderBeforeLock(source, target);
 	if (header === undefined) return target;
-	return withSessionMoveLock(source, header.id, () => moveSessionFile(source, target, cwd), {
+	return withSessionMoveLock(source, header.id, () => moveSessionFile(source, target, cwd, options.beforeRename), {
 		...(options.moveLockWaitMs === undefined ? {} : { waitMs: options.moveLockWaitMs }),
 	});
 }
@@ -93,7 +96,12 @@ async function readHeaderBeforeLock(source: string, target: string): Promise<Ses
 	}
 }
 
-async function moveSessionFile(source: string, target: string, cwd: string): Promise<string> {
+async function moveSessionFile(
+	source: string,
+	target: string,
+	cwd: string,
+	beforeRename?: () => void | Promise<void>,
+): Promise<string> {
 	if (target !== source && (await movedAlready(source, target))) return target;
 	const { header, rest } = await readHeaderLine(source);
 	if (target !== source && (await pathExists(target))) {
@@ -104,6 +112,13 @@ async function moveSessionFile(source: string, target: string, cwd: string): Pro
 	const temp = join(targetDir, `.${basename(source)}.rebind-${process.pid}.tmp`);
 	await writeFile(temp, `${JSON.stringify({ ...header, cwd })}\n${rest}`, { flag: "wx" });
 	if (target !== source) await moveSessionSidecars(dirname(source), targetDir, header.id);
+	try {
+		await beforeRename?.();
+	} catch (error) {
+		await rm(temp, { force: true });
+		if (target !== source) await moveSessionSidecars(targetDir, dirname(source), header.id);
+		throw error;
+	}
 	await rename(temp, target);
 	if (target !== source) await rm(source, { force: true });
 	return target;

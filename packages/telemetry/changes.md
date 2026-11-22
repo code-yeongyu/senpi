@@ -1,3 +1,21 @@
+## 2026-11-21 - Run telemetry tests with native Bun (senpi#4763)
+
+### What changed
+
+- `packages/telemetry/package.json`: run native `bun test --isolate` through the existing temp-owning launcher. Keep the test sources and their Vitest imports unchanged.
+
+### Why
+
+- Bun 1.4.4 runs the same 15 tests across both files without a compatibility preload. File isolation and temporary directory ownership remain in place.
+
+### Why an extension could not handle it
+
+- The workspace manifest selects the runner before any extension loads.
+
+### Expected merge conflict zones
+
+- `packages/telemetry/package.json`: preserve the native runner, per-file isolation, and temp-owning launcher when reconciling test script changes.
+
 ## 2026-10-29 - Run certified Vitest suites on Bun (senpi#4763)
 
 ### What changed

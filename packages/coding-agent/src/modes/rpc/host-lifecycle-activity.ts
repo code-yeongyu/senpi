@@ -1,7 +1,8 @@
 /**
  * WHAT the supervisor knows about the host's activity: attached public clients, and the turns its
- * always-on observer connection sees start and settle on the internal socket. Feeds the idle-exit
- * decision. Split out of `host-lifecycle.ts`, which keeps the supervisor's orchestration (senpi#2566).
+ * always-on observer connection sees start and settle on the internal socket, which also carries the
+ * host's count of attached connections that hold something there (`host_occupancy`, oh-my-openagent#14272).
+ * Feeds the idle-exit decision. Split out of `host-lifecycle.ts`, which keeps the supervisor's orchestration (senpi#2566).
  */
 import { type FSWatcher, watch } from "node:fs";
 import { createConnection, Socket } from "node:net";
@@ -9,6 +10,7 @@ import type { Duplex } from "node:stream";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { type HostLifetimeOwner, hostOwnerGone, readHostOwner, sameHostOwner } from "./host-daemon-state.ts";
 import { type HostActivity, IdleExitDecider, type IdleExitDecision } from "./host-lifecycle-policy.ts";
+import { hostOccupancyHolders, WATCH_HOST_OCCUPANCY } from "./host-observe-request.ts";
 import { holdIdleExitForSettling, SessionRunActivity } from "./host-run-activity.ts";
 import { startupHandOff } from "./host-startup-beacon.ts";
 import { supervisorLog } from "./host-supervisor-log.ts";
@@ -42,6 +44,8 @@ export class SupervisorActivity {
 	private readonly runs: SessionRunActivity;
 	private readonly observerLink: ObserverLink;
 	private observerSocket: Duplex | undefined;
+	/** The host's last `host_occupancy` on the current observer connection; undefined until it answers. */
+	private sessionHolders: number | undefined;
 	private readonly options: SupervisorActivityOptions;
 
 	constructor(options: SupervisorActivityOptions) {
@@ -60,7 +64,7 @@ export class SupervisorActivity {
 					`session ${sessionId} settled ${heldMs} ms ago and its agent_settled extension handlers have not finished; idle exit no longer waits for them`,
 				),
 		});
-		this.clients = new ClientOccupancy(() => this.refresh(), options.instanceId);
+		this.clients = new ClientOccupancy(() => this.attached(), options.instanceId);
 		this.observerLink = createObserverLink({
 			open: () => this.connectObserver(),
 			settled: options.settled,
@@ -76,7 +80,8 @@ export class SupervisorActivity {
 
 	current(): HostActivity {
 		return {
-			connections: this.clients.attachedCount,
+			// Without a healthy observer the host's count is unknown, and every attached client counts.
+			connections: this.clients.occupancy(this.observerLink.healthy() ? this.sessionHolders : undefined),
 			activeTurns: activeTurnsForIdleDecision({
 				healthy: this.observerLink.healthy(),
 				unhealthySince: this.observerLink.unhealthySince(),
@@ -92,6 +97,16 @@ export class SupervisorActivity {
 		if (current.connections > 0 || current.activeTurns > 0 || this.clients.unclassifiedCount > 0)
 			this.options.onActivity?.();
 		return holdIdleExitForSettling(this.decider.update(current), this.runs);
+	}
+
+	/**
+	 * An attachment restarts the idle window even when the host has not counted the client as a holder yet: its first
+	 * command (an open) is still on its way there.
+	 */
+	private attached(): void {
+		this.decider.restart();
+		this.options.onActivity?.();
+		this.refresh();
 	}
 
 	/** Owner death never turns an unknown observer snapshot into permission to stop a turn. */
@@ -135,10 +150,13 @@ export class SupervisorActivity {
 			throw cause;
 		}
 		this.observerSocket = stream;
+		this.sessionHolders = undefined;
 		attachJsonlLineReader(stream, (line) => this.observeHostEvent(line), { maxLineLength: MAX_RPC_LINE_CHARACTERS });
+		stream.write(`${JSON.stringify({ type: WATCH_HOST_OCCUPANCY, observe: true })}\n`);
 		return {
 			onLost: (handler: () => void) => {
 				const lost = () => {
+					this.sessionHolders = undefined;
 					handler();
 					this.options.onActivity?.();
 				};
@@ -149,6 +167,12 @@ export class SupervisorActivity {
 	}
 
 	private observeHostEvent(line: string): void {
+		const holders = hostOccupancyHolders(line);
+		if (holders !== undefined) {
+			this.sessionHolders = holders;
+			this.refresh();
+			return;
+		}
 		if (this.runs.observe(line)) this.refresh();
 	}
 }

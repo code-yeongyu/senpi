@@ -1,5 +1,122 @@
 # core/tools changes
 
+## 2026-11-18 - The local shell attests its spawned shell to the calling session (#6978)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/shell-operations.ts`: `BashOperations.exec` options take an optional `sessionId`, and `ShellExecHost` an optional `attestSessionSpawn(sessionId, pid)`. When both are present, the spawned shell's pid is attested on spawn and released on exit, alongside the host's own `onSpawn`/`onExit`.
+- `packages/coding-agent/src/core/tools/bash-core.ts` passes the session id whenever it exposes the session environment.
+- `packages/coding-agent/src/core/tools/bash.ts` (`createLocalShellOperations`) supplies `attestSessionSpawn` from `core/session-spawn-attestation.ts`; the worker-safe core imports nothing new.
+
+### Why
+
+- senpi#6972: a process a tool call started must be provable as that session's, not as whichever session its environment names.
+
+### Why an extension could not handle it
+
+- The pid exists only inside the core shell path's spawn callback.
+
+### Expected merge conflict zones
+
+- LOW: the `exec` option list in `shell-operations.ts` and the `createLocalShellOperations` host object in `bash.ts`.
+
+## 2026-11-15 - The tool cores show the fs code a wrapped machine error keeps (senpi#6745)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/fs-error-code.ts`: the fs code on the error itself or on its `cause` wins; the operation layer's `not_found`/`permission_denied`/`aborted` map back to ENOENT/EACCES/ABORT_ERR only when no fs code is carried.
+- `packages/coding-agent/src/tools-core.ts`: exports the `CoreCodingTools` type.
+
+### Why
+
+- Review LOWs on #6740 (senpi#6744): a machine that wraps EISDIR as `io_error` made the core edit tool show `io_error` where the local tool shows EISDIR; consumers of the tools-core entry could not name the tuple `createCoreCodingTools` returns.
+
+### Why an extension could not handle it
+
+- Both live in the built-in tools' worker-safe cores and their package entry.
+
+### Expected merge conflict zones
+
+- LOW: `fs-error-code.ts` (fork-only) and the coding-tools export in `tools-core.ts`.
+
+## 2026-11-15 - The bash, read, write and edit tools split into worker-safe cores and local extras (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/write.ts`, `packages/coding-agent/src/core/tools/edit.ts`: each factory now composes a worker-safe core (new `bash-core.ts`/`bash-schema.ts`/`shell-operations.ts`/`shell-output.ts`, `read-core.ts`/`read-text.ts`, `write-core.ts`, `edit-core.ts`) with its local extras: renderers, the temp-file spill, photon image processing, the local shell config and detached-group tracking, `resolveToCwd` and variant probing, realpath canonicalization and the machine-ops mutation queue. Exported names, option types and results are unchanged; `ReadOperations.readFile` and `EditOperations.readFile` now return `Uint8Array` (a `Buffer` still satisfies them).
+- `packages/coding-agent/src/core/tools/output-accumulator.ts`: the accumulator logic moves to `output-accumulator-core.ts` behind an `OutputSpill`; this module keeps `OutputAccumulator` with the same temp-file spill as its default (`createTempFileSpill`).
+- `packages/coding-agent/src/core/tools/truncate.ts`: `Buffer` byte work is replaced by `encoding.ts` (TextEncoder/TextDecoder) with identical results; `tail-window.ts` and `secret-output-redactor.ts` likewise.
+- `packages/coding-agent/src/core/tools/edit-diff.ts`: `computeEditsDiff` (the fs-reading preview) moves to `edit-preview.ts`; the module keeps only pure helpers.
+- `packages/coding-agent/src/core/tools/path-utils.ts`: `resolveReadPathAsync` delegates to the shared `resolveReadPathVariants` (`file-tool-host.ts`); the variant helpers move there unchanged.
+- New worker-side helpers: `fs-error-code.ts` maps the operation layer's error codes (`not_found`, `permission_denied`) back to fs codes, so the write baseline and edit error text match the local tools on a machine that reports its own codes; `posix-signals.ts` numbers signals per machine OS for the 128 + n exit code (Linux, Darwin and the BSDs, win32 as Node numbers it, and the common POSIX table for any other OS); the machine spill skips cleanup when nothing reached the machine.
+- `machine.ts` builds on the new `tool-machine.ts`; the tool-path `OpContext.limits` now derive from `ops.limits` (the local machine's are `DEFAULT_LIMITS`).
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- The tool definitions and their default operations are built inside these core modules; an extension can replace a tool but cannot make the built-in one bundle for another host.
+
+### Expected merge conflict zones
+
+- MEDIUM: the import blocks and factory bodies of `bash.ts`, `read.ts`, `write.ts`, `edit.ts` and `output-accumulator.ts` (their execute bodies now live in the `*-core.ts` modules); the `Buffer` lines in `truncate.ts`; the tail of `edit-diff.ts`; the variant probe in `path-utils.ts`.
+
+## 2026-11-15 - bash reads the session's device machine when a command runs (senpi#6720)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `deviceMachine` may be a resolver, read when the command runs, so a machine an extension registers after the tools are built is used. With `OMO_TOOLS_VIA_DAEMON=bash` and no machine, the existing `DeviceUnavailableError`.
+
+### Why
+
+- The device machine now comes from `registerDeviceMachine`, which an extension may call after the bash tool exists.
+
+### Why an extension could not handle it
+
+- The bash tool resolves its executor inside the built-in tool.
+
+### Expected merge conflict zones
+
+- LOW: the operations choice in `createShellToolDefinition`.
+
+## 2026-11-15 - bash gets an executor seam for the session's device, off by default (senpi#6713)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `BashToolOptions.deviceMachine` and the `OMO_TOOLS_VIA_DAEMON` flag (default off). With `bash` named, the tool runs on the injected device machine; with no device the bash tool fails with `DeviceUnavailableError` and never runs locally. Only the bash tool is covered: powershell keeps its own operations, and user `!` commands still run locally (slice 1b, senpi#6717). Slice 1a only: nothing supplies a device machine yet, so no call goes through the device daemon; the relay transport is slice 1b.
+
+### Why
+
+- Q's order that every tool call on a remote device go through that device's hands daemon. A probe showed remote sessions run their tools in-process on the device, so the tool executor needs a seam a relay transport can plug into.
+
+### Why an extension could not handle it
+
+- The executor is chosen inside the built-in tool's construction; an extension cannot swap the operation layer the built-in bash tool uses without this option.
+
+### Expected merge conflict zones
+
+- LOW: `BashToolOptions` and the operations choice in `createBashToolDefinition`.
+
+## 2026-11-11 - The grep description no longer says "inside eval" to agents that get grep as a direct tool (senpi#6426)
+
+### What changed
+
+- `grep/index.ts`: the description reads "Search file contents by pattern and path (from eval, call it as tool.grep({ pattern, path }))" instead of "with tool.grep({ pattern, path }) inside eval".
+
+### Why
+
+- grep is declared `exposure: "eval"`, but the eval-only policy is armed only when an eval tool is registered, so an agent without eval (the QA-executor agent, for one) receives grep as a direct tool and read an instruction it could not follow (code-yeongyu/oh-my-openagent#12522, finding 3).
+
+### Why an extension could not handle it
+
+- The description is the builtin tool's own.
+
+### Expected merge conflict zones
+
+- LOW: the grep description string.
+
 ## 2026-11-05 - `read` and `grep` descriptions state folding and page caps (senpi#5998)
 
 ### What changed

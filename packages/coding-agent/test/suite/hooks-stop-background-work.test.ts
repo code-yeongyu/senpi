@@ -18,6 +18,8 @@ const STOP_LOG = "stop-payloads.jsonl";
 type StopFixture = {
 	readonly harness: Harness;
 	readonly publish: (source: string, activeCount: number) => void;
+	/** An entry the background work writes into the session (a wake notice), as an extension's `pi.appendEntry`. */
+	readonly appendEntry: (customType: string) => void;
 	readonly payloads: () => Record<string, unknown>[];
 	readonly cleanup: () => void;
 };
@@ -60,12 +62,12 @@ async function prepareStopFixture(): Promise<StopFixture> {
 		`import { appendFileSync } from 'node:fs'; let stdin = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (chunk) => { stdin += chunk; }); process.stdin.on('end', () => { appendFileSync(${JSON.stringify(logPath)}, stdin.trim() + '\\n'); process.stdout.write('{}'); });`,
 		"utf-8",
 	);
-	let bus: ExtensionAPI["events"] | undefined;
+	let api: ExtensionAPI | undefined;
 	const harness = await createHarness({
 		extensionFactories: [
 			{ factory: hooksExtensionFactory(), path: "<builtin:hooks>" },
 			(pi) => {
-				bus = pi.events;
+				api = pi;
 			},
 		],
 	});
@@ -73,8 +75,12 @@ async function prepareStopFixture(): Promise<StopFixture> {
 	return {
 		harness,
 		publish: (source, activeCount) => {
-			if (bus === undefined) throw new Error("wake-source publisher was not bound");
-			bus.emit(WAKE_SOURCE_STATE_EVENT, { source, activeCount });
+			if (api === undefined) throw new Error("wake-source publisher was not bound");
+			api.events.emit(WAKE_SOURCE_STATE_EVENT, { source, activeCount });
+		},
+		appendEntry: (customType) => {
+			if (api === undefined) throw new Error("the background-work extension was not bound");
+			api.appendEntry(customType, { at: "background" });
 		},
 		payloads: () =>
 			existsSync(logPath)
@@ -144,6 +150,39 @@ describe("builtin hooks Stop while background work is live", () => {
 				hook_event_name: "Stop",
 				session_id: fixture.harness.session.sessionId,
 			}),
+		]);
+	});
+
+	// EQ E08, E16, E20 (fused sessions with background work): a held Stop reads its turn key when it dispatches, so the
+	// key names the leaf the session has reached by then (entries the background work and its drain appended), not the
+	// turn's end. That is the behavior before the hosted-loop port (#6751), measured at 26d5f2e24c: the stop-state
+	// entry's key there named its parent entry.
+	it("keys a held Stop's state to the session's leaf when the Stop dispatches, not to the turn's end", async () => {
+		// Given
+		const fixture = await prepareStopFixture();
+		fixtures.push(fixture);
+		fixture.harness.setResponses([fauxAssistantMessage("started it in the background")]);
+		fixture.publish("terminal-background-sessions", 1);
+		await fixture.harness.session.prompt("run the build in the background");
+		const turnEndLeaf = fixture.harness.session.sessionManager.getLeafId();
+		fixture.appendEntry("background-work-notice");
+
+		// When
+		const settled = stopDispatchSettled(fixture.harness);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		fixture.publish("terminal-background-sessions", 0);
+		await vi.advanceTimersByTimeAsync(STOP_DRAIN_GRACE_MS);
+		vi.useRealTimers();
+		await settled;
+
+		// Then
+		const stopStates = fixture.harness.session.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "custom" && entry.customType === STOP_STATE_CUSTOM_TYPE);
+		const leafWhenWritten = stopStates[0]?.parentId;
+		expect(leafWhenWritten).not.toBe(turnEndLeaf);
+		expect(stopStates.map((entry) => (entry.type === "custom" ? entry.data : undefined))).toEqual([
+			expect.objectContaining({ turnKey: `1:${leafWhenWritten}`, count: 0 }),
 		]);
 	});
 

@@ -8,7 +8,7 @@ import {
 	InMemoryCredentialStore,
 	type Model,
 } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, assert, describe, expect, it } from "vitest";
 import { subscribeProviderAccountEvents } from "../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
 import {
 	type AccountSlot,
@@ -179,11 +179,17 @@ function finiteAttempt(outcome: "success" | "failure" | "visible-failure"): Clos
 class FailoverResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 	closes = 0;
 	private readonly outcome: "success" | "failure" | "visible-failure";
+	private readonly onPrompt: (() => void) | undefined;
 	private readonly queued: SDKMessage[] = [];
 	private readonly readers: Array<(value: IteratorResult<SDKMessage>) => void> = [];
 
-	constructor(prompt: AsyncIterable<SDKUserMessage>, outcome: "success" | "failure" | "visible-failure") {
+	constructor(
+		prompt: AsyncIterable<SDKUserMessage>,
+		outcome: "success" | "failure" | "visible-failure",
+		onPrompt?: () => void,
+	) {
 		this.outcome = outcome;
+		this.onPrompt = onPrompt;
 		void this.consume(prompt);
 	}
 
@@ -212,6 +218,7 @@ class FailoverResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage>
 
 	private async consume(prompt: AsyncIterable<SDKUserMessage>): Promise<void> {
 		for await (const message of prompt) {
+			this.onPrompt?.();
 			const uuid = message.uuid ?? "submitted";
 			this.emit({ ...message, uuid, isReplay: true } as SDKMessage);
 			if (this.outcome === "visible-failure") {
@@ -359,6 +366,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		expect(cliAccountOf(captured[0]?.env)).toBe(hrwLast);
 	});
 
+	// senpi#7197: another test can allocate generations before this one.
 	it("transfers resident-query ownership on failover and fences the discarded generation", async () => {
 		const store = await storeWith(cliSlot("A"), cliSlot("B"));
 		configureAuth(store, managedEnvironment(), undefined, "oauth-slots");
@@ -366,18 +374,21 @@ describe("Claude SDK OAuth auth lanes", () => {
 			current?.type === "oauth" ? { ...current, pinned: "A" } : current,
 		);
 		const queries: CloseTrackedQuery[] = [];
+		const sessionId = "resident-failover";
+		let discardedGeneration: number | undefined;
 		overrideSdkBoundary({
 			query: ({ prompt, options }) => {
 				const outcome = cliAccountOf(options?.env) === "A" ? "failure" : "success";
 				const query =
 					options?.extraArgs?.["replay-user-messages"] === "" && typeof prompt !== "string"
-						? new FailoverResidentQuery(prompt, outcome)
+						? new FailoverResidentQuery(prompt, outcome, () => {
+								if (outcome === "failure") discardedGeneration = getSession(sessionId)?.generation;
+							})
 						: finiteAttempt(outcome);
 				queries.push(query);
 				return query;
 			},
 		});
-		const sessionId = "resident-failover";
 		residentSessionIds.add(sessionId);
 
 		const result = await streamAnthropicSubscription(
@@ -390,9 +401,14 @@ describe("Claude SDK OAuth auth lanes", () => {
 		expect(queries).toHaveLength(2);
 		expect(queries[0]?.closes).toBe(1);
 		expect(queries[1]?.closes).toBe(0);
-		expect(isCurrentGeneration(sessionId, 1)).toBe(false);
-		expect(getSession(sessionId)).toMatchObject({ generation: 2 });
-		expect(getSession(sessionId)?.accountName).not.toBe("A");
+		const replacement = getSession(sessionId);
+		assert.isDefined(discardedGeneration);
+		assert.isDefined(replacement);
+		expect(isCurrentGeneration(sessionId, discardedGeneration)).toBe(false);
+		expect(replacement.generation).toBeGreaterThan(discardedGeneration);
+		expect(isCurrentGeneration(sessionId, replacement.generation)).toBe(true);
+		expect(replacement.query).toBe(queries[1]);
+		expect(replacement.accountName).not.toBe("A");
 	});
 
 	it("discards a failed resident query without retrying after a visible delta", async () => {

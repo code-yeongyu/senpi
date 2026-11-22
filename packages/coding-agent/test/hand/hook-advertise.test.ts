@@ -19,7 +19,7 @@ import {
 	handHookAccess,
 	HookNotAdvertisedError,
 } from "../../src/core/hand/hook-advertise.ts";
-import { isUserLoopHook } from "../../src/modes/rpc/loopless-tool-handlers.ts";
+import { isUserLoopHook } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
 import { fusedDispatch } from "./hook-request-fixture.ts";
 

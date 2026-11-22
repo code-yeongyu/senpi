@@ -28,7 +28,7 @@ import {
 	isListedStoredSlot,
 	SENTINEL_OAUTH_FIELDS,
 } from "./extensions/builtin/anthropic-subscription/accounts.ts";
-import { isAccountBlocked } from "./extensions/builtin/anthropic-subscription/affinity.ts";
+import { isAccountBlocked, isLimitLiftedEarly } from "./extensions/builtin/anthropic-subscription/affinity.ts";
 import {
 	accountDirFor,
 	isValidAccountDirId,
@@ -46,6 +46,24 @@ export type CredentialAccountSource = "login" | "import" | "env";
  * until its re-probe time, `rate_limit` is a cooldown, `disabled` lasts until the credential is replaced.
  */
 export type CredentialAccountBlockedReason = "auth_error" | "rate_limit" | "disabled";
+
+/**
+ * The accounts no usage reading can bring back, so usage they report must not release a session's hold on the
+ * provider (senpi#6536): a slot of the other credential kind (senpi#3486), a signed-out account, and every account
+ * blocked for anything but a usage limit. A usage limit is a `rate_limit` block or a `paused` one (a ChatGPT
+ * subscription's usage-limit pause, which carries no reason). The Claude lane's billing and organization blocks also
+ * reach a summary with no reason but are not paused, so they count as needing the user.
+ */
+export function accountsNeedingUser(summaries: readonly CredentialAccountSummary[]): string[] {
+	return summaries
+		.filter(
+			(account) =>
+				account.unused === true ||
+				account.signedOut === true ||
+				(account.blocked && account.blockedReason !== "rate_limit" && account.paused !== true),
+		)
+		.map((account) => account.name);
+}
 
 /**
  * Whether a pooled account can serve `modelId` now: not blocked, not signed out (the pool skips those slots), and
@@ -239,7 +257,16 @@ function storedSlotBlock(provider: string, slot: object, now: number): SlotBlock
 	if (normalizeProviderId(provider) === "anthropic-subscription" && isForeignAuthBlock(slot)) return UNBLOCKED;
 	const skipped =
 		normalizeProviderId(provider) === "anthropic-subscription"
-			? isAccountBlocked({ blockedUntil }, now)
+			? isAccountBlocked({ blockedUntil }, now) &&
+				!isLimitLiftedEarly(
+					{
+						name: stringField(slot, "name") ?? "",
+						blockReason,
+						blockedAt: numberField(slot, "blockedAt"),
+						blockedUntil,
+					},
+					now,
+				)
 			: isSlotBlocked({ blockReason, blockedUntil }, now);
 	if (!skipped) return UNBLOCKED;
 	return {
