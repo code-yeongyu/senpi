@@ -7,6 +7,7 @@
  */
 
 import { spawn } from "child_process";
+import { signalSpawnedChild } from "../utils/child-signal.ts";
 import { getShellConfig } from "../utils/shell.ts";
 import { sleep } from "../utils/sleep.ts";
 
@@ -58,7 +59,7 @@ function runCommandProcess(
 			resolveOutcome(outcome);
 		};
 		const timer = setTimeout(() => {
-			child.kill("SIGTERM");
+			signalSpawnedChild(child, "SIGTERM");
 			// A helper that ignored the deadline must not keep the host alive either.
 			child.unref();
 			finish({ executed: true, value: undefined });
@@ -67,7 +68,7 @@ function runCommandProcess(
 		child.stdout.on("data", (chunk: string) => {
 			stdout += chunk;
 			if (stdout.length <= COMMAND_MAX_OUTPUT_BYTES) return;
-			child.kill("SIGTERM");
+			signalSpawnedChild(child, "SIGTERM");
 			finish({ executed: true, value: undefined });
 		});
 		child.on("error", (error: NodeJS.ErrnoException) =>

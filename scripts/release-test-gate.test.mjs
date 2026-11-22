@@ -1,19 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import {
-	awaitCiEvidence,
-	CATALOG_MANIFEST,
-	catalogChangedSinceHead,
-	discardTimestampOnlyCatalogChange,
-	isTimestampOnlyManifestChange,
-	planCiEvidence,
-	runForcedTestSuite,
-} from "./release-test-gate.mjs";
+import { awaitCiEvidence, planCiEvidence } from "./release-test-gate.mjs";
 
 const CHECK_NAME = "Check and test";
 
@@ -141,6 +129,18 @@ describe("awaitCiEvidence (senpi#2943)", () => {
 		assert.equal(deps.headSha(), "c2");
 	});
 
+	it("never follows main away from a pinned commit; a cancelled CI run there stops the release", () => {
+		const { deps, calls } = world({
+			heads: ["c1", "c2"],
+			runs: { c1: [supersededFanIn("c1")], c2: [checkRun("c2", "completed", "success")] },
+		});
+		assert.throws(
+			() => awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, { ...deps, pinned: true }),
+			/pinned release commit c1.*force_tests/,
+		);
+		assert.deepEqual(calls.merges, []);
+	});
+
 	it("never follows a moved main that does not contain the catalog commit", () => {
 		// main moved to x9, a history that lacks c1 (rewritten or reset), and c1's CI was cancelled.
 		const { deps, calls } = world({
@@ -185,145 +185,6 @@ describe("awaitCiEvidence (senpi#2943)", () => {
 		assert.throws(
 			() => awaitCiEvidence({ timeoutMs: 90_000, pollMs: 30_000 }, deps),
 			/no Check and test result for c1 within 2 min/,
-		);
-	});
-});
-
-const manifest = (generatedAt, hash) =>
-	`${JSON.stringify({ schemaVersion: 6, generatedAt, structureHash: "s", files: { "nvidia.json": hash } })}\n`;
-
-describe("isTimestampOnlyManifestChange (senpi#2943)", () => {
-	it("is true when only generatedAt moved", () => {
-		assert.equal(isTimestampOnlyManifestChange(manifest("2026-10-01T00:00:00Z", "h1"), manifest("2026-10-08T00:00:00Z", "h1")), true);
-	});
-
-	it("is false when a file hash changed", () => {
-		assert.equal(isTimestampOnlyManifestChange(manifest("2026-10-01T00:00:00Z", "h1"), manifest("2026-10-08T00:00:00Z", "h2")), false);
-	});
-});
-
-describe("catalogChangedSinceHead (senpi#2645)", () => {
-	const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe" });
-	function repoWithCatalog() {
-		const root = mkdtempSync(join(tmpdir(), "senpi-release-gate-"));
-		git(root, "init", "-q");
-		git(root, "config", "user.email", "gate@example.invalid");
-		git(root, "config", "user.name", "gate");
-		mkdirSync(join(root, "packages/ai/src/providers/data"), { recursive: true });
-		writeFileSync(join(root, "packages/ai/src/models.generated.ts"), "export const MODELS = {};\n");
-		writeFileSync(join(root, "packages/ai/src/providers/data/nvidia.json"), '{"a":1}\n');
-		writeFileSync(join(root, CATALOG_MANIFEST), manifest("2026-10-01T00:00:00.000Z", "h1"));
-		writeFileSync(join(root, "CHANGELOG.md"), "# Changelog\n");
-		git(root, "add", "-A");
-		git(root, "commit", "-q", "-m", "base");
-		return root;
-	}
-
-	it("is false when the regeneration left every catalog file as HEAD has it", () => {
-		const root = repoWithCatalog();
-		try {
-			writeFileSync(join(root, "CHANGELOG.md"), "# Changelog\n\n## [1.0.0]\n");
-			assert.equal(catalogChangedSinceHead(root), false);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("is true when the regeneration rewrote a provider's catalog data", () => {
-		const root = repoWithCatalog();
-		try {
-			writeFileSync(join(root, "packages/ai/src/providers/data/nvidia.json"), '{"b":2}\n');
-			assert.equal(catalogChangedSinceHead(root), true);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("is true when the regeneration added a new provider's catalog file", () => {
-		const root = repoWithCatalog();
-		try {
-			writeFileSync(join(root, "packages/ai/src/providers/data/newprovider.json"), '{"c":3}\n');
-			assert.equal(catalogChangedSinceHead(root), true);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("treats a regeneration that only re-stamped the manifest as unchanged, and restores HEAD's manifest", () => {
-		const root = repoWithCatalog();
-		try {
-			writeFileSync(join(root, CATALOG_MANIFEST), manifest("2026-10-08T09:00:00.000Z", "h1"));
-			assert.equal(discardTimestampOnlyCatalogChange(root), true);
-			assert.equal(catalogChangedSinceHead(root), false);
-			assert.equal(readFileSync(join(root, CATALOG_MANIFEST), "utf8"), manifest("2026-10-01T00:00:00.000Z", "h1"));
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("keeps a manifest change that came with real catalog drift", () => {
-		const root = repoWithCatalog();
-		try {
-			writeFileSync(join(root, "packages/ai/src/providers/data/nvidia.json"), '{"b":2}\n');
-			writeFileSync(join(root, CATALOG_MANIFEST), manifest("2026-10-08T09:00:00.000Z", "h2"));
-			assert.equal(discardTimestampOnlyCatalogChange(root), false);
-			assert.equal(catalogChangedSinceHead(root), true);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("keeps a manifest-only change that is more than the stamp", () => {
-		const root = repoWithCatalog();
-		try {
-			writeFileSync(join(root, CATALOG_MANIFEST), manifest("2026-10-08T09:00:00.000Z", "h9"));
-			assert.equal(discardTimestampOnlyCatalogChange(root), false);
-			assert.equal(catalogChangedSinceHead(root), true);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-});
-
-describe("runForcedTestSuite (senpi#2291)", () => {
-	it("fails loudly, naming the budget, when the in-job suite outlives it", () => {
-		const started = Date.now();
-		assert.throws(
-			() => runForcedTestSuite({ bin: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"], timeoutMs: 300 }),
-			/did not finish within 0\.005 min/,
-		);
-		assert.ok(Date.now() - started < 10_000, "the hung child is killed at the budget, not left running");
-	});
-
-	it("kills the whole suite process tree on timeout, including a hung grandchild worker", () => {
-		const dir = mkdtempSync(join(tmpdir(), "forced-suite-tree-"));
-		const pidFile = join(dir, "grandchild.pid");
-		const grandchild = "setInterval(() => {}, 1000)";
-		const suite = `const { spawn } = require("node:child_process"); const g = spawn(process.execPath, ["-e", ${JSON.stringify(grandchild)}], { stdio: "ignore" }); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(g.pid)); setInterval(() => {}, 1000);`;
-		try {
-			assert.throws(() => runForcedTestSuite({ bin: process.execPath, args: ["-e", suite], timeoutMs: 1_500 }), /did not finish within/);
-			const pid = Number(readFileSync(pidFile, "utf8"));
-			const alive = () => {
-				try {
-					process.kill(pid, 0);
-					return true;
-				} catch {
-					return false;
-				}
-			};
-			const deadline = Date.now() + 5_000;
-			while (alive() && Date.now() < deadline) execFileSync(process.execPath, ["-e", "setTimeout(() => {}, 100)"]);
-			const survived = alive();
-			if (survived) process.kill(pid, "SIGKILL");
-			assert.equal(survived, false, "the hung grandchild worker was left running after the timeout");
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	it("passes CI=1 to a suite that finishes inside the budget", () => {
-		assert.doesNotThrow(() =>
-			runForcedTestSuite({ bin: process.execPath, args: ["-e", "process.exit(process.env.CI === '1' ? 0 : 3)"], timeoutMs: 10_000 }),
 		);
 	});
 });

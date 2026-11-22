@@ -165,6 +165,31 @@ describe("pi-messages", () => {
 		});
 	});
 
+	it("does not send the request-local prompt-cache breakpoint hint on the wire (senpi#3242)", async () => {
+		const { baseUrl, requests } = await startServer({
+			events: [{ type: "start" }, { type: "done", reason: "stop", usage }],
+		});
+		const assistant = {
+			role: "assistant" as const,
+			content: [{ type: "text" as const, text: "earlier answer" }],
+			api: "pi-messages" as const,
+			provider: "radius",
+			model: "auto",
+			usage,
+			stopReason: "stop" as const,
+			timestamp: 1,
+			promptCacheBreakpoint: true as const,
+		};
+		const hinted: Context = {
+			messages: [...context.messages, assistant, { role: "user", content: "Next", timestamp: 2 }],
+		};
+		await stream(createModel(baseUrl), normalizeContext(hinted), { apiKey: "test-key" }).result();
+
+		const sent = (requests[0].body as { context: { messages: Record<string, unknown>[] } }).context.messages;
+		expect(sent[1]).not.toHaveProperty("promptCacheBreakpoint");
+		expect(sent[1]).toMatchObject({ role: "assistant", content: [{ type: "text", text: "earlier answer" }] });
+	});
+
 	it("forwards parsed wire events in order before converting them", async () => {
 		const wireEvents = [
 			{ type: "start" },

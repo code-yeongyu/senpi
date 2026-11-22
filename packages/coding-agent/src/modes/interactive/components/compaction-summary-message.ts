@@ -1,6 +1,6 @@
 import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
 import type { CompactionSummaryMessage } from "../../../core/messages.ts";
-import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { sharedMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
 
 const TERMINAL_ESCAPE_SEQUENCE =
@@ -38,7 +38,7 @@ export class CompactionSummaryMessageComponent extends Box {
 	private message: CompactionSummaryMessage;
 	private markdownTheme: MarkdownTheme;
 
-	constructor(message: CompactionSummaryMessage, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
+	constructor(message: CompactionSummaryMessage, markdownTheme: MarkdownTheme = sharedMarkdownTheme()) {
 		super(1, 1, (t) => theme.bg("customMessageBg", t));
 		this.message = message;
 		this.markdownTheme = markdownTheme;

@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "../../types.ts";
-import { collectServerCatalogForCache, writeMcpCachedServer } from "./catalog-cache.ts";
+import { collectServerCatalogForCache, type McpCachedServerCatalog, writeMcpCachedServer } from "./catalog-cache.ts";
 import type { ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { markMcpConnectionNeedsAuth } from "./health.ts";
@@ -127,14 +127,13 @@ export function connectAndRefreshMcpCatalog(
 	return refresh;
 }
 
-async function refreshConnectedMcpCatalog(
-	entry: McpConnectionEntry,
-	serverConfig: ResolvedMcpServer["config"],
-): Promise<void> {
-	if (serverConfig === undefined || entry.isCurrent?.() === false) return;
+/** Reconcile the grant before health recovery without attempting a transport connection. */
+export async function prepareMcpAuthentication(entry: McpConnectionEntry): Promise<boolean> {
+	if (entry.isCurrent?.() === false) return false;
 	try {
 		await entry.authPlan?.refresh?.ensureFresh();
 	} catch (error) {
+		if (entry.isCurrent?.() === false || entry.connection.state === "disabled") return false;
 		const authError = markMcpConnectionNeedsAuth(entry.connection, error);
 		if (authError !== undefined) {
 			entry.logger.warn(authError.message);
@@ -142,10 +141,19 @@ async function refreshConnectedMcpCatalog(
 		}
 		throw error;
 	}
+	if (entry.isCurrent?.() === false) return false;
 	if (entry.credentialsCurrent?.() === false) {
 		await entry.onCredentialsChanged?.();
-		return;
+		return false;
 	}
+	return true;
+}
+
+async function refreshConnectedMcpCatalog(
+	entry: McpConnectionEntry,
+	serverConfig: ResolvedMcpServer["config"],
+): Promise<void> {
+	if (serverConfig === undefined || !(await prepareMcpAuthentication(entry))) return;
 	await connectMcpServer(entry.connection, entry.logger);
 	if (entry.connection.state !== "connected" || entry.isCurrent?.() === false) return;
 	const generation = entry.connection.generation;
@@ -155,7 +163,13 @@ async function refreshConnectedMcpCatalog(
 		entry.connection.state === "connected" &&
 		entry.connection.generation === generation;
 	if (entry.connection instanceof SharedMcpLease) {
-		const catalog = await entry.connection.catalog();
+		let catalog: McpCachedServerCatalog;
+		try {
+			catalog = await entry.connection.catalog();
+		} catch (error) {
+			if (!ownsCatalog()) return;
+			throw error;
+		}
 		if (!ownsCatalog()) {
 			if (entry.credentialsCurrent?.() === false) await entry.onCredentialsChanged?.();
 			return;
@@ -170,7 +184,7 @@ async function refreshConnectedMcpCatalog(
 		const catalog = await collectServerCatalogForCache(
 			entry.connection,
 			serverConfig,
-			entry.configHash,
+			entry.generationHash ?? entry.configHash,
 			entry.credentialIdentity,
 		);
 		if (!ownsCatalog()) {
@@ -185,6 +199,7 @@ async function refreshConnectedMcpCatalog(
 		// resources.subscribe; best-effort, failures are non-fatal.
 		if (ownsCatalog()) await ensureMcpResourceSubscriptions(entry.connection.client, catalog.resources ?? []);
 	} catch (error) {
+		if (!ownsCatalog()) return;
 		entry.logger.warn("Failed to refresh MCP catalog cache", {
 			error: error instanceof Error ? error.message : String(error),
 		});
@@ -192,9 +207,15 @@ async function refreshConnectedMcpCatalog(
 }
 
 async function connectMcpServer(connection: ServerConnection, logger?: McpConnectionEntry["logger"]): Promise<void> {
+	const generation = connection.generation;
 	try {
 		await connection.connect();
 	} catch (error) {
+		// Dispose/disable or a renew superseded this attempt: its transport can close after that returned, so the late
+		// rejection is our own teardown, not a server failure, and must neither degrade nor log (senpi#4013).
+		// The generation check relies on reconnect being timer-scheduled (reconnect.ts scheduleReconnect): a degrade
+		// raised inside this attempt cannot bump the generation before this catch runs and hide a real failure.
+		if (connection.state === "disabled" || connection.generation !== generation) return;
 		const failure = error instanceof Error ? error : new Error(String(error));
 		if (connection.lastError === undefined) connection.markDegraded(failure);
 		logger?.warn(failure.message);

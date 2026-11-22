@@ -13,6 +13,8 @@ export interface LoadedTail {
 	readonly retained: FileEntry[];
 	/** Ids of the entries the mirror leaves out; a new entry must never reuse one. */
 	readonly trimmedIds: readonly string[];
+	/** How many entries at the end of `retained` are the file's own tail, in order (senpi#2537). */
+	readonly windowLength: number;
 }
 
 /**
@@ -68,7 +70,7 @@ export function planLoadedTail(entries: readonly FileEntry[]): LoadedTail | unde
 
 	const retainedIds = new Set([...prefix, ...window].map((entry) => entry.id));
 	const trimmedIds = [...byId.keys()].filter((id) => !retainedIds.has(id));
-	return trimmedIds.length === 0 ? undefined : { retained, trimmedIds };
+	return trimmedIds.length === 0 ? undefined : { retained, trimmedIds, windowLength: window.length };
 }
 
 /**

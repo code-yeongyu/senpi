@@ -17,6 +17,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { type RoutedSessionAttachment, type RoutedSessionHandle, ServerError } from "@earendil-works/pi-server";
 import { Check } from "typebox/value";
+import { signalSpawnedChild } from "../utils/child-signal.ts";
 import type { CoordinatorConnection, CoordinatorConnectionEvent } from "./coordinator.ts";
 import { spawnInternalProcess } from "./process.ts";
 import {
@@ -434,7 +435,7 @@ export class SessionWorkerManager {
 		});
 		const stopPending = (async () => {
 			if ((await Promise.race([pendingFinished.then(() => false), pendingTimedOut])) === true) {
-				for (const pending of pendingWorkers) pending.child.kill("SIGKILL");
+				for (const pending of pendingWorkers) signalSpawnedChild(pending.child, "SIGKILL");
 				await pendingFinished;
 			}
 			if (timer) clearTimeout(timer);
@@ -750,7 +751,8 @@ export class SessionWorkerManager {
 		this.#pending.delete(sessionKey);
 		clearTimeout(pending.timer);
 		this.#notifyWorkerCountChanged();
-		if (pending.child.exitCode === null && pending.child.signalCode === null) pending.child.kill("SIGKILL");
+		if (pending.child.exitCode === null && pending.child.signalCode === null)
+			signalSpawnedChild(pending.child, "SIGKILL");
 		pending.reject(error);
 	}
 

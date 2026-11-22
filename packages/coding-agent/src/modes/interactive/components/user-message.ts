@@ -1,6 +1,6 @@
 import { Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
-import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { sharedMarkdownTheme, theme } from "../theme/theme.ts";
 import { AskUserAnswerChip, parseAskUserAnswerFrame } from "./ask-user-answer-chip.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
@@ -20,7 +20,7 @@ export class UserMessageComponent extends Container {
 
 	constructor(
 		text: string,
-		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		markdownTheme: MarkdownTheme = sharedMarkdownTheme(),
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
 		answerHeaders: readonly string[] = [],

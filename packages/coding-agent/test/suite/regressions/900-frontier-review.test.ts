@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { reduceContextWithFrontier } from "../../../src/core/extensions/builtin/compaction/context-reduction-frontier.ts";
 import { createContextReductionState } from "../../../src/core/extensions/builtin/compaction/context-reduction-state.ts";
@@ -248,5 +249,3 @@ describe("frontier review regressions", () => {
 		expect(savedReduction(fork).cutIndex).toBe(saved.cutIndex);
 	});
 });
-
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";

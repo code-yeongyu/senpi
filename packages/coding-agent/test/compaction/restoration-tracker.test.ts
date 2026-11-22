@@ -18,8 +18,10 @@ import type {
 	ToolCallEvent,
 	ToolCallEventResult,
 } from "../../src/core/extensions/index.ts";
+import type { HistoryReducer } from "../../src/core/session-history-reduce.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
+import { reduceEntries } from "../helpers/reduce-entries.ts";
 import { createTempAgentDir } from "../support/temp-agent-dir.ts";
 
 const AGENT_DIR = createTempAgentDir();
@@ -72,6 +74,7 @@ function createGateExtensionContext(settings: CompactionSettings): ExtensionCont
 	];
 	const sessionManager = {
 		getEntries: () => entries,
+		reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(entries, reducer),
 		getBranch: () => entries,
 	} as ExtensionContext["sessionManager"];
 

@@ -15,6 +15,7 @@ import {
 export async function sharingHttpFixture(port = 0) {
 	const sessions = new Map<string, { server: Server; transport: StreamableHTTPServerTransport }>();
 	let connects = 0;
+	let connections = 0;
 	let toolName = "echo";
 	let toolSchema: Tool["inputSchema"] = { type: "object" };
 	let pings = 0;
@@ -27,6 +28,7 @@ export async function sharingHttpFixture(port = 0) {
 	let listBarrier: Promise<void> | undefined;
 	let listEntered: (() => void) | undefined;
 	let releaseList: (() => void) | undefined;
+	let listFailure: Error | undefined;
 	const sockets = new Set<Socket>();
 	const eventSockets = new Set<Socket>();
 	const http = createServer(async (req, res) => {
@@ -57,6 +59,7 @@ export async function sharingHttpFixture(port = 0) {
 				server.setRequestHandler(ListToolsRequestSchema, async () => {
 					listEntered?.();
 					await listBarrier;
+					if (listFailure !== undefined) throw listFailure;
 					return { tools: [{ name: toolName, inputSchema: toolSchema }] };
 				});
 				server.setRequestHandler(PingRequestSchema, async () => {
@@ -91,6 +94,7 @@ export async function sharingHttpFixture(port = 0) {
 		}
 	});
 	http.on("connection", (socket) => {
+		connections++;
 		sockets.add(socket);
 		socket.once("close", () => {
 			sockets.delete(socket);
@@ -104,6 +108,9 @@ export async function sharingHttpFixture(port = 0) {
 		url: `http://127.0.0.1:${address.port}/mcp`,
 		get connects() {
 			return connects;
+		},
+		get connections() {
+			return connections;
 		},
 		get pings() {
 			return pings;
@@ -181,6 +188,7 @@ export async function sharingHttpFixture(port = 0) {
 			await Promise.all(closed);
 		},
 		holdLists() {
+			listFailure = undefined;
 			listBarrier = new Promise<void>((resolve) => {
 				releaseList = resolve;
 			});
@@ -188,7 +196,8 @@ export async function sharingHttpFixture(port = 0) {
 				listEntered = resolve;
 			});
 		},
-		releaseLists() {
+		releaseLists(error?: Error) {
+			listFailure = error;
 			releaseList?.();
 			listBarrier = undefined;
 		},

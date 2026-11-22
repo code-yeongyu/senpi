@@ -262,6 +262,7 @@ describe("runSideQuery", () => {
 					sessionId: "session-1",
 					establishmentTimeoutMs: 25,
 					streamFn: ((_model: unknown, _context: unknown, options?: { signal?: AbortSignal }) =>
+						// oxlint-disable-next-line eslint/require-yield -- the generator throws before its first yield by design
 						(async function* () {
 							await new Promise((_, reject) => {
 								options?.signal?.addEventListener("abort", () => reject(options.signal?.reason));

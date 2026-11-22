@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
 import { createInterface } from "node:readline";
+import { signalSpawnedChild } from "../../../../utils/child-signal.ts";
 import { GrepEngineError } from "../engine.ts";
 import { commandLineOverflow } from "./argv.ts";
 import { parseRgEvent, type RgEvent } from "./json-rows.ts";
@@ -72,7 +73,7 @@ export function createRgRunner({
 			let failure: Error | undefined;
 			let timedOut = false;
 			const stop = () => {
-				if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+				if (child.exitCode === null && child.signalCode === null) signalSpawnedChild(child, "SIGTERM");
 			};
 			const onAbort = () => {
 				stop();

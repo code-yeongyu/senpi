@@ -28,6 +28,7 @@ function captureRegistration(
 } {
 	let captured: Registration | undefined;
 	const pi = {
+		cwd: process.cwd(),
 		registerProvider: (name: string, config: ProviderConfigInput) => {
 			captured = { name, config };
 		},

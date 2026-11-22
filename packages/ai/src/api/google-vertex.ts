@@ -10,6 +10,7 @@ import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
+	AssistantMessageEvent,
 	Model,
 	ModelThinkingLevel,
 	ProviderEnv,
@@ -22,11 +23,13 @@ import type {
 	ToolCall,
 	TranscriptContext,
 } from "../types.ts";
+import { pushAssistantCompleteBlock, pushAssistantSignature } from "../utils/assistant-capture.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { reportedCount } from "../utils/reported-count.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { collapseSystemMessages, getCurrentTools, getInitialSystemMessage } from "../utils/transcript.ts";
@@ -72,7 +75,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 	context: TranscriptContext,
 	options?: GoogleVertexOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = collapseSystemMessages(context);
 
 	(async () => {
@@ -113,10 +116,13 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
+			let currentIndex = 0;
 			let groundingMetadataEmitted = false;
 			let urlContextMetadataEmitted = false;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
+			// blockIndex() drifts past the open block once a native part is appended; capture keeps the block's own index.
+			const pushOpen = (event: AssistantMessageEvent) => stream.push(event, { contentIndex: currentIndex });
 			for await (const chunk of googleStream) {
 				await options?.onProviderStreamEvent?.(chunk, model);
 				// Vertex uses the same @google/genai GenerateContentResponse type as Gemini.
@@ -136,14 +142,14 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							) {
 								if (currentBlock) {
 									if (currentBlock.type === "text") {
-										stream.push({
+										pushOpen({
 											type: "text_end",
 											contentIndex: blocks.length - 1,
 											content: currentBlock.text,
 											partial: output,
 										});
 									} else {
-										stream.push({
+										pushOpen({
 											type: "thinking_end",
 											contentIndex: blockIndex(),
 											content: currentBlock.thinking,
@@ -154,20 +160,23 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 								if (isThinking) {
 									currentBlock = { type: "thinking", thinking: "", thinkingSignature: undefined };
 									output.content.push(currentBlock);
+									currentIndex = blockIndex();
 									stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
 								} else {
 									currentBlock = { type: "text", text: "" };
 									output.content.push(currentBlock);
+									currentIndex = blockIndex();
 									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
 								}
 							}
 							if (currentBlock.type === "thinking") {
 								currentBlock.thinking += part.text;
+								pushAssistantSignature(stream, currentIndex, currentBlock, part.thoughtSignature);
 								currentBlock.thinkingSignature = retainThoughtSignature(
 									currentBlock.thinkingSignature,
 									part.thoughtSignature,
 								);
-								stream.push({
+								pushOpen({
 									type: "thinking_delta",
 									contentIndex: blockIndex(),
 									delta: part.text,
@@ -175,11 +184,12 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 								});
 							} else {
 								currentBlock.text += part.text;
+								pushAssistantSignature(stream, currentIndex, currentBlock, part.thoughtSignature);
 								currentBlock.textSignature = retainThoughtSignature(
 									currentBlock.textSignature,
 									part.thoughtSignature,
 								);
-								stream.push({
+								pushOpen({
 									type: "text_delta",
 									contentIndex: blockIndex(),
 									delta: part.text,
@@ -192,14 +202,14 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							handledAsKnownPart = true;
 							if (currentBlock) {
 								if (currentBlock.type === "text") {
-									stream.push({
+									pushOpen({
 										type: "text_end",
 										contentIndex: blockIndex(),
 										content: currentBlock.text,
 										partial: output,
 									});
 								} else {
-									stream.push({
+									pushOpen({
 										type: "thinking_end",
 										contentIndex: blockIndex(),
 										content: currentBlock.thinking,
@@ -226,17 +236,22 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 
 							output.content.push(toolCall);
 							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-							stream.push({
-								type: "toolcall_delta",
-								contentIndex: blockIndex(),
-								delta: JSON.stringify(toolCall.arguments),
-								partial: output,
-							});
+							// The adapter never parses its own spelling: the complete parsed seed stays authoritative.
+							stream.push(
+								{
+									type: "toolcall_delta",
+									contentIndex: blockIndex(),
+									delta: JSON.stringify(toolCall.arguments),
+									partial: output,
+								},
+								{ parsedThrough: 0 },
+							);
 							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 						}
 
 						if (!handledAsKnownPart) {
 							output.content.push(toProviderNativeContent(part));
+							pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 						}
 					}
 				}
@@ -247,6 +262,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 						subtype: "groundingMetadata",
 						raw: candidate.groundingMetadata,
 					});
+					pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 					groundingMetadataEmitted = true;
 				}
 
@@ -256,6 +272,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 						subtype: "urlContextMetadata",
 						raw: candidate.urlContextMetadata,
 					});
+					pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 					urlContextMetadataEmitted = true;
 				}
 
@@ -268,6 +285,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				}
 
 				if (chunk.usageMetadata) {
+					const reasoning = reportedCount(chunk.usageMetadata.thoughtsTokenCount);
 					output.usage = {
 						input:
 							(chunk.usageMetadata.promptTokenCount || 0) - (chunk.usageMetadata.cachedContentTokenCount || 0),
@@ -275,7 +293,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
 						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
 						cacheWrite: 0,
-						reasoning: chunk.usageMetadata.thoughtsTokenCount || 0,
+						...(reasoning === undefined ? {} : { reasoning }),
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,
 						cost: {
 							input: 0,
@@ -291,14 +309,14 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 
 			if (currentBlock) {
 				if (currentBlock.type === "text") {
-					stream.push({
+					pushOpen({
 						type: "text_end",
 						contentIndex: blockIndex(),
 						content: currentBlock.text,
 						partial: output,
 					});
 				} else {
-					stream.push({
+					pushOpen({
 						type: "thinking_end",
 						contentIndex: blockIndex(),
 						content: currentBlock.thinking,

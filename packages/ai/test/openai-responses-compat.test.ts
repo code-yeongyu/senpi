@@ -262,8 +262,8 @@ describe("openai-responses provider defaults", () => {
 
 		expect(model.compat?.supportsStrictMode).toBe(true);
 		expect(capturedPayload?.tools).toEqual([
-			expect.objectContaining({ name: "ordinary", strict: false }),
 			expect.objectContaining({ name: "constrained", strict: true }),
+			expect.objectContaining({ name: "ordinary", strict: false }),
 		]);
 	});
 
@@ -358,7 +358,7 @@ describe("openai-responses provider defaults", () => {
 		expect(captured.clientRequestId).toBe("session-123");
 	});
 
-	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {
+	it("keeps the prefix prompt_cache_key within OpenAI's 64-character limit", async () => {
 		const sessionId = "x".repeat(67);
 		let capturedPayload: Pick<CapturedResponsesPayload, "prompt_cache_key"> | undefined;
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -387,7 +387,8 @@ describe("openai-responses provider defaults", () => {
 			if (event.type === "done" || event.type === "error") break;
 		}
 
-		expect(capturedPayload?.prompt_cache_key).toBe("x".repeat(64));
+		expect(capturedPayload?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+		expect(capturedPayload?.prompt_cache_key).not.toBe(sessionId.slice(0, 64));
 	});
 
 	it("sets cache-affinity headers for proxy OpenAI Responses requests with a sessionId", async () => {
@@ -424,7 +425,8 @@ describe("openai-responses provider defaults", () => {
 		expect(captured.clientRequestId).toBeNull();
 		expect(captured.xSessionId).toBe("session-proxy");
 		expect(capturedPayload?.session_id).toBeUndefined();
-		expect(capturedPayload?.prompt_cache_key).toBe("session-proxy");
+		expect(capturedPayload?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+		expect(capturedPayload?.prompt_cache_key).not.toBe("session-proxy");
 	});
 
 	it("auto-detects OpenRouter session-affinity header for OpenRouter Responses endpoints", async () => {
@@ -448,7 +450,8 @@ describe("openai-responses provider defaults", () => {
 		expect(captured.clientRequestId).toBeNull();
 		expect(captured.xSessionId).toBe("session-openrouter");
 		expect(capturedPayload?.session_id).toBeUndefined();
-		expect(capturedPayload?.prompt_cache_key).toBe("session-openrouter");
+		expect(capturedPayload?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+		expect(capturedPayload?.prompt_cache_key).not.toBe("session-openrouter");
 	});
 
 	it("uses OpenAI no-session format when configured", async () => {
@@ -473,7 +476,8 @@ describe("openai-responses provider defaults", () => {
 		expect(captured.clientRequestId).toBe("session-proxy");
 		expect(captured.xSessionId).toBeNull();
 		expect(capturedPayload?.session_id).toBeUndefined();
-		expect(capturedPayload?.prompt_cache_key).toBe("session-proxy");
+		expect(capturedPayload?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+		expect(capturedPayload?.prompt_cache_key).not.toBe("session-proxy");
 	});
 
 	it("uses OpenAI no-session format for OpenCode Responses models", async () => {
@@ -493,7 +497,8 @@ describe("openai-responses provider defaults", () => {
 		expect(captured.sessionId).toBeNull();
 		expect(captured.clientRequestId).toBe("session-opencode");
 		expect(captured.xSessionId).toBeNull();
-		expect(capturedPayload?.prompt_cache_key).toBe("session-opencode");
+		expect(capturedPayload?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+		expect(capturedPayload?.prompt_cache_key).not.toBe("session-opencode");
 	});
 
 	it("can omit OpenAI session_id header while preserving other affinity data", async () => {
@@ -516,7 +521,8 @@ describe("openai-responses provider defaults", () => {
 
 		expect(captured.sessionId).toBeNull();
 		expect(captured.clientRequestId).toBe("session-123");
-		expect(capturedPayload?.prompt_cache_key).toBe("session-123");
+		expect(capturedPayload?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+		expect(capturedPayload?.prompt_cache_key).not.toBe("session-123");
 	});
 
 	it("lets explicit headers override the default OpenAI cache-affinity headers", async () => {

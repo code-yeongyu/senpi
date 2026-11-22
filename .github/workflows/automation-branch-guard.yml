@@ -9,6 +9,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Only pull_request triggers this guard, and a newer head replaces the verdict of the older one, so the
+# superseded run holds a runner for a result nothing can use (senpi#4609).
+concurrency:
+  group: automation-branch-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

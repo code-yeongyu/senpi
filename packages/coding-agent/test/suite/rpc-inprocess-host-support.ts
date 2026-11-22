@@ -31,8 +31,8 @@ interface OpenFields {
 }
 
 export interface TeardownGate {
-	/** Every teardown from here on blocks until `release()`. */
-	hold(): void;
+	/** Every teardown from here on blocks until `release()`; resolves when one reaches the gate. */
+	hold(): Promise<void>;
 	/** Lets the held teardowns finish. */
 	release(): void;
 }
@@ -54,6 +54,8 @@ export interface FakeTurn {
 	finishBash(): void;
 	/** Delivery ids the admission ledger reports as held but not yet written. */
 	readonly pendingDeliveries: string[];
+	/** How many times the host held this session's automatic turns (`holdAutomaticTurns`). */
+	readonly automaticTurnHolds: number;
 }
 
 /** What the rig's binding reports beyond command handling. */
@@ -69,20 +71,22 @@ export interface FakeBindingExtras {
  * the host aborted persists nothing - so a test that expects a turn to outlive its
  * client's disconnect fails if the host tore the session down instead.
  */
-function inProcessRuntimeFactory(): {
+export function inProcessRuntimeFactory(): {
 	createRuntime: CreateAgentSessionRuntimeFactory;
 	turns: Map<string, FakeTurn>;
 	teardown: TeardownGate;
 } {
 	const turns = new Map<string, FakeTurn>();
-	let held: { promise: Promise<void>; resolve: () => void } | undefined;
+	let held: { promise: Promise<void>; resolve: () => void; entered: () => void } | undefined;
 	const teardown: TeardownGate = {
 		hold: () => {
+			const entered = Promise.withResolvers<void>();
 			let resolve!: () => void;
 			const promise = new Promise<void>((settle) => {
 				resolve = settle;
 			});
-			held = { promise, resolve };
+			held = { promise, resolve, entered: entered.resolve };
+			return entered.promise;
 		},
 		release: () => {
 			held?.resolve();
@@ -90,17 +94,17 @@ function inProcessRuntimeFactory(): {
 		},
 	};
 	const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		const manager = options.sessionManager;
 		const file = manager.getSessionFile();
 		const hold =
 			file === undefined
 				? undefined
-				: holdSessionFile(file, manager.getSessionId(), {
+				: await holdSessionFile(file, manager.getSessionId(), {
 						cwd: options.cwd,
 						expectExisting: false,
 					});
-		const state = { isStreaming: false, aborted: false };
+		const state = { isStreaming: false, aborted: false, automaticTurnHolds: 0 };
 		let bash: { end: (cancelled: boolean) => void } | undefined;
 		const pendingDeliveries: string[] = [];
 		const bashMessage = (cancelled: boolean) => ({
@@ -135,6 +139,9 @@ function inProcessRuntimeFactory(): {
 				}),
 			finishBash: () => bash?.end(false),
 			pendingDeliveries,
+			get automaticTurnHolds() {
+				return state.automaticTurnHolds;
+			},
 		});
 		return {
 			session: {
@@ -183,11 +190,19 @@ function inProcessRuntimeFactory(): {
 				get isSessionBusy(): boolean {
 					return isSessionBusySnapshot(this.activitySnapshot);
 				},
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: {
+					getFlagValues: () => new Map(),
+					hasHandlers: () => false,
+					emit: async () => {},
+					emitSessionMove: async () => [],
+				},
 				subscribe: () => () => {},
 				abort: async () => {
 					state.aborted = true;
 					state.isStreaming = false;
+				},
+				holdAutomaticTurns: () => {
+					state.automaticTurnHolds++;
 				},
 				// The real abort only signals the child; the cancelled entry is written when it settles.
 				abortBash: () => {
@@ -195,6 +210,7 @@ function inProcessRuntimeFactory(): {
 					if (running) queueMicrotask(() => running.end(true));
 				},
 				waitForIdle: async () => {
+					held?.entered();
 					await held?.promise;
 				},
 				dispose: () => hold?.release(),

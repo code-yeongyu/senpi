@@ -10,6 +10,8 @@
  * plain install behaves exactly as it did before this module existed.
  */
 
+import { isAbsolute } from "node:path";
+
 /** Environment variable carrying the JSON brand profile. */
 export const BRAND_ENV_VAR = "SENPI_BRAND";
 
@@ -50,9 +52,17 @@ export interface BrandProfile {
 	readonly userAgent: string;
 	/** Product token used as the provider-side originator, when the distribution overrides it. */
 	readonly originator?: string;
+	/** Product logo for the sign-in result pages, as a base64 image data URI. */
+	readonly logo?: string;
 	/** Update channel of the branded product; absent means the product manages updates itself. */
 	readonly update?: BrandUpdateChannel;
 	readonly changelog?: BrandChangelog;
+	/**
+	 * Absolute paths of the distribution's own extensions, which its launcher passes with `--extension` on every
+	 * start. A host the distribution runs loads them too, so an attaching start never counts them as flags it cannot
+	 * apply (oh-my-openagent#14465).
+	 */
+	readonly extensions?: readonly string[];
 }
 
 function readChangelog(source: Record<string, unknown>): BrandChangelog | undefined {
@@ -63,6 +73,15 @@ function readChangelog(source: Record<string, unknown>): BrandChangelog | undefi
 	if (!path?.startsWith("/") || path.includes("\0")) return undefined;
 	const version = readString(changelog, "version");
 	return { path, ...(version ? { version } : {}) };
+}
+
+function readExtensions(source: Record<string, unknown>): string[] | undefined {
+	const value = source.extensions;
+	if (!Array.isArray(value)) return undefined;
+	const paths = value.filter(
+		(path): path is string => typeof path === "string" && isAbsolute(path) && !path.includes("\0"),
+	);
+	return paths.length > 0 ? paths : undefined;
 }
 
 function readUpdateChannel(source: Record<string, unknown>): BrandUpdateChannel | undefined {
@@ -131,6 +150,7 @@ export function parseBrandProfile(raw: string | undefined): BrandProfile | undef
 	}
 
 	const changelog = readChangelog(source);
+	const extensions = readExtensions(source);
 	return {
 		name,
 		command: readString(source, "command"),
@@ -140,8 +160,10 @@ export function parseBrandProfile(raw: string | undefined): BrandProfile | undef
 		envPrefix: (readString(source, "envPrefix") || name).toUpperCase(),
 		userAgent: readString(source, "userAgent") || name,
 		originator: readString(source, "originator"),
+		logo: readString(source, "logo"),
 		update: readUpdateChannel(source),
 		...(changelog ? { changelog } : {}),
+		...(extensions ? { extensions } : {}),
 	};
 }
 

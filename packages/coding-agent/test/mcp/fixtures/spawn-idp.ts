@@ -5,11 +5,19 @@ import { fileURLToPath } from "node:url";
 const fixtureDir = dirname(fileURLToPath(import.meta.url));
 
 export interface IdpLog {
-	requests: { method: string; path: string; grantType?: string; resource?: string; note?: string }[];
+	requests: {
+		method: string;
+		path: string;
+		rpcMethod?: string;
+		grantType?: string;
+		resource?: string;
+		note?: string;
+	}[];
 	tokenHits: number;
 	registerHits: number;
 	discoveryHits: number;
 	familyInvalidated: boolean;
+	registrations: { clientId: string; redirectUris: string[] }[];
 }
 
 export interface IdpFixture {
@@ -17,6 +25,9 @@ export interface IdpFixture {
 	mcpUrl: string;
 	pid: number;
 	getLog: () => Promise<IdpLog>;
+	holdRefresh: () => Promise<void>;
+	refreshEntered: () => Promise<void>;
+	releaseRefresh: () => Promise<void>;
 	cleanup: () => Promise<void>;
 }
 
@@ -42,6 +53,15 @@ export async function spawnOAuthIdp(args: string[] = []): Promise<IdpFixture> {
 		mcpUrl: ready.mcpUrl,
 		pid: child.pid ?? ready.pid,
 		getLog: async () => (await fetch(`${ready.url}/__log`)).json() as Promise<IdpLog>,
+		holdRefresh: async () => {
+			await fetch(`${ready.url}/__refresh/hold`, { signal: AbortSignal.timeout(5000) });
+		},
+		refreshEntered: async () => {
+			await fetch(`${ready.url}/__refresh/entered`, { signal: AbortSignal.timeout(5000) });
+		},
+		releaseRefresh: async () => {
+			await fetch(`${ready.url}/__refresh/release`, { signal: AbortSignal.timeout(5000) });
+		},
 		cleanup: async () => {
 			if (child.exitCode === null) child.kill("SIGTERM");
 			await new Promise<void>((resolve) => {

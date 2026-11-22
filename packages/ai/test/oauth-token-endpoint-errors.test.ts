@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import { chatgptSubscriptionOAuth } from "../src/auth/oauth/chatgpt-subscription.ts";
 import { cursorOAuth } from "../src/auth/oauth/cursor.ts";
 import { exchangeDevinAuthorizationCode } from "../src/auth/oauth/devin-token.ts";
@@ -11,7 +10,7 @@ import { createRadiusOAuth } from "../src/auth/oauth/radius.ts";
 import { xaiOAuth } from "../src/auth/oauth/xai.ts";
 import type { OAuthAuth } from "../src/auth/types.ts";
 import { createOpenGatewayCatalog } from "../src/providers/opengateway-refresh.ts";
-import { classifyOAuthRefreshFailure } from "../src/utils/oauth-refresh-error.ts";
+import { classifyOAuthRefreshFailure, OAuthTokenEndpointError } from "../src/utils/oauth-refresh-error.ts";
 
 const credential = {
 	type: "oauth" as const,
@@ -29,7 +28,6 @@ describe("token endpoint HTTP error facts (#2893)", () => {
 	});
 
 	it.each([
-		["anthropic", anthropicOAuth],
 		["chatgpt-subscription", chatgptSubscriptionOAuth],
 		["cursor", cursorOAuth],
 		["github-copilot", githubCopilotOAuth],
@@ -50,7 +48,6 @@ describe("token endpoint HTTP error facts (#2893)", () => {
 	});
 
 	it.each([
-		["anthropic", anthropicOAuth],
 		["chatgpt-subscription", chatgptSubscriptionOAuth],
 		["cursor", cursorOAuth],
 		["github-copilot", githubCopilotOAuth],
@@ -73,6 +70,26 @@ describe("token endpoint HTTP error facts (#2893)", () => {
 		const error = await oauth.refresh(credential, timedOut.signal).catch((error: unknown) => error);
 		expect(error).toBeInstanceOf(Error);
 		expect(classifyOAuthRefreshFailure(error)).toBe("transient");
+	});
+
+	// The credential pool reads these facts, never the prose, to decide that the account is dead (senpi#5010).
+	it.each([
+		[403, { error_description: "token revoked" }, { status: 403, credentialRefused: true, oauthError: undefined }],
+		[
+			400,
+			{ error: "invalid_grant", error_description: "The refresh token is invalid" },
+			{ status: 400, credentialRefused: true, oauthError: "invalid_grant" },
+		],
+		[401, { error: "invalid_client" }, { status: 401, credentialRefused: true, oauthError: "invalid_client" }],
+		[404, { error: "not_found" }, { status: 404, credentialRefused: false, oauthError: "not_found" }],
+	] as const)("Kimi's %i refresh failure carries its refusal decision and OAuth code", async (status, body, facts) => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(JSON.stringify(body), { status })),
+		);
+		const error = await kimiCodingOAuth.refresh(credential, signal).catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(OAuthTokenEndpointError);
+		expect(error).toMatchObject(facts);
 	});
 
 	it("xAI keeps the status of a non-JSON error page", async () => {

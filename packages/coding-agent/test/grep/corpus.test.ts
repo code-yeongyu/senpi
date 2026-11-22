@@ -1,5 +1,24 @@
+import type { Dirent } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildCorpus } from "./fixtures/build-corpus.ts";
+
+async function listTreeWithoutFollowingSymlinks(root: string): Promise<{ files: string[]; symlinks: string[] }> {
+	const files: string[] = [];
+	const symlinks: string[] = [];
+	const pending = [root];
+	for (let dir = pending.pop(); dir !== undefined; dir = pending.pop()) {
+		const entries: Dirent[] = await readdir(dir, { withFileTypes: true });
+		for (const entry of entries) {
+			const path = join(dir, entry.name);
+			if (entry.isSymbolicLink()) symlinks.push(relative(root, path));
+			else if (entry.isDirectory()) pending.push(path);
+			else if (entry.isFile()) files.push(relative(root, path));
+		}
+	}
+	return { files, symlinks };
+}
 
 const expected: Record<string, number> = {
 	".gitignore": 9,
@@ -27,19 +46,11 @@ describe("grep fixture corpus", () => {
 	});
 	it("materializes the exact deterministic corpus", async () => {
 		corpus = await buildCorpus({ git: false });
-		const files = await (await import("node:fs/promises")).readdir(corpus.root, {
-			recursive: true,
-			withFileTypes: true,
-		});
+		const root = corpus.root;
+		const { files, symlinks } = await listTreeWithoutFollowingSymlinks(root);
 		const actual: Record<string, number> = {};
-		for (const entry of files) {
-			if (!entry.isFile()) continue;
-			const relative = entry.parentPath
-				? (await import("node:path")).relative(corpus.root, `${entry.parentPath}/${entry.name}`)
-				: entry.name;
-			actual[relative] = (await (await import("node:fs/promises")).stat(`${corpus.root}/${relative}`)).size;
-		}
+		for (const file of files) actual[file] = (await stat(join(root, file))).size;
 		expect(actual).toEqual(expected);
-		expect(files.filter((entry) => entry.isSymbolicLink()).map((entry) => entry.name)).toEqual(["loop"]);
+		expect(symlinks).toEqual(["loop"]);
 	});
 });

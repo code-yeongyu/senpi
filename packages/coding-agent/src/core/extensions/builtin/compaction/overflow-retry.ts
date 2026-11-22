@@ -194,16 +194,95 @@ export function summarizationHistoryBudget(contextWindow: number, promptTokens: 
 	);
 }
 
+function removeFirstToolPairAfter(messages: AgentMessage[], boundaryIndex: number): PruneStep | undefined {
+	for (let index = boundaryIndex + 1; index < messages.length; index++) {
+		const message = messages[index];
+		if (message?.role === "assistant" && getToolCallIds(message).size > 0)
+			return removeAssistantToolPair(messages, index);
+	}
+	return undefined;
+}
+
+/** Shortest request text a truncation keeps, so the summary still sees what was asked. */
+const TRUNCATED_REQUEST_MIN_CHARS = 200;
+
+const TRUNCATION_NOTE = /\n\n\[\.\.\. (\d+) more characters truncated\]$/;
+
 /**
- * Pre-size the summarization input before the first billed attempt. Only the
- * oldest messages are dropped; a fitting input passes through untouched.
+ * When the turn's request alone is over the budget, keep it but cut its text to fit (images and other non-text
+ * blocks go with the cut), so a giant pasted prompt still compacts instead of exhausting every retry (senpi#4079).
+ * Returns undefined when the request is within the budget or too short to cut.
+ */
+function truncateRequestToBudget(messages: AgentMessage[], targetTokens: number): AgentMessage[] | undefined {
+	const requestIndex = findLastUserLikeIndex(messages);
+	const request = messages[requestIndex];
+	if (request?.role !== "user") return undefined;
+	const requestTokens = estimateWireTokens(request);
+	if (requestTokens <= targetTokens) return undefined;
+	const fullText =
+		typeof request.content === "string"
+			? request.content
+			: request.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+	// A request cut by an earlier retry carries its note; fold that count into the new one instead of nesting notes.
+	const earlierCut = TRUNCATION_NOTE.exec(fullText);
+	const text = earlierCut ? fullText.slice(0, earlierCut.index) : fullText;
+	const alreadyCut = earlierCut ? Number(earlierCut[1]) : 0;
+	if (text.length <= TRUNCATED_REQUEST_MIN_CHARS) return undefined;
+	const available = Math.max(0, targetTokens - (estimateTotalTokens(messages) - requestTokens));
+	// The cut ratio is measured on the text alone: images never reach the serialized summary input, so their
+	// estimated weight must not deepen the cut.
+	const textTokens = Math.max(1, estimateWireTokens({ ...request, content: text }));
+	let keep = Math.min(
+		text.length - 1,
+		Math.max(TRUNCATED_REQUEST_MIN_CHARS, Math.floor((text.length * available) / textTokens)),
+	);
+	for (;;) {
+		const truncated: AgentMessage = {
+			...request,
+			content: `${text.slice(0, keep)}\n\n[... ${text.length - keep + alreadyCut} more characters truncated]`,
+		};
+		if (estimateWireTokens(truncated) <= available || keep <= TRUNCATED_REQUEST_MIN_CHARS)
+			return messages.map((message, index) => (index === requestIndex ? truncated : message));
+		keep = Math.max(TRUNCATED_REQUEST_MIN_CHARS, Math.floor(keep * 0.8));
+	}
+}
+
+/**
+ * Summarization input only: drop the oldest history first, then, when the last turn alone is still over the budget,
+ * its oldest tool steps. The turn's request is kept and a tool call never loses its result (senpi#4079). Live context
+ * pruning keeps using `pruneOldMessagesToBudget`, which never touches the last turn.
+ */
+function pruneSummarizationInputToBudget(messages: AgentMessage[], targetTokens: number): AgentMessage[] {
+	let pruned = pruneOldMessagesToBudget(messages, targetTokens);
+	let total = estimateTotalTokens(pruned);
+	while (total > targetTokens) {
+		const next = removeFirstToolPairAfter(pruned, findLastUserLikeIndex(pruned));
+		if (!next) break;
+		pruned = next.messages;
+		total -= next.removedTokens;
+	}
+	return pruned;
+}
+
+/**
+ * Pre-size the summarization input before the first billed attempt: oldest
+ * history first, then the last turn's oldest tool steps; when the turn's
+ * request alone is still over the budget, its text is cut to fit. A fitting
+ * input passes through untouched.
  */
 export function boundSummarizationInput(
 	messages: AgentMessage[],
 	contextWindow: number,
 	promptTokens: number,
 ): AgentMessage[] {
-	return pruneOldMessagesToBudget(messages, summarizationHistoryBudget(contextWindow, promptTokens));
+	const budget = summarizationHistoryBudget(contextWindow, promptTokens);
+	const pruned = pruneSummarizationInputToBudget(messages, budget);
+	// Without a user-like request (a turn that starts with a custom or summary
+	// entry) pruning can remove everything; the newest message is kept so the
+	// summary never runs on an empty conversation.
+	if (pruned.length === 0) return messages.slice(-1);
+	if (estimateTotalTokens(pruned) <= budget) return pruned;
+	return truncateRequestToBudget(pruned, budget) ?? pruned;
 }
 
 /**
@@ -216,14 +295,19 @@ export function shrinkSummarizationInputForOverflowRetry(
 	contextWindow: number,
 	promptTokens: number,
 ): AgentMessage[] | undefined {
-	if (messages.length <= 1) return undefined;
 	const budget = summarizationHistoryBudget(contextWindow, promptTokens);
 	const halfTokens = Math.floor(estimateTotalTokens(messages) / 2);
-	const shrunk = pruneOldMessagesToBudget(messages, Math.min(halfTokens, budget));
+	const target = Math.min(halfTokens, budget);
+	// A lone message is never pruned away: an over-target request is cut instead, anything else gives up.
+	if (messages.length <= 1) return truncateRequestToBudget(messages, target);
+	const shrunk = pruneSummarizationInputToBudget(messages, target);
 	if (shrunk.length < messages.length) return shrunk;
-	// Every remaining message sits at or after the turn boundary, so budget
-	// pruning cannot shrink further; still drop the oldest so the retry
-	// differs from the rejected attempt instead of re-billing an identical one.
+	// Nothing prunable is left: what remains after the request is plain replies
+	// (or orphaned results and custom entries). Still drop one so the retry differs from the rejected
+	// attempt instead of re-billing an identical one; the oldest one after the
+	// request goes before the request itself (senpi#4079).
+	const boundaryIndex = findLastUserLikeIndex(messages);
+	if (boundaryIndex < messages.length - 1) return messages.filter((_message, index) => index !== boundaryIndex + 1);
 	return messages.slice(1);
 }
 

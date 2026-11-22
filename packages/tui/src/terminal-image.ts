@@ -5,6 +5,8 @@ import type { TerminalColorMode } from "./colors.ts";
 import {
 	type DetectedTerminalCapabilities,
 	detectTerminalCapabilities,
+	type ImageProtocol,
+	isVsCodeTerminal,
 	type TerminalCapabilities,
 } from "./terminal-capabilities.ts";
 import { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
@@ -42,6 +44,10 @@ export interface ImageRenderOptions {
 
 let cachedCapabilities: TerminalCapabilities | null = null;
 let capabilityOverrides: Partial<TerminalCapabilities> = {};
+// Answer of the TUI's Kitty graphics probe, recorded once per process. It
+// outlives cachedCapabilities because focus events reset that cache and
+// re-detect from the environment (senpi #3698).
+let probedImageProtocol: ImageProtocol | undefined;
 
 // Default cell dimensions - updated by TUI when terminal responds to query
 let cellDimensions: CellDimensions = { widthPx: 9, heightPx: 18 };
@@ -116,12 +122,29 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
-	if (termProgram === "alacritty" || termProgram === "vscode" || termProgram === "zed") {
+	if (termProgram === "alacritty" || termProgram === "zed") {
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
 	if (terminalEmulator === "jetbrains-jediterm") {
 		return { images: null, trueColor: true, hyperlinks: false };
+	}
+
+	// herdr panes: the environment says nothing about the outer terminal's graphics support, and herdr
+	// itself leaks graphics sequences when the outer terminal cannot render them. Detection defers to
+	// the TUI's Kitty graphics probe and latches its answer (senpi #3698).
+	if (termProgram === "herdr" || process.env.HERDR_ENV === "1") {
+		return {
+			images: probedImageProtocol ?? null,
+			trueColor: hasTrueColorHint,
+			hyperlinks: false,
+			...(probedImageProtocol === undefined ? { imageProbe: "kitty" as const } : {}),
+		};
+	}
+
+	// After every other terminal: the VS Code marker is inherited by terminals started from VS Code (#2826).
+	if (isVsCodeTerminal(process.env)) {
+		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
 	// Windows Terminal does not always set WT_SESSION, for example when it hosts
@@ -142,9 +165,17 @@ function parseBooleanCapabilityOverride(value: string | undefined): boolean | un
 	return value === "1" ? true : value === "0" ? false : undefined;
 }
 
-// The hint explains why detection turned images off; an explicit image choice makes it wrong.
-function withoutImageHint<T extends TerminalCapabilities>(caps: T): Omit<T, "imageHint"> {
-	const { imageHint: _imageHint, ...rest } = caps;
+/** Record the TUI probe's answer for probe-requesting terminals. `undefined` re-arms the probe. */
+export function setProbedImageProtocol(protocol: ImageProtocol | undefined): void {
+	if (probedImageProtocol === protocol) return;
+	probedImageProtocol = protocol;
+	cachedCapabilities = null;
+}
+
+// The hint explains why detection turned images off; an explicit image choice makes it wrong. The
+// probe flag is stripped for the same reason: an explicit choice settles the question, no probe needed.
+function withoutImageHint<T extends TerminalCapabilities>(caps: T): Omit<T, "imageHint" | "imageProbe"> {
+	const { imageHint: _imageHint, imageProbe: _imageProbe, ...rest } = caps;
 	return rest;
 }
 

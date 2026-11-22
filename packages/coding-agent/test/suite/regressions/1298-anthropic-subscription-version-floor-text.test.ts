@@ -45,6 +45,7 @@ describe("regression #1298: Claude SDK version-floor errors", () => {
 					maxTokens: 8_192,
 				},
 				{ messages: [] },
+				{ cwd: process.cwd() },
 			).result();
 			expect(result.stopReason).toBe("error");
 			expect(result.errorMessage).toContain("does not support this model");

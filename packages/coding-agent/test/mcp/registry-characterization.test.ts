@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as cache from "../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import { loadMcpConfig } from "../../src/core/extensions/builtin/mcp/config.ts";
+import { resolveMcpConfigGeneration } from "../../src/core/extensions/builtin/mcp/config-generation.ts";
 import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
 import {
 	disposeMcpConnectionLifecycle,
@@ -105,8 +106,9 @@ describe("MCP registry characterization", () => {
 		setConfig(root, { fx: stdioServer(["--tools", "1"]) });
 		const server = loadMcpConfig({ ...root, projectTrusted: true }).servers.fx;
 		if (!server?.config || !server.configHash) throw new Error("missing fixture config");
+		const { config } = await resolveMcpConfigGeneration({ serverName: "fx", declared: server.config });
 		const logger = createMcpLogger("fx", { logDir: root.agentDir });
-		const connection = new ServerConnection({ serverName: "fx", config: server.config, logger });
+		const connection = new ServerConnection({ serverName: "fx", config, logger });
 		connections.push(connection);
 		const entry: McpConnectionEntry = {
 			key: `fx\0${server.configHash}`,

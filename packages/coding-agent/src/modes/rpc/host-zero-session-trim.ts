@@ -69,23 +69,27 @@ export class ZeroSessionTrimmer {
 	/** A collection that ran on the previous tick; its record waits for the allocator to return the pages. */
 	private pending: PendingTrim | undefined;
 	private lastPauseMs = 0;
-	private timer: ReturnType<typeof setInterval> | undefined;
+	private timer: ReturnType<typeof setTimeout> | undefined;
+	private started = false;
 
 	constructor(options: ZeroSessionTrimmerOptions) {
 		this.options = options;
 		this.now = options.now ?? Date.now;
 	}
 
+	/**
+	 * Ticks only while a trim is owed (senpi#3747): the registry reports every open and close through
+	 * `observe`, so a host whose session count holds still has nothing to check and no timer runs.
+	 */
 	start(): void {
-		if (this.timer !== undefined) return;
-		// Unref'd: a trim must never be the reason the host stays alive.
-		this.timer = setInterval(() => this.check(), ZERO_SESSION_TRIM_TICK_MS);
-		this.timer.unref?.();
+		this.started = true;
+		this.arm();
 	}
 
 	stop(): void {
+		this.started = false;
 		if (this.timer === undefined) return;
-		clearInterval(this.timer);
+		clearTimeout(this.timer);
 		this.timer = undefined;
 	}
 
@@ -94,9 +98,35 @@ export class ZeroSessionTrimmer {
 		if (size > 0) this.heldSessions = true;
 		if (size < this.lastSessionCount) this.declined = true;
 		this.lastSessionCount = size;
+		this.arm();
 	}
 
 	check(): void {
+		this.evaluate();
+		this.arm();
+	}
+
+	/** A collection waiting to be reported, a drop waiting for its spacing, or a zero not yet answered. */
+	private owesTick(): boolean {
+		return (
+			this.pending !== undefined ||
+			this.declined ||
+			this.zeroPending ||
+			(this.heldSessions && this.lastSessionCount === 0)
+		);
+	}
+
+	private arm(): void {
+		if (!this.started || this.timer !== undefined || !this.owesTick()) return;
+		this.timer = setTimeout(() => {
+			this.timer = undefined;
+			this.check();
+		}, ZERO_SESSION_TRIM_TICK_MS);
+		// Unref'd: a trim must never be the reason the host stays alive.
+		this.timer.unref?.();
+	}
+
+	private evaluate(): void {
 		if (this.pending !== undefined) this.report(this.pending);
 		const sessions = this.options.sessions();
 		if (sessions < this.lastSessionCount) this.declined = true;

@@ -362,6 +362,7 @@ export function convertMessages<T extends GoogleApiType>(
 						parts.push(part);
 					}
 				} else if (block.type === "providerNative") {
+					// providerNative blocks are not replayed to Google.
 				}
 			}
 

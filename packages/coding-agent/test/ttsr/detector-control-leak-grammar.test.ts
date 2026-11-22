@@ -31,8 +31,8 @@ describe("structural grammar acceptance", () => {
 		});
 	});
 
-	it("SGML name at maximum length 16 is valid and fires", () => {
-		const name = `a${"b".repeat(15)}`;
+	it("SGML tokenizer special token (longest known name) fires", () => {
+		const name = "start_of_image";
 		const token = sgml(name);
 		expectLeakMatchEverywhere(normalRun(token, 4), {
 			tokenId: `sgml:${name}`,
@@ -40,6 +40,10 @@ describe("structural grammar acceptance", () => {
 			context: "normal",
 			anomalyStartOffset: PLAIN_PROSE_PREFIX.length + 1,
 		});
+	});
+
+	it("SGML name that is not a tokenizer special token is markup and stays silent (omo#10789)", () => {
+		expectNoLeakMatchEverywhere(normalRun(sgml(`a${"b".repeat(15)}`), 4));
 	});
 
 	it("BRACKET name at maximum length 16 is valid and fires", () => {

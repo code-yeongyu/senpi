@@ -219,6 +219,26 @@ describe.skipIf(process.platform === "win32")("a terminal session's controls ove
 		expect(await controlData(socket, { type: "get_state" })).toMatchObject({ isStreaming: false });
 	});
 
+	it("takes background: stop as the RPC interrupt does and refuses any other value, leaving the turn running", async () => {
+		const held = heldTurn();
+		const { harness, socket } = await controlledTerminal([held.tool]);
+		expect(await controlData(socket, { type: "interrupt", background: "stop" })).toEqual({
+			interrupted: false,
+			background: { stopped: [], failed: [] },
+		});
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("hold", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		const run = harness.session.prompt("keep going");
+		await held.toolStarted;
+		expect(await refusal(socket, { type: "interrupt", background: "kill" })).toBe('background must be "stop".');
+		expect(harness.session.isStreaming).toBe(true);
+		held.release();
+		await run;
+	});
+
 	it("stops a running turn as Esc does: a stale turn id is left alone, queued input returns to the editor, the session stays open", async () => {
 		const held = heldTurn();
 		const { harness, mode, socket } = await controlledTerminal([held.tool]);

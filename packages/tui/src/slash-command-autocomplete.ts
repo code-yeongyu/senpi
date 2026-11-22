@@ -64,7 +64,7 @@ export function getSlashCommandSuggestions(
 		// A hint without an explicit `requiresArguments` means the command expects input.
 		const requiresArguments = ("requiresArguments" in cmd ? cmd.requiresArguments : undefined) ?? hint !== undefined;
 		const desc = cmd.description ?? "";
-		const fullDesc = hint ? (desc ? `${hint} — ${desc}` : hint) : desc;
+		const fullDesc = hint ? (desc ? `${hint} - ${desc}` : hint) : desc;
 		return [
 			{
 				name,

@@ -12,5 +12,9 @@ export function fakeSessionBase(options: { cwd: string; agentDir: string; sessio
 		sessionManager: options.sessionManager,
 		settingsManager: SettingsManager.create(options.cwd, options.agentDir),
 		agentDir: options.agentDir,
+		// list_sessions publishes this row for every entry (#3576); a fake session has no tool child.
+		toolChildRow: () => ({ state: "none" as const }),
+		// AgentSessionRuntime.dispose() awaits this before releasing the session hold (#3576); a fake has no child.
+		whenToolChildClosed: () => Promise.resolve(),
 	};
 }

@@ -44,9 +44,15 @@ export function buildOpeningEntry(input: {
 	// starts with reason "startup" and every extension that only rebuilds state
 	// on a resume - the ask-user dangling-question hook - stays unreachable from
 	// the RPC restart path. A session created by this open stays "startup".
-	const sessionStartEvent: SessionStartEvent | undefined = isResume
-		? { type: "session_start", reason: "resume" }
-		: undefined;
+	const sessionStartEvent: SessionStartEvent | undefined =
+		isResume || profile.attended === false || profile.continued === true
+			? {
+					type: "session_start",
+					reason: isResume ? "resume" : "startup",
+					...(profile.attended === false ? { attended: false } : {}),
+					...(profile.continued === true ? { continued: true } : {}),
+				}
+			: undefined;
 	const storedProfile = frozenProfile({ ...profile, ...(sessionPath ? { sessionPath } : {}) });
 	const runtimeProfile = isResume
 		? frozenProfile({ ...storedProfile, creationModel: undefined, initialThinkingLevel: undefined })
@@ -59,13 +65,14 @@ export function buildOpeningEntry(input: {
 	openCompletion.catch(() => {});
 	const entry: RpcSessionEntry = {
 		state: "opening",
+		...(options?.speculative ? { speculative: true } : {}),
 		scope: new ProviderScope(),
 		profile: storedProfile,
 		...sessionIdentity(storedProfile),
 		sessionPath,
 		reservationKey: sessionPath,
 		cwd: storedProfile.cwd,
-		attachments: 1,
+		attachments: options?.speculative || options?.unattached ? 0 : 1,
 		retainOnDisconnect: options?.retainOnDisconnect === true,
 		lastCommandAt: input.now,
 		lifecycleMutex: Promise.resolve(),

@@ -299,6 +299,33 @@ describe("Classic single-session RPC characterization pins (todo 2)", () => {
 	// Pin (c): exact current unknown-command error response shape (fixture)
 	// -------------------------------------------------------------------------
 
+	describe("(d) compact transport methods (senpi#5748)", () => {
+		// The classic stdio handler has no compact transport: each of the four answers the same typed refusal as the
+		// multi-session host with compact updates off, never "Unknown command".
+		it("answers feature_disabled naming compact_updates for all four", async () => {
+			const { lineHandler, cleanup } = await startClassicRpc();
+			try {
+				for (const type of ["reset_stream", "cancel_attempt", "get_recovery_page", "release_recovery"]) {
+					const id = sendCommand(lineHandler, { type, admissionId: "a", token: "t", streamId: "s" });
+					await vi.waitFor(() => {
+						expect(responseFor(id)).toBeDefined();
+					});
+					expect(responseFor(id), type).toMatchObject({
+						id,
+						type: "response",
+						command: type,
+						success: false,
+						error: "feature_disabled",
+						errorCode: "feature_disabled",
+						errorData: { feature: "compact_updates" },
+					});
+				}
+			} finally {
+				await cleanup();
+			}
+		});
+	});
+
 	describe("(c) unknown-command error response shape", () => {
 		/**
 		 * FIXTURE: the exact classic unknown-command error response shape, captured
@@ -401,8 +428,12 @@ describe("Classic single-session RPC characterization pins (todo 2)", () => {
 				// MUTATION: inject a top-level sessionId key into the first emitted line
 				// at the write boundary (the same array writeRawStdout pushes to).
 				const cleanLines = [...rpcIo.outputLines];
-				const firstRecord = JSON.parse(cleanLines[0]!) as ParsedOutputLine;
-				rpcIo.outputLines[0] = `${JSON.stringify({ ...firstRecord, sessionId: "sess-mutation" })}\n`;
+				const [firstLine = "", ...remainingLines] = cleanLines[0]!.split("\n");
+				const firstRecord = JSON.parse(firstLine) as ParsedOutputLine;
+				rpcIo.outputLines[0] = [
+					JSON.stringify({ ...firstRecord, sessionId: "sess-mutation" }),
+					...remainingLines,
+				].join("\n");
 
 				// The REAL pin assertion must now throw on the mutated captured lines.
 				expect(() => assertNoSessionIdTagging("mutated prompt flow")).toThrow(/sessionId/);

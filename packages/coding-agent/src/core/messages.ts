@@ -242,10 +242,10 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 				case "assistant":
 				case "toolResult":
 					return m;
-				default:
-					// biome-ignore lint/correctness/noSwitchDeclarations: fine
+				default: {
 					const _exhaustiveCheck: never = m;
 					return undefined;
+				}
 			}
 		})
 		.filter((m) => m !== undefined);

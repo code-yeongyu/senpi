@@ -1,18 +1,24 @@
 /** The shapes the in-process session registry hands out: entries, launch profiles, rows and its typed error. */
+import type { RetryWait } from "../../core/retry-wait.ts";
 import type { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { AgentSessionLaunchProfile, AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type { EventLoopSlicer } from "../../core/event-loop-slicer.ts";
 import type { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
 import type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 import type { SessionPathReservations } from "./host-reservations.ts";
 import type { PreparableRuntimeFactory } from "./host-warm.ts";
+import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import type { SessionContextOverlay } from "./session-context-patch.ts";
 import type { PublishedSessionContext } from "./session-status.ts";
 import type { SessionWorkerClient } from "./session-worker-client.ts";
 
 /** The immutable flags selected when a routing session is opened. */
 export interface RpcSessionLaunchProfile extends AgentSessionLaunchProfile {
+	attended?: false;
+	/** Host-internal: a successor reopens a session that was live on its predecessor (senpi#7020). */
+	continued?: true;
 	sessionPath?: string;
 	/**
 	 * Durable session id chosen by the caller, applied ONLY when this open creates the session.
@@ -26,8 +32,12 @@ export type RpcSessionState = "opening" | "open" | "closing" | "quarantined" | "
 
 export interface RpcSessionEntry {
 	state: RpcSessionState;
+	/** Built speculatively: no public identity, attachment, listing, or disk persistence until claimed. */
+	speculative?: boolean;
 	runtime?: SessionRuntime;
 	worker?: SessionWorkerClient;
+	/** The in-process session's ordered acceptance lane, present only while the compact-updates flag is on. */
+	acceptance?: SessionAcceptanceLane;
 	/** Visibility class chosen by the open, frozen for the entry's life. */
 	readonly kind: SessionKind;
 	/** Frozen opaque labels the open attached; `{}` when it attached none. */
@@ -57,6 +67,8 @@ export interface RpcSessionEntry {
 	 * Requested per `open_session`; an attach may turn it on, never off.
 	 */
 	retainOnDisconnect?: boolean;
+	/** The session path this host's handover-parked record entry is keyed by; it follows a transcript switch. */
+	recordedPath?: string;
 	/** Timestamp of the last routed command / observed activity; drives idle eviction. */
 	lastCommandAt: number;
 	/**
@@ -127,14 +139,25 @@ export interface RpcSessionRegistryOptions {
 	sessionFileLoad?: "sliced" | "blocking";
 	/** Slicer for a `sliced` load; defaults to an 8 ms budget on the real clock. */
 	createSlicer?: () => EventLoopSlicer;
+	/** A session worker's own registry: its host owns the acceptance lane, so the isolate opens none. */
+	workerIsolate?: true;
 }
 
 /** Host-side lifecycle policy for one `open_session`, distinct from the session's launch profile. */
 export interface RpcSessionOpenOptions {
+	/** Host-only handle already issued while this file's writer was on a predecessor. */
+	readonly routedHandle?: string;
+	/** Router-owned park construction; never accepted directly from the wire. */
+	speculative?: boolean;
 	/** Refuse unless the registry already owns the path; never prepare or construct a writer. */
 	attachOnly?: boolean;
 	/** Keep the session alive when its last client disconnects (`open_session.retain_on_disconnect`). */
 	retainOnDisconnect?: boolean;
+	/**
+	 * No client asked for this open (a successor restoring its predecessor's sessions, senpi#7020): it counts no
+	 * attachment, since no connection could ever release one, and an attach it lands on is left as it is.
+	 */
+	unattached?: boolean;
 }
 
 /** One `list_sessions` row. `context` is published only to a listing that asked for workers. */
@@ -146,10 +169,26 @@ export interface RpcSessionRow {
 	name?: string;
 	status: Exclude<RpcSessionState, "quarantined">;
 	attachments: number;
+	/** True when the session outlives its last attachment; once granted, never revoked. */
+	retain_on_disconnect: boolean;
 	kind: SessionKind;
 	context: PublishedSessionContext;
 	/** Milliseconds since the last routed command or session-owned activity refreshed the idle window. */
 	idleMs: number;
+	/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */
+	tool_child: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
+	/** The session file's archived flag (`set_session_archived`); a thread list hides archived rows by default. */
+	archived: boolean;
+	/** The session file's Done flag (`set_session_settled`); a Done row stays listed. */
+	settled: boolean;
+	/** How the session reached Done; present only on a settled row whose flag was written with a `by`. */
+	settledBy?: ThreadSettledBy;
+	/** `running` while a turn is in flight (the `session_status` streaming state), else `idle`. */
+	activity: "running" | "idle";
+	/** senpi#7025: the auto-retry wait a running session sleeps through; absent when it is not waiting. */
+	waiting?: RetryWait;
+	/** The session's current model; absent while unknown (an opening session). */
+	model?: { provider: string; id: string };
 }
 
 export interface OpenRpcSession {
@@ -167,6 +206,7 @@ export function frozenProfile(profile: RpcSessionLaunchProfile): Readonly<RpcSes
 		...(profile.holderEndpoint ? { holderEndpoint: Object.freeze({ ...profile.holderEndpoint }) } : {}),
 		...(profile.creationModel ? { creationModel: Object.freeze({ ...profile.creationModel }) } : {}),
 		...(profile.sessionContext ? { sessionContext: Object.freeze({ ...profile.sessionContext }) } : {}),
+		...(profile.sessionEnv ? { sessionEnv: Object.freeze({ ...profile.sessionEnv }) } : {}),
 		...(profile.retryFallback
 			? {
 					retryFallback: Object.freeze({

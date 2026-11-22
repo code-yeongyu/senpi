@@ -9,6 +9,7 @@ import {
 	normalizeContext,
 	type ProviderHeaders,
 } from "@earendil-works/pi-ai";
+import { deriveOpenAIPromptCacheKey } from "@earendil-works/pi-ai/api/openai-prompt-cache";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { convertToLlm } from "../../../messages.ts";
@@ -75,6 +76,7 @@ export const SENPI_COMPACTION_EVENT = "senpi:compaction";
 
 export type OpenAiRemoteCompactionRequest = {
 	body: OpenAiCompactBody;
+	sessionId?: string;
 	inputItemCount: number;
 	tokensBefore: number;
 };
@@ -104,7 +106,10 @@ type OpenAiRemoteCompactionContext = {
 	getSystemPrompt(): string;
 	model: Model<Api> | undefined;
 	modelRegistry: {
-		getApiKeyAndHeaders(model: Model<Api>): Promise<
+		getApiKeyAndHeaders(
+			model: Model<Api>,
+			options?: { sessionId?: string },
+		): Promise<
 			| {
 					ok: true;
 					apiKey?: string;
@@ -185,7 +190,7 @@ export function createOpenAiRemoteCompactionRequest(options: {
 	branchEntries: SessionEntry[];
 	messages?: AgentMessage[];
 	tokensBefore: number;
-	promptCacheKey?: string;
+	sessionId?: string;
 	serviceTier?: ServiceTier;
 }): OpenAiRemoteCompactionRequest | undefined {
 	if (!isOpenAiRemoteCompactionModel(options.model)) return undefined;
@@ -194,11 +199,15 @@ export function createOpenAiRemoteCompactionRequest(options: {
 		: convertBranchEntries(options.branchEntries, options.model);
 	if (input.length === 0) return undefined;
 	return {
+		sessionId: options.sessionId,
 		body: {
 			model: options.model.id,
 			input,
 			...(options.systemPrompt ? { instructions: options.systemPrompt } : {}),
-			...(options.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
+			prompt_cache_key: deriveOpenAIPromptCacheKey(
+				options.model.id,
+				normalizeContext({ systemPrompt: options.systemPrompt, messages: [] }),
+			),
 			...(options.serviceTier ? { service_tier: options.serviceTier } : {}),
 		},
 		inputItemCount: input.length,
@@ -290,7 +299,6 @@ export function createOpenAiResponsesStreamCompactionPayload(
 		...payload,
 		model: request.body.model,
 		input: [...leadingPromptMessages(payload.input), ...createOpenAiResponsesStreamCompactionInput(request)],
-		...(request.body.prompt_cache_key ? { prompt_cache_key: request.body.prompt_cache_key } : {}),
 		...(request.body.service_tier ? { service_tier: request.body.service_tier } : {}),
 	};
 }
@@ -392,7 +400,7 @@ async function runOpenAiResponsesStreamCompaction(options: {
 				}
 				return transformedPayload;
 			},
-			sessionId: options.request.body.prompt_cache_key,
+			sessionId: options.request.sessionId,
 			signal: options.signal,
 			transport: "websocket",
 		},
@@ -578,7 +586,7 @@ export async function runOpenAiRemoteCompaction(
 		return undefined;
 	}
 
-	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model, { sessionId: ctx.sessionManager.getSessionId() });
 	if (!auth.ok) {
 		emit?.({
 			version: 1,
@@ -607,7 +615,7 @@ export async function runOpenAiRemoteCompaction(
 		branchEntries: event.branchEntries,
 		messages: providerRequest?.messages,
 		tokensBefore: event.preparation.tokensBefore,
-		promptCacheKey: ctx.sessionManager.getSessionId(),
+		sessionId: ctx.sessionManager.getSessionId(),
 		serviceTier,
 	});
 	if (!request) {
@@ -652,7 +660,7 @@ export async function runOpenAiRemoteCompaction(
 	const requestHeaders = createOpenAiRemoteCompactionHeaders(
 		requestModel,
 		{ ...auth, headers: transformedHeaders },
-		request.body.prompt_cache_key,
+		request.sessionId,
 	);
 	if (!requestHeaders) {
 		emit?.({
@@ -678,6 +686,7 @@ export async function runOpenAiRemoteCompaction(
 		return undefined;
 	}
 
+	const siwc = requestModel.api === "openai-responses" && requestModel.compat?.siwc === true;
 	if (supportsOpenAiResponsesRemoteCompactionV2(requestModel)) {
 		// The v2 beta header is request-local, so the checkpoint keeps the origin every later
 		// turn presents; fingerprinting it made replay refuse every v2 checkpoint (senpi#2378).
@@ -702,7 +711,7 @@ export async function runOpenAiRemoteCompaction(
 			describeTimeout: (waitedMs) =>
 				timedOut(
 					waitedMs,
-					requestModel.api === "openai-codex-responses"
+					requestModel.api === "openai-codex-responses" || siwc
 						? "local-summary"
 						: supportsOpenAiResponsesWebSocket(requestModel)
 							? "websocket"
@@ -710,6 +719,22 @@ export async function runOpenAiRemoteCompaction(
 				),
 		});
 		if (result || requestModel.api === "openai-codex-responses") return result;
+	}
+
+	// SIWC permits only streaming /responses; unavailable v2 falls back to the local summary.
+	if (siwc) {
+		// A v2 attempt that ran already reported its own outcome; only the skipped attempt is reported here.
+		if (!supportsOpenAiResponsesRemoteCompactionV2(requestModel)) {
+			emit?.({
+				version: 1,
+				action: "remote_fallback",
+				route: "builtin.compaction.openai_remote",
+				requestId: event.requestId,
+				modelId: requestModel.id,
+				reason: "siwc-remote-compaction-v2-unsupported",
+			});
+		}
+		return undefined;
 	}
 
 	if (supportsOpenAiResponsesWebSocket(requestModel) && !remoteBudgetExhausted("websocket")) {

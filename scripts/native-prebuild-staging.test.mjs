@@ -1,21 +1,99 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
-import {
-	consumerWorkflow,
-	grepBytes,
-	mergeArtifacts,
-	packedFiles,
-	producerWorkflow,
-	ptyBytes,
-	runBash,
-	stageArtifact,
-	stepRunBlock,
-	targets,
-} from "./native-prebuild-staging.test-support.mjs";
+import { fileURLToPath } from "node:url";
+import { loadTargets } from "./native-prebuild-key.mjs";
+import { recordFileName, verifyRecord, writeRecord } from "./native-prebuild-record.mjs";
+import { parseNpmPackJson } from "./npm-pack-json.mjs";
 import { assertPublishedWorkspacePackFiles, nativePrebuildFile } from "./senpi-publish-pack-checks.mjs";
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const producerWorkflow = readFileSync(join(repoRoot, ".github/workflows/native-prebuilds.yml"), "utf8");
+const consumerWorkflow = readFileSync(join(repoRoot, ".github/workflows/publish-npm.yml"), "utf8");
+
+// The `run: |` block of the named step, dedented. Reading it from the workflow text keeps
+// the test bound to the shell that Actions executes instead of a copy that can drift.
+function stepRunBlock(workflow, stepName) {
+	const lines = workflow.split("\n");
+	const nameIndex = lines.findIndex((line) => line.trim() === `- name: ${stepName}`);
+	assert.notEqual(nameIndex, -1, `workflow step "${stepName}" not found`);
+	const runIndex = lines.findIndex((line, index) => index > nameIndex && line.trim() === "run: |");
+	assert.notEqual(runIndex, -1, `workflow step "${stepName}" has no run: | block`);
+	const nextStep = lines.findIndex((line, index) => index > nameIndex && index !== nameIndex && line.trim().startsWith("- name: "));
+	assert.ok(nextStep === -1 || runIndex < nextStep, `workflow step "${stepName}" run block belongs to another step`);
+	const keyIndent = lines[runIndex].match(/^\s*/)[0].length;
+	const body = [];
+	for (let index = runIndex + 1; index < lines.length; index++) {
+		const line = lines[index];
+		if (line.trim() === "") {
+			body.push("");
+			continue;
+		}
+		if (line.match(/^\s*/)[0].length <= keyIndent) break;
+		body.push(line);
+	}
+	const indent = Math.min(...body.filter((line) => line.trim() !== "").map((line) => line.match(/^\s*/)[0].length));
+	return body.map((line) => line.slice(indent)).join("\n");
+}
+
+function runBash(script, { cwd, env }) {
+	const result = spawnSync("bash", ["-c", script], { cwd, encoding: "utf8", env: { ...process.env, ...env } });
+	assert.equal(result.error, undefined, `bash is required to run the workflow step: ${result.error?.message}`);
+	return result;
+}
+
+// One matrix row, as native-prebuilds.yml exposes it to the Stage artifact step.
+const targets = [
+	{ host: "linux-x64", platform: "linux", arch: "x64", napi: "x86_64-unknown-linux-gnu.2.17", rust: "x86_64-unknown-linux-gnu", built: "linux-x64-gnu" },
+	{ host: "darwin-arm64", platform: "darwin", arch: "arm64", napi: "aarch64-apple-darwin", rust: "aarch64-apple-darwin", built: "darwin-arm64" },
+];
+
+const ptyBytes = (host) => Buffer.from(`senpi_pty addon bytes for ${host}\n`);
+const grepBytes = (host) => Buffer.from(`senpi_grep addon bytes for ${host}\n`);
+
+// Runs the producer's Stage artifact step for one matrix row against a napi output dir that
+// holds BOTH addons with distinct bytes, and returns the staged artifact directory.
+const windowsTargets = [
+	{ host: "win32-x64", platform: "win32", arch: "x64", napi: "x86_64-pc-windows-msvc", rust: "x86_64-pc-windows-msvc", built: "win32-x64-msvc" },
+	{ host: "win32-arm64", platform: "win32", arch: "arm64", napi: "aarch64-pc-windows-msvc", rust: "aarch64-pc-windows-msvc", built: "win32-arm64-msvc" },
+];
+const secretBytes = (host) => Buffer.from(`senpi_socket_secret addon bytes for ${host}\n`);
+
+function stageArtifact(root, target, producerScript = stepRunBlock(producerWorkflow, "Stage artifact")) {
+	const runnerTemp = join(root, "runner", target.host);
+	const outputDir = join(runnerTemp, "native-prebuild-output", target.built);
+	mkdirSync(outputDir, { recursive: true });
+	// napi writes the grep addon first in sort order, which is what made an index-based copy wrong.
+	writeFileSync(join(outputDir, `senpi_grep.${target.built}.node`), grepBytes(target.host));
+	writeFileSync(join(outputDir, `senpi_pty.${target.built}.node`), ptyBytes(target.host));
+	if (target.platform === "win32" && target.withSecret !== false) {
+		writeFileSync(join(outputDir, `senpi_socket_secret.${target.built}.node`), secretBytes(target.host));
+	}
+	const script = producerScript.replaceAll("${{ matrix.artifact }}", `native-prebuild-${target.host}`);
+	const result = runBash(script, {
+		cwd: root,
+		env: {
+			RUNNER_TEMP: runnerTemp,
+			NODE_PLATFORM: target.platform,
+			NODE_ARCH: target.arch,
+			NAPI_TARGET: target.napi,
+			RUST_TARGET: target.rust,
+		},
+	});
+	return { result, artifactDir: join(runnerTemp, "native-prebuild-artifact") };
+}
+
+// Mirrors actions/download-artifact with `pattern: native-prebuild-*` and `merge-multiple: true`:
+// every artifact's content lands in one directory.
+function mergeArtifacts(artifactDirs, destination) {
+	mkdirSync(destination, { recursive: true });
+	for (const artifactDir of artifactDirs) {
+		cpSync(artifactDir, destination, { recursive: true });
+	}
+}
 
 function writePtyPackageFixture(packageDir) {
 	mkdirSync(join(packageDir, "dist"), { recursive: true });
@@ -26,6 +104,12 @@ function writePtyPackageFixture(packageDir) {
 	);
 	writeFileSync(join(packageDir, "dist/index.js"), "export {};\n");
 	writeFileSync(join(packageDir, "native/index.js"), "export {};\n");
+}
+
+function packedFiles(packageDir) {
+	const result = spawnSync("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { cwd: packageDir, encoding: "utf8" });
+	assert.equal(result.status, 0, result.stderr);
+	return parseNpmPackJson(result.stdout)[0];
 }
 
 describe("native prebuild staging (producer -> download -> pty package)", () => {
@@ -40,10 +124,9 @@ describe("native prebuild staging (producer -> download -> pty package)", () => 
 				const stagedPty = join(artifactDir, "native/prebuilds", target.host, `senpi_pty.${target.host}.node`);
 				assert.ok(existsSync(stagedPty), `${target.host}: producer did not stage ${stagedPty}`);
 				assert.deepEqual(readFileSync(stagedPty), ptyBytes(target.host), `${target.host}: staged PTY file holds the wrong addon`);
-				const stagedGrep = join(artifactDir, "native/prebuilds", target.host, `senpi_grep.${target.host}.node`);
-				assert.deepEqual(readFileSync(stagedGrep), grepBytes(target.host), `${target.host}: staged grep file holds the wrong addon`);
 				const flatFiles = readdirSync(artifactDir);
-				assert.ok(!flatFiles.some((file) => file.endsWith(".node")), `${target.host}: no addon may sit at the artifact root`);
+				assert.ok(flatFiles.includes(`senpi_grep.${target.built}.node`), `${target.host}: grep addon missing from the artifact root`);
+				assert.ok(!flatFiles.some((file) => file.startsWith("senpi_pty.")), `${target.host}: PTY addon must not sit at the artifact root`);
 				const manifest = readFileSync(join(artifactDir, "manifest.txt"), "utf8");
 				assert.match(manifest, new RegExp(`^file_senpi_pty=senpi_pty\\.${target.built}\\.node$`, "m"));
 				assert.match(manifest, new RegExp(`^file_senpi_grep=senpi_grep\\.${target.built}\\.node$`, "m"));
@@ -108,6 +191,110 @@ describe("native prebuild staging (producer -> download -> pty package)", () => 
 			const staged = readFileSync(join(swappedDir, "native/prebuilds", target.host, `senpi_pty.${target.host}.node`));
 			assert.notDeepEqual(staged, ptyBytes(target.host), "swapped producer must not pass as the PTY addon");
 			assert.deepEqual(staged, grepBytes(target.host));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+// senpi#6622: a release may download every target as a reused artifact (re-uploaded by the plan job
+// from the cache, record included). The publish-only staging must still stage all six targets.
+describe("release staging from reused prebuilds", () => {
+	it("stages all six PTY prebuilds and both socket-secret bridges, and leaves the records in the scratch root", () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-reused-staging-"));
+		try {
+			const rows = loadTargets(repoRoot);
+			const rustc = "release: 1.91.0 commit-hash: f8297e351a40c1439a467bbbb6879088047f50b3";
+			const artifactDirs = rows.map((row) => {
+				const host = `${row.node_platform}-${row.node_arch}`;
+				const built = row.rust_target.includes("linux") ? `${host}-gnu` : row.node_platform === "win32" ? `${host}-msvc` : host;
+				const { result, artifactDir } = stageArtifact(root, { host, platform: row.node_platform, arch: row.node_arch, napi: row.napi_target, rust: row.rust_target, built });
+				assert.equal(result.status, 0, `${host}: ${result.stderr}`);
+				const key = `native-prebuild-v1-${row.artifact}-${"0".repeat(64)}`;
+				writeRecord({ artifactDir, target: row, key, rustc });
+				assert.deepEqual(verifyRecord({ artifactDir, target: row, key, rustc }), { ok: true });
+				return artifactDir;
+			});
+
+			const checkout = join(root, "checkout");
+			const packageDir = join(checkout, "packages/pty");
+			writePtyPackageFixture(packageDir);
+			mkdirSync(join(checkout, "packages/coding-agent"), { recursive: true });
+			mergeArtifacts(artifactDirs, join(packageDir, ".native-prebuild-artifacts"));
+			for (const step of ["Stage PTY prebuilds into the pty package", "Stage the socket-secret bridge into the coding-agent package"]) {
+				const consumer = runBash(stepRunBlock(consumerWorkflow, step), { cwd: checkout, env: {} });
+				assert.equal(consumer.status, 0, `${step}: ${consumer.stderr}`);
+			}
+
+			const hosts = rows.map((row) => `${row.node_platform}-${row.node_arch}`);
+			for (const host of hosts) {
+				assert.deepEqual(readFileSync(join(packageDir, "native/prebuilds", host, `senpi_pty.${host}.node`)), ptyBytes(host), `${host}: PTY prebuild`);
+				assert.ok(existsSync(join(packageDir, ".native-prebuild-artifacts", recordFileName({ node_platform: host.split("-")[0], node_arch: host.split("-")[1] }))));
+			}
+			for (const host of ["win32-x64", "win32-arm64"]) {
+				const bridge = join(checkout, "packages/coding-agent/native/socket-secret/prebuilds", host, `senpi_socket_secret.${host}.node`);
+				assert.deepEqual(readFileSync(bridge), secretBytes(host), `${host}: socket-secret bridge`);
+			}
+			const packedPaths = new Set(packedFiles(packageDir).files.map((file) => file.path.replace(/^package\//, "")));
+			assert.ok(![...packedPaths].some((path) => path.includes("native-prebuild-record")), "a reuse record leaked into the pty tarball");
+			for (const host of hosts) assert.ok(packedPaths.has(nativePrebuildFile(host, "@earendil-works/pi-pty")), `${host}: prebuild missing from the tarball`);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+// sisyphuslabs/omo-desktop-app#4199: Windows rows also build the socket-secret bridge, which has no fallback.
+describe("socket-secret bridge staging (Windows rows -> coding-agent package)", () => {
+	it("stages each Windows bridge where the loader and the publish step look", () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-secret-staging-"));
+		try {
+			const artifactDirs = [];
+			for (const target of windowsTargets) {
+				const { result, artifactDir } = stageArtifact(root, target);
+				assert.equal(result.status, 0, `${target.host}: ${result.stderr}`);
+				const staged = join(artifactDir, "native/socket-secret/prebuilds", target.host, `senpi_socket_secret.${target.host}.node`);
+				assert.deepEqual(readFileSync(staged), secretBytes(target.host));
+				const manifest = readFileSync(join(artifactDir, "manifest.txt"), "utf8");
+				assert.match(manifest, new RegExp(`^file_senpi_socket_secret=senpi_socket_secret\\.${target.built}\\.node$`, "m"));
+				artifactDirs.push(artifactDir);
+			}
+			const checkout = join(root, "checkout");
+			mkdirSync(join(checkout, "packages/coding-agent"), { recursive: true });
+			mergeArtifacts(artifactDirs, join(checkout, "packages/pty/.native-prebuild-artifacts"));
+			const consumer = runBash(stepRunBlock(consumerWorkflow, "Stage the socket-secret bridge into the coding-agent package"), { cwd: checkout, env: {} });
+			assert.equal(consumer.status, 0, consumer.stderr);
+			for (const target of windowsTargets) {
+				const file = join(checkout, "packages/coding-agent/native/socket-secret/prebuilds", target.host, `senpi_socket_secret.${target.host}.node`);
+				assert.deepEqual(readFileSync(file), secretBytes(target.host));
+			}
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("fails a Windows row whose napi output lacks the bridge", () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-secret-missing-"));
+		try {
+			const { result } = stageArtifact(root, { ...windowsTargets[0], withSecret: false });
+			assert.notEqual(result.status, 0);
+			assert.match(result.stdout + result.stderr, /expected 3 \.node files/);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("blocks the publish when only one Windows bridge was downloaded", () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-secret-partial-"));
+		try {
+			const { result, artifactDir } = stageArtifact(root, windowsTargets[0]);
+			assert.equal(result.status, 0, result.stderr);
+			const checkout = join(root, "checkout");
+			mkdirSync(join(checkout, "packages/coding-agent"), { recursive: true });
+			mergeArtifacts([artifactDir], join(checkout, "packages/pty/.native-prebuild-artifacts"));
+			const consumer = runBash(stepRunBlock(consumerWorkflow, "Stage the socket-secret bridge into the coding-agent package"), { cwd: checkout, env: {} });
+			assert.notEqual(consumer.status, 0);
+			assert.match(consumer.stdout + consumer.stderr, /missing socket-secret bridge for win32-arm64/);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

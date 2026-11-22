@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import lockfile from "proper-lockfile";
+import { type HeldFileLock, lockWithLossHandling } from "../file-lock.ts";
 import { CredentialStoreBusyError, FILE_STORAGE_LOCK_OPTIONS, isLockError } from "../lockfile-policy.ts";
 
 const FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
@@ -86,11 +86,11 @@ async function reachedBefore(turn: Promise<void>, deadline: number): Promise<boo
 	}
 }
 
-async function lockFileBefore(path: string, startedAt: number, deadline: number): Promise<() => Promise<void>> {
+async function lockFileBefore(path: string, startedAt: number, deadline: number): Promise<HeldFileLock> {
 	let attempt = 0;
 	while (true) {
 		try {
-			return await lockfile.lock(path, FILE_STORAGE_LOCK_OPTIONS);
+			return await lockWithLossHandling(path, FILE_STORAGE_LOCK_OPTIONS);
 		} catch (error) {
 			if (!isLockError(error)) throw error;
 			const remainingMs = deadline - Date.now();
@@ -106,7 +106,10 @@ async function lockFileBefore(path: string, startedAt: number, deadline: number)
  * Waits for the file lock within `budgetMs` (queueing behind same-process
  * callers counts against it), then fails naming the lock and the wait.
  */
-export async function acquireStateFileLock(path: string, budgetMs: number): Promise<() => Promise<void>> {
+export async function acquireStateFileLock(
+	path: string,
+	budgetMs: number,
+): Promise<Pick<HeldFileLock, "release" | "assertHeld">> {
 	const startedAt = Date.now();
 	const deadline = startedAt + budgetMs;
 	const previous = queueTails.get(path) ?? Promise.resolve();
@@ -124,13 +127,16 @@ export async function acquireStateFileLock(path: string, budgetMs: number): Prom
 		if (!(await reachedBefore(previous, deadline))) {
 			throw new CredentialStoreBusyError(path, Date.now() - startedAt);
 		}
-		const releaseFile = await lockFileBefore(path, startedAt, deadline);
-		return async () => {
-			try {
-				await releaseFile();
-			} finally {
-				finishTurn();
-			}
+		const held = await lockFileBefore(path, startedAt, deadline);
+		return {
+			assertHeld: held.assertHeld,
+			release: async () => {
+				try {
+					await held.release();
+				} finally {
+					finishTurn();
+				}
+			},
 		};
 	} catch (error) {
 		finishTurn();

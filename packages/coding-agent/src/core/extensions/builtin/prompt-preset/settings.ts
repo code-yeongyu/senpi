@@ -4,6 +4,7 @@ export type PromptPresetName =
 	| "auto"
 	| "claude-fable-5"
 	| "claude-fable-5-1"
+	| "claude-fable-5-2"
 	| "claude-opus-5-5"
 	| "claude-opus-5"
 	| "claude-sonnet-5-5"
@@ -22,6 +23,7 @@ export type PromptPresetName =
 	| "grok-4.5"
 	| "grok-4.6"
 	| "grok-4.7"
+	| "kimi-k3-1"
 	| "kimi-k3"
 	| "kimi-k2-8"
 	| "kimi-k2-7"
@@ -32,7 +34,8 @@ export type PromptPresetName =
 	| "gpt-5.4"
 	| "gpt-5.5"
 	| "gpt-5.6"
-	| "gpt-6-astra";
+	| "gpt-6-astra"
+	| "gpt-6.2";
 
 export interface PromptPresetSettings {
 	promptPreset: PromptPresetName;
@@ -44,6 +47,7 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"auto",
 	"claude-fable-5",
 	"claude-fable-5-1",
+	"claude-fable-5-2",
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5-5",
@@ -62,6 +66,7 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"grok-4.5",
 	"grok-4.6",
 	"grok-4.7",
+	"kimi-k3-1",
 	"kimi-k3",
 	"kimi-k2-8",
 	"kimi-k2-7",
@@ -73,6 +78,7 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"gpt-5.5",
 	"gpt-5.6",
 	"gpt-6-astra",
+	"gpt-6.2",
 ]);
 
 export function parsePromptPreset(value: string | undefined): PromptPresetName | undefined {

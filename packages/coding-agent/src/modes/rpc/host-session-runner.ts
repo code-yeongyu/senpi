@@ -120,7 +120,12 @@ async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTi
 			// A parked session resumes from its transcript and stays retained past this short-lived client.
 			const reopen =
 				found.kind === "parked"
-					? { sessionPath: found.sessionPath, cwd: found.cwd, retain_on_disconnect: true }
+					? {
+							sessionPath: found.sessionPath,
+							cwd: found.cwd,
+							retain_on_disconnect: true,
+							attended: false as const,
+						}
 					: { sessionPath: found.row.sessionPath, cwd: found.row.cwd };
 			durableSessionId = found.kind === "parked" ? found.durableSessionId : found.row.durableSessionId;
 			sessionId = (await client.openSession(reopen)).sessionId;

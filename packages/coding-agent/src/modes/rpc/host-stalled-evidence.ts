@@ -10,15 +10,21 @@
  * endpoint directory during a handoff. A stalled host is still serving its sessions; nothing here
  * signals anything.
  */
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { rm, stat } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
+import type { HolderGeneration } from "../../core/session-holders.ts";
 import {
 	processIsLive,
 	processStartTimeMs,
 	readProcessIdentity,
 	sameProcessStartMs,
 } from "../../utils/process-identity.ts";
-import { HOST_DAEMON_DIR_ENV, type HostGenerationPaths } from "./host-daemon-paths.ts";
+import {
+	generationPaths,
+	HOST_DAEMON_DIR_ENV,
+	type HostGenerationPaths,
+	hostDaemonDirectoryPaths,
+} from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { parseIdleExitMs } from "./host-lifecycle-policy.ts";
 import { ageOf, readJsonObject, writeJsonAtomic } from "./host-state-json.ts";
@@ -107,18 +113,77 @@ export async function hostLoopStalled(
 	return heartbeatAge !== undefined && heartbeatAge > options.errorMs && heartbeatAge < options.windowMs;
 }
 
-/** Whether the generation's host CHILD is running, from its own pid record; `undefined` when unrecorded. */
+/**
+ * Whether the generation left a heartbeat older than any stall could explain: the same "died without
+ * cleaning up" verdict `hostLoopStalled` reaches past the window. No heartbeat file is no evidence.
+ */
+export async function generationHeartbeatStopped(generation: HostGenerationPaths, now = Date.now()): Promise<boolean> {
+	const age = ageOf((await readJsonObject(generation.aliveFile))?.at, now);
+	return age !== undefined && age >= stallRefusalWindowMs();
+}
+
+const SAFE_INSTANCE_ID = /^[A-Za-z0-9_-]+$/;
+
+async function exists(path: string): Promise<boolean> {
+	return stat(path).then(
+		() => true,
+		() => false,
+	);
+}
+
+/**
+ * Whether the host generation a session-holder lease names has ENDED, for a holder whose pid is alive but
+ * whose start time cannot be compared (#3658). Two pieces of evidence count:
+ * - its heartbeat stopped (`generationHeartbeatStopped`, the rule claims and generations share);
+ * - the daemon directory the lease names is an endpoint's (`endpoint.json`, which every release leaves)
+ *   and the generation's directory is gone: a daemon removes it only after its child was judged not
+ *   alive, by the same heartbeat rule. A lease without a daemon directory is read against this host's
+ *   own daemon, where only the heartbeat counts, since absence there cannot prove membership.
+ * A fresh heartbeat, no heartbeat file, or this host's own generation never ends: a live host whose
+ * probe is merely slow keeps its sessions (#1609).
+ */
+export async function holderGenerationEnded(
+	holder: HolderGeneration,
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<boolean> {
+	const instance = holder.host_instance;
+	if (instance === undefined || !SAFE_INSTANCE_ID.test(instance) || instance === env[HOST_INSTANCE_ID_ENV])
+		return false;
+	const daemonDir = holder.host_daemon_dir ?? env[HOST_DAEMON_DIR_ENV];
+	if (daemonDir === undefined || !isAbsolute(daemonDir)) return false;
+	const directory = hostDaemonDirectoryPaths(daemonDir);
+	const generation = generationPaths(directory, instance);
+	if (await generationHeartbeatStopped(generation)) return true;
+	return (
+		holder.host_daemon_dir !== undefined && (await exists(directory.endpointFile)) && !(await exists(generation.dir))
+	);
+}
+
+/**
+ * Whether the generation's host CHILD is running, from its own pid record; `undefined` when unrecorded.
+ *
+ * A live pid whose start time cannot be compared (none recorded, or none readable now) is preserved -
+ * a starved probe on a live host must not read as dead (#1609) - unless the generation's heartbeat has
+ * stopped (#3658). On Windows a killed generation's pid is handed to an unrelated process, and without
+ * that second piece of evidence the stranger would keep the generation, and every ensure refusing
+ * `host_stalled`, alive for as long as it runs.
+ */
 export async function hostChildAlive(generation: HostGenerationPaths): Promise<boolean | undefined> {
 	const record = await readJsonObject(generation.childPidFile);
 	const pid = record?.pid;
 	if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return undefined;
 	if (!processIsLive(pid)) return false;
 	const observed = await readProcessIdentity(pid, process.platform, 1_000, processIsLive, "UTC");
-	if (!processIsLive(pid)) return false;
+	// `absent` includes an exited, unreaped child (state Z), read in the same async snapshot (senpi#4119).
+	if (observed.kind === "absent" || !processIsLive(pid)) return false;
 	const recordedMs =
 		typeof record?.processStartTime === "string" ? processStartTimeMs(record.processStartTime) : undefined;
 	const observedMs = observed.kind === "present" ? processStartTimeMs(observed.identity) : undefined;
 	if (recordedMs !== undefined && observedMs !== undefined) return sameProcessStartMs(recordedMs, observedMs);
+	if (await generationHeartbeatStopped(generation)) {
+		supervisorLog(`host child pid ${pid} start time unreadable and its heartbeat stopped; releasing generation`);
+		return false;
+	}
 	supervisorLog(`host child pid ${pid} start time unreadable; preserving generation`);
 	return true;
 }

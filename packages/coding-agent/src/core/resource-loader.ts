@@ -24,7 +24,7 @@ export { loadProjectContextFiles };
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { bundledBuiltinExtensions } from "./bundled-resources.ts";
-import { loadProjectContextFiles } from "./context-files.ts";
+import { type ContextFile, loadProjectContextFiles } from "./context-files.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
 	type BuiltinExtensionFactory,
@@ -59,8 +59,9 @@ import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
 import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-memo.ts";
 import { SettingsManager } from "./settings-manager.ts";
+import type { SkillProvenance } from "./skill-access.ts";
 import type { Skill } from "./skills.ts";
-import { loadSkills } from "./skills.ts";
+import { ignoredSkillDiagnostics, loadSkills } from "./skills.ts";
 import { warnIfLargeSkillCatalog } from "./skills-prompt.ts";
 import {
 	BUILTIN_PATH_PREFIX,
@@ -198,7 +199,7 @@ export interface ResourceLoader {
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
-	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }>; diagnostics?: ResourceDiagnostic[] };
+	getAgentsFiles(): { agentsFiles: ContextFile[]; diagnostics?: ResourceDiagnostic[] };
 	getSystemPrompt(): string | undefined;
 	getSystemPromptSource(): { path: string } | undefined;
 	getAppendSystemPrompt(): string[];
@@ -272,6 +273,25 @@ function getGlobalDefaultExtensionModulePath(extensionId: (typeof globalDefaultE
 	return canonicalizeGlobalDefaultExtensionModulePath(
 		join(packageDir, sourceRoot, "core", "extensions", "builtin", extensionFile),
 	);
+}
+
+// A write-denied agent dir (a sandboxed review child, senpi#6287) is left as it is: a missing default
+// extension shim is not seeded, so that default does not load, and a stale shim keeps loading whatever it
+// points at. Startup survives either way, and each denied write is reported as an extension warning so a
+// permission problem in a normal agent dir is visible; any other error is a real failure.
+function seedWritable(write: () => void, path: string, denied: Array<{ path: string; warning: string }>): boolean {
+	try {
+		write();
+		return true;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== "EROFS" && code !== "EACCES" && code !== "EPERM") throw error;
+		denied.push({
+			path,
+			warning: `Default extension shim not written (${code}); the extensions directory is not writable, so this default extension is not refreshed.`,
+		});
+		return false;
+	}
 }
 
 function buildGlobalDefaultExtensionShim(modulePath: string): string {
@@ -411,8 +431,8 @@ export interface DefaultResourceLoaderOptions {
 		themes: Theme[];
 		diagnostics: ResourceDiagnostic[];
 	};
-	agentsFilesOverride?: (base: { agentsFiles: Array<{ path: string; content: string }> }) => {
-		agentsFiles: Array<{ path: string; content: string }>;
+	agentsFilesOverride?: (base: { agentsFiles: ContextFile[] }) => {
+		agentsFiles: ContextFile[];
 	};
 }
 
@@ -452,8 +472,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		themes: Theme[];
 		diagnostics: ResourceDiagnostic[];
 	};
-	private agentsFilesOverride?: (base: { agentsFiles: Array<{ path: string; content: string }> }) => {
-		agentsFiles: Array<{ path: string; content: string }>;
+	private agentsFilesOverride?: (base: { agentsFiles: ContextFile[] }) => {
+		agentsFiles: ContextFile[];
 	};
 
 	private extensionsResult: LoadExtensionsResult;
@@ -463,7 +483,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private promptDiagnostics: ResourceDiagnostic[];
 	private themes: Theme[];
 	private themeDiagnostics: ResourceDiagnostic[];
-	private agentsFiles: Array<{ path: string; content: string }>;
+	private agentsFiles: ContextFile[];
 	private contextDiagnostics: ResourceDiagnostic[] = [];
 	private systemPrompt?: string;
 	private systemPromptSourcePath?: string;
@@ -481,6 +501,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private preSessionHookSourcePaths: string[];
 	private loadedHookSources: LoadedHookSources;
 	private loaded: boolean;
+	private deniedSeedWarnings: Array<{ path: string; warning: string }> = [];
 
 	constructor(options: DefaultResourceLoaderOptions) {
 		this.cwd = resolvePath(options.cwd);
@@ -492,7 +513,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 		this.eventBus = options.eventBus ?? createEventBus();
 		const factories = options.extensionFactories ?? [];
-		this.extensionFactories = factories.filter((input) => !isBuiltinExtension(input));
+		const hostFactories = factories.flatMap((input) =>
+			typeof input !== "function" && input.host ? [{ id: input.name, factory: input.factory }] : [],
+		);
+		this.extensionFactories = factories.filter(
+			(input) => !(typeof input !== "function" && input.host) && !isBuiltinExtension(input),
+		);
 		this.builtinExtensions = new Map(factories.filter(isBuiltinExtension).map((input) => [input.name, input]));
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
@@ -517,6 +543,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 								}
 							: extension,
 					);
+		this.builtinExtensionFactories = [...this.builtinExtensionFactories, ...hostFactories];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
@@ -578,7 +605,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { themes: this.themes, diagnostics: this.themeDiagnostics };
 	}
 
-	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }>; diagnostics: ResourceDiagnostic[] } {
+	getAgentsFiles(): { agentsFiles: ContextFile[]; diagnostics: ResourceDiagnostic[] } {
 		return { agentsFiles: this.agentsFiles, diagnostics: this.contextDiagnostics };
 	}
 
@@ -683,6 +710,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 			await this.settingsManager.reload();
 		}
 		const { resolvedPaths, cliExtensionPaths } = await this.resolvePackagePaths({ refresh });
+		this.userSkillRoots = [...(resolvedPaths.skillRoots ?? []), ...(cliExtensionPaths.skillRoots ?? [])]
+			.filter((selection) => selection.kind === "user")
+			.map((selection) => selection.selectedRoot);
+		this.ignoredSkillFiles = this.noSkills ? [] : [...(resolvedPaths.ignoredSkills ?? [])];
 		time("packageResolve", "extensions");
 		// Keep package metadata available for later extendResources() passes.
 		this.resourceMetadataByPath = new Map();
@@ -717,8 +748,25 @@ export class DefaultResourceLoader implements ResourceLoader {
 		// itself part of the harness keeps the system scope and root it resolved to.
 		const cliMetadata = (resource: ResolvedResource): PathMetadata =>
 			resource.metadata.scope === "system"
-				? { source: "cli", scope: "system", origin: "top-level", baseDir: resource.metadata.baseDir }
-				: { source: "cli", scope: "temporary", origin: "top-level" };
+				? {
+						source: "cli",
+						scope: "system",
+						origin: "top-level",
+						baseDir: resource.metadata.baseDir,
+						skillProvenance: {
+							kind: "user",
+							selectedRoot: resource.metadata.skillProvenance?.selectedRoot ?? resource.path,
+						},
+					}
+				: {
+						source: "cli",
+						scope: "temporary",
+						origin: "top-level",
+						skillProvenance: {
+							kind: "user",
+							selectedRoot: resource.metadata.skillProvenance?.selectedRoot ?? resource.path,
+						},
+					};
 		for (const resources of [
 			cliExtensionPaths.extensions,
 			cliExtensionPaths.skills,
@@ -761,6 +809,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const packageWarnings = collectExtensionPackageWarnings(dedupedExtensionPaths, metadataByPath);
 		const extensionsResult = await this.loadFinalExtensionSet(dedupedExtensionPaths, preTrustExtensions);
 		mergeExtensionWarnings(extensionsResult, packageWarnings);
+		mergeExtensionWarnings(extensionsResult, this.deniedSeedWarnings);
 		for (const p of this.additionalExtensionPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -831,6 +880,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 						cwd: this.cwd,
 						agentDir: this.agentDir,
 						...this.settingsManager.getSettings().contextFiles,
+						// senpi#5567: user settings only; a project's settings never redirect the global file.
+						globalPath: this.settingsManager.getGlobalContextFilePath(),
 					}),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
@@ -860,7 +911,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		const extensionsDir = join(this.agentDir, "extensions");
-		mkdirSync(extensionsDir, { recursive: true });
+		this.deniedSeedWarnings = [];
+		if (!seedWritable(() => mkdirSync(extensionsDir, { recursive: true }), extensionsDir, this.deniedSeedWarnings))
+			return;
 
 		for (const extensionId of globalDefaultExtensionIds) {
 			const modulePath = getGlobalDefaultExtensionModulePath(extensionId);
@@ -879,11 +932,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 					continue;
 				}
 
-				writeFileSync(targetPath, shim, "utf-8");
+				seedWritable(() => writeFileSync(targetPath, shim, "utf-8"), targetPath, this.deniedSeedWarnings);
 				continue;
 			}
 
-			writeFileSync(targetPath, shim, "utf-8");
+			seedWritable(() => writeFileSync(targetPath, shim, "utf-8"), targetPath, this.deniedSeedWarnings);
 		}
 	}
 
@@ -1128,6 +1181,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 	}
 
+	private userSkillRoots: string[] = [];
+	private ignoredSkillFiles: string[] = [];
 	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
@@ -1138,6 +1193,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 				agentDir: this.agentDir,
 				skillPaths,
 				includeDefaults: false,
+				provenanceByPath: new Map<string, SkillProvenance>(
+					skillPaths.map((path) => [
+						path,
+						metadataByPath?.get(path)?.skillProvenance ?? { kind: "user", selectedRoot: path },
+					]),
+				),
+				userSkillRoots: [
+					...this.userSkillRoots,
+					...(this.settingsManager.getGlobalSettings().skills ?? [])
+						.filter((path) => !/^[!+-]/.test(path))
+						.map((path) => resolvePath(path, this.agentDir, { trim: true })),
+				],
 			});
 		}
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;
@@ -1148,7 +1215,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 				skill.sourceInfo ??
 				this.getDefaultSourceInfoForPath(skill.filePath),
 		}));
-		this.skillDiagnostics = [...resolvedSkills.diagnostics, ...warnIfLargeSkillCatalog(this.skills)];
+		this.skillDiagnostics = [
+			...resolvedSkills.diagnostics,
+			...ignoredSkillDiagnostics(this.ignoredSkillFiles, this.skills),
+			...warnIfLargeSkillCatalog(this.skills),
+		];
 	}
 
 	private updatePromptsFromPaths(promptPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {

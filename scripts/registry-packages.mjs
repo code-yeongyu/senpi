@@ -1,12 +1,14 @@
 // Chord is deliberately absent: the fork does not modify it semantically, so it keeps upstream's
 // own release identity and its declared edges resolve to upstream's published version (checked by
-// publish-registry-dependencies.test.mjs).
+// publish-registry-dependencies.test.mjs). Machine-ops is absent too: it is never published, and
+// senpi ships its build vendored (prepare-senpi-bundled-workspaces.mjs, senpi#5784).
 export const registryPackageNames = new Map([
 	["@earendil-works/pi-ai", "@code-yeongyu/senpi-ai"],
 	["@earendil-works/pi-agent-core", "@code-yeongyu/senpi-agent-core"],
 	["@earendil-works/pi-tui", "@code-yeongyu/senpi-tui"],
 	["@earendil-works/pi-pty", "@code-yeongyu/senpi-pty"],
 	["@earendil-works/pi-telemetry", "@code-yeongyu/senpi-telemetry"],
+	["@earendil-works/pi-realm-registry", "@code-yeongyu/senpi-realm-registry"],
 	["@code-yeongyu/senpi-codemode", "@code-yeongyu/senpi-codemode"],
 	["@code-yeongyu/senpi", "@code-yeongyu/senpi"],
 ]);

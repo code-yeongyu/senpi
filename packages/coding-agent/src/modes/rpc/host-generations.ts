@@ -12,12 +12,13 @@
  * answers is exactly what an operator is looking for, and a superseded host holding gigabytes
  * cannot be asked how many sessions it has.
  */
-import { readdir, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { link, readdir, rename, rm } from "node:fs/promises";
 import { processIsLive } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonDirectory, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
-import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts";
+import { claimOwnerIdentity, readSessionPathClaims, type SessionPathOwner } from "./host-reservations.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 
 /** One generation that is still running, as the daemon directory and the OS describe it. */
@@ -47,32 +48,97 @@ export interface PrunedDaemonState {
 	readonly pointer: boolean;
 }
 
+export interface PruneOptions {
+	/** Deterministic race seam: runs after the pointer was read and before it is removed. */
+	readonly _test?: { readonly beforePointerRemoval?: () => Promise<void> };
+}
+
 /**
  * Drops every record of a generation that is no longer running: its directory, the pointer while it
  * still names it, and the session-path claims its pid published. A record that cannot be parsed is
  * LEFT - an ensure writing one right now must not be mistaken for a generation that ended.
  */
-export async function pruneDeadGenerations(paths: HostDaemonPaths): Promise<PrunedDaemonState> {
-	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile).catch(() => undefined));
+export async function pruneDeadGenerations(
+	paths: HostDaemonPaths,
+	options: PruneOptions = {},
+): Promise<PrunedDaemonState> {
+	const pointerText = await readFileOrUndefined(paths.pointerFile).catch(() => undefined);
+	const pointer = parseJson(pointerText);
 	const pointedAt = typeof pointer?.instance_id === "string" ? pointer.instance_id : undefined;
 	const generations: string[] = [];
 	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
 		const record = parseJson(await readFileOrUndefined(generationPaths(paths, instanceId).pidFile));
 		if (typeof record?.pid !== "number" || processIsLive(record.pid)) continue;
 		if (await hostChildAlive(generationPaths(paths, instanceId))) continue;
-		await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true }).catch(() => undefined);
 		generations.push(instanceId);
 	}
-	const pointerRemoved = pointedAt !== undefined && generations.includes(pointedAt);
+	// Claims end before the directories go: a prune cut short in between must not leave a claim whose generation
+	// (and heartbeat) no longer exists to explain it.
+	const claims = await endClaimsOfEndedGenerations(paths, new Set(generations));
+	for (const instanceId of generations)
+		await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true }).catch(() => undefined);
 	// The pointer outliving its generation is what makes a client probe a socket nobody serves.
-	if (pointerRemoved) await rm(paths.pointerFile, { force: true }).catch(() => undefined);
+	const pointerNamesDead = pointerText !== undefined && pointedAt !== undefined && generations.includes(pointedAt);
+	if (pointerNamesDead) await options._test?.beforePointerRemoval?.();
+	const pointerRemoved = pointerNamesDead && (await removePointerIfUnchanged(paths, pointerText));
+	return { generations, claims, pointer: pointerRemoved };
+}
+
+/**
+ * Removes the pointer only while it is still the one this prune read (senpi#1911). Prune runs outside the
+ * ensure lock (`host status`), so a registration may have renamed a new pointer in since: the file is
+ * moved aside atomically, compared, and a replacement is linked back unless an even newer one landed.
+ */
+async function removePointerIfUnchanged(paths: HostDaemonPaths, read: string): Promise<boolean> {
+	const parked = `${paths.pointerFile}.prune-${process.pid}-${randomUUID()}.tmp`;
+	const moved = await rename(paths.pointerFile, parked).then(
+		() => true,
+		() => false,
+	);
+	if (!moved) return false;
+	const unchanged = (await readFileOrUndefined(parked).catch(() => undefined)) === read;
+	if (!unchanged) await link(parked, paths.pointerFile).catch(() => undefined);
+	await rm(parked, { force: true }).catch(() => undefined);
+	return unchanged;
+}
+
+/**
+ * Removes every claim whose owner is gone, and every claim of a generation in `ended` (being removed by the caller)
+ * whose owner identity cannot be proven. Returns the session paths released. Every path that removes a generation
+ * directory calls this first, so no generation leaves claims behind that its directory no longer explains.
+ */
+export async function endClaimsOfEndedGenerations(
+	paths: HostDaemonDirectory,
+	ended: ReadonlySet<string>,
+): Promise<string[]> {
 	const claims: string[] = [];
 	for (const claim of await readSessionPathClaims(paths.reservationsDir)) {
-		if (await claimOwnerIsLive(claim.owner)) continue;
+		if (!(await claimEnded(claim.owner, ended))) continue;
 		await rm(claim.file, { force: true }).catch(() => undefined);
 		claims.push(claim.owner.sessionPath);
 	}
-	return { generations, claims, pointer: pointerRemoved };
+	return claims;
+}
+
+/**
+ * A claim ends with its owner's pid, or with the generation this prune just removed when the owner's identity
+ * cannot be proven (desktop#3157: Windows hands the dead host child's pid to another process, and removing the
+ * generation also removed the heartbeat that would have released the claim). Such an owner might only be frozen,
+ * so its session file is fenced first; a fence that cannot be written keeps the claim.
+ */
+async function claimEnded(owner: SessionPathOwner, ended: ReadonlySet<string>): Promise<boolean> {
+	const identity = await claimOwnerIdentity(owner);
+	if (identity === "gone") return true;
+	if (identity === "proven" || !ended.has(owner.instanceId)) return false;
+	// Documented lazy boundary (AGENTS.md: inline dynamic imports only at documented lazy boundaries): the lifecycle
+	// supervisor imports this module, and the fence module (whose writers read it synchronously) must stay out of its
+	// startup graph (test/supervisor-import-graph.test.ts).
+	return import("../../core/session-write-fence.ts")
+		.then(({ advanceSessionFence }) => advanceSessionFence(owner.sessionPath))
+		.then(
+			() => true,
+			() => false,
+		);
 }
 
 function memoryOf(metrics: HostProcessMetrics): Pick<HostGenerationRow, "rss_mb" | "host_rss_mb"> {

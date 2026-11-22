@@ -6,6 +6,8 @@ import type { PendingInputProjection } from "./pending-input-projection.ts";
 import { createSessionQueuedInputPort } from "./pending-input-session-port.ts";
 import { PENDING_INPUT_TRANSITION, type PendingInputJournal, PendingInputStore } from "./pending-input-store.ts";
 import type { OperationOutcome, PendingInputMode, PendingInputOperationResult } from "./pending-input-types.ts";
+import type { HistoryReducer } from "./session-history-reduce.ts";
+import type { SessionManager } from "./session-manager.ts";
 
 export interface IdentifiedInput {
 	readonly clientMessageId: string;
@@ -15,7 +17,8 @@ export interface IdentifiedInput {
 }
 
 export interface SessionPendingInputsOptions {
-	readonly sessionManager: ConstructorParameters<typeof SessionPendingInputJournal>[0];
+	readonly sessionManager: ConstructorParameters<typeof SessionPendingInputJournal>[0] &
+		Pick<SessionManager, "reduceHistory">;
 	/** The session's own queue-id counter, so a store handle and the session's queued record share one id. */
 	readonly nextQueuedId: () => string;
 	/** Receives every committed change, in cursor order. */
@@ -62,6 +65,12 @@ export class ClientMessageIdConflictError extends Error {
 	}
 }
 
+/** Whether the session history records any pending-input transition; folded without a full-history view (senpi#2537). */
+const holdsPendingInputTransition: HistoryReducer<boolean> = {
+	initial: () => false,
+	add: (held, entry) => held || (entry.type === "custom" && entry.customType === PENDING_INPUT_TRANSITION),
+};
+
 /**
  * The pending inputs of one AgentSession (senpi#3549): the store, opened on the first identified input, and the
  * agent queue port over it. Input without a client id never touches the store and keeps the legacy queue path.
@@ -78,9 +87,7 @@ export class SessionPendingInputs {
 	constructor(options: SessionPendingInputsOptions) {
 		this.options = options;
 		// A session file that already holds pending inputs is recovered now: the agent's first drain must see them.
-		const journaled = options.sessionManager
-			.getEntries()
-			.some((entry) => entry.type === "custom" && entry.customType === PENDING_INPUT_TRANSITION);
+		const journaled = options.sessionManager.reduceHistory(holdsPendingInputTransition);
 		// Opened eagerly, unawaited: every later use awaits this same opening and surfaces its failure, so the
 		// eager start only must not report it a second time as an unhandled rejection.
 		if (journaled) this.store().catch(() => undefined);
@@ -103,12 +110,20 @@ export class SessionPendingInputs {
 	 * inside the same gated step, so no drain, edit or removal can run between the two. A repeated submit of the
 	 * same input is answered from the record (`replayed`) and enqueues nothing.
 	 */
+	/**
+	 * `refusal` is read before the input is recorded (a refusal there records nothing) and again in the same synchronous
+	 * step as `enqueue`. A turn that ended while the record was written makes the second read refuse: the record is
+	 * cancelled `turn_conflict`, which a later submit under the same id replaces, and the refusal is thrown.
+	 */
 	async admit(
 		input: IdentifiedInput,
 		enqueue: (queuedId: string) => void,
+		refusal?: () => Error | undefined,
 	): Promise<PendingInputOperationResult | undefined> {
 		const store = await this.store();
 		return store.transaction(async (tx) => {
+			const early = refusal?.();
+			if (early !== undefined) throw early;
 			const result = await tx.submit({
 				clientMessageId: input.clientMessageId,
 				fingerprint: admissionFingerprint(input),
@@ -119,8 +134,14 @@ export class SessionPendingInputs {
 			if (result?.outcome === "client_message_id_conflict")
 				throw new ClientMessageIdConflictError(input.clientMessageId);
 			const admitted = tx.current(input.clientMessageId);
-			if (result?.outcome === "admitted" && admitted !== undefined) enqueue(admitted.handle.queuedId);
-			return result;
+			if (result?.outcome !== "admitted" || admitted === undefined) return result;
+			const refused = refusal?.();
+			if (refused === undefined) {
+				enqueue(admitted.handle.queuedId);
+				return result;
+			}
+			await tx.apply(input.clientMessageId, { type: "cancel", cause: "turn_conflict", consumerFenced: true });
+			throw refused;
 		});
 	}
 

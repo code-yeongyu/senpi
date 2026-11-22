@@ -9,7 +9,9 @@
 //   bearerTokenEnv variable, because the skill chose where the request goes.
 // Each kept-literal or dropped value produces one warning naming the fix.
 
+import { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-reference";
 import { hashConfig, interpolateValue, McpConfigValidationError, normalizeServer } from "./config.ts";
+import { refuseMcpReferences, rememberMcpReferenceOrigins } from "./config-references.ts";
 import type { RawConfig, ResolvedMcpServer } from "./config-schema.ts";
 import { inheritMcpSharingScope } from "./sharing-policy.ts";
 
@@ -45,6 +47,7 @@ export function resolveSkillMcpServer(
 	const label = `Skill '${source.skillName}' MCP server '${name}'`;
 	const declared = declareForTrust(name, raw, label, source);
 	if (declared.declaration === undefined) return { warning: declared.warnings.join(" ") };
+	rememberMcpReferenceOrigins({ [name]: declared.declaration }, sourcePath);
 	const config = { ...normalizeServer(declared.declaration), directTools: [], exposure: "search" as const };
 	inheritMcpSharingScope(raw, declared.declaration);
 	inheritMcpSharingScope(declared.declaration, config);
@@ -66,7 +69,10 @@ function declareForTrust(
 	label: string,
 	source: SkillServerSource,
 ): { declaration?: RawServer; warnings: string[] } {
-	if ((raw.type ?? (raw.url ? "http" : "stdio")) !== "stdio") return declareRemote(raw, label);
+	const remote = (raw.type ?? (raw.url ? "http" : "stdio")) !== "stdio";
+	const refused = remote || !source.trusted ? referenceRefusal(name, raw, label) : undefined;
+	if (refused !== undefined) return { warnings: [refused] };
+	if (remote) return declareRemote(raw, label);
 	if (!source.trusted) {
 		const literal = [raw.command, raw.cwd, ...(raw.args ?? []), ...Object.values(raw.env ?? {})];
 		const warning = literalWarning(
@@ -104,10 +110,22 @@ function declareRemote(raw: RawServer, label: string): { declaration: RawServer;
 	return { declaration: { ...rest, auth: false }, warnings };
 }
 
-function literalWarning(label: string, values: readonly (string | undefined)[], reason: string): string | undefined {
+/** Where `${NAME}` stays literal, a reference is refused before any I/O. */
+export function referenceRefusal(name: string, raw: RawServer, label: string): string | undefined {
+	try {
+		refuseMcpReferences(name, raw);
+		return undefined;
+	} catch (error) {
+		if (!(error instanceof ConfigReferenceError)) throw error;
+		return `${label} skipped: ${error.message}`;
+	}
+}
+
+function literalWarning(label: string, values: readonly unknown[], reason: string): string | undefined {
 	const names = new Set<string>();
 	for (const value of values) {
-		for (const match of value?.matchAll(ENV_REFERENCE) ?? []) names.add(`\${${match[1]}}`);
+		if (typeof value !== "string") continue;
+		for (const match of value.matchAll(ENV_REFERENCE)) names.add(`\${${match[1]}}`);
 	}
 	return names.size === 0 ? undefined : `${label}: ${[...names].join(", ")} ${reason}`;
 }

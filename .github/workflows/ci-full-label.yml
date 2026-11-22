@@ -1,0 +1,34 @@
+name: CI full set (run-full-ci label)
+
+# Hosted CI runs on a pull request only through this workflow (senpi#4968): merges are decided on a local whole-suite
+# receipt, so ci.yml has no pull_request trigger, and a PR gets hosted CI only while it carries the run-full-ci label.
+# The label is also the only way a pull request reaches a macOS or Windows runner (senpi#6834): it calls every workflow
+# with macOS/Windows legs (scripts/ci-platform-red.mjs PLATFORM_WORKFLOWS), and those classify a labelled run as full
+# (scripts/ci-platform-scope.mjs). Adding the label runs the full set at once, and every later push (or reopen) of the
+# labelled PR runs it again. Adding any other label never starts or restarts the run.
+on:
+  pull_request:
+    types: [labeled, opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  ci:
+    if: contains(github.event.pull_request.labels.*.name, 'run-full-ci') && (github.event.action != 'labeled' || github.event.label.name == 'run-full-ci')
+    uses: ./.github/workflows/ci.yml
+
+  read-summary-binary-parity:
+    if: contains(github.event.pull_request.labels.*.name, 'run-full-ci') && (github.event.action != 'labeled' || github.event.label.name == 'run-full-ci')
+    uses: ./.github/workflows/read-summary-binary-parity.yml
+
+  session-worker-compile:
+    if: contains(github.event.pull_request.labels.*.name, 'run-full-ci') && (github.event.action != 'labeled' || github.event.label.name == 'run-full-ci')
+    uses: ./.github/workflows/session-worker-compile.yml
+
+  native-prebuilds:
+    if: contains(github.event.pull_request.labels.*.name, 'run-full-ci') && (github.event.action != 'labeled' || github.event.label.name == 'run-full-ci')
+    uses: ./.github/workflows/native-prebuilds.yml
+    with:
+      full_ci: true

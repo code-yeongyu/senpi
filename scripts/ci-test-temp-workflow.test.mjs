@@ -13,11 +13,17 @@ test("every CI test-runtime invocation is between temp snapshot and always-run c
 			/(?:run-tests\.mjs|\bvitest\b|\bbun test\b|\bnode --test\b|\b(?:npm|bun) run (?:--cwd \S+ )?test(?::scripts)?(?:\s|$))/.test(step.run ?? "")
 				? [index] : []);
 		if (invocations.length === 0) continue;
-		const snapshot = steps.findIndex((step) => step.run?.includes("test-temp-guard.mjs snapshot"));
-		const check = steps.findIndex((step) => step.run?.includes("test-temp-guard.mjs check"));
-		assert.ok(snapshot >= 0 && invocations.every((index) => index > snapshot && index < check), name);
-		assert.match(steps[check].if, /always\(\)/, name);
-		assert.match(steps[check].if, /test_temp_snapshot\.outcome == 'success'/, name);
+		for (const index of invocations) {
+			const snapshot = steps.findLastIndex((step, position) =>
+				position < index && step.run?.includes("test-temp-guard.mjs snapshot"));
+			const check = steps.findIndex((step, position) =>
+				position > snapshot && step.run?.includes("test-temp-guard.mjs check"));
+			assert.ok(snapshot >= 0 && index > snapshot && index < check, `${name}: ${steps[index].name}`);
+			assert.match(steps[check].if, /always\(\)/, name);
+			assert.ok(steps[check].if.includes(`steps.${steps[snapshot].id}.outcome == 'success'`), name);
+			const receipt = steps[snapshot].run.match(/snapshot (\S+)/)?.[1];
+			assert.ok(receipt && steps[check].run.endsWith(`check ${receipt}`), name);
+		}
 	}
 });
 

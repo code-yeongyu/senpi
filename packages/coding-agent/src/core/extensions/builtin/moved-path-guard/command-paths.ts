@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, resolve, sep } from "node:path";
 
-// biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell spellings of the home directory, not a template.
+// oxlint-disable-next-line eslint/no-template-curly-in-string -- literal shell spellings of the home directory, not a template.
 const HOME_ANCHORS = ["~", "$HOME", "${HOME}", "%USERPROFILE%", "$env:USERPROFILE"] as const;
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
 const QUOTED = /"([^"]*)"|'([^']*)'/g;

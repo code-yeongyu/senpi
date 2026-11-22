@@ -10,7 +10,8 @@
  *   I2 - compatibility is `protocolVersion` + capabilities, NEVER a version-string compare,
  *        and "is my build newer?" is `compareEngineOrdinal`, never `serverVersion`. An
  *        ordinal that cannot be compared (a build without git metadata, a host that reports
- *        none) is EQUAL, and since a handoff needs STRICTLY greater, such a pair attaches.
+ *        none, an ordinal outside senpi CalVer such as a compiled omo's `[5, 1, 78]`, senpi#7040) is
+ *        EQUAL, and since a handoff needs STRICTLY greater, such a pair attaches.
  *
  * The profile rule is the third guard: a handoff additionally requires the candidate's
  * extension set to be a SUPERSET of the running host's. Handing off to a narrower generation
@@ -21,6 +22,7 @@
 import {
 	compareEngineOrdinal,
 	type EngineBuildIdentity,
+	engineIdentityOf,
 	type EngineOrdinal,
 } from "../../core/engine-build-identity.ts";
 import {
@@ -28,6 +30,7 @@ import {
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 } from "./custom-capability.ts";
+import { describeHostHolder, type HostHolder } from "./host-holder.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
 
@@ -41,6 +44,13 @@ export const HOST_PROTOCOL_VERSION = 1;
  * its sessions. A host without it is attach-only - it is never renamed, signalled or upgraded.
  */
 export const GENERATION_HANDOFF_CAPABILITY = "generation_handoff";
+
+/**
+ * HOST capability (senpi#4602): every rename or remove this host makes on its public socket entry runs under the
+ * endpoint's mutation fence and re-reads the endpoint owner token. Only a predecessor that advertises it is handed
+ * off with the owner-token guard; an older one gets today's handoff and its late-rename race.
+ */
+export const ENDPOINT_OWNER_FENCE_CAPABILITY = "endpoint_owner_fence";
 
 /** What a daemon session needs from a host before any client may attach to it. */
 export const REQUIRED_HOST_CAPABILITIES = [
@@ -129,13 +139,25 @@ export class HostEnsureRefusedError extends Error {
 	readonly reason: HostRefusalReason;
 	/** What only the caller knows: which process is in the way, and how to clear it. */
 	readonly detail: string | undefined;
+	/** The generation in the way, when its registration names one (`foreign_writer`). */
+	readonly holder: HostHolder | undefined;
 
-	constructor(socket: string, reason: HostRefusalReason, host: HostProtocolInfo | undefined, detail?: string) {
-		super(`RPC socket ${socket} refused: ${reason} - ${refusalDetail(reason, host)}${detail ? `: ${detail}` : ""}`);
+	constructor(
+		socket: string,
+		reason: HostRefusalReason,
+		host: HostProtocolInfo | undefined,
+		detail?: string,
+		holder?: HostHolder,
+	) {
+		const heldBy = holder ? ` (held by ${describeHostHolder(holder)})` : "";
+		super(
+			`RPC socket ${socket} refused: ${reason} - ${refusalDetail(reason, host)}${detail ? `: ${detail}` : ""}${heldBy}`,
+		);
 		this.name = "HostEnsureRefusedError";
 		this.socket = socket;
 		this.reason = reason;
 		this.detail = detail;
+		this.holder = holder;
 	}
 }
 
@@ -148,7 +170,7 @@ function refusalDetail(reason: HostRefusalReason, host: HostProtocolInfo | undef
 			return `the running host is missing ${JSON.stringify(missing)}; it owns the socket, so no second host is started`;
 		}
 		case "foreign_writer":
-			return "its pidfile was written by another process, so this one may not signal it; stop that host explicitly instead";
+			return "another process registered the host on this socket; it accepts connections but did not answer as a host, and this one may not signal it - stop that host explicitly (host stop --force), then ensure again";
 		case "legacy_host":
 			return "a host from before the per-socket daemon directory is still running; it is drained and replaced only while it holds no session, and no second host is started beside it";
 		case "host_busy":
@@ -216,12 +238,8 @@ export function decideHostAction(
 /** A strictly newer build whose extensions cover everything the host loads - the only handoff candidate. */
 function supersedes(client: HostDecisionClient, host: HostProtocolInfo): boolean {
 	if (host.engineOrdinal === undefined) return false;
-	const hostIdentity: EngineBuildIdentity = {
-		text: host.engineVersion ?? "",
-		ordinal: host.engineOrdinal,
-		scheme: host.engineOrdinal[4] > 0 ? "epoch" : "nodef",
-	};
-	if (compareEngineOrdinal(client.identity, hostIdentity) <= 0) return false;
+	if (compareEngineOrdinal(client.identity, engineIdentityOf(host.engineVersion ?? "", host.engineOrdinal)) <= 0)
+		return false;
 	return covers(client.launchProfile, host.launch_profile);
 }
 

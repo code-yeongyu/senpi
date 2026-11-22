@@ -55,8 +55,13 @@ export interface HostCrashRecord {
 	 * recording a supervisor it had to SIGKILL never saw the child start.
 	 */
 	readonly uptimeMs?: number;
-	/** `rpc-host` (terminal) or `rpc-host-watchdog`; absent on records written before the field existed. */
-	readonly kind?: "rpc-host" | "rpc-host-watchdog";
+	/**
+	 * `rpc-host` (terminal), `rpc-host-watchdog`, or `rpc-host-drain-overdue` (a drain still running past its grace,
+	 * senpi#7098); absent on records written before the field existed.
+	 */
+	readonly kind?: "rpc-host" | "rpc-host-watchdog" | "rpc-host-drain-overdue";
+	/** How long an overdue drain had been running when it was recorded. */
+	readonly drainingForMs?: number;
 	/** The generation (`instanceId`) the record is about. */
 	readonly generation?: string;
 	/**
@@ -80,7 +85,7 @@ export interface HostCrashRecord {
 
 /** A record that counts as a death: a terminal record no engine process asked for. */
 export function isHostCrash(record: HostCrashRecord): boolean {
-	return record.kind !== "rpc-host-watchdog" && record.detection !== "engine_stop";
+	return (record.kind === undefined || record.kind === "rpc-host") && record.detection !== "engine_stop";
 }
 
 /**

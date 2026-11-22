@@ -108,6 +108,10 @@ export interface RpcSubscriptionLimitsEvent {
 		readonly resetsAt?: string;
 	}>;
 	readonly reportedAt: string;
+	/** The plan the usage endpoint names, when it names one (senpi#3684). */
+	readonly plan?: string;
+	/** Why the last usage poll failed; the windows beside it are the last ones reported (senpi#3684). */
+	readonly error?: string;
 }
 
 export type RpcHostLifecycleEvent =

@@ -9,8 +9,9 @@ import {
 	isKernelToHostMessage,
 	type KernelToHostMessage,
 } from "../../bridge/protocol.ts";
-import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
+import { applySessionEnvironment, type InheritedEnvironment, type SessionEnvironment } from "../session-env.ts";
 import type { KernelPreludePlan } from "../shared/kernel-prelude-plan.ts";
+import { type AttestKernelSpawn, attestKernelChild } from "../shared/session-spawn-attestation.ts";
 import { readKernelCpuTime } from "../shared/process-cpu.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
@@ -27,6 +28,7 @@ import {
 	waitForExit,
 } from "./process.ts";
 import { PythonStartup, type PythonStartupStage } from "./startup.ts";
+import type { PythonPermissionHost } from "./permission-host.ts";
 
 export type PythonTransportResult = Extract<KernelToHostMessage, { type: "result" }>;
 
@@ -41,6 +43,7 @@ export interface PythonTransportRunInput {
 }
 
 export interface PythonTransportOptions {
+	readonly permission?: PythonPermissionHost;
 	readonly interpreterPath: string;
 	readonly sessionId: string;
 	readonly cwd: string;
@@ -48,6 +51,12 @@ export interface PythonTransportOptions {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** Attests the interpreter process to the session it runs for (senpi#6972). */
+	readonly attestSpawn?: AttestKernelSpawn;
+	/** The host environment kernel children inherit, without the RPC host's supervisor hand-off (senpi#5635); defaults to process.env. */
+	readonly inheritedEnv?: InheritedEnvironment;
+	/** The kill guard (senpi#5349): the host's protected pids; absent = the guard is off for this kernel. */
+	readonly killGuard?: { readonly protectedPids: readonly number[] };
 	readonly startupTimeoutMs: number;
 	readonly startupCeilingMs: number;
 	readonly readCpuTime?: (pid: number | undefined) => bigint | undefined;
@@ -127,13 +136,17 @@ export class PythonKernelTransport {
 			args: [...invocation.args, "-u", scriptPath],
 			cwd: options.cwd,
 			env: {
-				...applySessionEnvironment(process.env, options.sessionEnv),
+				...applySessionEnvironment(options.inheritedEnv?.() ?? process.env, options.sessionEnv),
 				...options.env,
 				PYTHONUNBUFFERED: "1",
 				PYTHONIOENCODING: "utf-8",
+				// Present only while the guard is on: it switches the kernel's guard on and feeds its os.kill prefilter.
+				SENPI_KILL_GUARD_PROTECTED:
+					options.killGuard === undefined ? undefined : options.killGuard.protectedPids.join(","),
 			},
 		};
 		const child = (options.spawnProcess ?? defaultSpawn)(spawnOptions);
+		attestKernelChild(options.attestSpawn, child);
 		const transport = new PythonKernelTransport(options, child);
 		try {
 			await transport.#initialize();
@@ -182,6 +195,8 @@ export class PythonKernelTransport {
 			const message = error instanceof Error ? error.message : String(error);
 			this.#stderrTail = `${this.#stderrTail}Python interrupt frame write failed: ${message}\n`.slice(-4_000);
 		}
+		// Only a started kernel reaches here; the guard keeps that invariant local (senpi#3706).
+		if (this.#child.pid === undefined) return;
 		if (process.platform === "win32") this.#child.kill();
 		else this.#child.kill("SIGINT");
 	}
@@ -254,18 +269,23 @@ export class PythonKernelTransport {
 			this.#onPipeError(error instanceof Error ? error : new Error(String(error))),
 		);
 		const { sessionId, connection, memory, kernelGeneration } = this.#options;
-		this.#write({
-			type: "init",
-			sessionId,
-			connection,
-			...(memory === undefined ? {} : { memory }),
-			...(kernelGeneration === undefined ? {} : { kernelGeneration }),
-		});
+		this.#write(
+			Object.assign(
+				{
+					type: "init",
+					sessionId,
+					connection,
+					...(memory === undefined ? {} : { memory }),
+					...(kernelGeneration === undefined ? {} : { kernelGeneration }),
+				} as const,
+				this.#options.permission ? { permission: this.#options.permission.bootstrap() } : {},
+			),
+		);
 		await startup.ready;
 	}
 
 	#write(message: HostToKernelMessage): void {
-		this.#child.stdin.write(encodeBridgeFrame(message));
+		this.#child.stdin.write(encodeBridgeFrame(this.#options.permission?.frame(message) ?? message));
 	}
 
 	#onStdout(chunk: string): void {

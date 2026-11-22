@@ -36,6 +36,7 @@ describe("claude-sdk-oauth abort continuity", () => {
 
 	it("resolves an aborted turn when the CLI never delivers a terminal result", async () => {
 		const query = {
+			// oxlint-disable-next-line eslint/require-yield -- the generator throws before its first yield by design
 			async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage> {
 				await new Promise(() => {});
 			},

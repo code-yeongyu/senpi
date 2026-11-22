@@ -159,7 +159,10 @@ describe("JS kernel shell output capture", () => {
 		expect(original.calls).toEqual(["nothrow", "throws:true", "env", "cwd"]);
 		expect(captured.braces("a{b,c}")).toEqual(["a{b,c}"]);
 		expect(captured.escape("x")).toBe("x");
-		expect(captured.Shell).toBe(original.Shell);
+		// The kill guard (senpi#5349) wraps `Shell` so a `new Bun.$.Shell()` instance is captured and judged like `$`
+		// (kill-guard-worker-capture.test.ts covers the judging); it is no longer the original constructor.
+		expect(captured.Shell).not.toBe(original.Shell);
+		expect(typeof captured.Shell).toBe("function");
 		expect(captured.ShellPromise).toBe(FakeShellPromise);
 		expect(captured.ShellError).toBe(FakeShellError);
 	});
@@ -238,13 +241,47 @@ describe("JS kernel shell output capture", () => {
 			restore = installShellCapture({ isActive: () => true, emitText });
 
 			fake.bun.spawn(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+			fake.bun.spawn(["null-options"], null);
+			fake.bun.spawn(["null-env"], { env: null });
 			await new Promise<void>((resolve) => setImmediate(resolve));
 
 			const pinned = fake.spawnCalls[0]?.options;
 			expect(pinned?.env).toEqual({ ...process.env });
 			expect(pinned?.env).toHaveProperty("PI_SESSION_ID", "capture-applied-session");
+			for (const call of fake.spawnCalls.slice(1)) expect(call.options?.env).toEqual({ ...process.env });
 		} finally {
 			delete process.env.PI_SESSION_ID;
+		}
+	});
+
+	// senpi#6820 security contract: a spawn after its cell settled (timer, callback) must not inherit the OS environ,
+	// which still holds credentials the session environment withholds.
+	it("Given a session environment and no active cell when Bun.spawn runs without env then the worker view is still pinned", () => {
+		const fake = installFakeBun();
+		process.env.TEST_CRED_6820 = "senpi-credential-proxy-placeholder";
+		globalThis.__senpi_session_env_applied__ = true;
+		try {
+			restore = installShellCapture({ isActive: () => false, emitText: emitter().emitText });
+
+			fake.bun.spawn(["sh", "-c", "true"]);
+			fake.bun.spawn({ cmd: ["true"] });
+			fake.bun.spawn(["keep"], { env: { CUSTOM: "1" } });
+			fake.bun.spawn(["null-options"], null);
+			fake.bun.spawn(["null-env"], { env: null });
+
+			expect(fake.spawnCalls[0]?.options?.env).toHaveProperty(
+				"TEST_CRED_6820",
+				"senpi-credential-proxy-placeholder",
+			);
+			expect(fake.spawnCalls[1]?.options?.env).toHaveProperty(
+				"TEST_CRED_6820",
+				"senpi-credential-proxy-placeholder",
+			);
+			expect(fake.spawnCalls[2]?.options?.env).toEqual({ CUSTOM: "1" });
+			for (const call of fake.spawnCalls.slice(3))
+				expect(call.options?.env).toHaveProperty("TEST_CRED_6820", "senpi-credential-proxy-placeholder");
+		} finally {
+			delete process.env.TEST_CRED_6820;
 		}
 	});
 
@@ -258,11 +295,15 @@ describe("JS kernel shell output capture", () => {
 			fake.bun.spawnSync(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
 			fake.bun.spawnSync(["keep"], { env: { CUSTOM: "1" } });
 			fake.bun.spawnSync({ cmd: ["obj"] });
+			fake.bun.spawnSync(["null-options"], null);
+			fake.bun.spawnSync(["null-env"], { env: null });
+			fake.bun.spawnSync({ cmd: ["obj-null-env"], env: null });
 
 			expect(fake.spawnSyncCalls[0]?.options.env).toEqual({ ...process.env });
 			expect(fake.spawnSyncCalls[0]?.options.env).toHaveProperty("PI_SESSION_ID", "capture-sync-session");
 			expect(fake.spawnSyncCalls[1]?.options.env).toEqual({ CUSTOM: "1" });
 			expect(fake.spawnSyncCalls[2]?.options.env).toEqual({ ...process.env });
+			for (const call of fake.spawnSyncCalls.slice(3)) expect(call.options.env).toEqual({ ...process.env });
 		} finally {
 			delete process.env.PI_SESSION_ID;
 		}

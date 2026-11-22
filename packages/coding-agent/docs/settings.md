@@ -41,6 +41,14 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 Senpi includes a built-in permission system for tool calls. It evaluates a preset first, then applies explicit rules from global settings, project settings, and CLI flags. The last matching rule wins.
 
+For `external_directory`, this order applies separately to each path spelling: the absolute lexical path, the physical prefix plus unresolved components at each symlink followed, the final physical path, and their on-disk case spellings for existing components. The most restrictive result wins across spellings (`deny` > `ask` > `allow`). Thus a blanket deny followed by an allow for a shared directory still allows that directory, but an allow on a symlink's destination cannot override a deny on an intermediate path. Resolution uses metadata and link targets without opening path components; case recovery may list directories, but unavailable listings do not invalidate component identities proven by metadata. Missing path components retain their supplied case. More than 16 distinct spellings, 40 symlink hops, or a loop yields `ask`, even with a remembered approval.
+
+"Allow always" scopes remain tied to the resolved directory and cannot override a deny. An explicit allow for only the resolved directory can still leave an unmatched alias at `ask`; a remembered "Always" approval covers that same resolved target across its aliases.
+
+Resolution follows a kernel-style component queue. A name is inspected at the current physical directory; a symlink prepends its target components, and an absolute target resets the position to its filesystem root. `.` is skipped and `..` moves to the physical parent, after preceding symlinks have been followed. Neither the request nor a link target has dot segments collapsed before this walk. Relative targets are never joined to an unresolved lexical parent, so the walk cannot invent a route such as `a/d` when `a/L1` actually points to `b/c` and `L2` points to `../d`.
+
+A genuine intermediate spelling can still match only a blanket deny even when specific rules allow both the original path and the final destination. For example, if `entry` links to `proj` and `proj/x/secret` links to `outside`, allowing `entry/*` and `outside/*` does not override a blanket deny on the intermediate `proj/x/secret/file.txt`. Allow that intermediate route explicitly if it should be accessible.
+
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `permissionPreset` | string | `"full-access"` | Permission preset: `"full-access"`, `"workspace"`, `"accept-edits"`, `"auto"`, `"read-only"`, or `"ask"` |
@@ -101,9 +109,9 @@ Permission rules are a confirmation policy, not a sandbox. Senpi, extensions, pa
 |---------|------|---------|-------------|
 | `defaultProvider` | string | - | Startup provider (e.g., `"anthropic"`, `"openai"`; saved with Ctrl+S in `/model`, or edited manually) |
 | `defaultModel` | string | - | Startup model ID (saved with Ctrl+S in `/model`, or edited manually) |
-| `recommendedModels` | string[] | `kimi-k3`, `gpt-6-astra`, `gpt-5.6-sol`, `claude-fable-5-1`, `claude-opus-5-5`, `glm-5.2` | Preferred default model ids in priority order. Built-in thinking levels are kimi-k3/`max`, GPT-6 Astra/`high`, GPT-5.6 Sol/`medium`, claude-fable-5-1/`high`, claude-opus-5-5/`max`, glm-5.2/`max`. Override the list or disable auto-switch with `--no-recommended-models` / `warnings.offRecommendedModel`. |
+| `recommendedModels` | string[] | `claude-opus-5-5`, `claude-fable-5-2`, `kimi-k3.1-pro`, `gpt-6.2-astra`, `gpt-6-astra`, `gpt-6.2-sol`, `gpt-6.1-sol`, `glm-5.3` | Preferred default model ids in priority order. Built-in thinking levels are claude-opus-5-5/`medium`, claude-fable-5-2/`xhigh`, kimi-k3.1-pro/`max`, gpt-6.2-astra/`xhigh`, gpt-6-astra/`xhigh`, gpt-6.2-sol/`medium`, gpt-6.1-sol/`medium`, glm-5.3/`max`. Override the list or disable auto-switch with `--no-recommended-models` / `warnings.offRecommendedModel`. |
 | `defaultThinkingLevel` | string | - | Startup thinking level (saved with Ctrl+S in `/thinking`, or edited manually): `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
-| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-haiku-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gemini-4-argon"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
+| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"kimi-k3-1"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-fable-5-2"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-haiku-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gemini-4-argon"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, `"gpt-6-astra"`, or `"gpt-6.2"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses, compaction or branch-summary usage, and provider recovery diagnostics such as dropped Anthropic thinking blocks |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level. Anthropic, Google, and Bedrock use these natively. OpenAI-compatible models use them when `compat.thinkingTokenBudgetField` (or `supportsThinkingTokenBudget`) is set. |
@@ -142,6 +150,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean \| `"header"` | `false` | `true` hides the startup header and loaded-resource listing. `"header"` keeps the header (version and key hints) but hides the model scope line and loaded-resource listing |
 | `tips` | boolean | `true` | Show the rotating startup and working-status tip lines |
+| `reducedMotion` | boolean | `false` | Keep decorative indicators static. Currently stops the footer's `watching` glyph from pulsing while the agent idles on monitors. Read at session start; takes effect after a reload |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
 | `enableInstallTelemetry` | boolean | `true` | Send the anonymous install/update ping and selected provider attribution headers. This does not control update checks |
@@ -156,7 +165,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `tuiMode` | string | `"regular"` | Interactive TUI mode: `"regular"` or experimental `"fullscreen"`. Changes from `/settings` apply immediately; `--tui-mode` overrides this setting at startup |
 | `fullscreenExitOutput` | string | `"transcript"` | Fullscreen exit output: `"transcript"` prints the final transcript and resume hint, while `"resume-hint"` restores the previous screen and prints only the resume hint. Has no effect in regular TUI mode |
 | `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling or while the pointer is over its rightmost-column track, `"always"` reserves that column and keeps it visible, and `"hidden"` hides it. Has no effect in regular TUI mode |
-| `fullscreenCopyOnSelect` | boolean | `true` | Automatically copy selected text in fullscreen mode. When disabled, selections stay highlighted and `Ctrl+X` copies the active selection |
+| `fullscreenCopyOnSelect` | boolean | `true` | Automatically copy selected text in fullscreen mode, preserving original Markdown syntax for Markdown content. When disabled, selections stay highlighted and `Ctrl+X` copies the active selection |
 | `fullscreenWheelScrollLines` | `"auto"` or number | `"auto"` | Lines per mouse-wheel event in fullscreen mode, from 1 to 100. `"auto"` moves one line per event in local macOS terminals, which already accelerate wheel and trackpad input; elsewhere, and over SSH, it speeds up fast wheel spins to at most 6 lines per event. Alt+wheel moves five times as far |
 
 For VS Code, include `--wait` so senpi resumes after the editor exits:
@@ -205,10 +214,11 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the senpi version update check. Use `--
 |---------|------|---------|-------------|
 | `contextFiles.maxBytesPerFile` | number | `65536` | Maximum UTF-8 bytes loaded from each AGENTS.md / CLAUDE.md, including the truncation note and any closing code fence |
 | `contextFiles.maxTotalBytes` | number | `131072` | Maximum combined UTF-8 bytes of loaded context files, including truncation notes and closing code fences |
+| `contextFiles.globalPath` | string | unset | Global (user-scope) context file to load instead of the agent-dir `AGENTS.md`, e.g. `~/.agents/AGENTS.md`. Read from `~/.senpi/agent/settings.json` only; a project's `.senpi/settings.json` cannot set it. A leading `~` is expanded, a relative path resolves against `~/.senpi/agent`, and a directory runs the same `AGENTS.override.md` / `AGENTS.md` / `CLAUDE.md` candidate probe as the agent dir. Unset or blank keeps the agent-dir file; a path that is set but missing, unreadable, or a directory with no candidate falls back to the agent-dir probe and shows one warning naming the path. The loaded file keeps the same size limits |
 
 Files receive budget nearest-first: the current directory, its ancestors, then the global file. A cut prefers a newline in the last quarter of the available content budget; otherwise it uses a UTF-8 character boundary. An open backtick or tilde fence is closed with the same marker before the truncation note; the closing marker's bytes count against the budget. Files with less than 1024 bytes of budget left are skipped when they would need truncation, with a warning distinguishing an undersized per-file limit from budget used by nearer files. Both limits accept positive numbers (rounded down); invalid values use the defaults.
 
-The skills section has a fixed 48 KiB rendered UTF-8 byte cap, including its roots table and markup. Above 100 visible skills or 64 KiB of descriptions, descriptions become one line of at most 160 characters. If needed to meet the section cap, smaller catalogs also use compact descriptions, then all descriptions are dropped. If names and locations still exceed the cap, only the first skills that fit are listed, with the omitted count inside the section. Skills remain available for explicit invocation.
+The skills section has a fixed 48 KiB rendered UTF-8 byte cap, including its roots table and markup. Above 100 visible skills or 16 KiB of descriptions, the catalog lists one line per skill, `- name [location]: description`, where the location is the shortest path that still resolves against the roots table and the description is cut to at most 160 characters. A cut keeps the description's when-to-use sentence ("Use when ...", "MUST USE for ...", "Triggers: ...") and fills the remaining room with the text around it. If needed to meet the section cap, smaller catalogs also use the one-line form, then all descriptions are dropped (`- name [location]`). If names and locations still exceed the cap, only the first skills that fit are listed, with the omitted count inside the section. Skills remain available for explicit invocation.
 
 Context cuts, skipped files, and compacted or omitted skills share the "Context size limits" resource notice in interactive mode and appear once on stderr at startup in print, JSON, and RPC modes, with the affected path when present. Ordinary skill validation warnings keep their existing diagnostic behavior and are not printed to stderr by this size check.
 
@@ -216,9 +226,23 @@ Context cuts, skipped files, and compacted or omitted skills share the "Context 
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `compaction.enabled` | boolean | `true` | Enable auto-compaction |
+| `compaction.enabled` | boolean | `true` | Enable auto-compaction. `false` stops threshold and idle compaction. Compaction at the reserve limit and provider-overflow recovery stay on, and so do background summaries unless `compaction.speculativeEnabled` is also `false` |
 | `compaction.reserveTokens` | number | `16384` | Tokens reserved for LLM response |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens to keep (not summarized) |
+| `compaction.reserveScalingEnabled` | boolean | `true` | Raise the reserve on large windows to the larger of `reserveTokens` and 4% of the context window (at most 49152). `false` uses `reserveTokens` as written |
+| `compaction.model` | string | - | `"provider/modelId"` that writes the summary instead of the session model. An unknown, malformed, spent or credential-less value falls back to the session model |
+| `compaction.speculativeEnabled` | boolean | `true` | Write the summary in the background shortly before the threshold, so compaction does not stop the turn to write it |
+| `compaction.speculativeLeadTokens` | number | 12.5% of the threshold | How many tokens before the threshold the background summary starts. Always held between 8192 and 32768 |
+| `compaction.speculativeCooldownMs` | number | `30000` | Minimum time after a background summary finishes before an idle session rebuilds one that no longer fits |
+| `compaction.speculativeFraction` | number | `0.75` | Read but without effect: the lead above always decides when the background summary starts |
+| `compaction.idleCompactionEnabled` | boolean | `true` | When a run ends in the TUI or RPC mode, compact or prepare a summary while nobody is waiting |
+| `compaction.graceBandEnabled` | boolean | `true` | Let a turn start past the threshold while a background summary is still being written, instead of waiting for it |
+| `compaction.toolAdmissionEnabled` | boolean | `true` | Send an oversized tool result to the model as a head and tail excerpt |
+| `compaction.restorationEnabled` | boolean | `true` | After a compaction, remind the model which files it touched and which skills it loaded |
+| `compaction.restorationMaxItems` | number | `10` | Most files and skills listed in that reminder |
+| `compaction.restorationMaxTokensPerItem` | number | `5000` | Longest single entry in that reminder, in tokens |
+| `compaction.restorationMaxTotalTokens` | number | `50000` | Largest reminder, in tokens |
+| `compaction.restorationContextRatio` | number | `0.15` | Largest reminder as a share of the context window. The smaller of this and `restorationMaxTotalTokens` applies |
 | `compaction.summarizationMaxDurationMs` | number | adaptive | Wall-clock budget for one summarization attempt: larger of 120s and 2ms per estimated input token, capped at 30min. Set a positive value to override |
 | `compaction.modelOverrides` | object | - | Per-model `reserveTokens` and `keepRecentTokens` overrides keyed by exact `"provider/modelId"` |
 
@@ -261,7 +285,9 @@ Global and project settings merge recursively **before** model lookup. A project
 
 `enabled` is not model-specific. The active model's token settings apply to manual compaction, automatic threshold checks (including between assistant turns), and overflow recovery. Switching models takes effect on the next check or compaction. Configure overrides in JSON; `/settings` retains the ordinary auto-compaction toggle.
 
-See [compaction.md](compaction.md) for trigger and summarization behavior.
+The boolean switches fall back to their default when the value is not a boolean. The numeric keys other than `reserveTokens` and `keepRecentTokens` fall back to their default when the value is not a finite number, and a negative value counts as `0`. `summarizationMaxDurationMs` is the exception: zero or a negative value uses the adaptive default.
+
+See [compaction.md](compaction.md#proactive-compaction) for how each of these behaves, and the [compaction guide](compaction-guide.md#what-runs-by-default-and-what-it-costs) for what each one costs and when to turn it off.
 
 ### Branch Summary
 
@@ -278,14 +304,18 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 | `retry.maxRetries` | number | `5` | Maximum agent-level retry attempts |
 | `retry.baseDelayMs` | number | `2000` | Base delay for agent-level exponential backoff (2s, 4s, 8s) |
 | `retry.modelFallback` | boolean | `true` | Let eligible retry failures advance through configured per-model fallback chains |
-| `retry.fallbackChains` | `Record<string, string[]>` | `{}` | Ordered exact model-selector to fallback-selector chains |
+| `retry.fallbackChains` | `Record<string, string[]>` | shipped chains for Fable 5, 5.1, 5.2 and Opus 5.5 | Ordered exact model-selector to fallback-selector chains. Your keys are added to the shipped ones; see [Model fallback chains](#model-fallback-chains) |
 | `retry.fallbackRevertPolicy` | `"cooldown-expiry"` \| `"never"` | `"cooldown-expiry"` | Automatic primary-model restoration policy |
 | `retry.abortServerSideFallback` | boolean | `true` | Abort a turn when the provider substitutes a different model after a classifier decline |
 | `fallback.circuitCooldownMs` | number | `60000` | First circuit-breaker cooldown for a chain entry that failed out of its chain; doubles on each consecutive failure; `0` disables the breaker |
 | `fallback.circuitMaxCooldownMs` | number | `1800000` | Ceiling for the doubled circuit-breaker cooldown (30 minutes) |
 | `retry.maxAgentDelayMs` | number | `60000` | Hard ceiling on agent-level retry delay (60s), applied after the retry profile and jitter |
+| `retry.hintedWaitCapMs` | number | `300000` | Longest rate-limit wait served on the same model (5 minutes); see [Rate-limit waits](#rate-limit-waits) |
+| `retry.probeBackMaxMs` | number | `3600000` | Rate-limit wait from which the primary is no longer probed in the background (1 hour); see [Rate-limit waits](#rate-limit-waits) |
+| `retry.providers` | object | - | Per-provider retry budget, keyed by provider id; see [Per-provider retry budget](#per-provider-retry-budget) |
 | `retry.provider.timeoutMs` | number | `300000` | Provider/SDK request timeout and stream idle timeout in milliseconds |
-| `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables |
+| `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables. Keep-alive bytes (SSE pings, comment keep-alives) received within the bound extend it |
+| `retry.provider.keepAliveTimeoutMs` | number | `900000` | Maximum time keep-alive bytes alone may hold a request without any response content; `0` disables the cap. Checked when the start or idle bound fires, so it has no effect when both are disabled |
 | `retry.provider.streamRetryTimeoutMs` | number | `30000` | First-request liveness cap after a known provider stream/transport timeout; `0` disables the cap |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay honored on the same model before the fallback chain engages (60s) |
@@ -310,6 +340,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
     "provider": {
       "timeoutMs": 3600000,
       "streamStartTimeoutMs": 300000,
+      "keepAliveTimeoutMs": 900000,
       "streamRetryTimeoutMs": 30000,
       "maxRetries": 0,
       "maxRetryDelayMs": 60000
@@ -318,9 +349,43 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 }
 ```
 
+#### Rate-limit waits
+
+When a provider answers a rate limit (429) with a wait time, two settings decide what Senpi does with it. For rate limits they take the place of `retry.provider.maxRetryDelayMs`, which covers the other failures that carry a wait:
+
+| Wait the provider asks for | What happens |
+|----------------------------|--------------|
+| Up to `retry.hintedWaitCapMs` | Senpi waits and retries the same model inside the turn. If the waits of one turn add up to more than the cap, the turn moves to the fallback chain |
+| Longer than that, below `retry.probeBackMaxMs` | The turn moves to the fallback chain at once, and Senpi probes the primary in the background, first at half the wait, so the session can return to it |
+| `retry.probeBackMaxMs` or longer | The turn moves to the fallback chain at once, with no background probe |
+
+A rate limit that carries no wait time moves to the fallback chain at once. When no fallback candidate can take over, it is retried on the same model with the normal backoff, waits in the middle row are served on the same model, shortened to `retry.hintedWaitCapMs`, and waits in the last row fail the turn with the time the limit lifts.
+
+A lower `retry.hintedWaitCapMs` leaves a rate-limited model sooner, which spends the fallback model's quota instead of your time. `retry.probeBackMaxMs` must be larger than `retry.hintedWaitCapMs`; otherwise both go back to their defaults. A provider whose own retry profile keeps rate limits on the retry budget does not use these tiers.
+
+#### Per-provider retry budget
+
+`retry.providers` changes the agent-level retry budget for one provider without touching the others:
+
+```json
+{
+  "retry": {
+    "providers": {
+      "anthropic": {
+        "turn": { "maxRetries": 8, "baseDelayMs": 1000 }
+      }
+    }
+  }
+}
+```
+
+`turn.enabled`, `turn.maxRetries` and `turn.baseDelayMs` take effect. They are applied after `retry.maxRetries` and `retry.baseDelayMs`, and they also apply to a provider that ships its own retry profile, which those two global keys leave alone. `retry.enabled: false` still turns every retry off.
+
+An entry is checked as a whole: a value of the wrong type drops the entry for that provider, and so does an entry with no recognized key. The validator also accepts `growthFactor`, `perAttemptCapMs`, `jitter` and `serverHintMaxDelayMs`, and a `providerRequest` block, but none of them changes a retry today.
+
 #### Model fallback chains
 
-`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to every provider serving that model family. Bare selectors expand against the models you actually have: providers holding an OAuth credential are preferred, then a fixed precedence order, and OpenRouter is never chosen by expansion. Senpi ships bare default chains for `claude-fable-5-1` and `claude-fable-5` - `claude-opus-5-5:max`, then `claude-opus-5:max`, `claude-opus-4-8:max`, and `claude-opus-4-6:max` - and for `claude-opus-5-5` - `claude-opus-5:max`, then `claude-opus-4-8:max`, then `claude-opus-4-6:max` - so Fable 5.1, Fable 5 and Opus 5.5 keep a fallback chain whichever provider serves them, and a fallback never leaves the Anthropic family; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
+`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to that model vendor's own providers - for example `anthropic-subscription` and `anthropic` for Claude, `chatgpt-subscription` and `openai` for GPT, `google` and `google-vertex` for Gemini. A bare selector never expands onto a reseller, gateway, cloud re-host or custom provider that also serves the model; name one as `provider/model` to use it. A bare id from a vendor senpi does not know stays on the provider the session is already using. Within the vendor's providers, those holding an OAuth credential are preferred, then a fixed precedence order. Senpi ships bare default chains for `claude-fable-5-2`, `claude-fable-5-1` and `claude-fable-5` - `claude-opus-5-5`, then `claude-opus-5`, with no thinking level of their own, so those rungs inherit the session's thinking level (clamped to what the model supports) and a Fable fallback never leaves the Anthropic family - and for `claude-opus-5-5` - `claude-fable-5-2:medium`, then `kimi-k3.1-pro:max`, and nothing else: each of those rungs runs at its own level whatever level the Opus 5.5 session was on, and no Opus rung follows because a rate limit on one Opus model holds the whole Opus quota. The bare `kimi-k3.1-pro` rung reaches Kimi Code (which serves it as `k3.1-pro`) and Moonshot. A fallback keeps walking the chain it started on, so a session that stepped from Opus 5.5 to Fable 5.2 moves on to Kimi K3.1 Pro rather than to Fable's own chain. These chains apply whichever provider serves the model; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
 
 ```json
 {
@@ -342,7 +407,7 @@ A fallback entry with `:thinking-level` requests that level on the target model;
 
 #### Fallback behavior and diagnostics
 
-With `retry.enabled` and `retry.modelFallback` enabled, Senpi can switch from a transient or eligible hard provider failure to the next configured candidate. Transient failures (timeouts, overload, 429, 5xx, transport drops) first retry the same model on the existing exponential backoff; the chain engages only after `retry.maxRetries` attempts are spent, and each fallback candidate starts with a fresh retry budget. Hard failures (quota, auth, model-not-found) and classifier refusals still switch immediately. The switch continues the current turn without changing the existing conversation prefix, preserving prompt-cache inputs; fallback lifecycle events are never added to model context. Returning to a primary model happens only at a turn boundary, never while a response is streaming. Selector cooldowns are error-derived, and a provider retry-after hint always wins: quota and billing failures park a model for 30 minutes, rate limits for 30 seconds, overload for 45 seconds plus jitter, 5xx for 20 seconds, and timeout or connection/transport failures for 60 seconds; unmatched failures default to five minutes. A fully failing chain costs up to `1 + (chainLength + 1) * maxRetries` provider calls plus per-rung backoff before the turn fails; with `maxRetries: 0` every failure switches immediately, costing `1 + chainLength` calls.
+With `retry.enabled` and `retry.modelFallback` enabled, Senpi can switch from a transient or eligible hard provider failure to the next configured candidate. Transient failures (timeouts, overload, 5xx, transport drops) first retry the same model on the existing exponential backoff; the chain engages only after `retry.maxRetries` attempts are spent, and each fallback candidate starts with a fresh retry budget. Rate limits (429) follow [Rate-limit waits](#rate-limit-waits) instead. Hard failures (quota, auth, model-not-found) and classifier refusals still switch immediately. The switch continues the current turn without changing the existing conversation prefix, preserving prompt-cache inputs; fallback lifecycle events are never added to model context. Returning to a primary model happens only at a turn boundary, never while a response is streaming. Selector cooldowns are error-derived, and a provider retry-after hint always wins: quota and billing failures park a model for 30 minutes, rate limits for 30 seconds, overload for 45 seconds plus jitter, 5xx for 20 seconds, and timeout or connection/transport failures for 60 seconds; unmatched failures default to five minutes. A fully failing chain costs up to `1 + (chainLength + 1) * maxRetries` provider calls plus per-rung backoff before the turn fails; with `maxRetries: 0` every failure switches immediately, costing `1 + chainLength` calls.
 
 Billing-class failures — Anthropic's 400 *credit balance is too low*, OpenAI's 429 `insufficient_quota`, and other credit/quota exhaustion responses — never recover by retrying the same account, so a configured chain candidate receives a **pinned** fallback switch, exactly like a refusal-pinned fallback: it never auto-reverts and later turns keep running on the replacement model instead of returning to the exhausted account after the 30-minute billing cooldown.
 
@@ -415,6 +480,7 @@ When unset, senpi leaves provider payloads unchanged. This setting currently app
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `anthropicSubscriptionProvider.enabled` | boolean | `false` | Enable the ambient (host-CLI-derived) lane of `anthropic-subscription`. Env override: `SENPI_CLAUDE_SDK_OAUTH_ENABLED`. Explicit senpi-side logins (stored OAuth accounts in `auth.json`, `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN_<n>` env accounts) keep the provider available with this unset |
+| `anthropicSubscriptionProvider.accountFallback` | boolean | `true` | Allow automatic switching between managed Claude accounts. `false` surfaces failure instead of using another account, including when the selected account is already blocked. Same-account retries and refresh remain enabled. Independent of `retry.modelFallback`. Env override: `SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK` |
 | `cursorCliOauthProvider.enabled` | boolean | `false` | Enable the `cursor-cli-oauth` fallback lane and automatic native credential bootstrap. Env override: `SENPI_CURSOR_CLI_OAUTH_ENABLED` |
 | `providers.<id>.maxConcurrency` | number | unlimited | Cap the streaming requests senpi keeps in flight against one provider, keyed by registry provider id (`anthropic`, `openai`, ...). `0`, a negative value, a fraction, or an absent key all mean unlimited |
 
@@ -469,11 +535,47 @@ unknown (e.g. Google models) or caching is off, no budget applies and timeout be
 |---------|------|---------|-------------|
 | `promptCache.cacheAwareTimeouts` | boolean | `true` | Cap foreground tool waits at the model's prompt-cache TTL minus the safety buffer; `false` restores the fixed legacy ceilings |
 | `promptCache.safetyBufferSeconds` | number | `30` | Headroom subtracted from the cache TTL (a 5m TTL yields a 270s ceiling). If it consumes the whole TTL, no budget applies |
+| `promptCache.sessionAffinity` | boolean | `true` | Send a stable per-session key on Anthropic Messages requests (`metadata.user_id`, plus the session-affinity header where the model's compat sends one) so a gateway that spreads requests over several accounts keeps one session on one account and its prompt cache. The key is an HMAC of the session id under a random per-install salt: it never carries the session id or any account or user identity. `false` restores the earlier behavior: no `metadata.user_id`, and a model whose compat sends the affinity header sends the session id there as before. A model whose compat sets `sendSessionAffinityHeaders: false` sends neither |
 | `promptCache.goalBackstopMaxSeconds` | number | `270` | Longest a goal parked on live wake sources (terminal monitors, background sessions, detached `eval` cells, task children) waits before it re-checks with a full turn, clamped to 1..3600. The default lands inside the 5m cache TTL; raise it toward `3570` to trade re-check frequency for cost on a wait you trust |
 
 A foreground `bash` command still running at the budget is handed to a live background session
 instead of being killed; its explicit `timeout` remains the kill deadline. See
 `terminal.timeoutAction` to switch that hand-off back to a kill.
+
+### Handoff Hint
+
+When a large session sits idle past its model's prompt-cache lifetime, the next reply has to resend the whole
+context at the cache-write price. The handoff hint shows one line above the editor with that price and the price of
+a fresh session's first reply, plus two choices: **Start fresh with a handoff** (`/handoff`) opens a new session,
+linked to this one, whose first entry is a short brief built from the session's state (goal, open todos, last request
+and answer, touched files, the old session's path); **Keep going** (`/handoff keep`) hides it for the rest of the
+session. A reopened session (a resume or `--continue`) counts its cache age from its last reply, so reopening a large
+session after its cache expired shows the hint before the first reply. The hint never interrupts a turn and never
+switches on its own; if another extension cancels the switch, the hint stays. `/handoff` with any other argument
+only explains the two choices. Prices come from the model's cost card; on a
+subscription they are API-price equivalents. No hint is shown for models without a cache lifetime or a price, for task
+children, in print/JSON mode, for turns an extension started, while a goal is active, or once compaction is about to
+run.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `handoffHint.enabled` | boolean | `true` | Offer the hint at all |
+| `handoffHint.minContextTokens` | number | `200000` | No hint below this context size |
+| `handoffHint.minSavingUsd` | number | `1` | No hint unless a fresh session saves at least this much on the next reply |
+
+### Job widgets
+
+A background command that keeps printing numbers (a render, a benchmark, a test run) gets a small live chart:
+once it has run for `authorAfterMs` and printed a few lines, a model reads the command and a redacted sample of
+its output once and writes a chart spec, and every update after that is computed locally from new output. Jobs
+whose output has nothing worth charting stay plain. It needs no setup; the views reach clients through the
+`job_widget_state` event ([RPC](rpc.md#job-widgets)).
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `jobWidgets.enabled` | boolean | `true` | Build widgets at all; `false` taps no output and never calls a model |
+| `jobWidgets.model` | string | - | `provider/model-id` that writes the specs; otherwise a model the host provides, else the session's model |
+| `jobWidgets.authorAfterMs` | number | `15000` | Job age in milliseconds before its spec is written |
 
 ### Shell
 
@@ -481,7 +583,53 @@ instead of being killed; its explicit `timeout` remains the kill deadline. See
 |---------|------|---------|-------------|
 | `shellPath` | string | - | Custom shell path (e.g., for Cygwin on Windows); supports a leading `~` for the home directory |
 | `shellCommandPrefix` | string | - | Prefix for every bash command (e.g., `"shopt -s expand_aliases"`) |
+| `tools.bash.redactSecretsInOutput` | boolean | `false` | Redact credential-shaped bash stdout and stderr before streaming, retaining output, or writing output spill files |
 | `npmCommand` | string[] | - | Command argv used for npm package lookup/install operations (e.g., `["mise", "exec", "node@20", "--", "npm"]`) |
+
+To opt in, set:
+
+```json
+{
+  "tools": {
+    "bash": {
+      "redactSecretsInOutput": true
+    }
+  }
+}
+```
+
+The default is off. When enabled, bash replaces GitHub, Slack, OpenAI/Anthropic,
+AWS access-key, Google API-key and JWT-shaped tokens, PEM private-key blocks,
+Bearer credentials, and secret-named `KEY=VALUE` values with `<redacted>`.
+Assignment names are retained; `AUTH` and `AUTHORIZATION` match complete name
+segments, not `AUTHOR`. Quoted assignment values end at their closing quote or
+the next newline. Bearer values must be token-shaped (at least eight characters,
+including a digit or token punctuation), so ordinary prose is retained when
+its word delimiter arrives.
+This applies to core bash, user `!cmd`/`!!cmd`, and persistent terminal
+bash, including streamed updates, background completion notices, terminal screen
+reads, structured results, output spill files and resulting transcript entries.
+The tool-child runtime uses the same setting.
+Credential prefixes are recognized after non-alphanumeric boundaries inside
+URLs, paths and compound tokens. ANSI styling and charset designations do not
+split credential detection; hidden OSC payloads (such as
+terminal titles and hyperlink targets) are omitted while redaction is enabled.
+
+An incomplete token is held until its delimiter or process exit. Persistent
+terminals also flush after 50 ms without output so idle prompts and complete
+cursor-control sequences reach screen reads. Once a token contains a full known
+public credential prefix (including `AKIA`, `AIza`, or `eyJ`), or a Bearer value
+has begun, idle flushes withhold it until a delimiter or process exit. Secret-named
+assignment values remain masked from their first character. Mere prefix fragments
+such as `I`, `e.g.`, `git`, `sk`, and `AI` are published verbatim at idle.
+At a delimiter, withheld tokens are redacted if they match a complete credential
+shape, otherwise released verbatim. At process exit, incomplete started shapes
+are replaced by their public prefix plus `<redacted>`; already published prefix
+characters are not repeated. Tokens longer than 8,192 characters are
+conservatively redacted to bound memory. Enabling the setting affects newly
+started commands; it does not rewrite existing terminal sessions, transcripts,
+command arguments, or files created by commands. This is shape detection, not a
+guarantee that arbitrary encoded or unrecognized credentials will be removed.
 
 Windows paths in JSON must use forward slashes or escaped backslashes:
 
@@ -541,27 +689,34 @@ An empty array starts with no built-in tools while preserving extension and SDK 
 
 #### Eval-only tools
 
-Whenever the `eval` tool is available (codemode loaded), `bash`, `powershell`, `grep`, `workflow` and `monitor` leave the model's direct tool list and run only inside eval cells:
+Whenever the `eval` tool is available (codemode loaded), `bash`, `powershell`, `grep`, `glob`, `generate_image`, `workflow` and `monitor` leave the model's direct tool list and run only inside eval cells:
 
 ```js
 const { output } = await tool.bash({ command: "ls -la" });
 const hits = await tool.grep({ pattern: "TODO", path: "src" });
+const image = await tool.generate_image({ prompt: "a line-art fox, transparent background" });
 const snapshot = await tool.workflow({ action: "snapshot", run_id });
 await tool.monitor({ description: "build", command: "bun run build", filter: "^done" });
 ```
 
-This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell` and `grep` use that declaration. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
+This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell`, `grep`, `glob` and `generate_image` use that declaration, and extension tools (for example the omo plugin's `thread_*` family) join the same way. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
 
 ### Automatic Turns
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `engineTurns.maxPerUserInput` | number | `150` | Turns the agent may start on its own (stream-rule nudges, goal continuations, other extension follow-ups) after one user message before it pauses; `0` turns the limit off |
+| `engineTurns.maxPerUserInput` | number | `0` | Turns the agent may start on its own (stream-rule nudges, goal continuations, other extension follow-ups) after one user message before it pauses; `0` (the default) turns the limit off |
 | `engineTurns.maxToolFreePerMinute` | number | `12` | Turns started on its own within 60 s that called no tool before it pauses; `0` turns the limit off |
 | `turn_inactivity_ms` | number | `3600000` | Milliseconds a turn may run with no tool progress before it is stopped as a deadline; renewed only by tool execution events and admitted user input, never by streamed text. Minimum `60000`; `0` disables |
 | `turn_max_runtime_ms` | number | `21600000` | Hard cap on one turn's runtime from prompt accept; `0` disables |
 
 When a limit is reached the session pauses with a notice instead of starting another turn; any message you send continues it, because only turns since your last message count.
+
+### Thread Chains
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `threads.chainCountLimit` | number | unset | Hops a thread chain may make (session A prompts B, B prompts A, ...) before the next thread call is refused with `chain_count_limit`; a chain that comes back to a session it already visited is allowed. Unset (the default) means unlimited. There is no cost limit. Read when RPC input arrives with a `chainCount` (a thread call from another session; see `rpc.md`) |
 
 ### Ask User
 
@@ -589,7 +744,7 @@ While a question is pending, the terminal title shows `? <header>` unless an act
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `todo.firstTurnPlan` | `"force"` \| `"remind"` \| `"off"` | `"force"` | First prompt of a session that is not a question (`?`/`!` ending): `"remind"` adds a hidden reminder to open the turn with a phased `todo` init; `"force"` also sends a named `tool_choice` for `todo` on that first request where the provider accepts one (Anthropic models whose compat allows forced tool choice with thinking off, OpenAI Responses, OpenAI Chat Completions unless `compat.supportsForcedToolChoice` is `false`), otherwise it falls back to the reminder. A provider that refuses the forced choice gets the request once more without it, and that model is not forced again for the rest of the process; `"off"` disables both. Print and JSON modes never arm |
+| `todo.firstTurnPlan` | `"force"` \| `"remind"` \| `"off"` | `"force"`; `"off"` under a GPT prompt preset or `deepseek-v4-1-flash` | First prompt of a session that is not a question (`?`/`!` ending): `"remind"` adds a hidden reminder to open the turn with a phased `todo` init; `"force"` also sends a named `tool_choice` for `todo` on that first request where the provider accepts one (Anthropic models whose compat allows forced tool choice with thinking off, OpenAI Responses, OpenAI Chat Completions unless `compat.supportsForcedToolChoice` is `false`), otherwise it falls back to the reminder. A provider that refuses the forced choice gets the request once more without it, and that model is not forced again for the rest of the process; `"off"` disables both. Under a GPT prompt preset (`gpt-5` through `gpt-6.2`) or `deepseek-v4-1-flash` an unset value means `"off"`: those models plan after they have read what the request points at, and a value set here still wins. Print and JSON modes never arm |
 | `todo.turnEndBackstop` | `boolean` | `true` | When a main-session turn (not print/json, no active goal or continuation) ends text-only while the todo list still has open tasks and the final paragraph does not ask the user a question, queue a hidden `senpi.todo-owed` followUp nudging the next open task. At most two per chain of unattended turns; the third notifies once and stays silent until the next accepted user message |
 
 While open todo work has an active wake source (such as `senpi-task`), a running goal, a pending continuation, or pending messages, the backstop sends no nudge or warning. The footer shows `waiting: <sources>` until the next `agent_start`; session start and tree navigation also clear it. The `todo_owed_reminder` event reports `reason: "waiting"` and the source names, and the session log records suppression reasons at debug level.
@@ -603,6 +758,7 @@ A goal whose continuation already stopped does not count as waiting: it keeps it
 | `sessionDir` | string | - | Directory where session files are stored. Accepts absolute or relative paths, plus `~`. |
 | `sessionShutdownHandlerWarnMs` | number | `2000` | Warn when a single extension's `session_shutdown` handler has run this long. Set to `0` to disable the warning. |
 | `sessionShutdownHandlerTimeoutMs` | number | `10000` | Hard cap for a single extension's `session_shutdown` handler. Set to `0` to disable the cap. |
+| `sessionShutdownQuitBudgetMs` | number | `2000` | Total time a quit that exits senpi waits on all `session_shutdown` handlers together. Set to `0` to disable it. |
 
 ```json
 { "sessionDir": ".senpi/sessions" }
@@ -615,8 +771,10 @@ When multiple sources specify a session directory, precedence is `--session-dir`
 senpi bounds each extension's `session_shutdown` handler so one slow extension cannot hold quit, `/reload`, `/new`, `/resume` or a fork hostage. Past `sessionShutdownHandlerWarnMs` it logs one warning naming the extension; at `sessionShutdownHandlerTimeoutMs` it aborts the `signal` that handler received on the event, reports an extension error, and continues teardown with the next handler. The handler itself is not killed - it keeps running until the process exits - so extensions that persist durable state should observe `event.signal`.
 
 ```json
-{ "sessionShutdownHandlerWarnMs": 2000, "sessionShutdownHandlerTimeoutMs": 10000 }
+{ "sessionShutdownHandlerWarnMs": 2000, "sessionShutdownHandlerTimeoutMs": 10000, "sessionShutdownQuitBudgetMs": 2000 }
 ```
+
+A quit that exits senpi (interactive quit, print mode, a single-connection RPC process) also has a total budget, counted from when senpi starts running the shutdown handlers (the steps before them, such as stopping the TUI, are not counted): every handler still starts, in order, but once `sessionShutdownQuitBudgetMs` has passed senpi stops waiting, logs one warning naming the extension that overran it and the elapsed time, and exits. Handlers that start after that point get 1 ms, so their synchronous cleanup still runs. `/reload`, `/new`, `/resume`, forks, and an RPC host closing one session while it keeps running keep only the per-handler limits.
 
 Only `session_shutdown` is bounded; other extension events (including ask-user and approval dialogs, which may legitimately wait for minutes) are unaffected.
 
@@ -735,7 +893,6 @@ Paths in `~/.senpi/agent/settings.json` resolve relative to `~/.senpi/agent`. Pa
 | `prompts` | string[] | `[]` | Local prompt template paths or directories |
 | `themes` | string[] | `[]` | Local theme file paths or directories |
 | `enableSkillCommands` | boolean | `true` | Register skills as `/skill:name` commands |
-| `maxSkillExpansionsPerPrompt` | number | `5` | Distinct skills one prompt may expand; later skill commands stay literal. Must be a positive integer, otherwise the default applies. The parser reads at most 64 invocation tokens per prompt |
 
 Arrays support glob patterns and exclusions. Use `!pattern` to exclude. Use `+path` to force-include an exact path and `-path` to force-exclude an exact path.
 

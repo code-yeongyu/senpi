@@ -131,7 +131,7 @@ export function serializeConversation(messages: Message[]): string {
 				if (block.type === "thinking") {
 					thinkingParts.push(block.thinking);
 				} else if (block.type === "toolCall") {
-					const args = block.arguments as Record<string, unknown>;
+					const args = block.arguments;
 					const argsStr = Object.entries(args)
 						.map(([k, v]) => `${k}=${safeJsonStringify(v)}`)
 						.join(", ");

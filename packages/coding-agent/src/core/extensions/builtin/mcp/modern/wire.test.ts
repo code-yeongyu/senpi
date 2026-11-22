@@ -76,10 +76,10 @@ describe("modern MCP request wire format", () => {
 		["tools/call", { name: "echo" }, "echo"],
 		["prompts/get", { name: "summarize" }, "summarize"],
 		["resources/read", { uri: "file:///notes.txt", name: "ignored" }, "file:///notes.txt"],
-		["tools/call", { name: "\uD55C\uAE00" }, "base64:7ZWc6riA"],
-		["resources/read", { uri: "x:\u00FF" }, "base64:eDrDvw"],
-		["prompts/get", { name: "line\nbreak" }, "base64:bGluZQpicmVhaw"],
-		["tools/call", { name: "base64:literal" }, "base64:YmFzZTY0OmxpdGVyYWw"],
+		["tools/call", { name: "\uD55C\uAE00" }, "=?base64?7ZWc6riA?="],
+		["resources/read", { uri: "x:\u00FF" }, "=?base64?eDrDvw==?="],
+		["prompts/get", { name: "line\nbreak" }, "=?base64?bGluZQpicmVhaw==?="],
+		["tools/call", { name: "base64:literal" }, "base64:literal"],
 	])("encodes the routing header for %s %j", (method, params, expected) => {
 		const request = buildModernRequest(1, method, client, {}, params);
 

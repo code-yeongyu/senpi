@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEditTool } from "../src/core/tools/edit.ts";
-import { withFileMutationQueue } from "../src/core/tools/file-mutation-queue.ts";
+import { acquireFileMutationLock, withFileMutationQueue } from "../src/core/tools/file-mutation-queue.ts";
 import { createWriteTool } from "../src/core/tools/write.ts";
 
 function delay(ms: number): Promise<void> {
@@ -106,6 +106,38 @@ describe("withFileMutationQueue", () => {
 		]);
 
 		expect(order).toEqual(["target:start", "target:end", "alias:start", "alias:end"]);
+	});
+});
+
+describe("acquireFileMutationLock", () => {
+	it("holds the same slot as withFileMutationQueue: a queued mutation waits for the release", async () => {
+		const dir = await createTempDir();
+		const file = join(dir, "a.txt");
+		const order: string[] = [];
+		const release = await acquireFileMutationLock(file);
+		const queued = withFileMutationQueue(join(dir, ".", "a.txt"), async () => {
+			order.push("queued");
+		});
+		expect(await resolvesWithin(queued, 100)).toBe(false);
+		order.push("held");
+		release();
+		release();
+		await queued;
+		expect(order).toEqual(["held", "queued"]);
+	});
+
+	it("rejects an aborted waiter without holding, and the next waiter still gets the slot", async () => {
+		const dir = await createTempDir();
+		const file = join(dir, "b.txt");
+		const release = await acquireFileMutationLock(file);
+		const controller = new AbortController();
+		const cancelled = acquireFileMutationLock(file, controller.signal);
+		const next = acquireFileMutationLock(file);
+		controller.abort(new Error("stop waiting"));
+		await expect(cancelled).rejects.toThrow("stop waiting");
+		expect(await resolvesWithin(next, 100)).toBe(false);
+		release();
+		(await next)();
 	});
 });
 

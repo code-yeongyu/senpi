@@ -24,6 +24,8 @@ async function envValue(ctx: AuthContext, name: string, signal: AbortSignal): Pr
 export function kimiCodeApiKeyAuth(): ApiKeyAuth {
 	return {
 		name: "Kimi API key",
+		// A blank key is valid: resolve falls back to KIMI_API_KEY and keeps the stored region (#3869).
+		keyOptional: true,
 		login: async (interaction) => {
 			const endpoints = await chooseKimiCodeLoginEndpoints(interaction);
 			const key = await interaction.prompt({ type: "secret", message: "Enter Kimi API key" });

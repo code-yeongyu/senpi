@@ -45,10 +45,10 @@ describe("todo model-path fuzzy resolution", () => {
 		expect(fuzzyResolveTask(phases, " deploy api ")).toMatchObject({ hit: task, corrected: true });
 		expect(fuzzyResolvePhase(phases, " verification ")).toMatchObject({ hit: phases[0], corrected: true });
 		expect(taskCorrections).toEqual([
-			'[auto-matched] task " deploy api " -> "\u001b[31mDeploy   API\u001b[0m" — pass the exact text from the previous todo result next time',
+			'[auto-matched] task " deploy api " -> "\u001b[31mDeploy   API\u001b[0m": pass the exact text from the previous todo result next time',
 		]);
 		expect(phaseCorrections).toEqual([
-			'[auto-matched] phase " verification " -> "Verification" — pass the exact text from the previous todo result next time',
+			'[auto-matched] phase " verification " -> "Verification": pass the exact text from the previous todo result next time',
 		]);
 	});
 
@@ -129,7 +129,7 @@ describe("todo model-path fuzzy resolution", () => {
 		resolveTaskOrError(phasesWithTasks("Build release"), "task-12", errors, []);
 
 		expect(errors).toEqual([
-			'Task "task-12" not found. Tasks are referenced by content, not by IDs — pass the task\'s full text from the previous result.',
+			'Task "task-12" not found. Tasks are referenced by content, not by IDs: pass the task\'s full text from the previous result.',
 		]);
 	});
 
@@ -139,7 +139,7 @@ describe("todo model-path fuzzy resolution", () => {
 		resolveTaskOrError([], "Unknown task", errors, []);
 
 		expect(errors).toEqual([
-			'Task "Unknown task" not found (todo list is empty — was it replaced or not yet created?)',
+			'Task "Unknown task" not found (todo list is empty: was it replaced or not yet created?)',
 		]);
 	});
 
@@ -150,7 +150,7 @@ describe("todo model-path fuzzy resolution", () => {
 		expect(applied.errors).toEqual([]);
 		expect(applied.phases[0].tasks[0].status).toBe(op === "done" ? "completed" : "abandoned");
 		expect(corrections).toEqual([
-			'[auto-matched] task " deploy api " -> "Deploy API" — pass the exact text from the previous todo result next time',
+			'[auto-matched] task " deploy api " -> "Deploy API": pass the exact text from the previous todo result next time',
 		]);
 	});
 
@@ -161,7 +161,7 @@ describe("todo model-path fuzzy resolution", () => {
 		expect(applied.errors).toEqual([]);
 		expect(applied.phases[0].tasks).toEqual([]);
 		expect(corrections).toEqual([
-			'[auto-matched] task " deploy api " -> "Deploy API" — pass the exact text from the previous todo result next time',
+			'[auto-matched] task " deploy api " -> "Deploy API": pass the exact text from the previous todo result next time',
 		]);
 	});
 });

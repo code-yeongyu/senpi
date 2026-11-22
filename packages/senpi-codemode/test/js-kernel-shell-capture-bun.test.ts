@@ -141,7 +141,7 @@ describe.skipIf(!bunAvailable)("JavaScript kernel under Bun keeps the host stdin
 
 	it("Given stdin isolation when the cell redirects its own stdin from a Response then that input still reaches the command", async () => {
 		const run = await runCellUnderBunWithOpenStdin(
-			// biome-ignore lint/suspicious/noTemplateCurlyInString: the placeholder belongs to the cell's own Bun.$ template
+			// oxlint-disable-next-line eslint/no-template-curly-in-string -- the placeholder belongs to the cell's own Bun.$ template
 			'return await Bun.$`cat < ${new Response("own-input")}`.text()',
 		);
 

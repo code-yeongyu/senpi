@@ -1,5 +1,5 @@
 import { compare, valid } from "semver";
-import { PACKAGE_NAME } from "../config.ts";
+import { detectInstallMethod, type InstallMethod, PACKAGE_NAME } from "../config.ts";
 import { type BrandUpdateChannel, brandProfile, envValue } from "../core/brand.ts";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
@@ -14,6 +14,20 @@ function latestVersionUrl(channel: BrandUpdateChannel | undefined): string {
 		: LATEST_VERSION_URL;
 }
 
+// A standalone binary can only be updated from a GitHub Release ("Download from: .../releases/latest" in config.ts),
+// and npm can publish before that release exists (senpi#6633), so a binary reads the latest release, never npm.
+const LATEST_RELEASE_URL = "https://api.github.com/repos/code-yeongyu/senpi/releases/latest";
+
+/** Version of the latest GitHub Release, from its tag; drafts and prereleases are not installable. */
+export function readLatestReleaseVersion(payload: unknown): string | undefined {
+	if (typeof payload !== "object" || payload === null) return undefined;
+	const release = payload as Record<string, unknown>;
+	if (release.draft === true || release.prerelease === true) return undefined;
+	const tag = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+	const version = tag.startsWith("v") ? tag.slice(1) : tag;
+	return version || undefined;
+}
+
 /** Reads the available version out of whichever registry document was fetched. */
 export function readAvailableVersion(payload: unknown, channel: BrandUpdateChannel | undefined): string | undefined {
 	if (typeof payload !== "object" || payload === null) return undefined;
@@ -24,7 +38,9 @@ export function readAvailableVersion(payload: unknown, channel: BrandUpdateChann
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 const RELEASE_CHANGELOG_BASE_URL = "https://github.com/code-yeongyu/senpi/blob";
 const RELEASE_CHANGELOG_PATH = "packages/coding-agent/CHANGELOG.md";
-const SENPI_CALVER_PATTERN = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([2-9]\d*))?$/;
+// Month and day may be zero-padded (`2026.11.02-1` as stamped in package.json) or not (npm's normalized
+// `2026.11.2-1`); a `-1` revision is the same release as the bare date.
+const SENPI_CALVER_PATTERN = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([1-9]\d*))?$/;
 
 export interface LatestPiRelease {
 	version: string;
@@ -39,6 +55,11 @@ function parseSenpiCalVer(version: string): readonly [number, number, number, nu
 	}
 	return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4] ?? 1)];
 }
+/** Unpadded form semver accepts, used when a CalVer version is compared with a plain semver version. */
+function canonicalCalVer([year, month, day, revision]: readonly [number, number, number, number]): string {
+	return revision > 1 ? `${year}.${month}.${day}-${revision}` : `${year}.${month}.${day}`;
+}
+
 /** Include useful errno details hidden behind Node's generic "fetch failed" error. */
 export function formatVersionCheckError(error: unknown): string {
 	const rootMessage = error instanceof Error && error.message ? error.message : String(error);
@@ -72,8 +93,8 @@ export function comparePackageVersions(leftVersion: string, rightVersion: string
 		return 0;
 	}
 
-	const left = valid(leftTrimmed);
-	const right = valid(rightTrimmed);
+	const left = valid(leftCalVer ? canonicalCalVer(leftCalVer) : leftTrimmed);
+	const right = valid(rightCalVer ? canonicalCalVer(rightCalVer) : rightTrimmed);
 	if (!left || !right) {
 		return undefined;
 	}
@@ -97,9 +118,16 @@ export function getReleaseChangelogUrl(version: string): string {
 	return `${RELEASE_CHANGELOG_BASE_URL}/${tag}/${RELEASE_CHANGELOG_PATH}`;
 }
 
+export interface VersionCheckOptions {
+	timeoutMs?: number;
+	retry?: boolean;
+	/** Defaults to the running install; tests pass it explicitly. */
+	installMethod?: InstallMethod;
+}
+
 export async function getLatestPiRelease(
 	currentVersion: string,
-	options: { timeoutMs?: number; retry?: boolean } = {},
+	options: VersionCheckOptions = {},
 ): Promise<LatestPiRelease | undefined> {
 	if (envValue("OFFLINE")) return undefined;
 
@@ -110,12 +138,13 @@ export async function getLatestPiRelease(
 		// advertising them would send the user after an update they cannot apply.
 		return undefined;
 	}
+	const fromRelease = !channel && (options.installMethod ?? detectInstallMethod()) === "bun-binary";
 	const response = await fetchWithRetry(
-		latestVersionUrl(channel),
+		fromRelease ? LATEST_RELEASE_URL : latestVersionUrl(channel),
 		{
 			headers: {
 				"User-Agent": getPiUserAgent(currentVersion),
-				accept: "application/json",
+				accept: fromRelease ? "application/vnd.github+json" : "application/json",
 			},
 		},
 		{
@@ -125,6 +154,10 @@ export async function getLatestPiRelease(
 	);
 	if (!response.ok) return undefined;
 
+	if (fromRelease) {
+		const releaseVersion = readLatestReleaseVersion(await response.json());
+		return releaseVersion ? { version: releaseVersion } : undefined;
+	}
 	const data = (await response.json()) as { packageName?: unknown; version?: unknown; note?: unknown };
 	const availableVersion = readAvailableVersion(data, channel);
 	if (!availableVersion) {
@@ -141,16 +174,19 @@ export async function getLatestPiRelease(
 
 export async function getLatestPiVersion(
 	currentVersion: string,
-	options: { timeoutMs?: number; retry?: boolean } = {},
+	options: VersionCheckOptions = {},
 ): Promise<string | undefined> {
 	return (await getLatestPiRelease(currentVersion, options))?.version;
 }
 
-export async function checkForNewPiVersion(currentVersion: string): Promise<LatestPiRelease | undefined> {
+export async function checkForNewPiVersion(
+	currentVersion: string,
+	options: Pick<VersionCheckOptions, "installMethod"> = {},
+): Promise<LatestPiRelease | undefined> {
 	if (envValue("SKIP_VERSION_CHECK")) return undefined;
 
 	try {
-		const latestRelease = await getLatestPiRelease(currentVersion);
+		const latestRelease = await getLatestPiRelease(currentVersion, options);
 		if (latestRelease && isNewerPackageVersion(latestRelease.version, currentVersion)) {
 			return latestRelease;
 		}

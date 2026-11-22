@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
 import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../../../../config.ts";
+import { redactResolvedReferenceValues } from "../../../config-reference-redaction.ts";
 import { LOG_SINK_RETRY_MS, rotateLogIfNeeded } from "../../../log-file-rotation.ts";
+import { keyedFingerprint } from "./config-identity-key.ts";
 
 export type McpLogLevel = "debug" | "info" | "notice" | "warning" | "error" | "critical" | "alert" | "emergency";
 export type McpLogChannel = "client" | "server" | "stderr" | "file";
@@ -68,7 +69,7 @@ export function getMcpLogDir(): string {
 }
 
 export function fingerprintSecret(secret: string): string {
-	return createHash("sha256").update(secret).digest("hex").slice(0, 8);
+	return keyedFingerprint(secret);
 }
 
 export function redactMcpLogText(text: string): string {
@@ -156,7 +157,7 @@ class FileMcpLogger implements McpLogger {
 			message: redactMcpLogTextWithContext(message, context),
 			data: redactedData,
 		};
-		return redactKnownSecrets(JSON.stringify(entry), context);
+		return redactResolvedReferenceValues(redactKnownSecrets(JSON.stringify(entry), context));
 	}
 
 	#pushRing(line: string): void {

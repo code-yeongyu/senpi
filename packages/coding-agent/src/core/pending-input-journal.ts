@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { type FileHandle, open } from "node:fs/promises";
 import { dirname } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import {
@@ -20,11 +20,20 @@ export interface JournalDurability {
 	syncDirectory(path: string): Promise<void>;
 }
 
-/** On Windows a directory handle cannot be flushed (EPERM); the file sync is all the platform offers there. */
-export function fsJournalDurability(platform: NodeJS.Platform = process.platform): JournalDurability {
+export type JournalFileOpener = (path: string, flags: "r" | "r+") => Promise<Pick<FileHandle, "sync" | "close">>;
+
+/**
+ * Windows flushes only through a handle with write access (FlushFileBuffers on a read-only handle fails with EPERM,
+ * senpi#3866), so the file is synced through an `r+` handle. A directory cannot be opened for writing anywhere, and
+ * on Windows a directory handle cannot be flushed at all, so the directory sync is skipped there.
+ */
+export function fsJournalDurability(
+	platform: NodeJS.Platform = process.platform,
+	openFile: JournalFileOpener = open,
+): JournalDurability {
 	return {
-		syncFile: (path) => syncPath(path),
-		syncDirectory: (path) => (platform === "win32" ? Promise.resolve() : syncPath(path)),
+		syncFile: (path) => syncPath(openFile, path, "r+"),
+		syncDirectory: (path) => (platform === "win32" ? Promise.resolve() : syncPath(openFile, path, "r")),
 	};
 }
 
@@ -65,7 +74,7 @@ export class SessionPendingInputJournal implements PendingInputJournal {
 				this.directorySynced = true;
 			}
 		} catch (error) {
-			throw new PendingInputAppendUncertainError(record.cursor, error);
+			throw new PendingInputAppendUncertainError(record.cursor, file, error);
 		}
 	}
 
@@ -189,10 +198,12 @@ export class PendingInputJournalCorruptError extends Error {
 /** The entry reached the file but could not be synced: it may or may not survive a crash. */
 export class PendingInputAppendUncertainError extends Error {
 	readonly code = "pending_input_append_uncertain";
-	constructor(cursor: number, cause: unknown) {
-		super(`Pending input transition ${cursor} was written but could not be synced; reopen the session to recover.`, {
-			cause,
-		});
+	constructor(cursor: number, file: string, cause: unknown) {
+		const reason = cause instanceof Error ? cause.message : String(cause);
+		super(
+			`Pending input transition ${cursor} was written to ${file} but could not be synced (${reason}). This is a local file error, not a model error; reopen the session to recover.`,
+			{ cause },
+		);
 		this.name = "PendingInputAppendUncertainError";
 	}
 }
@@ -215,8 +226,8 @@ export class PendingInputJournalGapError extends Error {
 	}
 }
 
-async function syncPath(path: string): Promise<void> {
-	const handle = await open(path, "r");
+async function syncPath(openFile: JournalFileOpener, path: string, flags: "r" | "r+"): Promise<void> {
+	const handle = await openFile(path, flags);
 	try {
 		await handle.sync();
 	} finally {

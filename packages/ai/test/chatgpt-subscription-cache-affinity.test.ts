@@ -76,7 +76,8 @@ function expectCacheAffinity(headers: Headers | undefined, body: unknown): void 
 	expect(headers?.get("session-id")).toBe(SESSION_ID);
 	expect(headers?.get("thread-id")).toBe(SESSION_ID);
 	expect(headers?.get("x-client-request-id")).toBe(SESSION_ID);
-	expect(isRecord(body) ? body.prompt_cache_key : undefined).toBe(SESSION_ID);
+	expect(isRecord(body) ? body.prompt_cache_key : undefined).toEqual(expect.stringMatching(/^.{1,64}$/));
+	expect(isRecord(body) ? body.prompt_cache_key : undefined).not.toBe(SESSION_ID);
 }
 
 describe("OpenAI Codex cache affinity", () => {

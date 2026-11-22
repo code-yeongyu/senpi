@@ -38,7 +38,12 @@ import {
 } from "./compaction-settings-access.ts";
 import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
 import type { ContextFileLimits } from "./context-files.ts";
-import { MAX_ENGINE_TURNS_PER_USER_INPUT, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW } from "./engine-turn-limit.ts";
+import {
+	MAX_ENGINE_TURNS_PER_RESUME_WINDOW,
+	MAX_ENGINE_TURNS_PER_USER_INPUT,
+	MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW,
+} from "./engine-turn-limit.ts";
+import { type HeldFileLock, lockWithLossHandling } from "./file-lock.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import {
 	CredentialStoreBusyError,
@@ -72,7 +77,10 @@ import {
 	ASK_USER_MAX_TIMEOUT_MINUTES,
 	ASK_USER_MIN_TIMEOUT_MINUTES,
 	type AskUserSettings,
+	type HandoffHintSettings,
 	type ImageSettings,
+	JOB_WIDGETS_DEFAULT_AUTHOR_AFTER_MS,
+	type JobWidgetsSettings,
 	type LookAtSettings,
 	type MarkdownSettings,
 	type MermaidRenderingMode,
@@ -91,7 +99,6 @@ import {
 	readSettingsState,
 	STATE_KEYS,
 } from "./settings-state.ts";
-import { MAX_SKILL_EXPANSIONS_PER_PROMPT } from "./skill-invocation.ts";
 import {
 	type BranchSummarySettings,
 	isTerminalMouseMode,
@@ -106,6 +113,12 @@ export type * from "./settings-public-types.ts";
 
 export const DEFAULT_STREAM_START_TIMEOUT_MS = 300_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
+/**
+ * How long keep-alive bytes alone may hold a provider request without content (senpi#4608). Longer than any
+ * first-token latency observed through relays (a few minutes) and than Anthropic's 10-minute ceiling for a
+ * non-streaming request, well short of the 60-minute turn inactivity lease.
+ */
+const DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS = 900_000;
 
 /** Warn threshold for a single `session_shutdown` extension handler. */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
@@ -115,6 +128,18 @@ export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
  * hung handler still must not hold quit/reload/new/resume hostage.
  */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
+/**
+ * Total wait across every `session_shutdown` handler when the process quits (senpi#3711). Above the OmO memory
+ * extension's own 1500 ms shutdown drain, whose first step flushes the memory journal.
+ */
+export const DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS = 2_000;
+/** Warn threshold for one handler of an agent lifecycle event the session awaits before persisting (senpi#3650). */
+export const DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS = 60_000;
+/**
+ * Hard cap for one such handler. Above the 15 min summarization budget a blocking compaction in a `message_end`
+ * handler may legitimately use; past it the host stops waiting so the turn is persisted and queued input delivered.
+ */
+export const DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS = 1_200_000;
 
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
@@ -205,13 +230,17 @@ export interface Settings {
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: QuietStartup; // default: false
 	tips?: boolean; // default: true
+	reducedMotion?: boolean; // default: false - keep decorative TUI indicators static
 	tipsHistory?: Record<string, number>; // tipId -> epoch ms last shown
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
+	tools?: { bash?: { redactSecretsInOutput?: boolean } }; // default: false; output only
+	credentialProxy?: { credentials?: unknown[] }; // global setting only; validated by core/credential-proxy/declarations.ts
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	enableAnalytics?: boolean; // default: false - opt-in analytics data sharing
+	enableSessionShare?: boolean; // default: true - false removes /share (global or project setting)
 	trackingId?: string; // analytics tracking identifier, generated when analytics is enabled
 	deviceId?: string; // stable UUID of this installation, created when a login first needs it; global setting only
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
@@ -223,16 +252,19 @@ export interface Settings {
 	themes?: string[]; // Array of local theme file paths or directories
 	hooks?: string[];
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
-	maxSkillExpansionsPerPrompt?: number; // default: 5 - distinct skills one prompt may expand
 	terminal?: TerminalSettings;
 	promptCache?: PromptCacheSettings;
+	handoffHint?: HandoffHintSettings;
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
+	jobWidgets?: JobWidgetsSettings;
 	/** Bounds on turns the engine starts without a user message (senpi#2967). */
-	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number };
+	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
 	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
 	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
+	/** A thread chain (A→B→A…) is refused past `chainCountLimit` hops; unset (the default) means unlimited. No cost limit. */
+	threads?: { chainCountLimit?: number };
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
@@ -254,6 +286,9 @@ export interface Settings {
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	sessionShutdownHandlerWarnMs?: number; // Warn when one session_shutdown extension handler runs this long; 0 disables the warning
 	sessionShutdownHandlerTimeoutMs?: number; // Abort and skip a session_shutdown extension handler after this long; 0 disables the cap
+	sessionShutdownQuitBudgetMs?: number; // Total wait across all session_shutdown handlers on quit; 0 disables the total budget
+	extensionEventHandlerWarnMs?: number; // Report an agent lifecycle extension handler still running after this long; 0 disables the warning
+	extensionEventHandlerTimeoutMs?: number; // Stop waiting on an agent lifecycle extension handler after this long; 0 disables the cap
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
@@ -484,6 +519,16 @@ export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
 	/** The project trust exists only because the session runs Full access (senpi#3414): leaving it withdraws the trust. */
 	trustFromFullAccess?: boolean;
+	/** The launch named the project trust explicitly (`--approve`/`--no-approve`): nothing in the session may change it. */
+	projectTrustLocked?: boolean;
+}
+
+/** The project settings file as stored, read whether or not the project is trusted (reading runs nothing). */
+export interface ProjectSettingsFile {
+	path: string;
+	exists: boolean;
+	settings: Settings | null;
+	error: string | null;
 }
 
 export interface SettingsStorage {
@@ -581,12 +626,12 @@ export class FileSettingsStorage implements SettingsStorage {
 		}
 	}
 
-	private async acquireLockWithRetry(path: string): Promise<() => Promise<void>> {
+	private async acquireLockWithRetry(path: string): Promise<HeldFileLock> {
 		const startedAt = Date.now();
 		let attempt = 0;
 		while (true) {
 			try {
-				return await lockfile.lock(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+				return await lockWithLossHandling(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
 				if (!isLockError(error)) throw error;
 				const waitedMs = Date.now() - startedAt;
@@ -640,7 +685,7 @@ export class FileSettingsStorage implements SettingsStorage {
 		let next = fn(current);
 		if (next === undefined) return;
 		await mkdir(dirname(path), { recursive: true });
-		const release = await this.acquireLockWithRetry(path);
+		const lock = await this.acquireLockWithRetry(path);
 		try {
 			// The wait may have outlived the caller's permission to write (e.g. project trust revoked).
 			underLock?.();
@@ -650,6 +695,7 @@ export class FileSettingsStorage implements SettingsStorage {
 				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
 				try {
 					await writeFile(tempPath, next, "utf-8");
+					lock.assertHeld();
 					await rename(tempPath, path);
 					// After the rename: a failed publish must not mark identical content as our own write.
 					recordSelfWrite(path, next);
@@ -659,7 +705,7 @@ export class FileSettingsStorage implements SettingsStorage {
 				}
 			}
 		} finally {
-			await release();
+			await lock.release();
 		}
 	}
 
@@ -852,6 +898,7 @@ export class SettingsManager {
 			settingsPaths,
 		);
 		manager.trustFromFullAccess = options.trustFromFullAccess === true;
+		manager.projectTrustLocked = options.projectTrustLocked === true;
 		return manager;
 	}
 
@@ -1045,6 +1092,59 @@ export class SettingsManager {
 		return structuredClone(this.projectSettings);
 	}
 
+	/**
+	 * `contextFiles.globalPath` from the user's own layers only: session overrides, then global
+	 * settings. A project's `.senpi/settings.json` never redirects the user's global context file
+	 * (senpi#5567), so the project layer is deliberately skipped.
+	 */
+	getGlobalContextFilePath(): string | undefined {
+		return this.runtimeOverrides.contextFiles?.globalPath ?? this.globalSettings.contextFiles?.globalPath;
+	}
+
+	/** The project settings file at `path` as stored: parsed and migrated like a load, but never gated by trust. */
+	readProjectSettingsFile(path: string): ProjectSettingsFile {
+		let content: string | undefined;
+		try {
+			this.storage.withLock("project", (current) => {
+				content = current;
+				return undefined;
+			});
+			if (content === undefined) return { path, exists: false, settings: null, error: null };
+			return {
+				path,
+				exists: true,
+				settings: SettingsManager.migrateSettings(parseSettingsJson(content)),
+				error: null,
+			};
+		} catch (error) {
+			return { path, exists: content !== undefined, settings: null, error: String(error) };
+		}
+	}
+
+	/**
+	 * Writes one top-level key of the project settings file (`null` removes it) through the same trusted-only,
+	 * locked, merge-on-write path every project setter uses. Refuses a file that failed to load: that path skips
+	 * the write silently, which an explicit caller must not mistake for success.
+	 */
+	async setProjectSetting(key: string, value: unknown): Promise<void> {
+		this.assertProjectTrustedForWrite();
+		if (this.projectSettingsLoadError) {
+			throw new Error(
+				`Project settings file could not be read; refusing to write: ${this.projectSettingsLoadError.message}`,
+			);
+		}
+		const field = key as keyof Settings;
+		const recordedBefore = new Set(this.errors);
+		this.updateProjectSettings(field, (settings) => {
+			if (value === null) delete settings[field];
+			else (settings as Record<string, unknown>)[key] = value;
+		});
+		await this.flush();
+		// The queued write records its failure instead of throwing; an explicit caller is told.
+		const failure = this.errors.find((entry) => entry.scope === "project" && !recordedBefore.has(entry));
+		if (failure) throw failure.error;
+	}
+
 	getProviderSettings(): Record<string, ProviderConcurrencySettings> {
 		return structuredClone(this.settings.providers ?? {});
 	}
@@ -1076,6 +1176,10 @@ export class SettingsManager {
 		);
 	}
 
+	getPromptCacheSessionAffinity(): boolean {
+		return this.settings.promptCache?.sessionAffinity ?? true;
+	}
+
 	getPromptCacheKeepAliveSettings(): Required<PromptCacheKeepAliveSettings> {
 		const configured = this.settings.promptCache?.keepAlive;
 		return {
@@ -1095,12 +1199,27 @@ export class SettingsManager {
 		};
 	}
 
-	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number } {
+	getJobWidgetsSettings(): { enabled: boolean; model: string | undefined; authorAfterMs: number } {
+		const configured = this.settings.jobWidgets;
+		const model = typeof configured?.model === "string" ? configured.model.trim() : "";
+		const after = configured?.authorAfterMs;
+		return {
+			enabled: typeof configured?.enabled === "boolean" ? configured.enabled : true,
+			model: model.length > 0 ? model : undefined,
+			authorAfterMs:
+				typeof after === "number" && Number.isFinite(after) && after >= 0
+					? Math.trunc(after)
+					: JOB_WIDGETS_DEFAULT_AUTHOR_AFTER_MS,
+		};
+	}
+
+	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number; maxPerResumeWindow: number } {
 		const configured = this.settings.engineTurns;
 		const limit = (value: unknown, fallback: number): number =>
 			typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
 		return {
 			maxPerUserInput: limit(configured?.maxPerUserInput, MAX_ENGINE_TURNS_PER_USER_INPUT),
+			maxPerResumeWindow: limit(configured?.maxPerResumeWindow, MAX_ENGINE_TURNS_PER_RESUME_WINDOW),
 			maxToolFreePerMinute: limit(configured?.maxToolFreePerMinute, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW),
 		};
 	}
@@ -1113,9 +1232,18 @@ export class SettingsManager {
 		return this.settings.turn_max_runtime_ms;
 	}
 
-	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
+	/** The user's thread chain count limit (`threads.chainCountLimit`, K8): a non-negative integer, else unlimited. */
+	getThreadChainCountLimit(): number | undefined {
+		const configured = this.settings.threads?.chainCountLimit;
+		return typeof configured === "number" && Number.isSafeInteger(configured) && configured >= 0
+			? configured
+			: undefined;
+	}
+
+	/** The user's `todo.firstTurnPlan`, else `fallback`: the default the active prompt preset declares. */
+	getTodoFirstTurnPlan(fallback: TodoFirstTurnPlan = "force"): TodoFirstTurnPlan {
 		const configured = this.settings.todo?.firstTurnPlan;
-		return configured === "remind" || configured === "off" ? configured : "force";
+		return configured === "force" || configured === "remind" || configured === "off" ? configured : fallback;
 	}
 
 	getTodoTurnEndBackstop(): boolean {
@@ -1125,6 +1253,13 @@ export class SettingsManager {
 
 	isProjectTrusted(): boolean {
 		return this.projectTrusted;
+	}
+
+	private projectTrustLocked = false;
+
+	/** True when the launch named the project trust explicitly; a trust decision saved in the session cannot apply. */
+	isProjectTrustLocked(): boolean {
+		return this.projectTrustLocked;
 	}
 
 	/**
@@ -1752,7 +1887,10 @@ export class SettingsManager {
 	}
 
 	getRetryFallbackSettings(): ResolvedRetryFallbackSettings {
-		return resolveRetryFallbackSettings(this.settings.retry);
+		// Chains in the session-only override layer (applyRetryFallbackProfile, or an SDK applyOverrides call) are the session's whole policy.
+		return resolveRetryFallbackSettings(this.settings.retry, {
+			sessionPolicy: this.runtimeOverrides.retry?.fallbackChains !== undefined,
+		});
 	}
 
 	getFallbackCircuitSettings(): ResolvedFallbackCircuitSettings {
@@ -1874,6 +2012,42 @@ export class SettingsManager {
 		this.globalSettings.sessionShutdownHandlerTimeoutMs = Math.floor(timeoutMs);
 		this.markModified("sessionShutdownHandlerTimeoutMs");
 		this.save();
+	}
+
+	/**
+	 * Total time the host waits on all `session_shutdown` handlers together when the
+	 * process quits; each handler's own cap still applies inside it. 0 disables it.
+	 */
+	getSessionShutdownQuitBudgetMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.sessionShutdownQuitBudgetMs, "sessionShutdownQuitBudgetMs") ??
+			DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS
+		);
+	}
+
+	setSessionShutdownQuitBudgetMs(budgetMs: number): void {
+		if (!Number.isFinite(budgetMs) || budgetMs < 0) {
+			throw new Error(`Invalid sessionShutdownQuitBudgetMs setting: ${String(budgetMs)}`);
+		}
+		this.globalSettings.sessionShutdownQuitBudgetMs = Math.floor(budgetMs);
+		this.markModified("sessionShutdownQuitBudgetMs");
+		this.save();
+	}
+
+	/** How long one agent lifecycle event handler may run before the host reports it as stalled. 0 disables. */
+	getExtensionEventHandlerWarnMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.extensionEventHandlerWarnMs, "extensionEventHandlerWarnMs") ??
+			DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS
+		);
+	}
+
+	/** Hard cap on one agent lifecycle event handler; past it the session's event queue moves on. 0 disables. */
+	getExtensionEventHandlerTimeoutMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.extensionEventHandlerTimeoutMs, "extensionEventHandlerTimeoutMs") ??
+			DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS
+		);
 	}
 
 	getProviderRetrySettings(): {
@@ -2006,6 +2180,19 @@ export class SettingsManager {
 		return Math.min(DEFAULT_STREAM_START_TIMEOUT_MS, idleTimeoutMs);
 	}
 
+	/**
+	 * Cap on keep-alive-only silence. While a provider keeps sending bytes (SSE pings, comment keep-alives) the
+	 * start and idle bounds do not end the request; this bounds how long that may last without any assistant
+	 * event. `retry.provider.keepAliveTimeoutMs` overrides the 15-minute default; 0 disables the cap.
+	 */
+	getAgentStreamKeepAliveTimeoutMs(): number | undefined {
+		const explicit = this.settings.retry?.provider?.keepAliveTimeoutMs;
+		if (explicit !== undefined) {
+			return explicit > 0 ? explicit : undefined;
+		}
+		return DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS;
+	}
+
 	getWebSocketConnectTimeoutMs(): number | undefined {
 		return parseTimeoutSetting(this.settings.websocketConnectTimeoutMs, "websocketConnectTimeoutMs");
 	}
@@ -2092,6 +2279,10 @@ export class SettingsManager {
 		return this.settings.tips ?? true;
 	}
 
+	getReducedMotion(): boolean {
+		return this.settings.reducedMotion ?? false;
+	}
+
 	getTipsHistory(): Record<string, number> {
 		const history = this.settings.tipsHistory;
 		if (typeof history !== "object" || history === null || Array.isArray(history)) {
@@ -2129,6 +2320,10 @@ export class SettingsManager {
 		return this.settings.shellCommandPrefix;
 	}
 
+	getBashRedactSecretsInOutput(): boolean {
+		return this.settings.tools?.bash?.redactSecretsInOutput === true;
+	}
+
 	setShellCommandPrefix(prefix: string | undefined): void {
 		this.globalSettings.shellCommandPrefix = prefix;
 		this.markModified("shellCommandPrefix");
@@ -2163,6 +2358,10 @@ export class SettingsManager {
 		this.globalSettings.enableInstallTelemetry = enabled;
 		this.markModified("enableInstallTelemetry");
 		this.save();
+	}
+
+	getEnableSessionShare(): boolean {
+		return this.settings.enableSessionShare ?? true;
 	}
 
 	getEnableAnalytics(): boolean {
@@ -2288,13 +2487,6 @@ export class SettingsManager {
 
 	getEnableSkillCommands(): boolean {
 		return this.settings.enableSkillCommands ?? true;
-	}
-
-	getMaxSkillExpansionsPerPrompt(): number {
-		const value = this.settings.maxSkillExpansionsPerPrompt;
-		return typeof value === "number" && Number.isInteger(value) && value > 0
-			? value
-			: MAX_SKILL_EXPANSIONS_PER_PROMPT;
 	}
 
 	setEnableSkillCommands(enabled: boolean): void {

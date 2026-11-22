@@ -81,10 +81,10 @@ describe("buildToolSection", () => {
 		expect(section).not.toMatch(/tool\.grep\(/);
 	});
 
-	test("returns minimal output for empty tools", () => {
+	test("renders nothing for empty tools", () => {
 		const result = buildToolSection({ tools: [], toolSnippets: {} });
 
-		expect(result).toContain("(none)");
+		expect(result).toBe("");
 	});
 
 	test("includes guidelines section", () => {

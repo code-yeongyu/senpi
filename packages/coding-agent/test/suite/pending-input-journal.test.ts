@@ -1,10 +1,12 @@
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	fsJournalDurability,
 	type JournalDurability,
+	type JournalFileOpener,
 	PendingInputAppendUncertainError,
 	PendingInputJournalCorruptError,
 	PendingInputJournalError,
@@ -54,6 +56,25 @@ const SAMPLE_INPUT = {
 	superseded: [],
 	operations: {},
 } as const;
+
+function windowsEperm(): NodeJS.ErrnoException {
+	return Object.assign(new Error("EPERM: operation not permitted, fsync"), { code: "EPERM", syscall: "fsync" });
+}
+
+/**
+ * Windows' FlushFileBuffers needs a handle with write access: fsync on a handle opened read-only fails with EPERM
+ * (Bun and Node alike). The win32 opener reproduces that on any host; both record the flags each sync used.
+ */
+function recordingOpen(opened: string[], platform: "win32" | "posix"): JournalFileOpener {
+	return async (path, flags) => {
+		opened.push(flags);
+		const handle = await open(path, flags);
+		return {
+			sync: () => (platform === "win32" && flags === "r" ? Promise.reject(windowsEperm()) : handle.sync()),
+			close: () => handle.close(),
+		};
+	};
+}
 
 async function storeOver(manager: SessionManager, lifetimeId: string): Promise<PendingInputStore> {
 	let next = 0;
@@ -364,6 +385,54 @@ describe("session pending-input journal", () => {
 
 		await expect(fsJournalDurability("win32").syncDirectory(missing)).resolves.toBeUndefined();
 		await expect(fsJournalDurability("darwin").syncDirectory(missing)).rejects.toThrow();
+	});
+
+	it("syncs the file through a writable handle, which Windows needs to flush it (omo#10781)", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		const opened: string[] = [];
+		const store = await PendingInputStore.open({
+			journal: new SessionPendingInputJournal(manager, fsJournalDurability("win32", recordingOpen(opened, "win32"))),
+			lifetimeId: "life-1",
+			nextQueuedId: () => "q_1",
+		});
+
+		await store.submit(SUBMIT);
+
+		expect(opened).toEqual(["r+"]);
+		expect(store.read("c-1").status).toBe("admitted");
+	});
+
+	it("still syncs a directory through a read-only handle where the OS supports it", async () => {
+		const opened: string[] = [];
+
+		await fsJournalDurability("linux", recordingOpen(opened, "posix")).syncDirectory(sessionDir());
+
+		expect(opened).toEqual(["r"]);
+	});
+
+	it("names the session file and the OS error when a sync fails, as a local error", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		const failing: JournalDurability = {
+			syncFile: async () => {
+				throw windowsEperm();
+			},
+			syncDirectory: async () => undefined,
+		};
+		const store = await PendingInputStore.open({
+			journal: new SessionPendingInputJournal(manager, failing),
+			lifetimeId: "life-1",
+			nextQueuedId: () => "q_1",
+		});
+
+		const error = await store.submit(SUBMIT).catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(PendingInputAppendUncertainError);
+		const message = error instanceof Error ? error.message : "";
+		expect(message).toContain(manager.getSessionFile() ?? "<no file>");
+		expect(message).toContain("EPERM: operation not permitted, fsync");
+		expect(message).toContain("local file error");
 	});
 
 	it("refuses a malformed journal entry instead of treating it as absence", async () => {

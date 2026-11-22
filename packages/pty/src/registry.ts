@@ -56,12 +56,16 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 	private readonly platform: string;
 	private sequence = 0;
 	readonly maxSessions: number;
+	private readonly idScope: string | undefined;
 	private readonly stopExitGraceMs: number;
 	private readonly forcedExitGraceMs: number;
 	private readonly detachedExitGraceMs: number;
 
 	constructor(options: SessionRegistryOptions<TSession> = {}) {
 		this.maxSessions = normalizeMaxSessions(options.maxSessions);
+		if (options.idScope !== undefined && !/^[A-Za-z0-9]+$/.test(options.idScope))
+			throw new Error("idScope must be letters and digits only.");
+		this.idScope = options.idScope;
 		this.stopExitGraceMs =
 			options.stopExitGraceMs !== undefined &&
 			Number.isFinite(options.stopExitGraceMs) &&
@@ -123,7 +127,10 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 			if (entry.state !== "exited") continue;
 			await this.cleanupDetachedChildren(entry);
 			sweptIds.push(entry.id);
-			if (options.remove) this.removeEntry(entry.id);
+			if (!options.remove) continue;
+			// Forgetting the session must not strand what it left running in its process group (senpi#6201).
+			await entry.session.stopLeftover?.();
+			this.removeEntry(entry.id);
 		}
 		return sweptIds;
 	}
@@ -201,6 +208,7 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 			const entry = this.findLeastRecentlyUsedExited();
 			if (!entry) return;
 			await this.cleanupDetachedChildren(entry);
+			await entry.session.stopLeftover?.();
 			this.removeEntry(entry.id);
 		}
 	}
@@ -223,6 +231,7 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 			if (await waitForTerminalSessionExit(entry.session, this.stopExitGraceMs)) this.markExited(entry);
 			else await this.forceKillEntry(entry);
 		}
+		await entry.session.stopLeftover?.();
 		return true;
 	}
 
@@ -281,7 +290,8 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 	}
 
 	private allocateId(command: string): string {
-		const prefix = sessionIdPrefix(command);
+		const commandPrefix = sessionIdPrefix(command);
+		const prefix = this.idScope === undefined ? commandPrefix : `${commandPrefix}_${this.idScope}`;
 		let next = (this.idCounters.get(prefix) ?? 0) + 1;
 		while (this.entries.has(`${prefix}_${next}`)) next += 1;
 		this.idCounters.set(prefix, next);

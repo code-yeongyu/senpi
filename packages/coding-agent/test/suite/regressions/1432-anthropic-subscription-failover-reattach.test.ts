@@ -46,6 +46,7 @@ import {
 	resetSessionRegistryBoundary,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
 import { streamAnthropicSubscription } from "../../../src/core/extensions/builtin/anthropic-subscription/stream.ts";
+import { cliAccountOf, cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const SESSION_ID = "issue-1432-failover-reattach";
 const ACCOUNT_PRIMARY = "primary";
@@ -74,8 +75,8 @@ function sdkMessage(value: unknown): SDKMessage {
 type AttemptOutcome = "success" | "rate-limit";
 type QueryRecord = { account: string; options: Options; submitted: SDKUserMessage[] };
 
-function slot(name: string, access: string): AccountSlot {
-	return { name, access, refresh: `r-${name}`, expires: Date.now() + 3_600_000, source: "login" };
+function slot(name: string): AccountSlot {
+	return cliSlot(name);
 }
 
 // Resident scripted query: answers each submission with a replay echo, then either
@@ -160,8 +161,10 @@ class ScriptedResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage>
 function residentBoundary(scriptFor: (account: string, submission: number) => AttemptOutcome): QueryRecord[] {
 	const queries: QueryRecord[] = [];
 	const query: SdkQuery = ({ prompt, options = {} }) => {
+		expect(options.cwd).toBe(process.env.SENPI_CODING_AGENT_DIR);
+		expect(options.cwd).not.toBe(process.cwd());
 		if (typeof prompt === "string") throw new Error("Expected streaming input");
-		const account = options.env?.CLAUDE_CODE_OAUTH_TOKEN === ACCESS_PRIMARY ? ACCOUNT_PRIMARY : ACCOUNT_SECONDARY;
+		const account = cliAccountOf(options.env) === ACCOUNT_PRIMARY ? ACCOUNT_PRIMARY : ACCOUNT_SECONDARY;
 		const handle = new ScriptedResidentQuery(prompt, account, (submission) => scriptFor(account, submission));
 		queries.push({ account, options, submitted: handle.submitted });
 		return handle;
@@ -176,7 +179,7 @@ const temporaryDirectories: string[] = [];
 
 // Two-account managed OAuth pool on the oauth-slots lane, pinned to primary.
 async function configureTwoAccountPool(): Promise<void> {
-	const slots = [slot(ACCOUNT_PRIMARY, ACCESS_PRIMARY), slot(ACCOUNT_SECONDARY, "access-secondary")];
+	const slots = [slot(ACCOUNT_PRIMARY), slot(ACCOUNT_SECONDARY)];
 	const store = new InMemoryCredentialStore();
 	await store.modify("anthropic-subscription", async () => ({
 		...slots.reduce<AnthropicSubscriptionCredential>(
@@ -194,7 +197,7 @@ async function configureTwoAccountPool(): Promise<void> {
 	);
 	overrideAuthLaneBoundary({
 		createStore: () => store,
-		env: () => ({ PATH: "/usr/bin" }),
+		env: () => cliLaneEnv(),
 		getAgentDir: () => agentDir,
 	});
 }
@@ -212,7 +215,11 @@ function assistant(text: string, timestamp: number): AssistantMessage {
 }
 
 function runTurn(context: Context): Promise<AssistantMessage> {
-	return streamAnthropicSubscription(model, context, { sessionId: SESSION_ID, streamKind: "main" }).result();
+	return streamAnthropicSubscription(model, context, {
+		cwd: process.env.SENPI_CODING_AGENT_DIR,
+		sessionId: SESSION_ID,
+		streamKind: "main",
+	}).result();
 }
 
 afterEach(() => {
@@ -231,8 +238,10 @@ describe("issue #1432 claude-sdk-oauth two-account failover reattach", () => {
 	it("fork-resumes the bound lineage on the failover account instead of flattening", async () => {
 		await configureTwoAccountPool();
 		const observations: ContinuityObservation[] = [];
+		const logged: Array<{ event: string; data: Record<string, unknown> }> = [];
 		overrideContinuityObservabilityBoundary({
 			emit: (observation) => observations.push(observation),
+			log: (event, data) => logged.push({ event, data }),
 		});
 		const queries = residentBoundary((account, submission) =>
 			account === ACCOUNT_PRIMARY && submission === 2 ? "rate-limit" : "success",
@@ -272,8 +281,28 @@ describe("issue #1432 claude-sdk-oauth two-account failover reattach", () => {
 				(observation) => observation.kind === "flatten" && observation.reason === "account_changed",
 			),
 		).toEqual([]);
+		// The fork is labelled as the seat switch it is (oh-my-openagent#10304): prompt caches
+		// never cross accounts, so the new seat writes the prefix instead of reading it.
 		expect(
-			observations.some((observation) => observation.kind === "fork" && observation.reason === "timeout_retry"),
+			observations.some((observation) => observation.kind === "fork" && observation.reason === "account_changed"),
 		).toBe(true);
+		expect(observations.some((observation) => observation.reason === "timeout_retry")).toBe(false);
+		// The seat switch is attributable without naming the account: a digest, flagged as changed.
+		const switched = observations.find((observation) => observation.reason === "account_changed");
+		expect(switched).toMatchObject({ seat: expect.stringMatching(/^[0-9a-f]{8}$/), seatChanged: true });
+		// Seat attribution is an opaque digest: no slot name, access token or refresh token
+		// reaches an observation or a session.log line (oh-my-openagent#10304).
+		const surfaced = JSON.stringify({ observations, logged });
+		expect(logged.some((line) => line.data.seatChanged === true)).toBe(true);
+		for (const secret of [
+			ACCOUNT_PRIMARY,
+			ACCOUNT_SECONDARY,
+			ACCESS_PRIMARY,
+			"access-secondary",
+			"r-primary",
+			"r-secondary",
+		]) {
+			expect(surfaced).not.toContain(secret);
+		}
 	}, 10_000);
 });

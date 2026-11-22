@@ -83,6 +83,34 @@ function answeredLines(response: QuestionResponse, questions: Questions, words: 
 	return lines;
 }
 
+function unansweredLine(response: QuestionResponse, questions: Questions): string[] {
+	const unanswered = response.unanswered.map((id) => headerFor(id, questions));
+	return unanswered.length > 0 ? [`Unanswered: ${unanswered.join(", ")}`] : [];
+}
+
+const CANCELLED_BY_USER = "The user cancelled the question after answering part of it.";
+const CANCELLED_AFTER_ANSWERS = "The question was cancelled after part of it was answered.";
+
+/** Whether a line opens the partial answers of a cancelled question. */
+export function isCancelledWithAnswersLine(line: string): boolean {
+	return line === CANCELLED_BY_USER || line === CANCELLED_AFTER_ANSWERS;
+}
+
+/**
+ * The one rule for a cancelled question's partial answers (sisyphuslabs/omo-desktop-app#4042): a cancel
+ * the user chose, or a failing question UI, shows the model what was already answered. Every lifecycle
+ * cancel (a turn abort, the session closing, ask-user disabled, a closed RPC connection) stays silent.
+ */
+export function showsPartialAnswers(response: QuestionResponse): boolean {
+	if (response.status !== "cancelled") return false;
+	if (response.cancelOrigin !== "user" && response.cancelOrigin !== "ui_failure") return false;
+	return Object.values(response.answers).some((answer) => answerBody(answer, "") !== undefined);
+}
+
+function selectedBlock(prefix: string, selected: readonly string[]): string[] {
+	return selected.length === 1 ? [`${prefix} ${selected[0]}`] : [prefix, ...selected];
+}
+
 const GATED_NO_ANSWER = "No answer: do not take the action it gates. Keep that action pending and end the turn.";
 
 /** A required question gates an action, so every settlement without an answer refuses that action (senpi#2949). */
@@ -104,7 +132,7 @@ function formatGatedNoAnswer(
 	const lines = [reason];
 	const selected = answeredLines(response, questions, words);
 	if (selected.length > 0)
-		lines.push(`Before going idle the user had selected (not an answer): ${selected.join("; ")}`);
+		lines.push(...selectedBlock("Before going idle the user had selected (not an answer):", selected));
 	lines.push(GATED_NO_ANSWER);
 	return lines.join("\n");
 }
@@ -127,20 +155,15 @@ function formatBody(response: QuestionResponse, questions: Questions, words: Wor
 		return formatGatedNoAnswer(response, questions, words);
 	}
 	switch (response.status) {
-		case "answered": {
-			const lines = answeredLines(response, questions, words);
-			const unanswered = response.unanswered.map((id) => headerFor(id, questions));
-			if (unanswered.length > 0) lines.push(`Unanswered: ${unanswered.join(", ")}`);
-			return lines.join("\n");
-		}
+		case "answered":
+			return [...answeredLines(response, questions, words), ...unansweredLine(response, questions)].join("\n");
 		case "comment-submitted": {
 			const comment = response.comment?.trim() ?? "";
 			const lines = [
 				`The user responded: ${comment.length > 0 ? words.comment(comment) : ""}`,
 				...answeredLines(response, questions, words),
+				...unansweredLine(response, questions),
 			];
-			const unanswered = response.unanswered.map((id) => headerFor(id, questions));
-			if (unanswered.length > 0) lines.push(`Unanswered: ${unanswered.join(", ")}`);
 			return lines.join("\n");
 		}
 		case "timed_out": {
@@ -150,13 +173,25 @@ function formatBody(response: QuestionResponse, questions: Questions, words: Wor
 			];
 			const selected = answeredLines(response, questions, words);
 			if (selected.length > 0) {
-				lines.push(`Before going idle the user had selected: ${selected.join("; ")}`);
+				lines.push(
+					...selectedBlock("Before going idle the user had selected:", selected),
+					...unansweredLine(response, questions),
+				);
 			}
 			lines.push("Continue the work to completion on your best judgment; do not ask this question again this turn.");
 			return lines.join("\n");
 		}
-		case "cancelled":
-			return "The user dismissed the question.";
+		case "cancelled": {
+			if (!showsPartialAnswers(response)) return "The user dismissed the question.";
+			// A UI failure names itself; only a cancel the user chose says the user cancelled.
+			const reason = response.cancelOrigin === "ui_failure" ? response.comment?.trim() : undefined;
+			return [
+				...(reason ? [reason] : []),
+				response.cancelOrigin === "user" ? CANCELLED_BY_USER : CANCELLED_AFTER_ANSWERS,
+				...answeredLines(response, questions, words),
+				...unansweredLine(response, questions),
+			].join("\n");
+		}
 		case "orphaned-after-restart":
 			return "The pending question could not be resumed after a restart; continue on best judgment.";
 		case "unavailable":

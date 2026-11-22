@@ -21,7 +21,7 @@ import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
-import { handlePackageCommand } from "../src/package-manager-cli.ts";
+import { handlePackageCommand, selfUpdatePlanAfterLookupFailure } from "../src/package-manager-cli.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
 describe("package manifest", () => {
@@ -235,7 +235,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:@project/pkg"] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, true);
+		await new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -257,7 +257,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:@project/pkg"] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, true);
+		await new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -394,7 +394,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:fake-package"], npmCommand: [originalExecPath, fakeNpmPath] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, true);
+		await new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -414,7 +414,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:@project/pkg"] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, false);
+		await new ProjectTrustStore(agentDir).set(projectDir, false);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -518,7 +518,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			cwd: projectDir,
 			agentDir,
 			settingsManager,
-			builtinExtensions: ["llama.cpp", "mcp"],
+			builtinExtensions: ["example-ext", "mcp"],
 		}).resolve();
 		const selector = new ConfigSelectorComponent(
 			{ global: resolvedPaths, project: resolvedPaths },
@@ -535,11 +535,11 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		const list = selector.getResourceList();
 		initTheme("dark");
 		expect(list.render(80).join("\n")).toContain("Built-in");
-		expect(list.render(80).join("\n")).toContain("llama.cpp");
+		expect(list.render(80).join("\n")).toContain("example-ext");
 		list.handleInput(" ");
-		expect(settingsManager.getGlobalSettings().extensions).toEqual(["-builtin:llama.cpp"]);
+		expect(settingsManager.getGlobalSettings().extensions).toEqual(["-builtin:example-ext"]);
 		list.handleInput(" ");
-		expect(settingsManager.getGlobalSettings().extensions).toEqual(["+builtin:llama.cpp"]);
+		expect(settingsManager.getGlobalSettings().extensions).toEqual(["+builtin:example-ext"]);
 	});
 
 	it("cycles project built-in extension overrides in config local mode", async () => {
@@ -631,6 +631,23 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			} else {
 				process.env.PI_SKIP_VERSION_CHECK = previousSkipVersionCheck;
 			}
+		}
+	});
+
+	it("points a binary install at the download page when its release lookup fails, and still fails other installs (senpi#6633)", () => {
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		try {
+			const plan = selfUpdatePlanAfterLookupFailure("bun-binary", "HTTP 403");
+			expect(plan.shouldRun).toBe(false);
+			const printed = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(printed).toContain("HTTP 403");
+			expect(printed).toContain("https://github.com/code-yeongyu/senpi/releases/latest");
+			expect(() => selfUpdatePlanAfterLookupFailure("npm", "HTTP 503")).toThrow(
+				/Could not determine latest .* version: HTTP 503/,
+			);
+			expect(() => selfUpdatePlanAfterLookupFailure("npm", "")).toThrow(/Could not determine latest .* version\./);
+		} finally {
+			logSpy.mockRestore();
 		}
 	});
 

@@ -51,7 +51,7 @@ function getAbortAndFireQueuedMessages() {
 	return (context: object): Promise<number> => Promise.resolve(abortAndFire.call(context));
 }
 
-function createPostCompactionExemptionHarness() {
+function createPostCompactionExemptionHarness(beforeAgentStart?: (prompt: string) => Promise<void>) {
 	return createHarness({
 		models: [{ id: "post-compaction-stale-usage", contextWindow: 128_000, maxTokens: 64 }],
 		settings: { compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 1 } },
@@ -64,6 +64,7 @@ function createPostCompactionExemptionHarness() {
 						tokensBefore: event.preparation.tokensBefore,
 					},
 				}));
+				if (beforeAgentStart) pi.on("before_agent_start", (event) => beforeAgentStart(event.prompt));
 			},
 		],
 	});
@@ -227,7 +228,15 @@ describe("post-compaction queued continuation exemption", () => {
 	it("does not resurrect deferred work after InteractiveMode abort clears the visible queue", async () => {
 		const steerMarker = "abort deferred post-compaction steer";
 		const followUpMarker = "abort deferred post-compaction follow-up";
-		const harness = await createPostCompactionExemptionHarness();
+		const promptText = "first prompt before queue abort";
+		const promptStarting = Promise.withResolvers<void>();
+		const releasePrompt = Promise.withResolvers<void>();
+		const harness = await createPostCompactionExemptionHarness(async (text) => {
+			if (text === promptText) {
+				promptStarting.resolve();
+				await releasePrompt.promise;
+			}
+		});
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("seed response")]);
 		await harness.session.prompt("seed abort-deferred context ".repeat(40));
@@ -237,26 +246,35 @@ describe("post-compaction queued continuation exemption", () => {
 			fauxAssistantMessage("aborted deferred steer must not reach provider"),
 			fauxAssistantMessage("aborted deferred follow-up must not reach provider"),
 		]);
-		const prompt = harness.session.prompt("first prompt before queue abort");
-		await harness.session.waitForIdle();
-		await harness.session.prompt(steerMarker, { streamingBehavior: "steer" });
-		await harness.session.followUp(followUpMarker);
+		const prompt = harness.session.prompt(promptText);
+		try {
+			// Keep both inputs deferred until abort captures them; idle alone does not fix the prompt's startup phase.
+			await promptStarting.promise;
+			await harness.session.prompt(steerMarker, { streamingBehavior: "steer" });
+			await harness.session.followUp(followUpMarker);
 
-		const setText = vi.fn<(text: string) => void>();
-		const context = {
-			compactionQueuedMessages: [],
-			compactionInFlightMessages: [],
-			compactionTransferAbortControllers: new Map(),
-			session: harness.session,
-			updatePendingMessagesDisplay: vi.fn(),
-			editor: { getText: () => "draft", setText },
-			clearAllQueues: () => getClearAllQueues()(context),
-		};
-		const restored = await getAbortAndFireQueuedMessages()(context);
-		expect(restored).toBe(2);
-		expect(setText).toHaveBeenCalledWith(`${steerMarker}\n\n${followUpMarker}\n\ndraft`);
-
-		await prompt;
+			const setText = vi.fn<(text: string) => void>();
+			const context = {
+				compactionQueuedMessages: [],
+				compactionInFlightMessages: [],
+				compactionTransferAbortControllers: new Map(),
+				session: harness.session,
+				updatePendingMessagesDisplay: vi.fn(),
+				editor: { getText: () => "draft", setText },
+				clearAllQueues: () => getClearAllQueues()(context),
+			};
+			const restored = await getAbortAndFireQueuedMessages()(context);
+			expect(restored).toBe(2);
+			expect(setText).toHaveBeenCalledWith(`${steerMarker}\n\n${followUpMarker}\n\ndraft`);
+		} finally {
+			releasePrompt.resolve();
+			await prompt;
+		}
+		await harness.session.waitForSettledSessionWork();
+		// Esc stops the session (senpi#3811): the prompt still in its startup phase is held, not sent.
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.pausedHeldInputCount).toBe(1);
+		await harness.session.resumeSession();
 		await harness.session.waitForSettledSessionWork();
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(getAssistantTexts(harness)).not.toContain("aborted deferred steer must not reach provider");

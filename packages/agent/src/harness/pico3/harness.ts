@@ -395,31 +395,45 @@ export class Harness<Ks extends readonly AnyKind[] = []> {
 		if (!this.scheduler.quiescent()) throw new Error("cannot hold a non-quiescent harness; suspend it instead");
 		return this.scheduler.hold();
 	}
-	/** Cancel and join in-process invocations, clear transient waits, then close without terminalizing tasks. */
+	/**
+	 * Cancel and join in-process invocations, clear transient waits, then close without terminalizing tasks.
+	 * The views and the session are closed even when joining or the waiting-state commit fails (a storage
+	 * that refuses writes), so a failed suspend never leaks the session files; the first error is rethrown.
+	 */
 	async suspend(ctx: Context): Promise<void> {
 		if (this.suspended) return;
 		this.suspended = true;
-		await this.scheduler.joinAll();
-		const tools = [...this.session.liveTasks.values()].filter((task) => task.kind === "pi.tool");
-		if (tools.length > 0) {
-			const docs = [...new Set(tools.map((task) => task.conversationId))].map(
-				(conversationId): DocRef => ({ doc: "sticky", conversationId }),
-			);
-			await this.session.commit(
-				KERNEL,
-				(tx) => {
-					for (const task of tools) {
-						const index = (task.input as { index: number }).index;
-						const slot = tx.sticky(task.conversationId).turn.tools[index];
-						if (slot?.waitingOn !== undefined) delete slot.waitingOn;
-					}
-				},
-				ctx,
-				{ docs },
-			);
+		let failure: { error: unknown } | undefined;
+		try {
+			await this.scheduler.joinAll();
+			const tools = [...this.session.liveTasks.values()].filter((task) => task.kind === "pi.tool");
+			if (tools.length > 0) {
+				const docs = [...new Set(tools.map((task) => task.conversationId))].map(
+					(conversationId): DocRef => ({ doc: "sticky", conversationId }),
+				);
+				await this.session.commit(
+					KERNEL,
+					(tx) => {
+						for (const task of tools) {
+							const index = (task.input as { index: number }).index;
+							const slot = tx.sticky(task.conversationId).turn.tools[index];
+							if (slot?.waitingOn !== undefined) delete slot.waitingOn;
+						}
+					},
+					ctx,
+					{ docs },
+				);
+			}
+		} catch (error) {
+			failure = { error };
 		}
 		this.views.close();
-		await this.session.close(ctx);
+		try {
+			await this.session.close(ctx);
+		} catch (error) {
+			failure ??= { error };
+		}
+		if (failure !== undefined) throw failure.error;
 	}
 
 	// --- registries --------------------------------------------------------------
@@ -458,6 +472,7 @@ export class Harness<Ks extends readonly AnyKind[] = []> {
 				routes.set(key, doc);
 			}
 		}
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let token!: Namespace<T>;
 		token = {
 			id,

@@ -16,13 +16,16 @@ import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
 import gptAccountExtension from "./gpt-account.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
+import handoffHintExtension from "./handoff-hint/index.ts";
 import helpExtension from "./help/index.ts";
 import herdrExtension from "./herdr/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
-import htmlRenderExtension from "./html-render/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
+import killGuardExtension from "./kill-guard/index.ts";
+import credentialProxyExtension from "./credential-proxy/index.ts";
 import importReproExtension from "./import-repro.ts";
+import jobWidgetsExtension from "./job-widgets/extension.ts";
 import lookAtExtension from "./look-at/index.ts";
 import loopExtension from "./loop/index.ts";
 import loopGuardExtension from "./loop-guard/index.ts";
@@ -38,6 +41,7 @@ import promptUrlWidgetExtension from "./prompt-url-widget.ts";
 import reasoningExtension from "./reasoning/index.ts";
 import recommendedModelsExtension from "./recommended-models/index.ts";
 import redrawsExtension from "./redraws.ts";
+import relocateSessionExtension from "./relocate-session/index.ts";
 import repositoryIdentityExtension from "./repository-identity.ts";
 import piRulesExtension from "./rules/index.ts";
 import scheduleExtension from "./schedule/index.ts";
@@ -72,6 +76,10 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "loop-guard", factory: loopGuardExtension },
 	// Ahead of hooks and permission-system: a path the desktop moved is refused before any hook runs or prompt asks.
 	{ id: "moved-path-guard", factory: movedPathGuardExtension },
+	// Beside moved-path-guard for the same reason: a signal it refuses never reaches a hook or a permission prompt.
+	{ id: "kill-guard", factory: killGuardExtension },
+	// Withholds declared credentials before any tool can spawn a child; the proxy starts at session start.
+	{ id: "credential-proxy", factory: credentialProxyExtension },
 	{ id: "hooks", factory: hooksExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
@@ -98,6 +106,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Terminal follows bash-timeout so its injected default reaches the PTY bash, and follows
 	// anthropic-bash so mutual-exclusion (companion step-aside) is evaluated after it registers.
 	{ id: "terminal", factory: terminalExtension },
+	// Beside terminal, the main host of its jobs; terminal reaches it only through the session registry, so order is not load-bearing.
+	{ id: "job-widgets", factory: jobWidgetsExtension },
 	{ id: "tool-pair-guard", factory: toolPairGuardExtension },
 	{ id: "compaction", factory: compactionExtension },
 	{ id: "history-search", factory: historySearchExtension },
@@ -115,11 +125,12 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Durable counterpart of `loop`: writes job files a separate `senpi schedule run` fires later.
 	{ id: "schedule", factory: scheduleExtension },
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
+	// After cache-keepalive: its warm pings move the cache expiry the hint waits for.
+	{ id: "handoff-hint", factory: handoffHintExtension },
+	// Asks the session's host to continue it on another computer; without a host it only answers "stay here".
+	{ id: "relocate-session", factory: relocateSessionExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
-	// HTML page rendering for standalone senpi (TUI/local); the desktop thread reaches the
-	// same capability through the desktop's MCP server instead.
-	{ id: "html-render", factory: htmlRenderExtension },
 	// Provider-neutral account listing; sits before the provider lanes so their
 	// dedicated commands (claude-account, cursor accounts) keep their own names.
 	{ id: "account", factory: accountExtension },

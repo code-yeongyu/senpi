@@ -268,6 +268,7 @@ describe("Cursor CLI OAuth account failover", () => {
 		let firstAccount = "";
 		const stream = runCursorCliFailover<AttemptEvent>({
 			...failoverOptions(store, "stale-state"),
+			// oxlint-disable-next-line eslint/require-yield -- the generator throws before its first yield by design
 			runAttempt: async function* (account) {
 				firstAccount = account.name;
 				await store.modify(providerId, async (current) => {

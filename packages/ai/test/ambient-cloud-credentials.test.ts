@@ -71,4 +71,43 @@ describe("ambient cloud credentials", () => {
 			ambient: true,
 		});
 	});
+
+	it("#given empty stored vertex location #when env location present #then resolves via env fallback", async () => {
+		const credential = { type: "api_key" as const, env: { GOOGLE_CLOUD_PROJECT: "p", GOOGLE_CLOUD_LOCATION: "" } };
+		const env = { GOOGLE_CLOUD_LOCATION: "us-central1", GOOGLE_APPLICATION_CREDENTIALS: "/adc.json" };
+		const resolve = await googleVertexProvider().auth.apiKey?.resolve({
+			ctx: authContext(env, ["/adc.json"]),
+			credential,
+			signal: new AbortController().signal,
+		});
+		expect(resolve).toMatchObject({ source: "stored credential" });
+	});
+
+	it("#given empty stored vertex project #when GCLOUD_PROJECT env present #then resolves via env fallback", async () => {
+		const credential = {
+			type: "api_key" as const,
+			env: { GOOGLE_CLOUD_PROJECT: "", GOOGLE_CLOUD_LOCATION: "us-central1" },
+		};
+		const env = { GCLOUD_PROJECT: "p", GOOGLE_APPLICATION_CREDENTIALS: "/adc.json" };
+		const resolve = await googleVertexProvider().auth.apiKey?.resolve({
+			ctx: authContext(env, ["/adc.json"]),
+			credential,
+			signal: new AbortController().signal,
+		});
+		expect(resolve).toMatchObject({ source: "stored credential" });
+	});
+
+	it("#given empty stored vertex credentials path #when env credentials present #then resolves via env fallback", async () => {
+		const credential = {
+			type: "api_key" as const,
+			env: { GOOGLE_CLOUD_PROJECT: "p", GOOGLE_CLOUD_LOCATION: "us-central1", GOOGLE_APPLICATION_CREDENTIALS: "" },
+		};
+		const env = { GOOGLE_APPLICATION_CREDENTIALS: "/adc.json" };
+		const resolve = await googleVertexProvider().auth.apiKey?.resolve({
+			ctx: authContext(env, ["/adc.json"]),
+			credential,
+			signal: new AbortController().signal,
+		});
+		expect(resolve).toMatchObject({ source: "stored credential" });
+	});
 });

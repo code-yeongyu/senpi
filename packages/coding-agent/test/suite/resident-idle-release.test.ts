@@ -59,7 +59,7 @@ describe("resident store idle release", () => {
 		await promptUntilIdle(harness, large);
 
 		// Then: the settled transcript reads as text for every consumer.
-		expect(harness.events.at(-1)?.type).toBe("agent_idle");
+		expect(harness.events.filter((event) => event.type !== "session_lifecycle").at(-1)?.type).toBe("agent_idle");
 		expect(getUserTexts(harness)).toContain(large);
 		expect(JSON.stringify(harness.session.messages)).not.toContain(RESIDENT_TOKEN_MARKER);
 	});

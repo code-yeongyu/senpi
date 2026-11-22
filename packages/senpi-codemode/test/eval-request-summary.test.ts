@@ -6,7 +6,7 @@ import type { EvalToolInput } from "../src/tool/types.ts";
 import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
 const TEACHING_ERROR =
-	"eval run requires summary — one line in the user's language: what you are working on and for what purpose";
+	"eval run requires summary (one line in the user's language): what you are working on and for what purpose";
 const SUMMARY_SCHEMA_DESCRIPTION =
 	"REQUIRED for run. One line in the language the user writes in: a progress update saying what you are doing and why, not a label for the code; shown in the TUI while the cell runs.";
 const LONG_SUMMARY = "s".repeat(300);

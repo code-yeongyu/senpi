@@ -23,6 +23,7 @@ import {
 	type ModelThinkingLevel,
 	type Usage,
 } from "@earendil-works/pi-ai";
+import { appendDebugLogEntry } from "../../core/hidden-stdout-log.ts";
 import { findInitialModel } from "../../core/model-resolver.ts";
 import { ModelRuntime } from "../../core/model-runtime.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
@@ -35,6 +36,7 @@ import type {
 	MicroView,
 	MicroViewSource,
 } from "./api.ts";
+import { lockGatedStorage } from "./lock-gated-storage.ts";
 import { createPicoModels, readModelsView } from "./models.ts";
 import { selectSession } from "./sessions.ts";
 import { createMicroTools } from "./tools.ts";
@@ -59,7 +61,13 @@ export interface OpenMicroResult {
 }
 
 export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMicroResult> {
-	const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false);
+	let lostBeforeOpen: Error | undefined;
+	let stopOnLostLock = (error: Error): void => {
+		lostBeforeOpen = error;
+	};
+	const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, (error) =>
+		stopOnLostLock(error),
+	);
 	let storage: JsonlStorage | undefined;
 	let executionEnv: NodeExecutionEnv | undefined;
 	try {
@@ -68,7 +76,7 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 		const env = new NodeExecutionEnv({ cwd: location.cwd });
 		executionEnv = env;
 		const microTools = createMicroTools(env);
-		const picoModels = createPicoModels(modelRuntime, microTools.modelMetadata);
+		const picoModels = createPicoModels(modelRuntime, microTools.modelMetadata, location.cwd);
 		const selectedTools = microTools.declarations.map((tool) => tool.name);
 		const preferredModel = modelRuntime.getModel(DEFAULT_MODEL.provider, DEFAULT_MODEL.modelId);
 		const initial = location.created
@@ -86,7 +94,7 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 		const pendingReports: unknown[] = [];
 		let report: (error: unknown) => void = (error) => pendingReports.push(error);
 		const harness = await Harness.open(
-			storage,
+			lockGatedStorage(storage, location.assertHeld),
 			{
 				models: picoModels,
 				tools: microTools.declarations,
@@ -383,7 +391,7 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 		}
 		harness.resume();
 
-		return {
+		const opened: OpenMicroResult = {
 			view: {
 				current: () => state,
 				subscribe: (listener) => {
@@ -404,11 +412,46 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 				await location.release().catch(() => {});
 			},
 		};
+		// Another process reclaimed the session lock and may be writing this session. Suspend signals and
+		// joins every run and writes nothing (the gated storage refuses any commit), then closes the files.
+		stopOnLostLock = () => {
+			const message = "Another process took over this micro session; it was stopped to protect its history.";
+			update({ fatal: message });
+			notice("error", message);
+			for (const controller of modelRefreshControllers) controller.abort(new Error(message));
+			loginController?.abort(new Error(message));
+			clearPendingAuth(new Error(message));
+			void harness.suspend(BACKGROUND_CONTEXT).catch(logLostLockStopFailure);
+		};
+		if (lostBeforeOpen) stopOnLostLock(lostBeforeOpen);
+		return opened;
 	} catch (error) {
 		await storage?.close(BACKGROUND_CONTEXT).catch(() => {});
 		await executionEnv?.cleanup(BACKGROUND_CONTEXT).catch(() => {});
 		await location.release().catch(() => {});
 		throw error;
+	}
+}
+
+function errorFields(error: unknown): { name: string; code?: string } {
+	if (!(error instanceof Error)) return { name: typeof error };
+	const code = (error as NodeJS.ErrnoException).code;
+	return code === undefined ? { name: error.name } : { name: error.name, code };
+}
+
+/** Names and codes only: error messages can carry absolute session paths. */
+function logLostLockStopFailure(error: unknown): void {
+	try {
+		appendDebugLogEntry(
+			"micro session stop after a lost lock failed",
+			JSON.stringify({
+				event: "micro_lost_lock_stop_failed",
+				error: errorFields(error),
+				...(error instanceof Error && error.cause !== undefined ? { cause: errorFields(error.cause) } : {}),
+			}),
+		);
+	} catch {
+		// The debug log is best effort; this runs from a heartbeat timer and must not throw.
 	}
 }
 
@@ -419,6 +462,7 @@ interface UsageAccumulator {
 	cacheRead: number;
 	cacheWrite: number;
 	totalCost: number;
+	totalCostUnknown?: true;
 	lastAssistantId: number;
 	lastCacheHitRate?: number;
 }
@@ -457,6 +501,7 @@ function accumulateUsage(accumulator: UsageAccumulator, entry: Entry): void {
 		accumulator.cacheRead += usage.cacheRead;
 		accumulator.cacheWrite += usage.cacheWrite;
 		accumulator.totalCost += usage.cost.total;
+		if (usage.costUnknown) accumulator.totalCostUnknown = true;
 	}
 	if (
 		assistant &&
@@ -499,6 +544,7 @@ function usageView(
 		cacheRead: cumulative.cacheRead,
 		cacheWrite: cumulative.cacheWrite,
 		totalCost: cumulative.totalCost,
+		...(cumulative.totalCostUnknown ? { totalCostUnknown: true as const } : {}),
 		...(cumulative.lastCacheHitRate === undefined ? {} : { lastCacheHitRate: cumulative.lastCacheHitRate }),
 		contextTokens,
 		contextWindow,
@@ -518,7 +564,10 @@ function usageRecord(entry: Entry): Usage | undefined {
 	return entry.data.usage as unknown as Usage;
 }
 
-function contextTokenCount(usage: Usage): number {
+function contextTokenCount(usage: Usage): number | null {
+	if (usage.contextUsage !== undefined) {
+		return usage.contextUsage === null ? null : usage.contextUsage.input + usage.contextUsage.output;
+	}
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 

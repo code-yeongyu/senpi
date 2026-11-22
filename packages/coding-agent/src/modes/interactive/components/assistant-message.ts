@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	type Component,
 	Container,
+	copyLineSources,
 	Markdown,
 	type MarkdownTheme,
 	nextRenderRevision,
@@ -10,7 +11,7 @@ import {
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
-import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { sharedMarkdownTheme, theme } from "../theme/theme.ts";
 import { type AssistantRenderDescriptor, createAssistantRenderDescriptors } from "./assistant-render-descriptors.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
@@ -56,6 +57,7 @@ export class AssistantMessageComponent extends Container {
 	private hasToolCalls = false;
 	private expanded = false;
 	private providerErrorOwned = false;
+	private ownsTurnNotice = false;
 	private isStreaming = false;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
 	private handoffOpenOverrides = new Map<number, boolean>();
@@ -65,7 +67,7 @@ export class AssistantMessageComponent extends Container {
 	constructor(
 		message?: AssistantMessage,
 		hideThinkingBlock = false,
-		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		markdownTheme: MarkdownTheme = sharedMarkdownTheme(),
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
@@ -113,6 +115,13 @@ export class AssistantMessageComponent extends Container {
 		this.refreshContent();
 	}
 
+	/** A replayed turn draws in one component, so it shows its own turn-ending notice (senpi#4958). */
+	setOwnsTurnNotice(owned: boolean): void {
+		if (this.ownsTurnNotice === owned) return;
+		this.ownsTurnNotice = owned;
+		this.refreshContent();
+	}
+
 	setProviderErrorOwned(owned: boolean): void {
 		if (this.providerErrorOwned === owned) return;
 		this.providerErrorOwned = owned;
@@ -137,7 +146,7 @@ export class AssistantMessageComponent extends Container {
 	override render(width: number): string[] {
 		const signature = this.lastMessageSignature ?? "";
 		if (this.renderCache?.width === width && this.renderCache.signature === signature) {
-			return [...this.renderCache.lines];
+			return copyLineSources(this.renderCache.lines, [...this.renderCache.lines]);
 		}
 
 		const lines = super.render(width);
@@ -174,6 +183,7 @@ export class AssistantMessageComponent extends Container {
 			thinkingVisibilityOverrides: this.thinkingVisibilityOverrides,
 			handoffOpenOverrides: this.handoffOpenOverrides,
 			hasToolCalls: this.hasToolCalls,
+			ownsTurnNotice: this.ownsTurnNotice,
 		});
 		this.reconcileRenderDescriptors(descriptors);
 	}
@@ -291,7 +301,7 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	private cacheRender(width: number, signature: string, lines: string[]): void {
-		this.renderCache = { lines: [...lines], signature, width };
+		this.renderCache = { lines: copyLineSources(lines, [...lines]), signature, width };
 	}
 
 	private refreshContent(): void {

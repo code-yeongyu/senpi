@@ -4,12 +4,20 @@ import { createStaticFacetLoader, defineFacet } from "@earendil-works/chord";
 import { AgentHarness, BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { consumeInternalProcessRole } from "../../src/experimental/process.ts";
-import { runSessionWorkerWithHarness } from "../../src/experimental/session-worker.ts";
+import { runSessionWorkerWithHarness, WorkerLifecycle } from "../../src/experimental/session-worker.ts";
 import { KeyedProbe } from "./keyed-service.ts";
+
+/**
+ * When set to "1", the worker applies server-disconnect notices to its lifecycle only after SIGUSR2.
+ * The coordinator sends that notice while a replacement server registers, so the orphan-demand grace
+ * would otherwise start before the replacement has discovered the worker.
+ */
+export const HOLD_SERVER_DISCONNECT_ENV = "__PI_TEST_HOLD_SERVER_DISCONNECT_UNTIL_SIGUSR2";
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	const role = consumeInternalProcessRole();
 	if (role !== "session-worker") throw new Error("Faux Session worker requires a session-worker invocation");
+	if (process.env[HOLD_SERVER_DISCONNECT_ENV] === "1") holdServerDisconnectsUntilSignal();
 	void runSessionWorkerWithHarness(process.argv.slice(2), async (session, options) => {
 		if (options.provider !== "anthropic" || options.model !== "claude-sonnet-4-5") {
 			throw new Error(`Unexpected faux worker model: ${options.provider}/${options.model}`);
@@ -61,6 +69,20 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 		console.error(error);
 		process.exit(1);
 	});
+}
+
+function holdServerDisconnectsUntilSignal(): void {
+	const serverDisconnected = WorkerLifecycle.prototype.serverDisconnected;
+	const held: (() => void)[] = [];
+	let released = false;
+	process.once("SIGUSR2", () => {
+		released = true;
+		for (const deliver of held.splice(0)) deliver();
+	});
+	WorkerLifecycle.prototype.serverDisconnected = function (this: WorkerLifecycle, serverConnectionId: string): void {
+		if (released) serverDisconnected.call(this, serverConnectionId);
+		else held.push(() => serverDisconnected.call(this, serverConnectionId));
+	};
 }
 
 function abortError(signal: AbortSignal): Error {

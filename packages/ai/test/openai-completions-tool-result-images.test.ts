@@ -36,6 +36,7 @@ const compat = {
 	toolSchemaFlavor: undefined,
 	toolCallFormat: undefined,
 	supportsOpenAIGrammarTools: false,
+	mixedStrictTools: true,
 	supportsMidConvoSystemMessages: false,
 	supportsMidConvoToolAdditions: false,
 	cacheControlFormat: "anthropic",

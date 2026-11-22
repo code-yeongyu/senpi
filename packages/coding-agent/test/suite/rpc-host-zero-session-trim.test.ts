@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	DECLINE_TRIM_FLOOR_BYTES,
 	ZERO_SESSION_TRIM_MIN_INTERVAL_MS,
+	ZERO_SESSION_TRIM_TICK_MS,
 	ZeroSessionTrimmer,
 } from "../../src/modes/rpc/host-zero-session-trim.ts";
 import type { RpcHostTrimmedEvent } from "../../src/modes/rpc/rpc-types.ts";
@@ -293,5 +294,39 @@ describe("zero-session host trim", () => {
 				pauseMs: 0,
 			},
 		]);
+	});
+
+	it("runs no timer while the session count holds still, and ticks on its own once one is owed (senpi#3747)", async () => {
+		vi.useFakeTimers();
+		let reads = 0;
+		let sessions = 2;
+		const records: RpcHostTrimmedEvent[] = [];
+		const trimmer = new ZeroSessionTrimmer({
+			emit: (record) => records.push(record),
+			sessions: () => {
+				reads += 1;
+				return sessions;
+			},
+			readFootprint: () => ({ bytes: 500 * MEGABYTE, measure: "phys_footprint" }),
+			collect: () => true,
+		});
+		try {
+			trimmer.observe(2);
+			trimmer.start();
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(reads).toBe(0);
+
+			sessions = 0;
+			trimmer.observe(0);
+			await vi.advanceTimersByTimeAsync(2 * ZERO_SESSION_TRIM_TICK_MS);
+			expect(records).toHaveLength(1);
+
+			reads = 0;
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(reads).toBe(0);
+		} finally {
+			trimmer.stop();
+			vi.useRealTimers();
+		}
 	});
 });
