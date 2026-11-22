@@ -17,8 +17,9 @@ import type { JsonValue } from "@earendil-works/pi-ai";
  * other. A call's hooks start once its session's previous call has settled, a cancelled call's included. How long a
  * running call takes is bounded only where its runner bounds its handlers (on a senpi hand: lifecycle and compaction
  * handlers have a session's per-handler cap unless it is turned off, while `input`, `before_agent_start` and
- * `before_provider_request` handlers have none, as in a local session). The wait for a turn is always bounded: a call
- * still waiting after `queueWaitMs` answers `hook.failed` with reason `queue_timeout` (the loop host raises
+ * `before_provider_request` handlers have none, as in a local session). The wait for a turn is always bounded, per call
+ * ahead rather than in total: a call whose call ahead does not settle within `queueWaitMs` (the bound restarts each time
+ * one settles, so a slow queue that keeps moving never trips it) answers `hook.failed` with reason `queue_timeout` (the loop host raises
  * `LoopHookQueueTimeoutError`) without starting its hooks. The hand reads the lane meanwhile, so `hook.cancel` reaches
  * the call it names: a running call's signal aborts, and a waiting call answers `hook.failed` with reason `cancelled`
  * without starting its hooks.
