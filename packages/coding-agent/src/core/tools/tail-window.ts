@@ -1,8 +1,6 @@
-const MAX_PENDING_TAIL_CHUNKS = 10;
+import { decodeUtf8, encodeUtf8, utf8ByteLength as byteLength } from "./encoding.ts";
 
-function byteLength(text: string): number {
-	return Buffer.byteLength(text, "utf-8");
-}
+const MAX_PENDING_TAIL_CHUNKS = 10;
 
 export class TailWindow {
 	private readonly maxBytes: number;
@@ -43,14 +41,14 @@ export class TailWindow {
 	}
 
 	private replaceWithTail(text: string, startsAtLineBoundary: boolean): void {
-		const buffer = Buffer.from(text, "utf-8");
+		const buffer = encodeUtf8(text);
 		let start = Math.max(0, buffer.length - this.maxBytes);
 		while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) {
 			start++;
 		}
 
 		this.startsAtBoundary = start === 0 ? startsAtLineBoundary : buffer[start - 1] === 0x0a;
-		const tail = buffer.subarray(start).toString("utf-8");
+		const tail = decodeUtf8(buffer.subarray(start));
 		this.chunks = tail.length > 0 ? [tail] : [];
 		this.bytes = byteLength(tail);
 	}
@@ -75,14 +73,14 @@ export class TailWindow {
 			return;
 		}
 
-		const buffer = Buffer.from(this.joined(), "utf-8");
+		const buffer = encodeUtf8(this.joined());
 		let start = Math.max(0, buffer.length - this.maxBytes);
 		while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) {
 			start++;
 		}
 
 		this.startsAtBoundary = start === 0 ? this.startsAtBoundary : buffer[start - 1] === 0x0a;
-		const tail = buffer.subarray(start).toString("utf-8");
+		const tail = decodeUtf8(buffer.subarray(start));
 		this.chunks = tail.length > 0 ? [tail] : [];
 		this.bytes = byteLength(tail);
 	}

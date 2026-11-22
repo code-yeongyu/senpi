@@ -51,6 +51,7 @@ export interface BashTimeoutPromptOptions {
 	readonly evalOnly?: boolean;
 }
 
+/** The pre-diet timeout policy section; only presets that render full shared sections append it (senpi#5665). */
 export function buildBashTimeoutPrompt(defaults: BashTimeoutDefaults, options: BashTimeoutPromptOptions = {}): string {
 	const { foregroundWindowSeconds, evalOnly = false } = options;
 	const subject = evalOnly

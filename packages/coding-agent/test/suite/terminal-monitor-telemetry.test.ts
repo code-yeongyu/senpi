@@ -173,6 +173,7 @@ describe("monitor telemetry", () => {
 				onMonitorEnded: ended,
 				onBackgroundState: vi.fn(),
 				onBackgroundExit: vi.fn(),
+				onBackgroundAge: vi.fn(),
 			};
 			bundle.bind(sinks);
 			bundle.bind(sinks);

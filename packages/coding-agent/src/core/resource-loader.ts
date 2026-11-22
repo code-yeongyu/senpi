@@ -275,6 +275,25 @@ function getGlobalDefaultExtensionModulePath(extensionId: (typeof globalDefaultE
 	);
 }
 
+// A write-denied agent dir (a sandboxed review child, senpi#6287) is left as it is: a missing default
+// extension shim is not seeded, so that default does not load, and a stale shim keeps loading whatever it
+// points at. Startup survives either way, and each denied write is reported as an extension warning so a
+// permission problem in a normal agent dir is visible; any other error is a real failure.
+function seedWritable(write: () => void, path: string, denied: Array<{ path: string; warning: string }>): boolean {
+	try {
+		write();
+		return true;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== "EROFS" && code !== "EACCES" && code !== "EPERM") throw error;
+		denied.push({
+			path,
+			warning: `Default extension shim not written (${code}); the extensions directory is not writable, so this default extension is not refreshed.`,
+		});
+		return false;
+	}
+}
+
 function buildGlobalDefaultExtensionShim(modulePath: string): string {
 	return `${GENERATED_GLOBAL_EXTENSION_BANNER}export { default } from ${JSON.stringify(pathToFileURL(modulePath).href)};\n`;
 }
@@ -482,6 +501,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private preSessionHookSourcePaths: string[];
 	private loadedHookSources: LoadedHookSources;
 	private loaded: boolean;
+	private deniedSeedWarnings: Array<{ path: string; warning: string }> = [];
 
 	constructor(options: DefaultResourceLoaderOptions) {
 		this.cwd = resolvePath(options.cwd);
@@ -493,7 +513,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 		this.eventBus = options.eventBus ?? createEventBus();
 		const factories = options.extensionFactories ?? [];
-		this.extensionFactories = factories.filter((input) => !isBuiltinExtension(input));
+		const hostFactories = factories.flatMap((input) =>
+			typeof input !== "function" && input.host ? [{ id: input.name, factory: input.factory }] : [],
+		);
+		this.extensionFactories = factories.filter(
+			(input) => !(typeof input !== "function" && input.host) && !isBuiltinExtension(input),
+		);
 		this.builtinExtensions = new Map(factories.filter(isBuiltinExtension).map((input) => [input.name, input]));
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
@@ -518,6 +543,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 								}
 							: extension,
 					);
+		this.builtinExtensionFactories = [...this.builtinExtensionFactories, ...hostFactories];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
@@ -783,6 +809,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const packageWarnings = collectExtensionPackageWarnings(dedupedExtensionPaths, metadataByPath);
 		const extensionsResult = await this.loadFinalExtensionSet(dedupedExtensionPaths, preTrustExtensions);
 		mergeExtensionWarnings(extensionsResult, packageWarnings);
+		mergeExtensionWarnings(extensionsResult, this.deniedSeedWarnings);
 		for (const p of this.additionalExtensionPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -853,6 +880,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 						cwd: this.cwd,
 						agentDir: this.agentDir,
 						...this.settingsManager.getSettings().contextFiles,
+						// senpi#5567: user settings only; a project's settings never redirect the global file.
+						globalPath: this.settingsManager.getGlobalContextFilePath(),
 					}),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
@@ -882,7 +911,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		const extensionsDir = join(this.agentDir, "extensions");
-		mkdirSync(extensionsDir, { recursive: true });
+		this.deniedSeedWarnings = [];
+		if (!seedWritable(() => mkdirSync(extensionsDir, { recursive: true }), extensionsDir, this.deniedSeedWarnings))
+			return;
 
 		for (const extensionId of globalDefaultExtensionIds) {
 			const modulePath = getGlobalDefaultExtensionModulePath(extensionId);
@@ -901,11 +932,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 					continue;
 				}
 
-				writeFileSync(targetPath, shim, "utf-8");
+				seedWritable(() => writeFileSync(targetPath, shim, "utf-8"), targetPath, this.deniedSeedWarnings);
 				continue;
 			}
 
-			writeFileSync(targetPath, shim, "utf-8");
+			seedWritable(() => writeFileSync(targetPath, shim, "utf-8"), targetPath, this.deniedSeedWarnings);
 		}
 	}
 

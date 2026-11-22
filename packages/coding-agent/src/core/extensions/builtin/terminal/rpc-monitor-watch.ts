@@ -6,7 +6,8 @@
  */
 import { RpcMonitorCoalescer } from "./rpc-monitor-coalesce.ts";
 import { openRpcObserver, type RpcObserver, type RpcRecord } from "./rpc-monitor-observer.ts";
-import { RpcMonitorRenderer, sessionKey } from "./rpc-monitor-render.ts";
+import { type RpcRemoteCheckpoint, RpcRemoteFeed } from "./rpc-monitor-remote.ts";
+import { detachedLabel, RpcMonitorRenderer, sessionKey } from "./rpc-monitor-render.ts";
 import {
 	endpointSockets,
 	matchesTask,
@@ -15,6 +16,7 @@ import {
 	subscriptionFor,
 	wantsRecord,
 } from "./rpc-monitor-targets.ts";
+import { currentRpcRemoteSource, type RpcRemoteSource } from "./rpc-remote-source.ts";
 
 export const RPC_RESCAN_MS = 30_000;
 
@@ -22,6 +24,8 @@ export const RPC_RESCAN_MS = 30_000;
 export interface RpcMonitorCheckpoint {
 	readonly hosts: Readonly<Record<string, { readonly instanceId: string; readonly generation: string }>>;
 	readonly statuses: Readonly<Record<string, string>>;
+	/** A remote target's resume position (absent for local targets). */
+	readonly remote?: RpcRemoteCheckpoint;
 }
 
 export interface RpcWatchOptions {
@@ -35,6 +39,12 @@ export interface RpcWatchOptions {
 	readonly line: (line: string) => void;
 	/** The watch's view changed (a host joined, a status moved): persist it. */
 	readonly checkpoint?: (checkpoint: RpcMonitorCheckpoint) => void;
+	/** The source serving a remote target; defaults to the one an extension registered. */
+	readonly remoteSource?: RpcRemoteSource;
+	/** A restore's saved view: a remote target resumes from its cursor. */
+	readonly restoredFrom?: RpcMonitorCheckpoint;
+	/** A remote target's access ended for good: the monitor settles with this summary. */
+	readonly ended?: (summary: string) => void;
 }
 
 export class RpcMonitorWatch {
@@ -45,6 +55,7 @@ export class RpcMonitorWatch {
 	readonly #coalescer: RpcMonitorCoalescer;
 	readonly #taskSessions = new Set<string>();
 	#rescan: ReturnType<typeof setInterval> | undefined;
+	#remote: RpcRemoteFeed | undefined;
 	#stopped = false;
 
 	constructor(options: RpcWatchOptions) {
@@ -54,6 +65,8 @@ export class RpcMonitorWatch {
 
 	/** Joins every endpoint now; resolves to the arm-time RESULT rows (one per matched session). */
 	async start(): Promise<string[]> {
+		const { target } = this.#options;
+		if (target.kind === "remote") return this.#startRemote(target.device, target.session);
 		const rows = await this.#join();
 		this.#rescan = setInterval(() => void this.#join(), RPC_RESCAN_MS);
 		this.#rescan.unref?.();
@@ -65,6 +78,7 @@ export class RpcMonitorWatch {
 		return {
 			hosts: Object.fromEntries(this.#hosts),
 			statuses: Object.fromEntries(this.#renderer.statuses()),
+			...(this.#remote === undefined ? {} : { remote: this.#remote.checkpoint() }),
 		};
 	}
 
@@ -79,7 +93,7 @@ export class RpcMonitorWatch {
 		}
 		const now = this.#renderer.statuses();
 		for (const [key, status] of Object.entries(saved.statuses)) {
-			const label = key.slice(key.lastIndexOf("#") + 1).slice(0, 8);
+			const label = detachedLabel(key);
 			const current = now.get(key);
 			// Only a host that answered can say a session is gone; otherwise it may be alive but unreachable
 			// or no longer matched by the re-resolved target.
@@ -95,6 +109,7 @@ export class RpcMonitorWatch {
 			else if (current !== status)
 				lines.push(`rpc ${label} status ${status} -> ${current} (changed while detached)`);
 		}
+		if (this.#remote !== undefined) lines.push(...this.#remote.diffSettled(saved.remote));
 		return lines;
 	}
 
@@ -104,6 +119,28 @@ export class RpcMonitorWatch {
 		this.#coalescer.dispose();
 		for (const observer of this.#observers.values()) observer.close();
 		this.#observers.clear();
+		this.#remote?.stop();
+	}
+
+	/** A remote target is served by the registered source instead of endpoint sockets; render is shared. */
+	#startRemote(device: string, session: string): Promise<string[]> {
+		const { events, exclude, restoredFrom } = this.#options;
+		const source = this.#options.remoteSource ?? currentRpcRemoteSource();
+		if (source === undefined)
+			return Promise.reject(new Error("remote targets need the omo remote surface; no remote source is registered"));
+		this.#remote = new RpcRemoteFeed(
+			{ device, session },
+			{ events, exclude, source, ...(restoredFrom?.remote === undefined ? {} : { saved: restoredFrom.remote }) },
+			{
+				renderer: this.#renderer,
+				hosts: this.#hosts,
+				record: (socket, record) => this.#record(socket, record),
+				line: (line) => this.#options.line(line),
+				checkpoint: () => this.#options.checkpoint?.(this.checkpoint()),
+				ended: (summary) => this.#options.ended?.(summary),
+			},
+		);
+		return this.#remote.start();
 	}
 
 	async #join(): Promise<string[]> {

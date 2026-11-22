@@ -7,13 +7,36 @@
 // and fixtures/offline-network.mjs keeps the child off the network, so the image can only come from that store.
 // Recorded once #4809 gave Bun-loaded extension modules `import.meta.dirname` (gondolin resolves its assets from it,
 // https://github.com/code-yeongyu/senpi/issues/4766); before that the VM never started on a Bun child.
+import { accessSync, constants } from "node:fs";
+import { delimiter, join } from "node:path";
 import { exampleExtension, OFFLINE_NETWORK } from "./support/example-extensions.mjs";
 import { WITHOUT_O8 } from "./support/observables.mjs";
+
+const QEMU = process.arch === "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64";
+
+function onPath(command) {
+	for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+		try {
+			accessSync(join(dir, command), constants.X_OK);
+			return true;
+		} catch {}
+	}
+	return false;
+}
 
 export default {
 	id: "E29",
 	title: "example extension gondolin, unmodified",
 	observables: WITHOUT_O8,
+	// senpi#5265: a host without the capability (hosted CI runners) reports E29 SKIPPED(host-capability) naming the
+	// missing prerequisite, never a PASS. Where the capability exists, E29 runs and is compared like every other case.
+	skip: () => {
+		const missing = [
+			...(process.env.EQ_GONDOLIN_IMAGE_STORE ? [] : ["EQ_GONDOLIN_IMAGE_STORE (a gondolin image store with alpine-base:latest)"]),
+			...(onPath(QEMU) ? [] : [`${QEMU} on PATH`]),
+		];
+		return missing.length ? `host-capability: missing ${missing.join(" and ")}` : undefined;
+	},
 	spec: () => {
 		const store = process.env.EQ_GONDOLIN_IMAGE_STORE;
 		if (!store)

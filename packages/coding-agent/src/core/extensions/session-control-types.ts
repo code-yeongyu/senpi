@@ -9,6 +9,7 @@
  * the runtime's steering or follow-up queue exactly like a user's queued message.
  */
 
+import type { HoldKind } from "../engine-turn-hold.ts";
 import type { RelocationRequest, RelocationRequestResult, RelocationTargetsResult } from "../session-relocation.ts";
 
 export type {
@@ -17,6 +18,7 @@ export type {
 	RelocationTarget,
 	RelocationTargetsResult,
 } from "../session-relocation.ts";
+export { RELOCATION_TOOL_NAMES } from "../session-relocation.ts";
 
 /** Why a `session_control_wake` fired. */
 export type SessionControlWakeReason =
@@ -55,6 +57,16 @@ export type SessionControlSender =
 	| { readonly kind: "command_line"; readonly user?: string }
 	| { readonly kind: "external"; readonly platform: string; readonly author?: string };
 
+/**
+ * The remote device a delivery's RPC connection speaks for, stamped by the engine from the connection it arrived on
+ * (senpi#6233). It is never taken from a caller's record or an extension's input, so it is the one provenance on a
+ * delivery that a remote caller cannot write.
+ */
+export interface SessionControlRemoteOrigin {
+	readonly deviceId: string;
+	readonly deviceName?: string;
+}
+
 export interface AdmitExternalMessageInput {
 	readonly delivery_id: string;
 	readonly text: string;
@@ -77,7 +89,10 @@ export interface AdmitExternalMessageInput {
  * - `queued`    mid-turn follow-up: enqueued once into the runtime's follow-up queue
  * - `steered`   mid-turn steer at the current epoch: enqueued once into the steering queue
  * - `turn_conflict`    the sender's epoch is stale (or a steer named none)
- * - `held_draft`       the user is composing: nothing was enqueued; retry on the next edge
+ * - `held_draft`       input the user submitted has not reached the runtime yet: nothing was enqueued; retry on the
+ *                      next edge. A draft still in the composer never holds a delivery (senpi#7043)
+ * - `held`             idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run
+ *                      hold; `holds` names them): kept as a held notice, it starts once released (senpi#6490)
  * - `already_admitted` this runtime already holds or already wrote this `delivery_id`
  */
 export type ExternalAdmissionKind =
@@ -86,15 +101,18 @@ export type ExternalAdmissionKind =
 	| "steered"
 	| "turn_conflict"
 	| "held_draft"
+	| "held"
 	| "already_admitted";
 
 export interface ExternalAdmissionResult {
 	readonly kind: ExternalAdmissionKind;
 	readonly turn_epoch: number;
+	/** `held` only: the kinds of the holds that keep the delivery. */
+	readonly holds?: readonly HoldKind[];
 }
 
-/** What the user is holding in the composer. A terminal delivers IME text only when it commits, so `ime` is reserved. */
-export type AdmissionHoldReason = "draft" | "ime" | "attachment";
+/** Why admission is held: `draft` is input the user submitted that the runtime has not taken yet. */
+export type AdmissionHoldReason = "draft";
 
 /** Read-only admission pre-check: calling it changes nothing. */
 export interface SessionAdmissionGate {
@@ -179,6 +197,20 @@ export interface SessionControlDeliveryDetails {
 	readonly deliverAs: ExternalDeliverAs;
 	readonly sender?: SessionControlSender;
 	readonly display_text?: string;
+	/** Engine-stamped: the remote device the admitting connection speaks for. */
+	readonly remote_origin?: SessionControlRemoteOrigin;
+	/** Engine-stamped: the thread-chain hop count the delivery was admitted at. */
+	readonly chain_count?: number;
+}
+
+/** The engine-stamped remote device a delivery's `details` names, when it names a well-formed one. */
+export function sessionControlRemoteOriginOf(details: unknown): SessionControlRemoteOrigin | undefined {
+	if (!isSessionControlDeliveryDetails(details) || typeof details.remote_origin !== "object") return undefined;
+	const origin: Record<string, unknown> = { ...details.remote_origin };
+	if (typeof origin.deviceId !== "string" || origin.deviceId === "") return undefined;
+	return typeof origin.deviceName === "string" && origin.deviceName !== ""
+		? { deviceId: origin.deviceId, deviceName: origin.deviceName }
+		: { deviceId: origin.deviceId };
 }
 
 /** The sender a delivery's `details` names, when it names a well-formed one. */

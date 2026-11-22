@@ -1,0 +1,52 @@
+name: Install CI npm dependency tree
+description: Restore the exact npm install for this Linux runner image, or install from the lock.
+inputs:
+  bun-version:
+    description: Bun pin used by the consuming test jobs.
+    required: true
+  seed:
+    description: Save a fresh install before the dependent test jobs start.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Compute npm tree cache key
+      id: key
+      shell: bash
+      env:
+        BUN_PIN: ${{ inputs.bun-version }}
+        TOOLCHAIN: ${{ runner.os }}-${{ runner.arch }}
+        INSTALL_INPUTS: ${{ hashFiles('package-lock.json', '.npmrc', 'package.json', 'packages/*/package.json', 'packages/session-backends/*/package.json', 'packages/coding-agent/examples/extensions/*/package.json') }}
+      run: |
+        node_version=$(node --version)
+        npm_version=$(npm --version)
+        echo "key=npm-tree-v1-${TOOLCHAIN}-${ImageOS:?}-${ImageVersion:?}-${node_version}-${npm_version}-${BUN_PIN}-${INSTALL_INPUTS:?}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the exact npm tree
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      id: tree
+      with:
+        key: ${{ steps.key.outputs.key }}
+        path: |
+          node_modules
+          packages/*/node_modules
+          packages/session-backends/*/node_modules
+          packages/coding-agent/examples/extensions/*/node_modules
+
+    - name: Install from the lockfile
+      if: steps.tree.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci --ignore-scripts
+
+    # The main push populates the default-branch key. A full CI PR can seed its own merge-ref cache
+    # on a cold key for measurement; GitHub never exposes that cache to main or to another PR.
+    - name: Save the clean npm tree
+      if: inputs.seed == 'true' && steps.tree.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.key.outputs.key }}
+        path: |
+          node_modules
+          packages/*/node_modules
+          packages/session-backends/*/node_modules
+          packages/coding-agent/examples/extensions/*/node_modules

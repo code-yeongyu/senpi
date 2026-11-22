@@ -32,6 +32,7 @@ import {
 } from "./rpc-input-validation.ts";
 import { type SessionEnv, sessionEnvShapeError } from "./session-caller-env.ts";
 import { applyContextPatch, type SessionContextOverlay } from "./session-context-patch.ts";
+import { isResidentWriter, type ResidentWriter } from "./host-handover-resident-writer.ts";
 
 export interface HandoverParkedEntry {
 	readonly sessionPath: string;
@@ -67,6 +68,17 @@ export interface HandoverParkedEntry {
 	 * Absent on entries an older generation wrote, which every reader treats as a predecessor's park.
 	 */
 	readonly parkedBy?: string;
+	/**
+	 * Present while the session is open on its host (senpi#6190); a park drops it. A successor reopens a stamped
+	 * entry only once that writer process is gone, so it never opens a session its live predecessor still holds.
+	 */
+	readonly residentWriter?: ResidentWriter;
+	/**
+	 * The session was loaded when the host that wrote this entry ended (senpi#7020): resident, parked by a handoff
+	 * drain, or parked by a clean stop. A successor reopens a live session as that host left it, releasing only the hold
+	 * the restart caused; an entry without it (an idle-sweep park, an unload, an older host) reopens dormant.
+	 */
+	readonly live?: true;
 }
 
 const recordDir = (daemonDir: string): string => join(daemonDir, "handover-parked");
@@ -82,7 +94,7 @@ function enqueueMutation(mutation: () => Promise<void>): Promise<void> {
 	return next;
 }
 
-function isEntry(value: unknown): value is HandoverParkedEntry {
+export function isHandoverParkedEntry(value: unknown): value is HandoverParkedEntry {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 	const record = value as Record<string, unknown>;
 	return (
@@ -91,6 +103,8 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		(record.durableSessionId === undefined || typeof record.durableSessionId === "string") &&
 		(record.cwd === undefined || typeof record.cwd === "string") &&
 		(record.parkedBy === undefined || typeof record.parkedBy === "string") &&
+		(record.residentWriter === undefined || isResidentWriter(record.residentWriter)) &&
+		(record.live === undefined || record.live === true) &&
 		(record.thinkingLevel === undefined || typeof record.thinkingLevel === "string") &&
 		(record.permissionPreset === undefined ||
 			(typeof record.permissionPreset === "string" &&
@@ -135,7 +149,7 @@ export async function readHandoverParkedSessions(daemonDir: string): Promise<rea
 		const file = join(recordDir(daemonDir), name);
 		try {
 			const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
-			if (isEntry(parsed)) entries.push(parsed);
+			if (isHandoverParkedEntry(parsed)) entries.push(parsed);
 			// A well-formed JSON value that fails the shape check is not corrupt: it may be an entry a
 			// different-version generation wrote (a rollback handover). Leave it alone.
 		} catch (cause) {
@@ -154,6 +168,28 @@ export async function readHandoverParkedSessions(daemonDir: string): Promise<rea
 
 export function clearHandoverParkedSession(daemonDir: string, sessionPath: string): Promise<void> {
 	return enqueueMutation(() => rm(entryFile(daemonDir, sessionPath), { force: true }));
+}
+
+/**
+ * Clears an inherited entry after its reopen, unless the reopen re-recorded it as resident on
+ * `holder` (a retained session is recorded by the host it is open on, so the next start reopens it).
+ */
+export function clearInheritedParkedSession(
+	daemonDir: string,
+	sessionPath: string,
+	holder: string | undefined,
+): Promise<void> {
+	return enqueueMutation(async () => {
+		const file = entryFile(daemonDir, sessionPath);
+		if (holder !== undefined) {
+			const recorded: unknown = await readFile(file, "utf8").then(
+				(text) => JSON.parse(text),
+				() => undefined,
+			);
+			if (isHandoverParkedEntry(recorded) && recorded.parkedBy === holder) return;
+		}
+		await rm(file, { force: true });
+	});
 }
 
 export function dropHandoverParkedSessionIfFileGone(daemonDir: string, sessionPath: string): Promise<void> {

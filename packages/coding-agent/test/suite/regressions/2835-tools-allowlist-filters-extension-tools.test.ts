@@ -75,8 +75,8 @@ describe("regression #2835: tool allowlists filter extension tools", () => {
 				.sort(),
 		).toEqual(["dynamic_tool", "read"]);
 		expect(session.getActiveToolNames().sort()).toEqual(["dynamic_tool", "read"]);
-		expect(session.systemPrompt).toContain("- read: Read file contents");
-		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
+		// Every allowed tool carries a schema description, so none gets a snippet line (senpi#5335).
+		expect(session.systemPrompt).not.toContain("## Available Tools");
 		expect(session.systemPrompt).not.toContain("- bash:");
 		expect(session.systemPrompt).not.toContain("- edit:");
 		session.dispose();
@@ -87,7 +87,7 @@ describe("regression #2835: tool allowlists filter extension tools", () => {
 
 		expect(session.getAllTools()).toEqual([]);
 		expect(session.getActiveToolNames()).toEqual([]);
-		expect(session.systemPrompt).toContain("## Available Tools\n\n(none)");
+		expect(session.systemPrompt).not.toContain("## Available Tools");
 		expect(session.systemPrompt).not.toContain("dynamic_tool");
 		session.dispose();
 	});

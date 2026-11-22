@@ -1,5 +1,7 @@
 export const EVAL_PROMPT_TEMPLATE = `Run one step of code in a persistent kernel.
-
+{{#if evalOnlyTools}}
+Eval-only tools (absent from your direct tool list, reachable only here): {{evalOnlyTools}}. Call them inside a cell as \`tool.<name>(args)\`.
+{{/if}}
 <instruction>
 **One eval call = one cell = one logical step.** Top-level names persist per language across eval calls{{#if spawns}}, tool calls and \`task\` subagents{{else}} and tool calls{{/if}}: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
@@ -21,12 +23,12 @@ GPT eval: batch a step's independent tool calls in one cell with \`tool.<name>(a
 - Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.
 {{#if monitor}}- Long-running build, test run, deploy, or watch work starts with \`tool.monitor({ command, filter })\`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.{{/if}}{{/if}}
 {{#if hostLine}}
-Host: {{hostLine}}. Cells execute here. Size \`parallel(thunks)\` pools to its cores; \`tool.<name>()\` shell commands must fit this platform, even when the code you are writing targets another machine.
+Host: {{hostLine}}. Cells execute here. \`parallel(thunks)\` runs through a fixed-width pool (the codemode \`parallelPoolWidth\` setting, default 4) whatever the core count; \`tool.<name>()\` shell commands must fit this platform, even when the code you are writing targets another machine.
 {{/if}}
 
 \`language\`: {{#if py}}\`"py"\` IPython kernel{{/if}}{{#ifAll py js}}, {{/ifAll}}{{#if js}}\`"js"\` persistent JavaScript VM{{/if}}{{#if rb}}{{#ifAny py js}}, {{/ifAny}}\`"rb"\` persistent Ruby kernel{{/if}}{{#if jl}}{{#ifAny py js rb}}, {{/ifAny}}\`"jl"\` persistent Julia kernel{{/if}}.
 
-A cell that outlives the foreground window detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to {{maxDetachedCells}} background cells per session; each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with \`eval({ action: "peek" | "stop", cell_id })\` / \`eval({ action: "list" })\`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at {{runBudgetSeconds}}s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise \`timeout\` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.
+A cell still running when the call stops waiting for it (the detach point in the parameter schema) detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to {{maxDetachedCells}} background cells per session (at that cap, a further cell that cannot detach is cancelled when its foreground window ends, so stop or await a live cell first); each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with \`eval({ action: "peek" | "stop", cell_id })\` / \`eval({ action: "list" })\`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at {{runBudgetSeconds}}s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise \`timeout\` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.
 
 {{#if py}}Python runs on a live event loop: use top-level \`await\`; \`asyncio.run(…)\` raises.{{/if}}
 {{#if js}}{{#if jsBun}}JS runs in-process on Bun {{jsVersion}}: top-level \`await\`/\`return\` work; \`Bun.*\` builtins available, including \`new Bun.WebView()\`, a headless browser (navigate/click/evaluate/screenshot) to reach for before \`curl\` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through \`Bun.$\` or \`Bun.spawn\`, never \`Bun.spawnSync\`: a synchronous child blocks the worker and cannot be interrupted.{{#if bunSkillPath}} Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at {{bunSkillPath}}: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.{{/if}}{{else}}JS runs under Node.js worker: top-level \`await\`/\`return\` work; \`fetch\`/\`Buffer\` available.{{/if}}{{/if}}
@@ -53,7 +55,7 @@ env(key?=None, value?=None) → str | None | dict
 {{/if}}tool.<name>(args) → { text, images?, details?, hasError? }
     Invoke any session tool; image results (e.g. \`tool.read\` on a png) arrive in \`images[i]\` as { mimeType, dataBase64 }.
 tool_schema(name?) → dict
-    Parameter schema of a tool (omit \`name\` to list tool names); a failed \`tool.<name>()\` call also returns the expected parameters.
+    { name, description, parameters } of a tool; omit \`name\` → { tools: [every tool name] }; a failed \`tool.<name>()\` call also returns the expected parameters.
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
     Oneshot, stateless. \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → parsed structured output.
 {{#if spawns}}agent(prompt, agent?="{{spawnDefaultAgent}}", model?=None, label?=None, schema?=None, isolated?=None, apply?=None, merge?=None, handle?=False) → str | dict

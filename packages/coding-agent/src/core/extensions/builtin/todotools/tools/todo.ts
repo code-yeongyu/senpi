@@ -8,6 +8,8 @@ import { type Static, Type } from "typebox";
 import { partialStrikethrough, strikeRevealCount } from "../../../../../modes/interactive/components/todo-strike.ts";
 import type { Theme } from "../../../../../modes/interactive/theme/theme.ts";
 import { resolvePromptSurface } from "../../../../dynamic-prompt/build.ts";
+import { resolveActivePresetName } from "../../prompt-preset/active-preset.ts";
+import { presetHandoffCueKind } from "../../prompt-preset/contract.ts";
 import type {
 	AgentToolResult,
 	ExtensionAPI,
@@ -16,7 +18,7 @@ import type {
 	ToolRenderContext,
 	ToolRenderResultOptions,
 } from "../../../types.ts";
-import { normalizeTodoParams, prepareTodoArguments } from "../normalize.ts";
+import { normalizeTodoParams, prepareTodoArguments, splitPreparedCorrections } from "../normalize.ts";
 import { TODO_TOOL_DESCRIPTION } from "../prompt.ts";
 import {
 	applyParams,
@@ -80,6 +82,8 @@ type TodoAccessors = {
 	getCurrentAsk: () => TodoAsk | undefined;
 	setCurrentAsk: (ask: TodoAsk | undefined) => void;
 	syncWidget: (ctx: ExtensionContext, completedTasks?: readonly TodoCompletionTransition[]) => void;
+	/** Records a call this extension instance executed, so its own result is not adopted again as a foreign list. */
+	noteExecuted?: (toolCallId: string) => void;
 };
 
 function countInitItems(params: TodoParams): { phases: number; tasks: number } {
@@ -290,11 +294,13 @@ function getTextContent(result: AgentToolResult<TodoToolDetails>): string {
 export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): void {
 	const tool: ToolDefinition<typeof TODO_PARAMS_SCHEMA, TodoToolDetails, unknown> = {
 		name: "todo",
+		runs: "brain",
+		sessionBound: true,
 		workspaceEffect: "read",
 		label: "Todo",
 		description: TODO_TOOL_DESCRIPTION,
 		promptSnippet: "Track phased tasks with one op-based todo tool; reference tasks by their exact content.",
-		promptGuidelines: [
+		fullPromptGuidelines: [
 			"Use one todo operation at a time, batched with the real work; never end a turn with a todo call as its only tool call.",
 			"Reference tasks and phases by their exact content/name; use view when the text is uncertain.",
 			"Mark work done immediately and use drop for tasks that are no longer needed.",
@@ -302,17 +308,24 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 		parameters: TODO_PARAMS_SCHEMA,
 		prepareArguments: (args) => prepareTodoArguments(args) as TodoParams,
 		executionMode: "sequential",
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<TodoToolDetails>> {
+		async execute(toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<TodoToolDetails>> {
+			accessors.noteExecuted?.(toolCallId);
 			const previousPhases = clonePhases(accessors.getCurrentPhases());
 			const previousAsk = accessors.getCurrentAsk();
-			const normalized = normalizeTodoParams(params as Record<string, unknown>, previousPhases);
+			// prepareTodoArguments carries its notices on the prepared args under a reserved key
+			// (#5332). The key is stripped here before normalizing and is never persisted or
+			// rendered, but the prepared arguments — key included — flow to the agent loop's
+			// beforeToolCall/afterToolCall hooks, so extension tool_call/tool_result hooks may
+			// observe it on the arguments they receive.
+			const prepared = splitPreparedCorrections(params as Record<string, unknown>);
+			const normalized = normalizeTodoParams(prepared.args, previousPhases);
 			if (normalized.error || !normalized.entry) {
 				const error =
 					normalized.error ?? 'Missing "op". Example: {"op":"init","list":[{"phase":"Setup","items":["..."]}]}';
 				throw new Error(`${error}\n\n${formatSummary(previousPhases, [], true, previousAsk)}`);
 			}
 			const entry = normalized.entry;
-			const corrections = normalized.corrections;
+			const corrections = [...prepared.corrections, ...normalized.corrections];
 			const readOnly = entry.op === "view";
 			const errors: string[] = [];
 			const applied = readOnly
@@ -349,8 +362,12 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 			if (completedTasks.length > 0) details.completedTasks = completedTasks;
 			// A chat surface posts replies to a conversation, which has no handoff block to cue (senpi#2398).
 			const surface = ctx.getSystemPromptOptions?.().surface ?? resolvePromptSurface(process.env);
+			// The cue must name the handoff block the session's prompt defines: the GPT block presets
+			// cue their outcome-first block, the rewritten gpt-6.2 core defines no block to cue, and every
+			// other core keeps the default Ask / For you cue (senpi#6977).
 			const cue = formatHandoffCue(
 				readOnly || surface === "chat" ? undefined : handoffMomentOf(previousPhases, applied.phases, createsList),
+				presetHandoffCueKind(resolveActivePresetName(ctx)),
 			);
 			const summary = `${formatSummary(applied.phases, [], readOnly, ask)}${cue}`;
 			const text = corrections.length > 0 ? `${corrections.join("\n")}\n\n${summary}` : summary;

@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { afterEach, expect, it, vi } from "vitest";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -17,7 +17,7 @@ it.each(["new_session", "switch_session", "fork"] as const)(
 	async (kind) => {
 		vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 		await using host = await statusHost();
-		const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+		const admissions = observeInProcessOpens(host);
 		const client = host.client("owner");
 		host.faux.setResponses(Array.from({ length: 4 }, () => fauxAssistantMessage("persisted answer")));
 		const open = async (sessionPath?: string) =>
@@ -43,9 +43,7 @@ it.each(["new_session", "switch_session", "fork"] as const)(
 			await settled;
 		};
 		const freeze = (sessionId: string) => {
-			const entry: RpcSessionEntry | undefined = admissions.mock.results.findLast(
-				(result) => result.type === "return",
-			)?.value;
+			const entry = admissions.entryFor(sessionId);
 			if (!entry?.acceptance) throw new Error("missing real acceptance lane");
 			const result = host.writer.recoveryCheckpoints.freeze(
 				{

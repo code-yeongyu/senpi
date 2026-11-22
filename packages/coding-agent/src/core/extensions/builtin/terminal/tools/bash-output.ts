@@ -17,7 +17,12 @@ import { describeExit } from "./spawn.ts";
 
 export const bashOutputSchema = Type.Object({
 	bash_id: Type.String({ description: "Session id returned by a run_in_background bash call." }),
-	filter: Type.Optional(Type.String({ description: "Only return output lines matching this regex." })),
+	filter: Type.Optional(
+		Type.String({
+			description:
+				"Only return output lines matching this regex. An invalid regex is ignored and the whole unfiltered output comes back.",
+		}),
+	),
 	view: Type.Optional(
 		Type.Union([Type.Literal("log"), Type.Literal("screen")], {
 			description: "'log' returns new raw output (default); 'screen' returns the rendered xterm grid.",

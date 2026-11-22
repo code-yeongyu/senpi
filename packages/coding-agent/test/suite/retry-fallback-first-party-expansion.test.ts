@@ -53,7 +53,7 @@ function providersOf(entries: readonly string[] | undefined): string[] {
 }
 
 describe("bare fallback entries expand only to the model vendor's first-party providers", () => {
-	it("keeps an anthropic-subscription session's bare rung on Anthropic, subscription before API key", () => {
+	it("keeps an anthropic-subscription session's bare rung on the subscription, never the API key (senpi#5518)", () => {
 		// Resellers hold OAuth credentials too, so OAuth-first ranking alone would pick them.
 		const chains = canonicalizeFallbackChains(
 			{ [`anthropic-subscription/${OPUS55}`]: [`${OPUS5}:max`] },
@@ -64,10 +64,7 @@ describe("bare fallback entries expand only to the model vendor's first-party pr
 			),
 		);
 
-		expect(chains[`anthropic-subscription/${OPUS55}`]).toEqual([
-			`anthropic-subscription/${OPUS5}:max`,
-			`anthropic/${OPUS5}:max`,
-		]);
+		expect(chains[`anthropic-subscription/${OPUS55}`]).toEqual([`anthropic-subscription/${OPUS5}:max`]);
 	});
 
 	it("never lands a bare Claude rung on a reseller, gateway or user-added provider", () => {
@@ -121,14 +118,14 @@ describe("bare fallback entries expand only to the model vendor's first-party pr
 			firstParty: ["zai"],
 			others: ["fireworks", "qwen-token-plan", "openrouter"],
 		},
-	])("scopes a bare $vendor rung to $firstParty", ({ key, entry, firstParty, others }) => {
+	])("keeps a bare $vendor rung on the session's own first-party lane", ({ key, entry, firstParty, others }) => {
 		const catalog = [...servedBy(key, [...firstParty, ...others]), ...servedBy(entry, [...firstParty, ...others])];
 		const chains = canonicalizeFallbackChains(
 			{ [`${firstParty[0]}/${key}`]: [entry] },
 			lookup(catalog, others, firstParty),
 		);
 
-		expect(providersOf(chains[`${firstParty[0]}/${key}`]).sort()).toEqual([...firstParty].sort().slice(0, 2));
+		expect(providersOf(chains[`${firstParty[0]}/${key}`])).toEqual(firstParty.slice(0, 1));
 	});
 
 	it("still honors a reseller the user names explicitly", () => {
@@ -140,7 +137,6 @@ describe("bare fallback entries expand only to the model vendor's first-party pr
 		expect(chains[`anthropic-subscription/${OPUS55}`]).toEqual([
 			`github-copilot/${OPUS5}:max`,
 			`anthropic-subscription/${OPUS5}:max`,
-			`anthropic/${OPUS5}:max`,
 		]);
 	});
 

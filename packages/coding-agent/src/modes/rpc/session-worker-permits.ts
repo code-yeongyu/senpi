@@ -13,9 +13,12 @@ export const WORKER_CONTROL_SLOTS = 1;
 /**
  * The Int32 words of a permit block (RULING-63 Q3 (1)): `credit` bytes, which only the host adds to and only the worker
  * takes from; the host's tagged word (granted, denied, closed), which only the host writes; the worker's tagged word
- * (idle, waiting), which only the worker writes. Every read is an `Atomics.load`.
+ * (idle, waiting), which only the worker writes; and `wake`, a count only the host adds to on every signal, the one
+ * word the worker waits on (#5591). Every read is an `Atomics.load`.
  */
-export const PERMIT_WORD = { credit: 0, host: 1, worker: 2 } as const;
+export const PERMIT_WORD = { credit: 0, host: 1, worker: 2, wake: 3 } as const;
+/** The size of one permit block: one Int32 per word of {@link PERMIT_WORD}. */
+export const PERMIT_BLOCK_BYTES = Object.keys(PERMIT_WORD).length * Int32Array.BYTES_PER_ELEMENT;
 export const PERMIT_TAG = { idle: 0, granted: 1, denied: 2, closed: 3, waiting: 4 } as const;
 
 /** How one permit request ended; anything but `granted` leaves the worker with no payload built. */
@@ -73,7 +76,7 @@ export const hostWorkerPermits = new WorkerPermitLedger();
  * spent on the one frame in flight.
  */
 export class HostPermits {
-	readonly block = new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT);
+	readonly block = new SharedArrayBuffer(PERMIT_BLOCK_BYTES);
 	private readonly state = new Int32Array(this.block);
 	private readonly ledger: WorkerPermitLedger;
 	private holding = false;
@@ -111,9 +114,14 @@ export class HostPermits {
 		if (!this.ledger.request(this.grant)) this.signal(PERMIT_TAG.denied);
 	}
 
+	/**
+	 * Every signal changes `wake` after its own writes, so a worker that read `wake` before deciding to wait sees the
+	 * change when its wait starts, even if the notify ran before the worker was parked (#5591).
+	 */
 	private signal(tag: number): void {
 		Atomics.store(this.state, PERMIT_WORD.host, tag);
-		Atomics.notify(this.state, PERMIT_WORD.credit);
+		Atomics.add(this.state, PERMIT_WORD.wake, 1);
+		Atomics.notify(this.state, PERMIT_WORD.wake);
 	}
 }
 
@@ -121,12 +129,16 @@ export class HostPermits {
  * The worker half of a permit block: takes one permit before the worker builds any payload. The wait loops, re-checking
  * after every wake, until a permit is taken, the host closes, or the deadline passes (RULING-63 Q3 (2)). A deny keeps
  * the request alive, so a later grant still ends the wait (recoverable); it only names the outcome at the deadline.
+ * Each pass reads `wake` first and waits on that value, so a host signal between the checks and the wait ends it.
  */
 export class WorkerPermitGate {
 	private readonly state: Int32Array;
 	private readonly timeoutMs: number;
 
 	constructor(block: SharedArrayBuffer, timeoutMs: number) {
+		// RULING-63 Q3a: host and worker share one block layout; a block of any other size is never attached.
+		if (block.byteLength !== PERMIT_BLOCK_BYTES)
+			throw new Error(`permit block is ${block.byteLength} bytes, expected ${PERMIT_BLOCK_BYTES}`);
 		this.state = new Int32Array(block);
 		this.timeoutMs = timeoutMs;
 	}
@@ -135,6 +147,7 @@ export class WorkerPermitGate {
 		const deadline = performance.now() + this.timeoutMs;
 		try {
 			for (;;) {
+				const wake = Atomics.load(this.state, PERMIT_WORD.wake);
 				if (Atomics.load(this.state, PERMIT_WORD.host) === PERMIT_TAG.closed) return "closed";
 				const credit = Atomics.load(this.state, PERMIT_WORD.credit);
 				if (credit >= WORKER_PERMIT_BYTES) {
@@ -151,7 +164,7 @@ export class WorkerPermitGate {
 				if (left <= 0)
 					return Atomics.load(this.state, PERMIT_WORD.host) === PERMIT_TAG.denied ? "denied" : "timeout";
 				this.mark(PERMIT_TAG.waiting);
-				Atomics.wait(this.state, PERMIT_WORD.credit, credit, left);
+				Atomics.wait(this.state, PERMIT_WORD.wake, wake, left);
 			}
 		} finally {
 			this.mark(PERMIT_TAG.idle);

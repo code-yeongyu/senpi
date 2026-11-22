@@ -12,6 +12,7 @@ import { CLAUDE_SDK_OAUTH_API_ID } from "./api-id.ts";
 import { plannedContextWindow } from "./context-window.ts";
 import { claudeCliDefaultModel } from "./claude-cli-account-test.ts";
 import { longContextAvailable, onLongContextAvailabilityChange } from "./long-context.ts";
+import { registerLimitRecheck } from "./limit-recheck.ts";
 import { createOAuthConfig } from "./oauth-login.ts";
 import { registerSessionRegistry } from "./session-registry-wiring.ts";
 import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
@@ -71,6 +72,7 @@ export function registerAnthropicSubscriptionExtension(
 	const cwd = requireAnthropicSubscriptionCwd(pi.cwd);
 	registerClaudeAccountCommand(pi);
 	registerSessionRegistry(pi);
+	const limitRecheck = registerLimitRecheck(pi);
 	// The lane re-registers whenever the 1M window is refused or offered again, so the session's current
 	// model, and compaction with it, plans against the window the requests get. Each registration is the
 	// whole config: the runtime validates a registration on its own, not merged with the previous one.
@@ -79,7 +81,12 @@ export function registerAnthropicSubscriptionExtension(
 		api: CLAUDE_SDK_OAUTH_API_ID,
 		models: anthropicSubscriptionModels(longContext),
 		streamSimple: (model, context, options) =>
-			streamAnthropicSubscription(model, toBuiltinProviderContext(context), options),
+			streamAnthropicSubscription(
+				model,
+				toBuiltinProviderContext(context),
+				options,
+				options?.streamKind === "main" ? limitRecheck.accounts() : undefined,
+			),
 		// A verbatim `enabled: false` is the kill switch: the lane cannot serve, so
 		// it must not consume an implicit fallback-expansion slot. An absent flag
 		// stays eligible - an explicit senpi-side login keeps the lane usable.
@@ -96,6 +103,8 @@ export function registerAnthropicSubscriptionExtension(
 		// The lane selects among its accounts itself (pin, resident account, order, per-account and
 		// per-model limits), so the generic credential pool must not choose a second time (senpi#2081).
 		ownsAccountSelection: true,
+		// Requests run Claude Code through @anthropic-ai/claude-agent-sdk as a subprocess, under Claude logins on this machine.
+		localOnly: true,
 		oauth: createOAuthConfig({
 			readCurrent: async () => readStoredCredential(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID),
 			readAmbientAuthStatus: deps.readAmbientAuthStatus,
@@ -121,7 +130,10 @@ export function registerAnthropicSubscriptionExtension(
 	const stopFollowingLongContext = onLongContextAvailabilityChange((available) => {
 		pi.registerProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, providerConfig(available));
 	});
-	pi.on("session_shutdown", () => stopFollowingLongContext());
+	pi.on("session_shutdown", () => {
+		stopFollowingLongContext();
+		limitRecheck.reset();
+	});
 }
 
 export default function anthropicSubscriptionExtension(pi: ExtensionAPI): void {
