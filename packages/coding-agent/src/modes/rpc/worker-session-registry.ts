@@ -17,6 +17,7 @@ import {
 } from "./session-registry.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
 import type { SessionWriteGrant } from "./session-worker-protocol.ts";
+import { sessionRowStatusFields } from "./session-status-source.ts";
 import type { WorkerSessionClaims } from "./worker-session-claims.ts";
 import { openWorkerSession } from "./worker-session-open.ts";
 import type { WorkerCapacity } from "./worker-capacity.ts";
@@ -61,6 +62,9 @@ export class WorkerSessionRegistry {
 	get size(): number {
 		return this.entries.size;
 	}
+	reserveHandle(): string {
+		return `rpc-${++this.serial}`;
+	}
 
 	holderPids(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]> {
 		return this.options.pathReservations?.holderPids?.(observedStarts) ?? Promise.resolve([]);
@@ -76,7 +80,7 @@ export class WorkerSessionRegistry {
 				closeGraceMs: this.closeGraceMs,
 				size: this.options.capacity?.inUse() ?? this.size,
 				now: this.now,
-				nextHandle: () => `rpc-${++this.serial}`,
+				nextHandle: () => this.reserveHandle(),
 				knownReservationKey: (path) => this.knownReservationKey(path),
 				attach: (owner, path, options, requested) => this.attach(owner, path, options, requested),
 				reserve: (handle, path) => this.reserve(handle, path),
@@ -182,6 +186,7 @@ export class WorkerSessionRegistry {
 				idleMs: Math.max(0, now - entry.lastCommandAt),
 				// A worker isolate's session has no tool child of its own yet (senpi#3566 todo 4 serves the in-process host).
 				tool_child: { state: "none" },
+				...sessionRowStatusFields(entry),
 			};
 		});
 	}
@@ -231,6 +236,8 @@ export class WorkerSessionRegistry {
 			await entry.worker.setPermissionPreset(permissionPreset);
 		}
 		const result = this.openResult(owner, entry);
+		// A restore that finds the session already open adds no attachment (senpi#7020).
+		if (options?.unattached === true) return { ...result, attached: true };
 		entry.attachments++;
 		this.claims.get(owner)?.setAttached(true);
 		// Retention is a property of the live session: any attach may ask for it, and

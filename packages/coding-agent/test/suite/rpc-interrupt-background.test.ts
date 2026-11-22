@@ -3,8 +3,11 @@ import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
+import type { TerminalRuntimeSession } from "../../src/core/extensions/builtin/terminal/runtime-session.ts";
+import { TerminalSessionBundle } from "../../src/core/extensions/builtin/terminal/session-bundle.ts";
+import { type RunBackgroundJob, RunBackgroundJobs } from "../../src/core/run-background-jobs.ts";
 import { createIdentityHarness } from "./rpc-client-identity-harness.ts";
 
 const WAIT_MS = 15_000;
@@ -124,6 +127,61 @@ function countAgentStarts(fixture: Fixture): { readonly count: () => number } {
 	cleanups.push(unsubscribe);
 	return { count: () => count };
 }
+
+describe("stopping an interrupted turn's background jobs", () => {
+	it("stops every job at once, so jobs that ignore TERM cost one grace period, not one each", async () => {
+		vi.useFakeTimers();
+		cleanups.push(() => {
+			vi.useRealTimers();
+		});
+		const GRACE_MS = 5_000;
+		const ignoresTerm = (id: string, outcome: "stopped" | "still running"): RunBackgroundJob => ({
+			kind: "bash",
+			id,
+			stop: () =>
+				new Promise<void>((resolve, reject) =>
+					setTimeout(
+						() => (outcome === "stopped" ? resolve() : reject(new Error(`${id} still running`))),
+						GRACE_MS,
+					),
+				),
+		});
+		const jobs = new RunBackgroundJobs();
+		jobs.register("7", ignoresTerm("bash_1", "still running"));
+		jobs.register("7", ignoresTerm("bash_2", "stopped"));
+		let outcome: Awaited<ReturnType<RunBackgroundJobs["stop"]>> | undefined;
+		const answered = jobs.stop("7").then((value) => {
+			outcome = value;
+		});
+
+		await vi.advanceTimersByTimeAsync(GRACE_MS);
+
+		expect(outcome).toEqual({
+			stopped: [{ kind: "bash", id: "bash_2" }],
+			failed: [{ kind: "bash", id: "bash_1", reason: "bash_1 still running" }],
+		});
+		await vi.advanceTimersByTimeAsync(GRACE_MS);
+		await answered;
+	});
+
+	it("names a session the terminal manager no longer holds apart from one still running after the stop", async () => {
+		const bundle = new TerminalSessionBundle({});
+		cleanups.push(() => bundle.teardown());
+		const runtime = { exited: false } as TerminalRuntimeSession;
+		vi.spyOn(bundle.manager, "get").mockReturnValue(runtime);
+		const stop = vi.spyOn(bundle.manager, "stop");
+
+		stop.mockResolvedValueOnce(false);
+		await expect(bundle.stopForInterrupt("bash_1", "7")).rejects.toThrow(
+			"the terminal manager has no session bash_1 to stop",
+		);
+
+		stop.mockResolvedValueOnce(true);
+		await expect(bundle.stopForInterrupt("bash_1", "7")).rejects.toThrow(
+			"bash_1 was still running after the stop (TERM, then KILL)",
+		);
+	});
+});
 
 describe.skipIf(process.platform === "win32")("RPC interrupt stops the interrupted turn's background jobs", () => {
 	it("stops the background bash the turn started, names it, and its exit starts no turn", async () => {

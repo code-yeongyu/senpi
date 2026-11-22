@@ -21,7 +21,10 @@ type StopState = {
 
 type StopRuntime = Pick<ExtensionAPI, "appendEntry" | "sendUserMessage">;
 
-/** The session and turn a Stop reports, read when the turn ended. */
+/**
+ * The session and turn a Stop reports: the session id is read when the turn ended, the turn key when the Stop
+ * dispatches.
+ */
 export type StopTurn = {
 	readonly sessionId: string;
 	readonly turnKey: string;
@@ -45,7 +48,8 @@ export function buildStopHookInput(
 
 export function createStopTurnTracker(): {
 	readonly reset: () => void;
-	readonly turnKey: (ctx: ExtensionContext) => string;
+	/** The current turn's key; with no leaf it names `sessionId`, the id the caller read when the turn ended. */
+	readonly turnKey: (ctx: ExtensionContext, sessionId: string) => string;
 } {
 	let activeTurnKey: string | undefined;
 	let turnIndex = 0;
@@ -54,9 +58,10 @@ export function createStopTurnTracker(): {
 			turnIndex += 1;
 			activeTurnKey = undefined;
 		},
-		turnKey(ctx) {
+		turnKey(ctx, sessionId) {
 			if (activeTurnKey !== undefined) return activeTurnKey;
-			const leafId = ctx.sessionManager.getLeafId() ?? ctx.sessionManager.getSessionId();
+			// A held Stop dispatches after a hand's call ended, where the session id is bound to the call only.
+			const leafId = ctx.sessionManager.getLeafId() ?? sessionId;
 			activeTurnKey = `${turnIndex}:${leafId}`;
 			return activeTurnKey;
 		},

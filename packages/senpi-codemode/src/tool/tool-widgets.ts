@@ -20,7 +20,15 @@ export interface WidgetOptions {
 	readonly theme: Theme | undefined;
 	readonly expanded: boolean;
 	readonly width: number;
+	/** The registered tool's own row renderers, by tool name; a tool without them keeps the generic row. */
+	readonly renderers?: (toolName: string) => NestedToolRenderers | undefined;
 }
+
+/** What a registered tool brings to draw its own nested row. */
+export type NestedToolRenderers = {
+	readonly renderCall?: ToolDefinition["renderCall"];
+	readonly renderResult?: ToolDefinition["renderResult"];
+};
 
 type AnyToolDef<TParams extends TSchema, TDetails, TState> = ToolDefinition<TParams, TDetails, TState>;
 type RenderCallOf<TParams extends TSchema, TDetails, TState> = NonNullable<
@@ -37,6 +45,7 @@ type CoreWidgets = Readonly<Record<CoreWidgetName, CoreWidgetRenderer>>;
 
 const MIN_RENDERER_WIDTH = 20;
 const MAX_RENDERER_LINES = 5;
+const MAX_EXPANDED_RESULT_LINES = 40;
 const MAX_FALLBACK_ARGUMENT_CODE_POINTS = 120;
 const MAX_COLLAPSED_ERROR_CODE_POINTS = 512;
 const MAX_COLLAPSED_ERROR_LINES = 4;
@@ -128,12 +137,123 @@ function renderWith<TParams extends TSchema, TDetails, TState>(
 
 	try {
 		const component: Component<TParams, TDetails, TState> = renderCall(preparedArgs, theme, context);
-		const renderedLines = component.render(innerWidth).map((line) => line.trimEnd());
-		const retainedLines = renderedLines.slice(0, MAX_RENDERER_LINES);
-		if (renderedLines.length > retainedLines.length) {
-			retainedLines.push(style(theme, "muted", WIDGET_TRUNCATION_MARKER));
-		}
-		return indent(retainedLines);
+		return cappedLines(component, innerWidth, MAX_RENDERER_LINES, theme);
+	} catch {
+		return undefined;
+	}
+}
+
+/** A renderer's lines, cut to `maxLines` with a marker, indented under the call. */
+function cappedLines(
+	component: { render(width: number): string[] },
+	innerWidth: number,
+	maxLines: number,
+	theme: Theme,
+): string[] {
+	const renderedLines = component.render(innerWidth).map((line) => line.trimEnd());
+	const retainedLines = renderedLines.slice(0, maxLines);
+	if (renderedLines.length > retainedLines.length) {
+		retainedLines.push(style(theme, "muted", WIDGET_TRUNCATION_MARKER));
+	}
+	return indent(retainedLines);
+}
+
+type OwnRenderContext = Parameters<NonNullable<ToolDefinition["renderCall"]>>[2];
+type OwnComponent = ReturnType<NonNullable<ToolDefinition["renderCall"]>>;
+
+/**
+ * What a tool's own renderers keep between the frames that redraw one nested call: their `state` and the components
+ * they returned, as the TUI keeps them for a direct row. Without it every frame handed a renderer fresh state, and one
+ * that prefetches (the edit row's diff read) started that work again on every frame. Keyed by the summary object, so a
+ * call's entry goes away with the eval result that holds it.
+ */
+type OwnRowMemory = { readonly state: Record<string, unknown>; call?: OwnComponent; result?: OwnComponent };
+const ownRowMemory = new WeakMap<EvalToolCallSummary, OwnRowMemory>();
+
+function ownRowMemoryOf(summary: EvalToolCallSummary): OwnRowMemory {
+	let memory = ownRowMemory.get(summary);
+	if (memory === undefined) {
+		memory = { state: {} };
+		ownRowMemory.set(summary, memory);
+	}
+	return memory;
+}
+
+function ownRenderContext(
+	summary: EvalToolCallSummary,
+	options: WidgetOptions,
+	hasResult: boolean,
+	memory: OwnRowMemory,
+): OwnRenderContext {
+	return {
+		args: summary.args,
+		toolCallId: summary.callId ?? summary.name,
+		invalidate: () => {},
+		lastComponent: hasResult ? memory.result : memory.call,
+		state: memory.state,
+		cwd: options.cwd,
+		executionStarted: true,
+		argsComplete: true,
+		isPartial: false,
+		expanded: options.expanded,
+		showImages: false,
+		isError: !summary.ok,
+		hasResult,
+	};
+}
+
+/**
+ * The call line a registered tool draws for itself, as its direct row would. Its renderer already takes partial
+ * arguments (the TUI calls it while they stream), so only truncated captures, a narrow width or a throwing renderer
+ * fall back to the generic row.
+ */
+function renderOwnCall(
+	own: NestedToolRenderers,
+	summary: EvalToolCallSummary,
+	options: WidgetOptions,
+): string[] | undefined {
+	const theme = options.theme;
+	const innerWidth = options.width - 2;
+	if (own.renderCall === undefined || theme === undefined || innerWidth < MIN_RENDERER_WIDTH || summary.argsTruncated)
+		return undefined;
+	try {
+		const memory = ownRowMemoryOf(summary);
+		memory.call = own.renderCall(summary.args, theme, ownRenderContext(summary, options, false, memory));
+		return cappedLines(memory.call, innerWidth, MAX_RENDERER_LINES, theme);
+	} catch {
+		return undefined;
+	}
+}
+
+/** The result a registered tool draws for itself from the details its nested call kept; undefined keeps the preview. */
+function renderOwnResult(
+	own: NestedToolRenderers,
+	summary: EvalToolCallSummary,
+	options: WidgetOptions,
+): string[] | undefined {
+	const theme = options.theme;
+	const innerWidth = options.width - 2;
+	if (
+		own.renderResult === undefined ||
+		summary.details === undefined ||
+		theme === undefined ||
+		innerWidth < MIN_RENDERER_WIDTH
+	)
+		return undefined;
+	try {
+		const memory = ownRowMemoryOf(summary);
+		memory.result = own.renderResult(
+			{ content: [{ type: "text", text: summary.resultPreview ?? summary.error ?? "" }], details: summary.details },
+			{ expanded: options.expanded, isPartial: false },
+			theme,
+			ownRenderContext(summary, options, true, memory),
+		);
+		return cappedLines(
+			memory.result,
+			innerWidth,
+			options.expanded ? MAX_EXPANDED_RESULT_LINES : MAX_RENDERER_LINES,
+			theme,
+		);
 	} catch {
 		return undefined;
 	}
@@ -185,7 +305,7 @@ function coreWidgetsFor(cwd: string): CoreWidgets {
 	return widgets;
 }
 
-function isCoreWidgetName(name: string): name is CoreWidgetName {
+export function isCoreWidgetName(name: string): name is CoreWidgetName {
 	switch (name) {
 		case "bash":
 		case "read":
@@ -260,12 +380,18 @@ function renderError(error: string, options: WidgetOptions, width: number): stri
  */
 export function renderToolCallWidget(summary: EvalToolCallSummary, options: WidgetOptions): string[] {
 	const innerWidth = Math.max(1, options.width - 2);
-	const coreLines = isCoreWidgetName(summary.name)
+	const own = isCoreWidgetName(summary.name) ? undefined : options.renderers?.(summary.name);
+	const callLines = isCoreWidgetName(summary.name)
 		? coreWidgetsFor(options.cwd)[summary.name](summary, options)
-		: undefined;
-	const lines = coreLines ?? renderFallback(summary, innerWidth);
+		: own === undefined
+			? undefined
+			: renderOwnCall(own, summary, options);
+	const lines = callLines ?? renderFallback(summary, innerWidth);
 	lines.push(...renderStatus(summary, options, innerWidth));
-	if (summary.ok && summary.resultPreview !== undefined) {
+	const resultLines = own === undefined ? undefined : renderOwnResult(own, summary, options);
+	if (resultLines !== undefined) {
+		lines.push(...resultLines);
+	} else if (summary.ok && summary.resultPreview !== undefined) {
 		lines.push(...renderPreview(summary.resultPreview, options, innerWidth));
 	} else if (!summary.ok && summary.error !== undefined) {
 		lines.push(...renderError(summary.error, options, innerWidth));

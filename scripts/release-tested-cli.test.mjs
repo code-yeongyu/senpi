@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// senpi#6642: `release.mjs --tested-sha` releases the commit the forced-suite matrix jobs tested. It skips the catalog
-// regeneration and the in-job suite, and refuses before stamping unless HEAD is that commit, its lineage from --sha
-// holds, and every matrix job's result file names it. Release contract, exercised through the real CLI with real git.
+// senpi#6642: `release.mjs --sha <sha> --shard-results <dir>` releases the commit the forced-suite matrix jobs tested. It
+// skips the in-job suite and the CI wait, and refuses before stamping unless HEAD is --sha, --sha is on main, and every
+// matrix job's result file names it. Release contract, exercised through the real CLI with real git.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
@@ -43,19 +43,18 @@ function withReleaseRepo(run) {
 		git(repo, "commit", "-q", "-m", "base");
 		const base = git(repo, "rev-parse", "HEAD");
 		git(repo, "push", "-q", "origin", "main");
-		write("packages/ai/src/models.generated.ts", "new\n");
-		git(repo, "add", "-A");
-		git(repo, "commit", "-q", "-m", `chore(ai): regenerate the model catalog for v${VERSION}`);
-		const tested = git(repo, "rev-parse", "HEAD");
 		const results = join(root, "results");
 		mkdirSync(results);
-		for (const part of FORCED_SUITE_PARTS) writeForcedSuiteResult(results, { testedSha: tested, part, exitCode: 0, files: 1, tests: 1 });
+		for (const part of FORCED_SUITE_PARTS) writeForcedSuiteResult(results, { testedSha: base, part, exitCode: 0, files: 1, tests: 1 });
 
 		mkdirSync(bin);
+		// gh answers only the platform gate (senpi#6834): an empty main history, or a red macOS leg on CI with
+		// FAKE_PLATFORM_RED=1; any CI lookup fails.
+		const ghBody = "const path = String(process.argv[3]);\nif (path.includes(\"/actions/workflows/\")) {\n\tconst red = process.env.FAKE_PLATFORM_RED === \"1\" && path.includes(\"/workflows/ci.yml/\");\n\tprocess.stdout.write(JSON.stringify({ workflow_runs: red ? [{ id: 99, conclusion: \"failure\", html_url: \"https://example.test/runs/99\", head_sha: \"f\".repeat(40) }] : [] }));\n\tprocess.exit(0);\n}\nif (path.includes(\"/actions/runs/99/jobs\")) {\n\tprocess.stdout.write(JSON.stringify([{ jobs: [{ name: \"macOS combined\", labels: [\"macos-latest\"], conclusion: \"failure\" }] }]));\n\tprocess.exit(0);\n}\nprocess.exit(1);\n";
 		for (const name of ["npm", "node", "bun", "gh"]) {
 			// The registry preflight (senpi#6636) asks npm view for every publish-set name; the fake knows them all.
 			const npmView = name === "npm" ? 'if (process.argv[2] === "view") process.stdout.write(JSON.stringify(process.argv[3]) + "\\n");\n' : "";
-			const body = `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...process.argv.slice(2)]) + "\\n");\n${npmView}${name === "gh" ? "process.exit(1);\n" : ""}`;
+			const body = `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...process.argv.slice(2)]) + "\\n");\n${npmView}${name === "gh" ? ghBody : ""}`;
 			writeFileSync(join(bin, name), `#!${process.execPath}\n${body}`);
 			chmodSync(join(bin, name), 0o755);
 		}
@@ -78,7 +77,7 @@ function withReleaseRepo(run) {
 			return { ...result, commands };
 		};
 		const originRefs = () => git(origin, "for-each-ref", "--format=%(refname) %(objectname)");
-		return run({ repo, origin, base, tested, results, git, release, originRefs });
+		return run({ repo, origin, base, results, git, release, originRefs });
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
@@ -87,94 +86,91 @@ function withReleaseRepo(run) {
 const ranRegeneration = (commands) => commands.some((args) => args.includes("generate-models"));
 const ranSuite = (commands) => commands.some((args) => args.includes("test:scripts") || args.some((arg) => /^--shard=/.test(arg)));
 
-describe("release.mjs --tested-sha (senpi#6642)", () => {
-	it("tags on top of the tested catalog commit without regenerating the catalog or re-running the suite", () =>
-		withReleaseRepo(({ origin, base, tested, results, git, release }) => {
-			const run = release(["--sha", base, "--tested-sha", tested, "--shard-results", results]);
+describe("release.mjs --shard-results (senpi#6642)", () => {
+	it("tags the dispatched commit without regenerating the catalog, re-running the suite or waiting for CI", () =>
+		withReleaseRepo(({ origin, base, results, git, release }) => {
+			const run = release(["--sha", base, "--shard-results", results]);
 			assert.equal(run.status, 0, run.stderr + run.stdout);
 			assert.equal(ranRegeneration(run.commands), false, JSON.stringify(run.commands));
 			assert.equal(ranSuite(run.commands), false, JSON.stringify(run.commands));
-			assert.equal(run.commands.some((args) => args[0] === "gh"), false, "a tested release does not wait for CI");
+			assert.equal(run.commands.some((args) => args[0] === "gh" && String(args[2]).includes("check-runs")), false, "a tested release does not wait for CI");
 			const tagged = git(origin, "rev-parse", `v${VERSION}^{commit}`);
-			assert.equal(git(origin, "rev-parse", `${tagged}^`), tested, "the release commit sits directly on the tested commit");
+			assert.equal(git(origin, "rev-parse", `${tagged}^`), base, "the release commit sits directly on the tested commit");
 			execFileSync("git", ["merge-base", "--is-ancestor", tagged, "main"], { cwd: origin });
 		}));
 
-	it("accepts the dispatched commit itself as the tested commit (no catalog change)", () =>
-		withReleaseRepo(({ repo, origin, base, results, git, release }) => {
-			git(repo, "checkout", "-q", "-B", "main", base);
-			for (const part of FORCED_SUITE_PARTS) writeForcedSuiteResult(results, { testedSha: base, part, exitCode: 0, files: 1, tests: 1 });
-			const run = release(["--sha", base, "--tested-sha", base, "--shard-results", results]);
-			assert.equal(run.status, 0, run.stderr + run.stdout);
-			assert.equal(git(origin, "rev-parse", `v${VERSION}^{commit}^`), base);
+	it("refuses while a macOS/Windows job is red on main, before stamping or pushing (senpi#6834)", () =>
+		withReleaseRepo(({ base, results, release, originRefs }) => {
+			const before = originRefs();
+			const run = release(["--sha", base, "--shard-results", results], { FAKE_PLATFORM_RED: "1" });
+			assert.notEqual(run.status, 0);
+			assert.match(run.stderr, /ci\.yml: macOS combined failed/);
+			assert.equal(originRefs(), before);
 		}));
 
-	it("refuses when HEAD is not the tested commit, before stamping or pushing", () =>
-		withReleaseRepo(({ repo, base, tested, results, git, release, originRefs }) => {
+	it("refuses when HEAD is not --sha, before stamping or pushing", () =>
+		withReleaseRepo(({ repo, base, results, git, release, originRefs }) => {
+			writeFileSync(join(repo, "README.md"), "local\n");
+			git(repo, "add", "-A");
+			git(repo, "commit", "-q", "-m", "local commit");
+			const head = git(repo, "rev-parse", "HEAD");
 			const before = originRefs();
-			git(repo, "checkout", "-q", "-B", "main", base);
-			const run = release(["--sha", base, "--tested-sha", tested, "--shard-results", results]);
+			const run = release(["--sha", base, "--shard-results", results]);
 			assert.notEqual(run.status, 0);
 			assert.match(run.stderr, /HEAD/);
+			assert.equal(originRefs(), before);
+			assert.equal(git(repo, "rev-parse", "HEAD"), head, "a refused release committed");
+		}));
+
+	it("refuses when a matrix job's result file is missing, before stamping or pushing", () =>
+		withReleaseRepo(({ repo, base, results, git, release, originRefs }) => {
+			const before = originRefs();
+			unlinkSync(join(results, forcedSuiteResultFile("coding-agent-5")));
+			const run = release(["--sha", base, "--shard-results", results]);
+			assert.notEqual(run.status, 0);
+			assert.match(run.stderr, /coding-agent-5/);
 			assert.equal(originRefs(), before);
 			assert.equal(git(repo, "rev-parse", "HEAD"), base, "a refused release committed");
 		}));
 
-	it("refuses when a matrix job's result file is missing, before stamping or pushing", () =>
-		withReleaseRepo(({ repo, base, tested, results, git, release, originRefs }) => {
-			const before = originRefs();
-			unlinkSync(join(results, forcedSuiteResultFile("coding-agent-5")));
-			const run = release(["--sha", base, "--tested-sha", tested, "--shard-results", results]);
-			assert.notEqual(run.status, 0);
-			assert.match(run.stderr, /coding-agent-5/);
-			assert.equal(originRefs(), before);
-			assert.equal(git(repo, "rev-parse", "HEAD"), tested, "a refused release committed");
-		}));
-
-	it("refuses a tested commit whose parent is not --sha, before stamping or pushing", () =>
-		withReleaseRepo(({ repo, base, tested, results, git, release, originRefs }) => {
-			git(repo, "checkout", "-q", "-B", "next", base);
-			git(repo, "commit", "-q", "--allow-empty", "-m", "main moved on");
-			const next = git(repo, "rev-parse", "HEAD");
-			git(repo, "push", "-q", "origin", "next:main");
-			git(repo, "checkout", "-q", "-B", "main", tested);
-			const before = originRefs();
-			const run = release(["--sha", next, "--tested-sha", tested, "--shard-results", results]);
-			assert.notEqual(run.status, 0);
-			assert.match(run.stderr, /parent/);
-			assert.equal(originRefs(), before);
-			assert.equal(git(repo, "rev-parse", "HEAD"), tested, "a refused release committed");
-		}));
-
-	// Review of senpi#6645, finding 2: the guard that stops a branch dispatch on the --tested-sha path is that --sha must
-	// be on origin/main, whatever the local branch is called.
-	it("refuses --tested-sha when --sha is a branch commit origin/main does not reach, even on a branch named main", () =>
+	it("refuses result files that name another commit, before stamping or pushing", () =>
 		withReleaseRepo(({ repo, base, results, git, release, originRefs }) => {
-			git(repo, "checkout", "-q", "-B", "main", base);
+			for (const part of FORCED_SUITE_PARTS) writeForcedSuiteResult(results, { testedSha: "e".repeat(40), part, exitCode: 0, files: 1, tests: 1 });
+			const before = originRefs();
+			const run = release(["--sha", base, "--shard-results", results]);
+			assert.notEqual(run.status, 0);
+			assert.match(run.stderr, /not the released commit/);
+			assert.equal(originRefs(), before);
+			assert.equal(git(repo, "rev-parse", "HEAD"), base, "a refused release committed");
+		}));
+
+	// Review of senpi#6645, finding 2: the guard that stops a branch dispatch on the --shard-results path is that --sha
+	// must be on origin/main, whatever the local branch is called.
+	it("refuses --shard-results when --sha is a branch commit origin/main does not reach, even on a branch named main", () =>
+		withReleaseRepo(({ repo, results, git, release, originRefs }) => {
 			writeFileSync(join(repo, "README.md"), "branch work\n");
 			git(repo, "add", "-A");
 			git(repo, "commit", "-q", "-m", "feature commit");
 			const feature = git(repo, "rev-parse", "HEAD");
 			for (const part of FORCED_SUITE_PARTS) writeForcedSuiteResult(results, { testedSha: feature, part, exitCode: 0, files: 1, tests: 1 });
 			const before = originRefs();
-			const run = release(["--sha", feature, "--tested-sha", feature, "--shard-results", results]);
+			const run = release(["--sha", feature, "--shard-results", results]);
 			assert.notEqual(run.status, 0);
 			assert.match(run.stderr, /is not on main/);
 			assert.equal(originRefs(), before);
 			assert.equal(git(repo, "rev-parse", "HEAD"), feature, "a refused release committed");
 		}));
 
-	it("needs --sha and --shard-results with --tested-sha, and refuses --force-tests with it", () =>
-		withReleaseRepo(({ base, tested, results, release }) => {
-			assert.match(release(["--tested-sha", tested, "--shard-results", results]).stderr, /--sha/);
-			assert.match(release(["--sha", base, "--tested-sha", tested]).stderr, /--shard-results/);
-			assert.match(release(["--sha", base, "--tested-sha", tested, "--shard-results", results, "--force-tests"]).stderr, /--force-tests/);
+	it("needs --sha with --shard-results, and refuses --force-tests with it", () =>
+		withReleaseRepo(({ base, results, release }) => {
+			assert.match(release(["--shard-results", results]).stderr, /--sha/);
+			assert.match(release(["--sha", base, "--shard-results", results, "--force-tests"]).stderr, /--force-tests/);
 		}));
 });
 
 // Release-train ruling on senpi#6645: the release's preflight never trusts the local branch name. `git checkout -B main`
-// on any commit used to satisfy it; now HEAD must be reachable from the fetched origin/main, or be the single
-// catalog-only child of a commit that is. Release contract (what may be stamped, tagged and pushed).
+// on any commit used to satisfy it; now HEAD must be reachable from the fetched origin/main. Release contract (what may
+// be stamped, tagged and pushed).
 describe("release.mjs preflight requires HEAD on origin/main, not a branch named main (senpi#6645)", () => {
 	const refused = (run) => {
 		assert.notEqual(run.status, 0, run.stdout);
@@ -193,7 +189,7 @@ describe("release.mjs preflight requires HEAD on origin/main, not a branch named
 			assert.equal(originRefs(), before);
 		}));
 
-	it("refuses it in a live release too, before the catalog, the suite, any commit or any push", () =>
+	it("refuses it in a live release too, before the suite, any commit or any push", () =>
 		withReleaseRepo(({ repo, base, git, release, originRefs }) => {
 			git(repo, "checkout", "-q", "-B", "main", base);
 			writeFileSync(join(repo, "README.md"), "unreviewed\n");
@@ -208,22 +204,11 @@ describe("release.mjs preflight requires HEAD on origin/main, not a branch named
 			assert.equal(originRefs(), before);
 		}));
 
-	it("refuses a second catalog commit on top of the catalog-only child", () =>
-		withReleaseRepo(({ repo, git, release }) => {
-			writeFileSync(join(repo, "packages/ai/src/models.generated.ts"), "newer\n");
-			git(repo, "add", "-A");
-			git(repo, "commit", "-q", "-m", "catalog again");
-			refused(release(["--dry-run"]));
-		}));
-
-	it("accepts HEAD equal to origin/main and the single catalog-only child of it", () =>
-		withReleaseRepo(({ repo, base, git, release }) => {
-			const child = release(["--dry-run"]);
-			assert.equal(child.status, 0, child.stderr + child.stdout);
-			assert.match(child.stdout, /would have prepared/);
-			git(repo, "checkout", "-q", "-B", "main", base);
+	it("accepts HEAD equal to origin/main", () =>
+		withReleaseRepo(({ release }) => {
 			const onMain = release(["--dry-run"]);
 			assert.equal(onMain.status, 0, onMain.stderr + onMain.stdout);
+			assert.match(onMain.stdout, /would have prepared/);
 		}));
 });
 
@@ -231,9 +216,9 @@ describe("release.mjs preflight requires HEAD on origin/main, not a branch named
 // lock independent of the workflow's step conditions; a dry run there, and any local run, still work.
 describe("release.mjs refuses a live run in GitHub Actions off refs/heads/main (senpi#6645)", () => {
 	it("refuses before pinning, stamping, committing or pushing, even for a main commit", () =>
-		withReleaseRepo(({ repo, base, tested, results, git, release, originRefs }) => {
+		withReleaseRepo(({ repo, base, results, git, release, originRefs }) => {
 			const before = originRefs();
-			const run = release(["--sha", base, "--tested-sha", tested, "--shard-results", results], {
+			const run = release(["--sha", base, "--shard-results", results], {
 				GITHUB_ACTIONS: "true",
 				GITHUB_REF: "refs/heads/ci/6642-forced-suite-matrix",
 			});
@@ -241,15 +226,15 @@ describe("release.mjs refuses a live run in GitHub Actions off refs/heads/main (
 			assert.match(run.stderr, /only from refs\/heads\/main/);
 			assert.deepEqual(run.commands, [], "the refused release ran a command");
 			assert.equal(originRefs(), before);
-			assert.equal(git(repo, "rev-parse", "HEAD"), tested);
+			assert.equal(git(repo, "rev-parse", "HEAD"), base);
 		}));
 
 	it("still runs a dry run there, and a live run on refs/heads/main", () =>
-		withReleaseRepo(({ base, tested, results, release }) => {
+		withReleaseRepo(({ base, results, release }) => {
 			const branch = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/ci/6642-forced-suite-matrix" };
-			const dry = release(["--dry-run", "--sha", base, "--tested-sha", tested, "--shard-results", results], branch);
+			const dry = release(["--dry-run", "--sha", base, "--shard-results", results], branch);
 			assert.equal(dry.status, 0, dry.stderr + dry.stdout);
-			const live = release(["--sha", base, "--tested-sha", tested, "--shard-results", results], { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main" });
+			const live = release(["--sha", base, "--shard-results", results], { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main" });
 			assert.equal(live.status, 0, live.stderr + live.stdout);
 		}));
 });

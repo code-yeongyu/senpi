@@ -25,7 +25,6 @@ const SHAPE = {
 	summarizationMaxDurationMs: z.number().positive().optional(),
 	graceBandEnabled: flag,
 	toolAdmissionEnabled: flag,
-	reminderEnabled: flag,
 	reserveScalingEnabled: flag,
 	speculativeLeadTokens: amount.optional(),
 	model: z.string().optional(),
