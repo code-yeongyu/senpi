@@ -4231,24 +4231,16 @@ export class AgentSession {
 					(clientMessageId === undefined
 						? undefined
 						: this._queuedInputOrder.find((input) => input.clientMessageId === clientMessageId));
-				// Check steering queue first
-				const steeringIndex =
-					(clientMessageId === undefined && queued === undefined) || queued?.mode === "steer"
-						? this._steeringMessages.indexOf(messageText)
-						: -1;
-				if (steeringIndex !== -1) {
-					this._steeringMessages.splice(steeringIndex, 1);
-					this._removeQueuedInput(messageText, "steer", clientMessageId);
-					this._emitQueueUpdate();
-				} else {
-					// Check follow-up queue
-					const followUpIndex =
-						(clientMessageId === undefined && queued === undefined) || queued?.mode === "followUp"
-							? this._followUpMessages.indexOf(messageText)
-							: -1;
-					if (followUpIndex !== -1) {
-						this._followUpMessages.splice(followUpIndex, 1);
-						this._removeQueuedInput(messageText, "followUp", clientMessageId);
+				if (queued !== undefined || clientMessageId === undefined) {
+					const mode = queued?.mode ?? (this._steeringMessages.includes(messageText) ? "steer" : "followUp");
+					const texts = mode === "steer" ? this._steeringMessages : this._followUpMessages;
+					const index = queued === undefined
+						? this._queuedInputOrder.findIndex((input) => input.mode === mode && input.text === messageText)
+						: this._queuedInputOrder.indexOf(queued);
+					const textIndex = queued === undefined ? texts.indexOf(messageText) : this._queuedTextIndex(queued, index, texts);
+					if (textIndex !== -1) {
+						texts.splice(textIndex, 1);
+						this._removeQueuedInput(index);
 						this._emitQueueUpdate();
 					}
 				}
@@ -9088,12 +9080,7 @@ export class AgentSession {
 	}
 
 	/** A queued input reached a turn: forget its record and remember its id as delivered. */
-	private _removeQueuedInput(text: string, mode: QueuedInput["mode"], clientMessageId?: string): void {
-		const index = this._queuedInputOrder.findIndex((message) =>
-			clientMessageId === undefined
-				? message.mode === mode && message.text === text
-				: message.clientMessageId === clientMessageId,
-		);
+	private _removeQueuedInput(index: number): void {
 		if (index === -1) return;
 		const [delivered] = this._queuedInputOrder.splice(index, 1);
 		if (delivered === undefined) return;
@@ -9192,11 +9179,7 @@ export class AgentSession {
 			else deferred[deferredIndex] = nextMessage;
 		}
 		const texts = record.mode === "steer" ? this._steeringMessages : this._followUpMessages;
-		const occurrence = this._queuedInputOrder
-			.slice(0, index)
-			.filter((input) => input.mode === record.mode && input.text === record.text).length;
-		let seen = -1;
-		const textIndex = texts.findIndex((text) => text === record.text && ++seen === occurrence);
+		const textIndex = this._queuedTextIndex(record, index, texts);
 		if (nextText === undefined || nextMessage === undefined) {
 			if (textIndex !== -1) texts.splice(textIndex, 1);
 			this._queuedInputOrder.splice(index, 1);
@@ -9208,6 +9191,14 @@ export class AgentSession {
 		}
 		this._emitQueueUpdate();
 		return nextText === undefined ? "removed" : "edited";
+	}
+
+	private _queuedTextIndex(record: QueuedInput, index: number, texts: readonly string[]): number {
+		const occurrence = this._queuedInputOrder
+			.slice(0, index)
+			.filter((input) => input.mode === record.mode && input.text === record.text).length;
+		let seen = -1;
+		return texts.findIndex((text) => text === record.text && ++seen === occurrence);
 	}
 
 	/**
