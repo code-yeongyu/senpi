@@ -46,6 +46,7 @@ import { probeProtocolInfo } from "./host-probe.ts";
 import { readHostStatus, readSessionCounts } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
 import { staleStopGeneration, stopHost } from "./host-stop.ts";
+import { hostUnitPayload } from "./host-unit-placement.ts";
 import type { HostStopGeneration } from "./host-stop-generation.ts";
 
 export {
@@ -206,6 +207,7 @@ async function ensureOutcome(
 		payload: {
 			action: ensureAction(ensured.reused, before, host),
 			...identityPayload(target.socket, ensured.pid, host),
+			...(await hostUnitPayload(ensured.pid, host?.instanceId)),
 			clientRuntimeBuildId: await clientRuntimeBuildId(spec),
 			reused: ensured.reused,
 		},
@@ -317,6 +319,7 @@ async function handoffOutcome(
 		payload: {
 			action: "handoff",
 			...identityPayload(target.socket, result.pid, host),
+			...(await hostUnitPayload(result.pid, host?.instanceId)),
 			clientRuntimeBuildId: await clientRuntimeBuildId(spec),
 			reused: false,
 		},

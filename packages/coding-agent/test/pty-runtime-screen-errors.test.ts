@@ -97,6 +97,7 @@ const pty = vi.hoisted(() => {
 vi.mock("@earendil-works/pi-pty", () => pty);
 
 import { TerminalRuntimeSession } from "../src/core/extensions/builtin/terminal/runtime-session.ts";
+import { processBootAtMs } from "../src/core/extensions/builtin/terminal/process-identity.ts";
 
 function latestSession(): InstanceType<typeof pty.TerminalSession> {
 	const session = pty.sessions.at(-1);
@@ -105,9 +106,9 @@ function latestSession(): InstanceType<typeof pty.TerminalSession> {
 }
 
 describe("PTY runtime screen error ownership", () => {
-	it("owns screen feed/resize rejections instead of leaking them unhandled", () => {
+	it("owns screen feed/resize rejections instead of leaking them unhandled", async () => {
 		pty.state.sharedMode = false;
-		const runtime = new TerminalRuntimeSession("screen-error-fixture", {});
+		const runtime = new TerminalRuntimeSession("screen-error-fixture", {}, await processBootAtMs());
 
 		latestSession().emit("flood");
 		runtime.resizeScreen(120, 40);
@@ -118,11 +119,11 @@ describe("PTY runtime screen error ownership", () => {
 		runtime.dispose();
 	});
 
-	it("attaches one rejection handler per distinct coalesced screen promise", () => {
+	it("attaches one rejection handler per distinct coalesced screen promise", async () => {
 		pty.state.sharedMode = true;
 		pty.state.sharedAttachCount = 0;
 		const feedCallsBefore = pty.state.feedCalls;
-		const runtime = new TerminalRuntimeSession("screen-coalesce-fixture", {});
+		const runtime = new TerminalRuntimeSession("screen-coalesce-fixture", {}, await processBootAtMs());
 
 		latestSession().emit("one");
 		latestSession().emit("two");

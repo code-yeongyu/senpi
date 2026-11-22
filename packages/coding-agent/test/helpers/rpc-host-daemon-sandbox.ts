@@ -43,7 +43,8 @@ export async function sandbox(label: string, options: { canonicalSocket?: boolea
 	roots.push(root);
 	const agentDir = join(root, "agent");
 	const socket = options.canonicalSocket ? join(agentDir, "rpc", "rpc.sock") : join(root, "rpc.sock");
-	await mkdir(dirname(socket), { recursive: true });
+	// A canonical socket's directory is `<agentDir>/rpc`, part of the host's key root (senpi#4541).
+	await mkdir(dirname(socket), { recursive: true, mode: 0o700 });
 	const flatDir = join(agentDir, "rpc-host-daemon");
 	const canonical = join(await realpath(dirname(socket)), basename(socket));
 	const daemonDirName = createHash("sha256").update(canonical, "utf8").digest("hex").slice(0, 16);

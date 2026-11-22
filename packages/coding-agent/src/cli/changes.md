@@ -1,3 +1,39 @@
+## 2026-11-20 - An attaching start does not refuse the distribution's own extension (#7118, oh-my-openagent#14465)
+
+### What changed
+
+- `packages/coding-agent/src/cli/held-session-attach.ts`: the `--extension` row of `UNAPPLIED_FLAGS` counts only the paths the brand profile does not name as the distribution's own (`userExtensions`, compared after `path.resolve`). A user-given `--extension` beside them still refuses the start.
+
+### Why
+
+- oh-my-openagent#14465: omo's launchers prepend `--extension <install>/plugin` to every chat start, so since #6914 every `omo --session <id>` on a host-held session exited 1 naming a flag the user never gave. The host runs that plugin already.
+
+### Why an extension could not handle it
+
+- The attach plan runs in `main.ts` before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `--extension` row of `UNAPPLIED_FLAGS` and the imports in `held-session-attach.ts` (fork-only file).
+
+## 2026-11-20 - Preserve prompts after boolean extension flags (#7116)
+
+### What changed
+
+- `args.ts` leaves the following positional argument untouched when the extension declares its option as boolean.
+
+### Why
+
+- The initial parse treated a positional prompt as the option's value and left the session with no first request.
+
+### Why an extension could not handle it
+
+- Extensions declare option types after the CLI first reads argv.
+
+### Expected merge conflict zones
+
+- The extension-option branch of `parseArgs`.
+
 ## 2026-11-19 - `senpi host handoff --allow-downgrade` (senpi#7018)
 
 ### What changed

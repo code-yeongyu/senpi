@@ -59,6 +59,8 @@ export interface SessionStatusEntryView {
 	readonly kind: SessionKind;
 	readonly cwd: string;
 	readonly attachments: number;
+	/** Milliseconds since the Unix epoch of the holder's last observed activity, if known. */
+	readonly lastActivityAt?: number;
 	readonly durableSessionId?: string;
 	readonly sessionPath?: string;
 	readonly name?: string;
@@ -143,6 +145,7 @@ export interface SessionStatusRecord {
 	readonly waiting?: RetryWait;
 	readonly context?: PublishedSessionContext;
 	readonly lastEffect?: SessionStatusLastEffect;
+	/** The last published status change. With no recorded change, snapshots use last known activity, or subscription time if unknown. */
 	readonly lastChange: { readonly at: string; readonly cause: SessionStatusCause; readonly by: SessionStatusActor };
 }
 
