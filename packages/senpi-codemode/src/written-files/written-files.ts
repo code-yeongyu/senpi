@@ -4,7 +4,7 @@ import type { ExtensionToolContext } from "@code-yeongyu/senpi";
 import type { TimeoutPauseHandle } from "../timeouts/idle-timeout.ts";
 import type { CellWrittenFilesOutcome } from "./report.ts";
 import type { FsAccess, RunGit } from "./scan-boundaries.ts";
-import { WrittenFilesTracker } from "./tracker.ts";
+import { type ToolCallHold, WrittenFilesTracker } from "./tracker.ts";
 import { type ScanFs, workspaceFs } from "./workspace-fs.ts";
 import { WorkspaceScanner } from "./workspace-scan.ts";
 import { reportWrittenFiles, selectWrittenFiles } from "./write-hooks.ts";
@@ -104,6 +104,7 @@ export class WrittenFiles {
 						noteHooked: (path) => window.hooked(path),
 						start: (path) => window.start(path),
 						skipped: (path) => window.skipped(path),
+						failed: (path) => window.failed(path),
 						signal,
 					});
 					if (written === undefined) return undefined;
@@ -123,10 +124,25 @@ export class WrittenFiles {
 	 * that made the call, or one that ran beside it, does not send that file through the hooks again.
 	 */
 	async noteToolCall(toolName: string, params: unknown): Promise<void> {
-		if (!isHookedWriteTool(toolName) || typeof params !== "object" || params === null) return;
-		const path = "path" in params ? params.path : undefined;
-		if (typeof path === "string" && path !== "") await this.#tracker.noteHooked(toolPath(path, this.#cwd));
+		const path = calledPath(toolName, params, this.#cwd);
+		if (path !== undefined) await this.#tracker.noteHooked(path);
 	}
+
+	/**
+	 * A `write` or `edit` call starts, before it writes its file: no cell reports or hooks that file until the call
+	 * ends, so the call's own hooks are the only ones it gets. Undefined when the call names no file in the workspace.
+	 */
+	startToolCall(toolName: string, params: unknown): ToolCallHold | undefined {
+		const path = calledPath(toolName, params, this.#cwd);
+		return path === undefined ? undefined : this.#tracker.holdForCall(path);
+	}
+}
+
+/** The absolute file a `write` or `edit` call names, if the call is one. */
+function calledPath(toolName: string, params: unknown, cwd: string): string | undefined {
+	if (!isHookedWriteTool(toolName) || typeof params !== "object" || params === null) return undefined;
+	const path = "path" in params ? params.path : undefined;
+	return typeof path === "string" && path !== "" ? toolPath(path, cwd) : undefined;
 }
 
 /** The file a write or edit call named: the host's file tools drop a leading `@` and expand a leading `~`. */

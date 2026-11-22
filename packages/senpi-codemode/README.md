@@ -662,8 +662,13 @@ its completion notification.
   cell until its write hooks for it return, so a hook that rewrites it (a
   formatter) is never charged to another cell that settles meanwhile; that other
   cell leaves the file out, and a change it made to that file while the hook ran
-  is taken as the hook's. The host's `tool_result` handler deadline bounds how
-  long a hook can hold a file.
+  is taken as the hook's. The file stays the cell's until the whole handler chain
+  for it returns: the host bounds each handler and moves on to the next when one
+  times out, so a write a handler makes after the chain returned is reported by
+  whichever cell settles next. A `write` or `edit` call the model issues holds its
+  file from before it writes until it ends, so a cell settling meanwhile neither
+  lists nor hooks it. A settlement that claims a file and then cannot run its
+  hooks (the cell was cancelled or closed) leaves the change for the next cell.
 - **Limits**: the first 20 files are listed and hooked and the rest are counted;
   hook output is capped at 2,000 code points per file and 12,000 per cell.
 

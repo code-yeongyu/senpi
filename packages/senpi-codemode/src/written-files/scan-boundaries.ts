@@ -12,6 +12,16 @@ export interface FileSignature {
 	readonly dev: number;
 }
 
+/** Whether two signatures show the same state of one file: no rewrite between them. */
+export function sameSignature(left: FileSignature, right: FileSignature): boolean {
+	return (
+		left.size === right.size &&
+		left.mtimeMs === right.mtimeMs &&
+		left.ctimeMs === right.ctimeMs &&
+		left.ino === right.ino
+	);
+}
+
 /**
  * What a path names, every symlink followed. `absent` is confirmed absence (nothing there, or a parent is not a
  * directory); `unknown` is any lookup that could not tell, a permission error or a link loop among them.

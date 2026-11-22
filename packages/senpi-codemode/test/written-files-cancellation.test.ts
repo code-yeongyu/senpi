@@ -88,7 +88,7 @@ describe("a cancelled or closed cell's claims", () => {
 		closing.close();
 		sniff.finish();
 		const outcomeClosed = outcomeFiles(await settlingClosed);
-		workspace.write("src/a.ts", "export const a = 2;\n");
+		// No rewrite in between: the later cell must see the original write the closed cell could not hook.
 		const outcomeLater = outcomeFiles(await later.settle(signal));
 		later.close();
 

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { SOURCE_FILE_SNIFF_BYTES } from "../src/written-files/source-file.ts";
-import { claimRound, claimRoundExpected, hooksReturn, openCell, outcomeFiles } from "./eval/written-files-barriers.ts";
+import {
+	claimRound,
+	claimRoundExpected,
+	hookFailures,
+	hooksReturn,
+	openCell,
+	outcomeFiles,
+} from "./eval/written-files-barriers.ts";
 import {
 	FakeWorkspace,
 	reportedPaths,
@@ -50,6 +57,38 @@ describe("a cell's claim on a file it hooks ends with that file's hook", () => {
 			failures: [first],
 			...claimRoundExpected(first, second),
 			hooked: absolute(first, second, first, second),
+		});
+	});
+
+	// Seventh review: the claim lasts until the whole handler chain returns; a handler that outlives it writes unowned.
+	it("lets the cell that settles next report a write a timed-out handler makes after the chain returned", async () => {
+		let lateWrite: () => void = () => {};
+		const harness: WrittenFilesHarness = writtenFilesHarness(async () => {
+			lateWrite = () => harness.workspace.write("src/a.ts", "export const a = 1;\n");
+			return {
+				...hooksReturn(harness),
+				failures: [{ extensionPath: "formatter.ts", error: "tool_result handler timed out" }],
+			};
+		});
+		const signal = new AbortController().signal;
+		const [cellA, cellB] = [await openCell(harness), await openCell(harness)];
+		harness.workspace.write("src/a.ts", "export const a=1\n");
+
+		const outcomeA = await cellA.settle(signal);
+		lateWrite();
+		const outcomeB = outcomeFiles(await cellB.settle(signal));
+		for (const cell of [cellA, cellB]) cell.close();
+
+		expect({
+			a: outcomeFiles(outcomeA),
+			failures: hookFailures(outcomeA),
+			b: outcomeB,
+			hooked: reportedPaths(harness),
+		}).toEqual({
+			a: { files: ["src/a.ts"], total: 1, hooked: 1 },
+			failures: ["src/a.ts"],
+			b: { files: ["src/a.ts"], total: 1, hooked: 1 },
+			hooked: absolute("src/a.ts", "src/a.ts"),
 		});
 	});
 
