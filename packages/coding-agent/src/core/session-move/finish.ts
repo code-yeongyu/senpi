@@ -2,7 +2,7 @@ import { rm } from "node:fs/promises";
 import { loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
 import { pathExists } from "../tools/path-utils.ts";
 import { readKeptBundle } from "./bundle.ts";
-import { readDroppedInputRecord } from "./dropped-input-record.ts";
+import { readDroppedInputRecord, removeDroppedInputRecord } from "./dropped-input-record.ts";
 import { outgoingStateDir } from "./extension-state.ts";
 import type { MoveAnswer } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
@@ -133,6 +133,7 @@ async function takeBack(
 async function discardMoveFiles(sessionFile: string, bundleDir: string, moveId: MoveId): Promise<void> {
 	await rm(bundleDir, { recursive: true, force: true });
 	await rm(outgoingStateDir(sessionFile, moveId), { recursive: true, force: true });
+	await removeDroppedInputRecord(sessionFile, moveId);
 }
 
 function reclaimed(entries: readonly { type: string; customType?: string; data?: unknown }[], moveId: MoveId): boolean {

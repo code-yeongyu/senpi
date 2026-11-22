@@ -22,7 +22,7 @@ export const MOVED_STATE_RESTORED = "session_move_state_restored";
 /** The `session_released` field naming the release attempt whose staged state the move bundles. */
 export const STATE_ATTEMPT_FIELD = "state_attempt";
 
-const MOVE_STATE = ".move-state";
+export const MOVE_STATE = ".move-state";
 const DELIVERED_MARKER = "delivered";
 const DELIVERY_COPY = "attempt-";
 
@@ -31,17 +31,6 @@ const newAttempt = (): string => randomBytes(8).toString("hex");
 /** Every release attempt of `moveId` stages under this folder; finish removes it whole. */
 export function outgoingStateDir(sessionFile: string, moveId: MoveId): string {
 	return join(dirname(sessionFile), MOVE_STATE, "out", parseMoveId(moveId));
-}
-
-/**
- * The release's durable record of the queued input it took out (`dropped-input.json`, senpi#6474/senpi#3962): it sits
- * beside the staged attempts, survives their sweep below, and a later release attempt of the same move overwrites
- * it with what it took. `finish` re-queues from it when no bundle manifest exists.
- */
-export const DROPPED_INPUT_FILE = "dropped-input.json";
-
-export function droppedInputRecordPath(sessionFile: string, moveId: MoveId): string {
-	return join(outgoingStateDir(sessionFile, moveId), DROPPED_INPUT_FILE);
 }
 
 export function movedStateDir(sessionFile: string, moveId: MoveId): string {
@@ -63,7 +52,7 @@ const field = (entry: EntryLike, name: string): string | undefined => {
 
 const moveIdOf = (entry: EntryLike): string | undefined => field(entry, "move_id");
 
-function sealedAttempt(entries: readonly EntryLike[], moveId: MoveId): string | undefined {
+export function sealedAttempt(entries: readonly EntryLike[], moveId: MoveId): string | undefined {
 	const seal = entries.findLast(
 		(entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED && moveIdOf(entry) === moveId,
 	);
@@ -89,10 +78,7 @@ export async function prepareOutgoingState(
 	const sealed = sealedAttempt(await loadEntriesFromFileAsync(sessionFile), moveId);
 	if (await pathExists(root)) {
 		for (const name of await readdir(root)) {
-			// The dropped-input record is the move's, not one attempt's: what an earlier release of this move took
-			// stays owed until the move ends, so the sweep of dead attempts never removes it.
-			if (name !== sealed && name !== DROPPED_INPUT_FILE)
-				await rm(join(root, name), { recursive: true, force: true });
+			if (name !== sealed) await rm(join(root, name), { recursive: true, force: true });
 		}
 	}
 	const attempt = newAttempt();

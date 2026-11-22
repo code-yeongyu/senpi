@@ -12,51 +12,15 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
-import { heldTurn, nextEvent, startReleaseHost } from "../rpc-release-host-support.ts";
+import { startReleaseHost } from "../rpc-release-host-support.ts";
+import { customTypes, queuedMoveRelease, requeuedLines } from "./6474-move-release-support.ts";
 
 const noExtension: ExtensionFactory = () => {};
 
-const customTypes = (file: string) =>
-	readFileSync(file, "utf8")
-		.trim()
-		.split("\n")
-		.map((line) => JSON.parse(line) as { customType?: string })
-		.map((entry) => entry.customType)
-		.filter((type) => type?.startsWith("session_"));
-
-/** How many pending-input journal entries the per-move re-queue id owns: one admit is exactly one entry. */
-const requeuedAs = (file: string, moveId: string) =>
-	readFileSync(file, "utf8")
-		.split("\n")
-		.filter((line) => line.includes(`"clientMessageId":"move:${moveId}:0"`)).length;
-
-/** A session with one queued user message, released for `moveId` with `interrupt`: the answer carries the message. */
-async function queuedMoveRelease(
-	host: Awaited<ReturnType<typeof startReleaseHost>>,
-	name: string,
-	moveId: string,
-): Promise<{ readonly sessionId: string; readonly sessionPath: string; readonly released: Record<string, unknown> }> {
-	host.faux.setResponses([fauxAssistantMessage("seed reply"), heldTurn]);
-	const { sessionId, sessionPath, session } = await host.open(name);
-	const started = nextEvent(session, "agent_start");
-	await host.send({ type: "prompt", id: "work", sessionId, message: "long work" });
-	await started;
-	await host.send({ type: "follow_up", id: "f", sessionId, message: "USER QUEUED TEXT" });
-	const released = await host.send({
-		type: "release_session",
-		id: "rel",
-		sessionId,
-		reason: "move",
-		moveId,
-		target: "device-b",
-		interrupt: true,
-	});
-	expect(released).toMatchObject({ success: true });
-	return { sessionId, sessionPath, released };
-}
+/** How many times `finish` re-queued the input under the per-move client message ids. */
+const requeuedAs = (file: string, moveId: string) => requeuedLines(file, moveId).length;
 
 describe("queued input a move release took out is not lost before the export's manifest", () => {
 	it("#given an answered move release #when the export fails before it writes its manifest and the move is finished declined #then the session is taken back with its queued input exactly once (senpi#6474)", async () => {
@@ -273,49 +237,5 @@ describe("queued input a move release took out is not lost before the export's m
 		});
 		expect(finished).toMatchObject({ success: true, data: { ownership: "writable" } });
 		expect(requeuedAs(sessionPath, "move-6474-open")).toBe(1);
-	});
-
-	it("#given a release whose durable record cannot be written #then the refusal carries the drained input and the session stays releasable (senpi#6474, senpi#3962)", async () => {
-		await using host = await startReleaseHost(noExtension);
-		host.faux.setResponses([fauxAssistantMessage("seed reply"), heldTurn]);
-		const { sessionId, sessionPath, session } = await host.open("wedge");
-		const started = nextEvent(session, "agent_start");
-		await host.send({ type: "prompt", id: "work", sessionId, message: "long work" });
-		await started;
-		await host.send({ type: "follow_up", id: "f", sessionId, message: "USER QUEUED TEXT" });
-		// The record's own path is a wedge (a directory where the file must land), so the release's durable write
-		// fails after the interrupt already drained the queue.
-		const recordPath = join(dirname(sessionPath), ".move-state", "out", "move-wedge", "dropped-input.json");
-		await mkdir(recordPath, { recursive: true });
-
-		const refused = await host.send({
-			type: "release_session",
-			id: "rel",
-			sessionId,
-			reason: "move",
-			moveId: "move-wedge",
-			target: "device-b",
-			interrupt: true,
-		});
-
-		// The drained input is not destroyed: the refusal itself carries it, and nothing was sealed.
-		expect(refused).toMatchObject({
-			success: false,
-			error: "release_failed",
-			errorData: { interrupted: true, dropped: { user_messages: ["USER QUEUED TEXT"] } },
-		});
-		expect(readFileSync(sessionPath, "utf8")).not.toContain('"session_released"');
-
-		// Once the wedge is gone the same move releases cleanly: the session was never wedged by the failure.
-		await rm(recordPath, { recursive: true });
-		const released = await host.send({
-			type: "release_session",
-			id: "rel2",
-			sessionId,
-			reason: "move",
-			moveId: "move-wedge",
-			target: "device-b",
-		});
-		expect(released).toMatchObject({ success: true });
 	});
 });
