@@ -3,6 +3,7 @@
 // Worker-safe: the JS/TS parser is injected by the host, JSON.parse is available everywhere.
 
 import { strictJsonErrorOffset } from "./strict-json-offset.ts";
+import { lineAndColumn } from "./text-position.ts";
 
 /** Larger files get no verdict, so the check stays cheap: 1 MiB of text, counted in UTF-16 code units. */
 const SYNTAX_CHECK_MAX_LENGTH = 1024 * 1024;
@@ -17,7 +18,7 @@ export interface SyntaxErrorReport {
 /** `undefined` means no verdict: unsupported file type, too large, no parser, or a failure that is not a syntax error. */
 type SyntaxVerdict = { readonly ok: true } | { readonly ok: false; readonly error: SyntaxErrorReport } | undefined;
 
-export type ScriptLoader = "jsx" | "ts" | "tsx";
+export type ScriptLoader = "js" | "jsx" | "ts" | "tsx";
 
 export type ScriptParser = (code: string, loader: ScriptLoader) => SyntaxVerdict;
 
@@ -31,12 +32,18 @@ export interface SyntaxChecker {
 	readonly locate: (path: string, content: string, error: SyntaxErrorReport) => SyntaxErrorReport;
 }
 
+/**
+ * .mjs and .cjs are plain ECMAScript modules, and TypeScript allows JSX only in .tsx, so .mts and .cts parse as .ts.
+ * .js keeps JSX because React toolchains (and Bun) accept JSX in .js files; the limitation is that JSX added to a .js
+ * file meant for plain Node gets no warning.
+ */
 function scriptLoader(extension: string): ScriptLoader | undefined {
 	switch (extension) {
-		case "js":
-		case "jsx":
 		case "mjs":
 		case "cjs":
+			return "js";
+		case "js":
+		case "jsx":
 			return "jsx";
 		case "ts":
 		case "mts":
@@ -65,12 +72,6 @@ function jsonParseErrorOffset(message: string, contentLength: number): number | 
 	return offset !== undefined && offset <= contentLength ? offset : undefined;
 }
 
-function lineAndColumn(content: string, offset: number): { line: number; column: number } {
-	const before = content.slice(0, offset);
-	const lastNewline = before.lastIndexOf("\n");
-	return { line: before.split("\n").length, column: offset - lastNewline };
-}
-
 function checkJson(content: string): SyntaxVerdict {
 	try {
 		JSON.parse(content);
@@ -89,7 +90,7 @@ function locateJsonError(content: string, error: SyntaxErrorReport): SyntaxError
 	if (offset === undefined) return error;
 	const reported = jsonParseErrorOffset(error.message, content.length);
 	if (reported !== undefined && reported !== offset) return error;
-	return { message: error.message, ...lineAndColumn(content, offset) };
+	return { message: error.message, ...lineAndColumn(content, offset, false) };
 }
 
 export function createSyntaxChecker({ parseScript }: SyntaxParsers = {}): SyntaxChecker {
@@ -105,8 +106,13 @@ export function createSyntaxChecker({ parseScript }: SyntaxParsers = {}): Syntax
 	};
 }
 
-function errorLocation(error: SyntaxErrorReport): string {
-	return error.line !== undefined && error.column !== undefined ? ` at ${error.line}:${error.column}` : "";
+function isPosition(value: unknown): value is number {
+	return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/** A leading byte order mark is not content: JSON.parse rejects it, editors and most loaders skip it. */
+function withoutBom(content: string): string {
+	return content.startsWith("\uFEFF") ? content.slice(1) : content;
 }
 
 /** The error `after` introduces: it does not parse, and `before` parsed or is a new file. */
@@ -122,6 +128,19 @@ function introducedError(
 	return checkSyntax.locate(path, after, afterVerdict.error);
 }
 
+/** Reads each field of the report once and builds the warning from primitives only. */
+function warningText(error: SyntaxErrorReport, created: boolean): string | undefined {
+	const message: unknown = error.message;
+	const line: unknown = error.line;
+	const column: unknown = error.column;
+	if (typeof message !== "string") return undefined;
+	const at = isPosition(line) && isPosition(column) ? ` at ${line}:${column}` : "";
+	const where = `First syntax error${at}: ${message}.`;
+	return created
+		? `Warning: the written file does not parse. ${where} The file was written; re-read that region and fix it.`
+		: `Warning: this file parsed before the edit and does not parse after it. ${where} The edit was applied; re-read that region and fix it.`;
+}
+
 /**
  * The warning to append to a successful edit or write result, or `undefined`. `before` is the content before the
  * call, or `undefined` for a newly created file, which counts as having parsed.
@@ -132,18 +151,17 @@ export function parseBreakWarning(
 	before: string | undefined,
 	after: string,
 ): string | undefined {
-	let error: SyntaxErrorReport | undefined;
+	// The file is already written and the warning is advisory: everything that touches checker output, down to
+	// reading its fields, stays inside this boundary, so a checker that fails costs the warning, never the result.
 	try {
-		error = introducedError(checkSyntax, path, before, after);
+		const error = introducedError(
+			checkSyntax,
+			path,
+			before === undefined ? undefined : withoutBom(before),
+			withoutBom(after),
+		);
+		return error === undefined ? undefined : warningText(error, before === undefined);
 	} catch {
-		// The file is already written and the warning is advisory: a checker that fails (a host parser or an injected
-		// checker throwing) costs the warning, never the result of the call.
 		return undefined;
 	}
-	if (error === undefined) return undefined;
-	const where = `First syntax error${errorLocation(error)}: ${error.message}.`;
-	if (before === undefined) {
-		return `Warning: the written file does not parse. ${where} The file was written; re-read that region and fix it.`;
-	}
-	return `Warning: this file parsed before the edit and does not parse after it. ${where} The edit was applied; re-read that region and fix it.`;
 }
