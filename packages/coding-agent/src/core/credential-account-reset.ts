@@ -56,10 +56,14 @@ export async function resetCredentialAccount(
 	const account = accounts.find((candidate) => candidate.name === name);
 	if (!account) throw new CredentialAccountNotFoundError(name);
 	await repo.mutateSlotState(provider, account.source === "env" ? "env" : "stored", name, () => undefined);
-	if (storage.get(provider) !== undefined) {
-		await storage.modify(provider, async (current) =>
-			current === undefined ? current : clearStoredBlock(current, name),
-		);
+	// The sidecar change is committed from here on: announce it even when the auth.json write fails (senpi#4884).
+	try {
+		if (storage.get(provider) !== undefined) {
+			await storage.modify(provider, async (current) =>
+				current === undefined ? current : clearStoredBlock(current, name),
+			);
+		}
+	} finally {
+		emitProviderAccountsChanged(provider, "reset");
 	}
-	emitProviderAccountsChanged(provider, "reset");
 }
