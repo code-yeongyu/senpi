@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import {
-	runClaudeCodeModelSupportReport,
-	runGenerateModels,
-	runPackageLockRefresh,
-	runProviderDefaultsCheck,
-} from "./release-artifacts.mjs";
+import { runClaudeCodeModelSupportReport, runPackageLockRefresh } from "./release-artifacts.mjs";
 
 describe("release package-lock refresh", () => {
 	it("refreshes package-lock.json, reconciles native optionals, then refreshes bun.lock", () => {
@@ -44,7 +39,7 @@ describe("release package-lock refresh", () => {
 });
 
 describe("release Claude Code model-support report (omo#8700)", () => {
-	it("reports the regenerated catalog against the pinned Claude Code without failing the release on catalog-only gaps", () => {
+	it("reports the released catalog against the pinned Claude Code without failing the release on catalog-only gaps", () => {
 		const commands = [];
 		runClaudeCodeModelSupportReport(
 			false,
@@ -54,46 +49,6 @@ describe("release Claude Code model-support report (omo#8700)", () => {
 		);
 
 		assert.deepEqual(commands, [["node", ["scripts/check-claude-code-model-support.mjs"]]]);
-	});
-});
-
-describe("release provider-default check (senpi#2645)", () => {
-	it("checks every bundled provider default against the regenerated catalog", () => {
-		const commands = [];
-		runProviderDefaultsCheck(
-			false,
-			(command, args, env) => commands.push([command, args, env]),
-			() => {},
-			() => {},
-		);
-
-		assert.deepEqual(commands, [["npm", ["--prefix", "packages/coding-agent", "run", "check:provider-defaults"], { CI: "1" }]]);
-	});
-
-	it("stops the release when a regenerated catalog lost a provider default", () => {
-		const failingCheck = () => {
-			throw new Error("Command failed: npm --prefix packages/coding-agent run check:provider-defaults (exit 1)");
-		};
-
-		assert.throws(() => runProviderDefaultsCheck(false, failingCheck, () => {}, () => {}), /check:provider-defaults/);
-	});
-});
-
-describe("release model regeneration", () => {
-	// senpi#4067: an OpenGateway feed break keeps the committed catalog in the release; the dedicated
-	// `--strict --providers opengateway` refresh workflow is what fails on it.
-	it("opts into keeping the last good OpenGateway catalog", () => {
-		const commands = [];
-		runGenerateModels(
-			false,
-			(command, args) => commands.push([command, args]),
-			() => {},
-			() => {},
-		);
-
-		assert.deepEqual(commands, [
-			["npm", ["--prefix", "packages/ai", "run", "generate-models", "--", "--keep-last-good-opengateway"]],
-		]);
 	});
 });
 

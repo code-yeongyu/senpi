@@ -39,7 +39,13 @@ function drainingRefusal(
 	host: RouterContext,
 	command: Extract<RpcAttachmentCommand, { type: "attach_session" | "reclaim_session" }>,
 ): RpcResponse | undefined {
-	if (!hostStopping(host)) return undefined;
+	if (
+		!hostStopping(host) ||
+		(command.type === "attach_session" &&
+			host.writer.currentConnection()?.startsWith("generation-route-") &&
+			command.expectedHostInstance !== undefined)
+	)
+		return undefined;
 	return error(command.id, command.type, "session_busy_lifecycle", { reason: "host_draining" });
 }
 

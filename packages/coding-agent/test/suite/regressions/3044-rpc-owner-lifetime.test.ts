@@ -18,6 +18,7 @@ import {
 	generationEnv,
 	generationScratch,
 	HeldAnthropicModel,
+	isSupervisorSpawn,
 	JsonlPeer,
 	openedSessionId,
 	supervisorLaunch,
@@ -317,7 +318,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 				childProcess,
 				"spawn",
 				(command: string, args: readonly string[], options: SpawnOptions) => {
-					if (!args[0]?.endsWith("host-lifecycle.ts")) return original(command, args, options);
+					if (!isSupervisorSpawn(args)) return original(command, args, options);
 					const stdio = Array.isArray(options.stdio) ? [...options.stdio] : [];
 					stdio[1] = "pipe";
 					const child = original(command, args, { ...options, stdio });

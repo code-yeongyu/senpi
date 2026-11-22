@@ -169,7 +169,7 @@ describe("retry fallback revert-to-primary", () => {
 		expect(harness.session.thinkingLevel).toBe("high");
 	});
 
-	it("(f) manual setModel during an active fallback clears state and aborts the pending retry", async () => {
+	it("(f) manual setModel during an active fallback clears state and continues the pending retry on the picked model", async () => {
 		let now = 0;
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
@@ -184,7 +184,7 @@ describe("retry fallback revert-to-primary", () => {
 			overloaded(),
 			overloaded(),
 			overloaded(),
-			fauxAssistantMessage("should never be requested"),
+			fauxAssistantMessage("answer on the picked model"),
 		]);
 		let switched = false;
 		harness.session.subscribe((event) => {
@@ -201,9 +201,16 @@ describe("retry fallback revert-to-primary", () => {
 
 		await harness.session.prompt("flaky then manual");
 
-		// The manual change aborted the pending fallback retry sleep and cleared
-		// fallback state: no third provider call, no later surprise revert.
-		expect(harness.faux.getCallLog()).toHaveLength(4);
+		// The manual change cut the pending fallback retry sleep, cleared fallback
+		// state, and the turn continued on the picked model (senpi#6893): no later surprise revert.
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual([
+			"faux-1",
+			"faux-1",
+			"faux-1",
+			"faux-2",
+			"faux-1",
+		]);
+		expect(harness.eventsOfType("auto_retry_end")).toMatchObject([{ success: true, attempt: 1 }]);
 		expect(harness.session.model?.id).toBe("faux-1");
 		expect(harness.eventsOfType("retry_fallback_reverted")).toHaveLength(0);
 		now += 10 * 60_000;

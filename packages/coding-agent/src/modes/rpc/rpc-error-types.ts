@@ -88,6 +88,18 @@ export const RPC_ERROR_PROJECT_MCP_CONFIG_INVALID = "project_mcp_config_invalid"
 /** `read_project_skill_file`/`write_project_skill_file` for a skill the engine does not list for the session. */
 export const RPC_ERROR_PROJECT_SKILL_NOT_LISTED = "project_skill_not_listed";
 
+/** `read_user_skill_file`/`write_user_skill_file` for a skill the engine does not list for the session. */
+export const RPC_ERROR_USER_SKILL_NOT_LISTED = "user_skill_not_listed";
+
+/** A listed skill whose file is outside every user skills root, or reached through a link or a `..` path. */
+export const RPC_ERROR_USER_SKILL_FILE_NOT_ALLOWED = "user_skill_file_not_allowed";
+
+/** A user skill write from another device that the user on the skill's machine denied. */
+export const RPC_ERROR_USER_SKILL_WRITE_DECLINED = "user_skill_write_declined";
+
+/** A user skill write from another device that nobody on the skill's machine answered (no app open there, or no answer). */
+export const RPC_ERROR_USER_SKILL_WRITE_UNCONFIRMED = "user_skill_write_unconfirmed";
+
 /** `open_session.context` broke a documented cap (key count, key syntax, value or total bytes). */
 export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
 
