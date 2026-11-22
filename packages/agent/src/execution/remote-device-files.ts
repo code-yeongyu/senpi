@@ -72,7 +72,7 @@ const TERMINATION_KINDS: ReadonlySet<string> = new Set<DeviceRunTerminationKind>
 /** A hand that predates senpi#7282 sends no termination: left absent (unknown), never inferred from the signal. */
 function terminationOf(value: JsonValue | undefined): { termination?: { kind: DeviceRunTerminationKind } } {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
-	const kind = value.kind;
+	const { kind } = value as Record<string, JsonValue>;
 	if (typeof kind !== "string" || !TERMINATION_KINDS.has(kind)) return {};
 	return { termination: { kind: kind as DeviceRunTerminationKind } };
 }

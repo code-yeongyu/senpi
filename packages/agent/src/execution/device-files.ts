@@ -83,10 +83,18 @@ export interface DeviceRunRequest {
  */
 export type DeviceRunTerminationKind = "exited" | "signaled" | "timed_out";
 
-/** The spawning side's record of why its child ended: `timedOut` is set only when its own timer stopped a live child. */
-export function terminationKind(timedOut: boolean, signal: string | null): DeviceRunTerminationKind {
-	if (timedOut) return "timed_out";
-	return signal === null ? "exited" : "signaled";
+/**
+ * The spawning side's record of why its child ended. A fired timer alone proves nothing: the child may already have
+ * exited before its exit was observed, or survived the signal and ended for another reason. So a run is `timed_out` only
+ * when the timer fired and the child then ended on a signal that side itself sent; any other outcome is reported as seen.
+ */
+export function terminationKind(
+	timerFired: boolean,
+	sentSignals: ReadonlySet<string>,
+	signal: string | null,
+): DeviceRunTerminationKind {
+	if (signal === null) return "exited";
+	return timerFired && sentSignals.has(signal) ? "timed_out" : "signaled";
 }
 
 export interface DeviceRunResult {

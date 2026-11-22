@@ -90,15 +90,19 @@ function runDirect(request: DeviceRunRequest, signal: AbortSignal | undefined): 
 		child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
 		child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
 		let killTimer: NodeJS.Timeout | undefined;
-		let timedOut = false;
+		let timerFired = false;
+		const sentSignals = new Set<string>();
+		const send = (sig: NodeJS.Signals): void => {
+			if (child.kill(sig)) sentSignals.add(sig);
+		};
 		const timer =
 			request.timeoutMs === undefined
 				? undefined
 				: setTimeout(() => {
 						if (child.exitCode !== null || child.signalCode !== null) return;
-						timedOut = true;
-						child.kill("SIGTERM");
-						killTimer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+						timerFired = true;
+						send("SIGTERM");
+						killTimer = setTimeout(() => send("SIGKILL"), 10_000);
 					}, request.timeoutMs);
 		child.on("error", (error) => fail(new DeviceFileError(signal?.aborted ? "aborted" : "io", error.message)));
 		child.on("close", (code, exitSignal) => {
@@ -107,7 +111,7 @@ function runDirect(request: DeviceRunRequest, signal: AbortSignal | undefined): 
 			done({
 				code,
 				signal: exitSignal,
-				termination: { kind: terminationKind(timedOut, exitSignal) },
+				termination: { kind: terminationKind(timerFired, sentSignals, exitSignal) },
 				stdout: new Uint8Array(Buffer.concat(out)),
 				stderr: Buffer.concat(err).toString("utf8"),
 			});

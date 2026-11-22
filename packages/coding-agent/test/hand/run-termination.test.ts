@@ -22,6 +22,8 @@ writeFileSync(
 		'    --version) echo "git version 2.50.0"; exit 0 ;;',
 		"    --git-common-dir) exec sleep 600 ;;",
 		'    --verify) kill -TERM "$$"; exec sleep 600 ;;',
+		// Survives the timer's SIGTERM and exits 0 on its own instead.
+		"    --show-current) trap 'exit 0' TERM; while :; do sleep 1; done ;;",
 		"  esac",
 		"done",
 		"exit 0",
@@ -60,6 +62,13 @@ describe.skipIf(process.platform === "win32")("hand run termination", () => {
 		const outcome = await run(["rev-parse", "--verify", "HEAD"], 60_000);
 		expect(outcome.signal).toBe("SIGTERM");
 		expect(outcome.termination).toEqual({ kind: "signaled" });
+	});
+
+	it("reports exited, not timed_out, for a git that survives the timer's signal and exits 0", async () => {
+		const outcome = await run(["branch", "--show-current"], 1_000);
+		expect(outcome.code).toBe(0);
+		expect(outcome.signal).toBeNull();
+		expect(outcome.termination).toEqual({ kind: "exited" });
 	});
 
 	it("reports exited for a git that exits on its own", async () => {

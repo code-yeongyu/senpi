@@ -4,7 +4,7 @@
 import type { JsonValue } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { localDeviceFiles } from "../../src/execution/device-files-node.ts";
-import { RUN_CHANNEL } from "../../src/execution/device-files.ts";
+import { RUN_CHANNEL, terminationKind } from "../../src/execution/device-files.ts";
 import { createRemoteDeviceFiles } from "../../src/execution/remote-device-files.ts";
 import type { HandLink } from "../../src/execution/remote-link.ts";
 
@@ -23,6 +23,21 @@ function handReplying(value: JsonValue): HandLink {
 
 const runOn = (link: HandLink) =>
 	createRemoteDeviceFiles(link, scope, () => "exec-1").run({ exe: "git", argv: ["status"], cwd: "/repo" });
+
+// The timer firing is not the outcome: what the spawning side then observes decides it (senpi#7282 review).
+describe("termination attribution", () => {
+	const sentTerm = new Set(["SIGTERM"]);
+	it.each([
+		["the timer's own signal ended a live child", true, sentTerm, "SIGTERM", "timed_out"],
+		["the escalated SIGKILL ended it", true, new Set(["SIGTERM", "SIGKILL"]), "SIGKILL", "timed_out"],
+		["the child had already exited when the timer fired", true, sentTerm, null, "exited"],
+		["the child survived the signal and ended on another", true, sentTerm, "SIGUSR2", "signaled"],
+		["the timer fired but no signal reached the child", true, new Set<string>(), "SIGTERM", "signaled"],
+		["no timer fired", false, new Set<string>(), "SIGTERM", "signaled"],
+	] as const)("%s", (_case, fired, sent, signal, kind) => {
+		expect(terminationKind(fired, sent, signal)).toBe(kind);
+	});
+});
 
 describe("remote run termination", () => {
 	it("keeps the hand's timed_out for a SIGTERM its own timer sent", async () => {

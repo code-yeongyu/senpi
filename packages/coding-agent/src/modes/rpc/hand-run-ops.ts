@@ -124,19 +124,23 @@ function spawnBounded(
 		let size = { out: 0, err: 0 };
 		let overflow = false;
 		let killTimer: NodeJS.Timeout | undefined;
+		const sentSignals = new Set<string>();
+		const send = (sig: NodeJS.Signals): void => {
+			if (child.kill(sig)) sentSignals.add(sig);
+		};
 		const stop = (): void => {
-			if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+			if (child.exitCode === null && child.signalCode === null) send("SIGTERM");
 			// A grandchild (ssh) may hold the pipes after git exits; destroying them lets the run end at its deadline.
 			killTimer ??= setTimeout(() => {
-				child.kill("SIGKILL");
+				send("SIGKILL");
 				child.stdout?.destroy();
 				child.stderr?.destroy();
 			}, KILL_GRACE_MS);
 		};
-		let timedOut = false;
+		let timerFired = false;
 		const timeout = setTimeout(
 			() => {
-				if (child.exitCode === null && child.signalCode === null) timedOut = true;
+				timerFired = true;
 				stop();
 			},
 			Math.min(args.timeoutMs ?? DEFAULT_TIMEOUT_MS, RUN_TIMEOUT_CAP_MS),
@@ -164,7 +168,7 @@ function spawnBounded(
 			done({
 				code,
 				signal: exitSignal,
-				termination: { kind: terminationKind(timedOut, exitSignal) },
+				termination: { kind: terminationKind(timerFired, sentSignals, exitSignal) },
 				stdout: encodeBase64(new Uint8Array(Buffer.concat(out))),
 				stderr: Buffer.concat(err).toString("utf8"),
 			});
