@@ -29,7 +29,7 @@ it("--headless serves a machine-owned host on the headless endpoint", async () =
 		SENPI_CODING_AGENT_DIR: agentDir,
 	});
 	try {
-		await waitForStderr(child, `senpi rpc listening on unix://${endpoint}`, 60_000);
+		await waitForStderr(child, `senpi rpc listening on unix://${endpoint}`);
 		const first = await connectPeer(endpoint);
 		let sessionId: string;
 		let durableSessionId: unknown;

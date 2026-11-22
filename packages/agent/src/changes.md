@@ -1,3 +1,328 @@
+## 2026-11-20 - parked follow-ups join the next run's first turn; `all` lists every queued message (oh-my-openagent#14428)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: a run that ends in a provider error with follow-ups still queued marks them parked, whoever owns that run's post-run decision (a retry, a compaction or `agent_before_settle`, which suppress the core's own drain). The next run started from new input (a prompt, a started delivery, a goal continuation's message) sets `takeFollowUpsAtStart`, so those follow-ups enter it at its first turn boundary instead of only after its first response; a retry or other `continue()` leaves the mark for that run, so follow-up work still waits behind a retry. A run that starts from the follow-up queue itself clears the mark. `peekQueuedMessages({ all: true })` returns every queued steering and follow-up message (new `PendingMessageQueue.all()`); in `one-at-a-time` mode it returned only each queue's next drain.
+- `packages/agent/src/agent-loop.ts`: the loop's first queue poll also drains follow-ups when `takeFollowUpsAtStart` is set and no steering is queued.
+- `packages/agent/src/internal-events.ts`: `InternalLoopConfig` carries the internal `takeFollowUpsAtStart` flag; the public `AgentLoopConfig` is unchanged.
+
+### Why
+
+- oh-my-openagent#14428: follow-ups another session queued while a run was failing were parked, and every later run whose request failed too (a started delivery, a goal continuation) settled without writing them, so they stayed pending for hours. The transcript entry is the delivery: the next run writes them before its request, whatever that request returns.
+- `takeQueuedDeliveries()`, `clearQueue()` and the ticket lookups used `peekQueuedMessages({ all: true })` as "every queued message". With user input queued ahead of a delivery, an interrupt dropped the delivery from the admission ledger while it stayed queued, so the sender's redelivery was written twice.
+
+### Why an extension could not handle it
+
+- Queue polling inside a run and the queue snapshot are agent-loop internals; no extension hook runs at a run's first turn boundary or owns the native queues.
+
+### Expected merge conflict zones
+
+- LOW: `runWithLifecycle()`, `createLoopConfig()` and `peekQueuedMessages()` in `agent.ts`; the first steering poll in `runLoop()` in `agent-loop.ts`.
+
+## 2026-11-15 - What a closed hand link suppresses, stated exactly (senpi#6777, PR #6801)
+
+### What changed
+
+- `packages/agent/src/execution/remote-link.ts`: comment only. A closed link ignores every inbound frame before decoding it, so a late `settled` / `terminal` frame is not acked, a `hello` re-sends no floor, and a nested `plane.request` gets no `plane.refused` (or any other plane answer). This states precisely what #6796's entry summarised as "no nested plane answer is written"; behaviour is unchanged.
+
+### Why
+
+- #6796 review L1: the claim about plane answers had no test; this PR adds the proof and the exact wording.
+
+### Why an extension could not handle it
+
+- The hand link is an agent-core execution internal.
+
+### Expected merge conflict zones
+
+- LOW: the comment at the top of the `transport.onFrame` handler in `remote-link.ts`.
+
+## 2026-11-15 - A closed hand link writes nothing for inbound frames (senpi#6777, PR #6796)
+
+### What changed
+
+- `packages/agent/src/execution/remote-link.ts`: the inbound frame handler returns at once on a closed link, so a late `settled` / `terminal` frame is not acked, a `hello` re-sends no floor, and no nested plane answer is written.
+
+### Why
+
+- After `close()` the link still wrote through its closed transport in response to frames (#6791 review L1).
+
+### Why an extension could not handle it
+
+- The hand link is an agent-core execution internal.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `transport.onFrame` handler in `remote-link.ts`.
+
+## 2026-11-15 - A closed hand link sends nothing (senpi#6777, PR #6791)
+
+### What changed
+
+- `packages/agent/src/execution/remote-link.ts`: `close()` marks the link closed; a `dispatch` after it settles at once as `{ kind: "closed", sent: false }` (the tool host's `cancelled`, a device file operation's `hand_unreachable`) instead of sending on the closed link.
+
+### Why
+
+- A call made after `close()` went out on a link whose transport the host had already closed (#6785 review L2). The one designed re-send, a durable hand's `hello`, happens on an open link, so nothing relies on post-close sends.
+
+### Why an extension could not handle it
+
+- The hand link is an agent-core execution internal.
+
+### Expected merge conflict zones
+
+- LOW: `dispatch` and `close()` in `remote-link.ts`.
+
+## 2026-11-15 - A sent device file operation is interrupted when the hand link closes; split-local closed calls (senpi#6777, PR #6783)
+
+### What changed
+
+- `packages/agent/src/execution/remote-device-files.ts`: a `closed` reply for an operation that was sent fails `interrupted` with `reason: "hand_restarted"` and `uncertain: true`, like a `terminal` reply; one never sent stays `hand_unreachable`.
+- With #6778, a closed tool call under `placement: "split-local"` returns the non-error `TOOL_RESULT_PLACEHOLDER` (sent or not), where it used to return an error; this follows the split-local recovery rule, under which the session's own recovery decides.
+
+### Why
+
+- `hand_unreachable` reads as "did not happen" and invites a retry of a write that may have landed (#6778 review L1). The split-local outcome was not stated (#6778 review L4).
+
+### Why an extension could not handle it
+
+- The device file client and the remote tool host are agent-core execution internals.
+
+### Expected merge conflict zones
+
+- LOW: the `closed` case of `valueOf` in `remote-device-files.ts`.
+
+## 2026-11-15 - A tool call pending when the hand link closes ends as hand_restarted or cancelled (senpi#6777, PR #6778)
+
+### What changed
+
+- `packages/agent/src/execution/remote-link.ts`: the `closed` reply carries `sent`, whether the call's invoke had been handed to the transport.
+- `packages/agent/src/execution/remote-tool-host.ts`: a `closed` reply maps through `terminalResult`: `hand_restarted` (uncertain, hooks may have run) when sent, `cancelled` (no effect) when never sent, instead of an untyped error.
+
+### Why
+
+- When the hand dies or is replaced mid-call, the model needs to know whether the call may have run; a hosted brain had to patch this locally.
+
+### Why an extension could not handle it
+
+- The remote tool host and the hand link are agent-core execution internals.
+
+### Expected merge conflict zones
+
+- LOW: the `resultOf` switch in `remote-tool-host.ts`; `close()` in `remote-link.ts`.
+
+## 2026-11-15 - Late hand results reach the brain over a durable, bounded wake link (senpi#5778, senpi#6763, PR #6767)
+
+### What changed
+
+- `packages/agent/src/execution/wake-link.ts` (new): the wake link on the hand transport's `hand.wake` lane. `createHandWakeLink` (hand end) commits each wake before sending it; on start and on the brain's `wake_reoffer` it sweeps the outbox, then sends every due drop report as `wake_dropped` with its `eventId` and every un-acked wake as `wake`, and applies the brain's `wake_receipt`. A wake it cannot record goes out as a best-effort `wake_dropped` (`unrecorded`, no `eventId`). `serveHandWakes` (brain end) passes the brain's `check` to `inbox.receive`, which runs it only for a new wake of a bound scope (an unbound scope is retryable `unknown_scope`; `not_scope_session` is reported as `WakeRefusedError`), commits each wake or durable drop report to the inbox, answers the receipt only after the commit, hands first commits to `onCommitted` and best-effort drops to `onDropped`, and reports an undecodable frame to `onFault`.
+- `packages/agent/src/execution/wake-outbox.ts`: optional `limits` (per scope and total; past either a wake the brain refused for good is evicted with all its state, reported `refused`, or else the new wake is refused before it is sent, `WakeOverflowError`, reported `overflow`; a sent wake is never evicted) and `onFault`. Drop reports (`overflow`, `expired`, `refused`, `malformed`) are durable records in the outbox document (`drops`), acked like wakes, coalesced only while this instance never sent them, never bounded and never reported dropped themselves. A refusal for good records its time; when it lapses after the retention the wake is reported `refused`, and `sweep` purges refusal entries whose wake is gone. `sweep` also removes malformed entries (reported `malformed`, `MalformedWakeError` to `onFault`). `due()` lists drop reports first, then un-acked wakes.
+- `packages/agent/src/execution/wake-outbox-record.ts` (new): the strict outbox record codec and the drop-report bookkeeping.
+- `packages/agent/src/execution/wake-inbox.ts`: `receive(sender, wake, check?)` acks a duplicate first, then refuses a closed scope, then checks the binding and runs `check`; optional `onUndeliverable` and `maxAttempts` (default 3). With them a wake whose consumer throws is reported, kept for later drains with its failure count in the record (`failures`), and taken as poisoned at its last attempt, while the wakes behind it are delivered. Without them a failure rejects the drain, as before. `sweep` keeps the other fields of the record.
+- `packages/agent/src/execution/wake-types.ts`: `WakeRefusal` adds `not_scope_session`; `WakeDropReason`, `WAKE_DROPPED_SOURCE`, `WakeLimits`; the outbox record's `drops` and timed `refused`; the inbox record's `failures`; the meaning of `WakeEvent.scope`.
+- `packages/agent/src/execution/wake-delivery.ts` (new): the brain side of a hand's wakes. `parseHandWake` (sources `message`, `user_message`, `entry`, `notice`, `wake.dropped`), `deliverHandWake` (the call a local session makes; a wake that would start a turn is skipped in a one-shot session or one without a model), `deliverHandDrop` (the consumer of `onDropped`: a warning notice), `scopeSessionCheck` (for `serveHandWakes({ check })`), `ONE_SHOT_MODES`.
+- `packages/agent/src/index.ts`: exports all of the above, `createWakeOutbox`, `createWakeInbox`, `WAKE_RETENTION_MS` and the `MemoryStoreMedium` type.
+
+### Why
+
+- S14 built the durable outbox and inbox but nothing wired them, so a hand's late results had no reliable way to the brain (senpi#5778, senpi#6763). The #6767 review asked for a bound on un-acked wakes with reported drops (M1), strict decoding (L2) and a session check on the brain (L3). The hosted brain's lane (omo-service#1176) asked for the delivery functions from `packages/agent/src/index.ts`, the package entry it already imports, for undecodable frames to be reported, and for one undeliverable wake to stop blocking the inbox.
+
+### Why an extension could not handle it
+
+- The outbox, the inbox, the wake link and the hand transport are agent-core primitives below the extension layer, and only `packages/agent/src/index.ts` makes them reachable from the package.
+
+### Expected merge conflict zones
+
+- LOW: the export block of `packages/agent/src/index.ts`.
+
+## 2026-11-08 - Agent forwards a hosted commitStep to every loop run (senpi#6236)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `AgentOptions.commitStep` (typed as `AgentLoopConfig["commitStep"]`), kept in a private read-only field and forwarded by `createLoopConfig` only when set. Every loop entry (initial prompt, queued continuation, `continue()`, post-run drains) goes through `createLoopConfig`, so this one site reaches them all.
+
+### Why
+
+- Custody C6 C.P3 (row CK1p): a hosted session must install its durable step commit through a public option instead of patching the agent's private loop config. Fused and split-local agents leave it unset, and their stream options stay key-identical.
+
+### Why an extension could not handle it
+
+- The loop config is assembled inside `Agent`; an extension has no access to it, and the hosted wrapper constructs the `Agent` itself.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentOptions` interface, the field list, the constructor assignments and the `createLoopConfig` object in `packages/agent/src/agent.ts`, each one added line beside `executionScope`.
+
+## 2026-11-05 - Session entries on the store's append-only record log (S21b-a, senpi#5955)
+
+### What changed
+
+- `packages/agent/src/durable/session-store.ts`: a session's entries are records in the store's append-only log, one kind per session (`session/<id>`). A record is an append (one entry) or a rewrite (the full header and entries, replacing everything before it). `readSessionState` reads the last rewrite plus every later append in seq order (a key seen twice keeps its first record). The manifest document holds only the header a new session starts with; a divergence is its own document (`divergenceWrite`). `manifestWrite`, `divergenceWrite`, `appendRecordWrites` and `rewriteRecordWrite` are the one layout both writers use; the manifest key and record kind stay module-private. An append's record id names the session, the rewrite count the handle last saw and the entry key, so a key another process committed first is refused by the store (`duplicate-record-id`) and surfaces as the session store's `duplicate-entry`; a handle still refuses a duplicate key against the entries it holds. A session stored in the layout before the record log (a manifest with `entryIds`) is refused as `corrupt-session`, with the instruction to re-import it from its JSONL file.
+- `packages/agent/src/index.ts`: exports that layout (`manifestWrite`, `divergenceWrite`, `appendRecordWrites`, `rewriteRecordWrite`, `readSessionState`, `SessionState`) from the main entry for the S07 importer.
+
+### Why
+
+Measured: two processes bound to one session, each appending, kept only one writer's entries. Each handle held the entry list in memory and wrote the whole manifest per append, so the last writer won. Row S21b (senpi#5822) needs co-bound Bun processes to keep writing. The store contract (DurableStore/SyncCommitStore) does not change.
+
+### Why an extension could not handle it
+
+The session store's own storage layout.
+
+### Expected merge conflict zones
+
+`session-store.ts` (layout functions, readSessionState, planAppend/planRewrite, the open handles); the durable-store export block in `packages/agent/src/index.ts`.
+
+## 2026-11-06 - Hand rig steps take a measured number of event-loop turns (senpi#6115)
+
+### What changed
+
+- `packages/agent/src/execution/testing/hand-harness.ts`: `drain`, the wait every rig step takes between manual-clock advances, now takes a fixed `IO_TURNS_PER_STEP = 8` event-loop turns (`setImmediate`, or a timer turn where the host has none) instead of exactly one. The count is measured, not derived (an immediate turn and a timer hop are not one-to-one): on the FAULT-HAND cases over the async store, 2 turns per step still fails, 4 passes on every run, and 8 is 4 with the same margin again.
+
+### Why
+
+- senpi#6114: `test/execution/hand-conformance-async-store.test.ts` FAULT-HAND-01..05 failed `every call settled: not reached within 600000 ms of transport time` on main. The async store confirms each write only after three `setTimeout(0)` hops, the rig delivers carrier messages on the manual clock, and one `setImmediate` per 5 ms tick let a write land one hop per tick while the fault profile's own timers kept re-arming ahead of it, so `settle` spent its whole transport budget. Deterministic locally from #6051's own commit (which added the test); the previous main runs were green only by runner timing.
+- The turns are immediates, not `setTimeout(0)`: node clamps `setTimeout(0)` to about 1 ms, and a 600 s transport budget is 120,000 ticks, so timer turns cost about 150 s per case against vitest's 30 s wall limit. `setImmediate` costs microseconds, and each loop iteration still runs the timers phase, so pending `setTimeout(0)` hops land between two immediates. A fixed count, not a quiet-loop probe: the rig cannot observe from inside the loop whether other work is pending (a probe built from immediates always reads busy), so the count is stated as the measured bound, and an adapter needing more raises it.
+
+### Why an extension could not handle it
+
+- The harness is the conformance rig every hand case runs on; its step semantics are not reachable from an extension.
+
+### Expected merge conflict zones
+
+- LOW: the `drain`/`ioTurn` block near the top of `hand-harness.ts`.
+
+## 2026-11-05 - The local device files carry a brand (senpi#6054)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports `isLocalDeviceFiles` and `LOCAL_DEVICE_FILES` from the device-files module.
+
+### Why
+
+An extension that keeps its own local file path on a fused session must tell `ctx.deviceFiles` on a fused session (the local filesystem) from a split session's hand channel; a fresh `localDeviceFiles()` object carried no marker (senpi#5839).
+
+### Why an extension could not handle it
+
+The objects are built by the engine, and the session side is not exposed to extensions.
+
+### Expected merge conflict zones
+
+The device-files export block in `index.ts`.
+
+## 2026-11-05 - Session store exported from the main entry (S20b, senpi#5897)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports `openSessionStore`, `openSyncSessionStore`, `SessionStoreError`, their handle/session types and `SyncCommit`/`SyncCommitStore` from the package's main entry, alongside the `./conformance` exports.
+
+### Why
+
+`packages/coding-agent`'s `SessionManager` binding (S20b, senpi#5827) uses the session store at runtime and imports only the main entry; the `./conformance` entry is a test-support surface.
+
+### Why an extension could not handle it
+
+Package entry exports are part of the package itself.
+
+### Expected merge conflict zones
+
+The durable-store export block in `packages/agent/src/index.ts`.
+
+## 2026-11-05 - Harness tool bodies run on the cleared arguments (senpi#5883)
+
+### What changed
+
+- `packages/agent/src/harness/execution/tools.ts`: `executeToolCall()` runs the body on `call.args` (the object `after_tool` sees) instead of the host's frozen copy, after a new `unrecordableArguments()` check that settles arguments JSON cannot carry as a tool error.
+- `packages/agent/src/harness/execution/tool-host-call.ts`: `runOnPreparedToolHost()`'s `run` no longer receives the host's arguments copy.
+
+### Why
+
+senpi#5861: since senpi#5859 the body got the host's JSON copy, so in-place edits no longer reached `after_tool`, a `Date` from `prepareArguments` arrived as a string, and a BigInt threw untyped. The host still records its JSON copy.
+
+### Why an extension could not handle it
+
+The harness's tool execution is internal to `AgentHarness`; no extension point wraps it.
+
+### Expected merge conflict zones
+
+- LOW: `execution/tools.ts` `executeToolCall()`; `tool-host-call.ts` `runOnPreparedToolHost()`.
+
+## 2026-11-05 - A tool result JSON cannot carry settles as a tool error (senpi#5878)
+
+### What changed
+
+- `packages/agent/src/execution/prepared/executor-freeze.ts`: new `recordedResult()` pairs a settled body with its durable ledger value. When `resultValue()` cannot serialize the content, it returns an `isError` result reading `Tool result content is not JSON: <reason>` and records that instead.
+- `packages/agent/src/execution/prepared/executor.ts`: the release path settles through `recordedResult()` instead of calling `resultValue()` directly.
+
+### Why
+
+senpi#5864: after a tool body ran on the prepared ToolHost, content JSON cannot carry made the release reject with `TypeError: Do not know how to serialize a BigInt`. Before the host, the caller got the tool's result back. A typed tool error keeps the run going and names the broken content contract.
+
+### Why an extension could not handle it
+
+The release path is internal to the prepared executor; no hook runs between the body's result and the ledger write.
+
+### Expected merge conflict zones
+
+- LOW: `executor.ts` `runReleased()` around the result step; `executor-freeze.ts` after `resultValue()`.
+
+## 2026-11-05 - ToolHost.deviceFiles (senpi#5839)
+
+### What changed
+
+- `packages/agent/src/execution/tool-host.ts`: `ToolHost` gains an optional `deviceFiles(scope)` that returns the `DeviceFiles` of the device the host runs calls on.
+
+### Why
+
+Extensions on the loop side of a split session need the hand's file channel for the session's scope (senpi#5839).
+
+### Why an extension could not handle it
+
+The tool host is chosen by the embedder below the extension layer; an extension cannot reach it.
+
+### Expected merge conflict zones
+
+The `ToolHost` interface in `tool-host.ts`.
+
+## 2026-11-05 - Sync commit capability and a session store over DurableStore (S20a, senpi#5866)
+
+### What changed
+
+- `packages/agent/src/durable/store.ts`: `SyncCommit` (`commitSync`) and `SyncCommitStore`. `DurableStore` itself is unchanged and stays async.
+- `packages/agent/src/durable/store-memory.ts`: `openMemoryStore` returns a `SyncCommitStore`; `commit` wraps `commitSync`.
+- `packages/agent/src/durable/session-store.ts` (new): `openSessionStore` (any `DurableStore`) and `openSyncSessionStore` (a `SyncCommitStore` only, enforced by the parameter type). It keeps S07's key schema for the manifest and entries, so the importer and the store share one format.
+- `packages/agent/src/durable/testing/sync-commit-cases.ts` (new): SYNC-COMMIT-01/02, a separate registry run only by backends with `commitSync`. The Durable Object store confirms durability only asynchronously, so it is not in it.
+- `packages/agent/src/conformance/index.ts`: exports the types, the session store and the SYNC-COMMIT cases.
+
+### Why
+
+Plan row S20 (senpi#5827), part a: the store-first session needs a durable session record a hosted brain can hold, and `SessionManager`'s "a throw means the entry did not take" contract has to hold on the same call. That needs a synchronous durable commit on the backends it runs on.
+
+### Why an extension could not handle it
+
+The durable store contract and its backends are core packages; extensions do not reach them.
+
+### Expected merge conflict zones
+
+`durable/store.ts` after the `DurableStore` interface; `store-memory.ts` `openMemoryStore`; the store export block in `conformance/index.ts`.
+
+## 2026-11-04 - Export the admission line type from the conformance entry (S37, senpi#5732)
+
+### What changed
+
+- `packages/agent/src/conformance/index.ts`: exports the `AdmissionLine` type, so a writer outside this package can take the store's single admission line.
+
+### Why
+
+- The headless engine's takeover ledger shares the store's admission line (senpi#5732).
+
+### Why an extension could not handle it
+
+- It is this package's public type surface.
+
+### Expected merge conflict zones
+
+- LOW: one export line, identical to the one senpi#5660 adds.
+
 ## 2026-11-05 - The session plane and the user-set thread chain count (senpi#5882)
 
 ### What changed

@@ -25,7 +25,7 @@ function runtimeWithTurnRunningUntilSettled(
 	onDispose: () => void,
 ): CreateAgentSessionRuntimeFactory {
 	return async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		return {
 			session: {
 				...fakeSessionBase(options),
@@ -36,7 +36,7 @@ function runtimeWithTurnRunningUntilSettled(
 				favoriteModels: [],
 				scopedModels: [],
 				isBashRunning: false,
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 				subscribe: (listener: (event: SessionEvent) => void) => {
 					listeners.add(listener);
 					return () => listeners.delete(listener);

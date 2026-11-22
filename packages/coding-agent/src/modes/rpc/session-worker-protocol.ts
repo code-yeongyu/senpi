@@ -1,7 +1,9 @@
 import type { RpcRemoteOrigin } from "./remote-origin.ts";
+import type { DelegationDescriptor } from "./delegation-record.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { McpFormInput, McpFormOutcome } from "../../core/mcp-form-types.ts";
 import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { MirroredLimits } from "../../core/subscription-limits/limit-store.ts";
@@ -53,11 +55,18 @@ export function withinFrameLimit(transitions: readonly TranscriptTransition[]): 
 	);
 }
 
-/** Wire values the host writes into a worker's wait signal; `conflict` is the generic denial. */
-export const WORKER_CREDIT_CODES = { granted: 1, conflict: 2, limit: 3 } as const;
+/**
+ * Wire values the host writes into a worker's wait signal; `conflict` is the generic denial. `stale`
+ * (omo-relay-daemon#307) answers a `capabilities` declaration captured under an incarnation that is no longer the
+ * connection's current one: the worker refuses that one command and lives on.
+ */
+export const WORKER_CREDIT_CODES = { granted: 1, conflict: 2, limit: 3, stale: 4 } as const;
 
 /** Host decision on a worker's session-write path request. */
-export type SessionWriteGrant = keyof typeof WORKER_CREDIT_CODES;
+export type SessionWriteGrant = Exclude<WorkerCreditAnswer, "stale">;
+
+/** Every answer the host writes into a worker's wait signal. */
+export type WorkerCreditAnswer = keyof typeof WORKER_CREDIT_CODES;
 
 export interface WorkerSnapshot {
 	state: RpcSessionState;
@@ -69,6 +78,11 @@ export interface WorkerSnapshot {
 	/** Turn/request activity, excluding durable wake-source holds. */
 	handoffBusy?: boolean;
 	streaming: boolean;
+	/** The session file's archived flag, read in the isolate that owns the file. */
+	archived: boolean;
+	/** The session file's Done flag and how it was reached, read like `archived`. */
+	settled: boolean;
+	settledBy?: ThreadSettledBy;
 }
 
 import type { AdmissionReplyScope } from "./compact-admission-reply.ts";
@@ -94,6 +108,8 @@ export type HostToSessionWorker =
 			connection?: string;
 			/** Roles the connection explicitly declared on the host (senpi#3811); the isolate adopts them. */
 			roles?: readonly string[];
+			/** The delegation the attaching line captured (omo-relay-daemon#307). */
+			delegation?: DelegationDescriptor;
 			mcpFormsEnforced?: boolean;
 	  }
 	| { type: "mcp_form_bound"; id: string; epoch: string; version?: string }
@@ -110,6 +126,9 @@ export type HostToSessionWorker =
 			origin?: RpcRemoteOrigin;
 			/** The gate the host captured at ingress, before its first await (#4728). */
 			owner?: ExtensionOwnerWire;
+			/** The delegation the command's line captured at its start, and its forwarder's `relayExec` (#307). */
+			delegation?: DelegationDescriptor;
+			exec?: number;
 	  }
 	/** Gates the host already retired atomically; the isolate only wakes their waiters. */
 	| { type: "owners_retired"; owners: readonly ExtensionOwnerIdentity[] }
@@ -205,7 +224,14 @@ export type SessionWorkerToHost =
 			limit?: number | undefined;
 			signal: SharedArrayBuffer;
 	  }
-	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
+	| {
+			type: "capabilities";
+			connection?: string;
+			capabilities: readonly string[];
+			/** The incarnation the declaring command captured, never looked up when sent or received (#307). */
+			incarnation?: number;
+			signal: SharedArrayBuffer;
+	  }
 	| { type: "loaded_surfaces"; previous?: string; digest: string; signal: SharedArrayBuffer }
 	/**
 	 * One piece of a payload message too large for one frame (S12b): at most D stored bytes of its JSON (signals left out)

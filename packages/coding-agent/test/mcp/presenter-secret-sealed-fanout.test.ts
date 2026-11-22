@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SecretInputRequests } from "../../src/modes/rpc/secret-input-requests.ts";
+import * as sealedKeys from "../../src/modes/rpc/secret-sealed.ts";
 import {
 	claimsOf,
 	closeAccountHosts,
@@ -19,6 +20,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
 	await closeAccountHosts();
+	vi.restoreAllMocks();
 	vi.useRealTimers();
 });
 
@@ -52,6 +54,40 @@ const signed = (request: Line, b: unknown[]) =>
 it("a raiser-refused secret with no sealed holder keeps today's refusal", async () => {
 	const { requests } = await sealedHost();
 	await expect(requests.input("API key", undefined)).rejects.toMatchObject({ reason: "no_presenter" });
+});
+
+// senpi#6062: failed key generation must close the latch without offering a request.
+it("a request key failure settles unavailable without sending an unmatched holder frame", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1", "secret_input_v1"]);
+	const key = Promise.withResolvers<sealedKeys.SecretRequestKey>();
+	vi.spyOn(sealedKeys, "generateSecretRequestKey").mockReturnValueOnce(key.promise);
+	let result: string | undefined | null = null;
+	void requests.input("API key", undefined).then((value) => {
+		result = value;
+	});
+	await host.human.recorded("extension_ui_request");
+	key.reject(new Error("injected key failure"));
+	await key.promise.catch(() => undefined);
+	expect(result).toBeUndefined();
+	expect(await host.human.recorded("secret_input_settled")).toMatchObject([{ outcome: "unavailable" }]);
+	expect(sealedTypes(phone.lines)).toEqual([]);
+});
+
+// senpi#6062: explicit key gate, with settlement before the asynchronous offer can leave.
+it("a request settled before its key resolves never offers or settles a holder request", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	const generated = await sealedKeys.generateSecretRequestKey();
+	const key = Promise.withResolvers<sealedKeys.SecretRequestKey>();
+	vi.spyOn(sealedKeys, "generateSecretRequestKey").mockReturnValueOnce(key.promise);
+	const result = requests.input("API key", undefined);
+	requests.cancelAll();
+	expect(await result).toBeUndefined();
+	key.resolve(generated);
+	await key.promise;
+	expect(sealedTypes(phone.lines)).toEqual([]);
 });
 
 it("a raiser-refused secret with one sealed holder proceeds on the sealed route, signed by the host key", async () => {
@@ -227,6 +263,18 @@ it("attached devices that are not sealed holders keep the value-free notice; the
 	expect(records(phone.lines, "secret_input_notice")).toEqual([]);
 	await phone.recorded("mcp_presenter_secret_request");
 	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
+});
+
+// senpi#5934 item 2: a raiser refused into the sealed route is a non-recipient, not a notice target (design 5.2).
+it("a raiser whose own lane was refused never receives the notice for its own request", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1", "raiser_notice_v1"]);
+	const pending = host.writer.withConnection("human", () => requests.input("API key", undefined));
+	await phone.recorded("mcp_presenter_secret_request");
+	expect(records(host.lines, "secret_input_notice")).toEqual([]);
+	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
+	void pending.catch(() => {});
 });
 
 it("a route without the sealed flag (a worker isolate's, until S5-4) never adds sealed holders", async () => {

@@ -235,6 +235,7 @@ export interface Settings {
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
 	tools?: { bash?: { redactSecretsInOutput?: boolean } }; // default: false; output only
+	credentialProxy?: { credentials?: unknown[] }; // global setting only; validated by core/credential-proxy/declarations.ts
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
@@ -518,6 +519,16 @@ export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
 	/** The project trust exists only because the session runs Full access (senpi#3414): leaving it withdraws the trust. */
 	trustFromFullAccess?: boolean;
+	/** The launch named the project trust explicitly (`--approve`/`--no-approve`): nothing in the session may change it. */
+	projectTrustLocked?: boolean;
+}
+
+/** The project settings file as stored, read whether or not the project is trusted (reading runs nothing). */
+export interface ProjectSettingsFile {
+	path: string;
+	exists: boolean;
+	settings: Settings | null;
+	error: string | null;
 }
 
 export interface SettingsStorage {
@@ -887,6 +898,7 @@ export class SettingsManager {
 			settingsPaths,
 		);
 		manager.trustFromFullAccess = options.trustFromFullAccess === true;
+		manager.projectTrustLocked = options.projectTrustLocked === true;
 		return manager;
 	}
 
@@ -1080,6 +1092,59 @@ export class SettingsManager {
 		return structuredClone(this.projectSettings);
 	}
 
+	/**
+	 * `contextFiles.globalPath` from the user's own layers only: session overrides, then global
+	 * settings. A project's `.senpi/settings.json` never redirects the user's global context file
+	 * (senpi#5567), so the project layer is deliberately skipped.
+	 */
+	getGlobalContextFilePath(): string | undefined {
+		return this.runtimeOverrides.contextFiles?.globalPath ?? this.globalSettings.contextFiles?.globalPath;
+	}
+
+	/** The project settings file at `path` as stored: parsed and migrated like a load, but never gated by trust. */
+	readProjectSettingsFile(path: string): ProjectSettingsFile {
+		let content: string | undefined;
+		try {
+			this.storage.withLock("project", (current) => {
+				content = current;
+				return undefined;
+			});
+			if (content === undefined) return { path, exists: false, settings: null, error: null };
+			return {
+				path,
+				exists: true,
+				settings: SettingsManager.migrateSettings(parseSettingsJson(content)),
+				error: null,
+			};
+		} catch (error) {
+			return { path, exists: content !== undefined, settings: null, error: String(error) };
+		}
+	}
+
+	/**
+	 * Writes one top-level key of the project settings file (`null` removes it) through the same trusted-only,
+	 * locked, merge-on-write path every project setter uses. Refuses a file that failed to load: that path skips
+	 * the write silently, which an explicit caller must not mistake for success.
+	 */
+	async setProjectSetting(key: string, value: unknown): Promise<void> {
+		this.assertProjectTrustedForWrite();
+		if (this.projectSettingsLoadError) {
+			throw new Error(
+				`Project settings file could not be read; refusing to write: ${this.projectSettingsLoadError.message}`,
+			);
+		}
+		const field = key as keyof Settings;
+		const recordedBefore = new Set(this.errors);
+		this.updateProjectSettings(field, (settings) => {
+			if (value === null) delete settings[field];
+			else (settings as Record<string, unknown>)[key] = value;
+		});
+		await this.flush();
+		// The queued write records its failure instead of throwing; an explicit caller is told.
+		const failure = this.errors.find((entry) => entry.scope === "project" && !recordedBefore.has(entry));
+		if (failure) throw failure.error;
+	}
+
 	getProviderSettings(): Record<string, ProviderConcurrencySettings> {
 		return structuredClone(this.settings.providers ?? {});
 	}
@@ -1175,9 +1240,10 @@ export class SettingsManager {
 			: undefined;
 	}
 
-	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
+	/** The user's `todo.firstTurnPlan`, else `fallback`: the default the active prompt preset declares. */
+	getTodoFirstTurnPlan(fallback: TodoFirstTurnPlan = "force"): TodoFirstTurnPlan {
 		const configured = this.settings.todo?.firstTurnPlan;
-		return configured === "remind" || configured === "off" ? configured : "force";
+		return configured === "force" || configured === "remind" || configured === "off" ? configured : fallback;
 	}
 
 	getTodoTurnEndBackstop(): boolean {
@@ -1187,6 +1253,13 @@ export class SettingsManager {
 
 	isProjectTrusted(): boolean {
 		return this.projectTrusted;
+	}
+
+	private projectTrustLocked = false;
+
+	/** True when the launch named the project trust explicitly; a trust decision saved in the session cannot apply. */
+	isProjectTrustLocked(): boolean {
+		return this.projectTrustLocked;
 	}
 
 	/**

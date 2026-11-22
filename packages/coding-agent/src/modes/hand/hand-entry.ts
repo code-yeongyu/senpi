@@ -1,14 +1,17 @@
 /**
  * The engine as a hand (`--hand`, senpi#5840): loopless runtimes per execution scope (`createLooplessHand`) serving the
  * remote executor, its device file channel and the scopes' loop hooks on one local endpoint, through the reference
- * transport over {@link serveSocketCarrier}. It never runs a loop and opens no transcript; the process lives until it is
+ * transport over {@link serveSocketCarrier}. What a scope's work sends the loop after its call ended travels on the wake
+ * lane from the hand's durable outbox (H3). It never runs a loop and opens no transcript; the process lives until it is
  * signalled.
  */
 import { createServer } from "node:net";
 import { posix, win32 } from "node:path";
 import {
+	createHandWakeLink,
 	createReliableTransport,
 	createRemoteExecutor,
+	HAND_WAKE_LANE,
 	serveLoopHooks,
 	type Transport,
 } from "@earendil-works/pi-agent-core";
@@ -19,6 +22,7 @@ import { listen } from "../rpc/host-socket-bind.ts";
 import { createLooplessHand } from "../rpc/remote-executor-scope.ts";
 import { shieldSocketDuringClose, unlinkOwnedSocket } from "../rpc/socket-ownership.ts";
 import { ensureSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "../rpc/socket-transport.ts";
+import { handWakesOver, openHandWakeOutbox } from "./hand-wakes.ts";
 import { serveSocketCarrier } from "./socket-carrier.ts";
 
 type FrameHandler = Parameters<Transport["onFrame"]>[0];
@@ -28,6 +32,11 @@ const HAND_LOOP_HOOK_LANE = "loop-hooks";
 
 export function handSocketPath(agentDir: string, platform: NodeJS.Platform = process.platform): string {
 	return (platform === "win32" ? win32 : posix).join(agentDir, "rpc", "hand.sock");
+}
+
+/** The hand's durable wake outbox, beside its socket: one live hand per agent dir writes it. */
+export function handWakeStorePath(agentDir: string, platform: NodeJS.Platform = process.platform): string {
+	return (platform === "win32" ? win32 : posix).join(agentDir, "rpc", "hand-wakes.json");
 }
 
 /** The address a carrier dials: the socket path on POSIX, its named pipe (named with the secret) on Windows. */
@@ -47,25 +56,22 @@ export function handEndpointSecret(
 	return platform === "win32" ? ensureSocketSecret(socketSecretPath(socketPath)) : Promise.resolve(undefined);
 }
 
-/** One transport seen as two: frames on `lane` go to one view's receiver, every other frame to the other's. */
-function splitLane(transport: Transport, lane: string): { readonly own: Transport; readonly rest: Transport } {
-	let ownHandler: FrameHandler | undefined;
-	let restHandler: FrameHandler | undefined;
-	transport.onFrame((frame) => (frame.lane === lane ? ownHandler : restHandler)?.(frame));
-	const view = (set: (handler: FrameHandler) => void): Transport => ({
+/** One transport seen as several: frames on each named lane go to that lane's view, every other frame to `rest`. */
+function splitLanes<Lane extends string>(
+	transport: Transport,
+	lanes: readonly Lane[],
+): { readonly lane: (name: Lane) => Transport; readonly rest: Transport } {
+	const handlers = new Map<string, FrameHandler>();
+	const named = new Set<string>(lanes);
+	const REST = "";
+	transport.onFrame((frame) => handlers.get(named.has(frame.lane) ? frame.lane : REST)?.(frame));
+	const view = (key: string): Transport => ({
 		send: (to, payload) => transport.send(to, payload),
-		onFrame: set,
+		onFrame: (handler) => void handlers.set(key, handler),
 		inFlight: (to) => transport.inFlight(to),
 		close: () => transport.close(),
 	});
-	return {
-		own: view((handler) => {
-			ownHandler = handler;
-		}),
-		rest: view((handler) => {
-			restHandler = handler;
-		}),
-	};
+	return { lane: view, rest: view(REST) };
 }
 
 export interface HandEntryOptions {
@@ -76,8 +82,12 @@ export interface HandEntryOptions {
 export async function runHand(options: HandEntryOptions): Promise<never> {
 	const { agentDir } = options.configuration;
 	const report = (message: string): void => void process.stderr.write(`senpi hand: ${message}\n`);
-	const hand = createLooplessHand(options.configuration, {
-		...(options.extensionFactories === undefined ? {} : { extensionFactories: options.extensionFactories }),
+	const socketPath = handSocketPath(agentDir);
+	// Refuses an entry a live hand still serves; only a dead (stale) entry is removed. The wake outbox it opens next
+	// claims its file's next epoch, so an older hand still shutting down can no longer write it.
+	await prepareSocketPath(socketPath);
+	const outbox = await openHandWakeOutbox(handWakeStorePath(agentDir), {
+		onFault: (error) => report(`wake fault: ${error.message}`),
 	});
 	const transport = createReliableTransport({
 		clock: {
@@ -89,7 +99,18 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 		},
 		onHandlerError: (error) => report(`frame handler failed: ${String(error)}`),
 	});
-	const lanes = splitLane(transport, HAND_LOOP_HOOK_LANE);
+	const lanes = splitLanes(transport, [HAND_LOOP_HOOK_LANE, HAND_WAKE_LANE]);
+	const wakeLink = createHandWakeLink({
+		transport: lanes.lane(HAND_WAKE_LANE),
+		outbox,
+		onFault: (error) => report(`wake fault: ${String(error)}`),
+	});
+	// The loop runs elsewhere (a hosted loop), so this machine is its extensions' home: their loop hooks run here (S33).
+	const hand = createLooplessHand(options.configuration, {
+		twoSidedHome: "hand",
+		...(options.extensionFactories === undefined ? {} : { extensionFactories: options.extensionFactories }),
+		wakes: handWakesOver(wakeLink),
+	});
 	const executor = createRemoteExecutor({
 		authority: { kind: "self" },
 		fileChannel: true,
@@ -98,18 +119,15 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 		onFault: (error) => report(`call fault: ${String(error)}`),
 	});
 	const loopHooks = serveLoopHooks({
-		transport: lanes.own,
+		transport: lanes.lane(HAND_LOOP_HOOK_LANE),
 		lane: HAND_LOOP_HOOK_LANE,
 		run: hand.loopHooks,
 		onFault: (error) => report(`loop hook fault: ${String(error)}`),
 	});
 
-	const socketPath = handSocketPath(agentDir);
-	// Refuses an entry a live hand still serves; only a dead (stale) entry is removed.
-	await prepareSocketPath(socketPath);
 	const secret = await handEndpointSecret(socketPath);
 	const server = createServer();
-	serveSocketCarrier(server, transport, secret);
+	serveSocketCarrier(server, transport, secret, report);
 	const boundIdentity = await listen(server, socketPath, secret);
 	report(`listening on ${handEndpoint(agentDir, process.platform, secret)}`);
 
@@ -127,6 +145,7 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 			// The transport goes first: closing it destroys the carrier connection, and the listener's close waits for
 			// every open connection, so a carrier still attached would hold the shutdown (and the shielded entry) open.
 			await step("loop hooks", () => loopHooks.close());
+			await step("wake link", () => wakeLink.close());
 			await step("transport", () => transport.close());
 			// libuv unlinks the bound name on close, which would delete a newer hand's entry: shield it for the close,
 			// then remove only the entry this process bound.

@@ -44,7 +44,7 @@ function recordingSide(): Recorded {
 async function gatedServer(secret: Uint8Array, side: CarrierSide): Promise<string> {
 	const path = join(scratchDir(), "hand.sock");
 	const server: Server = createServer();
-	serveSocketCarrier(server, side, secret);
+	serveSocketCarrier(server, side, secret, () => {});
 	await new Promise<void>((resolve) => server.listen(path, resolve));
 	cleanups.push(() => server.close());
 	return path;

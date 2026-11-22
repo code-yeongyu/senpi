@@ -104,10 +104,13 @@ export function raceTerminalSecretInput(
 	placeholder: string | undefined,
 	opts: ExtensionUIInputOptions | undefined,
 ): Promise<string | undefined> {
-	const opened = opts?.secret ? sealed?.open(title, placeholder, opts) : undefined;
-	if (!sealed || !opened) return local(opts);
 	const dismiss = new AbortController();
 	const signal = opts?.signal ? AbortSignal.any([opts.signal, dismiss.signal]) : dismiss.signal;
-	void local({ ...opts, signal }).then((value) => sealed.requests.answerLocal(opened.id, value));
+	const opened = opts?.secret ? sealed?.open(title, placeholder, { ...opts, signal }) : undefined;
+	if (!sealed || !opened) return local(opts);
+	void local({ ...opts, signal }).then(
+		(value) => sealed.requests.answerLocal(opened.id, value),
+		() => dismiss.abort(),
+	);
 	return opened.result.finally(() => dismiss.abort());
 }

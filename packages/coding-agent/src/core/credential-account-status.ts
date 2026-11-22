@@ -19,13 +19,19 @@ export function formatAccountRetryTime(epochMs: number): string {
  * One account's health in plain words: why it sits out and until when, the cases the desktop account row
  * shows (senpi#4092), so no account list says a bare "blocked".
  */
-export function describeAccountBlock(block: AccountBlock): string {
+export function describeAccountBlock(block: AccountBlock, signInAgain?: string): string {
 	if (!block.blocked) return "available";
 	const until = block.blockedUntil === undefined ? undefined : formatAccountRetryTime(block.blockedUntil);
 	switch (block.blockedReason) {
 		case "disabled":
 			return "account disabled; needs attention";
 		case "auth_error":
+			// A surface that has an in-place re-login names it, so the row says what to run (senpi#3216).
+			if (signInAgain !== undefined) {
+				return until === undefined
+					? `sign-in rejected; ${signInAgain}`
+					: `sign-in rejected; next check after ${until}, or ${signInAgain}`;
+			}
 			return until === undefined ? "sign-in rejected; sign in again" : `sign-in rejected; next check after ${until}`;
 		case "rate_limit":
 			return until === undefined ? "rate limited" : `rate limited; retry after ${until}`;
@@ -35,10 +41,10 @@ export function describeAccountBlock(block: AccountBlock): string {
 }
 
 /** One `/account`-style list row: label, source, health, per-model limits and pin. Never key material. */
-export function describeCredentialAccount(account: CredentialAccountSummary): string {
+export function describeCredentialAccount(account: CredentialAccountSummary, signInAgain?: string): string {
 	const availability = account.unused
 		? "unused (other login kind; switch with /login)"
-		: describeAccountBlock(account);
+		: describeAccountBlock(account, signInAgain);
 	const states = [accountLabel(account), account.source, availability];
 	for (const { model, until } of account.blockedModels ?? []) {
 		states.push(`blocked for ${model} until ${formatAccountRetryTime(until)}`);

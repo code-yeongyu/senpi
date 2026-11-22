@@ -26,11 +26,11 @@ export interface KeyPolicyTemplate {
 	}): string;
 }
 
-const USE_ACTIONS: Readonly<Record<KeyPolicyKind, readonly string[]>> = {
+const USE_ACTIONS = {
 	"custody-kem": ["kms:DeriveSharedSecret", "kms:GetPublicKey"],
 	"custody-sig": ["kms:GetPublicKey", "kms:Sign"],
 	registry: ["kms:GetPublicKey", "kms:Sign"],
-};
+} as const satisfies Readonly<Record<KeyPolicyKind, readonly string[]>>;
 
 const ADMIN_ACTIONS = [
 	"kms:CancelKeyDeletion",
@@ -41,14 +41,14 @@ const ADMIN_ACTIONS = [
 	"kms:GetPublicKey",
 	"kms:ScheduleKeyDeletion",
 	"kms:TagResource",
-];
+] as const;
 const READ_ACTIONS = [
 	"kms:DescribeKey",
 	"kms:GetKeyPolicy",
 	"kms:GetPublicKey",
 	"kms:ListGrants",
 	"kms:ListResourceTags",
-];
+] as const;
 const BREAKGLASS_ACTIONS = [
 	"kms:CancelKeyDeletion",
 	"kms:DescribeKey",
@@ -56,13 +56,13 @@ const BREAKGLASS_ACTIONS = [
 	"kms:GetKeyPolicy",
 	"kms:ListGrants",
 	"kms:ScheduleKeyDeletion",
-];
+] as const;
 
 function statement(sid: string, principal: string, actions: readonly string[]) {
 	return { Sid: sid, Effect: "Allow", Principal: { AWS: principal }, Action: [...actions], Resource: "*" };
 }
 
-export const KEY_POLICY_TEMPLATE_V1: KeyPolicyTemplate = {
+export const KEY_POLICY_TEMPLATE_V1 = {
 	render({ keyKind, roles }) {
 		const user = keyKind === "registry" ? roles.registrySigner : roles.runtime;
 		return canonicalJson({
@@ -76,4 +76,4 @@ export const KEY_POLICY_TEMPLATE_V1: KeyPolicyTemplate = {
 			],
 		});
 	},
-};
+} as const satisfies KeyPolicyTemplate;

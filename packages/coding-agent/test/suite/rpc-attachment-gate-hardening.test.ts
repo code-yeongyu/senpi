@@ -36,6 +36,14 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"get_media",
 			"get_messages",
 			"get_pending_inputs",
+			// senpi#6485: reads the folder's MCP servers file without effect, like read_project_file. Its entries are
+			// returned as stored, so a literal `env` secret in the file reaches this connection too; the verb is
+			// device_admin (method-classes.ts), the class read_project_file already has. set_project_mcp_servers stays gated.
+			"get_project_mcp_servers",
+			// senpi#6176/#6185: the workspace's saved trust and project settings file, read without effect like
+			// get_loaded_surfaces and resolve_path; set_project_trust and set_project_setting stay gated.
+			"get_project_settings",
+			"get_project_trust",
 			"get_protocol_info",
 			"get_provider_accounts",
 			"get_session_stats",
@@ -51,6 +59,16 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"list_sessions",
 			"memory_report",
 			"open_session",
+			"park_session",
+			"claim_session",
+			// senpi#6307: reads one allowlisted instruction file, without effect like get_project_settings;
+			// write_project_file stays gated.
+			"read_project_file",
+			// senpi#6485: reads one listed project skill's file without effect, like read_project_file;
+			// write_project_skill_file stays gated.
+			"read_project_skill_file",
+			// omo-desktop-app#7981: reads one listed user skill's file without effect; write_user_skill_file stays gated.
+			"read_user_skill_file",
 			"reclaim_session",
 			"resolve_path",
 			"subscribe_sessions",
@@ -99,6 +117,8 @@ it("refuses an unattached record_user_activity under enforcement, like every oth
 		{ type: "extension_ui_response", confirmed: true },
 		{ type: "export_jsonl" },
 		{ type: "select_hand", device: null },
+		{ type: "set_project_trust", choice: "trust" },
+		{ type: "set_project_setting", key: "theme", value: "dark" },
 	];
 	for (const [index, mutation] of mutations.entries()) {
 		const command = { ...mutation, id: `m-${index}`, sessionId: ref.sessionId };

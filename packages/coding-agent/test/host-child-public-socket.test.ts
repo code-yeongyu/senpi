@@ -22,6 +22,7 @@ function childEnvironment(platform: NodeJS.Platform): NodeJS.ProcessEnv {
 			instanceId: "instance-under-test",
 			cleanupPaths: [],
 			publicSocket,
+			trustHandOff: {},
 		},
 		undefined,
 		platform,
