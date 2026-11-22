@@ -70,6 +70,7 @@ export class Harness<TContext extends object | undefined> implements AgentHarnes
 				systemPrompt: options.systemPrompt,
 				toProviderMessages: options.toProviderMessages ?? ((messages) => convertToLlm(messages)),
 				entryProjectors: options.entryProjectors ?? {},
+				...(options.onExecutionPipeline === undefined ? {} : { onExecutionPipeline: options.onExecutionPipeline }),
 			},
 		};
 		for (const [name, state] of restored) this.lanesByName.set(name, this.buildLane(name, state));

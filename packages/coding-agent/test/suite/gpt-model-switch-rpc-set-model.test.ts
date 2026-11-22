@@ -105,9 +105,12 @@ describe("RPC set_model mid-session switch", () => {
 		// Then: the toolset and the prompt guidance update in the same turn.
 		expect(toGpt.success).toBe(true);
 		expect(harness.session.model?.id).toBe("gpt-5.5");
+		// The tool schemas sent to the model carry the switch; a described tool gets no snippet line (senpi#5335).
+		const schemaNames = () => harness.session.agent.state.tools.map((tool) => tool.name);
 		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
-		expect(harness.session.systemPrompt).toContain("- apply_patch:");
-		expect(harness.session.systemPrompt).not.toContain("- edit:");
+		expect(schemaNames()).toContain("apply_patch");
+		expect(schemaNames()).not.toContain("edit");
+		expect(harness.session.systemPrompt).not.toMatch(/^- apply_patch:/m);
 
 		// When: the RPC client switches back to the non-GPT model.
 		const backToNonGpt = await setModelViaRpc(handler, lines, "sw2", "proxy", "claude-sonnet");
@@ -115,7 +118,8 @@ describe("RPC set_model mid-session switch", () => {
 		// Then: the edit tools and their guidance return.
 		expect(backToNonGpt.success).toBe(true);
 		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "grep", "edit", "write"]);
-		expect(harness.session.systemPrompt).toContain("- edit:");
-		expect(harness.session.systemPrompt).not.toContain("- apply_patch:");
+		expect(schemaNames()).toEqual(expect.arrayContaining(["edit", "write"]));
+		expect(schemaNames()).not.toContain("apply_patch");
+		expect(harness.session.systemPrompt).not.toMatch(/^- edit:/m);
 	});
 });

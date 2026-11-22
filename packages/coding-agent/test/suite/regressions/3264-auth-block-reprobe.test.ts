@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CredentialStore } from "@earendil-works/pi-ai";
@@ -101,8 +102,8 @@ describe("generic credential-pool auth blocks are re-probed on a timer (senpi#32
 		repository = new CredentialSlotRepository(join(dir, "credential-pool-state.json"));
 	});
 
-	afterEach(() => {
-		rmSync(dir, { recursive: true, force: true });
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
 	});
 
 	const credential = {

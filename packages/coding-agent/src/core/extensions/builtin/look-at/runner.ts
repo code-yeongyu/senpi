@@ -52,7 +52,9 @@ export async function runLookAt(
 		);
 	}
 
-	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(resolved.model);
+	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(resolved.model, {
+		sessionId: ctx.sessionManager.getSessionId(),
+	});
 	if (!auth.ok) {
 		throw new Error(
 			`look_at cannot use ${resolved.model.provider}/${resolved.model.id}: ${auth.error}. ` +

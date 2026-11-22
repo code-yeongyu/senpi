@@ -9,7 +9,14 @@ import {
 } from "../../src/core/extensions/builtin/mcp/reconnect.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
-import { delay, readNumberFile, readNumberFileOrZero, serverConfig, waitFor } from "./fixtures/reconnect.ts";
+import {
+	delay,
+	readNumberFile,
+	readNumberFileOrZero,
+	serverConfig,
+	waitFor,
+	waitForReconnect,
+} from "./fixtures/reconnect.ts";
 import {
 	attach,
 	awaitMcpToolRegistration,
@@ -78,6 +85,9 @@ describe("MCP auto reconnect", () => {
 		await attach(root, pi);
 		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
+		const connection = getMcpService().getConnection("fx");
+		if (connection === undefined) throw new Error("missing fx connection");
+		const recovered = waitForReconnect(connection);
 
 		const first = await tool.execute(
 			"tc-first",
@@ -86,9 +96,7 @@ describe("MCP auto reconnect", () => {
 			undefined,
 			testContext() as ExtensionToolContext,
 		);
-		await waitFor(
-			() => getMcpService().getConnection("fx")?.state === "connected" && readNumberFile(counterFile) >= 2,
-		);
+		await recovered;
 
 		expect(textContent(first)).toBe("fixture tool_1 value=first mode=alpha");
 		expect(readNumberFile(counterFile)).toBe(2);

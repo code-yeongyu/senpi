@@ -9,13 +9,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { STOP_WAIT_BUDGET_MS } from "../../../src/modes/rpc/host-ensure-stop.ts";
-import { HANDOFF_LOCK_HOLD_MS, type HandoffResult, handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
+import { type HandoffResult, handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
+import { childStalledStopMaxMs } from "../../../src/modes/rpc/host-stalled-evidence.ts";
+import { startupEnvelope } from "../../../src/modes/rpc/host-startup-policy.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "../../../src/modes/rpc/host-lifecycle-policy.ts";
 import {
 	type GenerationScratch,
 	generationEnv,
 	generationScratch,
 	HeldAnthropicModel,
+	isSupervisorSpawn,
 	JsonlPeer,
 	openedSessionId,
 	supervisorLaunch,
@@ -48,7 +51,7 @@ const TEST_TIMEOUT_MS = {
 	// The scratch socket has no competing ensure-lock holder; include the handoff's own hold budget.
 	handoff:
 		CALLER_BOUND_MS +
-		HANDOFF_LOCK_HOLD_MS +
+		startupEnvelope(childStalledStopMaxMs()).holder +
 		2 * RPC_WAIT_MS +
 		EXIT_BOUND_MS +
 		OWNER_GRACE_MS +
@@ -315,7 +318,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 				childProcess,
 				"spawn",
 				(command: string, args: readonly string[], options: SpawnOptions) => {
-					if (!args[0]?.endsWith("host-lifecycle.ts")) return original(command, args, options);
+					if (!isSupervisorSpawn(args)) return original(command, args, options);
 					const stdio = Array.isArray(options.stdio) ? [...options.stdio] : [];
 					stdio[1] = "pipe";
 					const child = original(command, args, { ...options, stdio });

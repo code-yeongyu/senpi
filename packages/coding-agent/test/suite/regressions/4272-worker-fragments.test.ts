@@ -60,15 +60,24 @@ function fragmentsOf(message: OutputFrame, first: number, firstOrdinal: number |
 	}));
 }
 
-/** One real worker session that ran one prompt, with every message its isolate posted from the open onwards. */
+/**
+ * One real worker session that ran one prompt, with every message its isolate posted from the open onwards. It returns
+ * once the run's last ordered frame arrived: after `agent_idle` the session still writes its terminal lifecycle (an
+ * `entry_appended` and a `session_lifecycle` `done` frame), and a test that injected frames at `intake.nextOrdinal`
+ * before those landed would see them rejected as reused ordinals (senpi#5387).
+ */
 async function promptedWorker(message = "go") {
 	const host = await workerAcceptanceHost(builtFauxPath);
 	const { sessionId, worker } = await host.open();
 	const posted: Posted[] = [];
 	worker.worker.on("message", (each: Posted) => posted.push(each));
 	const done = host.next("idle", (record) => record.type === "agent_idle");
+	const settled = host.next(
+		"terminal lifecycle",
+		(record) => record.type === "session_lifecycle" && Reflect.get(Object(record.lifecycle), "state") === "done",
+	);
 	expect((await host.request({ type: "prompt", sessionId, message })).success).toBe(true);
-	await done;
+	await Promise.all([done, settled]);
 	await host.writer.flush();
 	return { host, worker, posted, lane: worker.acceptance };
 }

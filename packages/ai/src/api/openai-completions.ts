@@ -422,6 +422,20 @@ function parseLegacyEncryptedReasoningDetail(
 	}
 }
 
+/**
+ * Replays a thought signature that an OpenAI-compatible proxy returned in a tool call's
+ * `provider_specific_fields` (LiteLLM serving Gemini) on the same field, so the replayed call
+ * keeps it even though its id is normalized. A legacy encrypted reasoning detail sharing the
+ * `thoughtSignature` slot travels through `reasoning_details` instead.
+ */
+function withProviderThoughtSignature<TCall extends ChatCompletionMessageToolCall>(
+	call: TCall,
+	thoughtSignature: string | undefined,
+): TCall {
+	if (!thoughtSignature || parseLegacyEncryptedReasoningDetail(thoughtSignature) !== undefined) return call;
+	return { ...call, provider_specific_fields: { thought_signature: thoughtSignature } };
+}
+
 function fillMissingCommonReasoningDetailFields(
 	target: OpenAIReasoningDetailBase,
 	source: OpenAIReasoningDetail,
@@ -656,6 +670,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				type?: string;
 				function?: { name?: string; arguments?: string };
 				custom?: { name?: string; input?: string };
+				provider_specific_fields?: { thought_signature?: unknown };
 			};
 
 			let textBlock: TextContent | null = null;
@@ -983,6 +998,10 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 							const name = toolCall.function?.name ?? toolCall.custom?.name;
 							if (!block.name && name) {
 								block.name = name;
+							}
+							const thoughtSignature = toolCall.provider_specific_fields?.thought_signature;
+							if (typeof thoughtSignature === "string" && thoughtSignature.length > 0) {
+								block.thoughtSignature = thoughtSignature;
 							}
 
 							let delta = "";
@@ -1803,23 +1822,29 @@ export function convertMessages(
 				assistantMsg.tool_calls = toolCalls.map((tc): ChatCompletionMessageToolCall => {
 					const customInputProperty = options?.grammarToolInputProperties?.get(tc.name);
 					if (customInputProperty !== undefined) {
-						return {
-							id: tc.id,
-							type: "custom",
-							custom: {
-								name: tc.name,
-								input: sanitizeSurrogates(getGrammarToolInput(tc.name, tc.arguments, customInputProperty)),
+						return withProviderThoughtSignature(
+							{
+								id: tc.id,
+								type: "custom",
+								custom: {
+									name: tc.name,
+									input: sanitizeSurrogates(getGrammarToolInput(tc.name, tc.arguments, customInputProperty)),
+								},
 							},
-						};
+							tc.thoughtSignature,
+						);
 					}
-					return {
-						id: tc.id,
-						type: "function",
-						function: {
-							name: tc.name,
-							arguments: JSON.stringify(tc.arguments),
+					return withProviderThoughtSignature(
+						{
+							id: tc.id,
+							type: "function",
+							function: {
+								name: tc.name,
+								arguments: JSON.stringify(tc.arguments),
+							},
 						},
-					};
+						tc.thoughtSignature,
+					);
 				});
 			}
 			if (preservedReasoningDetails) {

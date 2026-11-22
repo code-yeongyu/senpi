@@ -5,6 +5,7 @@ import { formatModelTruncationNotice } from "../output/output-meta.ts";
 import { DEFAULT_MAX_BYTES, TailLineRing } from "../output/streaming-output.ts";
 import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
+import { type CellToolUpdateSink, NestedToolOutput } from "./nested-tool-output.ts";
 import type {
 	EvalKernelState,
 	EvalMemoryDetails,
@@ -51,8 +52,10 @@ export interface CellResultBuilderOptions {
 	readonly state: CellState;
 }
 
-export class CellResultBuilder {
+export class CellResultBuilder implements CellToolUpdateSink {
 	readonly #output: EvalOutputCollector;
+	readonly #nestedTools = new NestedToolOutput();
+	#finished = false;
 	readonly #state: CellState;
 	#memory: KernelMemoryReport | undefined;
 	#restartNotice: string | undefined;
@@ -70,6 +73,7 @@ export class CellResultBuilder {
 			...(options.artifactPath === undefined ? {} : { artifactPath: options.artifactPath }),
 			...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
 			onChunk: (chunk) => {
+				this.#nestedTools.releaseSettled();
 				this.#liveLines.append(chunk);
 				this.#scheduleOutputUpdate();
 			},
@@ -118,8 +122,29 @@ export class CellResultBuilder {
 		await this.#output.flush();
 	}
 
+	/** A nested tool's partial result streams through the same throttled live update as the cell's own output (#6167). */
+	nestedToolUpdate(callId: string, partial: AgentToolResult<unknown>): void {
+		if (this.#finished || !this.#nestedTools.update(callId, partial)) return;
+		this.#scheduleOutputUpdate();
+	}
+
+	/** Settling changes nothing on screen (the call's lines stay until the cell replaces them), so it emits nothing. */
+	nestedToolSettled(callId: string): void {
+		this.dropNestedTool(callId);
+	}
+
+	/**
+	 * Marks a call settled without emitting: its lines stay in the live view until the cell's own next output or its
+	 * completion replaces them (#6257).
+	 */
+	dropNestedTool(callId: string): boolean {
+		if (!this.#nestedTools.drop(callId)) return false;
+		this.#state.output = this.#liveCellOutput();
+		return true;
+	}
+
 	liveResult(): AgentToolResult<EvalToolDetails> {
-		this.#state.output = this.#output.cellTailText();
+		this.#state.output = this.#liveCellOutput();
 		return {
 			content: [{ type: "text", text: this.#liveUpdateText() }],
 			details: this.#details(undefined, this.#state.status === "error"),
@@ -149,8 +174,12 @@ export class CellResultBuilder {
 
 	#emitOutputUpdate(): void {
 		this.#lastOutputUpdateAt = Date.now();
-		this.#state.output = this.#output.cellTailText();
+		this.#state.output = this.#liveCellOutput();
 		this.emitUpdate(false);
+	}
+
+	#liveCellOutput(): string {
+		return this.#nestedTools.appendTo(this.#output.cellTailText());
 	}
 
 	#clearOutputUpdateTimer(): void {
@@ -160,6 +189,8 @@ export class CellResultBuilder {
 	}
 
 	async #finish(isError: boolean): Promise<AgentToolResult<EvalToolDetails>> {
+		this.#finished = true;
+		this.#nestedTools.clear();
 		this.#clearOutputUpdateTimer();
 		const output = await this.#output.finish();
 		this.#state.output = output.output;
@@ -225,7 +256,7 @@ export class CellResultBuilder {
 				: `queued behind ${this.#state.queuedBehind.join(", ")} in the ${this.#state.input.language} kernel`;
 		}
 		const summary = this.#state.input.summary === undefined ? "" : ` ${this.#state.input.summary}`;
-		const output = this.#liveLines.text();
+		const output = this.#nestedTools.appendLines(this.#liveLines.text(), LIVE_UPDATE_LINES);
 		return `1/1 cells ${this.#state.status}\n[1] ${this.#state.input.language}${summary} ${this.#state.status}${output.length === 0 ? "" : `\n${output}`}`;
 	}
 }

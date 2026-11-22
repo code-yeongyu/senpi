@@ -20,7 +20,8 @@ function fakeRuntime() {
 		spawn(_command, options) {
 			dataHandler = options.terminal.data;
 			return {
-				pid: 4242,
+				// Above Linux pid_max: `TerminalSession.start()` writes this pid's oom_score_adj.
+				pid: 2 ** 22 + 42,
 				terminal: {
 					write(data) {
 						writes.push(typeof data === "string" ? data : new TextDecoder().decode(data));
