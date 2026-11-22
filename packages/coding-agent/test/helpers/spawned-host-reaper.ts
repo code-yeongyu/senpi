@@ -9,12 +9,25 @@
  * directories they were started in were gone.
  *
  * Every host a case can start is named after its own sandbox directory (the socket path is inside
- * it), so the sandbox is the reliable handle: reap by argv, then wait until the pid is really gone
- * before the directory is removed.
+ * it), so a child this process spawned with the sandbox in its argv is the reliable handle: reap it
+ * and its descendants, then wait until each pid is really gone before the directory is removed.
+ * Only spawns recorded in this process count (senpi#7296): a foreign process whose command line
+ * happens to name the same path is never signalled.
  */
 import type { ChildProcess } from "node:child_process";
 import { execFileSync } from "node:child_process";
+import { subscribe } from "node:diagnostics_channel";
 import { once } from "node:events";
+
+/**
+ * Every child this process spawns, test and production code alike (`ensureHost` detaches its supervisor but still
+ * spawns it here). `systemd-run --scope` execs its argv in place, so the recorded pid stays the supervisor's.
+ */
+const spawnedChildren = new Set<ChildProcess>();
+subscribe("child_process", (message) => {
+	const child = (message as { process?: ChildProcess }).process;
+	if (child) spawnedChildren.add(child);
+});
 
 /** Terminates one spawned child and WAITS for its exit, so teardown cannot outrun it. */
 export async function killAndWait(child: ChildProcess, timeoutMs = 20_000): Promise<void> {
@@ -29,11 +42,10 @@ export async function killAndWait(child: ChildProcess, timeoutMs = 20_000): Prom
 }
 
 /**
- * Kills every process whose command line names `root` - AND every descendant of those processes -
- * then waits for each to disappear. A per-test `mkdtemp` directory appears in no other process's
- * argv, so the argv half is exact rather than pattern-lucky; the descendant half catches the
- * children those processes spawned under names of their own (a supervisor's host child binds its
- * own private socket, so the sandbox never appears in its argv).
+ * Kills every child this process spawned whose argv names `root` - AND every descendant of those
+ * processes - then waits for each to disappear. The descendant half catches the children those
+ * processes spawned under names of their own (a supervisor's host child binds its own private
+ * socket, so the sandbox never appears in its argv).
  *
  * POSIX only: `pgrep` does not exist on win32, where these hosts serve named pipes and are reaped
  * through the fixture's own parent watch instead.
@@ -125,16 +137,22 @@ function childrenOf(pid: number): number[] {
 	}
 }
 
+/**
+ * Live children this test process spawned whose argv names `root` (senpi#7296). Ownership is the spawn itself, never a
+ * match in the system process table: another user's process mentioning the same path is not ours and is never signalled.
+ */
 export function processesUnder(root: string): number[] {
-	try {
-		return execFileSync("pgrep", ["-f", root], { encoding: "utf8" })
-			.split("\n")
-			.map((line) => Number(line.trim()))
-			.filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
-	} catch {
-		// pgrep exits non-zero when nothing matches, which is the ordinary outcome.
-		return [];
+	const owned: number[] = [];
+	for (const child of spawnedChildren) {
+		if (child.exitCode !== null || child.signalCode !== null) {
+			spawnedChildren.delete(child);
+			continue;
+		}
+		const pid = child.pid;
+		if (pid === undefined || pid === process.pid) continue;
+		if (child.spawnargs.some((arg) => arg.includes(root))) owned.push(pid);
 	}
+	return owned;
 }
 
 /** A pid we did not spawn publishes no exit event, so liveness is the one bounded poll here. */
