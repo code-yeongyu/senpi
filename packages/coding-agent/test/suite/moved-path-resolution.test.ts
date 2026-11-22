@@ -3,8 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { deferWhileSessionOpen, type ScheduledPromptEvent } from "../../src/cli/schedule-delivery.ts";
-import { runDueJobs } from "../../src/cli/schedule-runner.ts";
+import { deferWhileSessionOpen } from "../../src/cli/schedule-delivery.ts";
+import type { ScheduledPromptEvent } from "../../src/core/extensions/builtin/schedule/delivery-contract.ts";
+import { runDueJobs } from "../../src/core/extensions/builtin/schedule/runner.ts";
 import type {
 	CreateAgentSessionRuntimeFactory,
 	CreateAgentSessionRuntimeResult,

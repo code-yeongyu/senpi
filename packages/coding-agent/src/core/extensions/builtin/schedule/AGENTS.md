@@ -13,7 +13,7 @@ User docs: `packages/coding-agent/docs/schedule.md`.
 - `tool.ts` - `schedule_prompt` (create/list/cancel), flat TypeBox schema, `exposure: "search"`.
 - `live-delivery.ts` - live delivery (senpi#4074): in an interactive or RPC session the extension runs `runDueJobs` scoped to its own session, arms one timer for the earliest due time, re-plans on tool create/cancel and on changes in `pending/`, and delivers with `sendUserMessage(..., { deliverAs: "steer" })`. It holds a `watch: false` runner lease for the process (ref-counted across sessions of one host) so an outside runner never treats its claims as abandoned.
 - `index.ts` - `createScheduleExtension({ now, timer })`: registers the tool and the live delivery.
-- The runner lives with the CLI: `src/cli/schedule-runner.ts` (`runDueJobs`), `src/cli/schedule-delivery.ts` (hook and session-resume deliveries, `deferWhileSessionOpen`), `src/cli/schedule-watch.ts` (lease, heartbeat, watch loop) and `src/cli/schedule-command.ts` (`senpi schedule list|cancel|run`).
+- The pass lives here: `runner.ts` (`runDueJobs`) and `delivery-contract.ts` (what a delivery receives and answers, `movedJobPaths`), so live delivery imports nothing from `src/cli/` (senpi#4130). The deliveries and the runner process stay with the CLI: `src/cli/schedule-delivery.ts` (hook and session-resume deliveries, `deferWhileSessionOpen`), `src/cli/schedule-watch.ts` (lease, heartbeat, watch loop) and `src/cli/schedule-command.ts` (`senpi schedule list|cancel|run`).
 
 ## INVARIANTS
 

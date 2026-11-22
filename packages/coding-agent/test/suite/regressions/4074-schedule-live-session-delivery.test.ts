@@ -11,7 +11,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { runDueJobs } from "../../../src/cli/schedule-runner.ts";
+import { runDueJobs } from "../../../src/core/extensions/builtin/schedule/runner.ts";
 import { createScheduleExtension } from "../../../src/core/extensions/builtin/schedule/index.ts";
 import type { LiveTimerPort } from "../../../src/core/extensions/builtin/schedule/live-delivery.ts";
 import { SCHEDULE_PROMPT_TOOL } from "../../../src/core/extensions/builtin/schedule/tool.ts";

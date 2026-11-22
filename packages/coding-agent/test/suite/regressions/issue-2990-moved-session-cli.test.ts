@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFile
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { sessionResumeDelivery } from "../../../src/cli/schedule-delivery.ts";
-import { runDueJobs } from "../../../src/cli/schedule-runner.ts";
+import { runDueJobs } from "../../../src/core/extensions/builtin/schedule/runner.ts";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { createScheduledJob } from "../../../src/core/extensions/builtin/schedule/store.ts";
 import { formatMissingSessionCwdError } from "../../../src/core/session-cwd.ts";
