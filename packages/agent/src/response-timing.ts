@@ -4,18 +4,23 @@ import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi
 export const STREAMED_DELTA_TYPES: ReadonlySet<string> = new Set(["text_delta", "thinking_delta", "toolcall_delta"]);
 
 export type GenerationWindowMessage = {
-	readonly usage?: { readonly reasoning?: number };
+	readonly usage?: { readonly reasoning?: number; readonly reasoningSummarized?: true };
 	readonly content?: ReadonlyArray<{ readonly type?: string }>;
 };
 
 /**
  * Whether a response generated output before its first streamed delta, so its generation window starts at the
  * response start instead (senpi#3393). Reasoning counted in usage.output may be hidden or only summarised after it
- * finished; a thinking block whose text never streamed (Bedrock, omitted display) reports no reasoning count. Shared
- * by the persisted timing (senpi#3879) and the TPS notice so both measure the same window.
+ * finished; a thinking block whose text never streamed (Bedrock, omitted display) reports no reasoning count, and a
+ * summary that did stream is marked by the adapter via usage.reasoningSummarized (senpi#3399). Shared by the
+ * persisted timing (senpi#3879) and the TPS notice so both measure the same window.
  */
 export function reasonedBeforeFirstDelta(message: GenerationWindowMessage, thinkingStreamed: boolean): boolean {
 	if ((message.usage?.reasoning ?? 0) > 0) return true;
+	// Summarized thinking (senpi#3399): the summary streams after the reasoning it condenses, so
+	// the window must start at the response start. The adapter stamped this from the request's
+	// reasoning-display mode; never guess summary semantics from stream content.
+	if (message.usage?.reasoningSummarized === true) return true;
 	if (thinkingStreamed) return false;
 	return message.content?.some((block) => block.type === "thinking") ?? false;
 }
