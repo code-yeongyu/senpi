@@ -8742,10 +8742,6 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/modes/rpc/compaction-settings-schema.ts#count": {
-			"class": "constant",
-			"reason": "schema or descriptor built once at load; never written after load"
-		},
 		"packages/coding-agent/src/modes/rpc/compaction-settings-schema.ts#flag": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"

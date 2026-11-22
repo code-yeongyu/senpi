@@ -111,6 +111,24 @@ describe("a hosted loop's boundary walks the user's handlers on the hand in step
 		await expect(step(hooks, { from: 1, walk: "never-opened" })).rejects.toThrow(/is not open on this hand/);
 	});
 
+	it("refuses a resume point other than the one the walk's last step named: no handler repeats or is skipped (#6787 review L1)", async () => {
+		const seen: string[] = [];
+		const hooks = await hooksOf([
+			{ path: "/user/a.ts", factory: drafting("a", seen) },
+			{ path: "/user/b.ts", factory: drafting("b", seen) },
+		]);
+		const first = await step(hooks, {});
+		const walk = first.resume?.walk;
+		const second = await step(hooks, { entries: first.entries, from: 1, walk });
+
+		for (const from of [1, 99])
+			await expect(step(hooks, { entries: second.entries, from, walk })).rejects.toThrow(/expects from 2/);
+		const last = await step(hooks, { entries: second.entries, from: 2, walk });
+
+		expect(seen).toEqual(["a", "b"]);
+		expect(last.resume).toBeUndefined();
+	});
+
 	it.each([0.5, 1.5])("refuses a resume point that is not a whole index: from %s (review L6)", async (from) => {
 		const hooks = await hooksOf([{ path: "/user/a.ts", factory: drafting("a", []) }]);
 		const payload: JsonValue = toJson({ ...turnEnd, context: preview, entries: [], from, walk: "w" });
