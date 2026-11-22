@@ -1,15 +1,20 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { access } from "node:fs/promises";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rememberResolvedReferenceValue } from "../../src/core/config-reference-redaction.ts";
 import { createFallbackLogger } from "../../src/core/retry-fallback/log.ts";
-
-vi.mock("node:fs/promises", async (importOriginal) => {
-	const fs = await importOriginal<typeof import("node:fs/promises")>();
-	return { ...fs, access: vi.fn(fs.access) };
-});
 
 // omo#12965: fallback.log generations written by an engine without the shared redaction registry are removed the
 // first time an engine with it starts on that agent dir (AgentSession builds its fallback logger at construction);
@@ -65,20 +70,34 @@ describe("fallback log generations from before the shared registry", () => {
 		expect(readFileSync(join(agentDir, "logs", "fallback.log"), "utf8")).toContain("first_line");
 	});
 
-	it("keeps both loggers' fresh lines when first-start cleanups overlap (#6351)", async () => {
-		const { agentDir, logs } = agentDirWithLogs({ "fallback.log": "old generation\n" });
+	it.each(["same path", "symlink alias"])("shares first-start cleanup for the %s (#6351)", async (path) => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-fallback-generations-"));
+		dirs.push(root);
+		const agentDir = join(root, "agent");
+		const logs = join(agentDir, "logs");
+		mkdirSync(agentDir);
+		let secondDir = agentDir;
+		if (path === "symlink alias") {
+			secondDir = join(root, "alias");
+			symlinkSync(agentDir, secondDir, "junction");
+		} else {
+			mkdirSync(logs);
+			writeFileSync(join(logs, "fallback.log"), "old generation\n");
+		}
 		const release = Promise.withResolvers<void>();
 		const missing = Object.assign(new Error("marker absent"), { code: "ENOENT" });
-		// Both probes observed the missing marker. Deliver the second result only after the first logger flushes.
-		vi.mocked(access)
+		// Any overlapping probe sees the missing marker. Hold the second result until the first logger flushes.
+		const probe = vi
+			.spyOn(fsPromises, "access")
 			.mockRejectedValueOnce(missing)
 			.mockImplementationOnce(async () => {
 				await release.promise;
 				throw missing;
 			});
+		syncBuiltinESMExports();
 		try {
 			const first = createFallbackLogger(agentDir);
-			const second = createFallbackLogger(agentDir);
+			const second = createFallbackLogger(secondDir);
 			first.info("from_first");
 			second.info("from_second");
 			await first.settled();
@@ -86,9 +105,11 @@ describe("fallback log generations from before the shared registry", () => {
 			await second.settled();
 			const lines = readFileSync(join(logs, "fallback.log"), "utf8").trimEnd().split("\n");
 			expect(lines.map((line) => JSON.parse(line).event)).toEqual(["from_first", "from_second"]);
+			expect(probe).toHaveBeenCalledTimes(1);
 		} finally {
 			release.resolve();
-			vi.mocked(access).mockReset();
+			probe.mockRestore();
+			syncBuiltinESMExports();
 		}
 	});
 
@@ -160,6 +181,36 @@ describe("fallback log generations from before the shared registry", () => {
 		expect(warning).toContain("removal failed: ERR_FS_EISDIR");
 		expect(warning).not.toContain(agentDir);
 		expect(warning).not.toContain("blocked");
+	});
+
+	it("still retires older logs and warns when the canonical lookup fails", async () => {
+		const { agentDir, logs } = agentDirWithLogs({ "fallback.log": "old generation\n" });
+		const lookup = vi.spyOn(realpathSync, "native").mockImplementationOnce(() => {
+			throw Object.assign(new Error(`cannot resolve ${logs}`), { code: "EACCES" });
+		});
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const logger = createFallbackLogger(agentDir);
+			logger.info("still_logged");
+			await logger.settled();
+
+			const text = readFileSync(join(logs, "fallback.log"), "utf8");
+			const entries = text
+				.trimEnd()
+				.split("\n")
+				.map((line) => JSON.parse(line));
+			expect(entries).toEqual([
+				expect.objectContaining({ event: "still_logged" }),
+				expect.objectContaining({
+					event: "retire_generations_failed",
+					errorMessage: "removal failed: EACCES",
+				}),
+			]);
+			expect(text).not.toContain(agentDir);
+		} finally {
+			lookup.mockRestore();
+			error.mockRestore();
+		}
 	});
 
 	it("runs the removal again on the next start once the obstruction is gone", async () => {

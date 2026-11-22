@@ -1,6 +1,6 @@
-import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { closeSync, fchmodSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 import { rotateLogIfNeeded } from "../log-file-rotation.ts";
 import { redactSecrets, redactSensitiveTokenValues } from "../sensitive-output.ts";
@@ -33,7 +33,7 @@ export interface SettledFallbackLogger extends FallbackLogger {
 const unsettledLoggers = new Set<Promise<void>>();
 
 /**
- * The first-start removal in flight per log path, shared by every engine copy in the realm (omo#12965): two copies
+ * The first-start removal in flight per canonical log path, shared by every engine copy in the realm (omo#12965): two copies
  * starting on one agent dir must run one removal, or the later one deletes lines the earlier one already wrote
  * (senpi#6351). A settled removal leaves the table, so a removal that failed runs again on the next start.
  */
@@ -170,9 +170,29 @@ async function retireUnsharedRegistryGenerations(filePath: string): Promise<void
 	await writeFile(marker, "", { mode: 0o600 });
 }
 
-function retireOnce(filePath: string): Promise<void> {
-	// Another copy's promise crosses here, so adopt it rather than trust its identity.
-	return Promise.resolve(retirements.once(filePath, () => retireUnsharedRegistryGenerations(filePath)));
+async function retireOnce(filePath: string): Promise<void> {
+	let directory = dirname(filePath);
+	let suffix = basename(filePath);
+	let key = filePath;
+	let canonicalizationFailure: unknown;
+	// The logs directory may not exist yet. Resolve the nearest existing directory before claiming retirement.
+	for (;;) {
+		try {
+			key = join(realpathSync.native(directory), suffix);
+			break;
+		} catch (error) {
+			const parent = dirname(directory);
+			if (errorCode(error) !== "ENOENT" || directory === parent) {
+				canonicalizationFailure = error;
+				break;
+			}
+			suffix = join(basename(directory), suffix);
+			directory = parent;
+		}
+	}
+	// If lookup failed, still attempt retirement with the original path before reporting through the existing warning.
+	await retirements.once(key, () => retireUnsharedRegistryGenerations(filePath));
+	if (canonicalizationFailure !== undefined) throw canonicalizationFailure;
 }
 
 function validMaxBytes(value: number | undefined): number {
