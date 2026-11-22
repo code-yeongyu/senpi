@@ -17,6 +17,12 @@ function parsePromptCacheTtl(value: string | undefined): PromptCacheTtl | undefi
 
 type QueryEnvironment = { env?: Record<string, string | undefined> };
 
+/** The lifetime Claude Code will write with this child environment, or undefined when it picks one per request. */
+export function pinnedPromptCacheTtl(environment: QueryEnvironment["env"]): PromptCacheTtl | undefined {
+	if (isTruthy(environment?.[FORCE_PROMPT_CACHING_5M_ENV])) return "5m";
+	return parsePromptCacheTtl(environment?.[PROMPT_CACHE_TTL_ENV]);
+}
+
 /**
  * Pin Claude Code's prompt-cache lifetime for a one-shot query and return it, so senpi's history breakpoint uses the
  * same lifetime (senpi#2982). The Messages API rejects a 1-hour breakpoint that follows a 5-minute one, and Claude Code

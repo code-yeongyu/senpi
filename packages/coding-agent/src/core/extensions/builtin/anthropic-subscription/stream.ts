@@ -11,18 +11,27 @@ import { LONG_CONTEXT_FALLBACK_DIAGNOSTIC, LONG_CONTEXT_FALLBACK_NOTICE } from "
 import { getSessionClaudeAccountPin } from "./account-command.ts";
 import { queryWithAuthLane } from "./auth-lane.ts";
 import { markColdSeedOverflow } from "./cold-seed-budget.ts";
+import {
+	buildColdSeedFrames,
+	type ColdSeedFrames,
+	framesApply,
+	seedSessionStore,
+	withFlatFallbackOnce,
+} from "./cold-seed-frames.ts";
 import { CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW } from "./context-window.ts";
 import { buildCustomToolServers } from "./custom-tools.ts";
 import { resolveQuerySettingsEnv } from "./claude-settings-env.ts";
 import { sdkAssistantFailure, sdkResultFailure, sdkResultFailureUsage } from "./errors.ts";
 import { type ClaudeCodeRun, defaultExecutableDeps, resolveClaudeCodeRun } from "./executable.ts";
+import { loadHistoryTranscript } from "./history-transcript.lazy.ts";
 import { estimateLongContextFallbackTokens } from "./long-context-budget.ts";
 import { buildAnthropicSubscriptionQueryOptions } from "./options.ts";
 import { buildDeferredPromptStream, buildPromptBlocks } from "./prompt-bridge.ts";
 import { type PromptCacheTtl, pinOneShotPromptCacheTtl } from "./prompt-cache-ttl.ts";
 import { dedupeUltraworkBlocks } from "./prompt-directive-dedupe.ts";
 import { refusalError } from "./refusal.ts";
-import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
+import { getSdkBoundary, loadClaudeAgentSdk, type SDKMessage, type SdkQueryHandle } from "./sdk-boundary.ts";
+import { createSessionUuid } from "./session-registry.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { forgetBinding } from "./session-reattach.ts";
 import { anthropicSubscriptionDiagnostic } from "./provider-diagnostic.ts";
@@ -30,6 +39,7 @@ import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import { residentSessionMessages } from "./session-stream.ts";
 import {
 	loadAnthropicSubscriptionProviderSettingsFromDisk,
+	resolveColdSeedReplay,
 	resolveCompactionOwner,
 	resumeModeSource,
 } from "./settings.ts";
@@ -106,6 +116,10 @@ export function streamAnthropicSubscription(
 			claudeCodeRun = resolveClaudeCodeRun(defaultExecutableDeps());
 			const executable = claudeCodeRun.executable;
 			let oneShotCacheTtl: PromptCacheTtl | undefined;
+			const coldSeedReplay = resolveColdSeedReplay(providerSettings);
+			// One-shot native-frame seed (senpi#1977), rebuilt per attempt for the lane it resolved; cleared by the fallback.
+			let oneShotFrames: ColdSeedFrames | undefined;
+			let oneShotFramesEnabled = true;
 			const buildOptions = (authLane: Parameters<typeof buildAnthropicSubscriptionQueryOptions>[0]["authLane"]) => {
 				const queryOptions = buildAnthropicSubscriptionQueryOptions({
 					model,
@@ -125,9 +139,11 @@ export function streamAnthropicSubscription(
 					},
 				});
 				if (mcpServers) queryOptions.mcpServers = mcpServers;
-				// The one-shot prompt is built after this, for the lane this attempt resolved (senpi#2982).
-				if (!useResidentSession) {
-					oneShotCacheTtl = pinOneShotPromptCacheTtl(
+				// The one-shot prompt is built after this, for the lane this attempt resolved (senpi#2982). A resident
+				// lane that may seed native frames pins the same lifetime, so the seed's breakpoint matches every
+				// process that later resumes it.
+				if (!useResidentSession || coldSeedReplay === "frames") {
+					const ttl = pinOneShotPromptCacheTtl(
 						queryOptions,
 						authLane ?? providerSettings.tokenInjection ?? "ambient",
 						{ ...process.env, ...options?.env },
@@ -137,6 +153,22 @@ export function streamAnthropicSubscription(
 							? settingsEnv
 							: undefined,
 					);
+					if (!useResidentSession) oneShotCacheTtl = ttl;
+				}
+				oneShotFrames =
+					!useResidentSession && oneShotFramesEnabled && historyTranscript
+						? buildColdSeedFrames(historyTranscript, context, {
+								sdkSessionId: createSessionUuid(),
+								cwd,
+								model,
+								customToolNameToSdk: resolvedTools.customToolNameToSdk,
+								...(toolWatchNote === undefined ? {} : { toolWatchNote }),
+								...(oneShotCacheTtl === undefined ? {} : { cacheTtl: oneShotCacheTtl }),
+							})
+						: undefined;
+				if (oneShotFrames) {
+					queryOptions.resume = oneShotFrames.sdkSessionId;
+					queryOptions.sessionStore = seedSessionStore(oneShotFrames);
 				}
 				return queryOptions;
 			};
@@ -174,6 +206,48 @@ export function streamAnthropicSubscription(
 					options?.sessionId,
 				);
 			const outputReserveTokens = options?.maxTokens;
+			const historyTranscript =
+				!useResidentSession && coldSeedReplay === "frames" && framesApply(context)
+					? await loadHistoryTranscript()
+					: undefined;
+			const onFramesSeedRejected = (error: unknown): void => {
+				output.diagnostics = [
+					...(output.diagnostics ?? []),
+					createAssistantMessageDiagnostic("claude_sdk_oauth_frames_seed_rejected", error),
+				];
+			};
+			const oneShotMessages = (): AsyncIterable<SDKMessage> =>
+				queryWithAuthLane({
+					prompt: buildDeferredPromptStream(
+						() =>
+							oneShotFrames?.prompt ??
+							dedupeUltraworkBlocks(
+								buildPromptBlocks(
+									context,
+									resolvedTools.customToolNameToSdk,
+									toolWatchNote,
+									oneShotCacheTtl === undefined ? {} : { cacheBreakpoint: oneShotCacheTtl },
+								),
+							).blocks,
+					),
+					query: getSdkBoundary().query,
+					onAttemptStart,
+					providerSettings,
+					env: options?.env,
+					recheckedAccounts,
+					signal: options?.signal,
+					sessionId: affinityKey,
+					model: model.id,
+					pinnedAccount: getSessionClaudeAccountPin(options?.sessionId),
+					onQuery: (query) => {
+						sdkQuery = query;
+						if (wasAborted) requestAbort();
+					},
+					buildOptions,
+					onLongContextFallback: recordLongContextFallback,
+					contextTokens,
+					outputReserveTokens,
+				});
 			if (options?.streamKind === "main" && !useResidentSession) {
 				// The reason must reflect the ACTUAL cause: resume mode "off"
 				// disables the lane by setting, while any other mode simply has no
@@ -210,6 +284,7 @@ export function streamAnthropicSubscription(
 							coldSeedAttempt = coldSeed;
 							coldSeedEstimate = estimatedTokens;
 						},
+						onFramesSeedRejected,
 						onResumeFallback: (error) => {
 							output.diagnostics = [
 								...(output.diagnostics ?? []),
@@ -217,36 +292,15 @@ export function streamAnthropicSubscription(
 							];
 						},
 					})
-				: queryWithAuthLane({
-						prompt: buildDeferredPromptStream(
-							() =>
-								dedupeUltraworkBlocks(
-									buildPromptBlocks(
-										context,
-										resolvedTools.customToolNameToSdk,
-										toolWatchNote,
-										oneShotCacheTtl === undefined ? {} : { cacheBreakpoint: oneShotCacheTtl },
-									),
-								).blocks,
-						),
-						query: getSdkBoundary().query,
-						onAttemptStart,
-						providerSettings,
-						env: options?.env,
-						recheckedAccounts,
-						signal: options?.signal,
-						sessionId: affinityKey,
-						model: model.id,
-						pinnedAccount: getSessionClaudeAccountPin(options?.sessionId),
-						onQuery: (query) => {
-							sdkQuery = query;
-							if (wasAborted) requestAbort();
+				: withFlatFallbackOnce(
+						oneShotMessages(),
+						() => oneShotFrames !== undefined,
+						(rejection) => {
+							onFramesSeedRejected(rejection);
+							oneShotFramesEnabled = false;
+							return oneShotMessages();
 						},
-						buildOptions,
-						onLongContextFallback: recordLongContextFallback,
-						contextTokens,
-						outputReserveTokens,
-					});
+					);
 
 			for await (const message of messages) {
 				const refusal = refusalError(message);

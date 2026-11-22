@@ -1,5 +1,5 @@
 import type { Api, AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type Options,
 	overrideSdkBoundary,
@@ -23,6 +23,12 @@ import {
 	submitSessionTurn,
 } from "../src/core/extensions/builtin/anthropic-subscription/session-registry-pump.ts";
 import { streamAnthropicSubscription } from "../src/core/extensions/builtin/anthropic-subscription/stream.ts";
+
+// These cases assert continuity decisions on the flat replay; a native-frame seed would also write its transcript
+// under the real HOME, which these scripted lanes inherit (senpi#1977).
+beforeEach(() => {
+	process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY = "flat";
+});
 
 const model: Model<Api> = {
 	id: "claude-test",
@@ -482,6 +488,7 @@ function residentBoundary(
 }
 
 afterEach(() => {
+	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
 	for (const sessionId of sessionIds) closeSession(sessionId, "test_cleanup");
 	sessionIds.clear();
 	resetSessionRegistryBoundary();

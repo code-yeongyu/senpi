@@ -1,5 +1,5 @@
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	type Options,
 	overrideSdkBoundary,
@@ -17,6 +17,12 @@ import {
 } from "../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
 import { streamAnthropicSubscription } from "../src/core/extensions/builtin/anthropic-subscription/stream.ts";
 import { ScriptedResidentQuery, sdkMessage, type TurnScript } from "./helpers/anthropic-subscription-scripted-sdk.ts";
+
+// These cases assert continuity decisions on the flat replay; a native-frame seed would also write its transcript
+// under the real HOME, which these scripted lanes inherit (senpi#1977).
+beforeEach(() => {
+	process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY = "flat";
+});
 
 /**
  * senpi#1973: when Claude Code rejects a fork point ("No message found with message.uuid"),
@@ -163,6 +169,7 @@ function topLevelAssistant(sessionId: string, uuid: string, parentToolUseId: str
 }
 
 afterEach(() => {
+	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
 	closeSession(SESSION_ID, "test_cleanup");
 	resetSessionRegistryBoundary();
 	resetSdkBoundary();

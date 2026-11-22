@@ -1,6 +1,6 @@
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, getCurrentTools, wrapStreamWithModelRecovery } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CLAUDE_SDK_OAUTH_API_ID } from "../../../src/core/extensions/builtin/anthropic-subscription/api-id.ts";
 import { decideNativeContinuity } from "../../../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
 import { getSession } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
@@ -18,7 +18,13 @@ import { createHarness, getMessageText, type Harness } from "../harness.ts";
 
 let harness: Harness | undefined;
 
+// These cases assert the flat replay's prompt content; the native-frame replay has its own tests (senpi#1977).
+beforeEach(() => {
+	process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY = "flat";
+});
+
 afterEach(() => {
+	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
 	harness?.cleanup();
 	harness = undefined;
 	resetScriptedSdk();
