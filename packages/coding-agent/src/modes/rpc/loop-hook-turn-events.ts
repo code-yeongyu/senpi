@@ -20,6 +20,7 @@ import {
 	isString,
 	isStrings,
 	type LoopHookDispatch,
+	type LoopHookParseContext,
 	loopHookFamily,
 	malformed,
 	forwarded,
@@ -92,32 +93,45 @@ const isToolResults = (value: unknown): value is ToolResultMessage[] =>
 	Array.isArray(value) && value.every((message) => isAgentMessage(message) && message.role === "toolResult");
 
 /**
- * A boundary step (review L2): the state the loop holds (its drafts, decision and `context` preview), and `from`, the
- * first of the hand's handlers to run. The hand's handlers chain their drafts and decision as a session's do, but only
- * the loop can build the preview from drafts, so the hand stops after a handler that returns drafts and its reply
- * names `resume { next, extensionPath }`. The loop then does what a local `emitBoundary` does after that handler:
- * rebuilds the preview, reports a failed build against `extensionPath` (keeping the last good preview; the boundary
- * ends with no drafts if they are still invalid at its end), and forwards the event again from `next`. A reply without
- * `resume` ends the hand's part of the walk.
+ * A boundary step (review L2): the state the loop holds (its drafts, decision and `context` preview), `from`, the first
+ * handler of the walk to run, and `walk`, the id of the walk a later step resumes (review L8, `loop-hook-boundary-walks`).
+ * The hand's handlers chain their drafts and decision as a session's do, but only the loop can build the preview from
+ * drafts, so the hand stops after a handler that returns drafts and its reply names `resume { next, extensionPath,
+ * walk }`. The loop then does what a local `emitBoundary` does after that handler: rebuilds the preview, reports a
+ * failed build against `extensionPath` (keeping the last good preview; the boundary ends with no drafts if they are
+ * still invalid at its end), and forwards the event again with `from: next` and the same `walk`. A reply without
+ * `resume` ends the hand's part of the walk. A first step has neither `from` nor `walk`; a step naming a walk this hand
+ * does not hold open (a new hand process) is refused, and the loop starts the boundary over.
  */
 function boundaryOf(event: "turn_end" | "agent_before_settle", payload: Record<string, unknown>) {
-	const { outcome, entries, context, from } = payload;
+	const { outcome, entries, context, from, walk } = payload;
 	const next = payload.continue;
 	if (!isOneOf(outcome, OUTCOMES) || !Array.isArray(entries) || !entries.every(isDraft) || !isBoolean(next))
 		throw malformed(event);
-	if (!isPreview(context) || !isOptional(from, isCount)) throw malformed(event);
-	return { outcome, entries, next, context, from: from ?? 0 };
+	if (!isPreview(context) || !isOptional(from, isCount) || !isOptional(walk, isString)) throw malformed(event);
+	if ((from === undefined || from === 0) !== (walk === undefined)) throw malformed(event);
+	return { outcome, entries, next, context, from: from ?? 0, walk };
 }
 
 const steppedBoundary =
-	(base: Parameters<ExtensionRunner["emitBoundary"]>[0], step: ReturnType<typeof boundaryOf>) =>
+	(
+		base: Parameters<ExtensionRunner["emitBoundary"]>[0],
+		step: ReturnType<typeof boundaryOf>,
+		{ sessionId, walks }: LoopHookParseContext,
+	) =>
 	async ({ runner, only }: LoopHookDispatch) => {
-		const forwarded = { only, from: step.from, entries: step.entries, continue: step.next };
+		const resumed = step.walk === undefined ? undefined : walks.resume(sessionId, step.walk);
+		if (step.walk !== undefined && resumed === undefined)
+			throw new Error(`${base.type} walk ${step.walk} is not open on this hand: start the boundary over`);
+		const walk = resumed ?? runner.openBoundaryWalk(base.type, only);
+		const id = step.walk ?? walks.open(sessionId, walk);
+		const forwarded = { walk, from: step.from, entries: step.entries, continue: step.next };
 		const result = await runner.emitBoundary(base, () => step.context, forwarded);
+		if (result.resume === undefined) walks.close(sessionId);
 		return {
 			entries: result.entries,
 			continue: result.continue,
-			...(result.resume === undefined ? {} : { resume: result.resume }),
+			...(result.resume === undefined ? {} : { resume: { ...result.resume, walk: id } }),
 		};
 	};
 
@@ -171,7 +185,7 @@ export const TURN_LOOP_HOOKS = loopHookFamily({
 		if (!isNumber(turnIndex) || !isNumber(timestamp)) throw malformed("turn_start");
 		return forwarded({ type: "turn_start", turnIndex, timestamp });
 	},
-	turn_end: (payload) => {
+	turn_end: (payload, context) => {
 		const { turnIndex, message, toolResults, messageEntryId, toolResultEntryIds } = payload;
 		if (
 			!isNumber(turnIndex) ||
@@ -183,10 +197,10 @@ export const TURN_LOOP_HOOKS = loopHookFamily({
 			throw malformed("turn_end");
 		const step = boundaryOf("turn_end", payload);
 		const base = { type: "turn_end" as const, turnIndex, message, toolResults, messageEntryId, toolResultEntryIds };
-		return { emit: steppedBoundary({ ...base, outcome: step.outcome }, step) };
+		return { emit: steppedBoundary({ ...base, outcome: step.outcome }, step, context) };
 	},
-	agent_before_settle: (payload) => {
+	agent_before_settle: (payload, context) => {
 		const step = boundaryOf("agent_before_settle", payload);
-		return { emit: steppedBoundary({ type: "agent_before_settle", outcome: step.outcome }, step) };
+		return { emit: steppedBoundary({ type: "agent_before_settle", outcome: step.outcome }, step, context) };
 	},
 });

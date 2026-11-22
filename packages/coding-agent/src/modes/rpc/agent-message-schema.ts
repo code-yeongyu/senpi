@@ -5,7 +5,10 @@ import { z } from "zod";
 // The hand's parse of the loop's transcript messages (senpi#5898): every role a session's transcript holds, each with the
 // fields its readers rely on. Objects are loose, so a field this schema does not name reaches handlers untouched.
 
-export const count = z.number().nonnegative();
+/** A count, size or index: a non-negative integer (a content index must name a slot, review L6). */
+export const count = z.number().int().nonnegative();
+/** A non-negative amount that may be fractional, such as a cost. */
+export const amount = z.number().nonnegative();
 export const isCount = (value: unknown): value is number => count.safeParse(value).success;
 const timestamp = z.number().nonnegative();
 
@@ -33,7 +36,7 @@ export const usageSchema = z.looseObject({
 	cacheRead: count,
 	cacheWrite: count,
 	totalTokens: count,
-	cost: z.looseObject({ input: count, output: count, cacheRead: count, cacheWrite: count, total: count }),
+	cost: z.looseObject({ input: amount, output: amount, cacheRead: amount, cacheWrite: amount, total: amount }),
 });
 
 const STOP_REASONS = [

@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, type JsonValue, type Model } from "@earendil-works/pi-ai";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
+import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import type { LateLoopRoute } from "../../src/modes/rpc/loop-hook-call.ts";
+import { createLoopHookCall, type LateLoopRoute } from "../../src/modes/rpc/loop-hook-call.ts";
+import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
@@ -51,6 +53,20 @@ export async function localRunner(cwd: string): Promise<ExtensionRunner> {
 		await createInMemoryModelRegistry(AuthStorage.inMemory()),
 		loaded.eventBus,
 	);
+}
+
+/** A hand's loop hooks over extensions given as factories at these paths (a `<builtin:...>` path is a builtin). */
+export async function hooksOf(extensions: { path: string; factory: ExtensionFactory }[]) {
+	const loaded = await createTestExtensionsResult(extensions);
+	const runner = new ExtensionRunner(
+		loaded.extensions,
+		loaded.runtime,
+		process.cwd(),
+		undefined,
+		await createInMemoryModelRegistry(AuthStorage.inMemory()),
+		loaded.eventBus,
+	);
+	return extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall(noLateEffects));
 }
 
 export interface LoopReply {

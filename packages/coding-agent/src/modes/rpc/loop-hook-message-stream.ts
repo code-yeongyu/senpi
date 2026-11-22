@@ -1,11 +1,16 @@
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { MessageUpdateEvent } from "../../core/extensions/types.ts";
-import { isAgentMessage } from "./agent-message-schema.ts";
+import { isAgentMessage, isCount } from "./agent-message-schema.ts";
 import { type WireStreamEvent, wireStreamEventOf } from "./assistant-stream-schema.ts";
 import { isRecord, malformed } from "./loop-hook-payloads.ts";
 
 // A hosted loop's `message_update` stream (senpi#5898, review L3). A stream is append-only, so the loop sends each
 // update as a delta and the hand holds the assistant message being streamed, per loop session:
+// - `seq` numbers every `message_update` the loop emits for the session, forwarded or not (review L7). A delta applies
+//   only right after the update the hand holds (`seq` one more); any other delta, after a gap in forwarding (`wants`
+//   dropped the stream for a while) or a hand restart, gets the reply `{ resync_required: true }` and runs no handler.
+//   The loop answers it by sending that same update again with the whole `message`, which the hand accepts at any
+//   `seq`;
 // - `assistantMessageEvent` is the event without its assistant message (`partial`, or `message` / `error` at the end);
 // - `message` (the whole message) comes with `start`, `done` and `error`, and with any update when the loop resyncs;
 // - otherwise `envelope` (the message without `content`) comes with every update, and `block` (the content block at
@@ -14,18 +19,24 @@ import { isRecord, malformed } from "./loop-hook-payloads.ts";
 // Each part is checked once, when it arrives, against the transcript schema; the handlers then get the event a
 // session's emit gives them (`message` a copy of the partial, `assistantMessageEvent.partial` the partial).
 
+/** An assistant message the hand holds while it streams, and the `seq` of the update that produced it. */
+export interface HeldStream {
+	readonly message: AssistantMessage;
+	readonly seq: number;
+}
+
 /** The assistant messages the hand holds while they stream, one per loop session. */
 export interface MessageStreams {
-	held(sessionId: string): AssistantMessage | undefined;
-	hold(sessionId: string, message: AssistantMessage): void;
+	held(sessionId: string): HeldStream | undefined;
+	hold(sessionId: string, stream: HeldStream): void;
 	end(sessionId: string): void;
 }
 
 export function createMessageStreams(): MessageStreams {
-	const streams = new Map<string, AssistantMessage>();
+	const streams = new Map<string, HeldStream>();
 	return {
 		held: (sessionId) => streams.get(sessionId),
-		hold: (sessionId, message) => void streams.set(sessionId, message),
+		hold: (sessionId, stream) => void streams.set(sessionId, stream),
 		end: (sessionId) => void streams.delete(sessionId),
 	};
 }
@@ -76,24 +87,37 @@ function eventFor(event: WireStreamEvent, partial: AssistantMessage): AssistantM
 	}
 }
 
+/** A forwarded `message_update`, parsed against what the hand holds for its session. */
+export type MessageUpdateStep =
+	| {
+			readonly kind: "update";
+			readonly event: Omit<MessageUpdateEvent, "type">;
+			/** What to hold next; `undefined` once the stream ended. */
+			readonly next: HeldStream | undefined;
+	  }
+	/** A delta that does not follow what is held: the loop must send this update again with its whole `message`. */
+	| { readonly kind: "resync_required" };
+
 /**
- * The `message_update` a forwarded delta stands for, given the message the hand holds for its session, and the message
- * to hold next (`undefined` once the stream ended). Throws when the delta is malformed or does not fit what is held.
+ * The `message_update` a forwarded update stands for, given the stream the hand holds for its session. Throws when the
+ * update is malformed, or when a delta that does follow the held update does not fit it (a loop that numbers its
+ * updates but sends a wrong delta).
  */
-export function messageUpdateOf(
-	update: Record<string, unknown>,
-	held: AssistantMessage | undefined,
-): { readonly event: Omit<MessageUpdateEvent, "type">; readonly next: AssistantMessage | undefined } {
+export function messageUpdateOf(update: Record<string, unknown>, held: HeldStream | undefined): MessageUpdateStep {
 	const event = wireStreamEventOf(update.assistantMessageEvent);
+	const { seq } = update;
+	if (!isCount(seq)) throw malformed("message_update");
 	const ends = event.type === "done" || event.type === "error";
 	let partial: AssistantMessage;
 	if (update.message !== undefined) {
 		if (!isAssistantMessage(update.message)) throw malformed("message_update");
 		partial = update.message;
-	} else if (held !== undefined && event.type !== "start" && !ends) partial = applied(held, update, event);
-	else throw malformed("message_update");
+	} else if (event.type === "start" || ends) throw malformed("message_update");
+	else if (held === undefined || seq !== held.seq + 1) return { kind: "resync_required" };
+	else partial = applied(held.message, update, event);
 	return {
+		kind: "update",
 		event: { message: { ...partial }, assistantMessageEvent: eventFor(event, partial) },
-		next: ends ? undefined : partial,
+		next: ends ? undefined : { message: partial, seq },
 	};
 }
