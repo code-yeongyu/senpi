@@ -14,7 +14,7 @@ import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ModelBlacklistAdapter, ModelBlacklistState } from "./extensions/types.ts";
 
 export const MODEL_BLACKLIST_FILE_NAME = "model-blacklist.json";
@@ -268,7 +268,7 @@ export class ModelBlacklistStore {
  */
 export function createModelBlacklistAdapter(
 	store: ModelBlacklistStore,
-	getUnfilteredModels: () => readonly Model<any>[],
+	getUnfilteredModels: () => readonly Model<Api>[],
 ): ModelBlacklistAdapter {
 	return {
 		getModels: getUnfilteredModels,

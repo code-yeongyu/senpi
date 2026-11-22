@@ -1,7 +1,7 @@
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModelBlacklistAdapter, ModelBlacklistState } from "../src/core/extensions/types.ts";
+import type { ExtensionUIContext, ModelBlacklistAdapter, ModelBlacklistState } from "../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { ModelSelectorComponent } from "../src/modes/interactive/components/model-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
@@ -267,14 +267,20 @@ describe("model picker blacklist (Ctrl+Alt+B)", () => {
 		harness = undefined;
 	});
 
-	const fullId = (model: Model<any>): string => `${model.provider}/${model.id}`;
+	const fullId = (model: Model<Api>): string => `${model.provider}/${model.id}`;
+
+	function requireModel(owner: Harness, id: string): Model<Api> {
+		const model = owner.getModel(id);
+		if (model === undefined) throw new Error(`harness has no model ${id}`);
+		return model;
+	}
 
 	// A policy double with the real adapter contract: toggle flips the saved state only, the active state
 	// stays whatever the process started with.
 	function createBlacklist(
-		models: Model<any>[],
+		models: Model<Api>[],
 		initial: Record<string, ModelBlacklistState>,
-		beforeSave?: (model: Model<any>) => void | Promise<void>,
+		beforeSave?: (model: Model<Api>) => void | Promise<void>,
 	) {
 		const states = new Map(Object.entries(initial));
 		const toggled: string[] = [];
@@ -294,20 +300,21 @@ describe("model picker blacklist (Ctrl+Alt+B)", () => {
 	async function openPicker(options: {
 		blacklist?: ModelBlacklistAdapter;
 		onSelect?: () => void;
-	}): Promise<{ selector: ModelSelectorComponent; alpha: Model<any>; tui: TUI }> {
-		harness = await createHarness({
+	}): Promise<{ selector: ModelSelectorComponent; alpha: Model<Api>; tui: TUI; owner: Harness }> {
+		const owner = await createHarness({
 			models: [
 				{ id: "alpha-model", name: "Alpha Model", reasoning: true },
 				{ id: "beta-model", name: "Beta Model", reasoning: true },
 			],
 		});
-		const alpha = harness.getModel("alpha-model")!;
+		harness = owner;
+		const alpha = requireModel(owner, "alpha-model");
 		const tui = createFakeTui();
 		const selector = new ModelSelectorComponent(
 			tui,
 			alpha,
-			harness.settingsManager,
-			harness.session.modelRuntime,
+			owner.settingsManager,
+			owner.session.modelRuntime,
 			[],
 			options.onSelect ?? (() => {}),
 			() => {},
@@ -315,7 +322,7 @@ describe("model picker blacklist (Ctrl+Alt+B)", () => {
 			undefined,
 			options.blacklist,
 		);
-		return { selector, alpha, tui };
+		return { selector, alpha, tui, owner };
 	}
 
 	it("offers no blacklist key when no extension installed an adapter", async () => {
@@ -328,7 +335,7 @@ describe("model picker blacklist (Ctrl+Alt+B)", () => {
 	it("lists blocked models the runtime never loaded, keeps them searchable, and refuses to select them", async () => {
 		const onSelect = vi.fn();
 		harness = await createHarness({ models: [{ id: "alpha-model", name: "Alpha Model", reasoning: true }] });
-		const alpha = harness.getModel("alpha-model")!;
+		const alpha = requireModel(harness, "alpha-model");
 		const zeta = { ...alpha, id: "zeta-blocked", name: "Zeta Blocked" };
 		const { adapter } = createBlacklist([zeta], { [fullId(zeta)]: { blocked: true, activeBlocked: true } });
 		const selector = new ModelSelectorComponent(
@@ -371,14 +378,14 @@ describe("model picker blacklist (Ctrl+Alt+B)", () => {
 
 	it("prefers the runtime's own copy of a model the adapter also lists", async () => {
 		const { adapter } = createBlacklist([], {});
-		const { selector, alpha } = await openPicker({ blacklist: adapter });
+		const { selector, alpha, owner } = await openPicker({ blacklist: adapter });
 		const staleAlpha = { ...alpha, name: "Stale Alpha" };
 		adapter.getModels = () => [staleAlpha];
 		const reopened = new ModelSelectorComponent(
 			createFakeTui(),
 			alpha,
-			harness!.settingsManager,
-			harness!.session.modelRuntime,
+			owner.settingsManager,
+			owner.session.modelRuntime,
 			[],
 			() => {},
 			() => {},
@@ -453,7 +460,7 @@ describe("model picker blacklist (Ctrl+Alt+B)", () => {
 	// Boundary: an extension's ctx.ui.setModelBlacklist reaches the picker /model opens.
 	it("installs the adapter through the interactive UI context into the picker", async () => {
 		harness = await createHarness({ models: [{ id: "alpha-model", name: "Alpha Model", reasoning: true }] });
-		const alpha = harness.getModel("alpha-model")!;
+		const alpha = requireModel(harness, "alpha-model");
 		const zeta = { ...alpha, id: "zeta-blocked", name: "Zeta Blocked" };
 		const eta = { ...alpha, id: "eta-extension", name: "Eta Extension" };
 		const { adapter } = createBlacklist([eta], { [fullId(eta)]: { blocked: true, activeBlocked: true } });
@@ -461,19 +468,25 @@ describe("model picker blacklist (Ctrl+Alt+B)", () => {
 			[fullId(zeta)]: { blocked: true, activeBlocked: true },
 		});
 		vi.spyOn(harness.session.modelRuntime, "getModelBlacklistAdapter").mockReturnValue(nativeAdapter);
-		const fakeThis: any = {
+		const showSelector = vi.fn<(create: (done: () => void) => { component: ModelSelectorComponent }) => void>();
+		const fakeThis = {
 			session: { favoriteModels: [], model: alpha, modelRuntime: harness.session.modelRuntime, scopedModels: [] },
 			settingsManager: harness.settingsManager,
 			ui: createFakeTui(),
 			captureFavoritePatternSnapshot: vi.fn(async () => undefined),
-			showSelector: vi.fn(),
+			showSelector,
 		};
-		const prototype = InteractiveMode.prototype as any;
+		// Private InteractiveMode methods, driven on a minimal host like the other interactive-mode tests.
+		const prototype = InteractiveMode.prototype as unknown as {
+			createExtensionUIContext(this: typeof fakeThis): ExtensionUIContext;
+			showModelSelector(this: typeof fakeThis): void;
+		};
 		const uiContext = prototype.createExtensionUIContext.call(fakeThis);
 		const openFromCommand = (): ModelSelectorComponent => {
 			prototype.showModelSelector.call(fakeThis);
-			const factory = fakeThis.showSelector.mock.calls.at(-1)[0];
-			return factory(() => {}).component;
+			const create = showSelector.mock.calls.at(-1)?.[0];
+			if (create === undefined) throw new Error("showModelSelector opened no selector");
+			return create(() => {}).component;
 		};
 
 		const nativePicker = openFromCommand();
@@ -481,14 +494,14 @@ describe("model picker blacklist (Ctrl+Alt+B)", () => {
 		expect(modelRow(nativePicker, "eta-extension")).toBeUndefined();
 		nativePicker.dispose();
 
-		uiContext.setModelBlacklist(adapter);
+		uiContext.setModelBlacklist?.(adapter);
 		const withAdapter = openFromCommand();
 		expect(renderedText(withAdapter)).toContain("block/unblock");
 		expect(modelRow(withAdapter, "eta-extension")).toMatch(/blocked$/);
 		expect(modelRow(withAdapter, "zeta-blocked")).toBeUndefined();
 		withAdapter.dispose();
 
-		uiContext.setModelBlacklist(undefined);
+		uiContext.setModelBlacklist?.(undefined);
 		const withoutAdapter = openFromCommand();
 		expect(renderedText(withoutAdapter)).toContain("block/unblock");
 		expect(modelRow(withoutAdapter, "zeta-blocked")).toMatch(/blocked$/);

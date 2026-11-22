@@ -273,10 +273,10 @@ export interface ModelBlacklistState {
  */
 export interface ModelBlacklistAdapter {
 	/** Every model the picker should list, captured before the blacklist filtered them. Models the runtime also reports as available win over these. */
-	getModels: () => readonly Model<any>[];
-	getState: (model: Model<any>) => ModelBlacklistState;
+	getModels: () => readonly Model<Api>[];
+	getState: (model: Model<Api>) => ModelBlacklistState;
 	/** Persist the opposite of the model's saved state. Rejecting or throwing is shown to the user. Never changes the running process. */
-	toggle: (model: Model<any>) => void | Promise<void>;
+	toggle: (model: Model<Api>) => void | Promise<void>;
 }
 
 /**
