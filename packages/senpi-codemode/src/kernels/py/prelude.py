@@ -2466,39 +2466,16 @@ def _start_parent_watch() -> None:
         ).start()
 
 
-def _point_windows_stdin_at_fd0() -> None:
-    # subprocess hands a child the process STD_INPUT_HANDLE, not fd 0, so it must follow the dup2 below.
-    import ctypes
-    import msvcrt
-
-    set_std_handle = ctypes.WinDLL("kernel32", use_last_error=True).SetStdHandle
-    set_std_handle.argtypes = (ctypes.c_uint32, ctypes.c_void_p)
-    set_std_handle.restype = ctypes.c_int
-    if not set_std_handle(-10, msvcrt.get_osfhandle(0)):  # STD_INPUT_HANDLE
-        raise ctypes.WinError(ctypes.get_last_error())
-
-
-def _private_control_stdin() -> typing.TextIO:
-    # The control pipe is the kernel's alone (senpi#2980): a cell's child that inherits it either steals control
-    # frames (POSIX) or hangs at startup while the reader thread holds the pipe (Windows, CPython gh-78961). The
-    # reader keeps a private, non-inheritable duplicate; fd 0 (and sys.stdin, input()) becomes the null device.
-    try:
-        control_fd = sys.stdin.fileno()
-    except (AttributeError, OSError, ValueError):
-        return sys.stdin  # an in-process stand-in has no descriptor a child could inherit
-    private_fd = os.dup(control_fd)
-    null_fd = os.open(os.devnull, os.O_RDONLY)
-    try:
-        os.dup2(null_fd, 0)
-        if os.name == "nt":
-            _point_windows_stdin_at_fd0()
-    except BaseException:
-        os.dup2(private_fd, 0)
-        os.close(private_fd)
-        raise
-    finally:
-        os.close(null_fd)
-    return os.fdopen(private_fd, "r", encoding="utf-8")
+def _control_channel() -> typing.TextIO:
+    # The control pipe is the kernel's alone (senpi#2980): the host spawns the interpreter with stdin on the null device
+    # and hands frames on their own descriptor, named here once and removed from the environment cells and their
+    # children see. Non-inheritable, so no child can hold it (Windows hang, CPython gh-78961) or steal frames (POSIX).
+    named = os.environ.pop("SENPI_PY_CONTROL_FD", None)
+    if named is None:
+        return sys.stdin  # an in-process stand-in drives the kernel through stdin
+    control_fd = int(named)
+    os.set_inheritable(control_fd, False)
+    return os.fdopen(control_fd, "r", encoding="utf-8")
 
 
 def _read_control(commands: queue.SimpleQueue[tuple[str, Any]], control: typing.TextIO) -> None:
@@ -2521,7 +2498,7 @@ def main() -> None:
     _start_parent_watch()
     sys.stdout, sys.stderr = KERNEL_TOOL_STREAMS
     commands: queue.SimpleQueue[tuple[str, Any]] = queue.SimpleQueue()
-    control = _private_control_stdin()
+    control = _control_channel()
     threading.Thread(target=_read_control, args=(commands, control), name="senpi-control-reader", daemon=True).start()
     host_closed = False
     while True:
