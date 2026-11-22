@@ -2,6 +2,7 @@ import { MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
 import { isValidThinkingLevel } from "../../cli/args.ts";
 import { usageLimitResetMs } from "../credential-pool/reset-time.ts";
+import { fallbackClassificationText } from "./classification-text.ts";
 import { isTransportFailureText } from "./transient-network.ts";
 
 /**
@@ -78,9 +79,10 @@ export class SelectorCooldowns {
 	}
 
 	private durationFor(failure: { retryAfterMs?: number; errorMessage?: string }): { ms: number; stated: boolean } {
-		const stated = this.statedDurationMs(failure);
+		const errorMessage = fallbackClassificationText(failure.errorMessage);
+		const stated = this.statedDurationMs({ ...failure, errorMessage });
 		return stated === undefined
-			? { ms: this.defaultDurationMs(failure.errorMessage), stated: false }
+			? { ms: this.defaultDurationMs(errorMessage), stated: false }
 			: { ms: stated, stated: true };
 	}
 

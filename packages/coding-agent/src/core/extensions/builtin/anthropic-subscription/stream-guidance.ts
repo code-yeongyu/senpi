@@ -1,3 +1,4 @@
+import { CLAUDE_POOL_MODEL_LIMIT_LEAD } from "../../../retry-fallback/classification-text.ts";
 import { AllAccountsBlockedError } from "./affinity.ts";
 import { errorAccountContext } from "./account-context.ts";
 import { classifySdkError } from "./errors.ts";
@@ -53,15 +54,15 @@ export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCo
  * fallback hold) reads.
  */
 function modelLimitSentence(error: AllAccountsBlockedError, model: string, now: number): string {
-	const subject =
+	const lead =
 		error.unavailableAccount === undefined
-			? "All Anthropic Subscription accounts have"
-			: `Claude account '${error.unavailableAccount.name}' has`;
+			? CLAUDE_POOL_MODEL_LIMIT_LEAD
+			: `Claude account '${error.unavailableAccount.name}' has hit the usage limit for model `;
 	const until = error.soonestUnblockAt;
-	if (until === undefined || !Number.isFinite(until)) return `${subject} hit the usage limit for model ${model}.`;
+	if (until === undefined || !Number.isFinite(until)) return `${lead}${model}.`;
 	const waitMs = Math.max(0, until - now);
 	const minutes = Math.ceil(waitMs / 60_000);
-	return `${subject} hit the usage limit for model ${model}; it resets in ${Math.floor(minutes / 60)} hours ${minutes % 60} minutes, at ${new Date(until).toISOString()}.`;
+	return `${lead}${model}; it resets in ${Math.floor(minutes / 60)} hours ${minutes % 60} minutes, at ${new Date(until).toISOString()}.`;
 }
 
 /** The session's retry-delay reader only takes the marker at the very end of the text. */

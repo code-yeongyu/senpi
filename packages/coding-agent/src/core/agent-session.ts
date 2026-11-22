@@ -380,6 +380,7 @@ import { checkSessionReloadVeto } from "./reload-veto.ts";
 import { RequiredCompactionError } from "./required-compaction-error.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
+import { fallbackClassificationText } from "./retry-fallback/classification-text.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
 import {
 	acquireFallbackCircuits,
@@ -13350,7 +13351,7 @@ export class AgentSession {
 	}
 
 	private _isClaudeSdkSessionLockError(message: AssistantMessage): boolean {
-		return (message.errorMessage ?? "").includes("Lock file is already being held");
+		return fallbackClassificationText(message.errorMessage)?.includes("Lock file is already being held") ?? false;
 	}
 
 	private _isClaudeSdkInvalidRequestError(message: AssistantMessage): boolean {
@@ -13444,9 +13445,10 @@ export class AgentSession {
 	}
 
 	private _getProviderRetryDelayMs(errorMessage: string): number | undefined {
-		const markerMs = parseRetryAfterMsMarker(errorMessage);
+		const text = fallbackClassificationText(errorMessage) ?? "";
+		const markerMs = parseRetryAfterMsMarker(text);
 		if (markerMs !== undefined) return markerMs;
-		const hintMs = extract429RetryAfterMs({ bodyText: errorMessage });
+		const hintMs = extract429RetryAfterMs({ bodyText: text });
 		return hintMs;
 	}
 
@@ -13765,7 +13767,7 @@ export class AgentSession {
 			const is429Class =
 				!stallError &&
 				/rate.?limit|(?:^429(?=\s+\{)|(?:\bHTTP\/1\.[01]\s+|\bHTTP\s+|\bstatus(?:\s+code)?\s+|\berror\s+|\bcode\s+)429\b)|too many requests|resource.?exhausted/i.test(
-					errorMessage,
+					fallbackClassificationText(errorMessage) ?? "",
 				);
 			if (is429Class) this._runLimitFailure = true;
 			// Profile-driven routing: "after-turn-budget" (Kimi) keeps 429s on the

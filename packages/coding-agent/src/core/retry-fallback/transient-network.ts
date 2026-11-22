@@ -1,4 +1,5 @@
 import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
+import { fallbackClassificationText } from "./classification-text.ts";
 
 // Transport blips (timeouts, DNS, socket drops, a cut stream); shared by the cooldown and the fallback decision.
 const TRANSPORT_FAILURE =
@@ -18,7 +19,8 @@ export function isTransportFailureText(normalizedMessage: string): boolean {
 }
 
 export function isPureNetworkTransient(errorMessage: string | undefined): boolean {
-	if (errorMessage === undefined) return false;
-	const message = normalize(errorMessage);
+	const text = fallbackClassificationText(errorMessage);
+	if (text === undefined) return false;
+	const message = normalize(text);
 	return isTransportFailureText(message) && !PROVIDER_VERDICT.test(message);
 }

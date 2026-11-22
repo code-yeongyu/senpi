@@ -1,3 +1,5 @@
+import { fallbackClassificationText } from "./classification-text.ts";
+
 /**
  * Billing-class provider failures (credit exhaustion, hard account quota).
  * These never recover by retrying the same account, so the fallback switch for
@@ -6,7 +8,7 @@
  *
  * The OpenAI hard-quota exhaustion family (`usage_limit_reached`,
  * `usage_not_included`, "usage limit has been reached") is inlined here to keep
- * this module import-free; its single source of truth is
+ * this module independent of the provider retry rules; its single source of truth is
  * `USAGE_LIMIT_EXHAUSTION` in `@earendil-works/pi-ai`'s `utils/retry.ts`
  * (senpi#1969).
  */
@@ -19,7 +21,7 @@ const BILLING_ERROR_PATTERN = new RegExp(
 		"credits[-_ ]required",
 		"credits are required",
 		// OpenAI hard-quota exhaustion (senpi#1969). Inlined to keep this module
-		// import-free; the single source of truth is USAGE_LIMIT_EXHAUSTION in
+		// independent of the provider retry rules; the single source of truth is USAGE_LIMIT_EXHAUSTION in
 		// @earendil-works/pi-ai utils/retry.ts.
 		"usage_limit_reached",
 		"usage_not_included",
@@ -58,11 +60,12 @@ const TRANSIENT_SERVER_SIGNAL_PATTERN =
 	/(?:^|[^0-9])(?:500|502|503|504|520|522|524)(?:[^0-9]|$)|"type"\s*:\s*"server_error"/i;
 
 export function isBillingErrorMessage(errorMessage: string | undefined): boolean {
-	if (errorMessage === undefined) return false;
-	if (STRONG_BILLING_ERROR_PATTERN.test(errorMessage)) return true;
-	if (!BILLING_ERROR_PATTERN.test(errorMessage)) return false;
+	const text = fallbackClassificationText(errorMessage);
+	if (text === undefined) return false;
+	if (STRONG_BILLING_ERROR_PATTERN.test(text)) return true;
+	if (!BILLING_ERROR_PATTERN.test(text)) return false;
 	// senpi#4632: bare "Billing" prose on a transient 5xx is a gateway
 	// dependency failure, not a spent account — it must not pin the fallback
 	// or hold the whole provider as an account limit.
-	return !TRANSIENT_SERVER_SIGNAL_PATTERN.test(errorMessage);
+	return !TRANSIENT_SERVER_SIGNAL_PATTERN.test(text);
 }

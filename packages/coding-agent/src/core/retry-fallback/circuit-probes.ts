@@ -1,6 +1,7 @@
 import { isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
 import { isBillingErrorMessage } from "./billing.ts";
 import type { CircuitAdmission, FallbackCircuitAccess, ProbeToken } from "./circuit.ts";
+import { fallbackClassificationText } from "./classification-text.ts";
 
 /**
  * Non-retryable failures that still say the entry is unusable for everyone:
@@ -8,7 +9,7 @@ import type { CircuitAdmission, FallbackCircuitAccess, ProbeToken } from "./circ
  * are not outages and never open a circuit.
  */
 export function isHealthExhaustionFailure(errorMessage: string | undefined): boolean {
-	return isBillingErrorMessage(errorMessage) || isQuotaExhaustionMessage(errorMessage);
+	return isBillingErrorMessage(errorMessage) || isQuotaExhaustionMessage(fallbackClassificationText(errorMessage));
 }
 
 /**

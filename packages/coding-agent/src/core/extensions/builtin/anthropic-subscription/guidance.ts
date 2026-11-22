@@ -1,4 +1,5 @@
 import { ACCOUNT_POOL_REFUSAL_NOTE } from "../../../credential-pool/classify.ts";
+import { CLAUDE_POOL_BLOCKED_HEADING } from "../../../retry-fallback/classification-text.ts";
 import type { BlockedAccountState, PinSource, UnavailableAccount } from "./affinity.ts";
 import type { SdkErrorKind } from "./errors.ts";
 import type { ClaudeCodeRun } from "./executable.ts";
@@ -62,7 +63,7 @@ export function allAccountsBlockedGuidance(
 				? [`  Next automatic re-check: ${new Date(soonestUnblockAt).toISOString()}.`]
 				: [];
 		return [
-			`All Claude accounts for ${PROVIDER} are currently blocked (authentication error).`,
+			`${CLAUDE_POOL_BLOCKED_HEADING}authentication error).`,
 			...recheck,
 			...accountStateLines(accounts),
 			`  /login ${PROVIDER}  - re-authenticate to refresh the blocked account`,
@@ -75,7 +76,7 @@ export function allAccountsBlockedGuidance(
 			? new Date(soonestUnblockAt).toISOString()
 			: "after re-login";
 	return [
-		`All Claude accounts for ${PROVIDER} are currently blocked (rate limit or auth errors).`,
+		`${CLAUDE_POOL_BLOCKED_HEADING}rate limit or auth errors).`,
 		`  Soonest automatic retry: ${eta}.`,
 		...accountStateLines(accounts),
 		`  /claude-account list  - inspect account states`,
