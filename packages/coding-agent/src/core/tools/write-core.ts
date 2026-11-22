@@ -90,12 +90,12 @@ export interface CoreWriteToolOptions {
 	checkSyntax?: SyntaxChecker;
 }
 
-async function writeParseBreakWarning(
+function writeParseBreakWarning(
 	checkSyntax: SyntaxChecker,
 	path: string,
 	baseline: WriteBaseline,
 	content: string,
-): Promise<string | undefined> {
+): string | undefined {
 	switch (baseline.kind) {
 		case "missing":
 			return parseBreakWarning(checkSyntax, path, undefined, content);
@@ -173,7 +173,7 @@ export function createCoreWriteToolDefinition(
 				await ops.writeFile(absolutePath, content);
 				throwIfAborted();
 
-				const warning = await writeParseBreakWarning(checkSyntax, path, baseline, content);
+				const warning = writeParseBreakWarning(checkSyntax, path, baseline, content);
 				const summary = `Successfully wrote to ${path}`;
 				return {
 					content: [{ type: "text", text: warning === undefined ? summary : `${summary}\n\n${warning}` }],

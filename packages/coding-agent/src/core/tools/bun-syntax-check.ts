@@ -1,17 +1,13 @@
 import {
 	createSyntaxChecker,
-	type JsonErrorLocator,
 	type ScriptLoader,
 	type ScriptParser,
 	type SyntaxChecker,
 	type SyntaxErrorReport,
 } from "./syntax-check.ts";
 
-// The local edit and write tools use the parsers the Bun runtime already ships: Bun.Transpiler for JS/TS, and the
-// bundler's JSON loader to locate a JSON error that JSC's JSON.parse reports without a position. On Node only JSON is
-// checked, and V8's JSON.parse message carries the position.
-
-const VIRTUAL_JSON_PATH = "/senpi-syntax-check/content.json";
+// The local edit and write tools check JS/TS with the parser the Bun runtime already ships, Bun.Transpiler. JSON is
+// checked by the worker-safe core on every runtime; on Node only JSON is checked.
 
 function numberField(value: unknown, key: string): number | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
@@ -55,32 +51,8 @@ function bunScriptParser(bun: object): ScriptParser | undefined {
 	};
 }
 
-/** The first positioned error log of an in-memory Bun.build of the content as a .json entry; nothing is written. */
-function bunJsonErrorLocator(bun: object): JsonErrorLocator | undefined {
-	const build: unknown = Reflect.get(bun, "build");
-	if (typeof build !== "function") return undefined;
-	return async (content) => {
-		try {
-			const result: unknown = await Reflect.apply(build, bun, [
-				{ entrypoints: [VIRTUAL_JSON_PATH], files: { [VIRTUAL_JSON_PATH]: content }, throw: false },
-			]);
-			const logs: unknown = typeof result === "object" && result !== null ? Reflect.get(result, "logs") : undefined;
-			if (!Array.isArray(logs)) return undefined;
-			for (const log of logs) {
-				if (typeof log !== "object" || log === null || Reflect.get(log, "level") !== "error") continue;
-				const message: unknown = Reflect.get(log, "message");
-				const report = positionedReport(typeof message === "string" ? message : "", Reflect.get(log, "position"));
-				if (report.line !== undefined && report.message !== "") return report;
-			}
-			return undefined;
-		} catch {
-			return undefined;
-		}
-	};
-}
-
 export function createLocalSyntaxChecker(): SyntaxChecker {
 	const bun: unknown = typeof process.versions.bun === "string" ? Reflect.get(globalThis, "Bun") : undefined;
 	if (typeof bun !== "object" || bun === null) return createSyntaxChecker();
-	return createSyntaxChecker({ parseScript: bunScriptParser(bun), locateJsonError: bunJsonErrorLocator(bun) });
+	return createSyntaxChecker({ parseScript: bunScriptParser(bun) });
 }

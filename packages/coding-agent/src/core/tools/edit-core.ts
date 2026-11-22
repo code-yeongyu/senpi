@@ -248,7 +248,7 @@ export function createCoreEditToolDefinition(
 
 				const diffResult = generateDiffString(baseContent, newContent);
 				const patch = generateUnifiedPatch(path, baseContent, newContent);
-				const warning = await parseBreakWarning(checkSyntax, path, normalizedContent, newContent);
+				const warning = parseBreakWarning(checkSyntax, path, normalizedContent, newContent);
 				const summary = `Successfully replaced ${edits.length} block(s) in ${path}.`;
 				return {
 					content: [{ type: "text", text: warning === undefined ? summary : `${summary}\n\n${warning}` }],

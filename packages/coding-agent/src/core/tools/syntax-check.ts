@@ -2,6 +2,8 @@
 // call and does not parse after it gets one advisory block naming the first syntax error; the call still succeeds.
 // Worker-safe: the JS/TS parser is injected by the host, JSON.parse is available everywhere.
 
+import { strictJsonErrorOffset } from "./strict-json-offset.ts";
+
 /** Larger files get no verdict, so the check stays cheap: 1 MiB of text, counted in UTF-16 code units. */
 const SYNTAX_CHECK_MAX_LENGTH = 1024 * 1024;
 
@@ -19,18 +21,14 @@ export type ScriptLoader = "jsx" | "ts" | "tsx";
 
 export type ScriptParser = (code: string, loader: ScriptLoader) => SyntaxVerdict;
 
-/** Finds the first strict-JSON error with its position, for a runtime whose JSON.parse message carries none. */
-export type JsonErrorLocator = (content: string) => Promise<SyntaxErrorReport | undefined>;
-
 export interface SyntaxParsers {
 	readonly parseScript?: ScriptParser;
-	readonly locateJsonError?: JsonErrorLocator;
 }
 
 export interface SyntaxChecker {
 	readonly check: (path: string, content: string) => SyntaxVerdict;
-	/** The reported error with a position where one can be found; called only once a warning is certain. */
-	readonly locate: (path: string, content: string, error: SyntaxErrorReport) => Promise<SyntaxErrorReport>;
+	/** The reported error with a position where one can be confirmed; called only once a warning is certain. */
+	readonly locate: (path: string, content: string, error: SyntaxErrorReport) => SyntaxErrorReport;
 }
 
 function scriptLoader(extension: string): ScriptLoader | undefined {
@@ -57,15 +55,20 @@ function extensionOf(path: string): string {
 	return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
 }
 
-/** The position in a JSON.parse message, which V8 reports as `(line N column M)` or `at position N`; Bun reports none. */
-function jsonErrorPosition(message: string, content: string): { line: number; column: number } | undefined {
-	const lineColumn = /\(line (\d+) column (\d+)\)/u.exec(message);
-	if (lineColumn) return { line: Number(lineColumn[1]), column: Number(lineColumn[2]) };
-	const offsetMatch = /at position (\d+)/u.exec(message);
-	if (!offsetMatch) return undefined;
-	const before = content.slice(0, Number(offsetMatch[1]));
+/**
+ * The offset V8 appends to a JSON.parse message, `... at position N` optionally followed by `(line L column C)`;
+ * JSC appends none. Only that suffix counts: elsewhere the message may quote the invalid input itself.
+ */
+function jsonParseErrorOffset(message: string, contentLength: number): number | undefined {
+	const suffix = / at position (\d+)(?: \(line \d+ column \d+\))?$/u.exec(message);
+	const offset = suffix ? Number(suffix[1]) : undefined;
+	return offset !== undefined && offset <= contentLength ? offset : undefined;
+}
+
+function lineAndColumn(content: string, offset: number): { line: number; column: number } {
+	const before = content.slice(0, offset);
 	const lastNewline = before.lastIndexOf("\n");
-	return { line: before.split("\n").length, column: before.length - lastNewline };
+	return { line: before.split("\n").length, column: offset - lastNewline };
 }
 
 function checkJson(content: string): SyntaxVerdict {
@@ -73,12 +76,23 @@ function checkJson(content: string): SyntaxVerdict {
 		JSON.parse(content);
 		return { ok: true };
 	} catch (error) {
-		if (!(error instanceof SyntaxError)) return undefined;
-		return { ok: false, error: { message: error.message, ...jsonErrorPosition(error.message, content) } };
+		return error instanceof SyntaxError ? { ok: false, error: { message: error.message } } : undefined;
 	}
 }
 
-export function createSyntaxChecker({ parseScript, locateJsonError }: SyntaxParsers = {}): SyntaxChecker {
+/**
+ * JSON.parse stays the verdict and the message; the position is the offset where the ECMA-404 grammar stops, added
+ * only when that grammar rejects the content too and, where V8 names an offset, it names the same one.
+ */
+function locateJsonError(content: string, error: SyntaxErrorReport): SyntaxErrorReport {
+	const offset = strictJsonErrorOffset(content);
+	if (offset === undefined) return error;
+	const reported = jsonParseErrorOffset(error.message, content.length);
+	if (reported !== undefined && reported !== offset) return error;
+	return { message: error.message, ...lineAndColumn(content, offset) };
+}
+
+export function createSyntaxChecker({ parseScript }: SyntaxParsers = {}): SyntaxChecker {
 	return {
 		check: (path, content) => {
 			if (content.length > SYNTAX_CHECK_MAX_LENGTH) return undefined;
@@ -87,12 +101,7 @@ export function createSyntaxChecker({ parseScript, locateJsonError }: SyntaxPars
 			const loader = scriptLoader(extension);
 			return loader && parseScript ? parseScript(content, loader) : undefined;
 		},
-		// JSON.parse stays the verdict; the locator only adds a position. When it finds no error (it is more lenient
-		// than JSON.parse on some inputs), the error is reported without one.
-		locate: async (path, content, error) => {
-			if (error.line !== undefined || locateJsonError === undefined || extensionOf(path) !== "json") return error;
-			return (await locateJsonError(content)) ?? error;
-		},
+		locate: (path, content, error) => (extensionOf(path) === "json" ? locateJsonError(content, error) : error),
 	};
 }
 
@@ -100,20 +109,38 @@ function errorLocation(error: SyntaxErrorReport): string {
 	return error.line !== undefined && error.column !== undefined ? ` at ${error.line}:${error.column}` : "";
 }
 
-/**
- * The warning to append to a successful edit or write result, or `undefined`. `before` is the content before the
- * call, or `undefined` for a newly created file, which counts as having parsed.
- */
-export async function parseBreakWarning(
+/** The error `after` introduces: it does not parse, and `before` parsed or is a new file. */
+function introducedError(
 	checkSyntax: SyntaxChecker,
 	path: string,
 	before: string | undefined,
 	after: string,
-): Promise<string | undefined> {
+): SyntaxErrorReport | undefined {
 	const afterVerdict = checkSyntax.check(path, after);
 	if (afterVerdict === undefined || afterVerdict.ok) return undefined;
 	if (before !== undefined && checkSyntax.check(path, before)?.ok !== true) return undefined;
-	const error = await checkSyntax.locate(path, after, afterVerdict.error);
+	return checkSyntax.locate(path, after, afterVerdict.error);
+}
+
+/**
+ * The warning to append to a successful edit or write result, or `undefined`. `before` is the content before the
+ * call, or `undefined` for a newly created file, which counts as having parsed.
+ */
+export function parseBreakWarning(
+	checkSyntax: SyntaxChecker,
+	path: string,
+	before: string | undefined,
+	after: string,
+): string | undefined {
+	let error: SyntaxErrorReport | undefined;
+	try {
+		error = introducedError(checkSyntax, path, before, after);
+	} catch {
+		// The file is already written and the warning is advisory: a checker that fails (a host parser or an injected
+		// checker throwing) costs the warning, never the result of the call.
+		return undefined;
+	}
+	if (error === undefined) return undefined;
 	const where = `First syntax error${errorLocation(error)}: ${error.message}.`;
 	if (before === undefined) {
 		return `Warning: the written file does not parse. ${where} The file was written; re-read that region and fix it.`;
