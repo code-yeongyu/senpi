@@ -10,8 +10,6 @@
 
 ### Fixed
 
-- Async event subscribers can no longer hold a run open indefinitely. Each has a 60-second budget by default (`AgentOptions.listenerTimeoutMs`), and abort releases held subscriber waits. A timeout names the listener and event, ends the run as a local failure rather than a provider failure, and preserves the subscription for later runs ([#4054](https://github.com/code-yeongyu/senpi/issues/4054)).
-
 ### Removed
 
 ## [2026.11.22-2] - 2026-11-22
