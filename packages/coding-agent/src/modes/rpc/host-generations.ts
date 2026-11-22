@@ -31,6 +31,8 @@ export interface HostGenerationRow {
 	readonly rss_mb: number | null;
 	/** Resident memory of that generation's own supervisor and host processes, without their tools. */
 	readonly host_rss_mb: number | null;
+	/** Kernel memory footprint of that generation's own supervisor and host processes. */
+	readonly host_footprint_mb: number | null;
 	/** Session files this generation still claims in `reservations/`. */
 	readonly sessions: number;
 	/** True for the generation the pointer names: the one serving the socket. */
@@ -141,8 +143,8 @@ async function claimEnded(owner: SessionPathOwner, ended: ReadonlySet<string>): 
 		);
 }
 
-function memoryOf(metrics: HostProcessMetrics): Pick<HostGenerationRow, "rss_mb" | "host_rss_mb"> {
-	return { rss_mb: metrics.rss_mb, host_rss_mb: metrics.host_rss_mb };
+function memoryOf(metrics: HostProcessMetrics): Pick<HostGenerationRow, "rss_mb" | "host_rss_mb" | "host_footprint_mb"> {
+	return { rss_mb: metrics.rss_mb, host_rss_mb: metrics.host_rss_mb, host_footprint_mb: metrics.host_footprint_mb };
 }
 
 /**
@@ -169,7 +171,9 @@ export async function readGenerationRows(
 			generation: typeof record.generation === "number" ? record.generation : 0,
 			pid: record.pid,
 			engineVersion: typeof record.engineVersion === "string" ? record.engineVersion : null,
-			...(alive ? memoryOf(await readHostProcessMetrics(record.pid)) : { rss_mb: null, host_rss_mb: null }),
+			...(alive
+				? memoryOf(await readHostProcessMetrics(record.pid))
+				: { rss_mb: null, host_rss_mb: null, host_footprint_mb: null }),
 			sessions: claims.filter((claim) => claim.owner.instanceId === instanceId).length,
 			current: instanceId === currentId,
 			alive,
