@@ -334,6 +334,7 @@ function isValidContinuationStoppedDetail(value: unknown): value is Goal["contin
 		(value.reason === "cap" ||
 			value.reason === "stale" ||
 			value.reason === "repetition" ||
+			value.reason === "idle" ||
 			value.reason === "length-exhausted" ||
 			value.reason === "no-progress" ||
 			value.reason === "context-overflow") &&

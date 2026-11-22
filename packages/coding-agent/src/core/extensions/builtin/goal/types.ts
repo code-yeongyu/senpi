@@ -14,7 +14,7 @@ export type GoalUpdateSource = "model" | "user";
 
 /** Deny reason + counters captured with a stop claim, so a later session start can re-append the stop entries if the process died between the claim and the append (senpi#3015). */
 export type GoalContinuationStoppedDetail = {
-	reason: "cap" | "stale" | "repetition" | "length-exhausted" | "no-progress" | "context-overflow";
+	reason: "cap" | "stale" | "repetition" | "idle" | "length-exhausted" | "no-progress" | "context-overflow";
 	consecutiveContinuations: number;
 	unattendedContinuations: number;
 	noProgressContinuations: number;
