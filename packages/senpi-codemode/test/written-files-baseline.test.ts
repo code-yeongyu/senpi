@@ -1,7 +1,8 @@
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FileSignature } from "../src/written-files/scan-boundaries.ts";
-import { type ChangedFile, WrittenFilesTracker } from "../src/written-files/tracker.ts";
+import { WrittenFilesTracker } from "../src/written-files/tracker.ts";
+import type { ChangedFile } from "../src/written-files/window.ts";
 import { gate, holdRead, hookFailures, hooksReturn, openCell, outcomeFiles } from "./eval/written-files-barriers.ts";
 import { reportedPaths, type WrittenFilesHarness, writtenFilesHarness } from "./eval/written-files-fakes.ts";
 

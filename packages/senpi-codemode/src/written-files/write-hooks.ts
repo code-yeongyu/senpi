@@ -2,7 +2,7 @@ import type { ExtensionToolContext } from "@code-yeongyu/senpi";
 import { capCodePoints } from "../tool/call-capture.ts";
 import type { ScanFs } from "./workspace-fs.ts";
 import { isSourceText, SOURCE_FILE_MAX_BYTES, SOURCE_FILE_SNIFF_BYTES } from "./source-file.ts";
-import type { ChangedFile, WrittenFilesSelection } from "./tracker.ts";
+import { type ChangedFile, type HookStart, withoutCeded, type WrittenFilesSelection } from "./window.ts";
 
 /** Files listed in a cell result and sent through the write hooks; the rest are counted. */
 export const WRITTEN_FILES_LIMIT = 20;
@@ -31,8 +31,11 @@ export interface WriteHookDeps {
 	readonly report: ReportToolResult | undefined;
 	/** The hooks for this file returned or failed: what they left on disk is the reporting cell's. */
 	readonly noteHooked: (absolutePath: string) => Promise<void>;
-	/** The hooks for this listed file start now: false when the cell may no longer start them (it closed). */
-	readonly start: (absolutePath: string) => boolean;
+	/**
+	 * The hooks for this listed file start now if this says `started`; `refused` when the cell may no longer start them
+	 * (it closed), `ceded` when a model call took the file and the cell let go of it.
+	 */
+	readonly start: (absolutePath: string) => HookStart;
 	/** The hooks for this listed file will not start: the cell lets go of it, and its change stays for a later cell. */
 	readonly skipped: (absolutePath: string) => void;
 	/** This listed file could not be read back: the cell reports that and lets go of it. */
@@ -67,6 +70,7 @@ export async function reportWrittenFiles(
 	let outputBudget = HOOK_OUTPUT_CELL_CODE_POINTS;
 	let hooked = 0;
 	const report = selection.hooks ? deps.report : undefined;
+	const ceded: ChangedFile[] = [];
 	for (const file of listed) {
 		// Without hooks the selection claimed nothing, so there is nothing to let go of.
 		if (report === undefined) break;
@@ -86,10 +90,11 @@ export async function reportWrittenFiles(
 			continue;
 		}
 		// The one dispatch point: from here the file stays this cell's until its hooks return, even if the cell closes.
-		if (!deps.start(file.absolutePath)) {
-			deps.skipped(file.absolutePath);
-			continue;
-		}
+		// `report` is called with no await after `start`, so no model call can take the file in between.
+		const start = deps.start(file.absolutePath);
+		if (start === "ceded") ceded.push(file);
+		if (start === "refused") deps.skipped(file.absolutePath);
+		if (start !== "started") continue;
 		const written = `Successfully wrote to ${file.absolutePath}`;
 		try {
 			const outcome = await report({
@@ -114,7 +119,11 @@ export async function reportWrittenFiles(
 		// A hook may rewrite the file (a formatter), even one that then failed; that rewrite is not a later cell's write.
 		await deps.noteHooked(file.absolutePath);
 	}
-	return { files: listed.map((file) => file.path), total, hooked, hookOutputs, hookFailures };
+	// A file a model call took is the call's change: the cell neither lists nor counts it.
+	const reported = withoutCeded(selection, ceded);
+	if (reported.total === 0) return undefined;
+	const files = reported.listed.map((file) => file.path);
+	return { files, total: reported.total, hooked, hookOutputs, hookFailures };
 }
 
 async function sourceFiles(changed: readonly ChangedFile[], fs: Pick<ScanFs, "read">): Promise<ChangedFile[]> {

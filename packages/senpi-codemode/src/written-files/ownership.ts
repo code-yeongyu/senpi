@@ -9,6 +9,8 @@ export interface Owner {
 export interface Claim {
 	readonly owner: Owner;
 	started: boolean;
+	/** A model call took the file since the claim: the claim cedes it if not yet started, and records nothing for it. */
+	contested: boolean;
 	/** The file's baseline before this settlement advanced it to `advanced`; absent for a file new to the baseline. */
 	readonly before: FileSignature | undefined;
 	readonly advanced: FileSignature;
@@ -22,6 +24,8 @@ export class FileOwnership {
 	readonly #claims = new Map<string, Claim>();
 	/** How many model calls are writing and hooking each file. */
 	readonly #calls = new Map<string, number>();
+	/** Per settlement between its first look and its claims: the files model calls took meanwhile. */
+	readonly #watches = new Set<Set<string>>();
 
 	owned(path: string): boolean {
 		return this.#claims.has(path) || this.#calls.has(path);
@@ -44,9 +48,22 @@ export class FileOwnership {
 		this.#claims.delete(path);
 	}
 
-	/** A model call holds the file until it calls the returned function, once. */
+	/** Records every file a model call takes from now until `stop`: a settlement's look at it may be stale. */
+	watchHolds(): { readonly taken: ReadonlySet<string>; stop(): void } {
+		const taken = new Set<string>();
+		this.#watches.add(taken);
+		return { taken, stop: () => this.#watches.delete(taken) };
+	}
+
+	/**
+	 * A model call holds the file until it calls the returned function, once. It never waits: a settlement that looked
+	 * at the file meanwhile, or claimed it, learns of the call here.
+	 */
 	holdForCall(path: string): () => void {
 		this.#calls.set(path, (this.#calls.get(path) ?? 0) + 1);
+		for (const taken of this.#watches) taken.add(path);
+		const claim = this.#claims.get(path);
+		if (claim !== undefined) claim.contested = true;
 		return () => {
 			const left = (this.#calls.get(path) ?? 1) - 1;
 			if (left > 0) this.#calls.set(path, left);

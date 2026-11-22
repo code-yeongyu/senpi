@@ -667,7 +667,12 @@ its completion notification.
   times out, so a write a handler makes after the chain returned is reported by
   whichever cell settles next. A `write` or `edit` call the model issues holds its
   file from before it writes until it ends, so a cell settling meanwhile neither
-  lists nor hooks it. A settlement that claims a file and then cannot run its
+  lists nor hooks it. Neither side waits for the other: a call that takes a file
+  a settling cell has already looked at, up to the moment the cell's hooks for it
+  start, takes it from that cell, which then neither lists, counts nor hooks it
+  and leaves the change to the call. A call that starts while the cell's hooks
+  for the file run gets its own hooks; the cell's ran for what the cell wrote.
+  A settlement that claims a file and then cannot run its
   hooks (the cell was cancelled or closed) leaves the change for the next cell.
 - **Limits**: the first 20 files are listed and hooked and the rest are counted;
   hook output is capped at 2,000 code points per file and 12,000 per cell.

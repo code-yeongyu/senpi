@@ -1,4 +1,5 @@
 import type { ExtensionToolContext } from "@code-yeongyu/senpi";
+import { observeModelWrites } from "../../src/written-files/model-writes.ts";
 import { SOURCE_FILE_SNIFF_BYTES } from "../../src/written-files/source-file.ts";
 import {
 	type FakeWorkspace,
@@ -40,6 +41,22 @@ export function holdRead(workspace: FakeWorkspace, kind: "sniff" | "readBack") {
 		await finished.opened;
 	};
 	return { reading: reading.opened, finish: finished.open };
+}
+
+/** A session whose model-write events a test sends by hand, in the order the host would. */
+export function modelSession(harness: WrittenFilesHarness) {
+	const handlers = new Map<string, (event: unknown) => unknown>();
+	observeModelWrites(
+		(event, handler) => handlers.set(event, handler),
+		() => harness.writtenFiles,
+	);
+	const send = async (type: string, event: object = {}) => await handlers.get(type)?.({ type, ...event });
+	return {
+		start: (toolCallId: string, toolName: string, path: string) =>
+			send("tool_execution_start", { toolCallId, toolName, args: { path } }),
+		end: (toolCallId: string, isError = false) => send("tool_execution_end", { toolCallId, isError }),
+		turnStart: () => send("turn_start"),
+	};
 }
 
 export function outcomeFiles(outcome: CellOutcome) {

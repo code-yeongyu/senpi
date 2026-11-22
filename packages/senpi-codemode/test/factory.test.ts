@@ -33,6 +33,7 @@ describe("senpi-codemode extension factory", () => {
 			"resources_discover",
 			"tool_execution_start",
 			"tool_execution_end",
+			"turn_start",
 			"session_start",
 			"session_shutdown",
 			"model_select",

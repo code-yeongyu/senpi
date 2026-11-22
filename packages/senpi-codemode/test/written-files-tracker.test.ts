@@ -1,7 +1,8 @@
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FileSignature } from "../src/written-files/scan-boundaries.ts";
-import { type ChangedFile, WrittenFilesTracker } from "../src/written-files/tracker.ts";
+import { WrittenFilesTracker } from "../src/written-files/tracker.ts";
+import type { ChangedFile } from "../src/written-files/window.ts";
 import type { WorkspaceScan } from "../src/written-files/workspace-scan.ts";
 
 const CWD = join("/", "work");
@@ -132,6 +133,21 @@ describe("written-files tracker", () => {
 		}
 
 		expect(await settled(cell)).toEqual(["../outside.ts"]);
+	});
+
+	// Eighth review: a model call that took the file after the scan read it, even one that ended, owns that look.
+	it("skips a file a model call took and failed while the settling scan ran, and reports it next", async () => {
+		const { tracker, afterSnapshot, write } = workspace();
+		const cell = tracker.open();
+		await cell.ready;
+		write("src/f.ts");
+		afterSnapshot.push(async () => {
+			const hold = tracker.holdForCall(join(CWD, "src", "f.ts"));
+			write("src/f.ts");
+			await hold?.end(false);
+		});
+
+		expect([await settled(cell), await settled(cell)]).toEqual([[], ["src/f.ts"]]);
 	});
 
 	it("turns itself off at once when git is not available", async () => {

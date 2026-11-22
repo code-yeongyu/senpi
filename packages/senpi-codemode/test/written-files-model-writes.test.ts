@@ -1,25 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { observeModelWrites } from "../src/written-files/model-writes.ts";
-import { openCell, outcomeFiles } from "./eval/written-files-barriers.ts";
-import { type WrittenFilesHarness, writtenFilesHarness } from "./eval/written-files-fakes.ts";
+import { modelSession as session, openCell, outcomeFiles } from "./eval/written-files-barriers.ts";
+import { writtenFilesHarness } from "./eval/written-files-fakes.ts";
 
 const signal = new AbortController().signal;
-
-/** A session whose model-write events a test sends by hand, in the order the host would. */
-function session(harness: WrittenFilesHarness) {
-	const handlers = new Map<string, (event: unknown) => unknown>();
-	observeModelWrites(
-		(event, handler) => handlers.set(event, handler),
-		() => harness.writtenFiles,
-	);
-	const send = async (type: string, event: object = {}) => await handlers.get(type)?.({ type, ...event });
-	return {
-		start: (toolCallId: string, toolName: string, path: string) =>
-			send("tool_execution_start", { toolCallId, toolName, args: { path } }),
-		end: (toolCallId: string, isError = false) => send("tool_execution_end", { toolCallId, isError }),
-		turnStart: () => send("turn_start"),
-	};
-}
 
 // senpi#7232, seventh review: a model write or edit holds its file from its start until its end, and never longer.
 describe("a model write's hold on its file", () => {

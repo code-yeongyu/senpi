@@ -1,63 +1,17 @@
 import { join, relative, sep } from "node:path";
 import { type FileSignature, sameSignature } from "./scan-boundaries.ts";
 import { type Claim, FileOwnership, type Owner } from "./ownership.ts";
+import {
+	type ChangedFile,
+	offWindow,
+	type ToolCallHold,
+	withoutCeded,
+	type WrittenFilesChange,
+	type WrittenFilesSelection,
+	type WrittenFilesWindow,
+} from "./window.ts";
 import { escapesWorkspace, type ScanFs } from "./workspace-fs.ts";
 import type { ScanSkipReason, ScannedFiles, WorkspaceScan } from "./workspace-scan.ts";
-
-export interface ChangedFile {
-	/** Workspace-relative POSIX path. */
-	readonly path: string;
-	readonly absolutePath: string;
-}
-
-/** What a settling cell does with the files that changed: the one choice both its claim and its hooks follow. */
-export interface WrittenFilesSelection {
-	/** The changed files the cell lists, in path order; it sends them through the write hooks when `hooks` is set. */
-	readonly listed: readonly ChangedFile[];
-	/** How many changed files the cell counts as written, listed or not. */
-	readonly total: number;
-	readonly hooks: boolean;
-}
-
-export type WrittenFilesChange =
-	| { readonly kind: "changed"; readonly selection: WrittenFilesSelection }
-	/** The cell's writes could not be compared; `disabled` says the check is now off for the session. */
-	| { readonly kind: "unchecked"; readonly reason: ScanSkipReason; readonly disabled: boolean }
-	| { readonly kind: "off" };
-
-export interface WrittenFilesWindow {
-	/** Resolves once the cell's code may start: the state its writes are compared with is recorded. */
-	readonly ready: Promise<void>;
-	/**
-	 * After the cell's code finished: the files that changed since the last report, sorted, go through `select` inside
-	 * the settling scan, and the cell owns the listed files it will hook until it lets go of them.
-	 */
-	settle(select: (changed: readonly ChangedFile[]) => Promise<WrittenFilesSelection>): Promise<WrittenFilesChange>;
-	/**
-	 * The cell starts the write hooks for a file now: false when it no longer owns the file or has closed, and then it
-	 * must not start them. From here the claim lasts until `hooked`, even past `close`.
-	 */
-	start(absolutePath: string): boolean;
-	/** The write hooks this cell ran for a file it reported returned: the state they left is this cell's, and it lets go. */
-	hooked(absolutePath: string): Promise<void>;
-	/**
-	 * This cell will not run the write hooks for a file it owns (cancelled, or `start` refused): it lets go of it now, and
-	 * the file's change stays for the next settlement to report.
-	 */
-	skipped(absolutePath: string): void;
-	/** This cell reports that it could not read a file it owns back for the hooks: it lets go, and the change is reported. */
-	failed(absolutePath: string): void;
-	/** This cell's hooks are done: it lets go of every file it still owns. */
-	release(): void;
-	/** Ends the window and lets go of the files whose hooks have not started; safe to call more than once. */
-	close(): void;
-}
-
-/** A `write` or `edit` call's hold on its file, from before the call writes it until the call ends. */
-export interface ToolCallHold {
-	/** The call ended; `hooked` when it completed through the hooks, so the state it left is not a cell's write. */
-	end(hooked: boolean): Promise<void>;
-}
 
 export interface WrittenFilesTrackerOptions {
 	readonly cwd: string;
@@ -70,19 +24,6 @@ export interface WrittenFilesTrackerOptions {
  * first scans of a session can meet a cold file cache, and a cell spends two (before it starts and when it settles).
  */
 const SKIPS_BEFORE_OFF = 3;
-
-function offWindow(): WrittenFilesWindow {
-	return {
-		ready: Promise.resolve(),
-		settle: async () => ({ kind: "off" }),
-		start: () => false,
-		hooked: async () => {},
-		skipped: () => {},
-		failed: () => {},
-		release: () => {},
-		close: () => {},
-	};
-}
 
 /**
  * Finds the files eval cells wrote by comparing the workspace before and after them. One baseline is shared by every
@@ -117,6 +58,20 @@ function offWindow(): WrittenFilesWindow {
  * - A model `write` or `edit` call starts (`holdForCall`): its file is held from before the call writes it until the
  *   call ends, so a settlement in between skips it and keeps its baseline; the call's own hooks are the only ones.
  *   The call's end records the state it left and lets go; two calls on one file hold it until both end.
+ * A model call never waits for a settlement, and a settlement never waits for a call: whoever took the file last at a
+ * transition point owns it. The transition points are the first look (the scan), the selection commit (right after
+ * `select`, synchronously with the claims) and the dispatch (`start`, synchronously with the report call). In order:
+ * - Model holds first (the call started before the first look): the file is skipped and keeps its baseline (above).
+ * - Model arrives during the scan: the first look skips the file as if it were held, even if the call has ended.
+ * - Model arrives during `select`: at the selection commit the cell cedes the file, even if the call has ended by
+ *   then: no claim, not listed, not counted, baseline kept. A file past the limit was never claimed, so it is
+ *   still counted and never hooked; the call's end records its state.
+ * - Model arrives between the claim and the dispatch (the read back included): the claim is contested, and `start`
+ *   cedes it: no hook, the claim ends with the baseline put back, and the file leaves the cell's list and count.
+ * - Model arrives during the settlement's hook (started claim): both chains run, each for its own write (the cell's
+ *   bytes were read before the call wrote). The contested claim records nothing at `hooked`: what is on disk is the
+ *   call's, recorded by its end if it succeeded and otherwise reported by the next settlement.
+ * - Settlement claims first and its hooks return before the call starts: a plain sequence, one chain each.
  * A claim lasts until the whole `tool_result` handler chain for its file returns, not until one handler's deadline:
  * the host moves on to the next handler when one times out. A write that lands after the claim ended (a handler that
  * outlived its deadline) is a change like any other, reported by whichever cell settles next.
@@ -164,13 +119,20 @@ export class WrittenFilesTracker {
 			settle: (select) => this.#enqueue(() => this.#report(owner, select)),
 			start: (absolutePath) => {
 				const owned = claimOf(absolutePath);
-				if (owned === undefined || owner.closed) return false;
+				if (owned === undefined || owner.closed) return "refused";
+				// The dispatch point, checked and marked with no await between: a model call took the file since the claim.
+				if (owned.claim.contested) {
+					this.#endClaim(owned.path, owned.claim, false);
+					return "ceded";
+				}
 				owned.claim.started = true;
-				return true;
+				return "started";
 			},
 			hooked: async (absolutePath) => {
+				const claim = claimOf(absolutePath)?.claim;
 				try {
-					await this.noteHooked(absolutePath);
+					// What a model call that took the file during the hooks leaves is the call's to record when it ends.
+					await this.#record(absolutePath, () => claim?.contested !== true);
 				} finally {
 					releaseFile(absolutePath, true);
 				}
@@ -194,11 +156,16 @@ export class WrittenFilesTracker {
 
 	/** A write or edit call took this file through the hooks: its present state is not a cell's unhooked write. */
 	async noteHooked(absolutePath: string): Promise<void> {
+		await this.#record(absolutePath, () => true);
+	}
+
+	/** Records the file's present state as hooked, if `still` holds once it is read. */
+	async #record(absolutePath: string, still: () => boolean): Promise<void> {
 		if (this.#live === 0) return;
 		const path = this.#workspacePath(absolutePath);
 		if (path === undefined) return;
 		const signature = await this.#stat(absolutePath);
-		if (signature !== undefined && this.#live > 0) this.#hooked.set(path, signature);
+		if (signature !== undefined && this.#live > 0 && still()) this.#hooked.set(path, signature);
 	}
 
 	/**
@@ -259,10 +226,17 @@ export class WrittenFilesTracker {
 		this.#baseline = { files: new Map(scan.files), head: scan.head, tracked: scan.tracked };
 	}
 
-	async #report(
-		owner: Owner,
-		select: (changed: readonly ChangedFile[]) => Promise<WrittenFilesSelection>,
-	): Promise<WrittenFilesChange> {
+	async #report(owner: Owner, select: Select): Promise<WrittenFilesChange> {
+		// From the settlement's first look at a file until it claims it, a model call may take it.
+		const holds = this.#ownership.watchHolds();
+		try {
+			return await this.#compare(owner, select, holds.taken);
+		} finally {
+			holds.stop();
+		}
+	}
+
+	async #compare(owner: Owner, select: Select, taken: ReadonlySet<string>): Promise<WrittenFilesChange> {
 		const baseline = this.#baseline;
 		if (baseline === undefined) {
 			const reason = this.#skipped ?? "scan_failed";
@@ -282,7 +256,7 @@ export class WrittenFilesTracker {
 		for (const [path, signature] of scan.files) {
 			const before = baseline.files.get(path);
 			if (before !== undefined && sameSignature(before, signature)) continue;
-			if (this.#ownership.owned(path)) {
+			if (this.#ownership.owned(path) || taken.has(path)) {
 				// Another settlement's hooks, or a model write's, are on it: what they leave is theirs, compared with later.
 				setEntry(next, path, before);
 				continue;
@@ -304,16 +278,22 @@ export class WrittenFilesTracker {
 			files.push({ path, absolutePath });
 		}
 		files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
-		const selection = await select(files);
+		const selected = await select(files);
+		// The selection commit, with no await from here to the claims: a listed file a model call took while the selection
+		// ran is the call's, so the cell cedes it, neither listing nor counting it, and it keeps its baseline.
+		const ceded = selected.listed.filter((file) => taken.has(file.path) || this.#ownership.owned(file.path));
+		const selection = withoutCeded(selected, ceded);
 		// A cell that closed while the selection read its files lists them to no one and hooks nothing: it claims nothing,
 		// and their changes stay for the next settlement.
-		if (owner.closed) for (const file of selection.listed) setEntry(next, file.path, baseline.files.get(file.path));
+		for (const file of owner.closed ? selected.listed : ceded)
+			setEntry(next, file.path, baseline.files.get(file.path));
 		this.#baseline = { files: next, head: scan.head, tracked: scan.tracked };
 		if (selection.hooks && !owner.closed)
 			for (const file of selection.listed) {
 				const advanced = next.get(file.path);
+				if (advanced === undefined) continue;
 				const before = baseline.files.get(file.path);
-				if (advanced !== undefined) this.#ownership.claim(file.path, { owner, started: false, before, advanced });
+				this.#ownership.claim(file.path, { owner, started: false, contested: false, before, advanced });
 			}
 		return { kind: "changed", selection };
 	}
@@ -342,6 +322,8 @@ export class WrittenFilesTracker {
 		return run;
 	}
 }
+
+type Select = (changed: readonly ChangedFile[]) => Promise<WrittenFilesSelection>;
 
 function setEntry(files: Map<string, FileSignature>, path: string, signature: FileSignature | undefined): void {
 	if (signature === undefined) files.delete(path);

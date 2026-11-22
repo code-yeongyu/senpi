@@ -1,4 +1,4 @@
-import type { ToolCallHold } from "./tracker.ts";
+import type { ToolCallHold } from "./window.ts";
 import { isHookedWriteTool, type WrittenFiles } from "./written-files.ts";
 
 type SessionEvent = "tool_execution_start" | "tool_execution_end" | "turn_start";
