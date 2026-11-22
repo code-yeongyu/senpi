@@ -1,6 +1,7 @@
 import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
 import type {
 	BetaInputTransformation,
+	BetaIterationsUsage,
 	BetaStopReason,
 	BetaTool,
 	BetaCacheControlEphemeral as CacheControlEphemeral,
@@ -649,6 +650,23 @@ function isAnthropicServerToolUseBlock(raw: unknown): raw is { readonly type: "s
 // byte-for-byte (encrypted_content), so never merge an `input` into them.
 function isProviderNativeToolUseBlock(raw: unknown): boolean {
 	return isRecord(raw) && (raw.type === "server_tool_use" || raw.type === "mcp_tool_use");
+}
+
+function lastSamplingContext(iterations: BetaIterationsUsage): AssistantMessage["usage"]["contextUsage"] {
+	for (let i = iterations.length - 1; i >= 0; i--) {
+		const sample = iterations[i];
+		if (sample?.type !== "message" && sample?.type !== "fallback_message") continue;
+		const input = sample.input_tokens + sample.cache_read_input_tokens + sample.cache_creation_input_tokens;
+		if (
+			!Number.isSafeInteger(input) ||
+			input < 0 ||
+			!Number.isSafeInteger(sample.output_tokens) ||
+			sample.output_tokens < 0
+		)
+			return null;
+		return { input, output: sample.output_tokens };
+	}
+	return null;
 }
 
 // Endpoints without `supportsWebSearch` reject replayed web-search server-tool
@@ -1651,6 +1669,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						output.content.push(block);
 						stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
 					} else {
+						// Billing can span multiple sampling iterations after a hosted tool runs.
+						// Until the final breakdown arrives, estimate context from the transcript.
+						if (isProviderNativeToolUseBlock(event.content_block)) output.usage.contextUsage = null;
 						const block: Block = {
 							type: "providerNative",
 							subtype: event.content_block.type,
@@ -1782,6 +1803,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					// Only update usage fields if present (not null).
 					// Preserves input_tokens from message_start when proxies omit it in message_delta.
 					if (event.usage) {
+						if (Array.isArray(event.usage.iterations) && event.usage.iterations.length > 0) {
+							output.usage.contextUsage = lastSamplingContext(event.usage.iterations);
+						}
 						if (event.usage.input_tokens != null) {
 							output.usage.input = event.usage.input_tokens;
 						}

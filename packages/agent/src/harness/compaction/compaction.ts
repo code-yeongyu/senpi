@@ -12,6 +12,7 @@ import {
 	type Usage,
 	uuidv7,
 } from "@earendil-works/pi-ai";
+import { estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { AgentMessage, ThinkingLevel } from "../../types.ts";
 import { type Context, getSessionCwd, getTelemetryContext } from "../context.ts";
 import { convertToLlm, createBranchSummaryMessage, createCompactionSummaryMessage } from "../messages.ts";
@@ -36,14 +37,6 @@ export interface CompactionDetails extends Record<string, JsonValue> {
 	/** Files modified in the compacted history. */
 	modifiedFiles: string[];
 }
-function safeJsonStringify(value: unknown): string {
-	try {
-		return JSON.stringify(value) ?? "undefined";
-	} catch {
-		return "[unserializable]";
-	}
-}
-
 function extractFileOperations(
 	messages: AgentMessage[],
 	entries: Entry[],
@@ -295,17 +288,7 @@ export function estimateTokens(message: AgentMessage): number {
 			return Math.ceil(chars / 4);
 		}
 		case "assistant": {
-			const assistant = message as AssistantMessage;
-			for (const block of assistant.content) {
-				if (block.type === "text") {
-					chars += block.text.length;
-				} else if (block.type === "thinking") {
-					chars += block.thinking.length;
-				} else if (block.type === "toolCall") {
-					chars += block.name.length + safeJsonStringify(block.arguments).length;
-				}
-			}
-			return Math.ceil(chars / 4);
+			return estimateMessageTokens(message);
 		}
 		case "custom":
 		case "toolResult": {
