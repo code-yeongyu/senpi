@@ -56,6 +56,8 @@ describe("image downgrade with a describing tool (senpi#7233)", () => {
 		expect(toolText).toBe("Read image file [image/png]");
 		expect(toolPlaceholder).toContain(DESCRIBING_TOOL);
 		expect(toolRest).toEqual([]);
+		// senpi#7320: a pasted image has no file path, so its placeholder cannot be the tool result's.
+		expect(userPlaceholder).not.toBe(toolPlaceholder);
 	});
 
 	it("leaves the images of a model with image input in place", () => {

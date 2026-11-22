@@ -64,8 +64,9 @@ function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], p
 
 export interface ImageDowngradeOptions {
 	/**
-	 * Name of a tool the model can call to get an image described from its file path. When set,
-	 * the placeholders that replace images for a model without image input name it.
+	 * Name of a tool the model can call to get an image described from its file path or, for an
+	 * image attached to the latest user message, its `[Image #N]` reference. When set, the
+	 * placeholders that replace images for a model without image input name it.
 	 */
 	imageDescriptionTool?: string;
 }
@@ -87,7 +88,7 @@ export function downgradeUnsupportedImages<TApi extends Api>(
 	}
 	const tool = options.imageDescriptionTool;
 	const userImagePlaceholder = tool
-		? `(image omitted: this model cannot see images; ${tool} describes an image given its file path)`
+		? `(image omitted: this model cannot see images; ${tool} describes it from its file path, or from [Image #N] for the Nth image of the latest user message; without either, ask the user for the file)`
 		: NON_VISION_USER_IMAGE_PLACEHOLDER;
 	const toolImagePlaceholder = tool
 		? `(tool image omitted: this model cannot see images; call ${tool} with the image's file path for a description)`

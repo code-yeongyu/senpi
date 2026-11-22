@@ -2,6 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { LOOK_AT_PARAMETERS, normalizeLookAtArgs, prepareLookAtArguments, validateLookAtArgs } from "./arguments.ts";
 import { registerLookAtCommand } from "./commands.ts";
+import { startHookDeadlineBudget } from "./hook-deadline-budget.ts";
 import { replaceImagesNamingTool } from "./image-placeholder.ts";
 import { resolveVisionModel } from "./model-selector.ts";
 import { LOOK_AT_DESCRIPTION, LOOK_AT_PROMPT_SNIPPET, TOOL_IMAGE_DESCRIPTION_GOAL } from "./prompts.ts";
@@ -58,6 +59,11 @@ export default function lookAtExtension(pi: ExtensionAPI): void {
 	pi.on("model_select", async (_event, ctx) => {
 		syncLookAt(ctx);
 	});
+	// A switch that is held for compaction emits model_select and then restores the previous model without an
+	// event, so the registration is checked against the active model again before each turn.
+	pi.on("turn_start", async (_event, ctx) => {
+		syncLookAt(ctx);
+	});
 
 	// The tool is named only while the model can call it.
 	function offersLookAt(ctx: ExtensionContext): ctx is ExtensionContext & { model: Model<Api> } {
@@ -101,16 +107,17 @@ export default function lookAtExtension(pi: ExtensionAPI): void {
 			if (event.parentToolCallId !== undefined || !Array.isArray(event.content) || !describesImagesFor(ctx)) {
 				return undefined;
 			}
+			const budget = startHookDeadlineBudget(ctx.signal);
 			const { content, failures } = await describeToolResultImages(event.content, TOOL_NAME, async (image) => {
 				ctx.updateToolHookStatus?.("look_at: describing image");
 				const result = await runLookAt(
 					{ image_data_list: [`data:${image.mimeType};base64,${image.data}`], goal: TOOL_IMAGE_DESCRIPTION_GOAL },
-					ctx.signal,
+					budget.signal,
 					ctx,
 					store,
 				);
 				return { model: result.model, text: result.text };
-			});
+			}).finally(budget.dispose);
 			if (failures.length > 0 && !ctx.signal?.aborted) {
 				const reasons = [...new Set(failures)].join("; ");
 				ctx.ui.notify(`look_at could not describe an image from ${event.toolName}: ${reasons}`, "warning");
