@@ -67,6 +67,8 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			// senpi#6485: reads one listed project skill's file without effect, like read_project_file;
 			// write_project_skill_file stays gated.
 			"read_project_skill_file",
+			// omo-desktop-app#7981: reads one listed user skill's file without effect; write_user_skill_file stays gated.
+			"read_user_skill_file",
 			"reclaim_session",
 			"resolve_path",
 			"subscribe_sessions",

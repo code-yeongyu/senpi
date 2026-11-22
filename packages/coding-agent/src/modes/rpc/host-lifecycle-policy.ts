@@ -86,6 +86,12 @@ export class IdleExitDecider {
 		this.firstClientBy = firstClientWithinMs === undefined ? undefined : now() + firstClientWithinMs;
 	}
 
+	/** A client attached: the window starts over, even while it holds nothing yet (oh-my-openagent#14272). */
+	restart(): void {
+		this.idleSince = undefined;
+		this.firstClientBy = undefined;
+	}
+
 	update(activity: HostActivity): IdleExitDecision {
 		// Only a client ends the wait for the first one: an unknown observer counts as an active turn at startup.
 		if (activity.connections > 0) this.firstClientBy = undefined;

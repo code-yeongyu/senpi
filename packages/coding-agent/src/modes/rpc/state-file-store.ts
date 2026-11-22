@@ -18,7 +18,7 @@ import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 
 type MediumState = MemoryStoreMedium["current"];
 
-export class StateFileCorruptError extends Error {
+class StateFileCorruptError extends Error {
 	override readonly name = "StateFileCorruptError";
 	readonly path: string;
 	constructor(path: string, what: string) {

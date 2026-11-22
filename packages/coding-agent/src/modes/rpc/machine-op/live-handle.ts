@@ -8,8 +8,8 @@
 import { readFile } from "node:fs/promises";
 import type { TerminalRuntimeSession } from "../../../core/extensions/builtin/terminal/runtime-session.ts";
 
-export const OUTPUT_SETTLE_MS = 800;
-export const RETAINED_OUTPUT_BYTES = 1024 * 1024;
+const OUTPUT_SETTLE_MS = 800;
+const RETAINED_OUTPUT_BYTES = 1024 * 1024;
 
 export type MachineLifecycle = "starting" | "running" | "waiting_input" | "exited" | "killed" | "lost";
 export const MACHINE_LIFECYCLES: readonly MachineLifecycle[] = [
