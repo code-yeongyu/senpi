@@ -626,15 +626,20 @@ its completion notification.
   its path resolved, is inside the session cwd and outside `.git`,
   `node_modules` and the session's own artifacts directory (a path below a
   directory that links out of the workspace or into one of those is never
-  listed, read or hooked; a file is read only if the file opened is the regular
-  file just checked, so a symlink swapped in as the last entry is not followed), that the workspace
+  listed, read or hooked; on a case-insensitive filesystem `NODE_MODULES` or
+  `.GIT` counts as the excluded directory when it resolves to the same one; a
+  file is read only if the file opened is the regular file just checked and,
+  after the open, the path still names it at the same real location with no
+  link as its last entry, so a symlink swapped in as the last entry, even to the
+  checked file moved out, is not followed. A file moved out after those checks
+  is still read through the already open descriptor), that the workspace
   does not ignore, at most 1 MiB, whose first 8 KiB are UTF-8 text. The definition lives in `src/written-files/source-file.ts`.
 - **Detection** compares the workspace before and after the cell, so it covers
   every way of writing. In a git repository it reads `git status` (files that
   differ from HEAD or are untracked, plus files committed while the cell ran,
   plus the earlier scan's tracked files, so a tracked file written back to its
   HEAD content counts as written; an untracked file the cell makes ignored does
-  not);
+  not, nor does a file taken out of the index with `git rm --cached`);
   elsewhere it lists the workspace through an empty repository kept in the
   session artifacts, so the workspace's own ignore files still apply. It needs
   `git`; without it the first cell says the check is off.

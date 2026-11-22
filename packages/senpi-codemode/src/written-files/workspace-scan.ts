@@ -104,20 +104,29 @@ export class WorkspaceScanner {
 			".",
 		]);
 		if (status.kind !== "ok") return { kind: "skipped", reason: skipReason(status) };
-		const { head, untracked, tracked } = parseStatus(status.stdout);
+		const { head, untracked, tracked, untrackedFromIndex } = parseStatus(status.stdout);
+		const committed: string[] = [];
 		const previousHead = previous?.head;
 		if (previousHead !== undefined && head !== undefined && head !== previousHead && head !== INITIAL_HEAD) {
 			const since = previousHead === INITIAL_HEAD ? EMPTY_TREE : previousHead;
-			const committed = await this.#git(["diff", "--name-only", "-z", "--no-renames", since, head, "--", "."]);
-			if (committed.kind === "over_budget") return { kind: "skipped", reason: "over_budget" };
-			if (committed.kind === "ok") tracked.push(...committed.stdout.split("\0"));
+			const diff = await this.#git(["diff", "--name-status", "-z", "--no-renames", since, head, "--", "."]);
+			if (diff.kind === "over_budget") return { kind: "skipped", reason: "over_budget" };
+			if (diff.kind === "ok") {
+				const { added, deleted } = parseNameStatus(diff.stdout);
+				committed.push(...added);
+				untrackedFromIndex.push(...deleted);
+			}
 		}
 		// Porcelain paths are relative to the repository root, the workspace may be a directory below it.
 		const inWorkspace = (paths: readonly string[]) =>
 			paths.flatMap((path) => (path.startsWith(prefix) ? [path.slice(prefix.length)] : []));
 		// Only tracked files are carried over: an untracked one leaves `git status` when it is deleted, committed (the
-		// diff above finds it) or ignored, and an ignored file is no candidate.
-		const trackedHere = [...inWorkspace(tracked), ...(previous?.tracked ?? [])];
+		// diff above finds it) or ignored, and an ignored file is no candidate. A path deleted from the index, staged or
+		// committed, is untracked from then on, so neither its deletion nor an earlier scan carries it; a status record
+		// other than a deletion is the index as it is now and outranks both.
+		const gone = new Set(inWorkspace(untrackedFromIndex));
+		const carried = [...inWorkspace(committed), ...(previous?.tracked ?? [])].filter((path) => !gone.has(path));
+		const trackedHere = [...inWorkspace(tracked), ...carried];
 		return this.#signatures([...inWorkspace(untracked), ...trackedHere], head, new Set(trackedHere));
 	}
 
@@ -173,16 +182,27 @@ function skipReason(outcome: Exclude<GitOutcome, { kind: "ok" }>): ScanSkipReaso
 	return outcome.kind === "over_budget" ? "over_budget" : "scan_failed";
 }
 
+interface StatusRecords {
+	head: string | undefined;
+	untracked: string[];
+	tracked: string[];
+	/** Deleted from the index (`git rm --cached`): the file may still be on disk, but git no longer tracks it. */
+	untrackedFromIndex: string[];
+}
+
 /** Reads `git status --porcelain=v2 --branch -z`: one NUL-terminated record per header and per path. */
-function parseStatus(stdout: string): { head: string | undefined; untracked: string[]; tracked: string[] } {
+function parseStatus(stdout: string): StatusRecords {
 	let head: string | undefined;
 	const untracked: string[] = [];
 	const tracked: string[] = [];
+	const untrackedFromIndex: string[] = [];
 	const records = stdout.split("\0");
 	for (let index = 0; index < records.length; index++) {
 		const record = records[index] ?? "";
 		if (record.startsWith(HEAD_RECORD)) head = record.slice(HEAD_RECORD.length);
 		else if (record.startsWith("? ")) untracked.push(record.slice(2));
+		// The first letter of the `XY` field is the index side: `D` there means the index no longer has the path.
+		else if (record.startsWith("1 D")) untrackedFromIndex.push(pathAfterFields(record, 8));
 		else if (record.startsWith("1 ")) tracked.push(pathAfterFields(record, 8));
 		else if (record.startsWith("u ")) tracked.push(pathAfterFields(record, 10));
 		else if (record.startsWith("2 ")) {
@@ -191,7 +211,20 @@ function parseStatus(stdout: string): { head: string | undefined; untracked: str
 			index += 1;
 		}
 	}
-	return { head, untracked, tracked };
+	return { head, untracked, tracked, untrackedFromIndex };
+}
+
+/** Reads `git diff --name-status -z --no-renames`: a status letter, then the path, each NUL-terminated. */
+function parseNameStatus(stdout: string): { added: string[]; deleted: string[] } {
+	const added: string[] = [];
+	const deleted: string[] = [];
+	const fields = stdout.split("\0");
+	for (let index = 0; index + 1 < fields.length; index += 2) {
+		const path = fields[index + 1] ?? "";
+		if (fields[index] === "D") deleted.push(path);
+		else added.push(path);
+	}
+	return { added, deleted };
 }
 
 function pathAfterFields(record: string, fields: number): string {

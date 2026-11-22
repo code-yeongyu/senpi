@@ -79,17 +79,16 @@ describe("workspace scan", () => {
 		expect(paths(await subject.scan())).toEqual(["src/a.ts"]);
 	});
 
-	it("keeps files committed since the scan it is compared with", async () => {
+	it("keeps files committed since the scan it is compared with, and drops a tracked candidate the commit deleted", async () => {
 		const { subject, calls } = scanner({
 			"rev-parse": { kind: "ok", stdout: AT_REPOSITORY_ROOT },
 			status: records("# branch.oid 2222"),
-			diff: records("src/committed.ts"),
+			diff: records("M", "src/committed.ts", "D", "src/untracked-now.ts"),
 		});
+		const previous = { head: "1111", files: new Map(), tracked: new Set(["src/untracked-now.ts"]) };
 
-		expect(paths(await subject.scan({ head: "1111", files: new Map(), tracked: new Set() }))).toEqual([
-			"src/committed.ts",
-		]);
-		expect(calls.at(-1)).toEqual(["diff", "--name-only", "-z", "--no-renames", "1111", "2222", "--", "."]);
+		expect(paths(await subject.scan(previous))).toEqual(["src/committed.ts"]);
+		expect(calls.at(-1)).toEqual(["diff", "--name-status", "-z", "--no-renames", "1111", "2222", "--", "."]);
 	});
 
 	// Review findings: a tracked file written back to its HEAD content leaves `git status`, so it is checked again from

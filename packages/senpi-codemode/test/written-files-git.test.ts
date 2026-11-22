@@ -137,6 +137,28 @@ describe("written files against real git", () => {
 		expect(files).toEqual(["src/inside.ts"]);
 	});
 
+	it("drops a file taken out of the index and then ignored, and still lists a tracked file restored to HEAD", async () => {
+		const root = tempRoot();
+		const repo = join(root, "repo");
+		mkdirSync(repo);
+		git(repo, "init", "--quiet");
+		const committed = "export const value = 1;\n";
+		put(repo, "src/restored.ts", committed);
+		put(repo, "src/removed.ts", "export const removed = 1;\n");
+		git(repo, "add", "--all");
+		git(repo, "commit", "--quiet", "--message", "init");
+		put(repo, "src/restored.ts", "export const value = 2;\n");
+		git(repo, "rm", "--cached", "--quiet", "src/removed.ts");
+
+		const files = await writtenBy(repo, join(root, "artifacts"), () => {
+			appendFileSync(join(repo, ".git", "info", "exclude"), "src/removed.ts\n");
+			put(repo, "src/removed.ts", "export const removed = 2;\n");
+			put(repo, "src/restored.ts", committed);
+		});
+
+		expect(files).toEqual(["src/restored.ts"]);
+	});
+
 	it("honours a workspace's own ignore file where there is no repository, and leaves out the session's artifacts", async () => {
 		const root = tempRoot();
 		const workspace = join(root, "plain");

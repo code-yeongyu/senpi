@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { constants, type Stats } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 
 /** What a scan compares between two moments; a rewrite changes at least one of these. */
 export interface FileSignature {
@@ -18,11 +18,18 @@ export interface FsAccess {
 	realpath(path: string): Promise<string | undefined>;
 	/** The signature of a regular file, its last entry not followed; undefined for a symlink, anything else and a missing path. */
 	lstat(path: string): Promise<FileSignature | undefined>;
+	/** The device and inode of whatever the path names, every symlink followed; undefined when it names nothing. */
+	identity(path: string): Promise<Pick<FileSignature, "dev" | "ino"> | undefined>;
 	/**
 	 * Opens the path, refusing a symlink as its last entry where the platform can, and reads at most `limit` leading
-	 * bytes only when the file it opened is a regular file `accept` takes; undefined otherwise.
+	 * bytes only when the file it opened is a regular file `accept` takes, asked after the open and before any read;
+	 * undefined otherwise.
 	 */
-	read(path: string, limit: number, accept: (opened: FileSignature) => boolean): Promise<Uint8Array | undefined>;
+	read(
+		path: string,
+		limit: number,
+		accept: (opened: FileSignature) => Promise<boolean>,
+	): Promise<Uint8Array | undefined>;
 }
 
 export type GitOutcome =
@@ -40,7 +47,16 @@ export type RunGit = (
 const GIT_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
 
 export function createNodeFsAccess(): FsAccess {
-	return { realpath: realLocation, lstat: statRegularFile, read: readLeadingBytes };
+	return { realpath: realLocation, lstat: statRegularFile, identity: identityOf, read: readLeadingBytes };
+}
+
+async function identityOf(path: string): Promise<Pick<FileSignature, "dev" | "ino"> | undefined> {
+	try {
+		const stats = await stat(path);
+		return { dev: stats.dev, ino: stats.ino };
+	} catch {
+		return undefined;
+	}
 }
 
 async function realLocation(path: string): Promise<string | undefined> {
@@ -68,7 +84,7 @@ function signatureOf(stats: Stats): FileSignature {
 async function readLeadingBytes(
 	path: string,
 	limit: number,
-	accept: (opened: FileSignature) => boolean,
+	accept: (opened: FileSignature) => Promise<boolean>,
 ): Promise<Uint8Array | undefined> {
 	let handle: Awaited<ReturnType<typeof open>> | undefined;
 	try {
@@ -76,7 +92,7 @@ async function readLeadingBytes(
 		// keeps a FIFO swapped in from holding the open, and the file type is checked before a byte is read.
 		handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
 		const opened = await handle.stat();
-		if (!opened.isFile() || !accept(signatureOf(opened))) return undefined;
+		if (!opened.isFile() || !(await accept(signatureOf(opened)))) return undefined;
 		const buffer = new Uint8Array(Math.min(limit, opened.size));
 		let filled = 0;
 		while (filled < buffer.length) {

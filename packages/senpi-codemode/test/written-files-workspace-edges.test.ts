@@ -116,6 +116,102 @@ describe("written files at the edges of the workspace", () => {
 		expect(workspace.reads).not.toContain(outsideFile);
 	});
 
+	// Third review findings: an excluded directory under another spelling, a path the index dropped, a moved file.
+	it.each([
+		["NODE_MODULES/pkg", "node_modules/pkg"],
+		[".GIT/hooks", ".git/hooks"],
+	])(
+		"neither lists nor reads a tracked path whose directory links to %s on a case-insensitive filesystem",
+		async (spelled, real) => {
+			const harness = writtenFilesHarness();
+			const { workspace } = harness;
+			workspace.caseInsensitive = true;
+			workspace.write("lib/hidden.ts", "export const tracked = 1;\n");
+			workspace.commit();
+
+			const listed = await cellListing(harness, () => {
+				workspace.write(`${real}/hidden.ts`, "export const excluded = 2;\n");
+				workspace.link("lib", workspace.absolute(spelled));
+			});
+
+			expect({ listed, hooked: reportedPaths(harness), reads: workspace.reads }).toEqual({
+				listed: undefined,
+				hooked: [],
+				reads: [],
+			});
+		},
+	);
+
+	it.each(["NODE_MODULES/pkg", ".GIT/hooks"])(
+		"lists a path below %s as an ordinary directory on a case-sensitive filesystem",
+		async (spelled) => {
+			const harness = writtenFilesHarness();
+			const { workspace } = harness;
+			workspace.write("lib/hidden.ts", "export const tracked = 1;\n");
+			workspace.commit();
+
+			const listed = await cellListing(harness, () => {
+				workspace.write(`${spelled}/hidden.ts`, "export const ordinary = 2;\n");
+				workspace.link("lib", workspace.absolute(spelled));
+			});
+
+			expect(listed).toEqual([`${spelled}/hidden.ts`, "lib/hidden.ts"]);
+			expect(reportedPaths(harness)).toEqual([
+				workspace.absolute(`${spelled}/hidden.ts`),
+				workspace.absolute("lib/hidden.ts"),
+			]);
+		},
+	);
+
+	it.each([
+		["before the cell", false],
+		["inside the cell, after it was modified", true],
+	])(
+		"drops a file taken out of the index %s, then ignored and rewritten, and still reports a file restored to HEAD",
+		async (_when, insideCell) => {
+			const harness = writtenFilesHarness();
+			const { workspace } = harness;
+			const committed = "export const value = 1;\n";
+			workspace.write("src/restored.ts", committed);
+			workspace.write("src/removed.ts", "export const removed = 1;\n");
+			workspace.commit();
+			workspace.write("src/restored.ts", "export const value = 2;\n");
+			if (insideCell) workspace.write("src/removed.ts", "export const removed = 2;\n");
+			else workspace.untrack("src/removed.ts");
+
+			const listed = await cellListing(harness, () => {
+				if (insideCell) workspace.untrack("src/removed.ts");
+				workspace.ignore("src/removed.ts");
+				workspace.write("src/removed.ts", "export const removed = 3;\n");
+				workspace.write("src/restored.ts", committed);
+			});
+
+			expect(listed).toEqual(["src/restored.ts"]);
+			expect(reportedPaths(harness)).toEqual([workspace.absolute("src/restored.ts")]);
+		},
+	);
+
+	it("reads nothing when the checked file moves out and a last-entry link to that same file replaces it", async () => {
+		const harness = writtenFilesHarness();
+		const { workspace } = harness;
+		workspace.write("src/moved.ts", "export const value = 1;\n");
+		workspace.commit();
+		const outsideFile = join(OUTSIDE, "moved.ts");
+		workspace.beforeOpen = () => {
+			workspace.beforeOpen = undefined;
+			workspace.moveOut("src/moved.ts", outsideFile);
+			workspace.linkFile("src/moved.ts", outsideFile);
+		};
+
+		const listed = await cellListing(harness, () => workspace.write("src/moved.ts", "export const value = 2;\n"));
+
+		expect({ listed, hooked: reportedPaths(harness), reads: workspace.reads }).toEqual({
+			listed: undefined,
+			hooked: [],
+			reads: [],
+		});
+	});
+
 	it("drops an untracked file the cell ignores and rewrites, and still reports a tracked file restored to HEAD", async () => {
 		const harness = writtenFilesHarness();
 		const { workspace } = harness;

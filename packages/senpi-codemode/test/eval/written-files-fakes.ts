@@ -12,7 +12,7 @@ export type ReportedResult = Parameters<ReportToolResult>[0];
  * virtual clock, so signatures differ without real time, and `git status` lists what differs from the last commit.
  * Directories can be symlinks, which the filesystem follows in every entry but the last, as the operating system does.
  * A file can be a symlink too, and an open follows it: this filesystem stands for a platform that cannot open without
- * following the last entry.
+ * following the last entry. With `caseInsensitive` set, two spellings that differ only in case name the same entry.
  */
 export class FakeWorkspace {
 	readonly cwd = sep === "/" ? "/work" : "C:\\work";
@@ -23,6 +23,8 @@ export class FakeWorkspace {
 	statusOutcome: GitOutcome | undefined;
 	/** Runs as a read starts, after the file was checked and before it is opened. */
 	beforeOpen: ((path: string) => void) | undefined;
+	/** Set before the first write: whether the filesystem folds case, as macOS and Windows ones do by default. */
+	caseInsensitive = false;
 	/** Keyed by the file's absolute real path. */
 	readonly #files = new Map<string, { readonly bytes: Uint8Array; readonly signature: FileSignature }>();
 	/** A symlinked directory's absolute path and the absolute directory it points to. */
@@ -31,6 +33,9 @@ export class FakeWorkspace {
 	readonly #fileLinks = new Map<string, string>();
 	readonly #ignored = new Set<string>();
 	readonly #committed = new Map<string, string>();
+	/** Committed paths `git rm --cached` took out of the index. */
+	readonly #removedFromIndex = new Set<string>();
+	readonly #directoryInodes = new Map<string, number>();
 	#clock = 0;
 
 	write(path: string, content: string | Uint8Array): void {
@@ -42,24 +47,38 @@ export class FakeWorkspace {
 		const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
 		this.#clock += 1;
 		const signature = { size: bytes.length, mtimeMs: this.#clock, ctimeMs: this.#clock, dev: 1, ino: this.#clock };
-		this.#files.set(this.#resolve(absolutePath), { bytes, signature });
+		this.#files.set(this.#key(this.#resolve(absolutePath)), { bytes, signature });
 	}
 
 	remove(path: string): void {
-		this.#files.delete(this.absolute(path));
+		this.#files.delete(this.#key(this.absolute(path)));
+	}
+
+	/** Moves the workspace file `path` to the absolute `target` on the same filesystem: same device and inode. */
+	moveOut(path: string, target: string): void {
+		const file = this.#files.get(this.#key(this.absolute(path)));
+		if (file === undefined) return;
+		this.#files.delete(this.#key(this.absolute(path)));
+		this.#files.set(this.#key(target), file);
+	}
+
+	/** `git rm --cached`: the committed file `path` leaves the index and stays on disk, untracked. */
+	untrack(path: string): void {
+		this.#removedFromIndex.add(path);
 	}
 
 	/** Replaces the workspace directory `path` and everything in it with a symlink to the absolute `target`. */
 	link(path: string, target: string): void {
 		const directory = this.absolute(path);
-		for (const file of [...this.#files.keys()]) if (file.startsWith(directory + sep)) this.#files.delete(file);
+		for (const file of [...this.#files.keys()])
+			if (file.startsWith(this.#key(directory) + sep)) this.#files.delete(file);
 		this.#links.set(directory, target);
 	}
 
 	/** Replaces the workspace file `path` with a symlink to the absolute file `target`. */
 	linkFile(path: string, target: string): void {
-		this.#files.delete(this.absolute(path));
-		this.#fileLinks.set(this.absolute(path), target);
+		this.#files.delete(this.#key(this.absolute(path)));
+		this.#fileLinks.set(this.#key(this.absolute(path)), target);
 	}
 
 	/** Adds an ignore rule for the untracked workspace file `path`. */
@@ -78,18 +97,37 @@ export class FakeWorkspace {
 	}
 
 	readonly fs: FsAccess = {
-		realpath: async (path) => this.#resolve(path),
-		lstat: async (path) => this.#files.get(this.#followParents(path))?.signature,
+		realpath: async (path) => {
+			const named = this.#followParents(path);
+			const target = this.#fileLinks.get(this.#key(named));
+			return target === undefined ? this.#resolve(path) : this.#resolve(target);
+		},
+		lstat: async (path) => this.#files.get(this.#key(this.#followParents(path)))?.signature,
+		identity: async (path) => {
+			const key = this.#key(this.#resolve(path));
+			const file = this.#files.get(key);
+			if (file !== undefined) return file.signature;
+			if (![...this.#files.keys()].some((stored) => stored.startsWith(key + sep))) return undefined;
+			const ino = this.#directoryInodes.get(key) ?? 1_000_000 + this.#directoryInodes.size;
+			this.#directoryInodes.set(key, ino);
+			return { dev: 1, ino };
+		},
 		read: async (path, limit, accept) => {
 			this.beforeOpen?.(path);
-			const named = this.#followParents(path);
-			const opened = this.#fileLinks.get(named) ?? named;
+			const named = this.#key(this.#followParents(path));
+			const link = this.#fileLinks.get(named);
+			const opened = link === undefined ? named : this.#key(link);
 			const file = this.#files.get(opened);
-			if (file === undefined || !accept(file.signature)) return undefined;
+			if (file === undefined || !(await accept(file.signature))) return undefined;
 			this.reads.push(opened);
 			return file.bytes.subarray(0, limit);
 		},
 	};
+
+	/** How the filesystem tells entries apart: by the path as spelled, or with case folded. */
+	#key(path: string): string {
+		return this.caseInsensitive ? path.toLowerCase() : path;
+	}
 
 	/** The path with every symlinked directory in it replaced by its target. */
 	#resolve(path: string): string {
@@ -124,7 +162,10 @@ export class FakeWorkspace {
 		const present = new Map(this.#workspaceFiles());
 		for (const [path, file] of present) {
 			const committed = this.#committed.get(path);
-			if (committed === undefined) {
+			if (committed !== undefined && this.#removedFromIndex.has(path)) {
+				records.push(`1 D. N... 100644 000000 000000 aaaa 0000 ${path}`);
+				if (!this.#ignored.has(path)) records.push(`? ${path}`);
+			} else if (committed === undefined) {
 				if (!this.#ignored.has(path)) records.push(`? ${path}`);
 			} else if (committed !== new TextDecoder().decode(file.bytes))
 				records.push(`1 .M N... 100644 100644 100644 aaaa bbbb ${path}`);
