@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { waitForChildProcess } from "../../../../utils/child-process.ts";
+import { withCredentialProxy } from "../../../credential-proxy/runtime.ts";
 import { killProcessTree, trackDetachedChildPid, untrackDetachedChildPid } from "../../../../utils/shell.ts";
 import {
 	applyHookOutputSafety,
@@ -66,7 +67,8 @@ export async function runCommandHook(
 			envPassthrough: options.envPassthrough,
 			handler,
 			input,
-			sourceEnv: options.sourceEnv ?? process.env,
+			// Hooks run agent-triggered commands: declared credentials are withheld as for the bash tool (senpi#6820).
+			sourceEnv: options.sourceEnv ?? withCredentialProxy(process.env),
 		}),
 		shell: true,
 		stdio: ["pipe", "pipe", "pipe"],
@@ -104,6 +106,12 @@ export async function runCommandHook(
 			else options.signal.addEventListener("abort", onAbort, { once: true });
 		}
 
+		// A hook may exit without reading its JSON input; the write then fails with EPIPE. That is the hook's choice and its
+		// exit code is the result, so it must not surface as an uncaught exception in the engine.
+		child.stdin?.on("error", (error: NodeJS.ErrnoException) => {
+			if (error.code !== "EPIPE")
+				stderr.append(Buffer.from(`[senpi:hooks] writing hook input failed: ${error.message}\n`));
+		});
 		child.stdin?.end(JSON.stringify(input));
 		const exitCode = await waitForChildProcess(child);
 		return buildResult({

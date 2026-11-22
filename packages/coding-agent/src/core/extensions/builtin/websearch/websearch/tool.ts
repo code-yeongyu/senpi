@@ -25,10 +25,16 @@ const Params = Type.Object(
 	{
 		query: Type.String({ minLength: 2, description: "The search query to use" }),
 		allowed_domains: Type.Optional(
-			Type.Array(Type.String(), { description: "Only include search results from these domains" }),
+			Type.Array(Type.String(), {
+				description:
+					"Only include search results from these domains. Cannot be combined with a non-empty blocked_domains.",
+			}),
 		),
 		blocked_domains: Type.Optional(
-			Type.Array(Type.String(), { description: "Never include search results from these domains" }),
+			Type.Array(Type.String(), {
+				description:
+					"Never include search results from these domains. Cannot be combined with a non-empty allowed_domains.",
+			}),
 		),
 		max_results: Type.Optional(
 			Type.Integer({

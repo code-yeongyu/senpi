@@ -22,7 +22,7 @@ export const MOVE_STEPS = [
 		flow: "import",
 		disk: "nothing has landed yet; the staged copy is ready",
 		record: "receiving, target recorded, stamped committing",
-		after: "a move lands once, so every import is fenced; status checks the target: no file there means failed (the sender takes the session back)",
+		after: "a move lands once, so every import is fenced; status checks the target: no file there means receiving while the stamp is young (a stalled commit may still land it) and failed after that (the sender takes the session back)",
 	},
 	{
 		step: "import:renamed",

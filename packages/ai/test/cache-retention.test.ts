@@ -189,6 +189,38 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload.system[0].cache_control).toEqual({ type: "ephemeral" });
 		});
 
+		it("should send the one-hour ttl for a proxy that opts into long cache retention", async () => {
+			const baseModel = getModel("anthropic", "claude-haiku-4-5");
+			const proxyModel = {
+				...baseModel,
+				baseUrl: "https://my-proxy.example.com/v1",
+				compat: { supportsLongCacheRetention: true },
+			};
+			const capturedPayloads: AnthropicCachePayload[] = [];
+
+			const { streamAnthropic } = await import("../src/providers/anthropic.ts");
+
+			try {
+				const s = streamAnthropic(proxyModel, context, {
+					apiKey: "fake-key",
+					cacheRetention: "long",
+					onPayload: (payload) => {
+						capturedPayloads.push(payload as AnthropicCachePayload);
+					},
+				});
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected to fail: the proxy host does not exist.
+			}
+
+			const capturedPayload = capturedPayloads[0];
+			expect(capturedPayload).toBeDefined();
+			expect(capturedPayload?.system?.[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+		});
+
 		it("should omit ttl when supportsLongCacheRetention is false", async () => {
 			const baseModel = getModel("anthropic", "claude-haiku-4-5");
 			const proxyModel = {
@@ -501,9 +533,10 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 		it.each([
 			["gpt-4o-mini", "24h", undefined],
-			["gpt-6-astra", undefined, { ttl: "30m" }],
-			["gpt-6-sol", undefined, { ttl: "30m" }],
-			["gpt-6-luna", undefined, { ttl: "30m" }],
+			// senpi#6290: "long" buys the longest documented lifetime; "30m" is the default and bought nothing.
+			["gpt-6-astra", undefined, { ttl: "12h" }],
+			["gpt-6-sol", undefined, { ttl: "12h" }],
+			["gpt-6-luna", undefined, { ttl: "12h" }],
 		] as const)("should use the supported long cache field for %s", async (modelId, retention, cacheOptions) => {
 			const model = getModel("openai", modelId);
 			let capturedPayload: OpenAIResponsesCachePayload | undefined;

@@ -13,6 +13,10 @@ import {
 } from "../models.ts";
 import { supportsAllowedToolChoice } from "../openai-responses-compat.ts";
 import { readProviderDiagnostic } from "../provider-diagnostic.ts";
+import {
+	isSharedSubscriptionItemLimitMessage,
+	sharedSubscriptionItemLimitMessage,
+} from "./subscription-sharing-items.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -44,6 +48,7 @@ import {
 } from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { isSiwcMissingResponsesScope, SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE } from "../utils/siwc-errors.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
@@ -62,6 +67,7 @@ import {
 import {
 	findPromptCacheComparisonResponseId,
 	type OpenAIPromptCacheOptionsPayload,
+	supportsOpenAIResponsesExplicitPromptCacheMode,
 	withPromptCacheComparison,
 } from "./openai-responses-prompt-cache.ts";
 import {
@@ -70,6 +76,7 @@ import {
 	processResponsesStream,
 	resolveResponsesDeferredToolsMode,
 	resolveResponsesToolPlacement,
+	ULTRAFAST_DOCUMENTED_MODEL_IDS,
 } from "./openai-responses-shared.ts";
 import { buildBaseOptions, clampMaxForOpenAI, OPENAI_RESPONSES_RESERVED_BODY_KEYS } from "./simple-options.ts";
 import { startWebSocketLiveness } from "./websocket-liveness.ts";
@@ -152,7 +159,7 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		supportsAdditionalTools: model.compat?.supportsAdditionalTools ?? false,
 		supportsToolSearch: !model.compat?.siwc && (model.compat?.supportsToolSearch ?? false),
-		supportsExplicitPromptCacheMode: !model.compat?.siwc && (model.compat?.supportsExplicitPromptCacheMode ?? false),
+		supportsExplicitPromptCacheMode: supportsOpenAIResponsesExplicitPromptCacheMode(model),
 		supportsConfigurationUpdate: model.compat?.supportsConfigurationUpdate ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
 		supportsForcedToolChoice: model.compat?.supportsForcedToolChoice ?? true,
@@ -184,7 +191,7 @@ function getPromptCacheOptions(
 ): OpenAIPromptCacheOptionsPayload | undefined {
 	if (!compat.supportsExplicitPromptCacheMode) return undefined;
 	if (cacheRetention === "none") return { mode: "explicit" };
-	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "30m" };
+	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "12h" };
 	return undefined;
 }
 
@@ -252,9 +259,15 @@ function formatOpenAIResponsesError(error: unknown, provider: string, siwc = fal
 		normalizeProviderError(error),
 		`${provider === "openai" ? "OpenAI" : provider} API error`,
 	);
+	if (isSharedSubscriptionItemLimitMessage(errorMessage)) {
+		errorMessage = sharedSubscriptionItemLimitMessage(provider, errorMessage);
+	}
 	if (siwc && error instanceof Error && Reflect.get(error, "code") === "subscription_sharing_unsupported_capability") {
 		const param = Reflect.get(error, "param");
 		if (typeof param === "string") errorMessage += `\nUnsupported parameter: ${param}`;
+	}
+	if (siwc && isSiwcMissingResponsesScope(errorMessage)) {
+		errorMessage += `\n${SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE}`;
 	}
 	// Sign in with ChatGPT shares the subscription's usage limit with other apps.
 	return errorMessage.includes("subscription_sharing_usage_limit_exceeded")
@@ -738,7 +751,18 @@ function buildParams(
 		context.messages,
 		resolveResponsesDeferredToolsMode(compat) !== undefined,
 	);
-	const requestedReasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
+	// Sign in with ChatGPT rejects configuration_update items (senpi#6607), so the newest one, the level in
+	// force, becomes the request effort instead of the cache baseline the session sends, as upstream does.
+	const configuredEffort =
+		compat.siwc && compat.supportsConfigurationUpdate
+			? context.messages.findLast((message) => message.role === "configurationUpdate")?.effort
+			: undefined;
+	const requestedReasoningEffort =
+		configuredEffort === undefined
+			? (options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined))
+			: configuredEffort === "off"
+				? undefined
+				: (configuredEffort as NonNullable<OpenAIResponsesOptions["reasoningEffort"]>);
 	const thinkingLevelMap = inferOpenAIThinkingLevelMap(model);
 	const mappedReasoningEffort =
 		requestedReasoningEffort === undefined ? undefined : thinkingLevelMap?.[requestedReasoningEffort];
@@ -1214,7 +1238,7 @@ function getServiceTierCostMultiplier(
 		case "ultrafast":
 			// OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at 6x Standard on every
 			// token class and context tier. Any other model keeps its base rate.
-			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 6 : 1;
+			return ULTRAFAST_DOCUMENTED_MODEL_IDS.has(model.upstreamModelId ?? model.id) ? 6 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":

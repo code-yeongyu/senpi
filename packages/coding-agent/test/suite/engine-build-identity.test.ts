@@ -17,6 +17,7 @@ import {
 	type EngineBuildIdentity,
 	engineBuildIdentity,
 	engineBuildIdentityFrom,
+	olderEngineDetail,
 } from "../../src/core/engine-build-identity.ts";
 
 const EPOCH = 1_758_000_000;
@@ -129,5 +130,54 @@ describe("engineBuildIdentity", () => {
 
 	it("returns the same identity on every call", () => {
 		expect(engineBuildIdentity()).toEqual(engineBuildIdentity());
+	});
+});
+
+// senpi#7018: a handoff is refused when the successor is OLDER than the running host by this order.
+describe("olderEngineDetail", () => {
+	it("ranks a -N post-release above the release, whatever the build epochs say", () => {
+		// The observed shape: a bundled runtime whose banner reads 5.1.77 runs engine 2026.11.18,
+		// the host it would replace (5.1.78) runs engine 2026.11.18-2.
+		const host = identity("2026.11.18-2", EPOCH);
+		const bundled = identity("2026.11.18", EPOCH + 500_000);
+
+		expect(olderEngineDetail(bundled, host)).toContain("2026.11.18-2");
+		expect(olderEngineDetail(host, bundled)).toBeUndefined();
+	});
+
+	it("ranks a same-day build with a later epoch as newer", () => {
+		const earlier = identity("2026.11.18", EPOCH);
+		const later = identity("2026.11.18", EPOCH + 100);
+
+		expect(olderEngineDetail(earlier, later)).toBeDefined();
+		expect(olderEngineDetail(later, earlier)).toBeUndefined();
+	});
+
+	it("treats an equal or uncomparable pair as not older", () => {
+		const built = identity("2026.11.18", EPOCH);
+		const source = identity("2026.11.18");
+
+		expect(olderEngineDetail(built, built)).toBeUndefined();
+		expect(olderEngineDetail(source, built)).toBeUndefined();
+		expect(olderEngineDetail(built, source)).toBeUndefined();
+	});
+});
+
+// senpi#7040: compiled omo builds through 5.1.78 advertised their omo version as the ordinal ([5,1,78,0,0]) while
+// every other build advertises senpi CalVer, so [2026,11,18] read as newer than a later engine. Only two CalVer
+// ordinals name positions in one release order; a pair with any other ordinal is never ordered and never handed off.
+describe("ordinals outside senpi CalVer", () => {
+	const omoVersion = identity("5.1.78");
+	const calver = identity("2026.11.18");
+
+	it("orders no pair with a non-CalVer side, in either direction", () => {
+		expect(compareEngineOrdinal(calver, omoVersion)).toBe(0);
+		expect(compareEngineOrdinal(omoVersion, calver)).toBe(0);
+		expect(compareEngineOrdinal(identity("5.1.79"), omoVersion)).toBe(0);
+	});
+
+	it("refuses a handoff across vocabularies in either direction", () => {
+		expect(olderEngineDetail(calver, omoVersion)).toContain("5.1.78");
+		expect(olderEngineDetail(omoVersion, calver)).toContain("5.1.78");
 	});
 });

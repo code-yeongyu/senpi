@@ -1,4 +1,5 @@
 import type { AccountSlot, ClaudeCliAccountSlot } from "./accounts.ts";
+import { isValidAccountDirId } from "./claude-cli-account-dir.ts";
 
 /** Every sign-in-required prompt starts with this, whatever the reason; `isSignInAgainError` keys on it. */
 const SIGN_IN_LEAD = "Claude sign-in ";
@@ -40,12 +41,27 @@ export function isSignInAgainError(errorMessage: string | undefined): boolean {
 	return errorMessage?.includes(`authentication_failed: ${SIGN_IN_LEAD}`) === true;
 }
 
+/**
+ * A slot this engine can serve: nothing to sign in again for, and (on the CLI store) an account dir id that names a
+ * directory. A stored CLI slot whose `dirId` is missing or malformed names no directory, so preparing it fails with an
+ * internal error ("Invalid Claude account dir id") before any model call - that is a sign-in state, not a turn
+ * failure, and it must never reach the SDK (omo#12228).
+ */
+export function isServableAccountSlot(slot: AccountSlot): boolean {
+	return slot.store !== "claude-cli" || (slot.signInRequired === undefined && isValidAccountDirId(slot.dirId));
+}
+
+/**
+ * The accounts a turn cannot use until the user signs in again, named so the prompt can say which. A stored slot whose
+ * account dir id is unusable carries no login this engine can read, so it is reported as expired: only a new sign-in
+ * gives it a directory (run `/login anthropic-subscription`).
+ */
 export function signInRequiredAccounts(accounts: readonly AccountSlot[]): SignInRequired[] {
-	return accounts.flatMap((slot) =>
-		slot.store === "claude-cli" && slot.signInRequired !== undefined
-			? [{ name: slot.name, reason: slot.signInRequired }]
-			: [],
-	);
+	return accounts.flatMap((slot): SignInRequired[] => {
+		if (slot.store !== "claude-cli") return [];
+		if (slot.signInRequired !== undefined) return [{ name: slot.name, reason: slot.signInRequired }];
+		return isValidAccountDirId(slot.dirId) ? [] : [{ name: slot.name, reason: "login_expired" }];
+	});
 }
 
 /**

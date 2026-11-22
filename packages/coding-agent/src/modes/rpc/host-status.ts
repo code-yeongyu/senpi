@@ -16,6 +16,7 @@ import { createHostDaemonPaths, parseShardSocket, type ShardKind } from "./host-
 import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
 import { type HostGenerationRow, pruneDeadGenerations, readGenerationRows } from "./host-generations.ts";
+import { type HostUnit, withHostUnits } from "./host-unit-placement.ts";
 import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
 import { electPointer, type HostPointerState } from "./host-pointer-election.ts";
 import type { PathIdentityResolverStatus } from "./path-identity-status.ts";
@@ -43,6 +44,11 @@ export interface HostSessionCounts {
 }
 
 export type { HostGenerationRow } from "./host-generations.ts";
+
+/** A generation row as `host status` reports it: plus the cgroup and unit its supervisor runs in (senpi#7099). */
+export interface HostGenerationStatusRow extends HostGenerationRow {
+	readonly unit: HostUnit | null;
+}
 export type { HostPathClaimRow, HostSessionRow } from "./host-status-rows.ts";
 
 export interface HostStatusReport {
@@ -76,7 +82,7 @@ export interface HostStatusReport {
 	readonly path_identity_resolver: PathIdentityResolverStatus | null;
 	/** Environment NAMES the daemon was granted, never values. */
 	readonly env_keys: readonly string[];
-	readonly generations: readonly HostGenerationRow[];
+	readonly generations: readonly HostGenerationStatusRow[];
 	/**
 	 * Which generation the pointer names: `current`, `elected` when this read gave a lost pointer back to
 	 * the one proven live generation (senpi#1911), or `missing` with the `candidates` it saw.
@@ -156,7 +162,7 @@ async function probeHostStatusInKeyRoot(
 	// be shown generations that ended, and the next reader must get the same answer.
 	if (prune) await pruneDeadGenerations(paths);
 	const pointer = await electPointer(paths, { write: prune });
-	const generations = await readGenerationRows(paths, { includeDead: !prune });
+	const generations = await withHostUnits(await readGenerationRows(paths, { includeDead: !prune }));
 	const current = generations.find((row) => row.current && row.alive);
 	const registered = await readHostRegistration(paths);
 	const metrics = current ? await readHostProcessMetrics(current.pid) : UNOBSERVED_METRICS;

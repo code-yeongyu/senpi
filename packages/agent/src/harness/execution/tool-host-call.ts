@@ -31,14 +31,15 @@ function issuingMessage(toolCall: AgentToolCall): AssistantMessage {
 
 /**
  * Runs one cleared harness call's body on the in-process prepared ToolHost (S19c), as a one-call batch on its own
- * in-memory ledger. The harness already prepared, validated and hooked the call, so the host passes its arguments
- * through unchanged; `run` owns the harness's own signal, updates and error semantics.
+ * in-memory ledger. The harness already prepared, validated and hooked the call, so the host's schema passes its
+ * arguments through. The host records a JSON copy of them, but `run` executes the body on the cleared arguments object
+ * itself, as before the host (senpi#5861); it owns the harness's own signal, updates and error semantics.
  */
 export async function runOnPreparedToolHost<T>(
 	toolCall: AgentToolCall,
 	scopeId: string,
 	recordWitness: WitnessSink | undefined,
-	run: (args: unknown) => Promise<{ readonly outcome: T; readonly result: AgentToolResult<unknown> }>,
+	run: () => Promise<{ readonly outcome: T; readonly result: AgentToolResult<unknown> }>,
 ): Promise<T> {
 	let settled: { readonly outcome: T } | undefined;
 	const body: AgentTool = {
@@ -46,8 +47,8 @@ export async function runOnPreparedToolHost<T>(
 		label: toolCall.name,
 		description: toolCall.name,
 		parameters: CLEARED_ARGUMENTS,
-		execute: async (_toolCallId, args) => {
-			const { outcome, result } = await run(args);
+		execute: async () => {
+			const { outcome, result } = await run();
 			settled = { outcome };
 			return result;
 		},

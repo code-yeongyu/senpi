@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs, parseRetryAfterMsMarker } from "../src/utils/retry-hint.ts";
 
 /* ---------- helpers ---------- */
@@ -454,7 +454,7 @@ describe("body prose", () => {
 	});
 });
 
-/* ---------- 7. Precedence: explicit zero beats lower-precedence positive ---------- */
+/* ---------- 6a. Wall-clock reset prose (senpi#1771, senpi#5097) ---------- */
 
 describe("zoned clock reset prose (senpi#1771)", () => {
 	// 2023-11-14T22:13:20Z = 2023-11-15 07:13:20 in Asia/Seoul (UTC+9, no DST).
@@ -478,7 +478,41 @@ describe("zoned clock reset prose (senpi#1771)", () => {
 	it("a clock time in prose without a rate-limit signal stays ineligible", () => {
 		expect(extract429RetryAfterMs({ status: 500, bodyText: "resets 12am (Asia/Seoul)" }, NOW)).toBeUndefined();
 	});
+
+	// 2024-03-10 05:00Z is midnight EST; New York moves to EDT (UTC-4) at 2am that day, so 3am is 07:00Z.
+	// Read with the pre-switch offset (one pass) it would land an hour late, at 08:00Z.
+	const BEFORE_SPRING_FORWARD = Date.UTC(2024, 2, 10, 5, 0, 0);
+	const THREE_AM_EDT = Date.UTC(2024, 2, 10, 7, 0, 0);
+
+	it("a zoned reset across a DST change uses the offset in force at the reset", () => {
+		const result = extract429RetryAfterMs(
+			{ status: 429, bodyText: "You've hit your limit \u00b7 resets 3am (America/New_York)" },
+			BEFORE_SPRING_FORWARD,
+		);
+		expect(result).toBe(THREE_AM_EDT - BEFORE_SPRING_FORWARD);
+	});
+
+	describe("a reset with no zone reads in the host's zone", () => {
+		const savedTz = process.env.TZ;
+		beforeAll(() => {
+			process.env.TZ = "America/New_York";
+		});
+		afterAll(() => {
+			if (savedTz === undefined) delete process.env.TZ;
+			else process.env.TZ = savedTz;
+		});
+
+		it("'resets 3am' on a New York host -> 3am New York time, DST included", () => {
+			const result = extract429RetryAfterMs(
+				{ status: 429, bodyText: "You've hit your limit \u00b7 resets 3am" },
+				BEFORE_SPRING_FORWARD,
+			);
+			expect(result).toBe(THREE_AM_EDT - BEFORE_SPRING_FORWARD);
+		});
+	});
 });
+
+/* ---------- 7. Precedence: explicit zero beats lower-precedence positive ---------- */
 
 describe("explicit zero precedence", () => {
 	it("retry-after-ms: 0 + retry-after: 60 -> 0 (higher precedence wins with zero)", () => {

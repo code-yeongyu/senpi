@@ -103,7 +103,18 @@ export function beginStartupAttempt(options: {
 }
 
 export function exitMessage(exit: ChildExit): string {
-	return `RPC socket host exited with code ${exit.code ?? "null"}${exit.signal ? ` (${exit.signal})` : ""} before answering get_protocol_info`;
+	return `RPC socket host exited with ${exitStatus(exit)} before answering get_protocol_info`;
+}
+
+function exitStatus(exit: ChildExit): string {
+	return `code ${exit.code ?? "null"}${exit.signal ? ` (${exit.signal})` : ""}`;
+}
+
+/** The reply a host gave instead of READY. A stopping host is not a protocol mismatch (senpi#6017). */
+function answerMessage(protocol: HostProtocolInfo, exited: ChildExit | undefined): string {
+	if (protocol.lifecycle !== "stopping") return incompatibleMessage(protocol);
+	const exit = exited ? `, and then exited with ${exitStatus(exited)}` : "";
+	return `RPC socket host answered get_protocol_info with lifecycle "stopping": it began stopping before this start verified it${exit}`;
 }
 
 function incompatibleMessage(protocol: HostProtocolInfo): string {
@@ -153,7 +164,7 @@ export async function driveStartupToReady(options: {
 	// An answer the host did give, or its exit, is an explicit cause: it is never relabelled as the timeout the
 	// poll ran into while it kept retrying that incompatible answer (A-amended section 6).
 	const explicit = result.protocol
-		? new Error(incompatibleMessage(result.protocol))
+		? new Error(answerMessage(result.protocol, result.exited))
 		: result.exited
 			? new Error(exitMessage(result.exited))
 			: undefined;

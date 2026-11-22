@@ -4,7 +4,9 @@ import type { Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-wor
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { QueuedInput } from "../../core/agent-session.ts";
 import type { HoldKind } from "../../core/engine-turn-hold.ts";
+import type { PermissionMode } from "../../core/permission-mode.ts";
 import type { ProviderOrigin } from "../../core/provider-origin.ts";
+import type { RetryWait } from "../../core/retry-wait.ts";
 
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage } from "../../core/extensions/types.ts";
@@ -88,9 +90,14 @@ export interface RpcProviderAccount {
 	orgName?: string;
 	subscriptionType?: string;
 	/** The sign-in connection test's last result. */
-	check?: { model: string; outcome: "ok" | "failed"; reason?: string; at: number };
+	check?: { model: string; outcome: "ok" | "failed"; reason?: string; message?: string; status?: number; at: number };
 	/** `needs_sign_in`: the account must sign in again before it is used. */
 	signIn?: "signed_in" | "needs_sign_in";
+	/** Actual session-local selection, not a prediction from account order or pin. */
+	active?: boolean;
+	/** SIWC usage pause; the internal probe cooldown is not a reset time. */
+	paused?: true;
+	usageUrl?: string;
 }
 
 // ============================================================================
@@ -137,7 +144,7 @@ export interface RpcSessionModelEntry {
 	serviceTier?: ServiceTier;
 }
 
-export interface RpcSessionState {
+export interface RpcSessionState extends Partial<PermissionMode> {
 	/** The running turn's id; absent when no turn is running. A steer or follow-up names it as `expectedTurnId` (senpi#5776). */
 	currentTurnId?: string;
 	/** Latest 64 UI-answer receipts in this session generation, oldest first. */
@@ -217,6 +224,7 @@ export interface RpcSessionState {
 	usageTotals: UsageTotals;
 	contextUsage?: ContextUsage;
 	retryAttempt: number;
+	retryWait?: RetryWait;
 	isBashRunning: boolean;
 	/** Open question prompts awaiting an answer. Absent when none are pending. */
 	pendingQuestions?: RpcQuestionUiRequest[];

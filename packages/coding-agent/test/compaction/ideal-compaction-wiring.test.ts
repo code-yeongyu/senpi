@@ -3,7 +3,6 @@ import { estimateTokens } from "../../src/core/compaction/index.ts";
 import {
 	admitContextToolResult,
 	admitContextToolResults,
-	injectTokenBudgetReminder,
 	resolveCompactionGeometry,
 	shouldDeferGraceBand,
 } from "../../src/core/extensions/builtin/compaction/orchestration.ts";
@@ -45,32 +44,7 @@ describe("ideal compaction extension wiring decisions", () => {
 		expect(shouldDeferGraceBand({ ...base, tokens: 82_000, graceBandEnabled: false })).toBe(false);
 	});
 
-	it("leases one ephemeral reminder onto the real user turn without changing restoration payloads", () => {
-		const user = { role: "user" as const, content: [{ type: "text" as const, text: "real prompt" }], timestamp: 1 };
-		const restoration = {
-			role: "custom" as const,
-			customType: "compaction-restoration",
-			content: "restore checkpoint",
-			display: false,
-			timestamp: 2,
-		};
-		const initial = injectTokenBudgetReminder([user, restoration], "budget reminder");
-		const retry = injectTokenBudgetReminder(initial, "budget reminder");
-
-		expect(initial).toHaveLength(2);
-		expect(initial[0]).toMatchObject({
-			role: "user",
-			content: [
-				{ type: "text", text: "budget reminder" },
-				{ type: "text", text: "real prompt" },
-			],
-		});
-		expect(initial[1]).toBe(restoration);
-		expect(retry).toBe(initial);
-		expect(injectTokenBudgetReminder([restoration], "budget reminder")).toEqual([restoration]);
-	});
-
-	it("clamps one configured lead for trigger, grace, and reminder geometry", () => {
+	it("clamps one configured lead for trigger and grace geometry", () => {
 		const base = { contextWindow: 200_000, lastYield: undefined };
 		const low = resolveCompactionGeometry({
 			...base,

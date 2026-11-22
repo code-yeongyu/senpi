@@ -12,7 +12,8 @@ import { createProjectTrustContext } from "../../cli/project-trust.ts";
 import { isLocalPath, resolvePath } from "../../utils/paths.ts";
 import type { Args } from "../../cli/args.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
-import type { LooplessRuntimeProfile } from "./runtime-factory-loopless.ts";
+import type { LooplessRuntimeProfile } from "./loopless-runtime.ts";
+import { resolveToolSelection } from "../../core/runtime/active-tools.ts";
 
 export interface LooplessRuntimeSettings {
 	readonly settingsManager: SettingsManager;
@@ -51,7 +52,11 @@ export async function resolveLooplessSettings(
 		hasTrustRequiringResources &&
 		parsed.projectTrustOverride === undefined &&
 		savedProjectTrust !== true;
-	const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
+	const settingsManager = SettingsManager.create(cwd, agentDir, {
+		projectTrusted,
+		trustFromFullAccess,
+		projectTrustLocked: parsed.projectTrustOverride !== undefined,
+	});
 	const reloadOptions: ResourceLoaderReloadOptions | undefined = shouldResolveProjectTrust
 		? {
 				resolveProjectTrust: ({ extensionsResult }) =>
@@ -84,19 +89,31 @@ export interface LooplessToolFilters {
 	readonly excludedToolNames?: ReadonlySet<string>;
 }
 
+export interface LooplessToolSelection {
+	/** The registry filters, as a session applies them. */
+	readonly filters: LooplessToolFilters;
+	/** The active set a session would request for the same flags and settings. */
+	readonly initialActiveToolNames: readonly string[];
+}
+
 /**
  * The CLI's tool filters (`--tools`, `--no-tools`, `--no-builtin-tools`, `--exclude-tools`, settings `defaultTools`),
- * mapped as `main.ts` maps them and resolved as `createAgentSession` resolves them (sdk.ts), so a loopless runtime
- * registers exactly the tools a session registers for the same flags and settings.
+ * mapped as `main.ts` maps them and resolved by `resolveToolSelection`, as `createAgentSession` resolves them, so a
+ * loopless runtime registers exactly the tools a session registers for the same flags and settings and knows the active
+ * set that session would request.
  */
-export function looplessToolFilters(parsed: Args, settingsManager: SettingsManager): LooplessToolFilters {
+export function looplessToolSelection(parsed: Args, settingsManager: SettingsManager): LooplessToolSelection {
 	const noTools = parsed.noTools ? "all" : parsed.noBuiltinTools ? "builtin" : undefined;
-	const defaultToolNames =
-		parsed.tools === undefined && noTools === undefined ? settingsManager.getDefaultTools() : undefined;
-	const allowedToolNames = parsed.tools ?? (noTools === "all" ? [] : undefined);
+	const { defaultToolNames, allowedToolNames, excludedToolNames, initialActiveToolNames } = resolveToolSelection(
+		{ tools: parsed.tools, noTools, excludeTools: parsed.excludeTools },
+		settingsManager.getDefaultTools(),
+	);
 	return {
-		...(defaultToolNames === undefined ? {} : { defaultToolNames: new Set(defaultToolNames) }),
-		...(allowedToolNames === undefined ? {} : { allowedToolNames: new Set(allowedToolNames) }),
-		...(parsed.excludeTools === undefined ? {} : { excludedToolNames: new Set(parsed.excludeTools) }),
+		filters: {
+			...(defaultToolNames === undefined ? {} : { defaultToolNames: new Set(defaultToolNames) }),
+			...(allowedToolNames === undefined ? {} : { allowedToolNames: new Set(allowedToolNames) }),
+			...(excludedToolNames === undefined ? {} : { excludedToolNames: new Set(excludedToolNames) }),
+		},
+		initialActiveToolNames,
 	};
 }

@@ -41,6 +41,9 @@ const hostToKernelMessageSchema = Type.Union([
 		sessionId: Type.String({ minLength: 1 }),
 		connection: connectionConfigSchema,
 		sessionEnv: Type.Optional(Type.Record(Type.String(), Type.String())),
+		/** Worker-thread JS kernels: host names the worker's env copy drops, and values it sets (senpi#5635). */
+		removedEnv: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+		inheritedSet: Type.Optional(Type.Record(Type.String(), Type.String())),
 		kernelGeneration: Type.Optional(Type.Integer({ minimum: 1 })),
 		hostToolNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 		foreignLanguageNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
@@ -59,6 +62,8 @@ const hostToKernelMessageSchema = Type.Union([
 		envRoot: Type.Optional(Type.String()),
 		/** The file a `%load` cell runs; the runner compiles under its name and imports beside it. */
 		sourceFile: Type.Optional(Type.String({ minLength: 1 })),
+		/** The run's bridge secret; the kernel attaches it to the cell's `/call` requests (see `EvalKernelRunInput`). */
+		bridgeCellToken: Type.Optional(Type.String({ minLength: 1 })),
 		/** Python only: active tool globals to install before the cell and deactivated ones to remove. */
 		preludes: Type.Optional(
 			Type.Object({

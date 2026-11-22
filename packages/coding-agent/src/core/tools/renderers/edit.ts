@@ -11,7 +11,8 @@ import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../../extensions/types.ts";
 import { countDiffChanges, renderToolDiff } from "../diff-render.ts";
 import type { EditToolDetails } from "../edit.ts";
-import { computeEditsDiff, type Edit, type EditDiffError, type EditDiffResult } from "../edit-diff.ts";
+import type { Edit, EditDiffError, EditDiffResult } from "../edit-diff.ts";
+import { computeEditsDiff } from "../edit-preview.ts";
 import { renderToolPath, str } from "../render-utils.ts";
 
 type EditPreview = EditDiffResult | EditDiffError;

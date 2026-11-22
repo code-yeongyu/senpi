@@ -34,12 +34,16 @@ cell grid. Prefixes encode role:
   (`node scripts/run-workspaces.mjs [--if-present] [--workspace <name|path>]... <script> [-- <args>]`):
   resolves the root `workspaces` field, runs `<pm> run <script>` per workspace sequentially in path
   order with the invoking manager, never re-enters the root, and prints a PASS / SKIP / FAIL summary.
+  `--parallel` starts every selected workspace at once; `--alongside <workspace>` runs that one workspace in
+  its own lane next to the others (still sequential among themselves) when `run-workspaces-lanes.mjs` finds room
+  (`os.availableParallelism()` >= 8 or `RUN_WORKSPACES_PARALLELISM`), else sequentially. The root `test` script
+  runs coding-agent alongside; `test:serial` keeps the strictly sequential run.
   Every root `package.json` delegation into a workspace goes through it (`root-workspace-scripts.test.mjs`).
 - `release.mjs`: CalVer release composing `calver.mjs` and
   `release-{packages,artifacts,changelog,git,test-gate}.mjs`. Preflight: on `main`, clean tree
   (dry-run warns), valid CalVer; `--dry-run` previews every command and file write.
-- `publish.mjs`: publishes seven fork-owned packages (`senpi-ai`, `senpi-agent-core`, `senpi-tui`,
-  `senpi-pty`, `senpi-telemetry`, `senpi-codemode`, `senpi`); sources stay `private`, copied to
+- `publish.mjs`: publishes eight fork-owned packages (`senpi-ai`, `senpi-agent-core`, `senpi-tui`,
+  `senpi-pty`, `senpi-telemetry`, `senpi-realm-registry`, `senpi-codemode`, `senpi`); sources stay `private`, copied to
   temporary public manifests under the fork scope (`@code-yeongyu/senpi-server` stays excluded).
   Provenance requires GitHub Actions (`publish-command.mjs` throws outside it);
   `local-release.mjs` smoke-tests a release to a temp dir without pushing tags.
@@ -53,15 +57,38 @@ cell grid. Prefixes encode role:
   `check-ts-relative-imports.mjs`, `check-browser-smoke.mjs`, `diff-model-catalog.mjs`,
   `publish-model-catalog.mjs`, `generate-thinking-capabilities.mjs` — `bun run check` chains them.
 
+## Manual first publish (senpi#6636)
+
+npm trusted publishing (`publish-npm.yml`, OIDC only) cannot do a package's first publish: the package must
+exist on the registry before a trusted publisher can be attached to it. `release.mjs` (first, before any build,
+suite, tag or push; `--dry-run` too) and `publish.mjs` (before staging any package) refuse while a value of
+`registryPackageNames` is unknown to the registry, through `assertRegistryPackagesKnown` in `npm-registry.mjs`;
+a registry failure that is not a 404 stops them with its own error. Only the `publish.mjs` call retries such a
+failure (3 attempts, a short fixed pause; a 404 is never retried), because it runs after the tag is pushed and a
+failure there costs the version; `release.mjs` checks once, since a failure there costs only a re-dispatch. The `Registry packages published` workflow
+runs `node scripts/npm-registry.mjs` on a PR that changes the publish set and on main. For each unknown name:
+
+1. With an npm login that maintains the scope, publish a placeholder once: a directory holding only a
+   `package.json` (`name`, `version` `0.0.0-reserve.0`, `repository`), then
+   `npm publish --access public --tag reserve`. A first publish also sets `latest`, whatever `--tag` says
+   (measured on 2026-11-13: `latest` and `reserve` both pointed at `0.0.0-reserve.0`), so `latest` points at the
+   placeholder until the first trusted release moves it.
+2. Attach the trusted publisher: `npm trust github <name> --repo code-yeongyu/senpi --file publish-npm.yml
+   --allow-publish` (or the package's access page on npmjs.com: GitHub Actions, user `code-yeongyu`,
+   repository `senpi`, workflow `publish-npm.yml`, no environment).
+
+Both steps ask for the npm account's second factor (a CLI web login and the package settings page both stop
+at it), so they need the account owner present; the settings page form is the alternative to `npm trust`.
+
 ## Release entry graph validation
 
-After a lifecycle-disabled install, run `npm rebuild canvas --foreground-scripts`
-(as the release builder does) to provide its native binding. Then run
+No native build is needed: every Bun build of the release entry graph keeps linkedom's optional
+`canvas` external (`bun-release-externals.mjs`, senpi#6045), so a lifecycle-disabled install is enough. Run
 `bun test scripts/release-graph-codemode.test.ts` followed by
 `bun test scripts/release-graph-exclusions.test.ts`. The codemode suite rebuilds
 all workspace entries and prepares compile assets before measuring real Bun output
 contributions, so direct invocation also replaces stale `dist` from another branch.
-The CI `Test (workspaces + scripts)` job runs these commands in its
+The CI `Test (scripts)` job runs these commands in its
 `Fresh release entry graphs (codemode and exclusions)` step, before either script
 suite can invalidate generated output. These Bun `.ts` tests are not part of the
 Node `.mjs` script-test glob. Run them only in a checkout whose generated outputs

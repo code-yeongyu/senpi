@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { McpFormRequest, McpFormResolved, McpFormSettled } from "../../src/core/mcp-form-types.ts";
+import type { McpPresenterSecretFrame } from "../../src/modes/rpc/secret-sealed.ts";
 import { McpFormGroup } from "../../src/modes/rpc/mcp-presenter-form-group.ts";
 
-type Frame = McpFormRequest | McpFormResolved | McpFormSettled;
+type Frame = McpFormRequest | McpFormResolved | McpFormSettled | McpPresenterSecretFrame;
 
 describe("MCP form group latch (D11 S3-3b)", () => {
 	it("the group latch admits and records one outcome even when a second claim reaches it", async () => {

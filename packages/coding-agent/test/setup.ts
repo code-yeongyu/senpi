@@ -9,7 +9,9 @@
  * $HOME and leaves faux-provider JSONLs there permanently, where downstream
  * tools (e.g. tokscale) then mis-count them as real usage.
  */
-import { dirname } from "node:path";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
 import { trackTempDir } from "../../../scripts/vitest-temp.ts";
 import { installHostScratchRemovalGuard } from "./support/host-scratch-removal-guard.ts";
 import { resolveQuarantineAgentDir, scrubAmbientAgentDirEnv, scrubHostLifecycleEnv } from "./support/quarantine.ts";
@@ -36,3 +38,23 @@ if (quarantineAgentDir) {
 	scrubAmbientAgentDirEnv(process.env);
 	process.env.SENPI_CODING_AGENT_DIR = quarantineAgentDir;
 }
+
+// senpi#7002: the TUI login surfaces launch the platform browser by name ("open" on darwin,
+// "xdg-open" on linux; src/utils/open-browser.ts), and a TUI-mode login test that forgets its
+// openBrowser dep would hand the login URL to the developer's real browser. Shadow both names
+// with a recording no-op first on PATH - the same always-wins boundary as the quarantine above -
+// so no spawn from this suite can leave the test process. Windows launches "rundll32", which
+// the loader resolves to the real System32 binary regardless of PATH: there the per-test
+// openBrowser deps remain the fix, and CI's windows runners are headless.
+const browserGuardDir = mkdtempSync(join(tmpdir(), "senpi-browser-guard-"));
+const browserGuardRecord = join(browserGuardDir, "opened");
+for (const opener of ["open", "xdg-open"]) {
+	const stub = join(browserGuardDir, opener);
+	writeFileSync(stub, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${browserGuardRecord.replaceAll("'", `'\\''`)}'\n`, {
+		mode: 0o700,
+	});
+	chmodSync(stub, 0o755);
+}
+process.env.PATH = `${browserGuardDir}${delimiter}${process.env.PATH ?? ""}`;
+process.env.SENPI_TEST_BROWSER_GUARD_RECORD = browserGuardRecord;
+trackTempDir(browserGuardDir);

@@ -90,6 +90,7 @@ export function syncRuntimeMetadata(
 	pathReservations: SessionPathReservations | undefined,
 ): void {
 	for (const entry of entries) {
+		if (entry.speculative) continue;
 		const manager = entry.runtime?.session.sessionManager;
 		if (!manager) continue;
 		const currentPath = manager.getSessionFile();

@@ -24,6 +24,7 @@
  * the pending operation and is answered with ITS id; another target is refused
  * (`handover_in_progress`) until the pending operation ends.
  */
+import { type EngineBuildIdentity, olderEngineDetail } from "../../core/engine-build-identity.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 
 /**
@@ -56,6 +57,13 @@ export interface IdleHandoverRequest {
 	readonly policy?: HostLifecyclePolicyInput;
 	/** The agent dir of the CLI that asked; absent from CLIs before #3560. Another dir than the host's is refused. */
 	readonly agentDir?: string;
+	/**
+	 * The engine of the CLI that asked, which is the engine the successor runs. Absent from CLIs before senpi#7018:
+	 * such a CLI predates the downgrade guard, so its engine is older than any host that enforces it.
+	 */
+	readonly targetEngine?: EngineBuildIdentity;
+	/** The requester's explicit consent to hand this host down to an older engine. */
+	readonly allowDowngrade?: boolean;
 }
 
 export interface HandoverSuccessor {
@@ -85,12 +93,21 @@ export interface HostIdentityView {
 	readonly instanceId: string;
 	readonly generation: number;
 	readonly runtimeBuildId: string | undefined;
+	/** This host's own engine; a request for an older one is refused `older_engine` (senpi#7018). */
+	readonly engine?: EngineBuildIdentity;
 }
 
 export interface HostIdleHandoverOptions {
 	readonly identity: () => HostIdentityView;
 	readonly isIdle: () => boolean;
 	readonly perform: (request: IdleHandoverRequest) => Promise<HandoverOutcome>;
+	/**
+	 * Called in the same synchronous step as the idle check that starts the switch, before anything is awaited, so work
+	 * the idle check does not see (machine ops, senpi#6752) cannot start between that check and the end of this host;
+	 * `releaseNewWork` reopens it when the handover is blocked and this host keeps serving.
+	 */
+	readonly holdNewWork?: () => void;
+	readonly releaseNewWork?: () => void;
 	/** How often a pending operation re-checks for idle between request settlements. */
 	readonly pollMs?: number;
 	readonly log?: (line: string) => void;
@@ -108,6 +125,7 @@ const NEW_WORK_COMMANDS: ReadonlySet<string> = new Set([
 	"bash",
 	"compact",
 	"wake",
+	"admit_external_message",
 	"edit_assistant_message",
 	"edit_user_message",
 ]);
@@ -163,6 +181,8 @@ export class HostIdleHandover {
 		if (self.runtimeBuildId === request.targetRuntimeBuildId) {
 			return { kind: "refused", reason: "already_current", detail: self.runtimeBuildId };
 		}
+		const downgrade = downgradeDetail(request, self.engine);
+		if (downgrade !== undefined) return { kind: "refused", reason: "older_engine", detail: downgrade };
 		const operation: Operation = {
 			request,
 			view: {
@@ -205,6 +225,7 @@ export class HostIdleHandover {
 		if (operation.view.state !== "handover_pending") return;
 		this.stopTimer();
 		operation.view = { ...operation.view, state: "handover_switching" };
+		this.options.holdNewWork?.();
 		const outcome = await this.options
 			.perform(operation.request)
 			.catch(
@@ -213,6 +234,7 @@ export class HostIdleHandover {
 		operation.view = outcome.ok
 			? { ...operation.view, state: "handover_completed", successor: outcome.successor }
 			: { ...operation.view, state: "handover_blocked", reason: outcome.reason };
+		if (!outcome.ok) this.options.releaseNewWork?.();
 		this.options.log?.(`handover ${operation.view.operationId} ${operation.view.state}`);
 	}
 
@@ -229,6 +251,14 @@ function sameTerms(a: IdleHandoverRequest, b: IdleHandoverRequest): boolean {
 		a.ifInstanceId === b.ifInstanceId &&
 		a.ifGeneration === b.ifGeneration
 	);
+}
+
+function downgradeDetail(request: IdleHandoverRequest, engine: EngineBuildIdentity | undefined): string | undefined {
+	if (request.allowDowngrade === true || engine === undefined) return undefined;
+	if (request.targetEngine === undefined) {
+		return `the requesting CLI did not state its engine, so it predates the downgrade guard and is older than this host's ${engine.text}`;
+	}
+	return olderEngineDetail(request.targetEngine, engine);
 }
 
 function answer(operation: Operation): HandoverAnswer {

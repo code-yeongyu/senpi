@@ -171,20 +171,29 @@ function parsePresentation(body: JsonValue): { method: PresentationMethod; args:
 export class PresentationBroker extends RuntimeUiBroker {
 	readonly #calls = new AsyncLocalStorage<ExtensionUIContext>();
 	readonly #onUndelivered: (error: unknown) => void;
+	readonly #late: ExtensionUIContext | undefined;
 
-	/** `onUndelivered` hears each call's first presentation the loop could not take; the call itself is unaffected. */
-	constructor(onUndelivered: (error: unknown) => void) {
+	/**
+	 * `onUndelivered` hears each call's first presentation the loop could not take; the call itself is unaffected.
+	 * `lateNotify` (H3) takes the notices made outside any call, or after the call that made them ended, which would
+	 * otherwise reach no UI: on a hand it is the wake route to the loop. Without a presenter it never answers a dialog.
+	 */
+	constructor(onUndelivered: (error: unknown) => void, lateNotify?: ExtensionUIContext["notify"]) {
 		super();
 		this.#onUndelivered = onUndelivered;
+		this.#late =
+			lateNotify === undefined
+				? undefined
+				: Object.assign({ ...noOpUIContext, notify: lateNotify }, { [PRESENTATION_ONLY]: true });
 	}
 
 	override get presenter(): ExtensionUIContext | undefined {
-		return this.#calls.getStore() ?? super.presenter;
+		return this.#calls.getStore() ?? super.presenter ?? this.#late;
 	}
 
 	async present<T>(nested: NestedRequest | undefined, run: () => Promise<T>): Promise<T> {
 		if (nested === undefined) return run();
-		const port = openPresentationPort(nested, super.presenter ?? noOpUIContext, this.#onUndelivered);
+		const port = openPresentationPort(nested, super.presenter ?? this.#late ?? noOpUIContext, this.#onUndelivered);
 		try {
 			return await this.#calls.run(port.ui, run);
 		} finally {

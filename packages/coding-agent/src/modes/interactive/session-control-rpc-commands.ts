@@ -6,40 +6,46 @@
  * meaning, and `get_effect_status` reads the same effect ledger. The rest of the host's drive set answers with the
  * host's contract (senpi#4267): `set_client_info` declares the connection's roles, `attach_session` and
  * `release_attachment` take and drop a live attachment on the session's identity, `abort` runs the host's effect
- * path and its role rule (a Stop needs `interactive_user`), and input sent with a `clientMessageId` is answered
- * with an admission receipt that a retry gets again, marked `replayed`. A frame this file does not own answers
+ * path and its role rule (a Stop needs `interactive_user`), and input goes through `session-control-input-commands.ts`.
+ * The private MCP form frames reach the terminal's presenters (D11 S3-6b). A frame this file does not own answers
  * `undefined` and falls through to the endpoint's other commands.
  */
-import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AgentSession } from "../../core/agent-session.ts";
-import type { ExternalDeliverAs } from "../../core/extensions/session-control-types.ts";
-import { CONNECTION_ROLE_FIXED } from "../rpc/connection-roles.ts";
+import { admitExternalMessageFieldError } from "../rpc/admit-external-message-wire.ts";
 import { INTERACTIVE_USER_CAPABILITY } from "../rpc/custom-capability.ts";
 import { runAbort, runGetEffectStatus } from "../rpc/effect-commands.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
 import { getSnapshot } from "../rpc/get-snapshot.ts";
+import { MAX_RPC_MESSAGE_CHARACTERS } from "../rpc/rpc-input-validation.ts";
 import type { RpcCommand } from "../rpc/rpc-types.ts";
 import { answerSubscribeSessions, answerUnsubscribeSessions, refusal } from "../rpc/session-status-commands.ts";
-import { type ControlAttachments, keyOf, type TerminalInputReceipt } from "./session-control-attach.ts";
+import { type ControlAttachments, keyOf } from "./session-control-attach.ts";
+import { admitInput, admitPrompt, answered, idOf } from "./session-control-input-commands.ts";
+import { admitTerminalDelivery, setClientInfo } from "./session-control-peer-commands.ts";
 import { type ControlCommand, type ControlConnection, failure, success } from "./session-control-server.ts";
+import { TERMINAL_PRESENTER_COMMANDS } from "./terminal-presenter-surface.ts";
 
 type Command<T extends RpcCommand["type"]> = Extract<RpcCommand, { type: T }>;
 
 export const TUI_RPC_COMMANDS = [
 	"open_session",
+	"park_session",
+	"claim_session",
 	"get_snapshot",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"steer",
 	"follow_up",
 	"prompt",
+	"admit_external_message",
 	"get_effect_status",
 	"set_client_info",
 	"attach_session",
 	"release_attachment",
 	"abort",
+	...TERMINAL_PRESENTER_COMMANDS,
 ] as const;
 
 /** The host's answer to a Stop from a connection that never declared the user's role (senpi#3811). */
@@ -86,6 +92,9 @@ export async function runTuiRpcCommand(
 		}
 		case "open_session":
 			return openSession(context, connection, command);
+		case "park_session":
+		case "claim_session":
+			return failure(idOf(command), command.type, "multi_session_disabled");
 		case "subscribe_sessions":
 			return subscribe(context, connection, frame<"subscribe_sessions">(command));
 		case "unsubscribe_sessions":
@@ -99,14 +108,32 @@ export async function runTuiRpcCommand(
 			return admitInput(context, command, command.type === "steer" ? "steer" : "followUp", command.whenIdle);
 		case "prompt":
 			return admitPrompt(context, command);
+		case "admit_external_message": {
+			const fieldError = admitExternalMessageFieldError(command, MAX_RPC_MESSAGE_CHARACTERS);
+			if (fieldError !== undefined) return failure(idOf(command), command.type, fieldError);
+			return admitTerminalDelivery(
+				context.session,
+				context.attachments,
+				connection,
+				frame<"admit_external_message">(command),
+			);
+		}
 		case "set_client_info":
-			return setClientInfo(context, connection, command);
+			return setClientInfo(context.attachments, connection, command);
 		case "attach_session":
 			return attachSession(context, connection, command);
 		case "release_attachment":
 			return releaseAttachment(context, connection, command);
 		case "abort":
 			return abort(context, connection, frame<"abort">(command));
+		case "mcp_presenter_context":
+		case "mcp_form_presented":
+		case "mcp_form_response":
+		case "mcp_form_sync":
+		case "mcp_presenter_secret_answer":
+			if (!context.attachments.presenters) return undefined;
+			context.attachments.presenters.receive(keyOf(connection), command);
+			return null;
 		case "get_effect_status":
 			return runGetEffectStatus(
 				{
@@ -124,10 +151,6 @@ export async function runTuiRpcCommand(
 /** The server checked the frame's shape (`rpcCommandShapeError`), as a host does before dispatching it. */
 function frame<T extends RpcCommand["type"]>(command: ControlCommand): Command<T> {
 	return command as unknown as Command<T>;
-}
-
-function idOf(command: ControlCommand): string | undefined {
-	return typeof command.id === "string" ? command.id : undefined;
 }
 
 function openSession(
@@ -156,17 +179,6 @@ function openSession(
 	return null;
 }
 
-/** Declares this connection's roles, fixed once declared, exactly as on a host; the other fields change nothing here. */
-function setClientInfo(context: RpcCommandContext, connection: ControlConnection, command: ControlCommand): object {
-	const capabilities = command.capabilities;
-	if (capabilities === undefined) return success(command.id, "set_client_info");
-	if (!Array.isArray(capabilities) || !capabilities.every((entry): entry is string => typeof entry === "string"))
-		return failure(command.id, "set_client_info", "capabilities must be an array of strings");
-	if (!context.attachments.roles.declare(keyOf(connection), capabilities))
-		return failure(command.id, "set_client_info", CONNECTION_ROLE_FIXED);
-	return success(command.id, "set_client_info");
-}
-
 /**
  * A live attachment on the session's identity, as on a host: `sessionId` is this terminal's routing handle,
  * `durableSessionId` its session id, and `expectedHostInstance`, when sent, this endpoint's instance id. The answer
@@ -190,6 +202,11 @@ function attachSession(
 		return refusal(id, "attach_session", "session_identity_mismatch", {
 			reason: "durableSessionId or expectedHostInstance does not name this terminal's session",
 			action: "read list_sessions and get_protocol_info again, then attach with their ids",
+		});
+	if (command.takeover === true)
+		return refusal(id, "attach_session", "takeover_unsupported", {
+			reason: "only a headless engine with a takeover ledger takes sessions over",
+			action: "attach without takeover",
 		});
 	attachments.run(connection, () => {
 		attachments.attach(connection);
@@ -245,26 +262,6 @@ function subscribe(context: RpcCommandContext, connection: ControlConnection, co
 	return null;
 }
 
-function admitPrompt(context: RpcCommandContext, command: ControlCommand): object {
-	const behavior = command.streamingBehavior;
-	if (behavior === undefined && context.session.isStreaming)
-		return refusal(idOf(command), "prompt", "session_busy", {
-			reason: "a turn is running and the prompt names no streamingBehavior",
-			action: 'send it with streamingBehavior "steer" or "followUp", or as a steer/follow_up',
-		});
-	return admitInput(context, command, behavior === "followUp" ? "followUp" : "steer", "start");
-}
-
-/** Input fields a host honours that admission cannot: refused by name instead of silently dropped. */
-const UNSERVED_INPUT_FIELDS = [
-	"images",
-	"thinkingLevel",
-	"expandPromptTemplates",
-	"unknownCommandAsText",
-	"sessionTitlePrompt",
-	"enqueueOrder",
-] as const;
-
 function samePath(requested: string, own: string | undefined): boolean {
 	if (own === undefined) return false;
 	const canonical = (path: string): string => {
@@ -275,91 +272,4 @@ function samePath(requested: string, own: string | undefined): boolean {
 		}
 	};
 	return canonical(requested) === canonical(own);
-}
-
-function admitInput(
-	context: RpcCommandContext,
-	command: ControlCommand,
-	deliverAs: ExternalDeliverAs,
-	whenIdle: unknown,
-): object {
-	const id = idOf(command);
-	const unserved = UNSERVED_INPUT_FIELDS.filter((field) => command[field] !== undefined);
-	if (unserved.length > 0)
-		return refusal(id, command.type, "unsupported_field", {
-			reason: `a terminal delivers input through its admission, which carries text only, not ${unserved.join(", ")}`,
-			action: "send the message without those fields, or send it to a host session",
-		});
-	const message = command.message;
-	if (typeof message !== "string" || message.trim() === "")
-		return refusal(id, command.type, "invalid_message", {
-			reason: "message is empty",
-			action: "send a non-empty message",
-		});
-	if (whenIdle !== undefined && whenIdle !== "queue" && whenIdle !== "start")
-		return refusal(id, command.type, "invalid_when_idle", {
-			reason: `whenIdle must be "queue" or "start", not ${JSON.stringify(whenIdle)}`,
-			action: 'send whenIdle: "queue" (the default) or "start"',
-		});
-	const admission = context.session.externalAdmission;
-	const clientMessageId = typeof command.clientMessageId === "string" ? command.clientMessageId : undefined;
-	const fingerprint = JSON.stringify([command.type, message, deliverAs, whenIdle ?? null]);
-	const prior = clientMessageId === undefined ? undefined : context.attachments.receipts.get(clientMessageId);
-	if (prior !== undefined) {
-		if (prior.fingerprint !== fingerprint)
-			return refusal(id, command.type, "client_message_id_conflict", {
-				reason: `clientMessageId ${clientMessageId} was already used for different input`,
-				action: "send new input with a new clientMessageId",
-			});
-		return answered(id, command.type, {
-			disposition: prior.disposition,
-			clientMessageId,
-			replayed: true,
-			duplicate: true,
-			admission: prior.admission,
-		});
-	}
-	const expected = typeof command.expected_turn_id === "number" ? command.expected_turn_id : admission.turnEpoch;
-	const result = admission.admit({
-		delivery_id: clientMessageId ?? `tui-rpc-${randomUUID()}`,
-		text: message,
-		sender: { kind: "external", platform: "rpc" },
-		deliverAs,
-		expected_turn_id: expected,
-		whenIdle: whenIdle === "start" ? "start" : "queue",
-	});
-	const identity = clientMessageId === undefined ? {} : { clientMessageId };
-	const admitted = (disposition: "started" | "queued"): object => {
-		if (clientMessageId === undefined) return answered(id, command.type, { disposition });
-		const receipt: TerminalInputReceipt = {
-			fingerprint,
-			disposition,
-			admission: { clientMessageId, durableSessionId: context.session.sessionId, disposition },
-		};
-		context.attachments.receipts.set(clientMessageId, receipt);
-		return answered(id, command.type, { disposition, clientMessageId, admission: receipt.admission });
-	};
-	switch (result.kind) {
-		case "started":
-			return admitted("started");
-		case "steered":
-		case "queued":
-			return admitted("queued");
-		case "already_admitted":
-			return answered(id, command.type, { disposition: "queued", duplicate: true, ...identity });
-		case "held_draft":
-			return refusal(id, command.type, "held_draft", {
-				reason: "the user is composing in this terminal, so nothing was delivered",
-				action: "retry after the draft is sent or cleared",
-			});
-		case "turn_conflict":
-			return refusal(id, command.type, "turn_conflict", {
-				reason: `the turn moved on (now ${result.turn_epoch}); this steer named an earlier one`,
-				action: "read get_state's turn_epoch and send it again",
-			});
-	}
-}
-
-function answered(id: string | undefined, command: string, data: object): object {
-	return { ...(id === undefined ? {} : { id }), type: "response", command, success: true, data };
 }

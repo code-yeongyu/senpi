@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { globSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { configDefaults } from "vitest/config";
 import { BaseSequencer } from "vitest/node";
 import { parse } from "yaml";
+import { balanceShards, verifyCoverage } from "./ci-coding-agent-shards.mjs";
 import { measureShard, SHARD_BUDGET_SECONDS } from "./ci-shard-budget.mjs";
 
 const workflow = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
@@ -95,94 +95,45 @@ test("shard membership is deterministic regardless of discovery order", async ()
 	}
 });
 
-// senpi#4131: dependency downloads must not consume a shard's entire job budget.
-test("every CI apt step has a short budget and uses the shared installer", () => {
-	const aptJobs = ["check", "test-coding-agent", "grep-native-contract", "test-workspaces"];
-	for (const name of aptJobs) {
-		const step = workflow.jobs[name].steps.find((entry) => entry.name === "Install system dependencies");
-		assert.equal(step["timeout-minutes"], 5, name);
-		assert.match(step.run, /bash scripts\/install-ci-system-deps\.sh /, name);
-		assert.doesNotMatch(step.run, /apt-get/, name);
+test("duration balancing assigns longest work first to the lightest shard with a median for new files", () => {
+	const durations = new Map([
+		["heavy", 10],
+		["medium", 6],
+		["light", 2],
+		["deleted", 1_000],
+	]);
+	const input = ["new-b", "light", "new-a", "heavy", "medium"];
+	const expected = [
+		["heavy", "new-b"],
+		["medium", "new-a", "light"],
+	];
+	assert.deepEqual(balanceShards(input, durations, 2), expected);
+	assert.deepEqual(balanceShards([...input].reverse(), durations, 2), expected);
+});
+
+test("duration balancing requests Vitest hash fallback when no current files have timings", () => {
+	assert.equal(balanceShards(["first", "second"], new Map([["deleted", 10]]), 2), null);
+});
+
+test("coverage accepts only a partition of the discovered file identities", () => {
+	verifyCoverage(["a", "b", "c"], [["c", "a"], ["b"]]);
+	for (const [shards, diagnostic] of [
+		[[["a"], ["c"]], /Missing \(1\): b/],
+		[[["a", "b"], ["c", "a"]], /Duplicate \(1\): a/],
+		[[["a", "b", "b"], ["c"]], /Duplicate \(1\): b/],
+		[[["a", "b"], ["c", "foreign"]], /Unexpected \(1\): foreign/],
+	]) {
+		assert.throws(() => verifyCoverage(["a", "b", "c"], shards), diagnostic);
 	}
 });
 
-for (const mirrorFile of [true, false]) {
-	test(`a timed-out apt transfer retries archive then installs offline (${mirrorFile ? "mirror file" : "direct sources"})`, () => {
-		const fixture = mkdtempSync(join(tmpdir(), "ci-apt-"));
-		try {
-			const apt = join(fixture, "apt");
-			const bin = join(fixture, "bin");
-			const trace = join(fixture, "trace.jsonl");
-			mkdirSync(join(apt, "sources.list.d"), { recursive: true });
-			mkdirSync(bin);
-			writeFileSync(join(apt, "sources.list"), "deb http://azure.archive.ubuntu.com/ubuntu noble main\n");
-			writeFileSync(join(apt, "sources.list.d", "legacy.list"), "deb http://azure.archive.ubuntu.com/ubuntu noble main\n");
-			writeFileSync(join(apt, "sources.list.d", "ubuntu.sources"),
-				`Types: deb\nURIs: ${mirrorFile ? "mirror+file:" + join(apt, "apt-mirrors.txt") : "http://azure.archive.ubuntu.com/ubuntu"}\nSuites: noble\nComponents: main\n`);
-			if (mirrorFile) {
-				writeFileSync(join(apt, "apt-mirrors.txt"),
-					"http://azure.archive.ubuntu.com/ubuntu\tpriority:1\nhttp://archive.ubuntu.com/ubuntu\tpriority:2\nhttp://security.ubuntu.com/ubuntu\tpriority:3\n");
-			}
-			// Keep privilege escalation fake; refuse writes outside the owned fixture.
-			// BSD sed needs a separate empty backup suffix, unlike the Linux runner.
-			writeFileSync(join(bin, "sudo"), `#!/bin/bash
-for arg in "$@"; do
-  case "$arg" in /etc/apt/*) exit 97 ;; esac
-done
-${process.platform === "darwin" ? 'if [ "$1" = sed ] && [ "$2" = -i ]; then shift 2; exec sed -i "" "$@"; fi' : ""}
-exec "$@"
-`, { mode: 0o755 });
-			const prelude = `#!${process.execPath}
-const fs = require("node:fs");
-const path = require("node:path");
-const args = process.argv.slice(2);
-const record = (entry) => fs.appendFileSync(process.env.FAKE_APT_TRACE, JSON.stringify(entry) + "\\n");
-`;
-			writeFileSync(join(bin, "apt-get"), `${prelude}
-const etc = process.env.APT_ETC_DIR;
-const source = fs.readFileSync(path.join(etc, "sources.list.d/ubuntu.sources"), "utf8");
-const mirrors = source.includes("mirror+file:")
-  ? fs.readFileSync(path.join(etc, "apt-mirrors.txt"), "utf8")
-  : source;
-const mirror = mirrors.match(/https?:\\/\\/[^\\s]+/)[0];
-record({ action: args.includes("update") ? "update" : args.includes("--download-only") ? "download" : "offline", mirror, mirrors, args });
-`, { mode: 0o755 });
-			writeFileSync(join(bin, "timeout"), `${prelude}
-const { spawnSync } = require("node:child_process");
-const marker = path.join(process.env.APT_ETC_DIR, "timed-out");
-const killAfter = args.shift();
-const budget = args.shift();
-record({ action: "timeout", killAfter, budget });
-const result = spawnSync(args[0], args.slice(1), { stdio: "inherit" });
-if (result.status !== 0) process.exit(result.status ?? 1);
-if (args[0] === "bash" && !fs.existsSync(marker)) {
-  fs.writeFileSync(marker, "");
-  process.exit(124);
-}
-`, { mode: 0o755 });
-			const result = spawnSync("bash", [fileURLToPath(new URL("./install-ci-system-deps.sh", import.meta.url)), "ripgrep"], {
-				env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, APT_ETC_DIR: apt, FAKE_APT_TRACE: trace },
-				encoding: "utf8",
-				timeout: 10000,
-			});
-			assert.equal(result.status, 0, result.stderr || result.error?.message);
-			const events = readFileSync(trace, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-			assert.deepEqual(events.map((entry) => entry.action),
-				["timeout", "update", "download", "timeout", "update", "download", "timeout", "offline"]);
-			const transfers = events.filter((entry) => entry.action === "update");
-			assert.match(transfers[0].mirror, /azure\.archive\.ubuntu\.com/);
-			assert.equal(transfers[1].mirror, "http://archive.ubuntu.com/ubuntu");
-			assert.doesNotMatch(transfers[1].mirrors, /azure\.archive\.ubuntu\.com/);
-			const budgets = events.filter((entry) => entry.action === "timeout");
-			assert.deepEqual(budgets.map((entry) => entry.budget), ["60s", "150s", "60s"]);
-			assert.ok(budgets.every((entry) => entry.killAfter === "--kill-after=5s"));
-			assert.ok(events.at(-1).args.includes("--no-download"));
-			assert.equal(events.at(-1).mirror, "http://archive.ubuntu.com/ubuntu");
-			for (const source of ["sources.list", "sources.list.d/legacy.list", "sources.list.d/ubuntu.sources"]) {
-				assert.doesNotMatch(readFileSync(join(apt, source), "utf8"), /azure\.archive\.ubuntu\.com/);
-			}
-		} finally {
-			rmSync(fixture, { recursive: true, force: true });
-		}
-	});
-}
+// senpi#4131: dependency downloads must not consume a shard's entire job budget.
+test("every CI apt step has a short budget and uses the shared installer", () => {
+	const aptJobs = ["check", "test-coding-agent", "grep-native-contract", "test-workspaces", "test-scripts"];
+	for (const name of aptJobs) {
+		const step = workflow.jobs[name].steps.find((entry) => entry.name === "Install system dependencies");
+		assert.equal(step["timeout-minutes"], 5, name);
+		assert.equal(step.uses, "./.github/actions/install-ci-system-deps", name);
+		assert.match(step.with.packages, /\bripgrep\b/, name);
+	}
+});

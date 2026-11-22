@@ -22,9 +22,11 @@ export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCo
 				? allAccountsBlockedGuidance(error.soonestUnblockAt, error.blockReason, error.accounts)
 				: singleAccountUnavailableGuidance(error.unavailableAccount, error.soonestUnblockAt, error.blockReason);
 		// The model-limit sentence is how the fallback chain learns the limit binds this model only (senpi#5007).
+		// A pool that recovers on its own names its soonest retry, so the session's retry waits for it instead of
+		// spending its budget on local refusals that cannot change before then (senpi#6727).
 		return error.limitedModel === undefined
-			? guidance
-			: `${modelLimitSentence(error, error.limitedModel, now)}\n${guidance}${retryAfterMarker(error, now)}`;
+			? `${guidance}${retryAfterMarker(error.rateLimitedUntil, now)}`
+			: `${modelLimitSentence(error, error.limitedModel, now)}\n${guidance}${retryAfterMarker(error.soonestUnblockAt, now)}`;
 	}
 	const kind = classifySdkError(error).kind;
 	const account = errorAccountContext(error instanceof ClassifiedSdkError ? error.original : error);
@@ -41,7 +43,9 @@ export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCo
 	const pool = error instanceof ClassifiedSdkError ? error.poolState : undefined;
 	const poolGuidance = pool && exhaustedPoolGuidance(pool.soonestUnblockAt, pool.accounts);
 	const hints = [guidance, versionGuidance, poolGuidance].filter((hint): hint is string => hint !== undefined);
-	return hints.length > 0 ? `${message}\n${hints.join("\n")}` : message;
+	const text = hints.length > 0 ? `${message}\n${hints.join("\n")}` : message;
+	// The last account's failure left no account to try: the next one is free at the pool's soonest retry (senpi#6727).
+	return `${text}${retryAfterMarker(pool?.rateLimitedUntil, now)}`;
 }
 
 /**
@@ -61,7 +65,6 @@ function modelLimitSentence(error: AllAccountsBlockedError, model: string, now: 
 }
 
 /** The session's retry-delay reader only takes the marker at the very end of the text. */
-function retryAfterMarker(error: AllAccountsBlockedError, now: number): string {
-	const until = error.soonestUnblockAt;
+function retryAfterMarker(until: number | undefined, now: number): string {
 	return until === undefined || !Number.isFinite(until) ? "" : ` (retry-after-ms: ${Math.max(0, until - now)})`;
 }

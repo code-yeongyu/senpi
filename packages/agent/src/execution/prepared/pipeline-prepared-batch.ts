@@ -127,7 +127,8 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 			if (reply.kind === "prepared") return { kind: "prepared", frozenDigest: reply.call.digest };
 			if (reply.kind === "prepared_awaiting_consent")
 				return { kind: "prepared_awaiting_consent", frozenDigest: reply.call.digest };
-			if (reply.kind === "refused") throw new Error(`prepared pipeline refused ${call.id}: ${reply.reason}`);
+			if (reply.kind === "refused")
+				throw new Error(`prepared pipeline refused call ${call.id} (execution ${id}): ${reply.reason}`);
 			const result =
 				reply.kind === "blocked" && reply.requestedName !== undefined && tool !== undefined
 					? withToolNameCorrection(reply.result, reply.requestedName, tool.name)
@@ -162,7 +163,8 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 					},
 				};
 			}
-			if (reply.kind !== "aborted") throw new Error(`prepared pipeline: release ${reply.kind} for ${call.id}`);
+			if (reply.kind !== "aborted")
+				throw new Error(`prepared pipeline: release ${reply.kind} for call ${call.id} (execution ${id})`);
 			await finish(
 				id,
 				signal?.aborted
