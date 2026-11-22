@@ -4553,7 +4553,7 @@
   "scripts/compiled-extension-load.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
-  "scripts/compiled-provider-probe.test.ts": {
+  "scripts/compiled-provider-probe-cases.ts": {
     "senpi-testing/no-flake-masking": 1
   },
   "scripts/cost.ts": {
