@@ -67,7 +67,7 @@ export interface ControlCommandContext {
 
 export const TUI_CONTROL_CAPABILITY = "tui_control";
 
-const TUI_CONTROL_COMMANDS = [
+export const TUI_CONTROL_COMMANDS = [
 	"get_protocol_info",
 	"list_sessions",
 	"get_state",
