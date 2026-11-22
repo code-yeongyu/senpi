@@ -18,11 +18,15 @@ import { type FallbackModelLookup, parseFallbackSelector } from "./retry-fallbac
  * `model_unavailable`: an `unknown` failure the provider answered with HTTP 404, the status a model
  * endpoint returns for a model id this account cannot use (senpi#4578).
  */
-export type ProviderFailureCategory = ProviderDiagnosticCategory | "request_refused" | "model_unavailable";
+export type ProviderFailureCategory =
+	| ProviderDiagnosticCategory
+	| "request_refused"
+	| "model_unavailable"
+	| "sign_in_required";
 
 /**
  * Structured failure of a turn that ended with a provider error, attached to `agent_end`.
- * Built only from the adapter-minted `ProviderDiagnostic`, the runtime's typed served-credential
+ * Built only from the adapter-minted `ProviderDiagnostic` or sign-in cause, the runtime's typed served-credential
  * mark, and the auth-miss sentinel auth resolution throws before any request (`PROVIDER_NOT_CONFIGURED_PREFIX`);
  * provider message text is never read.
  * Every category, `unknown` included, carries a reason and an action.
@@ -31,6 +35,8 @@ export interface ProviderFailure {
 	readonly category: ProviderFailureCategory;
 	/** Provider id of the failing request. */
 	readonly provider: string;
+	/** Local account labels requiring a new sign-in. */
+	readonly accountNames?: readonly string[];
 	/** Model id of the failing request (senpi#4328). */
 	readonly model?: string;
 	/**
@@ -54,6 +60,7 @@ export interface ProviderFailure {
 
 const ACTIONS: Record<Exclude<ProviderFailureCategory, "unknown">, { reason: string; action: string }> = {
 	auth: { reason: "the provider rejected the credentials", action: "re-authenticate the provider" },
+	sign_in_required: { reason: "Claude requires a new sign-in", action: "sign in again with Claude" },
 	request_refused: {
 		reason: "the provider refused this request, but the same key worked moments ago, so it may still be valid",
 		action: "send the message again or choose another model; if it keeps failing, re-authenticate",
@@ -157,12 +164,20 @@ export function providerFailureOf(
 	const last = messages.findLast((message) => message.role === "assistant");
 	if (last === undefined || last.role !== "assistant" || last.stopReason !== "error") return undefined;
 	const diagnostic = sanitizeProviderDiagnostic(last.providerDiagnostic);
-	const described =
-		notConfiguredFailure(last) ??
-		describeProviderFailure(diagnostic, last.provider, {
-			model: last.model,
-			requestRefused: isRequestLevelRefusal(last),
-		});
+	const described: ProviderFailure =
+		last.errorCause?.type === "sign_in_required"
+			? {
+					category: "sign_in_required",
+					provider: last.provider,
+					model: last.model,
+					accountNames: last.errorCause.accountNames,
+					...ACTIONS.sign_in_required,
+				}
+			: (notConfiguredFailure(last) ??
+				describeProviderFailure(diagnostic, last.provider, {
+					model: last.model,
+					requestRefused: isRequestLevelRefusal(last),
+				}));
 	const trust = transportTrustFailure(diagnostic);
 	const failure = trust === undefined ? described : { ...described, trust };
 	if (selected === undefined || (selected.provider === last.provider && selected.model === last.model)) {
