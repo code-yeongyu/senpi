@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -141,6 +141,9 @@ describe("an in-process open and a warm in flight (senpi#6199)", () => {
 
 	it("opens after its bound when a warm of its cwd never settles", async () => {
 		// Given: a warm whose extension factory never settles, and a short open bound.
+		// senpi#6202: the open names the same directory through a symlink.
+		const alias = join(scratch, "alias");
+		await symlink(scratch, alias, "junction");
 		const events: string[] = [];
 		const createRuntime = Object.assign(
 			async () => {
@@ -158,7 +161,7 @@ describe("an in-process open and a warm in flight (senpi#6199)", () => {
 
 		try {
 			// When: the open's bound expires.
-			const opened = expect(registry.openSession({ cwd: scratch })).rejects.toThrow("this test stops the open");
+			const opened = expect(registry.openSession({ cwd: alias })).rejects.toThrow("this test stops the open");
 			await vi.advanceTimersByTimeAsync(10_000);
 
 			// Then: the open proceeds and says why.
