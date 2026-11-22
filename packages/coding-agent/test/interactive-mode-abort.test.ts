@@ -18,26 +18,38 @@ type RestoreQueuedMessagesToEditorThis = {
 	};
 };
 
-type RestoreQueuedMessagesToEditor = (
-	this: RestoreQueuedMessagesToEditorThis,
-	options?: { abort?: boolean; currentText?: string },
-) => number;
+type QueuedInput = { text: string; mode: "steer" | "followUp"; enqueueOrder: number };
 
-function restoreQueuedMessagesToEditor(
-	fakeThis: RestoreQueuedMessagesToEditorThis,
-	options?: { abort?: boolean; currentText?: string },
-): number {
-	const descriptor = Object.getOwnPropertyDescriptor(InteractiveMode.prototype, "restoreQueuedMessagesToEditor");
-	const restore = descriptor?.value as RestoreQueuedMessagesToEditor | undefined;
-	if (!restore) {
-		throw new Error("restoreQueuedMessagesToEditor is missing");
-	}
-	return restore.call(fakeThis, options);
+type AbortKeepingQueuedDeliveryThis = {
+	session: {
+		abort: () => Promise<void>;
+		waitForIdle: () => Promise<void>;
+		clearQueue: () => { ordered: QueuedInput[] };
+	};
+	compactionQueuedMessages: QueuedInput[];
+	flushCompactionQueue: (options: { willRetry: boolean }) => Promise<void>;
+	editor: { setText: (text: string) => void };
+};
+
+function prototypeMethod<This, Args extends unknown[], Result>(name: string) {
+	const method = Object.getOwnPropertyDescriptor(InteractiveMode.prototype, name)?.value as
+		| ((this: This, ...args: Args) => Result)
+		| undefined;
+	if (!method) throw new Error(`${name} is missing`);
+	return (fakeThis: This, ...args: Args): Result => method.call(fakeThis, ...args);
 }
 
+const restoreQueuedMessagesToEditor = prototypeMethod<
+	RestoreQueuedMessagesToEditorThis,
+	[options?: { currentText?: string }],
+	number
+>("restoreQueuedMessagesToEditor");
+const abortKeepingQueuedDelivery = prototypeMethod<AbortKeepingQueuedDeliveryThis, [], Promise<void>>(
+	"abortKeepingQueuedDelivery",
+);
+
 describe("InteractiveMode.restoreQueuedMessagesToEditor", () => {
-	test("aborts through the session after restoring queued messages", () => {
-		// given
+	test("hands queued messages back to the editor without aborting the run", () => {
 		const abort = vi.fn<() => void>();
 		const setText = vi.fn<(text: string) => void>();
 		const updatePendingMessagesDisplay = vi.fn<() => void>();
@@ -54,73 +66,60 @@ describe("InteractiveMode.restoreQueuedMessagesToEditor", () => {
 			session: { abort },
 		} satisfies RestoreQueuedMessagesToEditorThis;
 
-		// when
-		const restoredCount = restoreQueuedMessagesToEditor(fakeThis, { abort: true });
+		const restoredCount = restoreQueuedMessagesToEditor(fakeThis);
 
-		// then
 		expect(restoredCount).toBe(2);
 		expect(setText).toHaveBeenCalledWith("Steering message\n\nFollow-up message\n\ncurrent draft");
 		expect(updatePendingMessagesDisplay).toHaveBeenCalledTimes(1);
-		expect(abort).toHaveBeenCalledTimes(1);
+		expect(abort).not.toHaveBeenCalled();
 	});
+});
 
-	test("aborts through the session when no queued message exists", () => {
-		// given
-		const abort = vi.fn<() => void>();
-		const setText = vi.fn<(text: string) => void>();
-		const updatePendingMessagesDisplay = vi.fn<() => void>();
+describe("InteractiveMode.abortKeepingQueuedDelivery", () => {
+	function fakeMode(queued: QueuedInput[]) {
+		const order: string[] = [];
 		const fakeThis = {
-			clearAllQueues: () => ({ steering: [], followUp: [] }),
-			updatePendingMessagesDisplay,
-			editor: {
-				getText: () => "",
-				setText,
+			session: {
+				abort: vi.fn(async () => {
+					order.push("abort");
+				}),
+				waitForIdle: vi.fn(async () => {
+					order.push("idle");
+				}),
+				clearQueue: vi.fn(() => {
+					order.push("take");
+					return { ordered: queued };
+				}),
 			},
-			session: { abort },
-		} satisfies RestoreQueuedMessagesToEditorThis;
-
-		// when
-		const restoredCount = restoreQueuedMessagesToEditor(fakeThis, { abort: true });
-
-		// then
-		expect(restoredCount).toBe(0);
-		expect(setText).not.toHaveBeenCalled();
-		expect(updatePendingMessagesDisplay).toHaveBeenCalledTimes(1);
-		expect(abort).toHaveBeenCalledTimes(1);
-	});
-
-	test("restores queued messages before async abort settles", async () => {
-		// given
-		let resolveAbort: (() => void) | undefined;
-		const abortSettled = new Promise<void>((resolve) => {
-			resolveAbort = resolve;
-		});
-		const abort = vi.fn<() => Promise<void>>(() => abortSettled);
-		const setText = vi.fn<(text: string) => void>();
-		const updatePendingMessagesDisplay = vi.fn<() => void>();
-		const fakeThis = {
-			clearAllQueues: () => ({
-				steering: ["queued before abort"],
-				followUp: [],
+			compactionQueuedMessages: [] as QueuedInput[],
+			flushCompactionQueue: vi.fn(async () => {
+				order.push(`flush:${fakeThis.compactionQueuedMessages.map((message) => message.text).join(",")}`);
 			}),
-			updatePendingMessagesDisplay,
-			editor: {
-				getText: () => "",
-				setText,
-			},
-			session: { abort },
-		} satisfies RestoreQueuedMessagesToEditorThis;
+			editor: { setText: vi.fn() },
+		} satisfies AbortKeepingQueuedDeliveryThis;
+		return { fakeThis, order };
+	}
 
-		// when
-		const restoredCount = restoreQueuedMessagesToEditor(fakeThis, { abort: true });
+	test("takes the queue only after the aborted run is idle and delivers it instead of drafting it", async () => {
+		const { fakeThis, order } = fakeMode([
+			{ text: "first", mode: "steer", enqueueOrder: 1 },
+			{ text: "second", mode: "followUp", enqueueOrder: 2 },
+		]);
 
-		// then
-		expect(restoredCount).toBe(1);
-		expect(setText).toHaveBeenCalledWith("queued before abort");
-		expect(updatePendingMessagesDisplay).toHaveBeenCalledTimes(1);
-		expect(abort).toHaveBeenCalledTimes(1);
+		await abortKeepingQueuedDelivery(fakeThis);
 
-		resolveAbort?.();
-		await abortSettled;
+		expect(order).toEqual(["abort", "idle", "take", "flush:first,second"]);
+		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
+		expect(fakeThis.editor.setText).not.toHaveBeenCalled();
+	});
+
+	test("aborts through the session and flushes nothing when no queued message exists", async () => {
+		const { fakeThis, order } = fakeMode([]);
+
+		await abortKeepingQueuedDelivery(fakeThis);
+
+		expect(order).toEqual(["abort", "idle", "take"]);
+		expect(fakeThis.flushCompactionQueue).not.toHaveBeenCalled();
+		expect(fakeThis.editor.setText).not.toHaveBeenCalled();
 	});
 });

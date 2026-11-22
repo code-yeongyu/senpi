@@ -2853,7 +2853,9 @@ export class InteractiveMode {
 			uiContext,
 			mode: "tui",
 			abortHandler: () => {
-				this.restoreQueuedMessagesToEditor({ abort: true });
+				void this.abortKeepingQueuedDelivery().catch((error: unknown) => {
+					this.showError(`Extension abort failed: ${error instanceof Error ? error.message : String(error)}`);
+				});
 			},
 			commandContextActions: {
 				waitForIdle: () => this.session.waitForIdle(),
@@ -7670,16 +7672,11 @@ export class InteractiveMode {
 		}
 	}
 
-	private restoreQueuedMessagesToEditor(options?: { abort?: boolean; currentText?: string }): number {
-		const { steering, followUp, ordered } = this.clearAllQueues({
-			abortWillFollow: options?.abort === true,
-		});
+	private restoreQueuedMessagesToEditor(options?: { currentText?: string }): number {
+		const { steering, followUp, ordered } = this.clearAllQueues();
 		const allQueued = ordered?.map((message) => message.text) ?? [...steering, ...followUp];
 		if (allQueued.length === 0) {
 			this.updatePendingMessagesDisplay();
-			if (options?.abort) {
-				void this.session.abort();
-			}
 			return 0;
 		}
 		const queuedText = allQueued.join("\n\n");
@@ -7687,10 +7684,27 @@ export class InteractiveMode {
 		const combinedText = [queuedText, currentText].filter((t) => t.trim()).join("\n\n");
 		this.editor.setText(combinedText);
 		this.updatePendingMessagesDisplay();
-		if (options?.abort) {
-			void this.session.abort();
-		}
 		return allQueued.length;
+	}
+
+	/**
+	 * An extension abort (`ctx.abort()`) stops the running turn, not the input the person already submitted
+	 * (senpi#5239). Whatever is still queued once the aborted run is idle stays a pending delivery, shown in the
+	 * queue and sent through the held-queue transfer; it never becomes an unsent editor draft, which would stall an
+	 * unattended session. Only an explicit user Stop or dequeue hands queued input back to the editor.
+	 */
+	private async abortKeepingQueuedDelivery(): Promise<void> {
+		const session = this.session;
+		await session.abort();
+		await session.waitForIdle();
+		if (this.session !== session) return;
+		const { ordered } = session.clearQueue();
+		if (ordered.length === 0) return;
+		this.compactionQueuedMessages = [
+			...ordered.map(({ text, mode, enqueueOrder }) => ({ text, mode, enqueueOrder })),
+			...this.compactionQueuedMessages,
+		];
+		await this.flushCompactionQueue({ willRetry: false });
 	}
 
 	/**
