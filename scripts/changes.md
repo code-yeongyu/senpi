@@ -2990,17 +2990,3 @@ Upstream edits to scripts/build-binaries.sh at the next sync.
 
 - `scripts/check-pr-changelog.mjs`: released-section detection, `checkPrChangelog` aggregation, and CLI failure output.
 - `scripts/check-pr-changelog.test.mjs`: the #2609 CLI fixture and aggregation assertions.
-
-## Release staging ships the imagegen skill beside the binary (2026-11-22)
-
-### What changed
-
-- `scripts/build-binaries.sh`: the per-platform staging block copies `dist/core/extensions/builtin/imagegen/skill/` to `skill/` beside each compiled binary, next to the theme and asset directories. `scripts/build-binaries-staging.test.mjs` runs the real staging block and asserts `skill/SKILL.md` lands in the archive.
-
-### Why
-
-- A compiled binary's embedded `type: "file"` import resolves to a Bun locator (`/$bunfs/…`, `B:\~BUN\…`) that no descriptor-based reader or external process can open (senpi#3799). The runtime resolves the skill from the shipped directory beside the executable, so the build must stage it there.
-
-### Expected merge conflict zones
-
-- LOW: one staging line pair inside the `# Copy shared files` block, shared with any other lane adding staged assets.
