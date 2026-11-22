@@ -108,6 +108,8 @@ export class MonitorAwareGoalContinuation {
 	#timer: ReturnType<typeof setTimeout> | undefined;
 	#scheduledContinuationKind: DelayedContinuationKind | undefined;
 	#armedDrainFire = false;
+	/** Backstop probes stopped, but the live channel's drain must still fire (#5325). */
+	#parkedOnLiveWait = false;
 	#channelStateUnsubscribers: Array<() => void> = [];
 	#lastAgentEndMessages: readonly AgentMessage[] = [];
 	#consecutiveLengthRecoveries = new Map<string, number>();
@@ -251,6 +253,7 @@ export class MonitorAwareGoalContinuation {
 			switch (immediateVerdict.reason) {
 				case "not-eligible":
 				case "single-flight":
+				case "live-wait":
 					return goal;
 				case "stale":
 				case "context-overflow":
@@ -443,7 +446,7 @@ export class MonitorAwareGoalContinuation {
 			remainingMs: Math.max(0, (this.#scheduledDueAtMs ?? heldAtMs) - heldAtMs),
 			heldAtMs,
 			totalMs: this.#scheduledDelayMs ?? GOAL_USER_GRACE_DELAY_MS,
-			drainFire: false,
+			drainFire: this.#armedDrainFire,
 		};
 		clearTimeout(this.#timer);
 		this.#timer = undefined;
@@ -493,6 +496,7 @@ export class MonitorAwareGoalContinuation {
 
 	#schedule(goal: Goal, kind: DelayedContinuationKind, repark = false, parked?: ParkedGoalWait): void {
 		if (this.#scheduledContinuationKind !== undefined) return;
+		this.#parkedOnLiveWait = false;
 		// A live wake source arms the periodic backstop only: the normal resumption
 		// is the drain fire in #setWakeSourceCount, and the backstop re-checks the
 		// goal every `promptCache.goalBackstopMaxSeconds` in case the source never
@@ -675,6 +679,7 @@ export class MonitorAwareGoalContinuation {
 			...(path === "providerRecovery" && this.#limitWait ? { limitWait: true } : {}),
 		};
 		const verdict = evaluateGoalContinuation({ goal, ...input });
+		if (verdict.kind === "deny" && verdict.reason === "live-wait") this.#parkedOnLiveWait = true;
 		const admittedGoal = await admitAndQueueGoalContinuation(this.#pi, ctx, goal, {
 			input,
 			content: (continuationVerdict) => this.#buildContinuationContent(ctx, goal, continuationVerdict),
@@ -722,6 +727,7 @@ export class MonitorAwareGoalContinuation {
 			toollessContinuationStreak: this.#toollessContinuationStreak,
 			continuationPending: this.#isContinuationPending(),
 			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(ctx, lastAssistant),
+			liveWakeSources: this.#activeWakeSourceCount() > 0,
 		};
 	}
 
@@ -863,7 +869,7 @@ export class MonitorAwareGoalContinuation {
 		this.#wakeSources.set(source, activeCount);
 		const nextTotal = this.#activeWakeSourceCount();
 		if (previousTotal > 0 && nextTotal === 0) {
-			if (this.#scheduledContinuationKind === "monitor") this.#armDrainFire();
+			if (this.#scheduledContinuationKind === "monitor" || this.#parkedOnLiveWait) this.#armDrainFire();
 			else this.#resetCacheWarmIteration();
 			this.#resetToollessContinuationStreak();
 			return;
@@ -879,6 +885,15 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	#armDrainFire(): void {
+		if (this.#parkedOnLiveWait) {
+			this.#parkedOnLiveWait = false;
+			this.#scheduledContinuationKind = "monitor";
+			this.#publish(GOAL_CONTINUATION_TIMER_STATE_EVENT, {
+				armed: true,
+				kind: "monitor",
+				dueAtMs: Date.now() + 1_000,
+			});
+		}
 		if (this.#directInputHolds.size > 0) {
 			this.#heldTimer = {
 				kind: "monitor",
@@ -956,6 +971,7 @@ export class MonitorAwareGoalContinuation {
 
 	#cancelTimer(): void {
 		const kind = this.#scheduledContinuationKind;
+		this.#parkedOnLiveWait = false;
 		this.#scheduledAtMs = undefined;
 		this.#scheduledDueAtMs = undefined;
 		this.#scheduledCache = undefined;
