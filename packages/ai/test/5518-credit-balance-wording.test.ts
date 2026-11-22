@@ -12,7 +12,7 @@ describe("an out-of-credit refusal is not worded as a usage limit (senpi#5518)",
 		});
 
 		expect(text).toBe(
-			"The anthropic account is out of credit. Add credit to it, or remove its API key so the session uses another provider.",
+			"The anthropic account is out of credit. Add credit to it, or choose another configured provider.",
 		);
 	});
 
