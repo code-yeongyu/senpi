@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
@@ -27,8 +28,8 @@ beforeEach(() => {
 	statePath = join(dir, "credential-pool-state.json");
 });
 
-afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+	await rm(dir, { recursive: true, force: true });
 });
 
 function pooled(pinned?: string): PooledCredential {
@@ -186,7 +187,7 @@ describe("a stale usage-limit block does not keep failing turns (#3771)", () => 
 		expect((await repository.listSlots(PROVIDER, "stored")).a?.blockedUntil).toBe(NOW + COOLDOWN_BASE_MS);
 	});
 
-	test("the turn's failure names the quota and when it resets instead of 'no code'", () => {
+	test("the turn's failure carries the quota code and reset timestamp", () => {
 		const failure = describeProviderFailure(
 			{
 				category: "quota",
@@ -201,7 +202,6 @@ describe("a stale usage-limit block does not keep failing turns (#3771)", () => 
 			category: "quota",
 			code: "usage_limit_reached",
 			resetsAt: 1_792_540_800_000,
-			reason: "the provider account is out of quota until 2026-10-21T00:00:00.000Z",
 		});
 	});
 });

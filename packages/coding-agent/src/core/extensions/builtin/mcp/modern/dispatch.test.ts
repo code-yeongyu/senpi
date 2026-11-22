@@ -81,61 +81,83 @@ describe("dual-era factory dispatch", () => {
 		expect(methods).toEqual(["server/discover", "tools/list"]);
 	});
 
-	it.each([400, 404])("keeps legacy requests byte-identical after an HTTP %s discovery rejection", async (status) => {
-		const wire: { method: string; body: string | undefined; headers: [string, string][] }[] = [];
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async (_url: string | URL, init?: RequestInit) => {
-				const body = typeof init?.body === "string" ? init.body : undefined;
-				const request = body ? JSON.parse(body) : undefined;
-				wire.push({ method: String(init?.method), body, headers: [...new Headers(init?.headers)] });
-				if (request?.method === "server/discover") return new Response("", { status });
-				if (init?.method !== "POST") return new Response(null, { status: 405 });
-				if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
-				return Response.json(
-					{
-						jsonrpc: "2.0",
-						id: request.id,
-						result:
-							request.method === "initialize"
-								? {
-										protocolVersion: request.params.protocolVersion,
-										capabilities: { tools: {} },
-										serverInfo: { name: "legacy", version: "1" },
-									}
-								: { tools: [] },
-					},
-					{ headers: { "Mcp-Session-Id": "fixture-session" } },
-				);
-			}),
-		);
-		const root = await mkdtemp(join(tmpdir(), "mcp-legacy-"));
-		const logger = createMcpLogger("legacy", { logDir: root });
-		const baseline = await materializeMcpTransport({
-			spec: { kind: "http", url: new URL(config.url ?? ""), authProvider: undefined, requestInit: undefined },
-			logger,
-			sink: { logger },
-			onStart: () => {},
-			elicitationUiProvider: undefined,
-		});
-		try {
-			await baseline.client.connect(baseline.transport);
-			await baseline.client.listTools();
-		} finally {
-			await baseline.close();
-		}
-		const expected = wire.splice(0);
-		const connection = createMcpTransport({ config, logger, serverName: "legacy" });
-		try {
-			await connectMcpTransport(connection);
-			await connection.client.listTools();
-		} finally {
-			await shutdownMcpTransport(connection);
-			await rm(root, { recursive: true, force: true });
-		}
-		expect(JSON.parse(wire[0]?.body ?? "{}").method).toBe("server/discover");
-		expect(wire.slice(1)).toEqual(expected);
-	});
+	// senpi#4402: the real SDK must negotiate an advertised legacy version after the probe selects legacy.
+	it.each([400, 404, -32022])(
+		"keeps legacy requests byte-identical after an HTTP %s discovery rejection",
+		async (status) => {
+			const wire: { method: string; body: string | undefined; headers: [string, string][] }[] = [];
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (_url: string | URL, init?: RequestInit) => {
+					const body = typeof init?.body === "string" ? init.body : undefined;
+					const request = body ? JSON.parse(body) : undefined;
+					wire.push({ method: String(init?.method), body, headers: [...new Headers(init?.headers)] });
+					if (request?.method === "server/discover") {
+						return status === -32022
+							? Response.json(
+									{
+										jsonrpc: "2.0",
+										id: request.id,
+										error: {
+											code: -32022,
+											message: "UnsupportedProtocolVersionError",
+											data: { supported: ["2025-06-18", "2025-03-26"] },
+										},
+									},
+									{ status: 400 },
+								)
+							: new Response("", { status });
+					}
+					if (init?.method !== "POST") return new Response(null, { status: 405 });
+					if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+					return Response.json(
+						{
+							jsonrpc: "2.0",
+							id: request.id,
+							result:
+								request.method === "initialize"
+									? {
+											protocolVersion: status === -32022 ? "2025-06-18" : request.params.protocolVersion,
+											capabilities: { tools: {} },
+											serverInfo: { name: "legacy", version: "1" },
+										}
+									: { tools: [] },
+						},
+						{ headers: { "Mcp-Session-Id": "fixture-session" } },
+					);
+				}),
+			);
+			const root = await mkdtemp(join(tmpdir(), "mcp-legacy-"));
+			const logger = createMcpLogger("legacy", { logDir: root });
+			const baseline = await materializeMcpTransport({
+				spec: { kind: "http", url: new URL(config.url ?? ""), authProvider: undefined, requestInit: undefined },
+				logger,
+				sink: { logger },
+				onStart: () => {},
+				elicitationUiProvider: undefined,
+			});
+			try {
+				await baseline.client.connect(baseline.transport);
+				await baseline.client.listTools();
+			} finally {
+				await baseline.close();
+			}
+			const expected = wire.splice(0);
+			const connection = createMcpTransport({ config, logger, serverName: "legacy" });
+			try {
+				await connectMcpTransport(connection);
+				await connection.client.listTools();
+				if (status === -32022) {
+					expect(logger.getRingBuffer().some((line) => line.includes("era=legacy version=2025-06-18"))).toBe(true);
+				}
+			} finally {
+				await shutdownMcpTransport(connection);
+				await rm(root, { recursive: true, force: true });
+			}
+			expect(JSON.parse(wire[0]?.body ?? "{}").method).toBe("server/discover");
+			expect(wire.slice(1)).toEqual(expected);
+		},
+	);
 
 	it("does not downgrade a recognized modern error to SDK initialize", async () => {
 		const methods: string[] = [];

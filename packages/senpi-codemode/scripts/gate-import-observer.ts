@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { threadId } from "node:worker_threads";
 
@@ -9,9 +9,10 @@ registerHooks({
 		const path = process.env.SENPI_GATE_IMPORT_FILE;
 		const phase = process.env.SENPI_GATE_IMPORT_PHASE;
 		if (path !== undefined && phase !== undefined && !result.url.includes("/scripts/gate-"))
-			appendFileSync(path, `${JSON.stringify({
+			// appendFileSync delegates through fs.writeFileSync, which the kernel interposes.
+			writeFileSync(path, `${JSON.stringify({
 				phase, url: result.url, thread: threadId, parent: context.parentURL, specifier,
-			})}\n`);
+			})}\n`, { flag: "a" });
 		return result;
 	},
 });

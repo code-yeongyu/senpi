@@ -10,8 +10,8 @@ import {
 	registerBunSkillContribution,
 } from "../src/extension/skill-contribution.ts";
 
-const bunSkillMd = join(import.meta.dirname, "..", "src", "skill", "bun-1-4", "SKILL.md");
-const bunSkillRefs = join(import.meta.dirname, "..", "src", "skill", "bun-1-4", "references");
+const bunSkillMd = join(import.meta.dirname, "..", "src", "skill", "bun", "SKILL.md");
+const bunSkillRefs = join(import.meta.dirname, "..", "src", "skill", "bun", "references");
 
 describe("bunVersionSupportsSkill", () => {
 	it.each([
@@ -28,7 +28,7 @@ describe("bunVersionSupportsSkill", () => {
 });
 
 describe("bundledBunSkillPath", () => {
-	it("returns the absolute bun-1-4 SKILL.md path that exists on disk", () => {
+	it("returns the absolute bun SKILL.md path that exists on disk", () => {
 		const result = bundledBunSkillPath();
 		expect(result).toBe(bunSkillMd);
 		expect(result !== undefined && existsSync(result)).toBe(true);
@@ -68,11 +68,11 @@ describe("bundledBunSkillPath in a compiled-binary layout", () => {
 			"senpi-codemode",
 			"src",
 			"skill",
-			"bun-1-4",
+			"bun",
 			"SKILL.md",
 		);
 		mkdirSync(dirname(sidecarSkill), { recursive: true });
-		writeFileSync(sidecarSkill, "---\nname: bun-1-4\n---\n# Bun 1.4\n");
+		writeFileSync(sidecarSkill, "---\nname: bun\n---\n# Bun 1.4\n");
 
 		const result = bundledBunSkillPath(join(tempDir, "embedded", "extension"), {
 			bunVersion: "1.4.0",
@@ -104,19 +104,9 @@ describe("bundledBunSkillPath in a compiled-binary layout", () => {
 			// The notice names BOTH probed locations: a compiled binary never has the
 			// module-relative asset, so the sidecar path is the actionable one.
 			const notice = String(errorSpy.mock.calls[0]?.[0] ?? "");
-			expect(notice).toContain(join(tempDir, "embedded", "skill", "bun-1-4", "SKILL.md"));
+			expect(notice).toContain(join(tempDir, "embedded", "skill", "bun", "SKILL.md"));
 			expect(notice).toContain(
-				join(
-					tempDir,
-					"bin",
-					"node_modules",
-					"@code-yeongyu",
-					"senpi-codemode",
-					"src",
-					"skill",
-					"bun-1-4",
-					"SKILL.md",
-				),
+				join(tempDir, "bin", "node_modules", "@code-yeongyu", "senpi-codemode", "src", "skill", "bun", "SKILL.md"),
 			);
 		} finally {
 			debugSpy.mockRestore();
@@ -177,11 +167,11 @@ describe("registerBunSkillContribution", () => {
 	});
 });
 
-describe("bun-1-4 skill assets", () => {
-	it("pins the SKILL.md frontmatter the skill loader reads: one block carrying name: bun-1-4", () => {
+describe("bun skill assets", () => {
+	it("pins the SKILL.md frontmatter the skill loader reads: one block carrying name: bun", () => {
 		const text = readFileSync(bunSkillMd, "utf8");
 		expect(text.match(/^---$/gm)).toHaveLength(2);
-		expect(text).toContain("name: bun-1-4");
+		expect(text).toContain("name: bun");
 	});
 
 	it("ships English-only copy: no Hangul in SKILL.md or any reference", () => {
@@ -190,5 +180,40 @@ describe("bun-1-4 skill assets", () => {
 		for (const file of files) {
 			expect(hangul.test(readFileSync(file, "utf8")), file).toBe(false);
 		}
+	});
+
+	it("qualifies process.execPath as a Bun launcher: standalone Bun only, PATH shim in a compiled host (omo#12569)", () => {
+		// The bundled Bun skill once told agents to re-spawn Bun as
+		// process.execPath unconditionally. Inside a compiled host (the OmO
+		// engine, any --compile binary) execPath is the host binary itself,
+		// so a script path passed to it starts another agent instead of
+		// running the script. The qualification must sit on the advice's own
+		// line in every file that gives it — file-wide toContain cannot tell
+		// whether it sits next to the advice, and harmless rewording
+		// elsewhere would break it. SKILL.md rule 5 sends agents to
+		// references/test.md first, so the traps table carries it too.
+		const lineWith = (text: string, needle: string) => {
+			const lines = text.split("\n").filter((line) => line.includes(needle));
+			expect(lines.length).toBeGreaterThan(0);
+			return lines;
+		};
+		const skill = readFileSync(bunSkillMd, "utf8");
+		const skillRule = lineWith(skill, "re-spawns Bun as `process.execPath`");
+		expect(skillRule).toHaveLength(1);
+		expect(skillRule[0]).toContain("standalone Bun");
+		expect(skillRule[0]).toContain("omo#12569");
+		expect(skillRule[0]).toMatch(/compiled host/);
+		const recipes = readFileSync(join(bunSkillRefs, "session-recipes.md"), "utf8");
+		const respawnLine = lineWith(recipes, "Re-spawning Bun:");
+		expect(respawnLine).toHaveLength(1);
+		expect(respawnLine[0]).toContain("standalone Bun");
+		expect(respawnLine[0]).toContain("omo#12569");
+		expect(respawnLine[0]).toMatch(/compiled binary/);
+		const traps = readFileSync(join(bunSkillRefs, "test.md"), "utf8");
+		const trapRow = lineWith(traps, 'Respawned `"bun"` is not this Bun');
+		expect(trapRow).toHaveLength(1);
+		expect(trapRow[0]).toContain("standalone Bun");
+		expect(trapRow[0]).toContain("omo#12569");
+		expect(trapRow[0]).toMatch(/compiled host/);
 	});
 });

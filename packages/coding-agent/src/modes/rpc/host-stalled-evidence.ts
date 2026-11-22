@@ -174,7 +174,8 @@ export async function hostChildAlive(generation: HostGenerationPaths): Promise<b
 	if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return undefined;
 	if (!processIsLive(pid)) return false;
 	const observed = await readProcessIdentity(pid, process.platform, 1_000, processIsLive, "UTC");
-	if (!processIsLive(pid)) return false;
+	// `absent` includes an exited, unreaped child (state Z), read in the same async snapshot (senpi#4119).
+	if (observed.kind === "absent" || !processIsLive(pid)) return false;
 	const recordedMs =
 		typeof record?.processStartTime === "string" ? processStartTimeMs(record.processStartTime) : undefined;
 	const observedMs = observed.kind === "present" ? processStartTimeMs(observed.identity) : undefined;

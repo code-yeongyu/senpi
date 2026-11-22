@@ -1,3 +1,207 @@
+## 2026-11-20 - Bedrock Haiku 5.5 on-demand route priced at its own band (senpi#7121)
+
+### What changed
+
+- `packages/ai/src/providers/data/amazon-bedrock.json` (+ `.manifest.json`): regenerated with a provider-scoped run (`generate-models.ts --strict --providers amazon-bedrock`). The on-demand id `anthropic.claude-haiku-5-5` now carries its own band ($0.11/$0.55 in/out, $0.011/$0.1375 cache, 5x long-context tier 0.55/2.75/0.055/0.6875) instead of the global profile's ($0.10/$0.50/$0.01/$0.125, tier 0.50/2.50/0.05/0.625). models.dev corrected the whole provider's standard-vs-global split in the same pass, so the sibling bare Anthropic ids (`claude-fable-5`, `-5-1`, `-5-2`, `claude-haiku-4-5`, `claude-opus-4-5/-4-7/-4-8`, `claude-sonnet-4-5/-5/-5-5`) move to their standard bands (uniformly x1.1) and Nova `cacheWrite` becomes 0 (AWS bills Nova prompt-cache writes at $0.00 in us-east-1 per the AmazonBedrock offer index; the previous values equaled input price and overestimated cache-write cost). Every Anthropic value was verified cent-exact against the AWS us-east-1 price list; the resulting file is canonically identical to the daily refresh branch's version (#6666). No other provider file changes.
+- `packages/ai/test/anthropic-haiku-5-5.test.ts`: the Bedrock row test asserts each route's cost object strictly (cache rates and tiers included); the shared-contract assertions are unchanged for both ids.
+
+### Why
+
+- AWS bills the two routes under different SKUs (us-east-1 price list) and models.dev carries the same per-id split. The stale row plus the shared assertion made every catalog refresh fail `ci / Test (workspaces ai)` (#6666 red since 2026-11-14, past the refresh workflow's MAX_STALE_DAYS), so catalog drift could not land for releases.
+
+### Why an extension could not handle it
+
+- The bundled catalog ships for every installation; a local extension cannot correct shipped cost metadata or the test that pins it.
+
+### Expected merge conflict zones
+
+- LOW: the Anthropic and Nova rows inside `packages/ai/src/providers/data/amazon-bedrock.json` and its manifest hash - regenerate rather than hand-merge; the daily catalog refresh rewrites this file.
+
+## 2026-11-18 - GPT-6.2 Astra and GPT-6.2 Sol catalog rows (senpi#6948, senpi#6942)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the ChatGPT subscription catalog gains `gpt-6.2-astra` and `gpt-6.2-sol`. Every GPT-6 id table (tool search, additional tools, short-context cap, long-context pricing, priority tier on both lanes, subscription `configuration_update`, standard costs, flagship and family context windows, the no-`none` effort markers, the thinking-level pass and the subscription Ultrafast clone) now lists both ids. The dotless Venice spellings (`gpt-62-astra`, `gpt-62-sol`) are listed as family markers. `isGpt61SolId` became `isGpt6NoNoneEffortId`, which covers every GPT-6 id that rejects effort `none`.
+
+### Why
+
+- OpenAI released both models on 2026-11-17 (developers.openai.com/api/docs/models/gpt-6.2-astra, gpt-6.2-sol). The subscription had no row for either id, and the API rows from models.dev carried the raw 922k window with no long-context tiers, Fast rows or tool flags. Astra follows gpt-6-astra's 600k budget. Sol follows gpt-6.1-sol: 400k on the API and 500k on the subscription, which openai/codex's models.json also uses. Both reject effort `none` and are flagged `supports_reasoning_effort_updates` in openai/codex.
+
+### Why an extension could not handle it
+
+- The bundled catalog and its per-id metadata passes are generated here. An extension can register a custom provider, but it cannot add rows or capability flags to the built-in `chatgpt-subscription` and `openai` catalogs.
+
+### Expected merge conflict zones
+
+- LOW: the GPT-6 id sets and context-window tables near the top of the file, and the Codex model list. Upstream pi adding its own 6.2 rows would touch the same lists.
+
+## 2026-11-11 - pi-ai depends on the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/ai/package.json`: adds the `@earendil-works/pi-realm-registry` workspace dependency.
+- `packages/ai/tsconfig.build.json`: maps that package to its built declarations.
+- `packages/ai/vitest.config.ts`: aliases that package to its source, like telemetry.
+
+### Why
+
+- Provider strict mode and scope moved into a realm registry built by the shared helper (see `packages/ai/src/changes.md`).
+
+### Why an extension could not handle it
+
+- Package manifests and build configuration are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the dependency list in `package.json` and the alias list in `vitest.config.ts`.
+
+## 2026-11-10 - Claude Fable 5.2 is a released model (senpi#3893)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: no longer imports the provisional Fable 5.5 launch-constant module, and that module under `src/utils/` is deleted (its last consumer, the prompt preset, stopped importing it in #6314). `ANTHROPIC_ALLOWED_FALLBACK_MODELS` names `claude-fable-5-2` (Opus 4.8 / Opus 5, the published refusal-fallback targets) in place of the provisional launch id. The Fable/Mythos mid-conversation effort and system/tool-change patterns match `5-2` / `5.2`. The adaptive-only and adaptive-thinking predicates name the `mythos-5` family in place of the provisional id.
+- `src/providers/data/`: strict regeneration. `claude-fable-5-2` lands in anthropic, amazon-bedrock (`anthropic.`, `us.`, `global.`), openrouter, vercel-ai-gateway, opencode and venice with the models.dev price and limits and the same compat set as Fable 5.1. The same run carries current upstream drift (openrouter, opencode, opencode-go, bedrock, vercel, google, opengateway rows and prices).
+
+### Why
+
+- The provisional `claude-fable-5-5` launch shipped on 2026-11-09 as Claude Fable 5.2. The launch block's provisional id no longer names a real model, so the generator routes the released id directly.
+
+### Why an extension could not handle it
+
+- Catalog generation runs before any extension loads; the generator's per-model compat and fallback tables are the only place these facts live.
+
+### Expected merge conflict zones
+
+- MEDIUM: `ANTHROPIC_ALLOWED_FALLBACK_MODELS` and the Anthropic compat predicates in `generate-models.ts`; LOW: the regenerated `src/providers/data/*.json` snapshots.
+
+## 2026-11-05 - GPT Image 2.6 entries in the static OpenAI image catalog (senpi#5821, fixes #5820)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `OPENAI_IMAGE_MODELS` gains `gpt-image-2.6-sunburst` and `gpt-image-2.6-flare` (released 2026-11-04) ahead of the 2.5 pair, with the same rates ($5 text input / $8 image input / $30 image output / $1.25 cached input per 1M tokens) and text plus image inputs; the source comment cites both model pages. `src/providers/data/openai.json` and its manifest entry are regenerated; no other provider file changes in this PR.
+- `packages/ai/src/api/openai-images-params.ts`: `OpenAIImagesOptions.complexity` (`low` | `medium` | `high`) is forwarded as the GPT Image 2.6 `complexity` request field when set, on generations and edits alike.
+- `packages/ai/src/utils/provider-error.ts`: `isModelConfigError` also matches an OpenAI-compatible gateway's image allowlist reply, "Model <id> is not supported on /v1/images/…", while an option error such as "Transparent background is not supported for this model" stays unmatched.
+
+### Why
+
+- OpenAI released GPT Image 2.6 Sunburst and Flare with a new `complexity` planning control, and gateways lag the release: one answers HTTP 400 with the allowlist text above, so callers need to recognize it as "this route does not serve the model".
+
+### Why an extension could not handle it
+
+- The static image catalog, the Images adapter's request builder, and the shared model-config classifier are package internals that every image caller reads.
+
+### Expected merge conflict zones
+
+- LOW: the head of `OPENAI_IMAGE_MODELS` in `generate-models.ts`, the option spread at the end of `buildParams()`, and the `MODEL_CONFIG_ERROR` pattern.
+
+## 2026-11-01 - Credential-shaped test fixtures are built from parts at runtime (senpi#5310)
+
+### What changed
+
+- `packages/ai/test/anthropic-claude-oauth-token-refused.test.ts`, `anthropic-cache-checkpoint-stability.test.ts`, `google-vertex-api-key-resolution.test.ts`: the `sk-ant-oat01-`, `sk-ant-api03-` and `AIza` fixtures are joined from a prefix and a body at runtime. The values are byte-identical; tests only.
+
+### Why
+
+- GitGuardian flagged the literal fixtures on every PR that merged main (senpi#5308); no scanner configuration is relaxed.
+
+### Why an extension could not handle it
+
+- Test sources only; nothing an extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the three test files' fixture constants.
+
+## 2026-10-30 - Mixed strict tool compatibility in catalog generation (senpi#4821)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: adds `mixedStrictTools: true` to the default and detected Chat Completions compatibility metadata, preserving the existing per-tool behavior unless a model explicitly disables mixing.
+
+### Why
+
+- `packages/ai/scripts/generate-models.ts`: catalog generation must retain explicit no-mix overrides without changing the default behavior of other providers.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts`: compatibility metadata is generated build data, before runtime extensions run.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/scripts/generate-models.ts` `OPENAI_COMPLETIONS_DEFAULT_COMPAT` and `detectOpenAICompletionsCompat`.
+
+## 2026-10-28 - GPT-6.1 Terra on the ChatGPT subscription (senpi#4578)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the Codex list gains `gpt-6.1-terra` (500,000-token context like GPT-6.1 Sol, the OpenAI list price, effort ladder with `off: "none"` and no `minimal`). It joins `CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS`, and that set now also grants tool search and mid-conversation system messages on the subscription, so Terra carries the same tool flags as GPT-6.1 Sol; the API-key Terra row is unchanged. `CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW` is renamed `CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW`. `data/chatgpt-subscription.json` is regenerated with `--providers chatgpt-subscription`; the only data change is the new row.
+
+### Why
+
+- Subscription users could not select Terra at all, while the API-key catalog and upstream pi's Codex list already ship it.
+
+### Why an extension could not handle it
+
+- The builtin catalog is generated data; an extension can only add a custom model without the generated metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `codexModels` array, the GPT-6.1 context-window constant, and the subscription checks in `applyOpenAIToolSearchMetadata` / `applyOpenAIResponsesTranscriptMetadata` in `generate-models.ts`.
+
+## 2026-10-27 - Moonshot Kimi K3.1 Pro rows get the K3 request contract (senpi#4442)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `MOONSHOT_KIMI_K3_SERIES_COSTS` (`kimi-k3`, `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`) replaces the `modelId === "kimi-k3"` checks in the Moonshot variant loop and in `applyOpenAICompletionsTranscriptMetadata`. Every listed row on `moonshotai` and `moonshotai-cn` gets the K3 compat (`supportsReasoningEffort`, `thinkingFormat: "openai"`, `requiresReasoningContentOnAssistantMessages`, mid-conversation system and tool messages), the low / high / max `MOONSHOT_KIMI_K3_SERIES_THINKING_LEVEL_MAP`, and its official USD list price. Regenerated `moonshotai.json`, `moonshotai-cn.json` and the manifest; only the K3.1 Pro rows changed.
+
+### Why
+
+- Moonshot documents that K3.1 Pro has the same parameter constraints as `kimi-k3` (top-level `reasoning_effort`, no K2-style `thinking` parameter). The generic Moonshot compat sent `thinking` and dropped the effort level, and `moonshotai-cn` billed a daily-drifting currency conversion instead of the USD list price (senpi#4441).
+
+### Why an extension could not handle it
+
+- The catalog rows are generated build data; an extension cannot correct a built-in model's compat or price before the provider sends the request.
+
+### Expected merge conflict zones
+
+- LOW: the Moonshot variant loop and the Kimi constants near `KIMI_K3_COST` in `generate-models.ts`; regenerated `providers/data/moonshotai*.json` and `.manifest.json` conflict with any other regeneration and are resolved by regenerating.
+
+## 2026-10-24 - Implied costs for Kimi Code K3.1 Pro (senpi#4183)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `KIMI_CODING_IMPLIED_COSTS` adds `k3.1-pro` (2 / 10 / 0.2 / 2) and `k3.1-pro-highspeed` (4 / 20 / 0.2 / 4), the Moonshot API rates models.dev publishes for `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed`.
+
+### Why
+
+- Kimi Code subscription rows carry the equivalent API rates so usage-value estimates do not read zero; the hand-owned shard rows use the same numbers.
+
+### Why an extension could not handle it
+
+- The implied-cost table is internal to the catalog generator.
+
+### Expected merge conflict zones
+
+- LOW: the `KIMI_CODING_IMPLIED_COSTS` literal in `packages/ai/scripts/generate-models.ts`.
+
+## 2026-10-23 - Release regeneration can keep the last good OpenGateway catalog (senpi#4067)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: new `--keep-last-good-opengateway` flag, passed to `fetchOpenGatewayModels` as `keepLastGoodOnFailure`. With it, an OpenGateway feed failure under `--strict` keeps the committed `data/opengateway.json` and prints a `::warning::` annotation; without it `--strict` still throws. The flag is refused together with `--providers`, and without `--strict` (where it would do nothing).
+
+### Why
+
+- `packages/ai/scripts/generate-models.ts`: an OpenGateway price-table format change stopped the release's `--strict` regeneration (senpi#4067). The release must not stop on one gateway feed, but the dedicated `--strict --providers opengateway` refresh workflow has to keep failing so a persistent feed break stays visible.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts`: committed catalog generation runs before runtime extensions.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: `readGeneratorOptions` and the `fetchOpenGatewayModels` call in `generateModels`.
+
 ## 2026-10-21 - Launch-gated Fable 5.5 generation (senpi#3893)
 
 ### What changed

@@ -2,30 +2,11 @@
  * Test that BashExecutionComponent's collapsed output respects the render-time width,
  * not a stale captured width. Regression test for #2569.
  */
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { TUI, visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
+import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import { BashExecutionComponent } from "../src/modes/interactive/components/bash-execution.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
-
-/** Minimal TUI stub that only exposes terminal.columns */
-function createTuiStub(columns: number): { columns: number; stub: any } {
-	const state = { columns };
-	const stub = {
-		terminal: {
-			get columns() {
-				return state.columns;
-			},
-			get rows() {
-				return 24;
-			},
-		},
-		// Loader calls ui.addInterval / ui.removeInterval
-		addInterval: (_cb: () => void, _ms: number) => ({ dispose: () => {} }),
-		removeInterval: () => {},
-		requestRender: () => {},
-	};
-	return { columns: state.columns, stub };
-}
 
 describe("BashExecutionComponent width handling (#2569)", () => {
 	beforeAll(() => {
@@ -33,9 +14,10 @@ describe("BashExecutionComponent width handling (#2569)", () => {
 	});
 
 	it("highlights bash command syntax in the command header", () => {
-		const { stub } = createTuiStub(120);
-		const component = new BashExecutionComponent('echo "hello" && false', stub);
+		const ui = new TUI(new VirtualTerminal(120, 24));
+		const component = new BashExecutionComponent('echo "hello" && false', ui);
 		component.setComplete(0, false);
+		ui.stop();
 
 		const rendered = component.render(120).join("\n");
 		expect(rendered).toContain(theme.fg("syntaxString", '"hello"'));
@@ -46,8 +28,8 @@ describe("BashExecutionComponent width handling (#2569)", () => {
 		const wideWidth = 200;
 		const narrowWidth = 80;
 
-		const { stub } = createTuiStub(wideWidth);
-		const component = new BashExecutionComponent("pwd", stub);
+		const ui = new TUI(new VirtualTerminal(wideWidth, 24));
+		const component = new BashExecutionComponent("pwd", ui);
 
 		// Add output with long lines that will wrap differently at different widths
 		const longLine = "x".repeat(150);
@@ -55,6 +37,7 @@ describe("BashExecutionComponent width handling (#2569)", () => {
 
 		// Complete the command so it enters collapsed mode
 		component.setComplete(0, false);
+		ui.stop();
 
 		// Render at the narrow width (simulating a resize or split pane)
 		const lines = component.render(narrowWidth);
@@ -67,12 +50,13 @@ describe("BashExecutionComponent width handling (#2569)", () => {
 	});
 
 	it("re-computes lines when width changes between renders", () => {
-		const { stub } = createTuiStub(200);
-		const component = new BashExecutionComponent("echo hello", stub);
+		const ui = new TUI(new VirtualTerminal(200, 24));
+		const component = new BashExecutionComponent("echo hello", ui);
 
 		const longLine = "abcdefghij".repeat(20); // 200 chars
 		component.appendOutput(`${longLine}\n`);
 		component.setComplete(0, false);
+		ui.stop();
 
 		// First render at width 200
 		const lines200 = component.render(200);

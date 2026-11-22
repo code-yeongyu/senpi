@@ -8,6 +8,7 @@ import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
+	AssistantMessageEvent,
 	Model,
 	ModelThinkingLevel,
 	SimpleStreamOptions,
@@ -19,6 +20,7 @@ import type {
 	ToolCall,
 	TranscriptContext,
 } from "../types.ts";
+import { pushAssistantCompleteBlock, pushAssistantSignature } from "../utils/assistant-capture.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
@@ -63,7 +65,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 	context: TranscriptContext,
 	options?: GoogleOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = collapseSystemMessages(context);
 
 	(async () => {
@@ -103,10 +105,13 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
+			let currentIndex = 0;
 			let groundingMetadataEmitted = false;
 			let urlContextMetadataEmitted = false;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
+			// blockIndex() drifts past the open block once a native part is appended; capture keeps the block's own index.
+			const pushOpen = (event: AssistantMessageEvent) => stream.push(event, { contentIndex: currentIndex });
 			for await (const chunk of googleStream) {
 				await options?.onProviderStreamEvent?.(chunk, model);
 				// @google/genai documents GenerateContentResponse.responseId as an output-only field
@@ -126,14 +131,14 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 							) {
 								if (currentBlock) {
 									if (currentBlock.type === "text") {
-										stream.push({
+										pushOpen({
 											type: "text_end",
 											contentIndex: blocks.length - 1,
 											content: currentBlock.text,
 											partial: output,
 										});
 									} else {
-										stream.push({
+										pushOpen({
 											type: "thinking_end",
 											contentIndex: blockIndex(),
 											content: currentBlock.thinking,
@@ -144,20 +149,23 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 								if (isThinking) {
 									currentBlock = { type: "thinking", thinking: "", thinkingSignature: undefined };
 									output.content.push(currentBlock);
+									currentIndex = blockIndex();
 									stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
 								} else {
 									currentBlock = { type: "text", text: "" };
 									output.content.push(currentBlock);
+									currentIndex = blockIndex();
 									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
 								}
 							}
 							if (currentBlock.type === "thinking") {
 								currentBlock.thinking += part.text;
+								pushAssistantSignature(stream, currentIndex, currentBlock, part.thoughtSignature);
 								currentBlock.thinkingSignature = retainThoughtSignature(
 									currentBlock.thinkingSignature,
 									part.thoughtSignature,
 								);
-								stream.push({
+								pushOpen({
 									type: "thinking_delta",
 									contentIndex: blockIndex(),
 									delta: part.text,
@@ -165,11 +173,12 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 								});
 							} else {
 								currentBlock.text += part.text;
+								pushAssistantSignature(stream, currentIndex, currentBlock, part.thoughtSignature);
 								currentBlock.textSignature = retainThoughtSignature(
 									currentBlock.textSignature,
 									part.thoughtSignature,
 								);
-								stream.push({
+								pushOpen({
 									type: "text_delta",
 									contentIndex: blockIndex(),
 									delta: part.text,
@@ -182,14 +191,14 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 							handledAsKnownPart = true;
 							if (currentBlock) {
 								if (currentBlock.type === "text") {
-									stream.push({
+									pushOpen({
 										type: "text_end",
 										contentIndex: blockIndex(),
 										content: currentBlock.text,
 										partial: output,
 									});
 								} else {
-									stream.push({
+									pushOpen({
 										type: "thinking_end",
 										contentIndex: blockIndex(),
 										content: currentBlock.thinking,
@@ -217,17 +226,22 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 
 							output.content.push(toolCall);
 							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-							stream.push({
-								type: "toolcall_delta",
-								contentIndex: blockIndex(),
-								delta: JSON.stringify(toolCall.arguments),
-								partial: output,
-							});
+							// The adapter never parses its own spelling: the complete parsed seed stays authoritative.
+							stream.push(
+								{
+									type: "toolcall_delta",
+									contentIndex: blockIndex(),
+									delta: JSON.stringify(toolCall.arguments),
+									partial: output,
+								},
+								{ parsedThrough: 0 },
+							);
 							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 						}
 
 						if (!handledAsKnownPart) {
 							output.content.push(toProviderNativeContent(part));
+							pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 						}
 					}
 				}
@@ -238,6 +252,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 						subtype: "groundingMetadata",
 						raw: candidate.groundingMetadata,
 					});
+					pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 					groundingMetadataEmitted = true;
 				}
 
@@ -247,6 +262,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 						subtype: "urlContextMetadata",
 						raw: candidate.urlContextMetadata,
 					});
+					pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 					urlContextMetadataEmitted = true;
 				}
 
@@ -283,14 +299,14 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 
 			if (currentBlock) {
 				if (currentBlock.type === "text") {
-					stream.push({
+					pushOpen({
 						type: "text_end",
 						contentIndex: blockIndex(),
 						content: currentBlock.text,
 						partial: output,
 					});
 				} else {
-					stream.push({
+					pushOpen({
 						type: "thinking_end",
 						contentIndex: blockIndex(),
 						content: currentBlock.thinking,

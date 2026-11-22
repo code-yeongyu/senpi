@@ -1,4 +1,10 @@
 import type { AssistantMessageEvent } from "../types.ts";
+import {
+	type CaptureHint,
+	carryAssistantCapture,
+	getAssistantCapture,
+	setAssistantReader,
+} from "../utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { snapshotRecoveryEvent } from "./recovery-message-snapshot.ts";
 
@@ -9,6 +15,13 @@ export class RecoveryAssistantMessageEventStream extends AssistantMessageEventSt
 	private cancellationHandler: CancellationHandler | undefined;
 	private cancellationPromise: Promise<void> | undefined;
 	private sourceClosed = false;
+	private relaySource: AssistantMessageEvent | undefined;
+	private relayed = false;
+
+	constructor() {
+		super({ captureBlocks: true });
+		setAssistantReader(this, (project) => this.withCancellation(this.mapIterator(project)));
+	}
 
 	setCancellationHandler(handler: CancellationHandler): void {
 		this.cancellationHandler = handler;
@@ -20,12 +33,36 @@ export class RecoveryAssistantMessageEventStream extends AssistantMessageEventSt
 		return true;
 	}
 
-	override push(event: AssistantMessageEvent): void {
-		super.push(snapshotRecoveryEvent(event));
+	/**
+	 * Runs a projection step that copies `source` 1:1 to a new index. The copy is built from source blocks read after
+	 * later deltas landed, so its capture relays the source's emission-time record instead of freezing the copy. Only
+	 * the step's first push of the source's type is that copy; any later one records nothing.
+	 */
+	relaying<T>(source: AssistantMessageEvent, project: () => T): T {
+		this.relaySource = source;
+		this.relayed = false;
+		try {
+			return project();
+		} finally {
+			this.relaySource = undefined;
+		}
+	}
+
+	override push(event: AssistantMessageEvent, hint?: CaptureHint): void {
+		const source = this.relaySource;
+		let relay = hint;
+		if (source?.type === event.type) {
+			relay = { ...hint, carried: this.relayed ? null : (getAssistantCapture(source) ?? null) };
+			this.relayed = true;
+		}
+		super.push(carryAssistantCapture(event, snapshotRecoveryEvent(event)), relay);
 	}
 
 	override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
-		const iterator = super[Symbol.asyncIterator]();
+		return this.withCancellation(super[Symbol.asyncIterator]());
+	}
+
+	private withCancellation<T>(iterator: AsyncIterator<T>): AsyncIterator<T> {
 		return {
 			next: () => iterator.next(),
 			return: async () => {

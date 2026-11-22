@@ -1,6 +1,6 @@
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { replayHistoryImages } from "./cold-seed-images.ts";
-import { appendSdkContentBlocks } from "./content-blocks.ts";
+import { appendSdkContentBlocks, neutralizeToolResultText } from "./content-blocks.ts";
 import type { PromptCacheTtl } from "./prompt-cache-ttl.ts";
 import type { ContentBlockParam, SDKUserMessage } from "./sdk-boundary.ts";
 import { mapPiToolNameToSdk } from "./tools.ts";
@@ -33,6 +33,13 @@ function appendContentBlocks(blocks: ContentBlockParam[], content: string | read
  * cache breakpoint.
  */
 export const CONVERSATION_HISTORY_CLOSER = "\n</conversation_history>";
+
+/**
+ * The current turn's tool images go after the history closer, past the cache breakpoint, so the history bytes stay the
+ * same when the turn ends and these images are no longer sent (senpi#5275).
+ */
+const CURRENT_TURN_IMAGES_OPENER = "\n<current_turn_tool_images>\n";
+const CURRENT_TURN_IMAGES_CLOSER = "\n</current_turn_tool_images>";
 
 export const RESPOND_TO_USER_INSTRUCTION =
 	'The above is the conversation history so far, provided as context. Respond as the assistant to the user message below only. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.';
@@ -96,7 +103,7 @@ export function buildPromptBlocks(
 		for (const [index, message] of history.entries()) {
 			if (message.role === "user") {
 				pushPrefix("USER:");
-				if (!appendContentBlocks(blocks, replayedImages.get(index) ?? message.content))
+				if (!appendContentBlocks(blocks, replayedImages.history.get(index) ?? message.content))
 					pushText("(see attached image)");
 				continue;
 			}
@@ -110,11 +117,18 @@ export function buildPromptBlocks(
 			pushPrefix(
 				`TOOL RESULT (historical ${mapPiToolNameToSdk(message.toolName, customToolNameToSdk)}, id=${message.toolCallId}):`,
 			);
-			if (!appendContentBlocks(blocks, replayedImages.get(index) ?? message.content))
+			const toolResultStart = blocks.length;
+			if (!appendContentBlocks(blocks, replayedImages.history.get(index) ?? message.content))
 				pushText("(see attached image)");
+			neutralizeToolResultText(blocks, toolResultStart);
 		}
 		if (options.cacheBreakpoint !== undefined) markCacheBreakpoint(blocks, historyStart, options.cacheBreakpoint);
 		pushText(CONVERSATION_HISTORY_CLOSER);
+		if (replayedImages.currentTurn.length > 0) {
+			pushText(CURRENT_TURN_IMAGES_OPENER);
+			appendContentBlocks(blocks, replayedImages.currentTurn);
+			pushText(CURRENT_TURN_IMAGES_CLOSER);
+		}
 	}
 
 	if (toolWatchNote?.trim()) {

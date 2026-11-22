@@ -17,7 +17,12 @@ export function marshalToolResult(result: AgentToolResult<unknown>) {
 	return images.length === 0 && details === undefined && !hasError ? { text } : { text, details, images, hasError };
 }
 
+/**
+ * Whether a nested tool call failed: the result's own `isError` (the documented way to fail without throwing,
+ * senpi#6904), or `details.isError` from tools that still report it there.
+ */
 export function toolResultIsError(result: AgentToolResult<unknown>): boolean {
+	if (result.isError === true) return true;
 	const details = result.details;
 	return typeof details === "object" && details !== null && "isError" in details && details.isError === true;
 }

@@ -12,12 +12,14 @@ import { type RpcSessionEntry, RpcSessionRegistryError } from "./session-registr
 // a read or a control needed to finish/cancel an already-admitted turn.
 const READ_ONLY_OR_CONTROL = new Set<RpcInboundRecord["type"]>([
 	"get_state",
+	"get_snapshot",
 	"get_effect_status",
 	"get_pending_inputs",
 	"get_steering_messages",
 	"get_follow_up_messages",
 	"get_available_models",
 	"get_available_thinking_levels",
+	"get_model_thinking_level",
 	"get_fast_mode",
 	"get_session_stats",
 	"resolve_path",

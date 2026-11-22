@@ -21,7 +21,7 @@ import {
  */
 afterEach(removeSupervisedScratches, 60_000);
 
-/** The supervisor may advertise before the caller looks, and `fileAppears` reports only a change. */
+/** The supervisor may advertise before the caller looks. */
 async function advertised(path: string): Promise<void> {
 	if (!existsSync(path)) await fileAppears(path, 10_000);
 }

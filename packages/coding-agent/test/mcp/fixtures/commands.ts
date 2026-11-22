@@ -61,6 +61,7 @@ export function createUi(options: { confirmResults?: boolean[]; selectResult?: s
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
+		setProgramStatus: () => {},
 		pasteToEditor: () => {},
 		setEditorText: () => {},
 		getEditorText: () => "",

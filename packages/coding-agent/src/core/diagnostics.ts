@@ -9,7 +9,7 @@ export interface ResourceCollision {
 
 export interface ResourceDiagnostic {
 	type: "warning" | "error" | "collision";
-	category?: "size-limit" | "skill-link-blocked";
+	category?: "size-limit" | "skill-link-blocked" | "skill-ignored";
 	message: string;
 	path?: string;
 	collision?: ResourceCollision;

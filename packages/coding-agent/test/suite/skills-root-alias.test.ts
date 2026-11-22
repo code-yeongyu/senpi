@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatSkillsForPrompt, type Skill } from "../../src/core/skills.ts";
 
 function skill(name: string, root: string): Skill {
@@ -52,5 +52,44 @@ describe("formatSkillsForPrompt root aliases", () => {
 		const locationChars = [...result.matchAll(/<location>([^<]+)<\/location>/g)].reduce((n, m) => n + m[1].length, 0);
 		const absoluteLocationChars = skills.reduce((n, s) => n + s.filePath.length, 0);
 		expect(locationChars).toBeLessThan(absoluteLocationChars / 4);
+	});
+});
+
+// senpi#5067: SENPI_TEST_WORKSTATION's repoRoot pin shows a root inside the pinned checkout under a synthetic root.
+describe("formatSkillsForPrompt under the test-only repoRoot pin", () => {
+	const PIN = { cpuModel: "Test CPU", cores: 4, kernel: "TestOS 1.0" };
+	const skills = [skill("alpha", "/work/checkout/packages/coding-agent/skills"), skill("gamma", "/opt/plugin/skills")];
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it("production (unset) renders the real roots, byte-identical to a pin whose checkout holds none of them", () => {
+		vi.stubEnv("SENPI_TEST_WORKSTATION", "");
+		const production = formatSkillsForPrompt(skills);
+		vi.stubEnv("SENPI_TEST_WORKSTATION", JSON.stringify({ ...PIN, repoRoot: { from: "/elsewhere", to: "/eq" } }));
+
+		expect(formatSkillsForPrompt(skills)).toBe(production);
+		expect(production).toContain("<r0>/work/checkout/packages/coding-agent/skills</r0>");
+		expect(production).toContain("<r1>/opt/plugin/skills</r1>");
+	});
+
+	it("a root inside the pinned checkout is shown under the pinned root; other roots and locations are unchanged", () => {
+		vi.stubEnv("SENPI_TEST_WORKSTATION", "");
+		const production = formatSkillsForPrompt(skills);
+		vi.stubEnv(
+			"SENPI_TEST_WORKSTATION",
+			JSON.stringify({ ...PIN, repoRoot: { from: "/work/checkout", to: "/eq-synthetic/checkout" } }),
+		);
+
+		const pinned = formatSkillsForPrompt(skills);
+
+		expect(pinned).toBe(
+			production.replace(
+				"<r0>/work/checkout/packages/coding-agent/skills</r0>",
+				"<r0>/eq-synthetic/checkout/packages/coding-agent/skills</r0>",
+			),
+		);
+		expect(pinned).not.toContain("/work/checkout");
 	});
 });

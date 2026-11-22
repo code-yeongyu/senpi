@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { bootHermeticStack, SOURCE_ROOT } from "./lib/anthropic-subscription-fullstack-harness.mjs";
 import { classifyPayload } from "./lib/anthropic-subscription-fullstack-support.mjs";
 import { safeDetail } from "./lib/output-safety.mjs";
+import { signalOwnedProcess } from "./lib/common.mjs";
 
 const TURN_TIMEOUT_MS = 120_000;
 const tsxImport = fileURLToPath(import.meta.resolve("tsx"));
@@ -20,7 +21,7 @@ function killTree(child) {
 	if (child.exitCode !== null) return;
 	try {
 		if (process.platform === "win32") child.kill("SIGKILL");
-		else process.kill(-child.pid, "SIGKILL");
+		else signalOwnedProcess({ pid: child.pid, spawned: child, group: true, signal: "SIGKILL" });
 	} catch {
 		child.kill("SIGKILL");
 	}

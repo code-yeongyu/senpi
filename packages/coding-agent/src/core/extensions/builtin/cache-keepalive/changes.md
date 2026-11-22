@@ -1,5 +1,77 @@
 # Cache Keep-Alive Extension Changes
 
+## 2026-11-06 - Keep-alive warms an opted-in Anthropic-compatible gateway (senpi#1248)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`: `isWarmSupportedModel` calls the shared `supportsAnthropicCacheWarming()` from `@earendil-works/pi-ai` instead of the local `isAnthropicApiBaseUrl(model.baseUrl)` check, and the import list drops `isAnthropicApiBaseUrl`.
+
+### Why
+
+- The hostname-only check kept every gateway seat cold, so a session on an Anthropic-compatible proxy whose model sets `compat.supportsLongCacheRetention: true` never got a refreshing ping even though its requests do carry `cache_control` (senpi#1248).
+
+### Why an extension could not handle it
+
+- The builtin is the caller.
+
+### Expected merge conflict zones
+
+- LOW: the `@earendil-works/pi-ai` import block and `isWarmSupportedModel`.
+
+## 2026-10-27 - Keepalive authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`: `getApiKeyAndHeaders` receives the session id.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call.
+
+## 2026-10-27 - The keep-alive ping splits the system prompt like the real request (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`: the warm request carries the session's `ctx.getSystemPromptStablePrefix()` when the current prompt starts with it.
+
+### Why
+
+- A ping whose system blocks differ from the real request would write its own cache entry instead of keeping the real one warm (senpi#2389).
+
+### Why an extension could not handle it
+
+- This is the keep-alive builtin's own request assembly.
+
+### Expected merge conflict zones
+
+- LOW: the `warm(...)` call in `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`.
+
+## 2026-10-18 - Do not arm provider work for size inspection (senpi#3483)
+
+### What changed
+
+- `index.ts`: `session_start.sizesOnly` skips prewarm and startup activity arming.
+
+### Why
+
+A diagnostic must not arm a provider request if a user extension emits activity during startup.
+
+### Why an extension could not handle it
+
+This built-in owns the warm-request subscriptions.
+
+### Expected merge conflict zones
+
+- `index.ts`: `session_start` before `prewarm.start`.
+
 ## 2026-10-11 - Arm prewarm until the first user activity (senpi#3140)
 
 ### What changed

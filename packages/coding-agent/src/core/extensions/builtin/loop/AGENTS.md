@@ -59,13 +59,19 @@ and keep domain parsing (and error relabeling) on this side of the seam.
   `schedule_wakeup` burns one credit and arms a fallback wakeup (`SENPI_LOOP_KEEPALIVE_SECONDS`,
   default 1200s, clamped 60-3600); the second consecutive omission ends the loop with
   `keepalive_exhausted`. Never applies after an ordinary user turn; a user abort PAUSES the
-  loop. Provider/turn errors are never terminal for a loop.
+  loop. A tick steered into a turn the loop did not start (the session was busy) re-arms the
+  fallback without spending the credit, since that run ended on the user's work. Provider/turn
+  errors are never terminal for a loop.
 
 ## TICK DELIVERY
 
-A tick never steers. When idle, `index.ts` dispatches through `sendUserMessage` with
+A tick steers. When idle, `index.ts` dispatches through `sendUserMessage` with
 `expandPromptTemplates: true` so a slash payload reaches the real command path; a busy
-session receives the tick as a follow-up. Sentinel payloads (the four `<<...>>`
+session receives the tick as a steer, so it lands in the running turn at its next boundary
+instead of waiting behind it as a follow-up. A busy tick whose payload is an extension
+slash command still waits for `agent_settled`, because extension commands cannot be queued
+at all. A steered tick also fires the running tool's `steeringSignal`, so a foreground
+`eval` cell detaches to the background when a tick lands mid-call. Sentinel payloads (the four `<<...>>`
 loop/loop-file forms) deliver the long instruction block once as an anchor, later ticks send
 a short reminder pointing back at it, keeping the cached message prefix stable; a changed
 loop-file fingerprint re-anchors. Verbatim `prompt` payloads are always sent as-is.
@@ -78,7 +84,9 @@ status ticker, and persists the snapshot without a terminal reason. Terminal rea
 exactly `stopped | keepalive_exhausted | expired | tick_budget_exhausted | error` (there is
 deliberately no `session_closed`). `restore` re-arms suspended loops on the next session
 start, re-checking expiry. A store failure ends affected loops with `error` and tells the
-user — a schedule that cannot be persisted must not keep running.
+user — a schedule that cannot be persisted must not keep running. A graceful close
+(`session_shutdown` with `closed: true`, oh-my-openagent#14313) is the one exception: the session ended on
+request, so its loops end `stopped` before the snapshot is persisted and nothing re-arms on a reopen.
 
 ## MODEL SURFACE
 

@@ -289,29 +289,6 @@ describe("xAI Responses provider", () => {
 		});
 	});
 
-	it("uses /responses for Grok 4.7 with xhigh effort and encrypted reasoning", async () => {
-		const captured = await captureRequest(
-			XAI_MODELS["grok-4.7"],
-			{
-				systemPrompt: "You are a careful coding assistant.",
-				messages: [{ role: "user", content: "hello", timestamp: 1 }],
-			},
-			{
-				apiKey: "xai-test-token",
-				reasoningEffort: "xhigh",
-			},
-		);
-
-		expect(captured.url).toBe("https://api.x.ai/v1/responses");
-		expect(captured.body).toMatchObject({
-			model: "grok-4.7",
-			store: false,
-			stream: true,
-			reasoning: { effort: "xhigh" },
-			include: ["reasoning.encrypted_content"],
-		});
-	});
-
 	it("uses /responses for Grok 4.3", async () => {
 		const captured = await captureRequest(
 			XAI_MODELS["grok-4.3"],

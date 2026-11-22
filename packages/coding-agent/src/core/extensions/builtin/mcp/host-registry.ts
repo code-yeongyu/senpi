@@ -1,4 +1,5 @@
 import type { ServerConnection } from "./connection.ts";
+import { legacyMcpFormEligible } from "./elicitation.ts";
 import { observe } from "./env-grants-store.ts";
 import { effectiveGrantNames, type ProjectMcpAuthority } from "./project-skill-policy.ts";
 import { SharedMcpConnection, type SharedMcpOptions } from "./shared-connection.ts";
@@ -30,7 +31,13 @@ export class HostMcpRegistry {
 	readonly #grantObservers = new Map<string, Promise<() => void>>();
 
 	attachShared(key: string, owner: object, options: SharedMcpOptions): ServerConnection {
-		const identity = sharedMcpKey(options, options.agentDir);
+		const eligible = legacyMcpFormEligible(options.elicitationUiProvider, options.elicitationEnabled !== false);
+		// Enforced pools observe live readiness; it must not remain frozen in a creation-time key.
+		const formPolicy =
+			options.elicitationUiProvider?.enforced?.() === true
+				? `private:${options.elicitationEnabled !== false}`
+				: `${eligible}:false`;
+		const identity = `${sharedMcpKey(options, options.agentDir)}\0legacy-form:${formPolicy}`;
 		let shared = this.#shared.get(identity);
 		if (shared === undefined) {
 			shared = new SharedMcpConnection(options, () => this.#shared.delete(identity));

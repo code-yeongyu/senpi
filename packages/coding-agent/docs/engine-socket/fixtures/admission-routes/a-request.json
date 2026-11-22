@@ -1,0 +1,9 @@
+{
+	"request": {
+		"type": "open_session",
+		"cwd": "<root>/cwd",
+		"sessionPath": "<root>/cwd/golden.jsonl",
+		"admissionId": "golden-a",
+		"id": "peer-1"
+	}
+}

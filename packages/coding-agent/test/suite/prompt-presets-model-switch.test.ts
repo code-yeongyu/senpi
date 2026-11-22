@@ -72,7 +72,7 @@ describe("prompt preset model switching", () => {
 
 		// then
 		expect(promptChange?.systemPromptName).toBeUndefined();
-		expect(harness.session.systemPrompt).toContain("## Available Tools");
+		expect(harness.session.systemPrompt).toContain("## Hard Limits");
 		expect(harness.session.systemPrompt).not.toContain("full set rather than the first item");
 		expect(harness.eventsOfType("system_prompt_change").map((event) => event.systemPromptName)).toEqual([undefined]);
 	});

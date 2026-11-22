@@ -9,6 +9,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import {
@@ -66,14 +67,23 @@ function holdersDir(sessionFile: string, sessionId: string): string {
 	return join(dirname(resolveMovedPath(sessionFile)), HOLDERS_DIR, encodedSessionId(sessionId));
 }
 
-function identityRecord(cwd?: string, endpoint?: SessionHolderEndpoint): string {
-	return JSON.stringify({
+/** What a holder publishes for a session it has open: its identity and, for an RPC host, that host's endpoint. */
+export interface HolderRecord extends Partial<SessionHolderEndpoint> {
+	readonly pid: number;
+	readonly bootAtMs: number;
+	readonly processStartedAtMs: number;
+	readonly cwd?: string;
+}
+
+async function identityRecord(cwd?: string, endpoint?: SessionHolderEndpoint): Promise<string> {
+	const record: HolderRecord = {
 		pid: process.pid,
-		bootAtMs: processBootAtMs(),
+		bootAtMs: await processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 		...(cwd === undefined ? {} : { cwd }),
 		...endpoint,
-	});
+	};
+	return JSON.stringify(record);
 }
 
 function unlinkIfPresentSync(path: string): void {
@@ -145,7 +155,7 @@ function parsePid(raw: string): number | undefined {
  * while another process is moving the session, and `SessionMovedError` when a session that was read
  * from disk (`expectExisting`) is gone, so nothing is ever appended to a path the session left.
  */
-export function holdSessionFile(
+export async function holdSessionFile(
 	sessionFile: string,
 	sessionId: string,
 	options: {
@@ -153,12 +163,14 @@ export function holdSessionFile(
 		readonly expectExisting: boolean;
 		readonly holderEndpoint?: SessionHolderEndpoint;
 	},
-): SessionHold {
+): Promise<SessionHold> {
+	// Resolved before the reference count is read, so nothing yields between that check and the record it guards.
+	const identity = await identityRecord(options.cwd, options.holderEndpoint);
 	const dir = holdersDir(sessionFile, sessionId);
 	const record = join(dir, `${process.pid}.json`);
 	const shared = holderRecordRefCounts.get(record) ?? 0;
 	if (shared === 0) {
-		publishHolderRecord(dir, record, identityRecord(options.cwd, options.holderEndpoint));
+		publishHolderRecord(dir, record, identity);
 		installExitCleanup();
 	}
 	holderRecordRefCounts.set(record, shared + 1);
@@ -187,12 +199,14 @@ export function holdSessionFile(
 	return { release };
 }
 
-// A finishing move removes the emptied directory, so a writer racing it recreates the directory once.
+// A finishing move removes the emptied directory, so a writer racing it recreates the directory once. The mkdir is
+// inside the retry too: a recursive mkdir that finds the directory just created stats it, and fails with ENOENT when
+// that removal lands in between (senpi#5618).
 function publishHolderRecord(dir: string, record: string, content: string): void {
 	for (let attempt = 0; ; attempt += 1) {
-		mkdirSync(dir, { recursive: true });
 		const temp = `${record}.${randomUUID().slice(0, 8)}.tmp`;
 		try {
+			mkdirSync(dir, { recursive: true });
 			writeFileSync(temp, content);
 			renameSync(temp, record);
 			return;
@@ -219,9 +233,25 @@ export async function liveSessionHolders(
 	}
 }
 
+// A concurrent mover that finishes removes the emptied lock directory. A recursive mkdir that saw the directory
+// exist and stats it after that removal fails with ENOENT (senpi#5618): the directory is merely gone again, so the
+// publish fails once more and the next call here recreates it. Returns whether this mkdir hit that ENOENT. Only one
+// in a row is tolerated: a second means the path can never be created (a dangling symlink), which fails fast. Who
+// moves is still decided by the exclusive lock alone.
+async function createLockDir(dir: string, tolerateEnoent: boolean): Promise<boolean> {
+	try {
+		await mkdir(dir, { recursive: true });
+		return false;
+	} catch (error) {
+		if (!tolerateEnoent || errorCode(error) !== "ENOENT") throw error;
+		return true;
+	}
+}
+
 async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): Promise<string> {
-	const mine = identityRecord();
+	const mine = await identityRecord();
 	const deadline = Date.now() + waitMs;
+	let lockDirVanished = false;
 	while (true) {
 		try {
 			await publishExclusive(lock, mine);
@@ -229,7 +259,7 @@ async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): 
 		} catch (error) {
 			const code = errorCode(error);
 			if (code === "ENOENT") {
-				mkdirSync(dirname(lock), { recursive: true });
+				lockDirVanished = await createLockDir(dirname(lock), !lockDirVanished);
 				continue;
 			}
 			if (code !== "EEXIST") throw error;

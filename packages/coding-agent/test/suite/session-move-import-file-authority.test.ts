@@ -1,6 +1,10 @@
 // Regression for sisyphuslabs/omo-desktop-app#3137 (desktop#4008 handover): a re-run import after a lost `accepted` write.
+
+import { uptime } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { importMovedSession } from "../../src/core/session-move/import.ts";
+import { answerMoveStatusAndLanding, importMovedSession } from "../../src/core/session-move/import.ts";
+import { COMMIT_SETTLE_AFTER_MS } from "../../src/core/session-move/move-landing.ts";
 import { MoveFencedError, MoveLedger } from "../../src/core/session-move/move-ledger.ts";
 import type { MoveId } from "../../src/core/session-move/ownership.ts";
 import { customTypes, MOVE, setup } from "./session-move-fixture.ts";
@@ -14,11 +18,21 @@ class LosesAcceptedWrite extends MoveLedger {
 		this.renames = renames;
 	}
 
-	override commit<T>(moveId: MoveId, rename: () => T | Promise<T>): Promise<T> {
-		return super.commit(moveId, async () => {
-			if (this.renames) this.landed = String(await rename());
-			throw new Error("the accepted write failed");
-		});
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
+		prepare?: () => void,
+	): Promise<T> {
+		return super.commit(
+			moveId,
+			target,
+			async (stampStands) => {
+				if (this.renames) this.landed = String(await rename(stampStands));
+				throw new Error("the accepted write failed");
+			},
+			prepare,
+		);
 	}
 }
 
@@ -47,25 +61,32 @@ describe("a re-run move import with the session file as the authority", () => {
 
 		const again = importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
 		await expect(again).rejects.toBeInstanceOf(MoveFencedError);
-		expect(await ledger.answerStatus(MOVE, { movedIn: false })).toEqual({
+		// A commit stamp with no file is settled once it is old enough that no stalled commit can still land (senpi#6417).
+		expect((await answerMoveStatusAndLanding(ledger, MOVE, undefined)).answer).toEqual({ state: "receiving" });
+		const afterTheBound = new MoveLedger(ledger.dir, {
+			now: () => Date.now() + COMMIT_SETTLE_AFTER_MS,
+			uptime: () => uptime() * 1000 + COMMIT_SETTLE_AFTER_MS,
+		});
+		expect((await answerMoveStatusAndLanding(afterTheBound, MOVE, undefined)).answer).toEqual({
 			state: "failed",
 			reason: "import_failed",
 		});
 	});
 
-	it("#given a ready, declined or failed move #when accept runs #then it is refused and the record stays", async () => {
-		const { ledger } = await setup();
-		await expect(ledger.accept(MOVE)).rejects.toBeInstanceOf(MoveFencedError);
+	it("#given a ready, declined or failed move #when confirmLanded runs #then it is refused and the record stays", async () => {
+		const { base, ledger } = await setup();
+		const target = join(base, "landed.jsonl");
+		await expect(ledger.confirmLanded(MOVE, target, false)).rejects.toBeInstanceOf(MoveFencedError);
 		const declined = "move-0002" as MoveId;
 		await ledger.decline(declined, "cancelled");
-		await expect(ledger.accept(declined)).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(ledger.confirmLanded(declined, target, false)).rejects.toBeInstanceOf(MoveFencedError);
 		expect(await ledger.answerStatus(declined, { movedIn: false })).toEqual({
 			state: "declined",
 			reason: "cancelled",
 		});
 		const failed = "move-0003" as MoveId;
 		await ledger.fail(failed, "import_failed");
-		await expect(ledger.accept(failed)).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(ledger.confirmLanded(failed, target, false)).rejects.toBeInstanceOf(MoveFencedError);
 		expect(await ledger.answerStatus(failed, { movedIn: false })).toEqual({
 			state: "failed",
 			reason: "import_failed",

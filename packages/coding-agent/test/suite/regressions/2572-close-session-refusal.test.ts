@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { RpcClient, RpcCommandError } from "../../../src/modes/rpc/rpc-client.ts";
+import { answerProtocolInfo } from "../../helpers/rpc-legacy-protocol.ts";
 
 type Request = { id: string; type: string; sessionId?: string };
 type Reply = (request: Request, peer: Socket) => void;
@@ -23,6 +24,7 @@ async function fakeHost(onClose: Reply): Promise<FakeHost> {
 			for (let newline = buffered.indexOf("\n"); newline !== -1; newline = buffered.indexOf("\n")) {
 				const request = JSON.parse(buffered.slice(0, newline)) as Request;
 				buffered = buffered.slice(newline + 1);
+				if (answerProtocolInfo(peer, request)) continue;
 				if (request.type === "open_session") {
 					peer.write(
 						`${JSON.stringify({ type: "response", id: request.id, command: "open_session", success: true, data: { sessionId: "s", state: {} } })}\n`,

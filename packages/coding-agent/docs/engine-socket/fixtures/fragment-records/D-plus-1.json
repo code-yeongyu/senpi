@@ -1,0 +1,46 @@
+{
+	"caseId": "D-plus-1",
+	"kind": "valid",
+	"contractIds": [
+		"R4.B3"
+	],
+	"description": "D + 1 raw bytes: two records of D and 1 bytes.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"generator": {
+			"kind": "segments",
+			"params": {
+				"segments": [
+					{
+						"kind": "repeat",
+						"patternBase64": "MDEyMzQ1Njc4OQ==",
+						"length": 131073
+					}
+				]
+			}
+		}
+	},
+	"sourceLength": 131073,
+	"sourceDigest": "c0af78fee1c0de08c3d9fd8438cac16c36db87b29a93982d11afe07d70cdcb2b",
+	"expectedRecords": [
+		{
+			"offset": 0,
+			"length": 131072,
+			"digest": "8a63f72033fbd67c8723d522a5b3eb3c67f280e38899306616804a96fd25e0b5",
+			"next": 131072,
+			"complete": false
+		},
+		{
+			"offset": 131072,
+			"length": 1,
+			"digest": "5641d651b592a7cd853fffb382344b77e18a5757efe06a8fca9fb805ebb9b89a",
+			"next": null,
+			"complete": true
+		}
+	]
+}

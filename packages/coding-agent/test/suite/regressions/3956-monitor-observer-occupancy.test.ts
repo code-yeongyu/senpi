@@ -30,15 +30,15 @@ async function classifyingEndpoint() {
 		let pending = "";
 		client.on("data", (chunk) => {
 			pending += chunk.toString("utf8");
-			const newline = pending.indexOf("\n");
-			if (newline === -1) return;
-			const line = pending.slice(0, newline);
-			pending = pending.slice(newline + 1);
-			firstLines.push(line);
-			const request = JSON.parse(line) as { id?: string };
-			client.write(
-				`${JSON.stringify({ type: "response", id: request.id, success: true, data: { snapshot: [] } })}\n`,
-			);
+			for (let newline = pending.indexOf("\n"); newline !== -1; newline = pending.indexOf("\n")) {
+				const line = pending.slice(0, newline);
+				pending = pending.slice(newline + 1);
+				firstLines.push(line);
+				const request = JSON.parse(line) as { id?: string };
+				client.write(
+					`${JSON.stringify({ type: "response", id: request.id, success: true, data: { snapshot: [] } })}\n`,
+				);
+			}
 		});
 	});
 	await new Promise<void>((resolve) => server.listen(socketPath, resolve));
@@ -65,8 +65,12 @@ describe("rpc monitor observer occupancy (senpi#3956)", () => {
 			cleanups.push(() => observer.close());
 			await observer.subscribed;
 
-			expect(firstLines).toHaveLength(1);
-			expect(JSON.parse(firstLines[0] ?? "{}")).toMatchObject({ type: "subscribe_sessions" });
+			// The public endpoint challenge comes first (senpi#3795), itself an observing read; this endpoint answers
+			// without `data.auth`, like a host that predates authentication, so no `authenticate` follows.
+			expect(firstLines.map((line) => JSON.parse(line))).toMatchObject([
+				{ type: "get_protocol_info", observe: true },
+				{ type: "subscribe_sessions" },
+			]);
 			expect(occupancy.attachedCount).toBe(0);
 			expect(occupancy.unclassifiedCount).toBe(0);
 			expect(closed).toEqual([]);

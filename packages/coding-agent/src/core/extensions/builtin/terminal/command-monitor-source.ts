@@ -213,16 +213,20 @@ export class CommandMonitorSource {
 		record.unsubscribeExit?.();
 		this.#records.delete(record.id);
 		this.#host.changed();
+		const exit = record.runtime.exitResult;
 		const status = describeExit(record.runtime) ?? "exited";
-		const code = record.runtime.exitResult?.exitCode;
+		const code = exit?.exitCode;
 		const codeText = code === null || code === undefined ? "" : ` (exit code ${code})`;
 		this.#host.emit(record, {
 			type: "summary",
 			id: record.id,
 			description: record.description,
-			summary: `watcher ${status}${codeText}`,
+			// A timed-out watch was KILLED by its own timeout_ms deadline; say so instead of a
+			// passive "timed_out" that reads like a mere observation. The exit code is
+			// deliberately omitted in this branch: a killed child's code is noise, and
+			// "killed at deadline" names the cause instead.
+			summary: exit?.timedOut ? `watcher killed at deadline (${status})` : `watcher ${status}${codeText}`,
 		});
-		const exit = record.runtime.exitResult;
 		this.#host.ended(record, exit?.timedOut ? "timeout" : exit?.cancelled ? "killed" : "exit", code ?? null);
 	}
 

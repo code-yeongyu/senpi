@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFallbackLogger } from "../../src/core/retry-fallback/log.ts";
+import { READABLE_PROVIDER_TEXT, SECRET_CELLS } from "./secret-inventory.ts";
 
 const tempDirs: string[] = [];
 
@@ -20,7 +21,7 @@ afterEach(() => {
 });
 
 describe("retry fallback logger", () => {
-	it("writes parseable 0600 NDJSON and safely serializes malformed data", () => {
+	it("writes parseable 0600 NDJSON and safely serializes malformed data", async () => {
 		const agentDir = createTempDir();
 		const circular: { count?: bigint; self?: unknown } = { count: 1n };
 		circular.self = circular;
@@ -33,6 +34,7 @@ describe("retry fallback logger", () => {
 				missing: undefined,
 			}),
 		).not.toThrow();
+		await logger.settled();
 
 		const logPath = join(agentDir, "logs", "fallback.log");
 		const entry: Record<string, unknown> = JSON.parse(readFileSync(logPath, "utf8"));
@@ -47,7 +49,7 @@ describe("retry fallback logger", () => {
 		expect(statSync(logPath).mode & 0o777).toBe(0o600);
 	});
 
-	it("truncates external error text and omits credential-bearing fields", () => {
+	it("truncates external error text and omits credential-bearing fields", async () => {
 		const agentDir = createTempDir();
 		const logger = createFallbackLogger(agentDir);
 		const longError = "x".repeat(240);
@@ -59,6 +61,7 @@ describe("retry fallback logger", () => {
 			apiKey: "should-not-appear",
 			env: { SECRET: "should-not-appear" },
 		});
+		await logger.settled();
 
 		const text = readFileSync(join(agentDir, "logs", "fallback.log"), "utf8");
 		const entry: Record<string, unknown> = JSON.parse(text);
@@ -70,12 +73,13 @@ describe("retry fallback logger", () => {
 		expect(entry).not.toHaveProperty("env");
 	});
 
-	it("rotates once the next line would exceed the configured cap", () => {
+	it("rotates once the next line would exceed the configured cap", async () => {
 		const agentDir = createTempDir();
 		const logger = createFallbackLogger(agentDir, { maxBytes: 150 });
 
 		logger.info("first", { selector: "a/one" });
 		logger.info("second", { selector: "b/two" });
+		await logger.settled();
 
 		const logPath = join(agentDir, "logs", "fallback.log");
 		expect(existsSync(`${logPath}.1`)).toBe(true);
@@ -83,7 +87,7 @@ describe("retry fallback logger", () => {
 		expect(readFileSync(logPath, "utf8")).toContain('"event":"second"');
 	});
 
-	it("never throws and reports a filesystem failure only once", () => {
+	it("never throws and reports a filesystem failure only once", async () => {
 		const agentDir = createTempDir();
 		writeFileSync(join(agentDir, "logs"), "not a directory");
 		const error = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -93,6 +97,34 @@ describe("retry fallback logger", () => {
 			logger.info("write_failed", { selector: "a/one" });
 			logger.warn("still_safe", { selector: "b/two" });
 		}).not.toThrow();
+		await logger.settled();
 		expect(error).toHaveBeenCalledTimes(1);
+	});
+
+	describe("redacts every secret shape in every container", () => {
+		for (const cell of SECRET_CELLS) {
+			it(cell.name, async () => {
+				const agentDir = createTempDir();
+				const logger = createFallbackLogger(agentDir);
+				logger.warn("candidate_failed", { error: cell.text, errorMessage: cell.text });
+				await logger.settled();
+
+				const text = readFileSync(join(agentDir, "logs", "fallback.log"), "utf8");
+				expect(text).toMatch(/\[redacted\]/i);
+				expect(text).not.toContain(cell.secret);
+			});
+		}
+
+		it("keeps model ids, error codes and request ids readable", async () => {
+			const agentDir = createTempDir();
+			const logger = createFallbackLogger(agentDir);
+			logger.warn("candidate_failed", { errorMessage: READABLE_PROVIDER_TEXT });
+			await logger.settled();
+
+			const entry: Record<string, unknown> = JSON.parse(
+				readFileSync(join(agentDir, "logs", "fallback.log"), "utf8"),
+			);
+			expect(entry.errorMessage).toBe(READABLE_PROVIDER_TEXT);
+		});
 	});
 });

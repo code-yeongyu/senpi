@@ -94,7 +94,10 @@ export class SessionPendingInputs {
 	/** Bumped synchronously by every clear, so a change can tell a clear it raced from a real divergence. */
 	private clears = 0;
 	private nativeRecovery:
-		| { readonly clientMessageId: string; readonly finish: (inputs: readonly PendingInput[]) => void }
+		| {
+				readonly clientMessageId: string;
+				readonly finish: (inputs: readonly PendingInput[], refuseTurn: (id: string) => void) => void;
+		  }
 		| undefined;
 
 	constructor(options: SessionPendingInputsOptions) {
@@ -126,12 +129,20 @@ export class SessionPendingInputs {
 	 * inside the same gated step, so no drain, edit or removal can run between the two. A repeated submit of the
 	 * same input is answered from the record (`replayed`) and enqueues nothing.
 	 */
+	/**
+	 * `refusal` is read before the input is recorded (a refusal there records nothing) and again in the same synchronous
+	 * step as `enqueue`. A turn that ended while the record was written makes the second read refuse: the record is
+	 * cancelled `turn_conflict`, which a later submit under the same id replaces, and the refusal is thrown.
+	 */
 	async admit(
 		input: IdentifiedInput,
 		enqueue: (queuedId: string) => void,
+		refusal?: () => Error | undefined,
 	): Promise<PendingInputOperationResult | undefined> {
 		const store = await this.store();
 		return store.transaction(async (tx) => {
+			const early = refusal?.();
+			if (early !== undefined) throw early;
 			const clearsAtStart = this.clears;
 			let result: PendingInputOperationResult | undefined;
 			try {
@@ -146,10 +157,11 @@ export class SessionPendingInputs {
 				if (isUncertainAppend(error))
 					this.nativeRecovery = {
 						clientMessageId: input.clientMessageId,
-						finish: (recovered) => {
+						finish: (recovered, refuseTurn) => {
 							const admitted = recovered.find((entry) => entry.clientMessageId === input.clientMessageId);
-							if (admitted?.phase === "queued" && this.clears === clearsAtStart)
-								enqueue(admitted.handle.queuedId);
+							if (admitted?.phase !== "queued" || this.clears !== clearsAtStart) return;
+							if (refusal?.() !== undefined) refuseTurn(input.clientMessageId);
+							else enqueue(admitted.handle.queuedId);
 						},
 					};
 				throw error;
@@ -157,8 +169,14 @@ export class SessionPendingInputs {
 			if (result?.outcome === "client_message_id_conflict")
 				throw new ClientMessageIdConflictError(input.clientMessageId);
 			const admitted = tx.current(input.clientMessageId);
-			if (result?.outcome === "admitted" && admitted !== undefined) enqueue(admitted.handle.queuedId);
-			return result;
+			if (result?.outcome !== "admitted" || admitted === undefined) return result;
+			const refused = refusal?.();
+			if (refused === undefined) {
+				enqueue(admitted.handle.queuedId);
+				return result;
+			}
+			await tx.apply(input.clientMessageId, { type: "cancel", cause: "turn_conflict", consumerFenced: true });
+			throw refused;
 		});
 	}
 
@@ -306,10 +324,10 @@ export class SessionPendingInputs {
 			// The agent port commits consumption before any provider sees an input, so an attempt left `sending` by a
 			// crash was never sent and returns to the queue under its id (T28).
 			uncommittedAttemptsAreUnsent: true,
-			onRecovered: (inputs) => {
+			onRecovered: (inputs, refuseTurn) => {
 				const native = this.nativeRecovery;
 				this.nativeRecovery = undefined;
-				native?.finish(inputs);
+				native?.finish(inputs, refuseTurn);
 			},
 		}).then((store) => {
 			const onChange = this.options.onChange;

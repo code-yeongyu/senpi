@@ -63,6 +63,10 @@ const ThemeJsonSchema = Type.Object({
 		mdQuoteBorder: ColorValueSchema,
 		mdHr: ColorValueSchema,
 		mdListBullet: ColorValueSchema,
+		// Markdown emphasis (3 optional colors, no fallback)
+		mdBold: Type.Optional(ColorValueSchema),
+		mdItalic: Type.Optional(ColorValueSchema),
+		mdStrikethrough: Type.Optional(ColorValueSchema),
 		// Tool Diffs (3 colors)
 		toolDiffAdded: ColorValueSchema,
 		toolDiffRemoved: ColorValueSchema,

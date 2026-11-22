@@ -212,6 +212,7 @@ describe("anthropic-subscription cold-seed budget", () => {
 		const tight = { ...model, contextWindow: 1_000 };
 
 		const result = await streamAnthropicSubscription(tight, coldSeedContext("x".repeat(8_000)), {
+			cwd: process.cwd(),
 			sessionId: SESSION_ID,
 			streamKind: "main",
 		}).result();
@@ -240,6 +241,7 @@ describe("anthropic-subscription cold-seed budget", () => {
 		]);
 
 		const result = await streamAnthropicSubscription(model, coldSeedContext("x".repeat(8_000)), {
+			cwd: process.cwd(),
 			sessionId: SESSION_ID,
 			streamKind: "main",
 		}).result();

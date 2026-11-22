@@ -15,6 +15,7 @@ export default mergeConfig(
 			globals: true,
 			environment: "node",
 			testTimeout: 30000,
+			globalSetup: ["./test/helpers/source-compile-cache-global-setup.ts"],
 			setupFiles: [
 				fileURLToPath(new URL("../../scripts/vitest-temp-setup.ts", import.meta.url)),
 				"./test/setup.ts",

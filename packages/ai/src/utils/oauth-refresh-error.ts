@@ -2,10 +2,47 @@ import { ModelsError } from "./models-error.ts";
 
 export class OAuthTokenEndpointError extends Error {
 	readonly status: number;
+	/** The OAuth `error` code of the response body (RFC 6749 section 5.2), when the adapter read one. */
+	readonly oauthError?: string;
+	/** The adapter itself decided that the endpoint refused this credential, so it needs a new login. */
+	readonly credentialRefused: boolean;
 
-	constructor(message: string, status: number) {
+	constructor(message: string, status: number, facts: { oauthError?: string; credentialRefused?: boolean } = {}) {
 		super(message);
 		this.status = status;
+		this.oauthError = facts.oauthError;
+		this.credentialRefused = facts.credentialRefused ?? false;
+	}
+}
+
+export type OAuthReauthorizationCode =
+	| "invalid_grant"
+	| "invalid_refresh_token"
+	| "token_expired"
+	| "refresh_token_expired"
+	| "refresh_token_invalidated"
+	| "refresh_token_reused";
+
+/** The renewable session is unusable; sign in again with its saved client ID. */
+export class OAuthReauthorizationRequiredError extends OAuthTokenEndpointError {
+	readonly code: OAuthReauthorizationCode;
+
+	constructor(code: OAuthReauthorizationCode, status: number) {
+		super(`OAuth refresh requires reauthorization (${code})`, status, { oauthError: code, credentialRefused: true });
+		this.name = "OAuthReauthorizationRequiredError";
+		this.code = code;
+	}
+}
+
+/** Repeating sign-in cannot repair an invalid client configuration. */
+export class OAuthClientConfigurationError extends OAuthTokenEndpointError {
+	readonly code = "invalid_client";
+
+	constructor(status: number) {
+		super("OAuth refresh failed: invalid client configuration (invalid_client)", status, {
+			oauthError: "invalid_client",
+		});
+		this.name = "OAuthClientConfigurationError";
 	}
 }
 

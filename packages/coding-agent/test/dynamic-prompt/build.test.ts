@@ -1,10 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { buildDynamicSystemPrompt } from "../../src/core/dynamic-prompt/build.ts";
 
-function occurrences(haystack: string, needle: string): number {
-	return haystack.split(needle).length - 1;
-}
-
 describe("buildDynamicSystemPrompt", () => {
 	const baseOptions = {
 		cwd: "/test/project",
@@ -20,71 +16,11 @@ describe("buildDynamicSystemPrompt", () => {
 		skills: [],
 	};
 
-	test("includes senpi identity", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toContain("You are senpi");
-	});
-
-	test("includes intent gate section with mandatory verbalization", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toContain("## Intent Gate");
-		expect(prompt).toContain("I read this as");
-		expect(prompt).not.toContain("Keep the routing decision internal");
-	});
-
-	test("includes working-the-task section with parallel and exploration discipline", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toContain("## Working the Task");
-		expect(prompt).toContain("loosely relevant");
-		expect(prompt).toContain("Stop searching when");
-	});
-
-	test("includes verification section with V1/V2/V3 tiers", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toContain("## Verification");
-		expect(prompt).toContain("V1");
-		expect(prompt).toContain("V2");
-		expect(prompt).toContain("V3");
-	});
-
 	test("includes tool section with categorized tools", () => {
 		const prompt = buildDynamicSystemPrompt(baseOptions);
 
 		expect(prompt).toContain("read");
 		expect(prompt).toContain("bash");
-	});
-
-	test("includes policies section", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toContain("## Policies");
-		expect(prompt).toContain("Hard Blocks");
-	});
-
-	test("policies section is language-agnostic", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).not.toContain("as any");
-		expect(prompt).not.toContain("ts-ignore");
-	});
-
-	test("includes style section", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toContain("## Style");
-		expect(prompt).toContain("Smallest correct change");
-	});
-
-	test("renders the handoff section exactly once", () => {
-		// when
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		// then
-		expect(occurrences(prompt, "## Handoff")).toBe(1);
 	});
 
 	test("does not include tuning section by default", () => {
@@ -134,7 +70,6 @@ describe("buildDynamicSystemPrompt", () => {
 
 		expect(prompt).toContain("# My Project Rules");
 		expect(prompt).toContain("/project/AGENTS.md");
-		expect(prompt).toContain("deeper files win on conflict");
 	});
 
 	test("appends skills in XML format", () => {

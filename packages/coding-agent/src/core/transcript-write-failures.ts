@@ -8,7 +8,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 export class TranscriptWriteFailures {
 	private runFailure: { readonly error: unknown } | undefined;
 	private reported = false;
-	private readonly refused = new Set<AgentMessage>();
+	private readonly refused = new Map<AgentMessage, { readonly error: unknown }>();
 
 	startRun(): void {
 		this.runFailure = undefined;
@@ -16,8 +16,12 @@ export class TranscriptWriteFailures {
 	}
 
 	record(message: AgentMessage, error: unknown): void {
-		this.refused.add(message);
+		this.refused.set(message, { error });
 		this.runFailure ??= { error };
+	}
+
+	refusal(message: AgentMessage): { readonly error: unknown } | undefined {
+		return this.refused.get(message);
 	}
 
 	takeReport(): { readonly error: unknown } | undefined {

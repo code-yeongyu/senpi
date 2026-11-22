@@ -1,3 +1,294 @@
+## 2026-11-19 - A continued session keeps its goal streak (senpi#7020)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: the load-time suppression of a goal ending on `GOAL_CONTINUATION_CAP` trailing continuations skips a `session_start` with `continued`.
+
+### Why
+
+- A long-running goal that a host restart interrupted stayed parked until a person wrote, although nothing about it was cold.
+
+### Why an extension could not handle it
+
+- This is the builtin goal extension's own session-start policy.
+
+### Expected merge conflict zones
+
+- LOW: one condition in the `session_start` handler.
+
+## 2026-11-18 - The audit-free continuation prompt follows the Astra family (senpi#6975)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts`: `isGpt6AstraReceiver` now delegates to the new `hasGpt6AstraSignal` family matcher instead of exact-set membership on `gpt-6-astra` / `gpt-6-astra-fast`.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts`: new `hasGpt6AstraSignal` id grammar beside the existing family signals.
+
+### Why
+
+- The receiver set held two exact launch ids, so gpt-6.2-astra and every future Astra release silently fell back to the full audit prompt the short form was created to avoid (senpi#2796): the audits amplify Astra's over-verification and contradict the preset's settled-check rule on every wake.
+
+### Why an extension could not handle it
+
+- The receiver choice sits inside the goal builtin itself and in the preset matcher module both extensions already share; there is no outer extension seam.
+
+### Expected merge conflict zones
+
+- LOW: the receiver check is three lines in `goal/prompt.ts`; `matchers.ts` gains one pure export with no callers moved.
+
+## 2026-11-17 - A Stop-paused goal stays paused when an input releases and retakes the hold (senpi#6897)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: `session_hold_changed` edges are applied one at a time, each against the current hold (Stop live pauses the goal, released resumes it), instead of trusting the edge's direction.
+
+### Why
+
+- An input that admits no turn (a slash command) releases the Stop and takes it back within milliseconds. The two edges were handled concurrently: the resume write landed after the pause read, leaving the goal active and ticking under a live Stop.
+
+### Why an extension could not handle it
+
+- The goal extension owns its own hold handling; the fix is inside it.
+
+### Expected merge conflict zones
+
+- LOW: the `session_hold_changed` handler in `goal/index.ts`.
+
+## 2026-11-11 - A goal waiting out a limit resumes when its session reopens (senpi#4085)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/session-start-continuation.ts` (new): `readTrailingGoalContinuations()` replaces `countTrailingGoalContinuationEntries()` from `index.ts`. It does not count a continuation whose turn the provider refused for a usage or rate limit (every answer of the turn is an error and at least one passes `isLimitRefusal`), and it reports whether the newest continuation was such a refusal. `queueGoalContinuation()` and `SessionStartContinuationOptions` moved here from `lifecycle-helpers.ts`, unchanged apart from the new `limitWait` option.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/reload-reengagement.ts`: the load-time flood guard (startup, resume and reload) uses that count, and a session opened in the middle of a limit wait queues its first wake as a limit re-check.
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: `limitWait` is honoured on the `sessionStart` path as well as `providerRecovery`, so that wake spends neither the continuation cap nor the no-progress budget.
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: loses the two moved symbols and their private helpers.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: comment only. The ladder park no longer stays parked until input (senpi#6388).
+- Correction to the senpi#6388 entry: `isLimitRefusal` also accepts a status-only 429 (`unknown` with HTTP 429).
+
+### Why
+
+- senpi#6388 lets a goal wait a limit out for any number of wakes, and each refused wake leaves a `goal-continuation` entry in the session. With eight or more of them since the last user message, a restart or a config reload hit the load-time flood guard, which exists for continuations that ran, so the goal stopped until a message arrived.
+
+### Why an extension could not handle it
+
+- The goal is a builtin extension; this is that extension's own load-time admission.
+
+### Expected merge conflict zones
+
+- LOW: the `session_start` handler in `index.ts`, the `reengageGoalAfterReload` options, the `limitWait` condition in `evaluateGoalContinuation`.
+
+## 2026-11-11 - A goal outlasts accounts that stay limited (senpi#4085)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: a `providerRecovery` wake marked `limitWait` skips the continuation cap and the no-progress budget.
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `store.ts`: such a delivery increments no continuation counter (`countStreak: false`).
+- `packages/coding-agent/src/core/extensions/builtin/goal/provider-retry.ts`: `isLimitRefusal` reads a `rate_limit` or `quota` diagnostic on the last failure.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: tracks a limit wait; a limit-exhausted ladder with no reset re-checks on the provider backoff instead of waiting for input (changes the unknown-reset case of senpi#3709); `accounts_changed` with a `login` or `reset` remedy fires a parked limit wait at once. Every limit wait is re-checked no sooner than the provider backoff (15 s doubling to 30 min); after `GOAL_LIMIT_WAIT_WAKE_LIMIT` (48) re-checks the goal parks, still active, publishing `goal_limit_wait_parked`, until a sign-in, a block reset or input.
+
+### Why
+
+- Refused wakes while every account stayed limited used up the continuation cap, so the goal blocked and never continued after the reset; a no-reset ladder and a login or block reset left the goal waiting for input.
+
+### Why an extension could not handle it
+
+- The goal is a builtin extension; this is that extension's own continuation policy.
+
+### Expected merge conflict zones
+
+- LOW: `evaluateGoalContinuation` guards, `recordContinuationDelivered` options, `MonitorAwareGoalContinuation` provider-retry paths.
+
+## 2026-11-09 - A crashed goal-continuation stop recovers its session entries on reopen (senpi#3015)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/store.ts`: `recordGoalContinuationStopped()` captures the denied-continuation payload (deny reason plus consecutive/unattended/no-progress counters) as `Goal.continuationStoppedDetail` alongside the `continuationStoppedAt` claim, and clears the detail wherever the claim is cleared.
+- `packages/coding-agent/src/core/extensions/builtin/goal/types.ts`: new `GoalContinuationStoppedDetail` type and the optional `continuationStoppedDetail` field on `Goal`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/persistence.ts`: `sanitizeContinuationState()` drops a malformed detail and never keeps a detail past its claim.
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: new `recoverMissingGoalContinuationStop()`, which re-appends a missing `goal-continuation-stopped` entry once from the captured payload, plus the matching `engine-paused` entry for `stale`/`repetition` stops; append failures are logged, never thrown.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: the `session_start` handler runs the recovery right after loading the goal.
+
+### Why
+
+- The stop claim and the session entries are two separate writes, so a crash between them leaves the claim recorded without the entry. The same stale decision never emits again, because the claim makes it "already stopped", so that one stop never reaches the session or the RPC clients (senpi#3015).
+
+### Why an extension could not handle it
+
+- The claim, the goal-file lock, and the session-start load all live in the goal builtin and core session lifecycle; no public extension hook runs at goal load with access to the claim payload.
+
+### Expected merge conflict zones
+
+- LOW: the added `continuationStoppedDetail` field and the one recovery call in the `session_start` handler; the claim sites in `store.ts` are additive.
+
+## 2026-11-08 - A Stop-held session pauses its goal and freezes the elapsed counter (senpi#6172)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: the goal extension now handles `session_hold_changed`.
+  - On `paused`, an idle active goal closes its accounting window at the Stop, is marked Stop-paused, and switches to `paused`.
+  - On `resumed`, a Stop-paused goal goes back to `active` and opens a new window.
+  - `session_start` pauses a goal reopened under a live Stop. A goal the live Stop paused (a crashed run reopened under a Stop included) skips the resume prompt and resumes with the session.
+  - `agent_end` pauses an active goal when a Stop is live even though the turn did not abort.
+- `packages/coding-agent/src/core/extensions/builtin/goal/stop-pause.ts`: `stopHoldLive` also counts `inherited_hold`.
+
+### Why
+
+- A Stop on an idle session emits no `session_abort`, so the goal stayed `active`. The footer kept counting `Pursuing goal (…)` while the session was paused, and the next turn committed the paused window into `timeUsedSeconds`.
+
+### Why an extension could not handle it
+
+- This is the goal builtin extension itself; the fix uses the existing `session_hold_changed` extension event.
+
+### Expected merge conflict zones
+
+- LOW: `goal/index.ts` `agent_end` and `session_start` handlers; `goal/stop-pause.ts` `stopHoldLive`.
+
+## 2026-11-05 - Resuming a session whose process died mid-goal asks before the goal continues (senpi#5755)
+
+### What changed
+
+- `index.ts` `session_start`: on a `resume`, or a `startup` that opens the saved session (`--continue`, `--session`), with UI, an `active` goal whose session reopened over an interrupted run (the `interrupted-run` hold, no stale stop) is stopped through `pauseOrBlockOnUserAbort`, the same path a quit-time abort takes. The existing `Resume blocked goal?` prompt then asks before any continuation runs; a startup that stopped the goal this way takes the same prompt. An RPC session binds a UI context, so it is stopped the same way, but RPC never shows that prompt (switch_session cannot answer a nested select while it binds): the goal stays `blocked`, a client resume of the interrupted run answers one turn with no goal continuation, and the client resumes the goal explicitly.
+- `stop-pause.ts`: `interruptedRunHeld(ctx)` reads the session's `interrupted-run` hold.
+
+### Why
+
+- senpi#5755: a killed or crashed process never ran the quit-time abort, so the goal stayed `active`. Its continuation sat as a held wake that the person's first message released, and hidden goal continuations followed that message without asking.
+
+### Why an extension could not handle it
+
+- This is the goal extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the goal read at the top of the `session_start` handler in `index.ts`.
+
+## 2026-10-30 - Goal parks until the soonest reset after an exhausted fallback ladder (senpi#3709)
+
+### What changed
+
+- `monitor-continuation.ts` `afterAgentSettled(fallbackExhausted)`: on a limit-exhausted ladder the generic provider recovery is replaced. With a `resumeAt`, the goal arms one `providerRetry` wait for that time (or the 1 s margin when it already passed); without one, it arms nothing and stays parked until input. Outage-only exhaustion retains immediate first recovery and the existing 15 s to 30 min backoff.
+- `provider-retry.ts` `exhaustedLadderResumeDelayMs`: waits until `resumeAt` + 1 s, skips the 6 h wake cap, and is clamped to the timer maximum.
+- `index.ts` passes `event.fallbackExhausted` to `afterAgentSettled`.
+
+### Why
+
+- senpi#3709: after exhaustion the goal either resumed at once into the same limits or never resumed.
+
+### Why an extension could not handle it
+
+- The change is inside this builtin extension, driven by the new `agent_settled` field.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentSettled` in `monitor-continuation.ts`; the provider-retry delay helpers.
+
+## 2026-10-30 - Goal parks on a provider limit with one notice; refused turns are not stalls (senpi#3975)
+
+### What changed
+
+- `monitor-continuation.ts`: a provider-retry park with a known resume time notifies once ("Goal paused until <local time> (<ISO>) ..."). A turn whose last assistant message ended in an error neither counts toward nor clears the toolless stall streak.
+
+### Why
+
+- senpi#3975: refused turns while every credential was limited injected `<goal_stall_check>` after three blocks, and the park was silent.
+
+### Why an extension could not handle it
+
+- This is the goal extension itself.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentEnd` around `#recordToollessContinuationTurn`, and the provider-retry branch of `afterAgentSettled`.
+
+## 2026-10-27 - get_goal is search-exposed (senpi#4454)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`: `get_goal` is deferred to by-name activation through the tool search; `create_goal` and `update_goal` stay active.
+
+### Why
+
+- Each deferred tool leaves the first request's tool list and system prompt, so every request carries fewer tool-schema tokens (senpi#4454).
+
+### Why an extension could not handle it
+
+- This builtin owns its tool registration.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`.
+
+## 2026-10-26 - Request-level refusals retain goal recovery (senpi#2491)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: exclude runtime-marked request-level auth refusals from terminal credential failures; retain the normal provider recovery continuation.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: a request refusal must not block an active goal with contradictory login guidance.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: this goal builtin owns terminal auth classification and automatic recovery.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts` `terminalProviderAuthFailure` guard.
+
+## 2026-10-26 - Goal retries exclude refused calls (senpi#4321)
+
+### What changed
+
+- `prompt.ts`: the no-progress check, which says retries are unbounded and to change the source, namespace, tool or assumption each time, now says that a permission denial, a refusal by the user or a rule block is final for that intent. The model asks the user or leaves that part out. The GPT-6 Astra prompt carries the same sentence.
+
+### Why
+
+- An unattended goal read "change the tool each time" as covering refusals, so a denied call could be retried another way.
+
+### Why an extension could not handle it
+
+- The continuation prompt is this builtin's own text.
+
+### Expected merge conflict zones
+
+- `buildContinuationPrompt` and `buildGpt6AstraContinuationPrompt` line lists.
+
+## 2026-10-25 - Report the todo backstop outcome to the lifecycle (senpi#3864)
+
+### What changed
+
+- `index.ts` and `lifecycle-facts.ts` pass the `TodoOwedOutcome` that `afterAgentEnd` returned through the shared lifecycle collector, so an exhausted reminder chain is reported as `todo_guard`/`cap`.
+
+### Why
+
+- The lifecycle needs the returned outcome; the reminder event fires only on the first capped turn and nothing may be inferred from `budgetSpent`.
+
+### Why an extension could not handle it
+
+- This builtin already owns the todo backstop and the lifecycle collector; no new hook is needed.
+
+### Expected merge conflict zones
+
+- `index.ts`: the `agent_end` handler's collector registration.
+
+## 2026-10-24 - Distinguish interrupted recovery from goal Stop (senpi#4204)
+
+### What changed
+
+- `stop-pause.ts` does not attribute the interrupted-run gate to the user's Stop.
+
+### Why
+
+- The interrupted gate must block automatic continuation without marking the goal as user-stopped.
+
+### Why an extension could not handle it
+
+- This builtin owns goal Stop attribution.
+
+### Expected merge conflict zones
+
+- `stop-pause.ts`: Stop hold detection.
+
 ## 2026-10-21 - A user Stop pauses the goal with the session (senpi#3811)
 
 ### What changed
@@ -30,6 +321,24 @@ The two `user interrupted the turn` branches (`agent_end`, `session_abort`) in `
 ### Expected merge conflict zones
 
 - `turn-end-liveness.ts`: `heldReason`.
+
+## 2026-10-21 - Share live continuation facts with lifecycle (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts` registers a session-owned live fact collector in `lifecycle-facts.ts`, using the existing exported `collectTurnEndLivenessInput`. The collector reads the real continuation latch, timers, recovery and goal; it retires with the extension. Goal refresh synchronously reports status transitions so an intervening close cannot be lost to an asynchronous reread. Restore supplies the durable last turn's end kind while the same collector reconstructs current live wake facts.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: lifecycle must read the facts after settlement and restoration, not retain a stale per-turn verdict or duplicate the continuation policy.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: these timers and latches belong to this builtin and have no external mutation surface.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: session_start, agent_start, agent_end and shutdown handlers. Preserve #3865's verdict/reporting path unchanged.
 
 ## 2026-10-21 - Turn-end liveness verdict (#3863)
 

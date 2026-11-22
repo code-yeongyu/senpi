@@ -1,7 +1,7 @@
-import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
+import type { BuildDynamicSystemPromptOptions, DynamicSystemPromptPart } from "../../../dynamic-prompt/build.ts";
 import { buildClaudeFable5Prompt } from "./claude-fable-5.ts";
 import { buildClaudeFable51Prompt } from "./claude-fable-5-1.ts";
-import { buildClaudeFable55Prompt } from "./claude-fable-5-5.ts";
+import { buildClaudeFable52Prompt } from "./claude-fable-5-2.ts";
 import { buildClaudeHaiku55Prompt } from "./claude-haiku-5-5.ts";
 import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.ts";
 import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
@@ -12,6 +12,7 @@ import { buildClaudeOpus55Prompt } from "./claude-opus-5-5.ts";
 import { buildClaudeSonnet55Prompt } from "./claude-sonnet-5-5.ts";
 import {
 	type ResolvedPresetName as ContractResolvedPresetName,
+	presetSharedSections,
 	resolvePresetName as resolveContractPresetName,
 } from "./contract.ts";
 import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
@@ -28,6 +29,7 @@ import { buildGpt55Prompt } from "./gpt-5.5.ts";
 import { buildGpt56Prompt } from "./gpt-5.6.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
 import { buildGpt6AstraPrompt } from "./gpt-6-astra.ts";
+import { buildGpt62Prompt } from "./gpt-6.2.ts";
 import { buildGrok45Prompt } from "./grok-4.5.ts";
 import { buildGrok46Prompt } from "./grok-4.6.ts";
 import { buildGrok47Prompt } from "./grok-4.7.ts";
@@ -35,6 +37,7 @@ import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
 import { buildKimiK28Prompt } from "./kimi-k2-8.ts";
 import { buildKimiK3Prompt } from "./kimi-k3.ts";
+import { buildKimiK31Prompt } from "./kimi-k3-1.ts";
 import type { ModelWithPromptPresetMetadata } from "./matchers.ts";
 import { type PromptPresetSettings, parsePromptPreset } from "./settings.ts";
 
@@ -45,6 +48,7 @@ type ResolvedPresetName = ContractResolvedPresetName;
 export interface ResolvedPromptPreset {
 	name: ResolvedPresetName;
 	prompt: string;
+	readonly parts: readonly DynamicSystemPromptPart[];
 }
 
 export function resolvePresetName(
@@ -64,7 +68,31 @@ export function resolvePresetName(
 }
 
 export function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
+	let parts: readonly DynamicSystemPromptPart[] = [];
+	const preset = renderPreset(name, {
+		...options,
+		sharedSections: presetSharedSections(name),
+		onParts: (composed) => {
+			parts = composed.map((part) => ({
+				...part,
+				source:
+					part.name === "project_context" && part.source !== undefined && part.source !== "dynamic-prompt"
+						? part.source
+						: `prompt-preset:${name}`,
+			}));
+			options.onParts?.(composed);
+		},
+	});
+	return { ...preset, parts };
+}
+
+function renderPreset(
+	name: ResolvedPresetName,
+	options: BuildDynamicSystemPromptOptions,
+): Omit<ResolvedPromptPreset, "parts"> {
 	switch (name) {
+		case "gpt-6.2":
+			return { name, prompt: buildGpt62Prompt(options) };
 		case "gpt-6-astra":
 			return { name, prompt: buildGpt6AstraPrompt(options) };
 		case "gpt-5.6":
@@ -99,6 +127,8 @@ export function buildPreset(name: ResolvedPresetName, options: BuildDynamicSyste
 			return { name, prompt: buildGrok45Prompt(options) };
 		case "gemini-4-argon":
 			return { name, prompt: buildGemini4ArgonPrompt(options) };
+		case "kimi-k3-1":
+			return { name, prompt: buildKimiK31Prompt(options) };
 		case "kimi-k3":
 			return { name, prompt: buildKimiK3Prompt(options) };
 		case "kimi-k2-8":
@@ -109,8 +139,8 @@ export function buildPreset(name: ResolvedPresetName, options: BuildDynamicSyste
 			return { name, prompt: buildKimiK26Prompt(options) };
 		case "claude-fable-5-1":
 			return { name, prompt: buildClaudeFable51Prompt(options) };
-		case "claude-fable-5-5":
-			return { name, prompt: buildClaudeFable55Prompt(options) };
+		case "claude-fable-5-2":
+			return { name, prompt: buildClaudeFable52Prompt(options) };
 		case "claude-fable-5":
 			return { name, prompt: buildClaudeFable5Prompt(options) };
 		case "claude-opus-5-5":
@@ -136,8 +166,10 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 	return {
 		cwd: options.cwd ?? "",
 		selectedTools: options.selectedTools ?? [],
+		...(options.nativeSearchAvailable === undefined ? {} : { nativeSearchAvailable: options.nativeSearchAvailable }),
 		toolSnippets: options.toolSnippets ?? {},
 		promptGuidelines: options.promptGuidelines ?? [],
+		...(options.fullToolPrompt === undefined ? {} : { fullToolPrompt: options.fullToolPrompt }),
 		contextFiles: options.contextFiles ?? [],
 		skills: options.skills ?? [],
 		surface: options.surface ?? "terminal",

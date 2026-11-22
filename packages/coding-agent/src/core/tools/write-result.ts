@@ -1,4 +1,3 @@
-import { readFile } from "fs/promises";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { createUnifiedPatch } from "./unified-diff.ts";
 
@@ -11,16 +10,6 @@ export type WriteBaseline =
 	| { readonly kind: "missing" }
 	| { readonly kind: "present"; readonly content: string }
 	| { readonly kind: "unavailable" };
-
-export async function readLocalWriteBaseline(absolutePath: string): Promise<WriteBaseline> {
-	try {
-		return { kind: "present", content: await readFile(absolutePath, "utf-8") };
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return { kind: "missing" };
-		if (error instanceof Error) return { kind: "unavailable" };
-		throw error;
-	}
-}
 
 export function createWriteDetails(
 	path: string,

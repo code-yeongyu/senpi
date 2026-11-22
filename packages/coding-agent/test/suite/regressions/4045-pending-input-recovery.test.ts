@@ -50,6 +50,33 @@ async function setup(journal: PendingInputJournal) {
 }
 
 describe("senpi#4045: recover uncertain pending input in place", () => {
+	it.each(["clean", "landed", "not-landed"])("retires a recovered stale steer (%s)", async (retirement) => {
+		const journal = new UncertainJournal();
+		const { inputs } = await setup(journal);
+		const input = { clientMessageId: "named", text: "steer", mode: "steer" } as const;
+		let turnEnded = false;
+		const sent: string[] = [];
+		const enqueue = (id: string) => {
+			sent.push(id);
+		};
+		await expect(
+			inputs.admit(input, enqueue, () => (turnEnded ? new Error("turn conflict") : undefined)),
+		).rejects.toBeInstanceOf(PendingInputAppendUncertainError);
+		turnEnded = true;
+		if (retirement !== "clean") {
+			journal.failPhase = "removed";
+			journal.failures = 1;
+			journal.landed = retirement === "landed";
+			await expect(inputs.snapshot(["named"])).rejects.toBeInstanceOf(PendingInputAppendUncertainError);
+			expect(sent).toEqual([]);
+		}
+		const recovered = await inputs.snapshot(["named"]);
+		expect(sent).toEqual([]);
+		expect(recovered.outcomes[0]).toMatchObject({ projection: { state: "removed" } });
+		await inputs.admit(input, enqueue);
+		expect(sent).toHaveLength(1);
+	});
+
 	it("preserves live handles, revisions, delivery tokens and subscribers during replay", async () => {
 		const journal = new UncertainJournal();
 		journal.failures = 0;

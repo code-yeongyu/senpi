@@ -5,6 +5,7 @@ const telemetrySrcIndex = fileURLToPath(new URL("../telemetry/src/index.ts", imp
 const aiSrcIndex = fileURLToPath(new URL("../ai/src/index.ts", import.meta.url));
 const aiSrcCompat = fileURLToPath(new URL("../ai/src/compat.ts", import.meta.url));
 const agentSrcIndex = fileURLToPath(new URL("./src/index.ts", import.meta.url));
+const agentSrcConformance = fileURLToPath(new URL("./src/conformance/index.ts", import.meta.url));
 
 export default defineConfig({
 	test: {
@@ -20,7 +21,9 @@ export default defineConfig({
 		conditions: ["source"],
 		alias: [
 			{ find: /^@earendil-works\/pi-telemetry$/, replacement: telemetrySrcIndex },
+			{ find: /^@earendil-works\/pi-realm-registry$/, replacement: fileURLToPath(new URL("../realm-registry/src/index.ts", import.meta.url)) },
 			{ find: /^@earendil-works\/pi-agent-core$/, replacement: agentSrcIndex },
+			{ find: /^@earendil-works\/pi-agent-core\/conformance$/, replacement: agentSrcConformance },
 			{ find: /^@earendil-works\/pi-ai$/, replacement: aiSrcIndex },
 			{ find: /^@earendil-works\/pi-ai\/compat$/, replacement: aiSrcCompat },
 		],

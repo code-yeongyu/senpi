@@ -59,6 +59,7 @@ describe("claude-sdk-oauth auxiliary authentication", () => {
 			model,
 			auth: { apiKey: first.auth.apiKey, env: first.env },
 			sessionId: "ambient-title-test",
+			baseOptions: { cwd: process.cwd() },
 			streamFn: (titleModel, titleContext, titleOptions) =>
 				models.streamSimple(titleModel, titleContext, titleOptions),
 		});

@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { hermeticProviderEnv, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 export type RecordValue = Record<string, unknown>;
 
@@ -47,6 +48,8 @@ export function scratch(label: string): { root: string; agentDir: string; cwd: s
 	roots.push(root);
 	const agentDir = join(root, "agent");
 	const cwd = join(root, "work");
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	mkdirSync(agentDir, { mode: 0o700 });
 	mkdirSync(join(agentDir, "extensions"), { recursive: true });
 	mkdirSync(cwd, { recursive: true });
 	writeRpcModelsJson(agentDir, "http://127.0.0.1:1");
@@ -59,8 +62,9 @@ export function spawnHost(
 	qa: { agentDir: string; cwd: string },
 	env: Readonly<Record<string, string>> = {},
 ): ChildProcessWithoutNullStreams {
-	const scrubbed = { ...process.env, ...hermeticProviderEnv() };
-	for (const key of ["OMO_RPC_SOCKET_PATH", "SENPI_RPC_HOST_WATCH_FD", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET"]) {
+	const scrubbed = { ...hostSpawnEnv(), ...hermeticProviderEnv() };
+	// The internal hand-off lane is already gone; these are this suite's own socket overrides.
+	for (const key of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET"]) {
 		delete scrubbed[key];
 	}
 	const child = spawn(process.execPath, [join(import.meta.dirname, "..", "src", "cli.ts"), ...args], {

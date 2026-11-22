@@ -1,0 +1,131 @@
+{
+  "priceVersion": "47db609f3074",
+  "generatedAt": "2026-10-23T07:00:07.873407956Z",
+  "currency": "USD",
+  "unit": "USD_PER_TOKEN",
+  "entries": {
+    "alibaba/deepseek-v4-flash": {
+      "provider": "alibaba",
+      "modelOwner": "deepseek",
+      "modelName": "deepseek-v4-flash",
+      "inputCostPerToken": 4.4e-7,
+      "outputCostPerToken": 0.00000132,
+      "cacheReadInputTokenCost": 1.4e-8,
+      "cacheCreationInputTokenCost": 0,
+      "axisPrices": {},
+      "pricing": {
+        "current": {
+          "effectivePrice": {
+            "inputCostPerToken": 3.96e-7,
+            "outputCostPerToken": 0.000001188,
+            "cacheReadInputTokenCost": 1.26e-8,
+            "cacheCreationInputTokenCost": 0,
+            "axisPrices": {}
+          }
+        }
+      }
+    },
+    "alibaba/deepseek-v4-pro": {
+      "provider": "alibaba",
+      "modelOwner": "deepseek",
+      "modelName": "deepseek-v4-pro",
+      "inputCostPerToken": 0.00000132,
+      "outputCostPerToken": 0.00000396,
+      "cacheReadInputTokenCost": 4.4e-8,
+      "cacheCreationInputTokenCost": 0,
+      "axisPrices": {},
+      "pricing": {
+        "current": {
+          "effectivePrice": {
+            "inputCostPerToken": 0.000001188,
+            "outputCostPerToken": 0.000003564,
+            "cacheReadInputTokenCost": 3.96e-8,
+            "cacheCreationInputTokenCost": 0,
+            "axisPrices": {}
+          }
+        }
+      }
+    },
+    "alibaba/glm-5.1": {
+      "provider": "alibaba",
+      "modelOwner": "z-ai",
+      "modelName": "glm-5.1",
+      "inputCostPerToken": 0.0000014,
+      "outputCostPerToken": 0.0000044,
+      "cacheReadInputTokenCost": 2.6e-7,
+      "cacheCreationInputTokenCost": 0,
+      "axisPrices": {},
+      "pricing": {
+        "current": {
+          "effectivePrice": {
+            "inputCostPerToken": 0.00000126,
+            "outputCostPerToken": 0.00000396,
+            "cacheReadInputTokenCost": 2.34e-7,
+            "cacheCreationInputTokenCost": 0,
+            "axisPrices": {}
+          }
+        }
+      }
+    },
+    "alibaba/glm-5.2": {
+      "provider": "alibaba",
+      "modelOwner": "z-ai",
+      "modelName": "glm-5.2",
+      "inputCostPerToken": 0.0000014,
+      "outputCostPerToken": 0.0000044,
+      "cacheReadInputTokenCost": 2.6e-7,
+      "cacheCreationInputTokenCost": null,
+      "axisPrices": {},
+      "pricing": {
+        "current": {
+          "effectivePrice": {
+            "inputCostPerToken": 0.00000126,
+            "outputCostPerToken": 0.00000396,
+            "cacheReadInputTokenCost": 2.34e-7,
+            "cacheCreationInputTokenCost": null,
+            "axisPrices": {}
+          }
+        }
+      }
+    },
+    "alibaba/qwen-flash": {
+      "provider": "alibaba",
+      "modelOwner": "qwen",
+      "modelName": "qwen-flash",
+      "inputCostPerToken": 5e-8,
+      "outputCostPerToken": 4e-7,
+      "cacheReadInputTokenCost": null,
+      "cacheCreationInputTokenCost": null,
+      "axisPrices": {
+        "AxisKey(threshold=256000, tier=null)": {
+          "input": 2.5e-7,
+          "cacheRead": null,
+          "cacheCreation": null,
+          "cacheCreation1h": null,
+          "output": 0.000002,
+          "isEmpty": false
+        }
+      },
+      "pricing": {
+        "current": {
+          "effectivePrice": {
+            "inputCostPerToken": 5e-8,
+            "outputCostPerToken": 4e-7,
+            "cacheReadInputTokenCost": null,
+            "cacheCreationInputTokenCost": null,
+            "axisPrices": {
+              "AxisKey(threshold=256000, tier=null)": {
+                "input": 2.5e-7,
+                "cacheRead": null,
+                "cacheCreation": null,
+                "cacheCreation1h": null,
+                "output": 0.000002,
+                "isEmpty": false
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

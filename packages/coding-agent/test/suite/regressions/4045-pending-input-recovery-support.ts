@@ -10,7 +10,7 @@ export class UncertainJournal implements PendingInputJournal {
 	failures = 1;
 	landed = true;
 	reads = 0;
-	failPhase: "queued" | "sending" | "delivered" | undefined;
+	failPhase: "queued" | "sending" | "delivered" | "removed" | undefined;
 	refuseConsumption = false;
 
 	async append(record: PendingInputJournalRecord): Promise<void> {

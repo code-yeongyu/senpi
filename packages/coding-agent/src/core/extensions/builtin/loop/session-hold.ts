@@ -5,5 +5,8 @@ export function sessionHeld(ctx: ExtensionContext): boolean {
 }
 
 export function userStopped(ctx: ExtensionContext): boolean {
-	return ctx.getPauseState?.().holds.some((hold) => hold.kind === "session_hold") === true;
+	return (
+		ctx.getPauseState?.().holds.some((hold) => hold.kind === "session_hold" && hold.key !== "interrupted-run") ===
+		true
+	);
 }

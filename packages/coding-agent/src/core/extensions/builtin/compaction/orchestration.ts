@@ -1,9 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { copyContextProvenance } from "@earendil-works/pi-ai";
 import { markTransientMessage } from "../../../compaction/estimate-cache-key.ts";
 import { type CompactionPreparation, estimateTokens } from "../../../compaction/index.ts";
 import { inheritSessionContextEntryId } from "../../../session-manager.ts";
-import type { BeforeAgentStartEventResult } from "../../types.ts";
 import { type IdleCompactionDecision, shouldWarmAtIdle } from "./idle.ts";
 import * as policy from "./policy.ts";
 import { isWarmResultStale, isWithinGraceBand, resolveSpeculationLeadTokens } from "./speculation-lead.ts";
@@ -44,52 +42,32 @@ export function shouldDeferGraceBand(input: {
 	);
 }
 
-export function injectTokenBudgetReminder(messages: AgentMessage[], reminder?: string): AgentMessage[] {
-	if (!reminder) return messages;
-	for (let index = messages.length - 1; index >= 0; index--) {
-		const message = messages[index];
-		if (message?.role !== "user") continue;
-		const content =
-			typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
-		const firstPart = content[0];
-		if (firstPart?.type === "text" && firstPart.text === reminder) return messages;
-		const reminded = copyContextProvenance(
-			message,
-			inheritSessionContextEntryId(
-				{ ...message, content: [{ type: "text" as const, text: reminder }, ...content] },
-				message,
-			),
-		);
-		return messages.map((candidate, candidateIndex) => (candidateIndex === index ? reminded : candidate));
-	}
-	return messages;
-}
+export type IdleWarmAction = "none" | "start" | "replace" | "reuse" | "regenerate";
 
-export function resolveBeforeAgentStartMessage(input: {
-	message?: BeforeAgentStartEventResult["message"];
-	reminder?: string;
-	reminderEnabled?: boolean;
-}): BeforeAgentStartEventResult["message"] | undefined {
-	if (!input.reminder || input.reminderEnabled === false) return input.message;
-	if (!input.message) return undefined;
-	return { ...input.message, content: `${input.message.content}\n\n${input.reminder}` };
-}
-
-export function resolveReminderSystemPrompt(input: {
-	systemPrompt: string;
-	reminder?: string;
-	reminderEnabled?: boolean;
-}): string | undefined {
-	if (!input.reminder || input.reminderEnabled === false) return undefined;
-	return `${input.systemPrompt}\n\n${input.reminder}`;
-}
-
+/**
+ * What the sub-threshold idle warm-up does with the current job (senpi#5481). A job whose
+ * summarized prefix was rewritten is replaced; otherwise a running generation is never replaced
+ * for growth after its anchor, a finished summary is kept while it fits (`reuse`) and is
+ * regenerated once the cooldown has passed (`regenerate`). Only a failed job falls back to
+ * replacing on growth.
+ */
 export function resolveIdleWarmAction(
 	decision: IdleCompactionDecision,
-	job: { armedAtTokens: number } | undefined,
-): "none" | "start" | "replace" {
+	job:
+		| { armedAtTokens: number; completed: boolean; completedAt?: number; hasResult: boolean; anchorValid: boolean }
+		| undefined,
+	candidate: { fits: boolean } | undefined,
+	now: number,
+): IdleWarmAction {
 	if (!shouldWarmAtIdle(decision)) return "none";
 	if (!job) return "start";
+	if (!job.anchorValid) return "replace";
+	if (!job.completed) return "none";
+	if (job.hasResult) {
+		if (candidate?.fits) return "reuse";
+		const cooldownMs = decision.settings.speculativeCooldownMs ?? 0;
+		return now - (job.completedAt ?? 0) < cooldownMs ? "none" : "regenerate";
+	}
 	const currentTokens = decision.usage?.tokens ?? 0;
 	return isWarmResultStale(job.armedAtTokens, currentTokens, decision.settings.keepRecentTokens) ? "replace" : "none";
 }

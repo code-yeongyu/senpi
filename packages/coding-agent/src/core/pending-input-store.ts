@@ -33,7 +33,7 @@ export interface PendingInputStoreOptions {
 	readonly dispatch?: (token: DeliveryToken, input: PendingInput) => void;
 	readonly restoreToDraft?: (text: string) => void;
 	/** Reconciles native custody after an uncertain append has been replayed and synced, under the gate. */
-	readonly onRecovered?: (inputs: readonly PendingInput[]) => void;
+	readonly onRecovered?: (inputs: readonly PendingInput[], refuseTurn: (clientMessageId: string) => void) => void;
 	/** The owner sends only after consumption resolves: reopen rebinds, and recovery releases rejected consumption. */
 	readonly uncommittedAttemptsAreUnsent?: boolean;
 	/**
@@ -87,6 +87,7 @@ export class PendingInputStore {
 	private unavailable: Error | undefined;
 	private unsentConsumption: PendingInput[] = [];
 	private recoveryEffects: (() => void) | undefined;
+	private recoveredTurnConflict: string | undefined;
 	private readonly options: PendingInputStoreOptions;
 
 	private constructor(options: PendingInputStoreOptions) {
@@ -165,7 +166,13 @@ export class PendingInputStore {
 			throw new PendingInputStoreUnavailableError(error);
 		}
 		const failures: unknown[] = [];
-		for (const reconcile of [effects, () => this.options.onRecovered?.([...this.inputs.values()])]) {
+		for (const reconcile of [
+			effects,
+			() =>
+				this.options.onRecovered?.([...this.inputs.values()], (id) => {
+					this.recoveredTurnConflict = id;
+				}),
+		]) {
 			try {
 				reconcile?.();
 			} catch (error) {
@@ -259,6 +266,15 @@ export class PendingInputStore {
 	private serialize<T>(operation: () => Promise<T>): Promise<T> {
 		const guarded = async () => {
 			if (this.unavailable !== undefined) await this.recover();
+			// The live turn check refused a landed steer. Retain the retirement until its own write succeeds.
+			if (this.recoveredTurnConflict !== undefined) {
+				await this.commit(this.recoveredTurnConflict, {
+					type: "cancel",
+					cause: "turn_conflict",
+					consumerFenced: true,
+				});
+				this.recoveredTurnConflict = undefined;
+			}
 			return operation();
 		};
 		const run = this.gate.then(guarded, guarded);

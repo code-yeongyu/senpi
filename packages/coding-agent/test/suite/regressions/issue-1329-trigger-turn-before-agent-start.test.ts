@@ -108,6 +108,7 @@ describe("issue #1329: trigger-turn custom messages enter before_agent_start", (
 
 		expect(harness.faux.state.callCount).toBe(0);
 		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+		expect(harness.session.workObligations.active).toMatchObject([{ state: "queued" }]);
 		expect(
 			harness.session.messages.some((message) => message.role === "custom" && getMessageText(message) === "wake"),
 		).toBe(false);

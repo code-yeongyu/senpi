@@ -1,11 +1,17 @@
 import { existsSync } from "node:fs";
-import { createHostDaemonPaths } from "./host-daemon-paths.ts";
+import { readdir } from "node:fs/promises";
+import { processIsLive } from "../../utils/process-identity.ts";
+import { createHostDaemonPaths, generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
+import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import {
 	clearHandoverParkedSession,
+	clearInheritedParkedSession,
 	dropHandoverParkedSessionIfFileGone,
 	type HandoverParkedEntry,
 	readHandoverParkedSessions,
 } from "./host-handover-parked.ts";
+import { type ResidentWriter, residentWriterProbe } from "./host-handover-resident-writer.ts";
+import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 
 /**
@@ -24,6 +30,9 @@ const HANDOVER_PARKED_REOPEN_BUDGET_MS = 120_000;
 const HANDOVER_PARKED_REOPEN_POLL_MS = 250;
 const HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS = 8;
 const HANDOVER_PARKED_REOPEN_QUIET_STREAK = 8;
+// Past the quiet streak or the budget the watch only waits on a predecessor that is still draining (senpi#6988): a
+// busy turn can hold its park for minutes, and a slower poll keeps that wait cheap (senpi#3515).
+const HANDOVER_PARKED_PREDECESSOR_POLL_MS = 2_000;
 
 /**
  * The host the watch reopens into. `shouldReopen` returns false once that host is draining for a
@@ -33,6 +42,17 @@ export interface ReopenHolder {
 	readonly hostInstance: string;
 	readonly hostSocket?: string;
 	readonly shouldReopen?: () => boolean;
+	/**
+	 * senpi#7020: what this host is still taking over after each pass (the parks not yet reopened, a predecessor still
+	 * draining), and `undefined` once nothing is, so `list_sessions` can say its answer is not the whole set yet.
+	 */
+	readonly onProgress?: (state: InheritedHandover | undefined) => void;
+}
+
+/** A takeover in progress: inherited parks not yet reopened, and whether a predecessor generation still runs. */
+export interface InheritedHandover {
+	readonly pending: number;
+	readonly predecessorDraining: boolean;
 }
 
 /**
@@ -47,7 +67,8 @@ export async function reopenHandoverParkedSessions(
 	socket: string,
 	holder?: ReopenHolder,
 ): Promise<void> {
-	const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
+	const paths = createHostDaemonPaths({ socket, agentDir });
+	const daemonDir = paths.dir;
 	// The predecessor parks its retained sessions AFTER this generation binds the public socket (its
 	// drain fires on detecting supersession), so the record is not necessarily present at startup,
 	// and a session still busy at the drain start parks only after its turn settles. Returning on the
@@ -66,26 +87,65 @@ export async function reopenHandoverParkedSessions(
 	const deadline = Date.now() + HANDOVER_PARKED_REOPEN_BUDGET_MS;
 	const reopenAttempts = new Map<string, number>();
 	const heldPolls = new Map<string, number>();
+	const writerAlive = residentWriterProbe();
+	// What a listing reads meanwhile (senpi#7020): the parks still to reopen and whether a predecessor still runs.
+	const report = async (pending: number): Promise<void> => {
+		if (holder?.onProgress === undefined) return;
+		const predecessorDraining = await predecessorAlive(paths, holder.hostInstance);
+		holder.onProgress(pending > 0 || predecessorDraining ? { pending, predecessorDraining } : undefined);
+	};
+	const done = (): void => holder?.onProgress?.(undefined);
 	let emptyStreak = 0;
 	let sawAnyPark = false;
+	let waitedOnPredecessor = false;
+	let finalPass = false;
 	for (;;) {
 		// A draining predecessor must not reopen into its own registry a session it just parked for
 		// its successor: stop consuming the record and leave every entry for the next generation
 		// (senpi#3282). The watch returns, the record persists, and the successor's own watch reopens
 		// it by path with the same durable id.
-		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
-		const parked = await inheritedParks(daemonDir, holder);
+		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return done();
+		const parked = await inheritedParks(daemonDir, holder, writerAlive);
+		await report(parked.length);
 		for (const entry of parked) {
 			sawAnyPark = true;
 			await reopenOne(daemonDir, open, entry, reopenAttempts, heldPolls, holder);
 		}
-		const remaining = (await inheritedParks(daemonDir, holder)).length;
-		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
+		const remaining = (await inheritedParks(daemonDir, holder, writerAlive)).length;
+		await report(remaining);
+		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return done();
 		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
-		if (sawAnyPark && emptyStreak >= HANDOVER_PARKED_REOPEN_QUIET_STREAK) return;
-		if (Date.now() >= deadline) return;
-		await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_REOPEN_POLL_MS));
+		const settled = (sawAnyPark && emptyStreak >= HANDOVER_PARKED_REOPEN_QUIET_STREAK) || Date.now() >= deadline;
+		if (!settled) {
+			await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_REOPEN_POLL_MS));
+			continue;
+		}
+		// A session still mid-turn when the drain began parks only once its turn settles, which can be long after the
+		// record went quiet and after the budget (senpi#6988): neither may end the watch while the predecessor runs.
+		if (await predecessorAlive(paths, holder?.hostInstance)) {
+			waitedOnPredecessor = true;
+			await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_PREDECESSOR_POLL_MS));
+			continue;
+		}
+		// The predecessor writes its last park before it exits: one more pass after it is gone picks that up.
+		if (waitedOnPredecessor && !finalPass) {
+			finalPass = true;
+			continue;
+		}
+		return done();
 	}
+}
+
+/** Whether another generation of this endpoint (a draining predecessor) still has a live supervisor or host child. */
+async function predecessorAlive(paths: HostDaemonPaths, self: string | undefined): Promise<boolean> {
+	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
+		if (instanceId === self) continue;
+		const generation = generationPaths(paths, instanceId);
+		const record = parseJson(await readFileOrUndefined(generation.pidFile).catch(() => undefined));
+		if (typeof record?.pid === "number" && processIsLive(record.pid)) return true;
+		if ((await hostChildAlive(generation)) === true) return true;
+	}
+	return false;
 }
 
 /**
@@ -96,9 +156,18 @@ export async function reopenHandoverParkedSessions(
 async function inheritedParks(
 	daemonDir: string,
 	holder: ReopenHolder | undefined,
+	writerAlive: (writer: ResidentWriter) => Promise<boolean>,
 ): Promise<readonly HandoverParkedEntry[]> {
 	const parked = await readHandoverParkedSessions(daemonDir);
-	return parked.filter((entry) => entry.parkedBy === undefined || entry.parkedBy !== holder?.hostInstance);
+	const inherited: HandoverParkedEntry[] = [];
+	for (const entry of parked) {
+		if (entry.parkedBy !== undefined && entry.parkedBy === holder?.hostInstance) continue;
+		// A session still resident in its live writer (a handoff's draining predecessor) is that process's to park,
+		// and its unstamped park is what this host reopens; only a writer that is gone leaves it here to restore.
+		if (entry.residentWriter !== undefined && (await writerAlive(entry.residentWriter))) continue;
+		inherited.push(entry);
+	}
+	return inherited;
 }
 
 async function reopenOne(
@@ -134,7 +203,7 @@ async function reopenOne(
 		// that is handing off, and the drain parks it again. Keep the record so the successor still
 		// reopens it; clearing it here would lose the session when the drain closes it (senpi#3282).
 		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
-		await clearHandoverParkedSession(daemonDir, entry.sessionPath);
+		await clearInheritedParkedSession(daemonDir, entry.sessionPath, holder?.hostInstance);
 	} catch (cause) {
 		// A `session_path_in_use` refusal means the predecessor still holds the path's cross-generation
 		// claim (its drain has not released it yet): the holder is alive, so the park is not failing -
