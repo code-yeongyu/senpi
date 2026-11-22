@@ -20,6 +20,7 @@ concurrency:
 
 env:
   SENPI_TEST_TEMP_GUARD: "1"
+  CODING_AGENT_BUN_VERSION: "1.4.4"
 
 jobs:
   # Measured 2026-11-21 over 51 CI runs: tuned job caps are ceil(2 × runner-duration p95), with a 5-minute floor.
@@ -259,10 +260,8 @@ jobs:
   # files (slow to upload one by one) and actions/upload-artifact does not preserve the executable bit that
   # the committed CLI stubs carry.
   #
-  # `node_modules` is NOT shared. Restoring it would mean either an artifact or an actions/cache entry
-  # holding a ~1 GB tree with workspace symlinks and platform-specific optional dependencies, which is both
-  # slower to transfer than this repository's `npm ci --ignore-scripts` (measured 12-13 s per shard with
-  # setup-node's npm cache) and unsafe to reuse across runners. Each shard therefore keeps its own `npm ci`.
+  # Pilot an exact Linux npm-tree cache for this build and its coding-agent shards. Seed it before
+  # building so that it contains only npm ci output, never generated files from a different revision.
   build-coding-agent:
     name: Build (coding-agent shards)
     runs-on: ubuntu-latest
@@ -272,6 +271,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: blob:none
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -279,8 +280,11 @@ jobs:
           node-version: "24"
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+      - name: Install dependencies (npm tree cache)
+        uses: ./.github/actions/install-ci-npm-tree
+        with:
+          bun-version: ${{ env.CODING_AGENT_BUN_VERSION }}
+          seed: "true"
 
       - name: Build workspace package entries
         run: npm run build
@@ -351,6 +355,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: blob:none
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -367,8 +373,10 @@ jobs:
       - name: Link fd
         run: sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+      - name: Install dependencies (npm tree cache)
+        uses: ./.github/actions/install-ci-npm-tree
+        with:
+          bun-version: ${{ env.CODING_AGENT_BUN_VERSION }}
 
       - name: Download the workspace build
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -389,7 +397,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.4"
+          bun-version: ${{ env.CODING_AGENT_BUN_VERSION }}
 
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
