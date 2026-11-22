@@ -3,7 +3,7 @@ import {
 	childEnvironmentOf,
 	type ExtensionContext,
 	readKillGuardSetting,
-	withBundledBunCommands,
+	SettingsManager,
 	withCredentialProxy,
 } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
@@ -29,6 +29,7 @@ import { processRuntimeInfo } from "../kernels/js/process-worker.ts";
 import { sessionEnvironmentFrom } from "../kernels/session-env.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
 import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
+import { kernelPathEntry } from "./kernel-path-env.ts";
 import { reachableToolNames } from "./reachable-tools.ts";
 import { jsRuntimeInfo, runtimesFromAvailability } from "./runtime-info.ts";
 import {
@@ -98,7 +99,8 @@ export async function createRuntime(
 	const create = options.createSessionManager ?? createCodemodeSessionManager;
 	const sessionId = sessionIdFrom(event);
 	const killGuard = readKillGuardSetting(ctx.cwd, ctx.agentDir) === "on";
-	const pathEntry = bundledBunPathEntry();
+	// The bundled bun directory, and on win32 the bash tool's Git Bash ahead of System32's WSL launcher (omo#10894).
+	const pathEntry = kernelPathEntry({ shellPath: SettingsManager.create(ctx.cwd).getShellPath() });
 	// The kill guard's runtime layer (senpi#5349): kernels and their children get the shims first on PATH and
 	// bash's BASH_ENV wrapper, as the bash tool does.
 	const killGuardEnv = killGuard ? activeKillGuardEnvironment({ ...process.env, ...pathEntry }) : {};
@@ -187,17 +189,6 @@ export function createExecuteTool(pi: CodemodeRuntimeAPI, activeTools?: Readonly
 	return Object.assign(executeTool, {
 		isToolAvailable: (name: string): boolean => (activeTools ?? reachableToolNames(pi)).has(name),
 	});
-}
-
-// In a compiled executable, Bun Shell runs `bun` as this executable unless PATH has one, which booted
-// a second agent from `bun test` in a cell (omo#9362). Kernel children get the same bundled `bun`
-// directory the bash tool's PATH carries.
-function bundledBunPathEntry(): Record<string, string> {
-	const env = withBundledBunCommands(process.env);
-	if (env === process.env) return {};
-	const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
-	const value = env[pathKey];
-	return value === undefined ? {} : { [pathKey]: value };
 }
 
 // senpi#6820: kernels and their children get the bash tool's view of declared credentials (a placeholder plus the
