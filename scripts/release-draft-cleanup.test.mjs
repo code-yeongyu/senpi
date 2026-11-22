@@ -173,6 +173,17 @@ describe("release-draft-cleanup.sh: dispatched publish run (senpi#4173)", () => 
 		}
 	});
 
+	// senpi#6851: the publish run's own finalize job keeps that run in progress, so its release job's result decides.
+	it("deletes the draft when the publish run's release job failed, though the run is still in progress", () => {
+		const outcome = cleanup(NPM_E404, { PUBLISH_RUN_ID: "77", PUBLISH_RELEASE_RESULT: "failure", FAKE_RUN_VIEW: "in_progress " });
+		assertDeleted(outcome);
+		assert.ok(!outcome.gh.calls().some((c) => c.startsWith("run view")), "the release job's result decides, not the run's status");
+	});
+
+	it("keeps the draft when the publish run's release job succeeded but npm does not show the version yet", () => {
+		assertKept(cleanup(NPM_E404, { PUBLISH_RUN_ID: "77", PUBLISH_RELEASE_RESULT: "success" }));
+	});
+
 	it("without a run id, keeps the draft while a publish-npm.yml dispatch is still in flight", () => {
 		const outcome = cleanup(NPM_E404, {
 			PUBLISH_JOB_RESULT: "cancelled",

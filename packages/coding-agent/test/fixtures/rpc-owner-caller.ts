@@ -4,7 +4,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { Socket } from "node:net";
 import { mock } from "node:test";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
-import { supervisorLaunch } from "../helpers/rpc-generation-support.ts";
+import { isSupervisorSpawn, supervisorLaunch } from "../helpers/rpc-generation-support.ts";
 import { MOCK_MODEL, MOCK_PROVIDER } from "../helpers/rpc-hermetic.ts";
 
 const [socket, agentDir, ownership = "caller", extension, idleExitMs = "60000"] = process.argv.slice(2);
@@ -12,7 +12,7 @@ if (!socket || !agentDir) throw new Error("socket and agentDir required");
 const spawn = childProcess.spawn;
 if (!process.versions.bun)
 	mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: SpawnOptions) => {
-		if (!args[0]?.endsWith("host-lifecycle.ts")) return spawn(command, args, options);
+		if (!isSupervisorSpawn(args)) return spawn(command, args, options);
 		const stdio = Array.isArray(options.stdio) ? [...options.stdio] : [];
 		stdio[1] = "pipe";
 		const child = spawn(command, args, { ...options, stdio });

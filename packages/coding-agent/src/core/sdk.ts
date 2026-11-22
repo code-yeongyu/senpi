@@ -41,7 +41,7 @@ import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import type { ThinkingLevelSource } from "./session-thinking-memory.ts";
-import { DEFAULT_TOOL_NAMES, SettingsManager } from "./settings-manager.ts";
+import { SettingsManager } from "./settings-manager.ts";
 import {
 	canStartOn,
 	isAutomaticPick,
@@ -204,6 +204,7 @@ export {
 	type ToolRegistryBuild,
 	type ToolRegistryInput,
 } from "./runtime/bootstrap.ts";
+import { resolveToolSelection } from "./runtime/active-tools.ts";
 export type { Skill } from "./skills.ts";
 export type { Tool } from "./tools/index.ts";
 
@@ -449,15 +450,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		model,
 	);
 
-	const configuredDefaultToolNames = settingsManager.getDefaultTools();
-	const sessionDefaultToolNames =
-		options.tools === undefined && options.noTools === undefined ? configuredDefaultToolNames : undefined;
-	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
-	const excludedToolNames = options.excludeTools;
-	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
-	const initialActiveToolNames = (
-		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? DEFAULT_TOOL_NAMES))
-	).filter((name) => !excludedToolNameSet?.has(name));
+	const {
+		defaultToolNames: sessionDefaultToolNames,
+		allowedToolNames,
+		excludedToolNames,
+		initialActiveToolNames,
+	} = resolveToolSelection(options, settingsManager.getDefaultTools());
 
 	// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 	let agent: Agent;

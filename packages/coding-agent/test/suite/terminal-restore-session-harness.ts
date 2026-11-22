@@ -62,6 +62,7 @@ export function createSessionGeneration(options: GenerationOptions): SessionGene
 		setActiveTools: (next: string[]) => {
 			activeTools = next;
 		},
+		isLoopRemote: () => false,
 	} as unknown as ExtensionAPI;
 	const ctx = {
 		cwd: options.cwd,

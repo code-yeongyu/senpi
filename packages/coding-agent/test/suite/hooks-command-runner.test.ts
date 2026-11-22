@@ -56,6 +56,23 @@ describe("builtin hooks command runner", () => {
 		}
 	});
 
+	// senpi#6821: a hook that exits without reading its input made the stdin write fail with an unhandled EPIPE.
+	it("resolves with the hook's exit code when the hook exits without reading its input", async () => {
+		const cwd = createTempDir("no-stdin-reader");
+		mkdirSync(cwd, { recursive: true });
+		const input: HookInputWire = {
+			cwd,
+			event: "PreToolUse",
+			toolInput: { command: "x".repeat(4 * 1024 * 1024) },
+			toolName: "Bash",
+		};
+
+		const result = await runCommandHook(createHandler("exit 3"), input, { cwd });
+
+		expect(result.exitCode).toBe(3);
+		expect(result.stderr).toBe("");
+	});
+
 	it("writes JSON stdin, runs in cwd, and captures stdout stderr and exit metadata", async () => {
 		// Given
 		const cwd = createTempDir("json-stdin");

@@ -15,7 +15,6 @@ afterEach(cleanupFakes);
 
 const script = fileURLToPath(new URL("./release-smoke-failure-issue.mjs", import.meta.url));
 const workflow = readFileSync(new URL("../.github/workflows/build-binaries.yml", import.meta.url), "utf8");
-const JOB = "report-smoke-failure-after-npm";
 const ROLLBACK = "npm dist-tag add @code-yeongyu/senpi@2026.11.12 latest";
 
 const job = (name, conclusion) => ({ name, conclusion });
@@ -79,8 +78,8 @@ describe("smoke failure after npm: issue content (senpi#6628)", () => {
 });
 
 describe("smoke failure after npm: the script (senpi#6628)", () => {
-	function runIssueScript(args) {
-		const gh = fakeBin("gh", `echo "$*" >> "$LOG"\ncase "$1" in\n  api) cat "$JOBS_FILE" ;;\n  issue) echo https://github.com/o/r/issues/7 ;;\n  *) exit 2 ;;\nesac`);
+	function runIssueScript(args, extraEnv = {}) {
+		const gh = fakeBin("gh", `echo "$*" >> "$LOG"\ncase "$1 $2" in\n  api*) cat "$JOBS_FILE" ;;\n  "issue list") echo "\${EXISTING_TITLE:-}" ;;\n  "issue create") echo https://github.com/o/r/issues/7 ;;\n  *) exit 2 ;;\nesac`);
 		const npm = fakeBin("npm", `echo "$*" >> "$LOG"\ncat "$TIMES_FILE"`);
 		writeFileSync(join(gh.root, "jobs.json"), JSON.stringify([{ jobs: JOBS }]));
 		writeFileSync(join(npm.root, "times.json"), JSON.stringify(TIMES));
@@ -96,6 +95,7 @@ describe("smoke failure after npm: the script (senpi#6628)", () => {
 				RUN_ID: "42",
 				RUN_ATTEMPT: "2",
 				RUN_URL: "https://run/42",
+				...extraEnv,
 			},
 		});
 		return { result, gh: gh.calls(), npm: npm.calls() };
@@ -106,9 +106,18 @@ describe("smoke failure after npm: the script (senpi#6628)", () => {
 		assert.equal(result.status, 1, result.stderr);
 		assert.match(result.stderr, /::error::Release 2026\.11\.13: .*macos-latest, windows-latest/);
 		assert.deepEqual(gh[0], "api --paginate --slurp repos/o/r/actions/runs/42/attempts/2/jobs");
-		assert.match(gh[1], /^issue create --repo o\/r --title Release 2026\.11\.13: standalone-binary smoke failed on macos-latest, windows-latest/);
+		assert.match(gh[1], /^issue list --repo o\/r --state all --search 2026\.11\.13 standalone-binary smoke in:title/);
+		assert.match(gh[2], /^issue create --repo o\/r --title Release 2026\.11\.13: standalone-binary smoke failed on macos-latest, windows-latest/);
 		assert.deepEqual(npm, ["view @code-yeongyu/senpi time --json"]);
 		assert.ok(!gh.concat(npm).some((call) => /dist-tag/.test(call)), "the script must never move a dist-tag");
+	});
+
+	it("opens no second issue when both finalize jobs reach it (senpi#6851)", () => {
+		const title = "Release 2026.11.13: standalone-binary smoke failed on macos-latest, windows-latest after npm published it";
+		const { result, gh } = runIssueScript([], { EXISTING_TITLE: title });
+		assert.equal(result.status, 1, result.stderr);
+		assert.ok(!gh.some((call) => call.startsWith("issue create")), gh.join("\n"));
+		assert.match(result.stderr, /issue already open/);
 	});
 
 	it("prints the issue under --dry-run without opening it", () => {
@@ -119,36 +128,19 @@ describe("smoke failure after npm: the script (senpi#6628)", () => {
 	});
 });
 
-describe("build-binaries.yml reports a smoke failure after npm (senpi#6628)", () => {
-	const text = jobText(JOB);
+describe("release-finalize.mjs runs the smoke report (senpi#6628, senpi#6851)", () => {
+	const finalize = readFileSync(new URL("./release-finalize.mjs", import.meta.url), "utf8");
 
-	it("runs only when the smoke failed and npm published, never on a dry run", () => {
-		assert.match(text, /\n {4}needs:\n {6}- smoke-test-binaries\n {6}- publish-npm\n/);
-		const condition = /\n {4}if: \$\{\{ (.*) \}\}\n/.exec(text)?.[1];
-		assert.equal(
-			condition,
-			"always() && inputs.dry_run != true && needs.publish-npm.result == 'success' && needs.smoke-test-binaries.result == 'failure'",
-		);
+	it("passes the Build Binaries run, its attempt and its URL to the issue script", () => {
+		assert.match(finalize, /release-smoke-failure-issue\.mjs/);
+		for (const key of ["RUN_ID: BUILD_RUN_ID", "RUN_ATTEMPT:", "RUN_URL:"]) assert.ok(finalize.includes(key), key);
 	});
 
-	it("passes the run, its attempt and its URL to the issue script", () => {
-		assert.match(text, /\n {8}run: node scripts\/release-smoke-failure-issue\.mjs\n/);
-		for (const key of ["RUN_ID: \\$\\{\\{ github\\.run_id \\}\\}", "RUN_ATTEMPT: \\$\\{\\{ github\\.run_attempt \\}\\}", "RUN_URL:", "GH_TOKEN: \\$\\{\\{ secrets\\.GITHUB_TOKEN \\}\\}"]) {
-			assert.match(text, new RegExp(`\\n {10}${key}`));
-		}
-	});
-
-	it("has the minimum permissions its steps need (contents: read for the checkout), and no other job can write issues", () => {
-		assert.match(text, /uses: actions\/checkout@/, "the job checks out the release scripts, so it needs contents: read");
-		assert.match(text, /\n {4}permissions:\n {6}actions: read\n {6}contents: read\n {6}issues: write\n {4}env:/);
+	it("leaves issues: write to the finalize job alone and moves no dist-tag", () => {
 		assert.match(workflow, /\npermissions: \{\}\n/);
 		assert.equal(workflow.match(/issues: write/g).length, 1);
+		assert.match(jobText("finalize-release"), /\n {6}issues: write\n/);
 		const commands = workflow.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
 		assert.ok(!/dist-tag/.test(commands), "no job may move an npm dist-tag");
-	});
-
-	it("blocks nothing: no other job waits for it", () => {
-		assert.equal(workflow.split(`- ${JOB}`).length - 1, 0);
-		assert.ok(!new RegExp(`needs:.*${JOB}`).test(workflow));
 	});
 });

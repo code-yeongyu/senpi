@@ -154,8 +154,14 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	if (value.type === "unload_session") {
 		if (value.children !== undefined && value.children !== "refuse" && value.children !== "detach")
 			return 'children must be "refuse" or "detach".';
-		for (const flag of ["interrupt", "clearQueue", "force"] as const)
+		if (value.deliveries !== undefined && value.deliveries !== "refuse")
+			return 'deliveries must be "refuse"; omit it to hand unwritten deliveries back on an interrupt.';
+		for (const flag of ["interrupt", "clearQueue", "force", "graceful"] as const)
 			if (value[flag] !== undefined && typeof value[flag] !== "boolean") return `${flag} must be a boolean.`;
+		if (value.waitMs !== undefined && !(Number.isSafeInteger(value.waitMs) && Number(value.waitMs) > 0))
+			return "waitMs must be a positive integer of milliseconds.";
+		if (value.graceful === true && value.interrupt === true)
+			return "graceful and interrupt exclude each other: a graceful close never interrupts the turn.";
 	}
 	if (
 		(value.type === "steer" || value.type === "follow_up") &&

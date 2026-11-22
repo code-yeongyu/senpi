@@ -20,6 +20,12 @@ const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
 // senpi#6199: an extension load now yields the host loop between modules, so an open_session can arrive while a warm
 // (the boot load of senpi#6147 included) is still loading. Its factories must not run beside that load: the boot load
 // is the host's first extension load, and an extension claiming a private channel there must not be claimed twice.
+//
+// The contracts below assert WHAT the registry waits on, never a global event order: the open path performs real
+// async work between the warm wait and the runtime build (a cwd stat through createAgentSessionRuntime), so on a
+// starved runner any warm whose load spans loop turns can reorder events the registry never ordered. A warm the open
+// must NOT wait on is therefore held on a gate the test releases, and the assertions hold while that warm is still
+// unsettled — true under any scheduling, not just the fast one (the CI shard flake, run 44446387272).
 describe("an in-process open and a warm in flight (senpi#6199)", () => {
 	it("builds the session runtime only after every warm in flight has settled", async () => {
 		// Given: a warm whose load spans many turns of the loop, as a yielding extension import does.
@@ -52,10 +58,14 @@ describe("an in-process open and a warm in flight (senpi#6199)", () => {
 	});
 
 	it("does not wait for a warm of another working directory", async () => {
-		// Given: a warm of an unrelated cwd whose load spans many turns of the loop.
+		// Given: a warm of an unrelated cwd that never settles until the test releases it.
 		const events: string[] = [];
 		const other = join(scratch, "other");
 		await mkdir(other);
+		let releaseOther: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			releaseOther = resolve;
+		});
 		const createRuntime = Object.assign(
 			async () => {
 				events.push("open builds its runtime");
@@ -63,7 +73,7 @@ describe("an in-process open and a warm in flight (senpi#6199)", () => {
 			},
 			{
 				prepare: async () => {
-					for (let turn = 0; turn < 50; turn++) await nextTurn();
+					await gate;
 					events.push("other warm finished loading");
 				},
 			},
@@ -73,17 +83,23 @@ describe("an in-process open and a warm in flight (senpi#6199)", () => {
 		const warming = registry.warm({ cwd: other });
 		await nextTurn();
 
-		// When
+		// When: an open of its own cwd runs while the other cwd's warm is still loading.
 		await expect(registry.openSession({ cwd: scratch })).rejects.toThrow("this test stops the open");
-		await warming;
 
 		// Then: the open built its runtime while the other cwd's warm was still loading.
+		expect(events).toEqual(["open builds its runtime"]);
+		releaseOther();
+		await warming;
 		expect(events).toEqual(["open builds its runtime", "other warm finished loading"]);
 	});
 
 	it("does not wait for a warm that starts while it is already waiting", async () => {
-		// Given: an open waiting on a short warm of its cwd.
+		// Given: an open waiting on a short warm of its cwd, and a second, gated warm of that cwd.
 		const events: string[] = [];
+		let releaseWorker: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			releaseWorker = resolve;
+		});
 		const createRuntime = Object.assign(
 			async () => {
 				events.push("open builds its runtime");
@@ -91,9 +107,13 @@ describe("an in-process open and a warm in flight (senpi#6199)", () => {
 			},
 			{
 				prepare: async (options: { launchProfile: { sessionKind?: string } }) => {
-					const turns = options.launchProfile.sessionKind === "worker" ? 500 : 10;
-					for (let turn = 0; turn < turns; turn++) await nextTurn();
-					events.push(`${options.launchProfile.sessionKind ?? "default"} warm finished loading`);
+					if (options.launchProfile.sessionKind === "worker") {
+						await gate;
+						events.push("worker warm finished loading");
+						return;
+					}
+					for (let turn = 0; turn < 10; turn++) await nextTurn();
+					events.push("default warm finished loading");
 				},
 			},
 		) satisfies PreparableRuntimeFactory;
@@ -103,11 +123,14 @@ describe("an in-process open and a warm in flight (senpi#6199)", () => {
 		await nextTurn();
 		const opening = registry.openSession({ cwd: scratch });
 
-		// When: a second, much longer warm of that cwd starts after the open began waiting.
+		// When: a second warm of that cwd starts after the open began waiting and never settles yet.
 		const later = registry.warm({ cwd: scratch, sessionKind: "worker" });
 
-		// Then: the open waited only for the warm in flight when it arrived.
+		// Then: the open completed having waited only for the warm in flight when it arrived — while the
+		// later warm was still loading, whatever the runner did to the open's own async work in between.
 		await expect(opening).rejects.toThrow("this test stops the open");
+		expect(events).toEqual(["default warm finished loading", "open builds its runtime"]);
+		releaseWorker();
 		await Promise.all([first, later]);
 		expect(events).toEqual([
 			"default warm finished loading",
