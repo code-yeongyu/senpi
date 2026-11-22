@@ -34,6 +34,11 @@ export class SessionConnectionContext {
 		);
 	}
 
+	/** Host-owned background construction has no requesting transport or inherited delegation. */
+	outside<T>(task: () => T): T {
+		return this.storage.exit(task);
+	}
+
 	/** The delegation the running line captured at its start, or undefined for a connection that never declared. */
 	get delegation(): DelegationDescriptor | undefined {
 		return this.storage.getStore()?.delegation;

@@ -14,6 +14,7 @@ import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
 import { isFifoMode } from "./utils/inherited-duplex.ts";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
+import { dispatchSessionOfPidCommand } from "./cli/session-of-pid-command.ts";
 import { dispatchKillGuardCommand } from "./cli/kill-guard-command.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import {
@@ -25,6 +26,7 @@ import {
 	isBundledNode,
 } from "./config.ts";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.ts";
+import { runtimeExecArgv } from "./utils/runtime-exec-argv.ts";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.ts";
@@ -126,6 +128,7 @@ if (reexecUnderBunIfNeeded()) {
 
 const args = process.argv.slice(2);
 await dispatchAgentDirectoryCommand(args);
+await dispatchSessionOfPidCommand(args);
 
 // Must run before cli-main is loaded, by either path: it caches the engine graph this process
 // imports on the fast path below, and it publishes NODE_COMPILE_CACHE so a spawned cli-main child
@@ -176,7 +179,9 @@ function requiresIsolatedProcess(): boolean {
 	// The bundled entry re-executes itself rather than a sibling, so the child would otherwise see the
 	// same exec arguments and spawn again forever. The marker is read before anything else runs.
 	if (process.env[ISOLATED_CHILD_ENV] === "1") return false;
-	return process.execArgv.length > 0 || hasInheritedInspectorOption();
+	// Decide on the sanitized argv (senpi#2952): the caller's entry mode (-e/-p/-i and friends) is
+	// not a runtime option, so an eval caller alone must not force an isolated re-launch.
+	return runtimeExecArgv().length > 0 || hasInheritedInspectorOption();
 }
 
 async function spawnFullCli(): Promise<number> {
@@ -189,9 +194,12 @@ async function spawnFullCli(): Promise<number> {
 		? fileURLToPath(import.meta.url)
 		: fileURLToPath(new URL(`./cli-main${extension}`, import.meta.url));
 	releaseInheritedInspectorForChild();
-	const childEnvironment = isBundledNode ? { ...process.env, [ISOLATED_CHILD_ENV]: "1" } : process.env;
+	// The child carries the caller's runtime options but never its entry mode (senpi#2952): forwarding
+	// raw execArgv replayed a `node -e` caller in the child. Both entries get the isolation marker so
+	// a re-entered cli.ts loads the agent in process instead of spawning again.
+	const childEnvironment = { ...process.env, [ISOLATED_CHILD_ENV]: "1" };
 	return await new Promise<number>((resolve, reject) => {
-		const child = spawnWithPrivateFds(spawn, process.execPath, [...process.execArgv, fullCliPath, ...args], {
+		const child = spawnWithPrivateFds(spawn, process.execPath, [...runtimeExecArgv(), fullCliPath, ...args], {
 			env: childEnvironment,
 			stdio: reexecStdio(),
 		});

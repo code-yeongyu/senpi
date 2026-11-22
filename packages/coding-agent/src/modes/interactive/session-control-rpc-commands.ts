@@ -31,6 +31,8 @@ type Command<T extends RpcCommand["type"]> = Extract<RpcCommand, { type: T }>;
 
 export const TUI_RPC_COMMANDS = [
 	"open_session",
+	"park_session",
+	"claim_session",
 	"get_snapshot",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
@@ -90,6 +92,9 @@ export async function runTuiRpcCommand(
 		}
 		case "open_session":
 			return openSession(context, connection, command);
+		case "park_session":
+		case "claim_session":
+			return failure(idOf(command), command.type, "multi_session_disabled");
 		case "subscribe_sessions":
 			return subscribe(context, connection, frame<"subscribe_sessions">(command));
 		case "unsubscribe_sessions":

@@ -5,7 +5,7 @@ import { HAND_SELECTION_CAPABILITY } from "./custom-capability.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
 import { advertisedCompactCapabilities } from "./compact-negotiation.ts";
 import { pathIdentityResolverStatus } from "./path-identity-status.ts";
-import { protocolIdentity } from "./protocol-identity.ts";
+import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { sessionMemory } from "./session-router-observation.ts";
@@ -20,6 +20,7 @@ export function answerProtocolInfo(
 ): RpcResponse {
 	const hostCapabilities = multiSessionHostCapabilities({
 		warm: host.registry.warm !== undefined,
+		parkClaim: host.registry.supportsParkClaim === true,
 		toolRuntime: host.defaults.toolRuntime ?? "in-process",
 		negotiated: host.connectionOptions?.capabilities ?? [],
 		mcpPresenters: host.writer.mcpPresenters !== undefined,
@@ -36,7 +37,7 @@ export function answerProtocolInfo(
 			serverVersion: VERSION,
 			capabilities: advertisedCompactCapabilities(
 				capabilities,
-				host.writer.currentConnection() !== undefined && host.registry.supportsCompact?.() === true,
+				host.writer.currentConnection() !== undefined && host.compactAvailable(),
 			),
 			mode: "multi",
 			...protocolIdentity(host.defaults.agentDir),
@@ -66,11 +67,16 @@ export function answerListSessions(
 	// the opaque context blob travels only on that listing, never to every connection.
 	const rows = host.registry.list();
 	const presence = host.defaults.sessionPresence;
-	const withMemory = rows.map((row) => ({
-		...row,
-		memory: sessionMemory(host, row.sessionId),
-		...(presence && row.durableSessionId !== undefined ? { presence: presence.view(row.durableSessionId) } : {}),
-	}));
+	const withMemory = [
+		...rows.map((row) => ({
+			...row,
+			generation: hostGeneration(process.env),
+			hostInstanceId: host.defaults.hostContext?.host_instance ?? hostInstanceId(),
+			memory: sessionMemory(host, row.sessionId),
+			...(presence && row.durableSessionId !== undefined ? { presence: presence.view(row.durableSessionId) } : {}),
+		})),
+		...host.routes.rows().filter((r) => !rows.some((row) => row.sessionId === r.sessionId)),
+	];
 	const sessions =
 		command.include_workers === true
 			? withMemory
@@ -80,6 +86,17 @@ export function answerListSessions(
 		type: "response",
 		command: "list_sessions",
 		success: true,
-		data: { sessions },
+		data: {
+			sessions,
+			// senpi#7020: a successor still taking over its predecessor's sessions lists only part of them so far.
+			...(host.inheritedHandover === undefined
+				? {}
+				: {
+						handover: {
+							pending: host.inheritedHandover.pending,
+							predecessor_draining: host.inheritedHandover.predecessorDraining,
+						},
+					}),
+		},
 	};
 }

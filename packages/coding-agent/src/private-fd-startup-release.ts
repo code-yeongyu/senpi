@@ -2,7 +2,8 @@
  * Side-effect entry: releases a coordinated start's inherited filler pipes (senpi#4602) while the #4749 private
  * descriptor table is still in the environment. An entry imports this BEFORE `private-fds.ts`, which removes the
  * table from the environment when it adopts it; released after that, a slot the table names would look like a
- * filler and be closed.
+ * filler and be closed. `private-fds.ts` also runs this release itself before it adopts the table, so a bundle that
+ * evaluates this module after the capture no longer closes a private slot (senpi#6769); the release is idempotent.
  */
 import { releaseInheritedStartupFillers } from "./private-fd-startup-fillers.ts";
 

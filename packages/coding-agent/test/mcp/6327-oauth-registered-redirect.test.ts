@@ -9,6 +9,7 @@ import {
 	runAuthStart,
 } from "../../src/core/extensions/builtin/mcp/auth/commands-auth.ts";
 import { resolveServerAuth } from "../../src/core/extensions/builtin/mcp/auth/context.ts";
+import { mcpCredentialIdentity } from "../../src/core/extensions/builtin/mcp/auth/catalog-identity.ts";
 import { beginAuthorization } from "../../src/core/extensions/builtin/mcp/auth/oauth.ts";
 import type { McpOAuthProvider } from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
 import { McpRefreshManager } from "../../src/core/extensions/builtin/mcp/auth/oauth-refresh.ts";
@@ -171,6 +172,10 @@ describe("MCP OAuth registers the redirect URI it authorizes with (senpi#6327)",
 		const { fixture, deps, store } = await harness();
 		expect((await interactiveAuth(deps)).authorizeStatus).toBe(302);
 		const signedIn = store.read();
+		const signedInEpoch = signedIn?.authorization?.id;
+		expect(signedInEpoch).toBeDefined();
+		const identity = () => mcpCredentialIdentity(deps.config, "fixture", deps.agentDir, undefined);
+		const signedInIdentity = identity();
 		expect(signedIn?.refreshToken).toMatch(/^SENTINEL_RT_/);
 
 		// When: the paste flow starts (a new redirect URI, so a new registration) and the user walks away.
@@ -180,10 +185,15 @@ describe("MCP OAuth registers the redirect URI it authorizes with (senpi#6327)",
 		// Then: the signed-in client and its refresh token are still stored, and a background refresh still works.
 		expect(store.read()?.clientInfo?.client_id).toBe(signedIn?.clientInfo?.client_id);
 		expect(store.read()?.refreshToken).toBe(signedIn?.refreshToken);
+		// #2861: pending registration and verifier changes do not replace the active grant.
+		expect(store.read()?.authorization?.id).toBe(signedInEpoch);
+		expect(identity()).toBe(signedInIdentity);
 		await store.update((current) => ({ ...current, expiresAt: 0 }));
 		const refreshed = await new McpRefreshManager(provider(deps)).refresh();
 		expect(refreshed.access_token).toMatch(/^SENTINEL_AT_/);
 		expect(refreshed.access_token).not.toBe(signedIn?.accessToken);
+		expect(store.read()?.authorization?.id).toBe(signedInEpoch);
+		expect(identity()).toBe(signedInIdentity);
 
 		// When: the abandoned flow is finished after all.
 		const location = (await fetch(url, { redirect: "manual" })).headers.get("location");
@@ -195,6 +205,8 @@ describe("MCP OAuth registers the redirect URI it authorizes with (senpi#6327)",
 		expect(store.read()?.clientInfo?.client_id).toBe(registrations.at(-1)?.clientId);
 		expect(store.read()?.refreshToken).toMatch(/^SENTINEL_RT_/);
 		expect(store.read()?.refreshToken).not.toBe(signedIn?.refreshToken);
+		expect(store.read()?.authorization?.id).not.toBe(signedInEpoch);
+		expect(identity()).not.toBe(signedInIdentity);
 	});
 
 	it("client_credentials sends no authorize request, so it uses a stored registration made for another redirect URI", async () => {

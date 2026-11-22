@@ -88,7 +88,7 @@ it("--hand runs a tool call end to end over its socket and survives a re-attach 
 	});
 	const sockets: Socket[] = [];
 	try {
-		await waitForStderr(child, `senpi hand: listening on ${endpoint}`, 60_000);
+		await waitForStderr(child, `senpi hand: listening on ${endpoint}`);
 		const brain = brainSide();
 		const reattached = Promise.withResolvers<void>();
 		const first = await dial(endpoint);
@@ -134,7 +134,7 @@ it("a second --hand on the same agent dir refuses the live endpoint, and a stopp
 	const env = { SENPI_CODING_AGENT_DIR: agentDir };
 	const first = spawnRpc(["--hand", "--no-skills", "--no-context-files"], qa, undefined, env);
 	try {
-		await waitForStderr(first, `senpi hand: listening on ${endpoint}`, 60_000);
+		await waitForStderr(first, `senpi hand: listening on ${endpoint}`);
 		const second = spawnRpc(["--hand", "--no-skills", "--no-context-files"], qa, undefined, env);
 		let secondErr = "";
 		second.stderr.on("data", (chunk: Buffer) => {
@@ -165,7 +165,7 @@ it("a hand stopped while a carrier is still attached exits and removes its entry
 	});
 	const carrier: Socket[] = [];
 	try {
-		await waitForStderr(child, `senpi hand: listening on ${endpoint}`, 60_000);
+		await waitForStderr(child, `senpi hand: listening on ${endpoint}`);
 		carrier.push(await dial(endpoint));
 		const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
 		child.kill("SIGTERM");

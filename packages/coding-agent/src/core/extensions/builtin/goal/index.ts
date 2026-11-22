@@ -1,6 +1,4 @@
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../manual-continue.ts";
-import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
-import type { SessionEntry } from "../../../session-manager.ts";
 import {
 	buildDeadlineStopNotice,
 	type DeadlineStopData,
@@ -21,12 +19,12 @@ import { goalLifecycleChanged, registerGoalLifecycleCollector } from "./lifecycl
 import {
 	GOAL_STALE_STOP_NOTICE,
 	isResumeOfStoppedGoal,
-	queueGoalContinuation,
 	recoverMissingGoalContinuationStop,
 } from "./lifecycle-helpers.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
+import { queueGoalContinuation, readTrailingGoalContinuations } from "./session-start-continuation.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { interruptedRunHeld, markStopPaused, markStopResumed, pausedByStop, stopHoldLive } from "./stop-pause.ts";
 import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
@@ -240,15 +238,16 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				ctx,
 				goal,
 				monitor: monitorContinuation,
-				countTrailingContinuations: () => countTrailingGoalContinuationEntries(ctx.sessionManager.getBranch()),
-				queueContinuation: () => queueGoalContinuationForCurrentSession(pi, ctx, goal),
+				readTrailingContinuations: () => readTrailingGoalContinuations(ctx.sessionManager.getBranch()),
+				queueContinuation: (limitWait) => queueGoalContinuationForCurrentSession(pi, ctx, goal, limitWait),
 			});
 		} else if (goal) {
 			// Migration-lite admission: a resumed session carrying a trailing flood of
 			// historical continuations must not reignite on load. Skip the auto-queue,
 			// leave the goal active (no status rewrite), and tell the user how to resume.
-			const trailingContinuations = countTrailingGoalContinuationEntries(ctx.sessionManager.getBranch());
-			if (trailingContinuations >= GOAL_CONTINUATION_CAP) {
+			const trailing = readTrailingGoalContinuations(ctx.sessionManager.getBranch());
+			// A session a host restart interrupted is not a cold resume (senpi#7020): its streak goes on.
+			if (trailing.counted >= GOAL_CONTINUATION_CAP && event.continued !== true) {
 				// The load-time flood suppression parks the goal without rewriting its
 				// status, so the only resume signal left is the user's next message.
 				// Arm the one-shot latch the direct-input lifecycle fires when that
@@ -256,19 +255,26 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				// and the resumed session sits idle until the goal is recreated.
 				directInputLifecycle.armSuppressedLoadResume();
 				ctx.ui.notify(
-					`Goal auto-continuation suppressed for this resumed session (${trailingContinuations} historical continuations). Send a message to resume.`,
+					`Goal auto-continuation suppressed for this resumed session (${trailing.counted} historical continuations). Send a message to resume.`,
 					"info",
 				);
 			} else {
-				await queueGoalContinuationForCurrentSession(pi, ctx, goal);
+				await queueGoalContinuationForCurrentSession(pi, ctx, goal, trailing.waitingOutLimit);
 			}
 		}
 	});
 
 	// A Stop that lands while no turn runs emits no `session_abort`, so the goal pauses and resumes with the session here.
-	pi.on("session_hold_changed", async (event, ctx) => {
-		if (event.change === "paused") await pauseGoalWithHeldSession(ctx);
-		else await resumeGoalWithReleasedSession(ctx);
+	// Edges are applied one at a time against the hold as it is now: an input that admits no turn (a slash command)
+	// releases the Stop and takes it back within milliseconds, and handling those two edges concurrently let the resume
+	// write land after the pause read, leaving the goal running under a live Stop (senpi#6897).
+	let holdChange: Promise<void> = Promise.resolve();
+	pi.on("session_hold_changed", (_event, ctx) => {
+		const applied = holdChange.then(() =>
+			stopHoldLive(ctx) ? pauseGoalWithHeldSession(ctx).then(() => {}) : resumeGoalWithReleasedSession(ctx),
+		);
+		holdChange = applied.catch(() => {});
+		return applied;
 	});
 
 	pi.on("held_wakes_released", async (event, ctx) => {
@@ -411,7 +417,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("session_shutdown", async (_event, ctx) => {
+	pi.on("session_shutdown", async (event, ctx) => {
 		retireLifecycleCollector?.();
 		activeContext = undefined;
 		unsubscribeGoalStoreChanged();
@@ -419,6 +425,9 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			await accountCurrentAgentTurn(ctx, "active");
 		}
 		clearAgentGoalAccounting();
+		// A graceful close stops the goal cleanly (oh-my-openagent#14313): it reopens paused, never mid-continuation.
+		if (event.closed === true && (await readGoal(goalStoreRef(ctx)))?.status === "active")
+			await updateGoal(goalStoreRef(ctx), { status: "paused" }, "user");
 		goalTicker.stop();
 		monitorContinuation.dispose();
 	});
@@ -461,12 +470,14 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		extensionApi: ExtensionAPI,
 		ctx: ExtensionContext,
 		goal: Goal,
+		limitWait = false,
 	): Promise<void> {
 		const continuedGoal = await queueGoalContinuation(extensionApi, ctx, goal, {
 			continuationPending,
 			markContinuationPending: () => {
 				continuationPending = true;
 			},
+			limitWait,
 		});
 		if (continuedGoal === null) {
 			clearAgentGoalAccounting();
@@ -588,22 +599,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 		return goal;
 	}
-}
-
-/**
- * Counts goal-continuation entries queued since the most recent real user message
- * in the current branch (mirrors the todo-gate / todo-bridge backward branch read).
- * A real user message is the only reset: the assistant turns in between are exactly
- * the unattended loop this admission guard exists to stop.
- */
-function countTrailingGoalContinuationEntries(entries: readonly SessionEntry[]): number {
-	let count = 0;
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (entry?.type === "message" && entry.message.role === "user") break;
-		if (entry?.type === "custom_message" && entry.customType === GOAL_CONTINUATION_MESSAGE_TYPE) count += 1;
-	}
-	return count;
 }
 
 function goalStoreRef(ctx: ExtensionContext): GoalStoreRef {

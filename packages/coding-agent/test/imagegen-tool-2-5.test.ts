@@ -46,8 +46,8 @@ beforeEach(async () => {
 	registerImagesApiProvider({ api: "openai-images", generateImages: generate }, STUB_SOURCE_ID);
 	harness = await createHarness({ extensionFactories: [(pi) => pi.registerTool(generateImageTool)] });
 	await harness.session.bindExtensions({});
-	// generate_image is search-exposed: these tests exercise the tool body directly, so they opt
-	// into the same active set the by-name call would have produced.
+	// generate_image is eval-exposed and this harness registers no eval tool, so it is a direct tool;
+	// these tests exercise the tool body and keep it in the active set explicitly.
 	harness.session.setActiveToolsByName([...harness.session.getActiveToolNames(), "generate_image"]);
 });
 

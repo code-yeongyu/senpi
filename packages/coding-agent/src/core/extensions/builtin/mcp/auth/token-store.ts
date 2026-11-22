@@ -13,7 +13,26 @@ import { adoptLegacyRecord, type LegacyMigration, readRecordAsync } from "./lega
 // A dynamic registration, with the redirect URIs this client sent when it registered (senpi#6327).
 export type McpClientRegistration = OAuthClientInformationFull & { redirectUrisSent?: string[] };
 
+export interface McpAuthorizationProof {
+	readonly credentialIdentity: string;
+	readonly previousCredentialIdentity?: string;
+	readonly issuer: string;
+	readonly resource: string;
+	readonly clientIdentity: string;
+	readonly scope: string;
+	readonly refreshScope?: string;
+}
+
+export interface McpAuthorization {
+	readonly version: 1;
+	readonly id: string;
+	readonly proof?: McpAuthorizationProof;
+}
+
 export interface McpStoredAuth {
+	readonly scope?: string;
+	readonly refreshScope?: string;
+	readonly authorization?: McpAuthorization;
 	accessToken?: string;
 	refreshToken?: string;
 	clientInfo?: McpClientRegistration;
@@ -91,6 +110,9 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 
 	get rootDir(): string {
 		return join(this.#agentDir, AUTH_ROOT);
+	}
+	get agentDir(): string {
+		return this.#agentDir;
 	}
 	get dir(): string {
 		return join(this.rootDir, this.#hash);

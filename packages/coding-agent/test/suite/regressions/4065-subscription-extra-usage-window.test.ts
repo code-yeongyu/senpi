@@ -10,6 +10,7 @@ import {
 	queryWithAuthLane,
 	resetAuthLaneBoundary,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts";
+import { claudeCodeMaxContextTokens } from "../../../src/core/extensions/builtin/anthropic-subscription/context-window.ts";
 import { classifySdkError } from "../../../src/core/extensions/builtin/anthropic-subscription/errors.ts";
 import { anthropicSubscriptionModels } from "../../../src/core/extensions/builtin/anthropic-subscription/index.ts";
 import {
@@ -152,8 +153,8 @@ describe.each(["ambient", "oauth-slots"] as const)("%s: extra usage exhaustion",
 
 		expect(result.attempts.map((options) => options.model)).toEqual([`${LEGACY}[1m]`, LEGACY]);
 		expect(result.attempts.map((options) => options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS)).toEqual([
-			"1000000",
-			"200000",
+			String(claudeCodeMaxContextTokens(1_000_000)),
+			String(claudeCodeMaxContextTokens(200_000)),
 		]);
 		expect(result.failure).toBeUndefined();
 		expect(result.messages).toEqual([{ type: "result", subtype: "success", result: "ok" }]);
@@ -170,7 +171,9 @@ describe.each(["ambient", "oauth-slots"] as const)("%s: extra usage exhaustion",
 		await runTurn(lane, LEGACY);
 		const second = await runTurn(lane, LEGACY);
 		expect(second.attempts[0].model).toBe(`${LEGACY}[1m]`);
-		expect(second.attempts[0].env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("1000000");
+		expect(second.attempts[0].env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe(
+			String(claudeCodeMaxContextTokens(1_000_000)),
+		);
 		expect(second.attempts[0].env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBeUndefined();
 	});
 

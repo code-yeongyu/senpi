@@ -64,6 +64,10 @@ export const rpcEffectRecordSchema = z.object({
 			currentRevision: z.number().int().positive().optional(),
 		})
 		.optional(),
+	// Deliveries an interrupting unload handed back unwritten, so a replay names them as the live answer did.
+	dropped: z.object({ deliveries: z.array(z.string()) }).optional(),
+	// A refused unload's unwritten deliveries (senpi#7004), so a replay names them as the live refusal did.
+	pending: z.object({ deliveries: z.array(z.string()) }).optional(),
 	by: actorSchema,
 	acceptedAt: z.string(),
 	updatedAt: z.string(),
@@ -81,6 +85,10 @@ export interface EffectStatus {
 	readonly outcome?: EffectOutcome;
 	/** A queued-input change's answer fields (`text`/`revision` for edited, `currentRevision` for conflict). */
 	readonly answer?: QueuedChangeAnswer;
+	/** An interrupting unload's handed-back deliveries (`unload_session` `dropped`). */
+	readonly dropped?: { readonly deliveries: readonly string[] };
+	/** A refused unload's admitted deliveries not yet written (`unload_session` `pending`). */
+	readonly pending?: { readonly deliveries: readonly string[] };
 	readonly by?: EffectActor;
 	readonly acceptedAt?: string;
 	readonly updatedAt?: string;
@@ -117,7 +125,7 @@ const SEMANTIC_FIELDS: Readonly<Record<EffectCommandKind, readonly string[]>> = 
 	abort: ["awaitIdle", "clearQueue", "graceMs"],
 	set_model: ["provider", "modelId", "thinkingLevel", "scope"],
 	set_thinking_level: ["level", "scope"],
-	unload: ["interrupt", "clearQueue", "children", "force"],
+	unload: ["interrupt", "clearQueue", "children", "force", "deliveries"],
 	dequeue: ["queuedId", "expectedRevision"],
 	edit_queued: ["queuedId", "text", "expectedRevision"],
 };

@@ -9,6 +9,7 @@
  * the runtime's steering or follow-up queue exactly like a user's queued message.
  */
 
+import type { HoldKind } from "../engine-turn-hold.ts";
 import type { RelocationRequest, RelocationRequestResult, RelocationTargetsResult } from "../session-relocation.ts";
 
 export type {
@@ -88,7 +89,10 @@ export interface AdmitExternalMessageInput {
  * - `queued`    mid-turn follow-up: enqueued once into the runtime's follow-up queue
  * - `steered`   mid-turn steer at the current epoch: enqueued once into the steering queue
  * - `turn_conflict`    the sender's epoch is stale (or a steer named none)
- * - `held_draft`       the user is composing: nothing was enqueued; retry on the next edge
+ * - `held_draft`       input the user submitted has not reached the runtime yet: nothing was enqueued; retry on the
+ *                      next edge. A draft still in the composer never holds a delivery (senpi#7043)
+ * - `held`             idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run
+ *                      hold; `holds` names them): kept as a held notice, it starts once released (senpi#6490)
  * - `already_admitted` this runtime already holds or already wrote this `delivery_id`
  */
 export type ExternalAdmissionKind =
@@ -97,15 +101,18 @@ export type ExternalAdmissionKind =
 	| "steered"
 	| "turn_conflict"
 	| "held_draft"
+	| "held"
 	| "already_admitted";
 
 export interface ExternalAdmissionResult {
 	readonly kind: ExternalAdmissionKind;
 	readonly turn_epoch: number;
+	/** `held` only: the kinds of the holds that keep the delivery. */
+	readonly holds?: readonly HoldKind[];
 }
 
-/** What the user is holding in the composer. A terminal delivers IME text only when it commits, so `ime` is reserved. */
-export type AdmissionHoldReason = "draft" | "ime" | "attachment";
+/** Why admission is held: `draft` is input the user submitted that the runtime has not taken yet. */
+export type AdmissionHoldReason = "draft";
 
 /** Read-only admission pre-check: calling it changes nothing. */
 export interface SessionAdmissionGate {

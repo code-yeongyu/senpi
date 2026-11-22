@@ -74,6 +74,37 @@ describe("eval tool-call capture", () => {
 		expect(toolResult.details.toolCalls[0]).not.toHaveProperty("resultPreview");
 	});
 
+	// senpi#6904: a tool that fails the documented way (AgentToolResult.isError, no throw) is a failed nested call.
+	it("capture: records a result-level isError: true as a failure and hands the kernel hasError", async () => {
+		const kernel = new FakeKernel([
+			{ type: "tool-call", callId: "c5", toolName: "thread_send", args: { thread: "missing" } },
+			result("capture-result-error", "done"),
+		]);
+		const executeTool: ExecuteTool = vi.fn(async () => ({
+			...textResult("not_found: no thread matches", { result: { kind: "error" } }),
+			isError: true,
+		}));
+
+		const toolResult = await createTool(kernel, executeTool).execute(
+			"capture-result-error",
+			{ language: "js", code: "await tool.thread_send({ thread: 'missing' })", summary: "capture result error" },
+			undefined,
+			undefined,
+			fakeExtensionContext(),
+		);
+
+		expect(toolResult.details.toolCalls[0]).toMatchObject({
+			name: "thread_send",
+			ok: false,
+			callId: "c5",
+			error: "not_found: no thread matches",
+		});
+		expect(toolResult.details.toolCalls[0]).not.toHaveProperty("resultPreview");
+		expect(kernel.replies).toEqual([
+			expect.objectContaining({ callId: "c5", ok: true, value: expect.objectContaining({ hasError: true }) }),
+		]);
+	});
+
 	it("capture: preserves rejected execution errors with captured call metadata", async () => {
 		const kernel = new FakeKernel([
 			{ type: "tool-call", callId: "c3", toolName: "blocked", args: { path: "/tmp/blocked" } },
@@ -189,5 +220,35 @@ describe("eval tool-call capture", () => {
 				}),
 			}),
 		);
+	});
+});
+
+// Only a tool whose own row draws the nested call keeps its result details; the six core tools are drawn by codemode's
+// own widgets and never read them, so their nested calls keep none (senpi#6903 review).
+describe("nested call details are kept only for rows drawn by the tool", () => {
+	const listTools = () => [
+		{ name: "read", renderResult: () => ({ render: () => [], invalidate: () => {} }) },
+		{ name: "thread_list", renderResult: () => ({ render: () => [], invalidate: () => {} }) },
+	];
+
+	it.each([
+		["read", false],
+		["thread_list", true],
+	] as const)("%s keeps details: %s", async (toolName, kept) => {
+		const kernel = new FakeKernel([
+			{ type: "tool-call", callId: "d1", toolName, args: {} },
+			result(`details-${toolName}`, "done"),
+		]);
+		const executeTool: ExecuteTool = vi.fn(async () => textResult("ok", { rows: [1, 2] }));
+
+		const toolResult = await createTool(kernel, executeTool, listTools).execute(
+			`details-${toolName}`,
+			{ language: "js", code: `await tool.${toolName}({})`, summary: "details" },
+			undefined,
+			undefined,
+			fakeExtensionContext(),
+		);
+
+		expect(toolResult.details.toolCalls[0]?.details).toEqual(kept ? { rows: [1, 2] } : undefined);
 	});
 });
