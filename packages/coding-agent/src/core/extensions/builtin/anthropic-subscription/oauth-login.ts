@@ -419,18 +419,18 @@ export function createOAuthConfig(deps: {
 				callbacks.onProgress?.(
 					check.outcome === "ok"
 						? `Connection test passed on ${model}`
-						: `Connection test failed on ${model} (${check.reason ?? "unknown"}); the account was kept. Retry from the account list.`,
+						: `Connection test failed on ${model}: ${check.status === undefined ? "" : `HTTP ${check.status}: `}${check.message ?? check.reason ?? "No provider response was retained"}; the account was kept. Retry from the account list.`,
 				);
 				// The slot stays written: the caller's commit merges onto it, so the account owns its dir throughout.
 				let tested: AccountSlot = slot;
 				const saved = await credentials.modify(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, async (stored) => {
 					const base = storedSubscription(stored) ?? withSlot(current, slot);
 					tested = base.accounts?.find((candidate) => candidate.name === name) ?? slot;
-					return withCheck(base, name, check);
+					return withCheck(base, name, check, dirId);
 				});
 				if (callbacks.signal !== undefined)
 					recordClaudeCliLoginOutcome(callbacks.signal, { account: { name }, check });
-				signedInCredential = withCheck(withSlot(storedSubscription(saved) ?? current, tested), name, check);
+				signedInCredential = withCheck(withSlot(storedSubscription(saved) ?? current, tested), name, check, dirId);
 			} catch (error) {
 				try {
 					await rollBack();

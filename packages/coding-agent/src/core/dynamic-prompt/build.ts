@@ -7,12 +7,12 @@ import { buildPoliciesSection } from "./policies.ts";
 import { buildStyleSection } from "./style.ts";
 import { categorizeTools } from "./tool-categorization.ts";
 import { buildToolSection } from "./tool-section.ts";
-import type { AvailableTool, PromptSurface } from "./types.ts";
+import type { AvailableTool, PromptSurface, SharedSections } from "./types.ts";
 import { buildVerificationSection } from "./verification.ts";
 import { buildWorkingTaskSection } from "./working-task.ts";
 import { buildWorkstationSection, type WorkstationDialect } from "./workstation.ts";
 
-export { type PromptSurface, type TerminalOrApp, terminalOrApp } from "./types.ts";
+export { type PromptSurface, type SharedSections, type TerminalOrApp, terminalOrApp } from "./types.ts";
 
 export const PROMPT_SURFACE_ENV_VAR = "SENPI_PROMPT_SURFACE";
 
@@ -27,8 +27,24 @@ export interface DynamicPromptCoreContext {
 	tools: AvailableTool[];
 	surface: PromptSurface;
 	appName?: string;
-	/** Rendered "## Available Tools" (+ "## Tool Guidelines") section. */
+	/** Rendered "## Available Tools" (+ "## Tool Guidelines") section; empty when it has nothing to list. */
 	toolSection: string;
+	/** The wording the shared section builders render for this prompt (senpi#5665). */
+	sharedSections: SharedSections;
+	/**
+	 * True when the session can search through a provider-native search tool
+	 * added to the request (e.g. Anthropic-native web search), even when the
+	 * builtin `web_search` tool is not among the active tools (senpi#2935).
+	 */
+	nativeSearchAvailable?: boolean;
+}
+
+/** Tool snippets and guidelines as the pre-diet prompt listed them, rendered for `sharedSections: "full"`. */
+export interface FullToolPrompt {
+	/** Every contributing tool's snippet, including tools whose schema description the model already reads. */
+	toolSnippets: Record<string, string>;
+	/** Each tool's `fullPromptGuidelines`, else its `promptGuidelines`. */
+	promptGuidelines: string[];
 }
 
 export interface BuildDynamicSystemPromptOptions {
@@ -46,8 +62,23 @@ export interface BuildDynamicSystemPromptOptions {
 	 */
 	cwd: string;
 	selectedTools: string[];
+	/**
+	 * Whether a provider-native search tool is available for this session
+	 * (e.g. Anthropic-native web search added to the request), even when the
+	 * builtin `web_search` tool is not selected (senpi#2935). Presets that
+	 * gate search wording on the builtin tool read this as a second signal.
+	 */
+	nativeSearchAvailable?: boolean;
+	/** One-line snippets, listed under "## Available Tools" for selected tools; pass none for a tool whose schema description the model already sees. */
 	toolSnippets: Record<string, string>;
 	promptGuidelines: string[];
+	/** Tool contributions for `sharedSections: "full"`; without it the full render uses `toolSnippets`/`promptGuidelines`. */
+	fullToolPrompt?: FullToolPrompt;
+	/**
+	 * Wording of the shared section builders: `full` renders their text from before the senpi#5335 diet,
+	 * `diet` (the default) the slimmed text. A prompt preset declares it (senpi#5665).
+	 */
+	sharedSections?: SharedSections;
 	contextFiles: Array<{ path: string; content: string; scope?: "user" }>;
 	skills: Skill[];
 	tuningSection?: string;
@@ -94,32 +125,43 @@ export function buildDynamicSystemPromptParts(options: BuildDynamicSystemPromptO
 		];
 	}
 	const tools = categorizeTools(options.selectedTools);
+	const sharedSections = options.sharedSections ?? "diet";
+	const toolPrompt = sharedSections === "full" ? options.fullToolPrompt : undefined;
 
 	const toolSection = buildToolSection({
 		tools,
-		toolSnippets: options.toolSnippets,
-		promptGuidelines: options.promptGuidelines,
+		toolSnippets: toolPrompt?.toolSnippets ?? options.toolSnippets,
+		promptGuidelines: toolPrompt?.promptGuidelines ?? options.promptGuidelines,
+		sharedSections,
 	});
 
 	const surface = options.surface ?? "terminal";
 	const sections = options.corePrompt
-		? [options.corePrompt({ tools, toolSection, surface, appName: options.appName })]
+		? [
+				options.corePrompt({
+					tools,
+					toolSection,
+					surface,
+					appName: options.appName,
+					sharedSections,
+					nativeSearchAvailable: options.nativeSearchAvailable,
+				}),
+			]
 		: [
-				buildIdentitySection(options.appName),
+				buildIdentitySection(options.appName, sharedSections),
 				"",
-				buildIntentGate({ tools, surface }),
+				buildIntentGate({ tools, surface, sharedSections }),
 				"",
-				buildWorkingTaskSection(),
+				buildWorkingTaskSection({ sharedSections }),
 				"",
-				buildVerificationSection({ surface }),
+				buildVerificationSection({ surface, sharedSections }),
 				"",
-				toolSection,
+				...(toolSection ? [toolSection, ""] : []),
+				buildPoliciesSection({ sharedSections }),
 				"",
-				buildPoliciesSection(),
+				buildHandoffSection({ surface, sharedSections }),
 				"",
-				buildHandoffSection({ surface }),
-				"",
-				buildStyleSection({ surface }),
+				buildStyleSection({ surface, sharedSections }),
 			];
 
 	const parts: DynamicSystemPromptPart[] = [{ name: "core", source: "dynamic-prompt", text: sections.join("\n") }];

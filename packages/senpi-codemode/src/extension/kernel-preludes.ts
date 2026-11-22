@@ -1,20 +1,28 @@
 import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
 import type { CodemodeRuntimeAPI } from "./runtime-factory.ts";
+import { reachableToolNames } from "./reachable-tools.ts";
 
 type ToolRegistry = Pick<CodemodeRuntimeAPI, "getActiveTools" | "getAllTools">;
 
 /**
- * Kernel globals of the tools active right now. Read per cell, so a tool activated by `tool_search`, a by-name
- * call, or a command shows up in the next cell and a deactivated one disappears, whatever the registration order.
+ * Kernel globals of the tools a cell can reach right now (active, or eval-exposed and withheld from the model).
+ * Read per cell, so a tool activated by `tool_search`, a by-name call, or a command shows up in the next cell
+ * and a deactivated one disappears, whatever the registration order.
  */
 export function activeKernelPreludes(pi: ToolRegistry): readonly KernelPreludeContribution[] {
-	const active = new Set(pi.getActiveTools());
+	const active = reachableToolNames(pi);
 	return pi.getAllTools().flatMap((tool) => (tool.kernelPrelude && active.has(tool.name) ? [tool.kernelPrelude] : []));
 }
 
-/** Identity of the prompt's contribution doc lines; the eval tool re-registers only when it changes. */
-export function kernelPreludeDocsKey(preludes: readonly KernelPreludeContribution[]): string {
-	return preludes.map((prelude) => prelude.documentation).join("\n");
+/**
+ * Identity of the registry-derived parts of the eval description (contribution doc lines and the eval-only tool
+ * names); the eval tool re-registers only when it changes.
+ */
+export function evalDescriptionKey(
+	preludes: readonly KernelPreludeContribution[],
+	evalOnlyTools: readonly string[],
+): string {
+	return JSON.stringify([preludes.map((prelude) => prelude.documentation), evalOnlyTools]);
 }
 
 /**

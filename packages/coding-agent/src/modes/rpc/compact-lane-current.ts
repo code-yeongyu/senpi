@@ -72,10 +72,10 @@ export class CompactLaneCurrent {
 	}
 
 	/** An execution, hook or boundary record for the calls component (S06); undefined once the state is unavailable. */
-	foldCall(record: object, sequence: number, turnId: string | null): CallFold | undefined {
+	foldCall(record: object, sequence: number, turnId: string | null, callKey?: string): CallFold | undefined {
 		if (!this.state) return undefined;
 		try {
-			return this.state.acceptCall(protocolClone(record), sequence, turnId);
+			return this.state.acceptCall(protocolClone(record), sequence, turnId, callKey);
 		} catch (cause) {
 			this.fail(cause);
 			return undefined;
@@ -185,7 +185,12 @@ export class CompactLaneCurrent {
 	retire(): void {
 		const state = this.state;
 		this.state = undefined;
-		if (state) this.cleanup = Promise.all([this.cleanup, state.retire()]).then(() => {});
+		if (!state) return;
+		this.cleanup = Promise.all([this.cleanup, state.retire()]).then(() => {});
+		// idle() still rejects for whoever joins this cleanup; nobody may join, so the failure is reported here (senpi#6068).
+		void this.cleanup.catch((cause: unknown) =>
+			process.stderr.write(`senpi rpc acceptance: compact current state retire failed: ${reasonOf(cause)}\n`),
+		);
 	}
 
 	idle(): Promise<void> {
@@ -201,8 +206,7 @@ export class CompactLaneCurrent {
 		const limit = protocolDepthLimitOf(cause);
 		if (limit !== undefined) return this.refuse(limit);
 		if (!this.state) return;
-		const reason = cause instanceof Error && "reason" in cause ? String(cause.reason) : String(cause);
-		process.stderr.write(`senpi rpc acceptance: compact current state unavailable: ${reason}\n`);
+		process.stderr.write(`senpi rpc acceptance: compact current state unavailable: ${reasonOf(cause)}\n`);
 		this.retire();
 	}
 
@@ -210,4 +214,8 @@ export class CompactLaneCurrent {
 		this.refused += 1;
 		process.stderr.write(`senpi rpc acceptance: compact record refused: unsupported_value (depth above ${limit})\n`);
 	}
+}
+
+function reasonOf(cause: unknown): string {
+	return cause instanceof Error && "reason" in cause ? String(cause.reason) : String(cause);
 }

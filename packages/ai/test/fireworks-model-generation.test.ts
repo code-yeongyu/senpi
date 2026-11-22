@@ -148,6 +148,30 @@ describe("Fireworks model generation", () => {
 		}
 	});
 
+	// senpi#6207: upstream may retire every live toggle-only row, so the budget-based path runs on a generated one.
+	it("keeps toggle-only Messages models without a verified fallback on budget-based thinking", async () => {
+		const model = generateFireworksModels({ "toggle-only": [{ type: "toggle" }] })[
+			"accounts/fireworks/models/toggle-only"
+		];
+		if (!hasApi(model, "anthropic-messages")) throw new Error("Expected Messages model");
+		expect(model.compat?.forceAdaptiveThinking).toBeUndefined();
+		let payload: Record<string, unknown> | undefined;
+		await streamSimple(model, normalizeContext({ messages: [{ role: "user", content: "test", timestamp: 0 }] }), {
+			apiKey: "test-fireworks-key",
+			reasoning: "high",
+			onPayload: (value) => {
+				payload = value as Record<string, unknown>;
+				throw new Error("payload captured");
+			},
+		}).result();
+		expect(payload?.thinking).toEqual({
+			type: "enabled",
+			budget_tokens: expect.any(Number),
+			display: "summarized",
+		});
+		expect(payload?.output_config).toBeUndefined();
+	});
+
 	// Regression for #9323: full hardcoded maps must not override updated catalog efforts.
 	it("prefers updated upstream efforts over fixed maps and the Qwen fallback", () => {
 		const models = generateFireworksModels({

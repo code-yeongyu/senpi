@@ -12,6 +12,8 @@ const MAX_ARGUMENT_ENTRIES = 32;
 const MAX_ARGUMENT_DEPTH = 6;
 const MAX_SERIALIZED_ARGUMENT_LENGTH = 4096;
 const MAX_RESULT_PREVIEW_CODE_POINTS = 160;
+/** The serialized size above which a nested result's details are not kept for its renderer (the eval result persists them). */
+const MAX_CAPTURED_DETAILS_CHARACTERS = 16_384;
 
 type BoundedValue = {
 	readonly value: unknown;
@@ -124,6 +126,7 @@ export function recordToolCall(
 	capture: ToolCallCapture,
 	resultPreview: string | undefined,
 	error: string | undefined,
+	details?: unknown,
 ): void {
 	const completedAt = Date.now();
 	settleToolCallMetric(capture.metric, ok, completedAt);
@@ -144,7 +147,25 @@ export function recordToolCall(
 		args: capture.args,
 		...(capture.argsTruncated === true ? { argsTruncated: true } : {}),
 		...(resultPreview === undefined ? {} : { resultPreview }),
+		...(details === undefined ? {} : { details }),
 	});
+}
+
+/**
+ * A plain JSON copy of a nested result's details for the tool's own renderResult, or undefined when there are none, they
+ * are not JSON, or they serialize past MAX_CAPTURED_DETAILS_CHARACTERS: the summary then keeps only its text preview.
+ */
+export function toolCallResultDetails(result: AgentToolResult<unknown>): unknown {
+	if (result.details === undefined) return undefined;
+	let serialized: string | undefined;
+	try {
+		serialized = JSON.stringify(result.details);
+	} catch {
+		return undefined;
+	}
+	if (serialized === undefined || serialized.length > MAX_CAPTURED_DETAILS_CHARACTERS) return undefined;
+	const copy: unknown = JSON.parse(serialized);
+	return copy;
 }
 
 export function toolCallResultPreview(result: AgentToolResult<unknown>): string | undefined {

@@ -24,6 +24,8 @@ function registerSwitchTools(pi: ExtensionAPI): void {
 		label: "Switch Tools",
 		description: "Switch the active extension tool set",
 		promptSnippet: "Switch to the next extension tool",
+		// Described tools get no snippet line (senpi#5335); a guideline sentinel makes the prompt track the active set.
+		promptGuidelines: ["SWITCH_TOOLS_GUIDELINE_SENTINEL"],
 		parameters: Type.Object({}),
 		execute: async () => {
 			pi.setActiveTools(["after_switch"]);
@@ -35,6 +37,7 @@ function registerSwitchTools(pi: ExtensionAPI): void {
 		label: "After Switch",
 		description: "Tool that should be available after switching",
 		promptSnippet: "Run after the active tool set changes",
+		promptGuidelines: ["AFTER_SWITCH_GUIDELINE_SENTINEL"],
 		parameters: Type.Object({}),
 		execute: async () => ({ content: [{ type: "text", text: "after" }], details: {} }),
 	});

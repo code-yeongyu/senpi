@@ -22,6 +22,10 @@ export const MODEL_NOT_FOUND_ANSWERS: readonly (readonly [label: string, message
 		'404 {"type":"error","error":{"type":"not_found_error","message":"model: faux-1"},"request_id":"req_fixture01"}',
 	],
 	[
+		"gateway image allowlist without the id (senpi#5820)",
+		'400 {"error":{"message":"Model faux-1 is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2.5-flare.","type":"invalid_request_error"}}',
+	],
+	[
 		"Google models/<id> is not found",
 		'404 {"error":{"code":404,"message":"models/faux-1 is not found for API version v1beta, or is not supported for generateContent.","status":"NOT_FOUND"}}',
 	],
@@ -41,4 +45,8 @@ export const NOT_MODEL_NOT_FOUND_ANSWERS: readonly (readonly [label: string, mes
 		'404 {"error":{"code":404,"message":"cachedContents/fixture01 not found","status":"NOT_FOUND"}}',
 	],
 	["a generic 404", "404 Not Found"],
+	[
+		"image option a model does not support",
+		'400 {"error":{"message":"Transparent background is not supported for this model","type":"invalid_request_error"}}',
+	],
 ];

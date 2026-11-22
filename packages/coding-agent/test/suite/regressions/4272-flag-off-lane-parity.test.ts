@@ -2,9 +2,9 @@
 import { existsSync } from "node:fs";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
-import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { builtFauxPath, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
 const REPLY = "ok";
@@ -37,12 +37,10 @@ function turnOf(records: readonly WireRecord[]) {
 async function inProcessTurn() {
 	await using host = await statusHost();
 	host.faux.setResponses([fauxAssistantMessage(REPLY, { timestamp: 1 })]);
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const client = host.client("legacy");
 	const sessionId = String(dataOf(await client.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
+	const entry = admissions.entryFor(sessionId);
 	const ended = client.waitFor((record) => record.type === "agent_end" && record.sessionId === sessionId);
 	expect((await client.request({ type: "prompt", sessionId, message: "hi" })).success).toBe(true);
 	await ended;

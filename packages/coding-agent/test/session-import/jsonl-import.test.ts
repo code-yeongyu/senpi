@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAdmissionLine } from "../../../agent/src/durable/store-admission.ts";
 import { createMemoryStoreMedium, openMemoryStore } from "../../../agent/src/durable/store-memory.ts";
-import type { DurableStoreOptions } from "../../../agent/src/durable/store.ts";
+import { openSessionStore, openSyncSessionStore } from "../../../agent/src/durable/session-store.ts";
+import type { DurableStore, DurableStoreOptions } from "../../../agent/src/durable/store.ts";
 import { createJsonlImporter, jsonlFiles, writeHatchMarker } from "../../src/core/session-import/jsonl-import.ts";
 
 const roots: string[] = [];
@@ -70,6 +71,53 @@ async function fixture(options: DurableStoreOptions = {}) {
 
 // R1.f / S07, #4995: the durable documents and actual file bytes are the assertion boundary.
 describe("JSONL import", () => {
+	it("does not record a projected append when the file grew past it (another writer's bytes)", async () => {
+		const f = await fixture();
+		const path = await f.put("s", text("s", [entry("a")]));
+		await f.reopen().open([path]);
+		const before = await f.reopen().getLedger(path);
+		const line = JSON.stringify(entry("b", "a"));
+		const offset = (await stat(path)).size;
+		await writeFile(path, `${text("s", [entry("a")])}${line}\n${JSON.stringify(entry("x", "a"))}\n`);
+		const written = await stat(path);
+
+		await expect(
+			f.reopen().recordProjectedTail(path, "s", [{ key: "b", line, offset }], {
+				size: written.size,
+				mtimeMs: written.mtimeMs,
+				ctimeMs: written.ctimeMs,
+			}),
+		).rejects.toThrow("Projection size does not match its written image");
+		expect(await f.reopen().getLedger(path)).toEqual(before);
+	});
+
+	it("an import that only extends the held entries keeps an entry a co-bound writer appended while it was planned (S21b-a)", async () => {
+		const f = await fixture();
+		const path = await f.put("s", text("s", [entry("a")]));
+		await f.reopen().open([path]);
+		await writeFile(path, text("s", [entry("a"), entry("b", "a")]));
+		const peer = await openSyncSessionStore(openMemoryStore(f.medium), 1).open("s", header("s"));
+		const base = openMemoryStore(f.medium);
+		let landed = false;
+		const store: DurableStore = {
+			...base,
+			commit: (epoch, writes, adopt) => {
+				if (!landed) {
+					landed = true;
+					peer.appendSync([{ key: "x", line: JSON.stringify(entry("x", "a")) }]);
+				}
+				return base.commit(epoch, writes, adopt);
+			},
+		};
+		const importer = createJsonlImporter({ store, epoch: 1, admission: createAdmissionLine(), files: f.files });
+
+		expect(await importer.importFile(path)).toMatchObject({ outcome: "extended", sessionId: "s" });
+
+		expect(landed).toBe(true);
+		const session = await openSessionStore(base, 1).load("s");
+		expect(session?.entries.map((stored) => stored.key)).toEqual(["a", "x", "b"]);
+	});
+
 	it("imports a new session and later tails exactly once across reopen, preserving interleaved parent links", async () => {
 		const f = await fixture();
 		const a = entry("a");

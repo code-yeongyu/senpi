@@ -5,7 +5,8 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { type HttpReply, IdpState, parseIdpOptions } from "./oauth-idp-core.ts";
+import { type HttpReply, IdpState } from "./oauth-idp-core.ts";
+import { parseIdpOptions } from "./oauth-idp-options.ts";
 import { parseFixtureOptions } from "./options.ts";
 import { createFixtureServer } from "./sdk-server.ts";
 
@@ -13,6 +14,13 @@ interface McpSession {
 	server: ReturnType<typeof createFixtureServer>;
 	transport: StreamableHTTPServerTransport;
 }
+
+let refreshGate:
+	| {
+			readonly entered: ReturnType<typeof Promise.withResolvers<void>>;
+			readonly release: ReturnType<typeof Promise.withResolvers<void>>;
+	  }
+	| undefined;
 
 async function main(): Promise<void> {
 	const state = new IdpState(parseIdpOptions(process.argv.slice(2)));
@@ -48,8 +56,21 @@ async function handle(
 ): Promise<void> {
 	const url = new URL(req.url ?? "/", state.baseUrl);
 	const path = url.pathname;
+	if (path === "/__refresh/hold") {
+		refreshGate = { entered: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
+		return writeReply(res, { status: 200 });
+	}
+	if (path === "/__refresh/entered") {
+		await refreshGate?.entered.promise;
+		return writeReply(res, { status: 200 });
+	}
+	if (path === "/__refresh/release") {
+		refreshGate?.release.resolve();
+		refreshGate = undefined;
+		return writeReply(res, { status: 200 });
+	}
 	if (path.startsWith("/.well-known/oauth-protected-resource"))
-		return writeReply(res, state.protectedResourceMetadata());
+		return writeReply(res, state.protectedResourceMetadata(url.searchParams.get("resource") ?? undefined));
 	if (path.startsWith("/.well-known/oauth-authorization-server")) {
 		return writeReply(res, state.authorizationServerMetadata("oauth"));
 	}
@@ -59,7 +80,15 @@ async function handle(
 	if (path === "/cimd") return writeReply(res, state.clientMetadataDocument());
 	if (path === "/authorize") return writeReply(res, state.authorize(url.searchParams));
 	if (path === "/register") return writeReply(res, state.register(await readJson(req)));
-	if (path === "/token") return writeReply(res, state.token(await readForm(req)));
+	if (path === "/token") {
+		const params = await readForm(req);
+		if (params.get("grant_type") === "refresh_token" && refreshGate !== undefined) {
+			const gate = refreshGate;
+			gate.entered.resolve();
+			await gate.release.promise;
+		}
+		return writeReply(res, state.token(params));
+	}
 	if (path === "/__log") return writeReply(res, { status: 200, body: logSnapshot(state) });
 	if (path === "/mcp") return handleMcp(req, res, state, mcpSessions);
 	writeReply(res, { status: 404, body: { error: "not_found", path } });
@@ -72,6 +101,7 @@ function logSnapshot(state: IdpState): Record<string, unknown> {
 		registerHits: state.registerHits,
 		discoveryHits: state.discoveryHits,
 		familyInvalidated: state.familyInvalidated,
+		registrations: state.registrations,
 	};
 }
 
@@ -91,8 +121,13 @@ async function handleMcp(
 		res.end(JSON.stringify({ error: "invalid_token" }));
 		return;
 	}
-	state.log({ method: req.method ?? "POST", path: "/mcp", note: "authorized" });
 	const body = await readJson(req);
+	state.log({
+		method: req.method ?? "POST",
+		path: "/mcp",
+		note: "authorized",
+		rpcMethod: typeof body.method === "string" ? body.method : undefined,
+	});
 	const header = req.headers["mcp-session-id"];
 	const sessionId = Array.isArray(header) ? header[0] : header;
 	const existing = sessionId === undefined ? undefined : mcpSessions.get(sessionId);

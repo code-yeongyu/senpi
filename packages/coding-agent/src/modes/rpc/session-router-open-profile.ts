@@ -105,6 +105,10 @@ export function validatedOpenProfile(
 				: { host_socket: host.defaults.hostContext.host_socket }),
 		},
 		permissionPreset: command.permissionPreset ?? defaults?.permissionPreset,
+		// An embedder's host-level preset is the host default, never a client's choice (remote approval-mode rule).
+		...(command.permissionPreset === undefined && defaults?.permissionPreset !== undefined
+			? { permissionPresetSource: "host_default" as const }
+			: {}),
 		creationModel:
 			command.provider && command.modelId
 				? { provider: command.provider, modelId: command.modelId }
