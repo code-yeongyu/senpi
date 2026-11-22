@@ -21,8 +21,10 @@
 // change-render-look loop.
 //
 // 2026-11-22 (senpi#7232): "edits one at a time" gave a cadence but no destination,
-// so agents wrote source files from eval cells; the routing rule now names the
-// `edit`/`write` tool, and stay-direct drops the result-fed clause rule 1 covers.
+// so agents wrote source files from eval cells. The routing rule's edits item now
+// names the session's own file-editing tools (`[[...]]` below, filled from
+// `resolveFileMutationRouting` and dropped when there is none), and a call fed by
+// an unseen result is routed once, to a direct call, in stay-direct.
 //
 // The wait-as-subscription stance lives in the eval tool description instead:
 // `monitor` is reachable only through an eval cell, so a rule gated on it being
@@ -30,6 +32,7 @@
 // `tool.monitor(...)` form the model must actually type.
 
 import type { SharedSections } from "../../../dynamic-prompt/types.ts";
+import { formatToolList, resolveFileMutationRouting } from "./file-operations.ts";
 
 export type ExecutionToolingRuleId =
 	| "eval-routing-decision"
@@ -55,13 +58,13 @@ export const EXECUTION_TOOLING_RULES = [
 		concern: "code-cell-routing",
 		directive: {
 			claude:
-				"Sort each multi-call step: independent reads/searches/symbol lookups/probes -> ONE `eval` cell via `parallel(thunks)`. Source edits -> `edit`/`write` tool, not cell code. Side effects, deploys, approvals, calls fed by an unseen result -> one at a time, observe each.",
-			kimi: "Sort a multi-call step before you write it: put independent reads, searches, symbol lookups, and probes into one `eval` cell with `parallel(thunks)`, edit source with the `edit` or `write` tool, not cell code, and run side-effecting commands, deploys, approvals, and any call that depends on a result you have not seen one at a time, looking at each result before the next.",
+				"Sort each multi-call step: independent reads/searches/symbol lookups/probes -> ONE `eval` cell via `parallel(thunks)`. Edits[[ (via {editTools}, not cell code)]], side effects, deploys, approvals -> one at a time, observe each before next.",
+			kimi: "Sort a multi-call step before you write it: put independent reads, searches, symbol lookups, and probes into one `eval` cell together with `parallel(thunks)`, and run edits[[ (with {editTools}, not cell code)]], side-effecting commands, deploys, and approvals one at a time, looking at each result before the next.",
 		},
 		fullDirective: {
 			claude:
-				"Sort a multi-call step before you write it: independent reads, searches, symbol lookups, and probes go into ONE `eval` cell via `parallel(thunks)` - an extra read-only call in that wave is nearly free, a stale assumption costs the turn - while source edits use the `edit` or `write` tool, not cell code, and side-effecting commands, deploys, approvals, and any call fed by an unseen result run one at a time, each observed before the next.",
-			kimi: "Sort a multi-call step before you write it: put independent reads, searches, symbol lookups, and probes into one `eval` cell with `parallel(thunks)`, edit source with the `edit` or `write` tool, not cell code, and run side-effecting commands, deploys, approvals, and any call that depends on a result you have not seen one at a time, looking at each result before the next.",
+				"Sort a multi-call step before you write it: independent reads, searches, symbol lookups, and probes go into ONE `eval` cell together via `parallel(thunks)` - an extra read-only call in that wave is nearly free, a stale assumption costs the turn - while edits[[ (with {editTools}, not cell code)]], side-effecting commands, deploys, and approvals run one at a time, each observed before the next.",
+			kimi: "Sort a multi-call step before you write it: put independent reads, searches, symbol lookups, and probes into one `eval` cell together with `parallel(thunks)`, and run edits[[ (with {editTools}, not cell code)]], side-effecting commands, deploys, and approvals one at a time, looking at each result before the next.",
 		},
 	},
 	{
@@ -97,13 +100,13 @@ export const EXECUTION_TOOLING_RULES = [
 		concern: "code-cell-routing",
 		directive: {
 			claude:
-				"Direct tool call only when: one call suffices, semantic judgment sits between calls, or action needs approval.",
-			kimi: "Use a direct tool call when one call is enough or when the action needs approval - then stop deliberating and make it.",
+				"Direct tool call only when: one call suffices, result decides next call, semantic judgment sits between calls, or action needs approval.",
+			kimi: "Use a direct tool call when one call is enough, when each result decides the next call, or when the action needs approval - then stop deliberating and make it.",
 		},
 		fullDirective: {
 			claude:
-				"Call a tool directly only when one call is enough, semantic judgment sits between calls, or the action needs approval.",
-			kimi: "Use a direct tool call when one call is enough or when the action needs approval - then stop deliberating and make it.",
+				"Call a tool directly only when one call is enough, the result decides the next call, semantic judgment sits between calls, or the action needs approval.",
+			kimi: "Use a direct tool call when one call is enough, when each result decides the next call, or when the action needs approval - then stop deliberating and make it.",
 		},
 	},
 ] as const satisfies readonly ExecutionToolingRule[];
@@ -118,11 +121,25 @@ export interface BuildExecutionToolingSectionOptions {
 	readonly sharedSections?: SharedSections;
 }
 
+const EDIT_TOOLS_CLAUSE = /\[\[(.*?)\]\]/;
+
+/** The rule's wording for these options, its `[[...]]` clause naming the session's file-editing tools or dropped. */
+export function renderExecutionToolingDirective(
+	rule: ExecutionToolingRule,
+	options: BuildExecutionToolingSectionOptions,
+): string {
+	const directive = (options.sharedSections === "full" ? rule.fullDirective : rule.directive)[options.dialect];
+	const editTools = resolveFileMutationRouting(options.toolNames).tools;
+	return directive.replace(EDIT_TOOLS_CLAUSE, (_clause, body: string) =>
+		editTools.length > 0 ? body.replace("{editTools}", formatToolList(editTools)) : "",
+	);
+}
+
 /** Directives for the selected tools, or "" when eval is not available. */
 export function buildExecutionToolingSection(options: BuildExecutionToolingSectionOptions): string {
 	const paragraphs = EXECUTION_TOOLING_RULES.filter((rule) =>
 		options.toolNames.includes(CONCERN_TOOL[rule.concern]),
-	).map((rule) => (options.sharedSections === "full" ? rule.fullDirective : rule.directive)[options.dialect]);
+	).map((rule) => renderExecutionToolingDirective(rule, options));
 	if (paragraphs.length === 0) {
 		return "";
 	}
