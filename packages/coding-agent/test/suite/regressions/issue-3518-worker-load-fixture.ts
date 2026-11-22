@@ -24,7 +24,7 @@ SessionManager.openAsync = (...args: Parameters<typeof slicedOpen>) => {
 };
 
 const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
-	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+	await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
 			...fakeSessionBase(options),

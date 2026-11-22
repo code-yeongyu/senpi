@@ -1,3 +1,21 @@
+## 2026-11-20 - `todo.firstTurnPlan` documents its per-preset default (#7110, senpi#7101)
+
+### What changed
+
+- `packages/coding-agent/docs/settings.md`: the `todo.firstTurnPlan` row gives the default as `"force"`, and `"off"` under a GPT prompt preset.
+
+### Why
+
+- The default changed for GPT presets (senpi#7101).
+
+### Why an extension could not handle it
+
+- Documentation of a core setting.
+
+### Expected merge conflict zones
+
+- LOW: one table row.
+
 ## 2026-11-15 - New worker-safe tools-core entry (senpi#6740)
 
 ### What changed

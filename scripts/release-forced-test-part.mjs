@@ -8,7 +8,7 @@
  * `i` runs coding-agent `--shard=i/N`, N being `FORCED_SHARD_JOBS`. Both go through `runForcedTestSuite`, so CI=1,
  * the supervisor's budget and the wall lines are the in-job suite's. It refuses to run on any commit but the tested
  * one, and always writes the part's result file (tested commit, part, exit, file and test counts), which
- * `release.mjs --tested-sha` requires for every part before it stamps the release.
+ * `release.mjs --shard-results` requires for every part before it stamps the release.
  */
 
 import { execFileSync } from "node:child_process";

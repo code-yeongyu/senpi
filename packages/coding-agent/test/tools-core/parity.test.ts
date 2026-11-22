@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDefinition } from "../../src/core/extensions/types.ts";
 import { createBashTool } from "../../src/core/tools/bash.ts";
 import { createEditTool } from "../../src/core/tools/edit.ts";
-import { createAllToolDefinitions } from "../../src/core/tools/index.ts";
+import { createAllToolDefinitions, createCodingTools } from "../../src/core/tools/index.ts";
 import { createToolMachine } from "../../src/core/tools/machine.ts";
 import { createReadTool } from "../../src/core/tools/read.ts";
 import { createWriteTool } from "../../src/core/tools/write.ts";
@@ -20,6 +20,8 @@ import {
 	createCoreReadToolDefinition,
 	createCoreWriteTool,
 	createCoreWriteToolDefinition,
+	type CoreCodingTools,
+	createCoreCodingTools,
 	createMachineOutputSpill,
 	type ToolMachine,
 } from "../../src/tools-core.ts";
@@ -216,5 +218,36 @@ describe("tools-core errors across machines", () => {
 		}
 		expect(texts[1]).toBe(texts[0]);
 		expect(texts[0]).toContain("Error code: ENOENT.");
+	});
+});
+
+describe("createCoreCodingTools", () => {
+	it("returns read, bash, edit and write in createCodingTools order", () => {
+		const machine = createToolMachine();
+		const tools: CoreCodingTools = createCoreCodingTools("/workspace", { machine });
+		expect(tools.map((tool) => tool.name)).toEqual(createCodingTools("/workspace").map((tool) => tool.name));
+	});
+});
+
+describe("tools-core error codes a machine wraps (senpi#6744)", () => {
+	it.each([
+		["io_error", "EISDIR"],
+		["not_found", "ENOTDIR"],
+		["permission_denied", "EPERM"],
+	])("edit shows the fs code kept as the cause of a %s error (%s)", async (opCode, fsCode) => {
+		const cause = Object.assign(new Error(`${fsCode}: failed`), { code: fsCode });
+		const wrapped = Object.assign(new Error("operation failed", { cause }), { code: opCode });
+		const edit = createCoreEditTool(dir, {
+			machine: createToolMachine({ ops: createFakeMachine({ scripts, errorCodes: "fs" }) }),
+			operations: {
+				access: () => Promise.reject(wrapped),
+				readFile: () => Promise.reject(wrapped),
+				writeFile: () => Promise.reject(wrapped),
+			},
+		});
+
+		await expect(edit.execute("call", { path: "x.txt", edits: [{ oldText: "a", newText: "b" }] })).rejects.toThrow(
+			`Could not edit file: x.txt. Error code: ${fsCode}.`,
+		);
 	});
 });

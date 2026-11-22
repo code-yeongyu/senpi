@@ -9,7 +9,15 @@ import { createLoopHookCall, type LateLoopRoute } from "../../src/modes/rpc/loop
 import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
-import { localRunner, type LoopReply, loopEventMachine, MODEL, PREVIOUS_MODEL, toJson } from "./loop-event-fixture.ts";
+import {
+	localRunner,
+	type LoopReply,
+	loopEventMachine,
+	MODEL,
+	PREVIOUS_MODEL,
+	toJson,
+	noLateEffects,
+} from "./loop-event-fixture.ts";
 import { cleanupHands } from "./remote-hand-fixture.ts";
 
 const noLateEffects: LateLoopRoute = () => {

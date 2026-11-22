@@ -4,7 +4,11 @@ import type { AgentEvent, AgentLoopConfig } from "./types.ts";
 
 export const internalProgressSink = Symbol("internalProgressSink");
 type ProgressSink = (progress: AssistantProgress) => Promise<void> | undefined;
-export type InternalLoopConfig = AgentLoopConfig & { [internalProgressSink]?: ProgressSink };
+export type InternalLoopConfig = AgentLoopConfig & {
+	[internalProgressSink]?: ProgressSink;
+	/** Poll the follow-up queue at the first turn boundary when no steering is queued (omo#14428). */
+	takeFollowUpsAtStart?: boolean;
+};
 type InternalEvent = { event: AgentEvent } | { progress: AssistantProgress };
 /** @internal For senpi's session layer only. */
 export type OrderedAgentRecord = InternalEvent & { readonly sequence: number };

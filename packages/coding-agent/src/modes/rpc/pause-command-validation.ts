@@ -12,12 +12,19 @@ function validRunRef(value: unknown): boolean {
 	return typeof ref.kind === "string" && RUN_REF_KINDS.has(ref.kind) && nonEmpty(ref.id);
 }
 
+/** `interrupt`'s `background` field, shared by the RPC host and the terminal control endpoint. */
+export function interruptBackgroundError(background: unknown): string | undefined {
+	return background === undefined || background === "stop" ? undefined : 'background must be "stop".';
+}
+
 export function validatePauseCommand(value: Command): string | undefined {
 	if ((value.type === "abort" || value.type === "interrupt") && value.intent !== undefined) {
 		if (value.intent !== "stop" && value.intent !== "abort") return 'intent must be "stop" or "abort".';
 	}
-	if (value.type === "interrupt" && value.background !== undefined && value.background !== "stop")
-		return 'background must be "stop".';
+	if (value.type === "interrupt") {
+		const backgroundError = interruptBackgroundError(value.background);
+		if (backgroundError !== undefined) return backgroundError;
+	}
 	if (value.type === "resume_session") {
 		if (value.expectedSeq !== undefined && !seq(value.expectedSeq))
 			return "expectedSeq must be a non-negative integer.";
@@ -25,6 +32,8 @@ export function validatePauseCommand(value: Command): string | undefined {
 			return 'mode must be "continue" or "release".';
 		if (value.message !== undefined && typeof value.message !== "string") return "message must be a string.";
 		if (value.effectId !== undefined && !nonEmpty(value.effectId)) return "effectId must be 1-256 characters.";
+		if (value.unlessStopped !== undefined && typeof value.unlessStopped !== "boolean")
+			return "unlessStopped must be a boolean.";
 	}
 	if (value.type === "hold_input") {
 		if (!nonEmpty(value.inputId) || !seq(value.revision) || typeof value.text !== "string")

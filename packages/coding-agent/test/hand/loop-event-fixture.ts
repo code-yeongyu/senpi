@@ -5,6 +5,7 @@ import { fauxAssistantMessage, type JsonValue, type Model } from "@earendil-work
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import type { LateLoopRoute } from "../../src/modes/rpc/loop-hook-call.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
@@ -12,6 +13,11 @@ import loopEventExtension from "./fixtures/loop-event-extension.ts";
 import { handConfiguration, handDirs } from "./remote-hand-fixture.ts";
 
 export const LOOP_EVENT_EXTENSION = fileURLToPath(new URL("./fixtures/loop-event-extension.ts", import.meta.url));
+
+/** The late-work route of a hand whose hooks under test leave no work running after their call (H3). */
+export const noLateEffects: LateLoopRoute = () => {
+	throw new Error("this test's hooks have no work that outlives their call");
+};
 
 export const toJson = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 

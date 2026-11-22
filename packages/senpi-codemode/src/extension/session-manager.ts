@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import {
+	attestSessionSpawn,
 	decideKillGuardRequest,
 	KILL_GUARD_MODULE_URL,
 	killGuardProtectedPids,
@@ -290,6 +291,12 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		const localRoots =
 			this.#options.localRoots ??
 			(this.#options.artifactsDir ? { local: join(this.#options.artifactsDir, "local") } : undefined);
+		// senpi#6972: the kernels attest their processes to the session id the host gave them, never one a cell sets.
+		const attestedSessionId = this.#options.sessionEnv?.PI_SESSION_ID;
+		const attestation =
+			attestedSessionId === undefined
+				? {}
+				: { attestSpawn: (pid: number) => attestSessionSpawn(attestedSessionId, pid) };
 		if (language === "js") {
 			const memoryThresholds = resolveKernelMemoryThresholds(this.#options.settings.memory);
 			const processIsolation = resolveJsIsolation(this.#options.settings) === "process";
@@ -302,12 +309,14 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				foreignLanguageNames: () => this.#foreignKernelToolNames(),
 				memory: memoryThresholds,
 				collectOrphanedChildren,
+				...attestation,
 				...(processIsolation ? { isolation: "process" as const } : {}),
 				...(processIsolation && memoryThresholds !== undefined
 					? { processMemory: { thresholds: memoryThresholds, readFootprint: readProcessFootprint } }
 					: {}),
 				...(resolveKernelToolsEnabled(this.#options.settings) ? {} : { kernelToolsEnabled: false }),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
+				...(this.#options.inheritedEnv ? { inheritedEnv: this.#options.inheritedEnv } : {}),
 				...(this.#options.killGuard === true
 					? { killGuard: { moduleUrl: KILL_GUARD_MODULE_URL, agentPid: process.pid } }
 					: {}),
@@ -333,6 +342,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			sessionId: this.#options.sessionId,
 			cwd: this.#options.cwd,
 			...(sessionEnv ? { sessionEnv } : {}),
+			...attestation,
+			...(this.#options.inheritedEnv ? { inheritedEnv: this.#options.inheritedEnv } : {}),
 			...(this.#options.killGuard === true ? { killGuard: { protectedPids: killGuardProtectedPids() } } : {}),
 			connection,
 			onMessage,

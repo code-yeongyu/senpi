@@ -13,7 +13,7 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { renderFragment } from "./changes-fragments.mjs";
-import { discardTimestampOnlyCatalogChange, REGENERATED_CATALOG_PATHS } from "./release-test-gate.mjs";
+import { discardTimestampOnlyCatalogChange, REGENERATED_CATALOG_PATHS } from "./model-catalog-drift.mjs";
 
 const REFRESH_ENTRY_PREFIX = "- The bundled model catalog is refreshed from models.dev";
 

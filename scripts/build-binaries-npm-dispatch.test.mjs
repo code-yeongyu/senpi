@@ -81,10 +81,13 @@ describe("build-binaries.yml npm dispatch and binary smoke (senpi#6627)", () => 
 			runners[1].trim().split("\n").map((line) => line.replace(/^\s*-\s*/, "").trim()).sort(),
 			["macos-latest", "ubuntu-latest", "windows-latest"],
 		);
-		for (const job of ["stage-github-release", "publish-github-release"]) {
+		// senpi#6851: finalize-release publishes the draft only after the full smoke and staging; it learns npm's result
+		// from the publish run (scripts/release-finalize.mjs), whose own finalize job covers npm finishing last.
+		for (const job of ["stage-github-release", "finalize-release"]) {
 			assert.ok(upstream(job).has("smoke-test-binaries"), `${job} no longer waits for the binary smoke`);
 		}
-		assert.ok(upstream("publish-github-release").has("publish-npm"), "the GitHub Release must still wait for npm");
+		assert.ok(upstream("finalize-release").has("stage-github-release"), "the GitHub Release must still wait for staging");
+		assert.ok(upstream("finalize-release").has("publish-npm"), "the GitHub Release must still know the npm dispatch");
 	});
 
 	it("parses the needs: of every job in the workflow", () => {

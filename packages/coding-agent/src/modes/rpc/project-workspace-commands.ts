@@ -11,6 +11,12 @@
  * (`applyProjectTrustChange`), in line with the runtime's own trust changes: project settings, skills, prompts,
  * extensions and MCP servers load or unload at once.
  *
+ * `no_inherit` is the one choice `set_project_trust` takes that `get_project_trust` never lists, because it is for
+ * clients, not people (a desktop pull-request worktree of another repository): it saves an explicit no-decision entry,
+ * so the folder inherits no decision from above it or from its main checkout and is decided as if nothing were saved.
+ * It never adds trust to the session it is set in: a trust that came only from Full access stays (and leaving Full
+ * access still withdraws it), any other trust goes unless a `project_trust` handler decides the folder is trusted.
+ *
  * Settings: the project settings file is read as stored (reading runs nothing, so trust does not gate it) and written
  * one top-level key at a time through `SettingsManager`'s own project write path, which refuses an untrusted project.
  */
@@ -19,7 +25,12 @@ import { createHeadlessProjectTrustContext } from "../../cli/project-trust-headl
 import type { AgentSession } from "../../core/agent-session.ts";
 import { emitProjectTrustEvent } from "../../core/extensions/runner.ts";
 import { getSettingsPath, type ProjectSettingsFile } from "../../core/settings-manager.ts";
-import { getProjectTrustOptions, type ProjectTrustOption, ProjectTrustStore } from "../../core/trust-manager.ts";
+import {
+	getProjectTrustNoInheritOption,
+	getProjectTrustOptions,
+	type ProjectTrustOption,
+	ProjectTrustStore,
+} from "../../core/trust-manager.ts";
 import { hasTrustRequiringProjectResourcesAsync } from "../../core/trust-requiring-resources.ts";
 import {
 	RPC_ERROR_INVALID_ARGUMENT,
@@ -33,7 +44,7 @@ import {
 /** Runs a trust change after every trust change the session's runtime already started (Full access syncs). */
 export type InTrustChangeOrder = <T>(task: () => Promise<T>) => Promise<T>;
 
-export type ProjectTrustChoice = "trust" | "trust_parent" | "do_not_trust";
+export type ProjectTrustChoice = "trust" | "trust_parent" | "do_not_trust" | "no_inherit";
 
 export interface RpcProjectTrustChoice {
 	choice: ProjectTrustChoice;
@@ -68,6 +79,10 @@ function choiceOf(option: ProjectTrustOption): ProjectTrustChoice {
 
 function trustChoices(cwd: string): Array<{ choice: ProjectTrustChoice; option: ProjectTrustOption }> {
 	return getProjectTrustOptions(cwd).map((option) => ({ choice: choiceOf(option), option }));
+}
+
+function settableTrustChoices(cwd: string): Array<{ choice: ProjectTrustChoice; option: ProjectTrustOption }> {
+	return [...trustChoices(cwd), { choice: "no_inherit", option: getProjectTrustNoInheritOption(cwd) }];
 }
 
 export async function readProjectTrust(session: AgentSession): Promise<RpcProjectTrust> {
@@ -113,11 +128,11 @@ export async function writeProjectTrust(
 	inTrustChangeOrder: InTrustChangeOrder,
 ): Promise<ProjectCommandResult<RpcProjectTrust>> {
 	const cwd = session.sessionManager.getCwd();
-	const selected = trustChoices(cwd).find((entry) => entry.choice === choice);
+	const selected = settableTrustChoices(cwd).find((entry) => entry.choice === choice);
 	if (selected === undefined) {
 		return {
 			ok: false,
-			message: `set_project_trust requires 'choice' to be one of: ${trustChoices(cwd)
+			message: `set_project_trust requires 'choice' to be one of: ${settableTrustChoices(cwd)
 				.map((entry) => entry.choice)
 				.join(", ")}.`,
 			errorCode: RPC_ERROR_INVALID_ARGUMENT,
@@ -135,15 +150,18 @@ export async function writeProjectTrust(
 		// As resolveProjectTrusted: a folder with nothing trust gates is trusted whatever is saved or decided.
 		const requiresTrust = await hasTrustRequiringProjectResourcesAsync(cwd);
 		const decided = requiresTrust ? await extensionTrustDecision(session, cwd) : undefined;
-		if (decided !== undefined && decided !== selected.option.trusted) {
+		const noInherit = selected.choice === "no_inherit";
+		// no_inherit saves no decision, so a handler's decision does not contradict it: the handler keeps deciding.
+		if (!noInherit && decided !== undefined && decided !== selected.option.trusted) {
 			return {
 				ok: false,
 				message: `A project_trust extension handler decides this folder is ${decided ? "trusted" : "untrusted"}; nothing was saved.`,
 				errorCode: RPC_ERROR_PROJECT_TRUST_EXTENSION_DECIDED,
 			};
 		}
-		new ProjectTrustStore(session.agentDir).setMany(selected.option.updates);
-		const trusted = requiresTrust ? selected.option.trusted : true;
+		await new ProjectTrustStore(session.agentDir).setMany(selected.option.updates);
+		const trusted =
+			!requiresTrust || (decided ?? (noInherit ? settings.isTrustFromFullAccess() : selected.option.trusted));
 		if (settings.isProjectTrusted() !== trusted) {
 			settings.setProjectTrusted(trusted);
 			await session.applyProjectTrustChange();

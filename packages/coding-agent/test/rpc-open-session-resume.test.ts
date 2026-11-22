@@ -44,7 +44,7 @@ interface CapturedFactoryCall {
 
 function makeFactory(calls: CapturedFactoryCall[]): CreateAgentSessionRuntimeFactory {
 	return async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		calls.push({
 			cwd: options.cwd,
 			launchProfile: options.launchProfile as Readonly<RpcSessionLaunchProfile> | undefined,
