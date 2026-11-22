@@ -44,6 +44,39 @@ describe("discoverProviderModels", () => {
 	const providerModels = () => readProviderModels(readFileSync(modelsPath, "utf-8"), "local");
 	const discover = () => discoverProviderModels({ providerId: "local", modelsPath, auth: { apiKey: "test-key" } });
 
+	it("resolves an exact proxy catalog ID and warns only about an unknown window (#3824)", async () => {
+		const known = "deepseek-v4-flash-0731";
+		writeProvider({ models: [{ id: known }, { id: "unknown-window-3824" }] });
+		const runtime = await ModelRuntime.create({
+			modelsPath,
+			authPath: join(tempDir, "auth.json"),
+			allowModelNetwork: false,
+		});
+		const catalog = runtime.getModel("alibaba-token-plan", known);
+		expect(catalog?.contextWindow).toBe(1_000_000);
+		expect(runtime.getModel("local", known)?.contextWindow).toBe(catalog?.contextWindow);
+		expect(runtime.getModel("local", "unknown-window-3824")?.contextWindow).toBe(128000);
+		const warnings = runtime.getWarnings().join("\n");
+		expect(warnings).toContain("unknown-window-3824");
+		expect(warnings).toContain("contextWindow");
+		expect(warnings).not.toContain(known);
+	});
+
+	it("uses advertised context length without replacing an explicit window (#3824)", async () => {
+		server.listing.body = {
+			data: [
+				{ id: "advertised", max_context_tokens: 640000 },
+				{ id: "explicit", context_length: 640000 },
+				{ id: "invalid", context_length: -1 },
+			],
+		};
+		writeProvider({ models: [{ id: "explicit", contextWindow: 274000 }] });
+		await discover();
+		expect((await runtimeModel("advertised")).contextWindow).toBe(640000);
+		expect((await runtimeModel("explicit")).contextWindow).toBe(274000);
+		expect((await runtimeModel("invalid")).contextWindow).toBe(128000);
+	});
+
 	async function runtimeModel(id: string) {
 		const runtime = await ModelRuntime.create({
 			modelsPath,

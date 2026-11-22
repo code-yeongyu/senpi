@@ -97,6 +97,7 @@ import {
 	resolveCompatibilityRequestConfig,
 	resolveCompatibilityRequestHeaders,
 	resolveConfiguredModelHeaders,
+	usesUnknownContextWindow,
 	validateExtensionProvider,
 } from "./provider-composer.ts";
 import { createProviderSemaphores } from "./provider-concurrency.ts";
@@ -119,6 +120,21 @@ import {
 
 /** Sessions whose active ChatGPT account is remembered; older entries are dropped first. */
 const MAX_ACTIVE_CREDENTIAL_SESSIONS = 256;
+
+let exactWindows: Map<string, number> | undefined;
+function exactCatalogWindow(id: string): number | undefined {
+	if (!exactWindows) {
+		exactWindows = new Map();
+		for (const provider of builtinProviderCatalog.getBuiltinProviders()) {
+			for (const model of builtinProviderCatalog.getBuiltinModels(provider)) {
+				// A proxy need not serve the largest variant of an ambiguous exact ID.
+				const previous = exactWindows.get(model.id);
+				exactWindows.set(model.id, Math.min(previous ?? model.contextWindow, model.contextWindow));
+			}
+		}
+	}
+	return exactWindows.get(id);
+}
 
 // The product's identity must ride outgoing requests. This lives here because the AI package
 // is already part of this module's graph; the CLI bootstrap deliberately does not import it.
@@ -503,7 +519,7 @@ export class ModelRuntime implements Models {
 				const credential = await this.credentials.read(sourceId);
 				return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
 			};
-			const provider = composeModelProvider(providerId, base, this.config, extension, { storedProviderEnv });
+			const provider = composeModelProvider(providerId, base, this.config, extension, { storedProviderEnv, exactCatalogWindow });
 			this.compositionErrors.delete(providerId);
 			return provider;
 		} catch (error) {
@@ -745,7 +761,12 @@ export class ModelRuntime implements Models {
 
 	/** Non-fatal models.json notices (e.g. renamed provider ids), rendered as warnings. */
 	getWarnings(): readonly string[] {
-		return this.config.getWarnings();
+		return [
+			...this.config.getWarnings(),
+			...this.snapshot.all.filter(usesUnknownContextWindow).map((model) =>
+				`Unknown context size for ${model.provider}/${model.id}; using 128000 tokens. Set contextWindow in models.json.`,
+			),
+		];
 	}
 
 	getError(): string | undefined {

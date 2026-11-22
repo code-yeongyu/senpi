@@ -90,6 +90,14 @@ function modelById(provider: ReturnType<typeof composeModelProvider>, id: string
 }
 
 describe("models.json custom models under extension providers", () => {
+	it("keeps the catalog window when a known model is listed without a context override (#3824)", () => {
+		const base = baseProvider([{ ...catalogModel("large"), contextWindow: 1_000_000 }]);
+		const config = configFor("anthropic", [{ id: "large", name: "Renamed model" }]);
+		const model = modelById(composeModelProvider("anthropic", base, config, undefined), "large");
+		expect(model.name).toBe("Renamed model");
+		expect(model.contextWindow).toBe(1_000_000);
+	});
+
 	it.each([
 		{ whitelist: ["paid"] },
 		{ blacklist: ["free-image", "free-classifier"] },

@@ -228,7 +228,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `thinkingLevelMap` | No | omitted | Maps senpi thinking levels to provider values and marks unsupported levels (see below) |
 | `defaultThinkingLevel` | No | omitted | Level a session starts at for this model when you have not chosen one for it (see below) |
 | `input` | No | `["text"]` | Input types: `["text"]` or `["text", "image"]` |
-| `contextWindow` | No | `128000` | Context window size in tokens |
+| `contextWindow` | No | Discovered or catalog window; otherwise `128000` | Context window size in tokens |
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `samplingParams` | No | omitted | Sampling parameters merged verbatim into every request body (see below) |
 | `inputLimits` | No | omitted | Image resize profile and request limits (see [Image Input Limits](#image-input-limits)) |
@@ -451,6 +451,8 @@ When the provider sets `"compat": { "supportsReasoningEffort": true }`, discover
 ```
 
 For a model whose entry advertises `reasoning_efforts`, discovery owns `reasoning`, `thinkingLevelMap`, and `defaultThinkingLevel`: it sets `reasoning` to `true` (overriding an explicit `false`), replaces the map, and replaces the default, removing a previous `defaultThinkingLevel` when the listing marks none. Values that name no senpi level are reported and not used; if none of the advertised values is usable, the model's reasoning controls are turned off (`reasoning: false`, no map, no default) instead of keeping an old map. A model whose entry has no `reasoning_efforts` field keeps its reasoning fields as they are. Without the compat flag, advertised efforts are ignored and only the model ids are added.
+
+Context-length discovery is independent of reasoning-effort support. A positive integer `context_length` or `max_context_tokens` is stored as `discoveredContextWindow`; an explicit `contextWindow` always wins. If neither exists, senpi looks for the model's exact ID in the catalog, preferring the same provider and taking the smallest catalog window when other providers disagree. With no match it uses 128,000 tokens and raises a configuration warning. Resolving a window does not trigger a network request.
 
 ### Image Input Limits
 

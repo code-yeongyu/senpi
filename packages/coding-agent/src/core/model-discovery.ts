@@ -6,7 +6,8 @@
  * `reasoning_efforts` an entry advertises become that model's `thinkingLevelMap` (endpoint
  * spelling kept, unadvertised levels vetoed) and its `default` becomes `defaultThinkingLevel`.
  * Discovery owns `reasoning`, `thinkingLevelMap`, and `defaultThinkingLevel` of a model that advertises
- * efforts; every other field is left exactly as the user wrote them.
+ * efforts. Valid advertised context lengths are saved separately as `discoveredContextWindow`,
+ * so later discovery can refresh them without replacing the user's `contextWindow`.
  */
 
 import { chmodSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -69,6 +70,7 @@ type JsonRecord = Record<string, unknown>;
 interface ListedModel {
 	id: string;
 	reasoningEfforts: unknown;
+	contextWindow: number | undefined;
 }
 
 const THINKING_LEVELS: readonly ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -158,7 +160,12 @@ async function fetchListing(
 	const listed = new Map<string, ListedModel>();
 	for (const entry of data) {
 		if (!isRecord(entry) || typeof entry.id !== "string" || entry.id.trim() === "") continue;
-		if (!listed.has(entry.id)) listed.set(entry.id, { id: entry.id, reasoningEfforts: entry.reasoning_efforts });
+		if (!listed.has(entry.id)) {
+			const contextWindow = [entry.context_length, entry.max_context_tokens].find(
+				(value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0,
+			);
+			listed.set(entry.id, { id: entry.id, reasoningEfforts: entry.reasoning_efforts, contextWindow });
+		}
 	}
 	return [...listed.values()];
 }
@@ -239,7 +246,13 @@ export async function discoverProviderModels(options: DiscoverProviderModelsOpti
 		const index = configured.findIndex((entry) => isRecord(entry) && entry.id === listed.id);
 		const existing = index >= 0 ? configured[index] : undefined;
 		const current = isRecord(existing) ? existing : undefined;
-		const next = withEfforts(current ?? { id: listed.id }, parsed);
+		const { discoveredContextWindow: _previousWindow, ...configuredFields } = current ?? { id: listed.id };
+		const next = withEfforts(
+			listed.contextWindow === undefined
+				? configuredFields
+				: { ...configuredFields, discoveredContextWindow: listed.contextWindow },
+			parsed,
+		);
 		if (current === undefined) {
 			configured.push(next);
 			report.added.push(listed.id);
