@@ -1,14 +1,14 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { webfetch } from "../../../src/core/extensions/builtin/webfetch/webfetch/tool.ts";
-import type { ExtensionContext } from "../../../src/core/extensions/types.ts";
+import type { ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 
 const CHALLENGE =
 	'<!doctype html><html><head><title>Just a moment...</title></head><body><main><h1>Just a moment...</h1><p>Checking your browser before accessing the source.</p><div class="cf-challenge">Verify you are human</div></main></body></html>';
 const ARTICLE = `<!doctype html><html><head><title>How CAPTCHAs work</title></head><body><article><h1>How CAPTCHAs work</h1>${"<p>A CAPTCHA asks you to verify you are human, for example with a g-recaptcha widget, before a form is accepted. Sites use them against automated sign-ups.</p>".repeat(30)}</article></body></html>`;
 
 const servers: Server[] = [];
-const context = {} as ExtensionContext;
+const context = {} as ExtensionToolContext;
 const previousBrowserSetting = process.env.PI_WEBFETCH_BROWSER;
 
 beforeEach(() => {
