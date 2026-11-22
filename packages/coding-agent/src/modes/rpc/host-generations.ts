@@ -143,7 +143,9 @@ async function claimEnded(owner: SessionPathOwner, ended: ReadonlySet<string>): 
 		);
 }
 
-function memoryOf(metrics: HostProcessMetrics): Pick<HostGenerationRow, "rss_mb" | "host_rss_mb" | "host_footprint_mb"> {
+function memoryOf(
+	metrics: HostProcessMetrics,
+): Pick<HostGenerationRow, "rss_mb" | "host_rss_mb" | "host_footprint_mb"> {
 	return { rss_mb: metrics.rss_mb, host_rss_mb: metrics.host_rss_mb, host_footprint_mb: metrics.host_footprint_mb };
 }
 
