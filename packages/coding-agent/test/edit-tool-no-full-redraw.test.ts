@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { Container, type Terminal, Text, type TUI, TuiMainScreen } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createEditToolDefinition } from "../src/core/tools/edit.ts";
-import { computeEditsDiff, type Edit } from "../src/core/tools/edit-diff.ts";
+import type { Edit } from "../src/core/tools/edit-diff.ts";
+import { computeEditsDiff } from "../src/core/tools/edit-preview.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 

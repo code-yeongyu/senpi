@@ -69,7 +69,9 @@ export type LedgerRefusal =
 	| "invalid_transition"
 	| "invalid_renewal"
 	| "invalid_time"
-	| "terminal";
+	| "terminal"
+	/** A guard refused the step: the sender's epoch is below the hand's floor for the call's scope (S35). */
+	| "epoch_fenced";
 export type LedgerReply =
 	| { readonly status: "applied" | "replayed"; readonly entry: ExecutionEntry }
 	| { readonly status: "refused"; readonly reason: LedgerRefusal }

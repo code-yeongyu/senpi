@@ -1,8 +1,10 @@
-import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
+import { type AgentEvent, type AgentTool, openMemoryBatchStore } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import { createCursorExecBridge } from "../src/core/cursor-exec-bridge.ts";
+
+const PREPARED = { openBatchStore: openMemoryBatchStore, getExecutionScope: () => ({ id: "test-scope", root: "" }) };
 
 function stubTool(
 	name: string,
@@ -25,6 +27,7 @@ function makeBridge(tools: AgentTool[], events: AgentEvent[] = []) {
 	const byName = new Map(tools.map((tool) => [tool.name, tool]));
 	const runSignal = new AbortController().signal;
 	return createCursorExecBridge({
+		...PREPARED,
 		getTool: (name) => byName.get(name),
 		getAbortSignal: () => runSignal,
 		emitEvent: async (event) => {
@@ -223,6 +226,7 @@ describe("cursor exec bridge", () => {
 		const emitEvent = vi.fn();
 		const tool = stubTool("read", Type.Object({ path: Type.String() }), vi.fn());
 		const bridge = createCursorExecBridge({
+			...PREPARED,
 			getTool: (name) => (name === "read" ? tool : undefined),
 			getAbortSignal: () => runSignal,
 			emitEvent,
@@ -239,6 +243,7 @@ describe("cursor exec bridge", () => {
 		const emitEvent = vi.fn();
 		const tool = stubTool("read", Type.Object({ path: Type.String() }), execute);
 		const bridge = createCursorExecBridge({
+			...PREPARED,
 			getTool: (name) => (name === "read" ? tool : undefined),
 			getAbortSignal: () => undefined,
 			emitEvent,
@@ -268,6 +273,7 @@ describe("cursor exec bridge", () => {
 		const emitEvent = vi.fn();
 		const tool = stubTool("read", Type.Object({ path: Type.String() }), execute);
 		const bridge = createCursorExecBridge({
+			...PREPARED,
 			getTool: (name) => (name === "read" ? tool : undefined),
 			getAbortSignal: () => activeSignal,
 			preflightToolCall: async () => {
@@ -289,11 +295,69 @@ describe("cursor exec bridge", () => {
 		expect(execute).not.toHaveBeenCalled();
 	});
 
+	// #5738 review: on the prepared host, preflight is followed by the call's digest, ledger steps and release before the
+	// tool runs. A run that ends normally changes the agent's signal without aborting it, so ownership must be rechecked
+	// at execution itself, not only when preflight returns.
+	it("refuses to execute when the owning run ends after preflight but before the tool runs", async () => {
+		const owner = new AbortController();
+		const replacement = new AbortController();
+		let activeSignal: AbortSignal | undefined = owner.signal;
+		const execute = vi.fn();
+		const tool = stubTool("write", Type.Object({ path: Type.String(), content: Type.String() }), execute);
+		const bridge = createCursorExecBridge({
+			...PREPARED,
+			getTool: (name) => (name === "write" ? tool : undefined),
+			getAbortSignal: () => activeSignal,
+			preflightToolCall: async () => {
+				setImmediate(() => {
+					activeSignal = replacement.signal;
+				});
+				return undefined;
+			},
+			emitEvent: async () => undefined,
+		});
+
+		const result = asToolResult(
+			await bridge.write?.({ path: "a.ts", fileText: "x", toolCallId: "call-owner-left-mid-dispatch" } as never),
+		);
+
+		expect(execute).not.toHaveBeenCalled();
+		expect(result.isError).toBe(true);
+		expect(result.content[0]).toMatchObject({ text: expect.stringContaining("active run") });
+	});
+
+	// #5738 review: the bridge dropped its own non-object guard; the prepared executor's argument validation runs after
+	// prepareArguments, so such a call is still refused before preflight and before the tool.
+	it("refuses non-object prepared arguments before preflight and execution", async () => {
+		const execute = vi.fn();
+		const preflightToolCall = vi.fn(async () => undefined);
+		const tool = {
+			...stubTool("read", Type.Object({ path: Type.String() }), execute),
+			prepareArguments: () => "not-an-object",
+		} as unknown as AgentTool;
+		const runSignal = new AbortController().signal;
+		const bridge = createCursorExecBridge({
+			...PREPARED,
+			getTool: (name) => (name === "read" ? tool : undefined),
+			getAbortSignal: () => runSignal,
+			preflightToolCall,
+			emitEvent: async () => undefined,
+		});
+
+		const result = asToolResult(await bridge.read?.({ path: "a.ts", toolCallId: "call-non-object" } as never));
+
+		expect(result.isError).toBe(true);
+		expect(result.content[0]).toMatchObject({ text: expect.stringContaining("must be object") });
+		expect(preflightToolCall).not.toHaveBeenCalled();
+		expect(execute).not.toHaveBeenCalled();
+	});
+
 	it("propagates lifecycle listener failures through the bridge dispatch", async () => {
 		const runSignal = new AbortController().signal;
 		const execute = vi.fn();
 		const tool = stubTool("read", Type.Object({ path: Type.String() }), execute);
 		const bridge = createCursorExecBridge({
+			...PREPARED,
 			getTool: (name) => (name === "read" ? tool : undefined),
 			getAbortSignal: () => runSignal,
 			emitEvent: async () => {
@@ -319,6 +383,7 @@ describe("cursor exec bridge", () => {
 		const runSignal = new AbortController().signal;
 		const tool = stubTool("write", Type.Object({ path: Type.String(), content: Type.String() }), () => undefined);
 		const bridge = createCursorExecBridge({
+			...PREPARED,
 			getTool: (name) => (name === "write" ? tool : undefined),
 			getAbortSignal: () => runSignal,
 			emitEvent: async () => undefined,

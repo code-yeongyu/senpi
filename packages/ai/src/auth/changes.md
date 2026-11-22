@@ -1,3 +1,169 @@
+## 2026-11-05 - Reauthorizing a signed-out ChatGPT account restores it in place (part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `LoginOptions.reauthorizeSlot` names the saved account that `reauthorize` selects.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` takes `reauthorizeSlot` and rewrites exactly that account. It keeps the name, label and source, clears `signedOut`, and moves the flat projection to it when it carried that account or when the whole credential was signed out.
+- `packages/ai/src/auth/pool/slots.ts`: before it rewrites the account, the sign-in must be the same ChatGPT account. The route must match; SIWC must match issuer, subject and client ID; legacy must match the token identity, or the workspace once signed out. Otherwise `ReauthorizeAccountMismatchError` is thrown and nothing is written.
+
+### Why
+
+- A signed-out account holds blank tokens. Neither the token-identity match nor the sign-in takeover could find it, so reauthorizing it appended a duplicate `login-N`.
+
+### Why an extension could not handle it
+
+- The credential pool's login merge is shared by every login entry point.
+
+### Expected merge conflict zones
+
+- `appendLoginSlot` and its options type.
+
+## 2026-10-30 - Replace a returning SIWC registration instead of appending (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: match SIWC logins by their verified issuer, subject and issued client ID; replace the existing slot while keeping its immutable name, display name, pin, order and sibling material; an SIWC login that matches no tuple is appended and never falls back to token-identity replacement.
+
+### Why
+
+- `packages/ai/src/auth/pool/slots.ts`: fresh tokens for the same registration otherwise allocate another login-N slot. Email is not identity.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/pool/slots.ts`: the common login commit path owns the serialized update against current stored credentials.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot`.
+
+## 2026-10-30 - Preserve per-account ChatGPT routes and identity (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: credentials may select a chat API and record their ChatGPT route. Absent routes remain legacy.
+- `packages/ai/src/auth/pool/slots.ts`: keep route, identity, issued client ID, scopes, retained ID token and permission state through slot promotion, projection and refresh; a same-account re-login replaces only a slot on its own route (legacy Codex vs Sign in with ChatGPT), never one on the other route.
+
+### Why
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/pool/slots.ts`: mixed SIWC and legacy accounts need account-specific transport and metadata without inheriting a sibling's registration.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/pool/slots.ts`: the shared auth and storage contracts precede provider dispatch.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: auth contracts. `packages/ai/src/auth/pool/slots.ts`: projection and refresh merge helpers.
+
+## 2026-10-30 - Pass an explicitly selected account to OAuth login (senpi#5046)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts` adds optional `LoginOptions.reauthorize` for the selected saved OAuth credential; omission means Add account.
+
+### Why
+
+- `packages/ai/src/auth/types.ts` must distinguish a selected account from new registration without inferring one from the active provider credential.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` owns the options forwarded through Models to bundled provider login.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: LoginOptions.
+
+## 2026-10-30 - Record SIWC plan permission and explicit plan consent (senpi#5044)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: add optional `OAuthCredential.planUsageEnabled` and `LoginOptions.planUsageConsent` with the saved issued client ID.
+
+### Why
+
+- `packages/ai/src/auth/types.ts`: callers need a backward-compatible permission field and an explicit opt-in for later plan consent.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts`: shared login options and persisted credential metadata are core auth contracts.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: `OAuthCredential` and `LoginOptions` optional fields.
+
+## 2026-10-30 - Carry the validated SIWC identity on OAuth credentials (senpi#5012)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts` declares optional subject, display-only email, issuer, clientId, idToken, and scopes fields on `OAuthCredential`. Provider registration and the missing-scope rejection remain unchanged.
+
+### Why
+
+- `packages/ai/src/auth/types.ts`: the validated identity and retained ID token must survive storage so a later sign-in can send `id_token_hint` and match the same account.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` is the shared persisted credential contract read by every auth consumer.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: `OAuthCredential` optional fields.
+
+## 2026-10-30 - Serialize rotating-token refresh per session (senpi#5003, PR #5024)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts` adds the optional `CredentialStore.withRefreshLock` capability. `packages/ai/src/auth/oauth-refresh.ts` holds it across read-latest, exchange and persistence, sharing a stable provider/slot identity between flat, named-slot and catalog refreshes.
+
+### Why
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/oauth-refresh.ts` previously provided only process-local exchange deduplication. Compare-and-swap after exchange cannot prevent two processes from consuming one rotating refresh token. The global write lock stays outside the exchange as required by #1542.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/oauth-refresh.ts` define the credential-store contract and common refresh path below extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: credential-store capability. `packages/ai/src/auth/oauth-refresh.ts`: pre-exchange read and dispatch.
+
+## 2026-10-27 - Credentials carry a login id that only a sign-in writes (senpi#4099)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: optional `loginId` on `ApiKeyCredential` and `OAuthCredential`. It is not key material. A refresh keeps or drops it and never mints one: the pooled merges spread the stored credential and keep it, while the single-account refresh (`mergeRefreshed` with no accounts) replaces the flat credential and drops it.
+- `packages/ai/src/auth/pool/login-id.ts` (fork-only): `stampLogin(credential)` sets a fresh random `loginId` on a credential a sign-in (a login or an account import) stores.
+
+### Why
+
+- Retry fallback needs a durable "someone signed in" signal that a token refresh never produces (senpi#4099). The material HMAC moves on every refresh.
+
+### Why an extension could not handle it
+
+- The field belongs to the stored credential contract that every login and refresh path shares.
+
+### Expected merge conflict zones
+
+- The `ApiKeyCredential` and `OAuthCredential` interfaces in `auth/types.ts`.
+
+## 2026-10-27 - Never exchange a managed account-pool sentinel (senpi#3924)
+
+### What changed
+
+- `packages/ai/src/auth/resolve.ts`: `resolveStoredOAuth` refuses a stale credential whose `access` and `refresh` are the provider's managed-sentinel material (`managedSentinelMaterials`) with a `ModelsError("auth")` instead of calling `refreshOAuthCredential`, so the placeholder never reaches a provider's token endpoint.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- Staleness and the refresh call live inside `resolveStoredOAuth`, below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the staleness block at the top of `resolveStoredOAuth` in `auth/resolve.ts`.
+
 ## 2026-10-30 - Product display name in login options (senpi#5014, part of #5003)
 
 ### What changed

@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { resolveMovedPath } from "../core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { ScheduledJob } from "../core/extensions/builtin/schedule/types.ts";
 import { liveSessionHolders } from "../core/session-holders.ts";
+import { SESSION_HELD_EXIT_CODE } from "./session-opening.ts";
 import { killWindowsProcessTree } from "../utils/shell.ts";
 
 /** What a delivery hook receives on stdin, one JSON object. */
@@ -28,7 +29,14 @@ export interface ScheduledPromptEvent {
 	readonly fireCount: number;
 }
 
-export type DeliveryResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
+export type DeliveryResult =
+	| { readonly ok: true }
+	| {
+			readonly ok: false;
+			readonly error: string;
+			/** Nothing was delivered because another live process holds the session: retry later, not a failure. */
+			readonly sessionHeld?: true;
+	  };
 /** Called with the delivery process pid as soon as it exists, so the session lock can record it. */
 export interface DeliveryContext {
 	readonly onSpawn?: (pid: number) => Promise<void>;
@@ -61,6 +69,8 @@ export interface ProcessLaunch {
 	readonly stdin?: string;
 	/** win32: pass `args` to the process unquoted (a `cmd.exe /s /c "..."` command line). */
 	readonly windowsVerbatimArguments?: boolean;
+	/** An exit code meaning the session was held and nothing ran; only the senpi resume delivery sets it. */
+	readonly sessionHeldExitCode?: number;
 }
 
 const STDERR_TAIL_CHARS = 2000;
@@ -130,7 +140,10 @@ export function runDeliveryProcess(
 			clearTimeout(timer);
 			if (failure !== undefined) resolve({ ok: false, error: failure });
 			else if (code === 0) resolve({ ok: true });
-			else {
+			else if (launch.sessionHeldExitCode !== undefined && code === launch.sessionHeldExitCode) {
+				const reason = stderr.trim() || "the session is open in another process";
+				resolve({ ok: false, error: reason, sessionHeld: true });
+			} else {
 				const status = code === null ? `signal ${signal}` : `exit code ${code}`;
 				resolve({ ok: false, error: stderr.trim() ? `${status}: ${stderr.trim()}` : status });
 			}
@@ -202,6 +215,7 @@ export function sessionResumeDelivery(
 				args: [...senpi.args, "-p", "--session", event.sessionFile ?? event.sessionId, event.message],
 				cwd: event.cwd,
 				env: eventEnv(event),
+				sessionHeldExitCode: SESSION_HELD_EXIT_CODE,
 			},
 			timeoutMs,
 			context,

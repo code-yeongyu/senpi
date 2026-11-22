@@ -173,7 +173,7 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 		// A corrupt manifest is left as it was (fail closed); a readable one is rewritten to the truth.
 		if (restoredFromReadableManifest) await writer.persistRestored();
 		state.ensurePersistence = null;
-		const self = { pid: process.pid, bootAtMs: processBootAtMs(), processStartedAtMs: ownProcessStartedAtMs() };
+		const self = { pid: process.pid, bootAtMs: await processBootAtMs(), processStartedAtMs: ownProcessStartedAtMs() };
 		// Housekeeping only: a failed sweep leaves the files for the next start to reclaim.
 		void sweepTerminalStateDir(dir, { self, keep: new Set([`${encoded}.lease`, `${encoded}.json`]) }).catch(
 			() => undefined,
@@ -247,8 +247,11 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 	};
 }
 
-/** session_shutdown (not reload): stop waiting, finish any restore, suspend and flush, release. */
-export async function stopPersistence(state: PersistenceState, sessionKey: string): Promise<void> {
+/**
+ * session_shutdown (not reload): stop waiting, finish any restore, suspend and flush, release. A graceful close
+ * (`closed`, oh-my-openagent#14313) records nothing to restore instead of suspending.
+ */
+export async function stopPersistence(state: PersistenceState, sessionKey: string, closed = false): Promise<void> {
 	const keeper = state.keeper;
 	keeper?.stop();
 	state.keeper = null;
@@ -261,7 +264,7 @@ export async function stopPersistence(state: PersistenceState, sessionKey: strin
 	const writer = state.manifestWriter;
 	if (writer && state.bundle) await writer.observeMonitorState(state.bundle.monitors.snapshot());
 	detachPersistence(state, sessionKey);
-	if (writer) await writer.recordShutdown();
+	if (writer) await (closed ? writer.recordClosed() : writer.recordShutdown());
 	if (lease !== null) await releaseTerminalLease(lease);
 	decisions.get(sessionKey)?.resolve();
 }

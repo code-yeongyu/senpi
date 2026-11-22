@@ -222,3 +222,35 @@ it("cancels once on close and abort", async () => {
 	expect(await answer).toMatchObject({ status: "cancelled" });
 	expect(output.filter((record) => "type" in record && record.type === "question_resolved")).toHaveLength(1);
 });
+// senpi#5960: a draft that lands while the winning answer is being admitted must not overwrite it, and a
+// claimed question answers progress the way a resolved one does.
+it("refuses progress once a question is claimed, so the admitted answer stands", async () => {
+	const output: object[] = [];
+	const bridge = new ConnectionQuestionBridge((record) => output.push(record));
+	const answer = bridge.ask(request);
+	const id = bridge.pendingQuestions()[0].id;
+	let progress: string | undefined;
+	expect(
+		bridge.respond(
+			{
+				type: "extension_ui_response",
+				id,
+				answers: { q1: { selected: ["A"] }, q2: { selected: ["B"] } },
+				comment: "",
+			},
+			() => {
+				progress = bridge.progress({
+					type: "extension_ui_progress",
+					id,
+					answers: { q1: { selected: ["B"] }, q2: { selected: ["B"] } },
+				});
+			},
+		),
+	).toBe(true);
+	expect(progress).toBe("question_already_resolved");
+	expect(await answer).toMatchObject({
+		status: "answered",
+		answers: { q1: { selected: ["A"] }, q2: { selected: ["B"] } },
+		unanswered: [],
+	});
+});

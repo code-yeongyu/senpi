@@ -22,6 +22,7 @@ const bunChild = (() => {
 })();
 
 const hostFixture = join(import.meta.dirname, "fixtures", "process-kernel-host.ts");
+const isolationDefaultFixture = join(import.meta.dirname, "fixtures", "js-isolation-default-host.ts");
 const subreaperFixture = join(import.meta.dirname, "fixtures", "process-kernel-subreaper.ts");
 
 /** A child the subreaper has not reaped yet is a zombie: it no longer runs. */
@@ -1298,6 +1299,44 @@ return "done";`,
 		},
 		60_000,
 	);
+
+	// RED on the base: under bun the default isolation resolves to worker, so the SIGBUS the cell raises kills the bun
+	// host itself (no JSON line, a signal exit). GREEN: the kernel is a child process, the host prints its survival.
+	if (process.platform !== "win32" && bunChild !== undefined)
+		it(
+			"Given a bun host with no isolation setting, when its kernel child dies of SIGBUS, then the host survives and the next cell says the kernel restarted",
+			{ timeout: 60_000 },
+			async () => {
+				const { SENPI_CODEMODE_JS_ISOLATION: _unset, ...env } = process.env;
+				const host = spawn(bunChild, [isolationDefaultFixture], { env, stdio: ["ignore", "pipe", "pipe"] });
+				let stdout = "";
+				let stderr = "";
+				host.stdout.on("data", (chunk: Buffer) => {
+					stdout += String(chunk);
+				});
+				host.stderr.on("data", (chunk: Buffer) => {
+					stderr += String(chunk);
+				});
+				const [code, signal] = (await once(host, "exit")) as [number | null, NodeJS.Signals | null];
+
+				expect({ code, signal, stderr: stderr.slice(-2_000) }).toMatchObject({ code: 0, signal: null });
+				const report: unknown = JSON.parse(stdout.trim().split("\n").at(-1) ?? "null");
+				expect(report).toMatchObject({
+					resolved: "process",
+					modeBefore: "process",
+					pidBefore: expect.any(Number),
+					crashedOk: false,
+					crashedMessage: expect.stringMatching(/SIGBUS|signal (7|10)/),
+					afterOk: true,
+					afterValue: '"undefined"',
+					afterKernelState: "restarted",
+					afterNotice: expect.stringContaining("kernel was restarted"),
+					pidAfter: expect.any(Number),
+				});
+				const pids = report as { pidBefore: number; pidAfter: number };
+				expect(pids.pidAfter).not.toBe(pids.pidBefore);
+			},
+		);
 
 	it("When a worker-mode cell crashes, then the next result carries no restart notice, as before process mode existed", async () => {
 		const kernel = workerKernel();

@@ -3,9 +3,9 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { recoveryCarrier } from "../../../src/core/session-recovery-identity.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 import { EVENT_SAFETY_MS, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -65,13 +65,11 @@ it("keeps the real in-process epoch out of persisted JSONL and public legacy byt
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	const lines = captureLegacyBytes();
 	await using host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const client = host.client("legacy");
 	const opened = dataOf(await client.request({ type: "open_session", cwd: host.cwd }));
 	const sessionId = String(opened.sessionId);
-	const entry: RpcSessionEntry | undefined = admissions.mock.results.findLast(
-		(result) => result.type === "return",
-	)?.value;
+	const entry = admissions.entryFor(sessionId);
 	const lane = entry?.acceptance;
 	const session = entry?.runtime?.session;
 	if (!lane || !session) throw new Error("no real in-process lane");

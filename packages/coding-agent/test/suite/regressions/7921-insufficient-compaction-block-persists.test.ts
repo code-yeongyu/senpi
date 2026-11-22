@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { CompactionRejectionCause } from "../../../src/core/extensions/types.ts";
 import { REQUIRED_COMPACTION_ERROR_MESSAGE, RequiredCompactionError } from "../../../src/index.ts";
 import { createHarness, getUserTexts, type Harness } from "../harness.ts";
 
@@ -131,10 +132,10 @@ describe("#7921 case 6: an insufficient accepted compaction keeps its blocked st
 	});
 
 	/**
-	 * A session whose automatic compaction failed after an earlier checkpoint, so the
-	 * automatic-loop latch is armed; `retryAllowed` decides whether a later attempt succeeds.
+	 * A session whose automatic compaction was rejected with `rejectionCause` after an earlier
+	 * checkpoint; `retryAllowed` decides whether a later attempt succeeds.
 	 */
-	async function createLatchedHarness(): Promise<{
+	async function createFailedCompactionHarness(rejectionCause?: CompactionRejectionCause): Promise<{
 		harness: Harness;
 		attempts: () => number;
 		allowRetry: (allowed: boolean) => void;
@@ -150,7 +151,7 @@ describe("#7921 case 6: an insufficient accepted compaction keeps its blocked st
 				(pi) => {
 					pi.on("session_before_compact", (event) => {
 						attempts++;
-						if (!retryAllowed) return { cancel: true, reason: "summary unavailable" };
+						if (!retryAllowed) return { cancel: true, rejectionCause, reason: "summary unavailable" };
 						const retained = event.branchEntries.at(-1);
 						if (!retained) throw new Error("Expected a retained response");
 						return {
@@ -185,7 +186,6 @@ describe("#7921 case 6: an insufficient accepted compaction keeps its blocked st
 		if (liveAssistant?.role !== "assistant") throw new Error("Expected the live assistant response");
 		await privateMethod(harness.session, "_checkCompaction")(liveAssistant, true);
 		expect(attempts).toBe(1);
-		expect(Reflect.get(harness.session, "_blockedPostCompactionAssistant")).toBeDefined();
 		return {
 			harness,
 			attempts: () => attempts,
@@ -193,6 +193,13 @@ describe("#7921 case 6: an insufficient accepted compaction keeps its blocked st
 				retryAllowed = allowed;
 			},
 		};
+	}
+
+	/** A deterministic rejection after an earlier checkpoint arms the automatic-loop latch. */
+	async function createLatchedHarness(): ReturnType<typeof createFailedCompactionHarness> {
+		const failed = await createFailedCompactionHarness();
+		expect(Reflect.get(failed.harness.session, "_blockedPostCompactionAssistant")).toBeDefined();
+		return failed;
 	}
 
 	// senpi#4161: the automatic-loop latch must not prevent an explicit new turn from recovering.
@@ -237,6 +244,23 @@ describe("#7921 case 6: an insufficient accepted compaction keeps its blocked st
 		expect(attempts()).toBe(1);
 		expect(harness.faux.state.callCount).toBe(0);
 	});
+
+	// senpi#6760: a transient provider failure, and the breaker cooldown repeated ones trip, say
+	// nothing about the context, so they must not latch admission; an automated session would
+	// otherwise never compact again.
+	it.each(["transient-failure", "circuit-breaker"] as const)(
+		"retries compaction on the next automated prompt after a %s rejection",
+		async (rejectionCause) => {
+			const { harness, attempts, allowRetry } = await createFailedCompactionHarness(rejectionCause);
+
+			expect(Reflect.get(harness.session, "_blockedPostCompactionAssistant")).toBeUndefined();
+			allowRetry(true);
+			harness.setResponses([fauxAssistantMessage("answered the automated nudge")]);
+			await expect(harness.session.prompt("automated nudge", { source: "extension" })).resolves.toBeUndefined();
+			expect(attempts()).toBe(2);
+			expect(harness.faux.state.callCount).toBe(1);
+		},
+	);
 
 	it("clears the block once a real compaction reduces the context", async () => {
 		const { harness, assistant } = await createBlockedHarness();

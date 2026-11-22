@@ -37,7 +37,14 @@ const recordSchema = z
 	.passthrough();
 export type WorkerHostRecord = z.infer<typeof recordSchema>;
 
-export function endpoint(input: Readable, output: Writable, diagnostic: () => string) {
+export const RPC_RESPONSE_TIMEOUT_MS = 30_000;
+
+export function endpoint(
+	input: Readable,
+	output: Writable,
+	diagnostic: () => string,
+	openTimeoutMs = RPC_RESPONSE_TIMEOUT_MS,
+) {
 	let serial = 0;
 	const records: WorkerHostRecord[] = [];
 	const listeners = new Set<{ accept: (record: WorkerHostRecord) => void; reject: (error: Error) => void }>();
@@ -75,7 +82,10 @@ export function endpoint(input: Readable, output: Writable, diagnostic: () => st
 	input.on("close", onEnd);
 	input.on("error", fail);
 	output.on("error", fail);
-	function wait(predicate: (record: WorkerHostRecord) => boolean, ms = 30_000): Promise<WorkerHostRecord> {
+	function wait(
+		predicate: (record: WorkerHostRecord) => boolean,
+		ms = RPC_RESPONSE_TIMEOUT_MS,
+	): Promise<WorkerHostRecord> {
 		if (terminalError) return Promise.reject(terminalError);
 		return new Promise((resolveRecord, reject) => {
 			const finish = () => {
@@ -115,7 +125,10 @@ export function endpoint(input: Readable, output: Writable, diagnostic: () => st
 		},
 		request(command: Record<string, unknown>, ms?: number) {
 			const id = `worker-test-${++serial}`;
-			const response = wait((record) => record.type === "response" && record.id === id, ms);
+			const response = wait(
+				(record) => record.type === "response" && record.id === id,
+				ms ?? (command.type === "open_session" ? openTimeoutMs : RPC_RESPONSE_TIMEOUT_MS),
+			);
 			output.write(`${JSON.stringify({ ...command, id })}\n`);
 			return response;
 		},

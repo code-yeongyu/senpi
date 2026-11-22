@@ -23,6 +23,8 @@ export interface LifecyclePersistence {
 	readonly sessionId: string;
 	readonly spawnedBy?: SpawnedBy;
 	readonly entries: readonly SessionEntry[];
+	/** The run whose end the transcript holds (`lastRunEnd`), even if no idle record cleared its `runActive`. */
+	readonly endedRunId?: string;
 	append(record: LifecycleRecord): void;
 	emit(event: SessionLifecycleEvent): void;
 }
@@ -88,7 +90,10 @@ export class LifecycleLedger {
 		this.attention = new LifecycleAttention(persistence.sessionId, restored);
 		this.sealed = restored?.epochSealed ?? false;
 		this.runId = restored?.runId;
-		this.interrupted = restored?.interrupted === true || (restored?.runActive === true && !this.sealed);
+		// A run recorded active is interrupted only when the transcript holds no end of it (senpi#7016).
+		this.interrupted =
+			restored?.interrupted === true ||
+			(restored?.runActive === true && !this.sealed && restored.runId !== persistence.endedRunId);
 		this.goalCompleted = restored?.completedGoalId;
 		this.runCompleted = restored?.completedRunId;
 		this.lastTurnEnd = restored?.lastTurnEnd;
