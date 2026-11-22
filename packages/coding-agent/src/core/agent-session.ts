@@ -1729,7 +1729,14 @@ export class AgentSession {
 	 * none of those change the context that was rejected; only a real reduction, a
 	 * new user prompt, or a manual compaction releases it (#7921 case 6).
 	 */
-	private _blockedPostCompactionAssistant: { assistant: AssistantMessage; contentTokens: number } | undefined;
+	private _blockedPostCompactionAssistant:
+		| {
+				assistant: AssistantMessage;
+				contentTokens: number;
+				/** Admission budget (window minus reserve) of the model in force when the latch armed (#2073). */
+				admissionBudgetTokens: number | undefined;
+		  }
+		| undefined;
 	private _delegatedCompactionKey: { provider: string; id: string } | undefined;
 	private _skipNextPostCompactionAssistantCheck = false;
 	private _scheduledContinuationRecompacted = false;
@@ -3377,11 +3384,39 @@ export class AgentSession {
 		return estimateMessagesTokens(filterContextExcludedMessages(this._runtimeMessages()));
 	}
 
-	/** A compaction that genuinely reduced the context clears the blocked state. */
+	/** Admission budget of the model in force (window minus effective reserve); undefined without a usable model. */
+	private _blockedAdmissionBudgetTokens(): number | undefined {
+		const model = this.model;
+		if (!model || model.contextWindow <= 0) return undefined;
+		return (
+			model.contextWindow -
+			resolveEffectiveReserveTokens(model.contextWindow, this._getCompactionSettings(model))
+		);
+	}
+
+	/**
+	 * A compaction that genuinely reduced the context clears the blocked state. So does a model
+	 * change whose admission budget verifiably expanded since arming while the unchanged content
+	 * now fits: the latch is evidence the context cannot be sent (#7921 case 6) measured against
+	 * the model in force when it armed, so only a strictly larger budget in force releases it
+	 * (#2073). A same-budget re-evaluation never releases - a provider-reported overflow or
+	 * usage figure can exceed the window while the local byte-estimate stays small - and an
+	 * unknown budget (no model, or a latch armed without one) never releases either.
+	 */
 	private _releaseBlockedPostCompactionAdmissionIfReduced(): void {
 		const blocked = this._blockedPostCompactionAssistant;
 		if (blocked === undefined) return;
 		if (this._blockedAdmissionContentTokens() < blocked.contentTokens) {
+			this._blockedPostCompactionAssistant = undefined;
+			return;
+		}
+		const budgetTokens = this._blockedAdmissionBudgetTokens();
+		if (
+			blocked.admissionBudgetTokens !== undefined &&
+			budgetTokens !== undefined &&
+			budgetTokens > blocked.admissionBudgetTokens &&
+			!this._exceedsPolicyByContentEstimate()
+		) {
 			this._blockedPostCompactionAssistant = undefined;
 		}
 	}
@@ -11749,6 +11784,7 @@ export class AgentSession {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
 						contentTokens: this._blockedAdmissionContentTokens(),
+						admissionBudgetTokens: this._blockedAdmissionBudgetTokens(),
 					};
 				}
 				return compacted;
@@ -11895,6 +11931,7 @@ export class AgentSession {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
 						contentTokens: this._blockedAdmissionContentTokens(),
+						admissionBudgetTokens: this._blockedAdmissionBudgetTokens(),
 					};
 				}
 				return compacted;
