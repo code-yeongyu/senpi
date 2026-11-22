@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseHookConfig } from "../../src/core/extensions/builtin/hooks/index.ts";
@@ -76,8 +76,18 @@ interface RunOptions {
 	readonly rewrittenCommand?: string;
 }
 
+// senpi#7007: the auto preset approves nothing in a session root inside a hidden directory (auto-paths.ts), so a
+// TMPDIR such as ~/.run-tmp/<run> would make the allowed read below need a prompt. The project lives outside one.
+function projectParent(): string {
+	return tmpdir()
+		.split(sep)
+		.some((segment) => segment.startsWith("."))
+		? "/tmp"
+		: tmpdir();
+}
+
 async function runAutoPresetBashCall(options: RunOptions) {
-	const projectDir = mkdtempSync(join(tmpdir(), "senpi-x1-project-"));
+	const projectDir = mkdtempSync(join(projectParent(), "senpi-x1-project-"));
 	const hookDir = mkdtempSync(join(tmpdir(), "senpi-x1-hook-"));
 	dirs.push(projectDir, hookDir);
 	const notesPath = join(projectDir, "notes.txt");
