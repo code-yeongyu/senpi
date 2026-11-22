@@ -5,7 +5,7 @@
 // `{legacy:"7"}` is blocked by hook2, so its body never runs. trace.log (O5 tree) holds the order; the replaced result
 // and the block reason reach the next request (O1) and the transcript (O7).
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, symlinkSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { resolveBun } from "../../../scripts/lib/common.mjs";
 import { FIXTURES } from "./support/case-run.mjs";
@@ -50,6 +50,10 @@ export default {
 		await run.open();
 		await run.prompt("run qa twice");
 		await run.close();
+		const trace = readFileSync(join(run.box.cwd, "trace.log"), "utf8").split(/\r?\n/);
+		for (const required of ['pre({"value":42})', 'pre({"value":7})', 'post({"value":42})']) {
+			if (!trace.includes(required)) throw new Error(`E04 trace.log lacks command hook: ${required}`);
+		}
 		await run.reopenState();
 	},
 };
