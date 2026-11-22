@@ -241,6 +241,11 @@ Declared skills with missing descriptions are not loaded. Malformed `SKILL.md` f
 
 Name collisions (same name from different locations) warn and keep the first skill found.
 
+Clients displaying resource diagnostics can distinguish warnings by their optional `category`.
+`skill-ignored` means an ignore file hid a skill; `path` identifies its `SKILL.md`.
+It is distinct from `skill-link-blocked` (a link was not allowed) and `size-limit` (a resource exceeded a size limit).
+Warnings without a category can still be displayed using their `message`.
+
 ## Example
 
 ```
