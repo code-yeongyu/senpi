@@ -2,7 +2,7 @@
 // MCP stdio fixture server, the with-deps example extension and a sub-agent task component. The model side (fake model
 // server or the pinned real provider) is reached through the recording proxy (recording-proxy.mjs) for O3/O4.
 import { spawnSync } from "node:child_process";
-import { cpSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeSandbox, repoRoot, resolveBun } from "../../../../scripts/lib/common.mjs";
@@ -10,8 +10,8 @@ import { hermeticEnv } from "../../../../scripts/lib/mock-loop-support.mjs";
 
 export const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const MCP_SERVER = "fxstdio";
-/** The EQ task fixture: a deterministic stand-in for the sub-agent component, used only by the self-test. */
-export const SELF_TEST_TASK_EXTENSION = join(FIXTURE, "..", "..", "fused-equivalence", "fixtures", "task-tool.mjs");
+/** Background child reports and continuation delivery, used only by the self-test. */
+export const SELF_TEST_TASK_EXTENSION = join(FIXTURE, "support", "self-test-task.mjs");
 
 /** Terminal-identity variables the CLI renders into its prompt; pinned so every host sees the same. */
 const TERMINAL_ENV = ["TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM", "TERM_SESSION_ID", "ITERM_SESSION_ID"];
@@ -24,6 +24,9 @@ const TERMINAL_ENV = ["TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM", "TERM
 export function setUpSandbox({ label, taskExtension, extraEnv = {} }) {
 	const box = makeSandbox(`live-${label}`);
 	cpSync(join(FIXTURE, "repo"), box.cwd, { recursive: true });
+	const extensionDir = join(box.agentDir, "extensions");
+	mkdirSync(extensionDir);
+	cpSync(join(FIXTURE, "support", "tool-call-evidence.mjs"), join(extensionDir, "tool-call-evidence.js"));
 	const hookTrace = join(box.dir, "hook-trace.jsonl");
 	const hookCommand = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(FIXTURE, "hooks", "hook.mjs"))} ${JSON.stringify(hookTrace)}`;
 	// The CLI resolves its cwd through symlinks (macOS /var -> /private/var); the hooks file must name that same path.

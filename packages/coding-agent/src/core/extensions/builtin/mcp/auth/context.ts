@@ -51,6 +51,9 @@ export function resolveServerAuth(deps: ServerAuthDeps): ServerAuthPlan {
 		// flow and raises UnauthorizedError (-> needs_auth) on a token-less connect,
 		// rather than falling through to a client_credentials token request.
 		redirectUrl: deps.redirectUrl ?? BACKGROUND_REDIRECT,
+		// Only a caller that names its redirect sends an authorize request; background connects and refresh keep
+		// the stored registration so an existing sign-in keeps refreshing (senpi#6327).
+		requireRegisteredRedirect: deps.redirectUrl !== undefined,
 		scopes: deps.config.oauth?.scopes,
 		clientId: deps.config.oauth?.clientId,
 		clientMetadataUrl: deps.config.oauth?.clientMetadataUrl,

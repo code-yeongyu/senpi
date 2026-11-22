@@ -19,6 +19,23 @@ afterEach(async () => {
 
 const QUESTION = { id: "q1", header: "Ship", question: "Ship it?", options: [], multiSelect: false };
 
+it("never downgrades a secret-marked response into a persisted ordinary question answer", async () => {
+	const { answer, answered } = await terminalAsking("ordinary");
+	expect(
+		await answer({
+			id: "private",
+			uiRequestId: "ordinary",
+			answerId: "private",
+			secret: true,
+			answers: { q1: { selected: ["synthetic"] } },
+		}),
+	).toMatchObject({
+		success: false,
+		error: "invalid_secret_response",
+	});
+	expect(answered).toEqual([]);
+});
+
 async function terminalAsking(...requestIds: string[]) {
 	const pending = new Set(requestIds);
 	const answered: Array<{ readonly requestId: string; readonly response: QuestionResponse }> = [];

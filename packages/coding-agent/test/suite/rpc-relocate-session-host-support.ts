@@ -3,6 +3,7 @@
  * that offers `session_relocation` and stays attached, and a scripted turn in which the agent asks to move to Studio.
  */
 import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
+import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import relocateSessionExtension from "../../src/core/extensions/builtin/relocate-session/index.ts";
 import { startReleaseHost } from "./rpc-release-host-support.ts";
 
@@ -20,6 +21,8 @@ export interface RelocationHostOptions {
 	readonly closing?: FauxResponseStep;
 	/** Runs after the session is opened and before the desktop attaches. */
 	readonly beforeDesktop?: (host: Awaited<ReturnType<typeof startReleaseHost>>, sessionPath: string) => Promise<void>;
+	/** Replaces the builtin relocation extension, e.g. with one whose tools take longer to return. */
+	readonly extension?: ExtensionFactory;
 }
 
 export async function relocationHost(options: RelocationHostOptions = {}) {
@@ -29,7 +32,7 @@ export async function relocationHost(options: RelocationHostOptions = {}) {
 		due = resolve;
 	});
 	let onRequest: (record: WireRecord) => void = () => {};
-	const host = await startReleaseHost(relocateSessionExtension, {
+	const host = await startReleaseHost(options.extension ?? relocateSessionExtension, {
 		onRecord: (record, connection) => {
 			received.push({ connection, record });
 			if (record.type === "host_request") onRequest(record);

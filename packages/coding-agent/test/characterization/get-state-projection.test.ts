@@ -24,6 +24,7 @@ const IDLE_KEYS = [
 	"autoCompactionEnabled",
 	"contextUsage",
 	"cwd",
+	"effectivePermissionPreset",
 	"fastMode",
 	"favoriteModels",
 	"followUp",
@@ -44,6 +45,9 @@ const IDLE_KEYS = [
 	"pendingMessageCount",
 	"pendingModelSwitch",
 	"pendingQuestions",
+	"permissionPreset",
+	"permissionPresetSource",
+	"permissionPresetStatus",
 	"projectTrusted",
 	"retryAttempt",
 	"runPaused",
@@ -105,6 +109,7 @@ describe("X5: get_state projection", () => {
 		const state = await readState(client);
 
 		expect(Object.keys(state).sort()).toEqual(IDLE_KEYS);
+		expect(state.lifecycle).not.toHaveProperty("runId");
 		expect(withoutDeliveryStamp(state)).toEqual({
 			...sessionMirror(fixture.session),
 			answeredUiRequests: [],
@@ -124,6 +129,10 @@ describe("X5: get_state projection", () => {
 			retryAttempt: 0,
 			isBashRunning: false,
 			projectTrusted: false,
+			permissionPreset: "full-access",
+			permissionPresetSource: "host_default",
+			permissionPresetStatus: "applied",
+			effectivePermissionPreset: "full-access",
 			steering: [],
 			followUp: [],
 			ordered: [],
@@ -141,6 +150,9 @@ describe("X5: get_state projection", () => {
 		await runToAgentIdle(fixture, () => client.send({ type: "prompt", message: "Do one thing." }));
 		const state = await readState(client);
 
+		const start = client.messages().find((record) => record.type === "agent_start");
+		expect(start).toMatchObject({ runId: expect.any(String) });
+		expect(state.lifecycle).toHaveProperty("runId", start?.runId);
 		expect(withoutDeliveryStamp(state)).toMatchObject({
 			...sessionMirror(fixture.session),
 			isStreaming: false,

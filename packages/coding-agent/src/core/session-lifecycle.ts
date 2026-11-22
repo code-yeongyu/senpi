@@ -40,6 +40,8 @@ export class SessionLifecycleController {
 	private readonly options: SessionLifecycleOptions;
 	private idleBoundaryPassed = false;
 	private pendingHuman = false;
+	/** A host restart continues the engine-started run it cut short (senpi#7020); cleared when that run starts. */
+	private restartContinues = false;
 	private admittingHuman = false;
 	private runAdmitted = false;
 	private goal: Goal | null = null;
@@ -95,6 +97,11 @@ export class SessionLifecycleController {
 			if (report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId)
 				this.ownTask = report;
 		}
+		// Before crash recovery reads consumed custody as an interrupted run (senpi#4848).
+		this.obligations.settleEndedRuns(
+			this.ledger.runId,
+			this.ledger.runId !== undefined && this.ledger.runId === options.endedRunId,
+		);
 	}
 
 	get snapshot(): SessionLifecycle {
@@ -107,11 +114,31 @@ export class SessionLifecycleController {
 	}
 
 	get requiresHumanContinuation(): boolean {
-		return this.ledger.interrupted && !this.pendingHuman;
+		return this.ledger.interrupted && !this.pendingHuman && !this.restartContinues;
 	}
 
 	get nextRunOrigin(): "human" | "automatic" {
 		return this.pendingHuman ? "human" : "automatic";
+	}
+
+	/**
+	 * The current run when this process started it, not the run the session file left current. `startRun` settles what the
+	 * previous run consumed, so this run's consumed custody is the only custody a run of this process holds.
+	 */
+	get runStartedHere(): string | undefined {
+		const runId = this.ledger.runId;
+		return runId === this.restoredRunId ? undefined : runId;
+	}
+
+	/** The host's clean stop cut the running run short: record it interrupted, as a kill leaves it (senpi#7020). */
+	cutByHostShutdown(): void {
+		this.ledger.interrupted = true;
+		this.ledger.checkpoint();
+	}
+
+	/** The interrupted run was the engine's and a host restart cut it: its continuation needs no person (senpi#7020). */
+	continueAfterRestart(): void {
+		this.restartContinues = true;
 	}
 
 	restoreComplete(): void {
@@ -150,11 +177,14 @@ export class SessionLifecycleController {
 		this.liveness = undefined;
 		this.stopFacts = undefined;
 		this.deadlineStop = undefined;
-		const interruptedRun = this.ledger.interrupted ? this.ledger.runId : undefined;
+		// Settle whatever the previous run consumed, however it ended: idle() settles only a run that reaches it, and a
+		// run cut short by crash recovery or by a provider error that auto-retry replaces never does.
+		const previousRun = this.ledger.runId;
 		this.ledger.interrupted = false;
 		this.ledger.startRun(origin ?? (this.pendingHuman ? "human" : "automatic"));
 		this.pendingHuman = false;
-		if (interruptedRun) this.obligations.settleRun(interruptedRun);
+		this.restartContinues = false;
+		if (previousRun) this.obligations.settleRun(previousRun);
 		this.recompute();
 		this.ledger.publishUnwritten();
 	}
@@ -298,8 +328,17 @@ export class SessionLifecycleController {
 				activeCount: record.activeCount ?? 1,
 				...projectWaitItems(record),
 			}));
+		// A delivery's own custody while its send is in flight is the session starting a turn, not a wait (senpi#6810);
+		// once the live run consumed it, it is that run's own work until settleRun (senpi#6814 review).
+		const deliveryInFlight = active.some((record) => this.obligations.isDeliveryInFlight(record));
+		const liveRun = this.ledger.runActive ? this.ledger.runId : undefined;
 		const background: LifecycleWaits["background"][number][] = active
-			.filter((record) => record.kind === "background")
+			.filter(
+				(record) =>
+					record.kind === "background" &&
+					!this.obligations.isDeliveryInFlight(record) &&
+					!this.obligations.isConsumedBy(record, liveRun),
+			)
 			.map((record) => ({
 				source: record.source ?? record.key,
 				activeCount: record.activeCount ?? 1,
@@ -360,7 +399,11 @@ export class SessionLifecycleController {
 			if (this.ledger.interrupted)
 				synthetic.push({ key: `interrupted:${this.ledger.snapshot.epoch}`, kind: "interrupted_run" });
 			const noWake =
-				children === 0 && background.length === 0 && !continuationQueued && runtime.pendingMessages === 0;
+				children === 0 &&
+				background.length === 0 &&
+				!deliveryInFlight &&
+				!continuationQueued &&
+				runtime.pendingMessages === 0;
 			if (
 				input &&
 				noWake &&
@@ -397,6 +440,7 @@ export class SessionLifecycleController {
 			runtime.activity.isBashRunning ||
 			runtime.activity.hasSessionWork ||
 			runtime.pendingMessages > 0 ||
+			deliveryInFlight ||
 			continuationQueued;
 		const failure: SessionLifecycle["failure"] =
 			input &&

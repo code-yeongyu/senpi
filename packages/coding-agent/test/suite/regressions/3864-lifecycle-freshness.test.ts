@@ -97,7 +97,7 @@ it("re-stamps each attach from the cached line without mutating its content or c
 			...event,
 			lifecycle: { ...lifecycle, observedAt: new Date(SECOND).toISOString() },
 		});
-		expect(fanout["lifecycleSnapshots"].get("root")?.line).toBe(line);
+		expect(fanout.replay["lifecycleSnapshots"].get("root")?.line).toBe(line);
 		expect(event.lifecycle).not.toHaveProperty("observedAt");
 	} finally {
 		await fixture.cleanup();

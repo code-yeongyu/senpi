@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { basename, extname } from "node:path";
 import type { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import { extensionLoadKey } from "../../extension-load-key.ts";
 import type { ExtensionAPI, ToolInfo } from "../../types.ts";
@@ -12,8 +11,9 @@ import {
 	tokenizeToolText,
 } from "./engine/bm25.ts";
 import type { ToolSearchDocument, ToolSearchSource } from "./engine/document.ts";
-import { deriveExtensionRegistrationId, rehydrate } from "./engine/marker.ts";
+import { rehydrate } from "./engine/marker.ts";
 import { activationMarkerCandidates } from "./engine/marker-candidates.ts";
+import { extensionDocument } from "./extension-document.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "./tool.ts";
 
 export interface ToolSearchFeederHooks {
@@ -165,6 +165,20 @@ export class ToolSearchService {
 		return buildBm25Index(this.getCatalog()).search(query, limit, { precision: DEFAULT_BM25_PRECISION, ...options });
 	}
 
+	/**
+	 * Rank the tools the session routes through eval only (senpi#6886). They are never catalog entries, so no feeder
+	 * can activate them; a model reaches them as `tool.<name>(...)` inside an eval cell.
+	 */
+	searchEvalOnly(query: string, limit = 10, options: Bm25SearchOptions = {}): Bm25Result[] {
+		const catalogNames = new Set(this.getCatalog().map((doc) => doc.name));
+		const docs = this.#runtime
+			.getAllTools()
+			.filter((tool) => tool.evalOnly === true && !catalogNames.has(tool.name))
+			.map(extensionDocument)
+			.filter((doc): doc is ToolSearchDocument => doc !== undefined);
+		return buildBm25Index(docs).search(query, limit, { precision: DEFAULT_BM25_PRECISION, ...options });
+	}
+
 	/** Route all matches through their owning feeder, even when already active. */
 	activate(matches: readonly Bm25Result[]): string[] {
 		this.#assertLive();
@@ -279,31 +293,6 @@ export class ToolSearchService {
 		const added = [...new Set(names.filter((name) => !active.has(name)))].sort();
 		this.#runtime.setActiveTools([...current, ...added]);
 	}
-}
-
-function extensionDocument(tool: ToolInfo): ToolSearchDocument | undefined {
-	if (tool.name.length === 0) return undefined;
-	const ownerLabel = extensionOwnerLabel(tool);
-	const registrationId = deriveExtensionRegistrationId(tool.sourceInfo, tool.name);
-	if (registrationId.length === 0) return undefined;
-	return {
-		name: tool.name,
-		label: tool.label,
-		aliases: [],
-		description: tool.description,
-		searchText: tool.searchText,
-		keywords: tool.searchKeywords,
-		source: "extension",
-		group: tool.searchGroup ?? ownerLabel,
-		ownerLabel,
-		registrationId,
-	};
-}
-
-function extensionOwnerLabel(tool: ToolInfo): string {
-	const fileName = basename(tool.sourceInfo.path);
-	const extension = extname(fileName);
-	return extension.length === 0 ? fileName : fileName.slice(0, -extension.length);
 }
 
 function isValidDocument(doc: ToolSearchDocument, source: ToolSearchSource): boolean {

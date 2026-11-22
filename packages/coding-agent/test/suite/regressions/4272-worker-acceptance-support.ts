@@ -1,6 +1,8 @@
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "../../../src/cli/args.ts";
 import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
@@ -10,18 +12,30 @@ import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.
 import { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-client.ts";
 import type { SessionWorkerToHost } from "../../../src/modes/rpc/session-worker-protocol.ts";
 import { WorkerSessionRegistry } from "../../../src/modes/rpc/worker-session-registry.ts";
+import { EVENT_SAFETY_MS } from "../event-safety-bound.ts";
 
 const fauxPath = fileURLToPath(new URL("../../../../ai/src/providers/faux.ts", import.meta.url));
-const extension = `
-import { fauxProvider, fauxAssistantMessage } from ${JSON.stringify(fauxPath)};
+/**
+ * The isolate's own build of the faux provider, so its provider capture is the one the isolate's session reads. It is
+ * taken from the `@earendil-works/pi-ai` the isolate resolves, never from this checkout's `packages/ai`: a worktree whose
+ * `node_modules` links to another checkout loads that checkout's build, and a second copy splits the capture state.
+ */
+const installedAi = findPackageJSON("@earendil-works/pi-ai", import.meta.url);
+if (!installedAi) throw new Error("@earendil-works/pi-ai is not installed for the worker isolate");
+export const builtFauxPath = join(realpathSync(dirname(installedAi)), "dist/providers/faux.js");
+const extensionSource = (faux: string, prelude: string, responses: string) => `
+import { fauxProvider, fauxAssistantMessage, fauxToolCall } from ${JSON.stringify(faux)};
+${prelude}
 export default function (pi) {
 	const faux = fauxProvider({ tokenSize: { min: 4, max: 4 } });
 	const answer = () => fauxAssistantMessage("an answer streamed in a few deltas", { timestamp: 1 });
-	faux.setResponses([answer(), answer(), answer()]);
+	faux.setResponses(${responses});
 	pi.registerProvider(faux.provider);
 }`;
 
 export type WireRecord = Record<string, unknown>;
+/** How long an open (a worker spawn) or the final worker exits may take before the fixture fails typed. */
+const OPEN_MS = 75_000;
 export type OutputFrame = Extract<SessionWorkerToHost, { type: "output" }>;
 
 /** An output frame as the host received it, with the lane's root read as the frame arrived (before its own apply). */
@@ -32,7 +46,9 @@ export interface ObservedFrame {
 	readonly previousCredit: number | undefined;
 }
 
-export function within<T>(name: string, promise: Promise<T>, ms = 30_000): Promise<T> {
+export { EVENT_SAFETY_MS };
+
+export function within<T>(name: string, promise: Promise<T>, ms = EVENT_SAFETY_MS): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	return Promise.race([
 		promise,
@@ -44,8 +60,8 @@ export function within<T>(name: string, promise: Promise<T>, ms = 30_000): Promi
 
 export async function creditOf(signal: SharedArrayBuffer): Promise<number> {
 	const state = new Int32Array(signal);
-	const waited = Atomics.waitAsync(state, 0, 0, 10_000);
-	if (waited.async) await waited.value;
+	const waited = Atomics.waitAsync(state, 0, 0, EVENT_SAFETY_MS);
+	if (waited.async && (await waited.value) === "timed-out") throw new Error("deadline: credit");
 	return Atomics.load(state, 0);
 }
 
@@ -53,10 +69,15 @@ export async function creditOf(signal: SharedArrayBuffer): Promise<number> {
  * Real session workers, the production router and writer, and the registry's own reconcile callback, which a
  * test may hold for one frame through `holdReconcile`. Only the connection sink is in memory.
  */
-export async function workerAcceptanceHost() {
+export async function workerAcceptanceHost(
+	fauxModule = fauxPath,
+	isolatePrelude = "",
+	/** The isolate's faux responses, as source: `answer`, `fauxAssistantMessage` and `fauxToolCall` are in scope. */
+	responses = "[answer(), answer(), answer()]",
+) {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-4272-worker-"));
 	const extensionPath = join(dir, "faux-extension.ts");
-	await writeFile(extensionPath, extension);
+	await writeFile(extensionPath, extensionSource(fauxModule, isolatePrelude, responses));
 	const writer = new SessionEventWriter(() => {});
 	const workers: SessionWorkerClient[] = [];
 	const frames: ObservedFrame[] = [];
@@ -125,7 +146,7 @@ export async function workerAcceptanceHost() {
 		},
 		waitForBackpressure: async () => {},
 	});
-	const next = (name: string, predicate: (record: WireRecord) => boolean): Promise<WireRecord> => {
+	const next = (name: string, predicate: (record: WireRecord) => boolean, ms?: number): Promise<WireRecord> => {
 		const found = Promise.withResolvers<WireRecord>();
 		const listener = (record: WireRecord) => {
 			if (!predicate(record)) return;
@@ -133,18 +154,24 @@ export async function workerAcceptanceHost() {
 			found.resolve(record);
 		};
 		listeners.add(listener);
-		return within(name, found.promise);
+		return within(name, found.promise, ms);
 	};
 	let serial = 0;
-	const request = (command: { readonly type: string } & WireRecord): Promise<WireRecord> => {
+	const request = (command: { readonly type: string } & WireRecord, ms?: number): Promise<WireRecord> => {
 		const id = `t-${++serial}`;
-		const response = next(`response ${command.type}`, (record) => record.type === "response" && record.id === id);
-		void writer.withConnection("c", () => router.handle({ ...command, id } as RpcCommand));
-		return response;
+		const response = next(`response ${command.type}`, (record) => record.type === "response" && record.id === id, ms);
+		// Like the host's socket loop, a response the router returns (a refusal, a failed open) is the caller's to write,
+		// and a handler that throws fails the request at once: neither waits for the deadline.
+		const handled = writer.withConnection("c", async () => {
+			const direct = await router.handle({ ...command, id } as RpcCommand);
+			if (direct) await writer.enqueueControl(direct);
+		});
+		return Promise.race([response, handled.then(() => response)]);
 	};
 	return {
 		dir,
 		registry,
+		router,
 		writer,
 		workers,
 		frames,
@@ -164,14 +191,18 @@ export async function workerAcceptanceHost() {
 			};
 			return { reached: within("reconcile held", reached.promise), release: () => release.resolve() };
 		},
-		async open(): Promise<{ sessionId: string; worker: SessionWorkerClient }> {
-			const opened = await request({
-				type: "open_session",
-				cwd: dir,
-				sessionPath: join(dir, `s-${serial}.jsonl`),
-				provider: "faux",
-				modelId: "faux-1",
-			});
+		async open(openMs = OPEN_MS): Promise<{ sessionId: string; worker: SessionWorkerClient }> {
+			// Carry 13: a worker spawn under heavy host load can take past 30 s; the open gets most of a test's own budget.
+			const opened = await request(
+				{
+					type: "open_session",
+					cwd: dir,
+					sessionPath: join(dir, `s-${serial}.jsonl`),
+					provider: "faux",
+					modelId: "faux-1",
+				},
+				openMs,
+			);
 			if (opened.success !== true) throw new Error(`open failed: ${JSON.stringify(opened)}`);
 			const sessionId = String((opened.data as { sessionId: string }).sessionId);
 			const worker = registry.peek(sessionId)?.worker;
@@ -180,7 +211,7 @@ export async function workerAcceptanceHost() {
 		},
 		async dispose() {
 			for (const worker of workers) worker.quarantine();
-			await within("workers exit", Promise.all(workers.map((worker) => worker.exited)));
+			await within("workers exit", Promise.all(workers.map((worker) => worker.exited)), OPEN_MS);
 			await router.dispose();
 			writer.unregisterConnection("c");
 			await rm(dir, { recursive: true, force: true });

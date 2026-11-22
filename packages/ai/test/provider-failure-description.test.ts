@@ -91,6 +91,14 @@ describe("describeProviderFailureForUser", () => {
 		);
 	});
 
+	it("describes a request held only by keep-alives as alive but answerless", () => {
+		expect(
+			describeProviderFailureForUser(
+				"Provider stream sent only keep-alives and timed out after 900000ms (raise streamKeepAliveTimeoutMs: retry.provider.keepAliveTimeoutMs in senpi settings; 0 disables)",
+			),
+		).toBe("The provider kept the connection alive but sent no response within 15m, so the request was cancelled.");
+	});
+
 	it("returns undefined for failures it has no wording for", () => {
 		expect(describeProviderFailureForUser("Codex error: stream ended with an error response")).toBeUndefined();
 		expect(describeProviderFailureForUser(undefined)).toBeUndefined();

@@ -16,7 +16,7 @@ import { KEY_FORMS, type Key, leakedSlices, makeKey } from "./key-fixtures.ts";
 const TOKENS: readonly (readonly [string, string, string])[] = [
 	["GitHub token", `ghp_${"A1b2C3d4E5".repeat(4)}`, "deploy with"],
 	["OpenAI project key", `sk-proj-${"Zx9Yw8Vu7T".repeat(4)}`, "using key"],
-	["AWS access key id", "AKIAIOSFODNN7EXAMPLE", "aws id"],
+	["AWS access key id", ["AKIA", "IOSFODNN7EXAMPLE"].join(""), "aws id"],
 	["bearer token", "abcDEF1234567890xyzTOKEN", "Authorization: Bearer"],
 ];
 

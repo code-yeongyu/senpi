@@ -471,7 +471,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		const credential = await loginPromise;
 		expect(credential).toMatchObject({ type: "oauth", access: testCopilotAccessToken });
 		expect(policyModelIds).toEqual([firstModelId]);
-		expect(await store.read("github-copilot")).toEqual(credential);
+		expect(await store.read("github-copilot")).toEqual({ ...credential, loginId: expect.any(String) });
 	});
 
 	it("rejects a non-http(s) verification_uri before it reaches onDeviceCode", async () => {

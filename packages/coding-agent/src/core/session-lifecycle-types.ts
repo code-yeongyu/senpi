@@ -94,6 +94,8 @@ export interface SessionLifecycle {
 	readonly seq: number;
 	readonly epoch: number;
 	readonly epochOrigin: "human" | "automatic";
+	/** Current or most recent run; absent before the first run and in older engine snapshots. */
+	readonly runId?: string;
 	readonly completionId?: string;
 	readonly humanInputRevision: number;
 	readonly selfSettleEligible: boolean;

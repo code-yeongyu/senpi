@@ -20,8 +20,10 @@ import { fakeSessionBase } from "../../helpers/fake-session-base.ts";
 
 const MEGABYTE = 1024 * 1024;
 
-function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): CreateAgentSessionRuntimeResult {
-	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+async function runtime(
+	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
+): Promise<CreateAgentSessionRuntimeResult> {
+	await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
 			...fakeSessionBase(options),
@@ -32,7 +34,7 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 			scopedModels: [],
 			isBashRunning: false,
 			isStreaming: false,
-			extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+			extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 			abort: async () => {},
 			abortBash: () => {},
 			waitForIdle: async () => {},

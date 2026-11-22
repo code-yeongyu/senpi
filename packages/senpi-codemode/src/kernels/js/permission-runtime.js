@@ -190,6 +190,8 @@ export async function initializePermissionRuntime(install, workerData, engine) {
 	const { initializeProcessCleanup } = await import("./process-tree.js");
 	const { initializeWindowsCleanup } = await import("./windows-tree-kill.js");
 	initializeProcessCleanup(engine.cleanupExecFile);
+	const { initializeKillGuardSpawn } = await import("./worker-kill-guard.js");
+	initializeKillGuardSpawn(engine.killGuardSpawnSync);
 	initializeWindowsCleanup(engine.cleanupExecFile);
 	createWorkerCore({
 		send: (message) => parentPort.postMessage(message),

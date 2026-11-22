@@ -154,8 +154,10 @@ describe("stable request-local reduction prefix", () => {
 		await render(h);
 		expect(frontierRecords(h).length).toBeGreaterThan(0);
 		const initialRecords = frontierRecords(h).length;
-		// Less than the 10k block budget, but near the 52k prompt window.
-		append(h, [...pair(200, "write", 1_000), ...pair(201, "write", 1_000), ...pair(202, "write", 1_000)]);
+		// Less than the 10k block budget, but near the 52k prompt window. The system prompt counts toward that window, so
+		// the padding grew when the shared system prompt got shorter (senpi#5335): 1_000 per pair no longer reached the
+		// ceiling. 1_800-3_300 per pair hits this branch today; 2_400 sits mid-range so a modest prompt change keeps it.
+		append(h, [...pair(200, "write", 2_400), ...pair(201, "write", 2_400), ...pair(202, "write", 2_400)]);
 		const outgoing = await render(h);
 		expect(frontierRecords(h).length).toBe(initialRecords);
 		expect(h.compactions).toHaveBeenCalledTimes(1);

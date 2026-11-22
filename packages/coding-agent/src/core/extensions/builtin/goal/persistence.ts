@@ -319,7 +319,28 @@ function sanitizeContinuationState(goal: Goal): Goal {
 	if (!isNonNegativeSafeInteger(next.noProgressContinuations)) delete next.noProgressContinuations;
 	if (typeof next.lastContinuationSignature !== "string") delete next.lastContinuationSignature;
 	if (!isNonNegativeSafeInteger(next.continuationStoppedAt)) delete next.continuationStoppedAt;
+	if (!isValidContinuationStoppedDetail(next.continuationStoppedDetail)) {
+		delete next.continuationStoppedDetail;
+	}
+	// The detail only means something with its claim; never keep a stale payload past the claim.
+	if (next.continuationStoppedAt === undefined) delete next.continuationStoppedDetail;
 	return next;
+}
+
+/** A stop-publication payload is usable only with a known deny reason and non-negative counters. */
+function isValidContinuationStoppedDetail(value: unknown): value is Goal["continuationStoppedDetail"] {
+	if (!isRecord(value)) return false;
+	return (
+		(value.reason === "cap" ||
+			value.reason === "stale" ||
+			value.reason === "repetition" ||
+			value.reason === "length-exhausted" ||
+			value.reason === "no-progress" ||
+			value.reason === "context-overflow") &&
+		isNonNegativeSafeInteger(value.consecutiveContinuations) &&
+		isNonNegativeSafeInteger(value.unattendedContinuations) &&
+		isNonNegativeSafeInteger(value.noProgressContinuations)
+	);
 }
 
 function isMissingFile(error: unknown): boolean {

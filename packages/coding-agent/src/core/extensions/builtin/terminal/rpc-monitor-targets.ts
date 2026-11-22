@@ -8,12 +8,18 @@
  */
 import { listHostEndpoints } from "../../../../modes/rpc/host-endpoints.ts";
 import type { RpcRecord } from "./rpc-monitor-observer.ts";
+import { currentRpcRemoteSource } from "./rpc-remote-source.ts";
 
 export type RpcTarget =
 	| { readonly kind: "children"; readonly parent: string }
 	| { readonly kind: "all" }
 	| { readonly kind: "id"; readonly id: string }
-	| { readonly kind: "task"; readonly taskId: string };
+	| { readonly kind: "task"; readonly taskId: string }
+	| { readonly kind: "remote"; readonly device: string; readonly session: string };
+
+// `<device>/<session>` or `<device>/*`: one `/`, no leading `/`, not a `.jsonl` path, not a drive letter.
+const REMOTE_TARGET = /^(?<device>[^/]+)\/(?<session>[^/]+)$/;
+const DRIVE_LETTER = /^[A-Za-z]:$/;
 
 export type RpcEvents = "all" | readonly string[];
 
@@ -34,7 +40,19 @@ export function parseRpcTarget(
 	}
 	if (trimmed === "all") return { kind: "all" };
 	if (trimmed.startsWith("st_")) return { kind: "task", taskId: trimmed };
+	const remote = REMOTE_TARGET.exec(trimmed)?.groups;
+	if (remote?.device !== undefined && remote.session !== undefined && isRemoteShape(trimmed, remote.device)) {
+		if (currentRpcRemoteSource() === undefined)
+			return {
+				error: `target "${trimmed}" names a session on another device; remote targets need the omo remote surface`,
+			};
+		return { kind: "remote", device: remote.device, session: remote.session };
+	}
 	return { kind: "id", id: trimmed };
+}
+
+function isRemoteShape(target: string, device: string): boolean {
+	return !target.endsWith(".jsonl") && !DRIVE_LETTER.test(device);
 }
 
 /** `["session_status", "effect_status"]` for children, `["session_status"]` otherwise. */
