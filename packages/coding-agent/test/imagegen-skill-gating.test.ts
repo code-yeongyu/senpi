@@ -102,7 +102,8 @@ describe("imagegen skill contribution", () => {
 		vi.stubEnv("PI_IMAGE_GEN_PROVIDER", "");
 		setImageGenRegistry(stubRegistry(true));
 		const missingBaseDir = createTempDir("senpi-imagegen-missing-skill");
-		const factory: ExtensionFactory = (pi) => registerImageGenExtension(pi, missingBaseDir);
+		const factory: ExtensionFactory = (pi) =>
+			registerImageGenExtension(pi, missingBaseDir, { shippedSkillDir: join(missingBaseDir, "skill") });
 		const { cwd, runner } = await createRunner(factory);
 		const errors: string[] = [];
 		runner.onError((error) => errors.push(error.error));

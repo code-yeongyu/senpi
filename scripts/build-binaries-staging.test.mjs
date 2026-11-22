@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -21,6 +21,7 @@ it("stages a usable release closure before adding the archive package manifest",
 			"packages/coding-agent/dist/modes/interactive/theme/theme.json",
 			"packages/coding-agent/dist/modes/interactive/assets/icon.png",
 			"packages/coding-agent/dist/core/export-html/template.html",
+			"packages/coding-agent/dist/core/extensions/builtin/imagegen/skill/SKILL.md",
 			"packages/coding-agent/docs/doc.md", "packages/coding-agent/examples/example.js",
 			"node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm",
 			"packages/tui/native/darwin/prebuilds/darwin-arm64/helper",
@@ -55,6 +56,9 @@ it("stages a usable release closure before adding the archive package manifest",
 		assert.equal(result.status, 0, result.stderr);
 		const output = join(root, "release/darwin-arm64");
 		assert.equal(JSON.parse(readFileSync(join(output, "package.json"))).name, "release-fixture");
+		// senpi#3799: the compiled binary must ship the imagegen skill as a real file beside the
+		// executable, never only inside Bun's embedded filesystem.
+		assert.ok(existsSync(join(output, "skill", "SKILL.md")), "release staging must ship the imagegen skill beside the binary");
 		rmSync(join(root, "node_modules"), { recursive: true });
 		rmSync(join(root, "packages/senpi-codemode"), { recursive: true });
 		assert.equal(createRequire(join(output, "entry.js"))("@code-yeongyu/senpi-codemode"), "loaded payload");

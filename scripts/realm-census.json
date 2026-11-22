@@ -2990,6 +2990,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/config.ts#IMAGEGEN_SKILL_ASSET": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/config.ts#INTERACTIVE_ASSETS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"

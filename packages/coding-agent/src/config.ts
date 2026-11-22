@@ -27,6 +27,16 @@ export const isBunBinary =
 /** Detect if Bun is the runtime (compiled binary or bun run) */
 export const isBunRuntime = !!process.versions.bun;
 
+/**
+ * True for paths inside Bun's compiled-binary virtual filesystem (`/$bunfs/…`, `~BUN…`, `%7EBUN…`).
+ * Such a path exists only inside the process: existsSync passes, descriptor-based readers get
+ * ENOENT, and no other process can open it, so it must never be advertised as a file location
+ * (senpi#3799).
+ */
+export function isBunVirtualPath(path: string): boolean {
+	return path.includes("$bunfs") || path.includes("~BUN") || path.includes("%7EBUN");
+}
+
 /** Detect the esbuild-bundled Node.js distribution. */
 declare const PI_BUNDLED_NODE: boolean;
 export const isBundledNode = typeof PI_BUNDLED_NODE !== "undefined" && PI_BUNDLED_NODE;
@@ -458,6 +468,12 @@ const INTERACTIVE_ASSETS: ShippedAsset = {
 	probe: "clankolas.png",
 };
 
+const IMAGEGEN_SKILL_ASSET: ShippedAsset = {
+	binaryDir: "skill",
+	sourceSegments: ["core", "extensions", "builtin", "imagegen", "skill"],
+	probe: "SKILL.md",
+};
+
 function assetDirIn(root: string, asset: ShippedAsset): string {
 	if (isBunBinary) {
 		return join(root, asset.binaryDir);
@@ -538,6 +554,16 @@ export function getChangelogPath(): string {
  */
 export function getInteractiveAssetsDir(): string {
 	return resolveShippedAssetDir(INTERACTIVE_ASSETS);
+}
+
+/**
+ * Get path to the bundled imagegen skill directory.
+ * - For Bun binary: skill/ next to executable
+ * - For Node.js (dist/): dist/core/extensions/builtin/imagegen/skill/
+ * - For tsx (src/): src/core/extensions/builtin/imagegen/skill/
+ */
+export function getImagegenSkillDir(): string {
+	return resolveShippedAssetDir(IMAGEGEN_SKILL_ASSET);
 }
 
 /** Get path to a bundled interactive asset */
