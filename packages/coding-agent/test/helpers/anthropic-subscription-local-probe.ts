@@ -9,7 +9,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query, tool, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { HOST_TOOL_DENIAL_HOOKS } from "../../src/core/extensions/builtin/anthropic-subscription/tools.ts";
 
 export type LocalSdkTurnObservation = {
@@ -97,10 +97,16 @@ function closeServer(server: Server): Promise<void> {
 	return new Promise((resolve) => server.close(() => resolve()));
 }
 
-export async function runInstalledSdkLocalTurn(toolName: string): Promise<LocalSdkTurnObservation> {
+export async function runInstalledSdkLocalTurn(
+	toolName: string,
+	requestedInput?: Record<string, unknown>,
+	onMessage?: (message: SDKMessage) => void,
+): Promise<LocalSdkTurnObservation> {
 	const tmpDir = await mkdtemp(join(tmpdir(), "senpi-494-"));
 	const markerPath = join(tmpDir, "hook-stop-marker.txt");
-	const toolInput = JSON.stringify(toolName === "Bash" ? { command: `echo hi > "${markerPath}"` } : {});
+	const toolInput = JSON.stringify(
+		requestedInput ?? (toolName === "Bash" ? { command: `echo hi > "${markerPath}"` } : {}),
+	);
 	const requestBodies: string[] = [];
 	const server = createServer((req, res) => {
 		if (req.method === "POST" && req.url?.startsWith("/v1/messages")) {
@@ -171,6 +177,7 @@ export async function runInstalledSdkLocalTurn(toolName: string): Promise<LocalS
 			},
 		});
 		for await (const message of stream) {
+			onMessage?.(message);
 			if (message.type === "stream_event") {
 				const { event } = message;
 				if (event.type === "content_block_start" && event.content_block.type === "tool_use") {

@@ -10,6 +10,8 @@ import type { ExtensionContext, FilesystemPolicyChecker } from "../extensions/ty
 import type { ModelRegistry } from "../model-registry.ts";
 import type { SessionManager } from "../session-manager.ts";
 import type { SettingsManager } from "../settings-manager.ts";
+import { prepareSkillReadArguments } from "../skill-read-paths.ts";
+import type { Skill } from "../skills.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "../source-info.ts";
 import type { ToolDispatcher } from "../tool-dispatch/tool-dispatcher.ts";
 import { composeFilesystemPolicies } from "../tools/filesystem-policy.ts";
@@ -35,6 +37,8 @@ export interface RuntimeBootstrapOptions {
 	modelRegistry: ModelRegistry;
 	/** Absent for a runtime that owns no session: its runner then serves only the runtime context (senpi#5223). */
 	sessionManager?: SessionManager;
+	/** Current loaded skills, refreshed with the session's resource loader. */
+	skills?: () => readonly Skill[];
 	/** Routes the core bash tool's process work; absent means the tool's own local operations. */
 	toolDispatcher?: ToolDispatcher;
 	/** The device this session works on (slice 1a seam; supplied by the relay transport in slice 1b). */
@@ -94,6 +98,11 @@ export function bootstrapRuntime(options: RuntimeBootstrapOptions): RuntimeBoots
 				glob: { filesystemPolicy },
 				ls: { filesystemPolicy },
 			});
+	const { sessionManager, skills } = options;
+	if (!options.baseToolsOverride && sessionManager && skills) {
+		baseToolDefinitions.read.prepareArguments = (args) =>
+			prepareSkillReadArguments(args, sessionManager.getSessionId(), skills());
+	}
 	if (options.flagValues) {
 		for (const [name, value] of options.flagValues) {
 			extensionsResult.runtime.flagValues.set(name, value);

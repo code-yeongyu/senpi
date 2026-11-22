@@ -13075,6 +13075,7 @@ export class AgentSession {
 			extensionsResult,
 			modelRegistry: this._modelRegistry,
 			sessionManager: this.sessionManager,
+			skills: () => this._resourceLoader.getSkills().skills,
 			toolDispatcher: this._toolDispatcher,
 			...(this._baseToolsOverride ? { baseToolsOverride: this._baseToolsOverride } : {}),
 			...(options.flagValues ? { flagValues: options.flagValues } : {}),

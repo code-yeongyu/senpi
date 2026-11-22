@@ -9,7 +9,7 @@ import { formatSkillsForPrompt, type Skill } from "../../../src/core/skills.ts";
 
 // Regression for code-yeongyu/senpi#6089: the subscription lane renders skill paths in Claude's form, and that rewrite
 // must never point the model at a different copy of the skill. A stale ~/.claude/skills farm (or a missing entry)
-// resolves elsewhere; the rendered path then has to stay the one the running version loaded.
+// resolves elsewhere; the rendered path must still select the one the running version loaded.
 const temporaryDirectories: string[] = [];
 const createdSkillDirectories: string[] = [];
 
@@ -64,6 +64,7 @@ function claudeRoots(skills: Skill[], cwd: string, home: string): string[] {
 		const options = buildAnthropicSubscriptionQueryOptions({
 			model,
 			cwd,
+			sessionId: "loaded-copy-fixture",
 			context: { messages: [], systemPrompt: `before${formatSkillsForPrompt(skills)}\nafter` },
 			providerSettings: { systemPromptMode: "preset-append" },
 		});
@@ -78,7 +79,7 @@ function claudeRoots(skills: Skill[], cwd: string, home: string): string[] {
 }
 
 describe("senpi#6089: a rendered skill path always names the copy the runtime loaded", () => {
-	it("keeps the loaded absolute path when the Claude-form path resolves to a different copy", () => {
+	it("uses an opaque location when the Claude-form path resolves to a different copy", () => {
 		const home = temp("senpi-6089-home-");
 		const cwd = temp("senpi-6089-cwd-");
 		const loaded = loadSkill(join(getAgentDir(), "skills"), "ultrawork");
@@ -87,15 +88,15 @@ describe("senpi#6089: a rendered skill path always names the copy the runtime lo
 		mkdirSync(join(home, ".claude", "skills"), { recursive: true });
 		symlinkSync(join(staleRoot, "ultrawork"), join(home, ".claude", "skills", "ultrawork"));
 
-		expect(claudeRoots([loaded], cwd, home)).toEqual([`r0=${join(getAgentDir(), "skills")}`]);
+		expect(claudeRoots([loaded], cwd, home)).toEqual([expect.stringMatching(/^r0=skill:\/\/[a-f0-9]{64}$/)]);
 	});
 
-	it("keeps the loaded absolute path when the Claude-form path does not exist", () => {
+	it("uses an opaque location when the Claude-form path does not exist", () => {
 		const home = temp("senpi-6089-home-");
 		const cwd = temp("senpi-6089-cwd-");
 		const loaded = loadSkill(join(getAgentDir(), "skills"), "ulw-loop");
 
-		expect(claudeRoots([loaded], cwd, home)).toEqual([`r0=${join(getAgentDir(), "skills")}`]);
+		expect(claudeRoots([loaded], cwd, home)).toEqual([expect.stringMatching(/^r0=skill:\/\/[a-f0-9]{64}$/)]);
 	});
 
 	it("uses the Claude-form root when it resolves to the same directory", () => {
@@ -115,7 +116,7 @@ describe("senpi#6089: a rendered skill path always names the copy the runtime lo
 		const projectSkills = join(cwd, CONFIG_DIR_NAME, "skills");
 		const loaded = loadSkill(projectSkills, "rules");
 
-		expect(claudeRoots([loaded], cwd, home)).toEqual([`r0=${projectSkills}`]);
+		expect(claudeRoots([loaded], cwd, home)).toEqual([expect.stringMatching(/^r0=skill:\/\/[a-f0-9]{64}$/)]);
 
 		mkdirSync(join(cwd, ".claude"), { recursive: true });
 		symlinkSync(projectSkills, join(cwd, ".claude", "skills"));

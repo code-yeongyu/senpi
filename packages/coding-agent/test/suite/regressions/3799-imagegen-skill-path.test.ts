@@ -90,7 +90,9 @@ describe("senpi#3799 imagegen skill advertised at a Bun locator", () => {
 		expect(paths).toEqual([sidecarSkill]);
 		// The advertised path is a real file: an fd-based reader outside Bun's virtual filesystem opens it.
 		const { openSync, readSync, closeSync, fstatSync } = await import("node:fs");
-		const fd = openSync(paths[0]!, "r");
+		const advertisedPath = paths[0];
+		if (advertisedPath === undefined) throw new Error("Imagegen did not return a skill path");
+		const fd = openSync(advertisedPath, "r");
 		try {
 			const size = fstatSync(fd).size;
 			const buffer = Buffer.alloc(size);
