@@ -248,4 +248,16 @@ describe("images a text-only model cannot see (senpi#7233)", () => {
 		expect(requests).toHaveLength(2);
 		expect(hasImage(lastMessage(requests.at(-1), "toolResult"))).toBe(true);
 	});
+
+	// Each registered tool_result handler is a PostToolUse hook run, start and end, on the session stream.
+	it("adds no hook run to a tool call while look_at is not offered", async () => {
+		const harness = await createLookAtHarness([VISION]);
+		harness.setResponses([readShot(), fauxAssistantMessage("done")]);
+
+		await harness.session.prompt("read shot.png");
+
+		expect(getToolResult(harness, "read").isError).toBe(false);
+		const postToolUse = harness.eventsOfType("tool_hook_status").filter((event) => event.hookName === "PostToolUse");
+		expect(postToolUse).toEqual([]);
+	});
 });
