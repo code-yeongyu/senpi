@@ -565,11 +565,12 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 		// `reasoning_details` are replay metadata, not user-visible stream deltas.
 		// Keep them in memory during streaming and serialize once when the block is finalized.
-		// oxlint-disable-next-line eslint/no-unassigned-vars -- dead since #8671's serialize-once was lost in an upstream sync merge; fixed in senpi#3934
-		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
+		const streamedReasoningDetails = new Map<ThinkingContent, OpenAIReasoningDetail[]>();
 		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
-			if (streamedReasoningDetails !== undefined) {
-				block.thinkingSignature = JSON.stringify(streamedReasoningDetails);
+			const details = streamedReasoningDetails.get(block);
+			if (details !== undefined) {
+				block.thinkingSignature = JSON.stringify(details);
+				streamedReasoningDetails.delete(block);
 			}
 		};
 
@@ -1033,11 +1034,12 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						for (const detail of reasoningDetails) {
 							if (!isOpenAIReasoningDetail(detail)) continue;
 							const block = ensureThinkingBlock("");
-							const preservedDetails = parseOpenAIReasoningDetails(block.thinkingSignature) ?? [];
+							let preservedDetails = streamedReasoningDetails.get(block);
+							if (!preservedDetails) {
+								preservedDetails = [];
+								streamedReasoningDetails.set(block, preservedDetails);
+							}
 							appendOpenAIReasoningDetail(preservedDetails, detail);
-							// Keep provider replay data in the existing signature slot. OpenRouter
-							// requires the complete reasoning_details sequence in its original order.
-							block.thinkingSignature = JSON.stringify(preservedDetails);
 						}
 					}
 				}
