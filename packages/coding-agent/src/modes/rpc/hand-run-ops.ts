@@ -140,8 +140,12 @@ function spawnBounded(
 		let timerFired = false;
 		const timeout = setTimeout(
 			() => {
-				timerFired = true;
-				stop();
+				// Timers run before the loop reaps children: a child that ended on its own before the deadline can still
+				// look alive here. One poll phase later its exit is recorded, so only a child still running is timed out.
+				setImmediate(() => {
+					if (child.exitCode === null && child.signalCode === null) timerFired = true;
+					stop();
+				});
 			},
 			Math.min(args.timeoutMs ?? DEFAULT_TIMEOUT_MS, RUN_TIMEOUT_CAP_MS),
 		);

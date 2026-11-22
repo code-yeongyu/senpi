@@ -99,10 +99,14 @@ function runDirect(request: DeviceRunRequest, signal: AbortSignal | undefined): 
 			request.timeoutMs === undefined
 				? undefined
 				: setTimeout(() => {
-						if (child.exitCode !== null || child.signalCode !== null) return;
-						timerFired = true;
-						send("SIGTERM");
-						killTimer = setTimeout(() => send("SIGKILL"), 10_000);
+						// Timers run before the loop reaps children: a child that ended on its own before the deadline can
+						// still look alive here, and kill() on it succeeds. One poll phase later its exit is recorded.
+						setImmediate(() => {
+							if (child.exitCode !== null || child.signalCode !== null) return;
+							timerFired = true;
+							send("SIGTERM");
+							killTimer = setTimeout(() => send("SIGKILL"), 10_000);
+						});
 					}, request.timeoutMs);
 		child.on("error", (error) => fail(new DeviceFileError(signal?.aborted ? "aborted" : "io", error.message)));
 		child.on("close", (code, exitSignal) => {

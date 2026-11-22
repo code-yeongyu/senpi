@@ -1,6 +1,9 @@
 // senpi#7282: a run's result says why its process ended. `timed_out` comes only from the spawning side's own timer; a
 // process that ends on the same signal for another reason is `signaled`; a hand that predates the field leaves the
 // cause unknown, never inferred from the signal.
+import { mkdtempSync, readFileSync, rmSync, watch } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { JsonValue } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { localDeviceFiles } from "../../src/execution/device-files-node.ts";
@@ -92,6 +95,43 @@ describe.skipIf(process.platform === "win32")("fused run termination", () => {
 		expect(result.signal).toBe("SIGTERM");
 		expect(result.termination).toEqual({ kind: "signaled" });
 	});
+
+	// The exact ordering from the #7308 review: the child signals itself and dies before the deadline, but the loop is
+	// held so its exit is not yet reaped when the timer comes due; kill() on that zombie succeeds. It is still signaled.
+	it.skipIf(process.platform !== "linux")(
+		"reports signaled for a child that ended on its own SIGTERM but was not yet reaped at the deadline",
+		async () => {
+			const dir = mkdtempSync(join(tmpdir(), "run-termination-zombie-"));
+			const marker = join(dir, "pid");
+			const timeoutMs = 1_000;
+			const watcher = watch(dir, () => {
+				watcher.close();
+				const pid = readFileSync(marker, "utf8").trim();
+				const ready = Date.now() + timeoutMs + 200;
+				const giveUp = Date.now() + 10_000;
+				// Holding the loop is the point: the child's exit must stay unreaped until the timer is overdue.
+				while (Date.now() < ready || !readFileSync(`/proc/${pid}/stat`, "utf8").includes(") Z ")) {
+					if (Date.now() > giveUp) throw new Error(`child ${pid} never became an unreaped zombie`);
+				}
+			});
+			try {
+				const result = await localDeviceFiles().run({
+					exe: node,
+					argv: [
+						"-e",
+						`require("fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid)); process.kill(process.pid, "SIGTERM"); setInterval(() => {}, 1000)`,
+					],
+					cwd: process.cwd(),
+					timeoutMs,
+				});
+				expect(result.signal).toBe("SIGTERM");
+				expect(result.termination).toEqual({ kind: "signaled" });
+			} finally {
+				watcher.close();
+				rmSync(dir, { recursive: true, force: true });
+			}
+		},
+	);
 
 	it("reports exited with the child's code", async () => {
 		const result = await localDeviceFiles().run({
