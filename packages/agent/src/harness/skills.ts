@@ -70,7 +70,15 @@ export async function loadSkills(
 		}
 		const rootInfo = rootInfoResult.value;
 		if ((await resolveKind(env, rootInfo, diagnostics, context)) !== "directory") continue;
-		const result = await loadSkillsFromDirInternal(env, rootInfo.path, true, ignore(), rootInfo.path, context);
+		const result = await loadSkillsFromDirInternal(
+			env,
+			rootInfo.path,
+			true,
+			ignore(),
+			rootInfo.path,
+			context,
+			new Set<string>(),
+		);
 		skills.push(...result.skills);
 		diagnostics.push(...result.diagnostics);
 	}
@@ -114,6 +122,7 @@ async function loadSkillsFromDirInternal(
 	ignoreMatcher: IgnoreMatcher,
 	rootDir: string,
 	context: Context,
+	ancestry: ReadonlySet<string>,
 ): Promise<{ skills: Skill[]; diagnostics: SkillDiagnostic[] }> {
 	const skills: Skill[] = [];
 	const diagnostics: SkillDiagnostic[] = [];
@@ -132,6 +141,14 @@ async function loadSkillsFromDirInternal(
 	}
 	const dirInfo = dirInfoResult.value;
 	if ((await resolveKind(env, dirInfo, diagnostics, context)) !== "directory") return { skills, diagnostics };
+
+	// A linked folder pointing at one of its own ancestors resolves to a canonical path already
+	// on the walk stack; recursing there would loop until the path limit (senpi#5102).
+	const canonicalResult = await env.canonicalPath(dir, context);
+	const canonical = canonicalResult.ok ? canonicalResult.value : dir;
+	if (ancestry.has(canonical)) return { skills, diagnostics };
+	const descendants = new Set(ancestry);
+	descendants.add(canonical);
 
 	await addIgnoreRules(env, ignoreMatcher, dir, rootDir, diagnostics, context);
 
@@ -177,6 +194,7 @@ async function loadSkillsFromDirInternal(
 				isLink ? ignore() : ignoreMatcher,
 				rootDir,
 				context,
+				descendants,
 			);
 			skills.push(...result.skills);
 			diagnostics.push(...result.diagnostics);
