@@ -19,7 +19,19 @@ export type ScriptLoader = "jsx" | "ts" | "tsx";
 
 export type ScriptParser = (code: string, loader: ScriptLoader) => SyntaxVerdict;
 
-export type SyntaxChecker = (path: string, content: string) => SyntaxVerdict;
+/** Finds the first strict-JSON error with its position, for a runtime whose JSON.parse message carries none. */
+export type JsonErrorLocator = (content: string) => Promise<SyntaxErrorReport | undefined>;
+
+export interface SyntaxParsers {
+	readonly parseScript?: ScriptParser;
+	readonly locateJsonError?: JsonErrorLocator;
+}
+
+export interface SyntaxChecker {
+	readonly check: (path: string, content: string) => SyntaxVerdict;
+	/** The reported error with a position where one can be found; called only once a warning is certain. */
+	readonly locate: (path: string, content: string, error: SyntaxErrorReport) => Promise<SyntaxErrorReport>;
+}
 
 function scriptLoader(extension: string): ScriptLoader | undefined {
 	switch (extension) {
@@ -66,13 +78,21 @@ function checkJson(content: string): SyntaxVerdict {
 	}
 }
 
-export function createSyntaxChecker(parseScript?: ScriptParser): SyntaxChecker {
-	return (path, content) => {
-		if (content.length > SYNTAX_CHECK_MAX_LENGTH) return undefined;
-		const extension = extensionOf(path);
-		if (extension === "json") return checkJson(content);
-		const loader = scriptLoader(extension);
-		return loader && parseScript ? parseScript(content, loader) : undefined;
+export function createSyntaxChecker({ parseScript, locateJsonError }: SyntaxParsers = {}): SyntaxChecker {
+	return {
+		check: (path, content) => {
+			if (content.length > SYNTAX_CHECK_MAX_LENGTH) return undefined;
+			const extension = extensionOf(path);
+			if (extension === "json") return checkJson(content);
+			const loader = scriptLoader(extension);
+			return loader && parseScript ? parseScript(content, loader) : undefined;
+		},
+		// JSON.parse stays the verdict; the locator only adds a position. When it finds no error (it is more lenient
+		// than JSON.parse on some inputs), the error is reported without one.
+		locate: async (path, content, error) => {
+			if (error.line !== undefined || locateJsonError === undefined || extensionOf(path) !== "json") return error;
+			return (await locateJsonError(content)) ?? error;
+		},
 	};
 }
 
@@ -84,18 +104,19 @@ function errorLocation(error: SyntaxErrorReport): string {
  * The warning to append to a successful edit or write result, or `undefined`. `before` is the content before the
  * call, or `undefined` for a newly created file, which counts as having parsed.
  */
-export function parseBreakWarning(
+export async function parseBreakWarning(
 	checkSyntax: SyntaxChecker,
 	path: string,
 	before: string | undefined,
 	after: string,
-): string | undefined {
-	const afterVerdict = checkSyntax(path, after);
+): Promise<string | undefined> {
+	const afterVerdict = checkSyntax.check(path, after);
 	if (afterVerdict === undefined || afterVerdict.ok) return undefined;
-	const where = `First syntax error${errorLocation(afterVerdict.error)}: ${afterVerdict.error.message}.`;
+	if (before !== undefined && checkSyntax.check(path, before)?.ok !== true) return undefined;
+	const error = await checkSyntax.locate(path, after, afterVerdict.error);
+	const where = `First syntax error${errorLocation(error)}: ${error.message}.`;
 	if (before === undefined) {
 		return `Warning: the written file does not parse. ${where} The file was written; re-read that region and fix it.`;
 	}
-	if (checkSyntax(path, before)?.ok !== true) return undefined;
 	return `Warning: this file parsed before the edit and does not parse after it. ${where} The edit was applied; re-read that region and fix it.`;
 }

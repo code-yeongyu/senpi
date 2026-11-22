@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
-import { createLocalSyntaxChecker } from "./bun-script-parser.ts";
+import { createLocalSyntaxChecker } from "./bun-syntax-check.ts";
 import {
 	type CoreEditToolOptions,
 	createCoreEditToolDefinition,
