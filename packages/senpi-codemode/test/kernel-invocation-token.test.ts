@@ -94,6 +94,57 @@ describe("kernel invocation tokens", () => {
 		},
 	);
 
+	it("drops an invoker binding once its retained continuation ends", async () => {
+		const invokerId = `invoker-${crypto.randomUUID()}`;
+		const retired: string[] = [];
+		const makeHost = () =>
+			new KernelPermissionHost(
+				{
+					sessionId: `owner-${crypto.randomUUID()}`,
+					cwd: "/owner",
+					parallelPoolWidth: 2,
+					permissions: {
+						state: () => ({ epoch: 1, active: false, rules: [] }),
+						resolveSession: () => ({ cwd: "/invoker", state: { epoch: 2, active: false, rules: [] } }),
+						decide: () => ({ action: "pass" }),
+					},
+				},
+				async () => {
+					retired.push("retired");
+					return "terminated";
+				},
+			);
+		const request = {
+			name: "probe",
+			kernel_generation: 1,
+			definition_revision: 1,
+			args: {},
+			call_id: crypto.randomUUID(),
+		};
+		// A settled no-deny continuation is still live, so its invoker keeps reaching it (#4390).
+		const retaining = makeHost();
+		try {
+			retaining.invocation(request, { invoker: { sessionId: invokerId } })();
+			await revokeSessionKernels(invokerId);
+			expect(retired).toHaveLength(1);
+		} finally {
+			await retaining.terminateChildren();
+			retaining.dispose();
+		}
+		// Once that continuation is gone, the binding is given back instead of waiting for retirement.
+		retired.length = 0;
+		const ended = makeHost();
+		try {
+			ended.invocation(request, { invoker: { sessionId: invokerId } })();
+			ended.frame({ type: "close" });
+			await revokeSessionKernels(invokerId);
+			expect(retired).toHaveLength(0);
+		} finally {
+			await ended.terminateChildren();
+			ended.dispose();
+		}
+	});
+
 	it("mints owner tokens for absent/same invokers and invoking-session tokens otherwise", async () => {
 		const host = new KernelPermissionHost(
 			{

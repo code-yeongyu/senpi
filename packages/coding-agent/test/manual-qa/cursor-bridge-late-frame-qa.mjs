@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent, openMemoryBatchStore } from "@earendil-works/pi-agent-core";
 import { EventStream } from "@earendil-works/pi-ai";
 import { createSessionCursorExecBridge } from "../../dist/core/cursor-exec-bridge-session.js";
 
@@ -42,6 +42,7 @@ const runBStream = new MockStream();
 let index = 0;
 
 const agent = new Agent({
+	batchStoreFactory: openMemoryBatchStore,
 	streamFn: () => {
 		if (index++ === 0) {
 			runAStarted.resolve();

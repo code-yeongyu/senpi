@@ -3,9 +3,10 @@
  * A spark draws as 8-level block glyphs, a meter as `[██████░░░░] 120/250`, any other primary block
  * leaves only the headline; a pending job shows how much output was read, a fallback its latest
  * line. The line never exceeds the width it is given, and the numbers are the last thing to go: the
- * block label goes first, then the title shrinks to 8 columns, then the chart (a meter keeps its
- * count), then the headline label; then the title shrinks further or goes, the gaps narrow to one
- * space, and only then is the whole line cut.
+ * block label goes first, then the title shrinks to 8 columns, then the chart goes (a meter keeps
+ * its count); still too wide, the headline label goes and the chart comes back if it fits without
+ * the label, and only then do both go; then the title shrinks further or goes, the gaps narrow to
+ * one space, and only then is the whole line cut.
  * The look follows oh-my-pi 9df0457b31 (MIT, Copyright Can Boluk et al.), adapted to senpi's widget surface.
  */
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
@@ -69,7 +70,7 @@ function styled(segments: readonly Segment[], style: JobWidgetLineStyle): string
 }
 
 /** `truncateToWidth` closes every cut with SGR resets; text that carried no styling keeps none. */
-function cutPlain(text: string, columns: number): string {
+export function cutPlain(text: string, columns: number): string {
 	return truncateToWidth(text, columns, ELLIPSIS).replaceAll(SGR_RESET, "");
 }
 

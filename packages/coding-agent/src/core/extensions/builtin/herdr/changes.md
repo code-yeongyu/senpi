@@ -1,5 +1,63 @@
 # Herdr builtin reporter changes
 
+## 2026-11-07 - A pane idles after its turn while only a monitor or background session is live (senpi#6150)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts`: `selectHerdrReport` keeps `working` for a running turn and for bounded wake sources (subagents, DAG runs, detached eval cells, loop-guard recovery, unknown sources, and one-shot monitors with a deadline), and reports `idle` when only open-ended sources are live: monitors with no deadline (persistent watches, or watches without a timeout, counted by the new `openEndedMonitors` from the `terminal_monitor_state` per-watch `persistent`/`deadlineMs`) and background terminal sessions. The message names the live sources in both states. This partly reverses the 2026-09-24 entry in this tracker (senpi#2077), which folded every wake source into `working`: bounded sources keep that behaviour, open-ended ones no longer do.
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts`: passes the open-ended watch count with each monitor snapshot.
+
+### Why
+
+- A persistent monitor or a background server kept the pane `working` forever after the turn ended, so front ends drawing the OSC 7501 state showed a spinner on an idle agent.
+
+### Why an extension could not handle it
+
+- The builtin herdr reporter is the extension that owns this report; the change is inside it.
+
+### Expected merge conflict zones
+
+- LOW: the `selectHerdrReport` body, the `monitors` reducer event and `OPEN_ENDED_WAKE_SOURCES`; the monitor subscription in `index.ts`.
+
+## 2026-11-04 - Name the product command in an app pane token (omo#12395, senpi#5817)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` adds `tokens: { app: APP_COMMAND }` to its title metadata report. On quit it clears the token with `tokens: { app: null }` before `pane.release_agent`. Every lifecycle, session and release report still sends `agent: "pi"`.
+
+### Why
+
+- Tools built on herdr's API could not tell an OmO pane from a Pi pane. herdr 0.9.5 bases prompt delivery and restore on agent labels it knows. With an `omo` label, `agent prompt` and `agent send-keys` are refused with `agent_not_ready`, and the reported `resume_argv` is dropped when detection says `pi`. Pane tokens are display-only, and herdr's pane and agent APIs expose them. herdr keeps tokens after release and process exit, so quit clears the token.
+
+### Why an extension could not handle it
+
+- This is the builtin reporter that owns the pane's herdr metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `reportTitle` params and the `session_shutdown` quit branch in `index.ts`.
+
+## 2026-11-01 - Program status binds in every TUI session (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` binds state tracking to the first top-level TUI session whatever the `HERDR_*` environment and user-reporter deferral, and reports each `selectHerdrReport` result through `ctx.ui.setProgramStatus` (deduplicated). The herdr socket client keeps its preconditions (`HERDR_ENV=1`, socket path, pane id, no user reporter) and its exact request transcript. A blocked report carries the `kind` of the oldest open block (`selectHerdrBlockedKind`), which `herdr:blocked` now carries: `question` from ask-user, `permission` from a host dialog about a tool call; other dialogs carry none. Quit clears the status; reload and session navigation leave it for the successor runtime.
+- The reporter calls `ctx.ui.setProgramStatus` optionally, so an outside SDK host whose UI context predates the method keeps its herdr socket reporting (senpi#5344).
+- `herdr-state.ts` keeps `{ label, kind }` per open block instead of the label alone; `isHerdrBlockedEvent` accepts the optional `kind`.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` emits `kind: "question"` on its active `herdr:blocked` event.
+
+### Why
+
+- herdr-core panes set only `HC_TERMINAL_ID`/`HC_TERMINAL_SOCKET`, so the reporter never bound there and omo panes showed as a plain shell. They read OSC 7501 instead.
+
+### Why an extension could not handle it
+
+- This is the builtin reporter; it uses the public `ctx.ui.setProgramStatus` API.
+
+### Expected merge conflict zones
+
+- LOW: `session_start` binding order and `publish` in `index.ts`; the `blocked` case of `reduceHerdrState`.
+
 ## 2026-10-21 - Restore the branded launcher after Herdr restart (senpi#3849)
 
 ### What changed

@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
-import { lstat, mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describeCause } from "./compact-storage-io.ts";
+import { currentRootOwner, readRootMarker, ROOT_MARKER } from "./compact-root-owner.ts";
 
 /**
  * Ownership of the compact spool's epoch directory (senpi#4272). The store creates the directory
@@ -11,7 +12,7 @@ import { describeCause } from "./compact-storage-io.ts";
  * a directory this store did not create and still own.
  */
 
-const MARKER = ".compact-spool-owner";
+const MARKER = ROOT_MARKER;
 
 type CompactSpoolRefusal =
 	| "pre_existing"
@@ -47,10 +48,15 @@ export async function createSpoolDir(dir: string): Promise<string> {
 		throw cause;
 	}
 	const token = randomUUID();
+	const temporary = join(dir, `${MARKER}.${token}.tmp`);
 	try {
-		await writeFile(join(dir, MARKER), token, { flag: "wx", mode: 0o600 });
+		await writeFile(temporary, JSON.stringify({ kind: "scratch", token, owner: await currentRootOwner() }), {
+			flag: "wx",
+			mode: 0o600,
+		});
+		await rename(temporary, join(dir, MARKER));
 	} catch (cause) {
-		throw await abandonSpoolDir(dir, cause);
+		throw await abandonSpoolDir(dir, cause, temporary);
 	}
 	return token;
 }
@@ -60,8 +66,9 @@ export async function createSpoolDir(dir: string): Promise<string> {
  * fresh instead of refusing it as pre-existing. Only a marker this call's exclusive create made (any
  * failure but EEXIST) is unlinked, then the directory itself, which `rmdir` removes only while empty.
  */
-async function abandonSpoolDir(dir: string, cause: unknown): Promise<CompactSpoolRefusedError> {
+async function abandonSpoolDir(dir: string, cause: unknown, temporary: string): Promise<CompactSpoolRefusedError> {
 	try {
+		await rm(temporary, { force: true });
 		if ((cause as NodeJS.ErrnoException).code !== "EEXIST") await rm(join(dir, MARKER), { force: true });
 		await rmdir(dir);
 		return new CompactSpoolRefusedError("marker_write_failed", dir, cause);
@@ -90,7 +97,7 @@ async function refusalFor(dir: string, owned: Stats, token: string): Promise<Com
 	if (!owned.isDirectory()) return "not_directory";
 	const markerPath = join(dir, MARKER);
 	const marker = await lstat(markerPath).catch(() => undefined);
-	if (!marker?.isFile() || (await readFile(markerPath, "utf8")) !== token) return "marker_missing";
+	if (!marker?.isFile() || (await readRootMarker(dir))?.token !== token) return "marker_missing";
 	// Windows has no POSIX owner or mode bits; the marker token and the no-follow checks still apply.
 	const uid = process.getuid?.();
 	if (uid === undefined) return undefined;

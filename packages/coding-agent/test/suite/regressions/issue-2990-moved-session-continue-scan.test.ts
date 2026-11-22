@@ -11,6 +11,7 @@ import { getDefaultSessionDir, SessionManager } from "../../../src/core/session-
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import { createSessionManager } from "../../../src/main.ts";
 import { createMovedLayout, type MovedLayout, writeSessionHeader } from "../moved-path-guard-fixtures.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 // The real implementations stay; the mocks only count how often --continue lists session dirs or asks git.
 vi.mock("../../../src/core/repository-identity.ts", async (importOriginal) => {
@@ -177,7 +178,7 @@ describe("issue #2990 --continue looks only at sessions moved here", () => {
 				["init", "-q"],
 				["commit", "-q", "--allow-empty", "-m", "init"],
 			])
-				execFileSync("git", args, { cwd: layout.newWorktree, env: { ...process.env, ...identity } });
+				execFileSync("git", args, { cwd: layout.newWorktree, env: { ...hostSpawnEnv(), ...identity } });
 			const own = session(layout.newWorktree, "own", NEW);
 			const unreadable = getDefaultSessionDir(join(layout.home, "gone", "0"));
 			chmodSync(unreadable, 0o000);

@@ -11,15 +11,18 @@ import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "../../src/modes/
 
 const cleanups: Array<() => Promise<void>> = [];
 
-async function proxy(holdOpen = false) {
+async function proxy(holdOpen = false, publicSecret?: Buffer) {
 	const dir = await mkdtemp(join(tmpdir(), "admit-"));
 	const peers: Socket[] = [];
+	const internalLines: string[] = [];
 	const internalPath = join(dir, "i.sock");
 	const publicPath = join(dir, "p.sock");
 	const internal = createServer((peer) => {
 		peers.push(peer);
 		attachJsonlLineReader(peer, (line) => {
+			internalLines.push(line);
 			const command = JSON.parse(line);
+			if (command.type === "launch_proven") return;
 			if (holdOpen && command.type === "open_session") return;
 			peer.write(
 				`${JSON.stringify({ type: "response", id: command.id, command: command.type, success: true, data: command })}\n`,
@@ -34,7 +37,13 @@ async function proxy(holdOpen = false) {
 		instanceId: "proxy",
 	});
 	const clients = new ClientOccupancy(() => {});
-	const server = createPublicProxy({ internalSocket: internalPath, clients, admission, onDetach: () => {} });
+	const server = createPublicProxy({
+		internalSocket: internalPath,
+		clients,
+		admission,
+		onDetach: () => {},
+		...(publicSecret ? { publicSecret } : {}),
+	});
 	const publicPeers = new Set<Socket>();
 	server.on("connection", (peer) => publicPeers.add(peer));
 	await listen(server, publicPath);
@@ -62,6 +71,7 @@ async function proxy(holdOpen = false) {
 	};
 	return {
 		client,
+		internalLines,
 		admission,
 		take,
 		publicPeers,
@@ -81,6 +91,16 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === "win32")("supervisor admission framing", () => {
+	// senpi#5632 (CI on senpi#5651): a client that proved the public secret (the Windows path) gets its first request
+	// forwarded behind the proof record; the record must not delay reading the client past its resume.
+	it("forwards a secret-proven client's first request right behind the launch proof", async () => {
+		const secret = Buffer.alloc(32, 7);
+		const p = await proxy(false, secret);
+		p.client.write(Buffer.concat([secret, Buffer.from('{"id":"first","type":"get_protocol_info"}\n')]));
+		expect(await p.take(1)).toMatchObject([{ id: "first", command: "get_protocol_info", success: true }]);
+		expect(p.internalLines.map((line) => JSON.parse(line).type)).toEqual(["launch_proven", "get_protocol_info"]);
+	});
+
 	it("closes a drained connection after its last session parks", async () => {
 		const p = await proxy();
 		p.client.write('{"id":"open","type":"open_session"}\n');

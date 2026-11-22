@@ -1,17 +1,24 @@
 import { join } from "node:path";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
-import type { SessionEnvironment } from "../session-env.ts";
+import type { InheritedEnvironment, SessionEnvironment } from "../session-env.ts";
 import type { KernelLifecycle } from "../shared/kernel-death.ts";
+import type { InvocationPermissions } from "../shared/invocation-authority.ts";
+import type { AttestKernelSpawn } from "../shared/session-spawn-attestation.ts";
 import { readProcessGroupCpuTime } from "../shared/process-group-cpu.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { SubprocessKernel, type SubprocessKernelMemory, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
 
 export interface JuliaKernelStartOptions extends KernelLifecycle {
+	readonly permissions?: InvocationPermissions;
 	readonly cwd: string;
 	readonly sessionId: string;
 	readonly connection: BridgeConnectionConfig;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** Attests the interpreter process to the session it runs for (senpi#6972). */
+	readonly attestSpawn?: AttestKernelSpawn;
+	/** The host environment kernel children inherit, without the RPC host's supervisor hand-off (senpi#5635); defaults to process.env. */
+	readonly inheritedEnv?: InheritedEnvironment;
 	readonly command?: string;
 	readonly spawn?: SubprocessSpawn;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
@@ -50,11 +57,14 @@ export class JuliaKernel extends SubprocessKernel {
 			cwd: options.cwd,
 			sessionId: options.sessionId,
 			sessionEnv: options.sessionEnv,
+			...(options.attestSpawn === undefined ? {} : { attestSpawn: options.attestSpawn }),
+			inheritedEnv: options.inheritedEnv,
 			connection: options.connection,
 			spawn: options.spawn,
 			onMessage: options.onMessage,
 			memory: options.memory && { language: "jl", ...options.memory },
 			onDeath: options.onDeath,
+			permissions: options.permissions,
 			startup: { label: "Julia", readGroupCpuTime: readProcessGroupCpuTime },
 		});
 	}

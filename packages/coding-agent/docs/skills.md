@@ -39,6 +39,7 @@ Discovery rules:
 - In all skill locations, directories containing `SKILL.md` are discovered recursively
 - In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored, but nested `.md` files in grouping folders are discovered when they declare skill frontmatter
 - Root Markdown files other than `SKILL.md` that do not look like skills are ignored silently
+- `.gitignore`, `.ignore` and `.fdignore` files inside a skill location hide the folders and files they list. A symlinked entry is not hidden by the ignore files above it: it belongs to another tree, so a skill linked in from its own repository loads even when the location's `.gitignore` lists the link. The linked tree's own ignore files still apply inside it. To keep git ignoring a link, list it in `.git/info/exclude`; to stop loading a linked skill on purpose, exclude it with the settings `skills` array (`!pattern` or `-path`, see [Settings](settings.md))
 
 Disable discovery with `--no-skills` (explicit `--skill` paths still load).
 
@@ -91,16 +92,16 @@ appears inline. Bare inline dollar text remains literal, so `Use $HOME` and `exp
 do not become skill invocations.
 
 After resolving the explicit tokens, Senpi removes only those tokens and wraps the remaining text once
-as the user request. Unknown tokens stay literal, duplicates are skipped, and at most five distinct
-skills expand per prompt. Raise that limit with `maxSkillExpansionsPerPrompt` in `settings.json`
-when you deliberately compose more skills.
+as the user request. Unknown tokens stay literal and duplicates are skipped. There is no limit on how
+many skills one prompt composes: every invoked skill loads. Skill bodies are inlined until they total
+about 128K characters; any skill past that budget is still loaded, as a reference that names its
+`SKILL.md` path and tells the model to read it before acting. The first skill is always inlined.
 
 Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
 
 ```json
 {
-  "enableSkillCommands": true,
-  "maxSkillExpansionsPerPrompt": 5
+  "enableSkillCommands": true
 }
 ```
 
@@ -282,7 +283,7 @@ cd /path/to/brave-search && bun install
 
 Senpi contributes built-in skills conditionally based on available credentials and capabilities.
 
-**gpt-image-gen** is contributed by the `imagegen` builtin extension when image-generation credentials exist (stored OpenAI key, `OPENAI_API_KEY`, or an OpenAI-compatible gateway). It is the GPT Image 2.5 prompting guide: tool routing (native `image_generation` server tool vs. the client `generate_image` tool), model selection, a specificity policy (normalize specific requests, add concreteness only to generic ones), verbatim quoted text, reference roles and end-state edits, transparent assets, output formats, multi-turn refinement, and a result checklist. For `generate_image`, `model` selects `gpt-image-2.5-sunburst` (default, most capable), `gpt-image-2.5-flare` (speed), or `gpt-image-2`; `quality` accepts `auto`, `low`, `medium`, `high`, `xhigh`, or `max`; `size` accepts `auto`, presets, or validated custom dimensions; `background`, `output_format` (`png`/`jpeg`/`webp`), `output_compression` (jpeg/webp), and `moderation` shape the output, and the saved extension follows the delivered bytes. `reference_image_paths` supplies 1-5 local images; `mask_image_path` adds an alpha mask for local repaints. Only the native server tool returns a `revised_prompt`.
+**gpt-image-gen** is contributed by the `imagegen` builtin extension when image-generation credentials exist (stored OpenAI key, `OPENAI_API_KEY`, or an OpenAI-compatible gateway). It is the GPT Image 2.5 prompting guide: tool routing (native `image_generation` server tool vs. the client `generate_image` tool, which is eval-only like `bash`: hidden from the direct tool list whenever an `eval` tool exists and called as `tool.generate_image({ prompt: "..." })` inside a cell), model selection, a specificity policy (normalize specific requests, add concreteness only to generic ones), verbatim quoted text, reference roles and end-state edits, transparent assets, output formats, multi-turn refinement, and a result checklist. For `generate_image`, `model` selects `gpt-image-2.5-sunburst` (default, most capable), `gpt-image-2.5-flare` (speed), or `gpt-image-2`; `quality` accepts `auto`, `low`, `medium`, `high`, `xhigh`, or `max`; `size` accepts `auto`, presets, or validated custom dimensions; `background`, `output_format` (`png`/`jpeg`/`webp`), `output_compression` (jpeg/webp), and `moderation` shape the output, and the saved extension follows the delivered bytes. `reference_image_paths` supplies 1-5 local images; `mask_image_path` adds an alpha mask for local repaints. Only the native server tool returns a `revised_prompt`.
 
 Skill visibility refreshes at startup and on `/reload`. Mid-session credential changes (login, environment variable updates) take effect on the tool and injector immediately but are reflected in the skill list only after the next reload.
 

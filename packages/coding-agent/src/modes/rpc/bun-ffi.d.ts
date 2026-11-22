@@ -5,6 +5,7 @@ declare module "bun:ffi" {
 		ptr = 12,
 	}
 	export function ptr(view: NodeJS.TypedArray): number;
+	export const read: { i32(pointer: number, byteOffset: number): number };
 	export function dlopen<Symbols extends Record<string, { args: readonly FFIType[]; returns: FFIType }>>(
 		library: string,
 		symbols: Symbols,

@@ -1,0 +1,35 @@
+{
+	"caseId": "cursor-out-of-range",
+	"kind": "refusal",
+	"contractIds": [
+		"R4.B3",
+		"RULING-62",
+		"RULING-70"
+	],
+	"description": "After the last page, the first page's cursor is presented again: its ordinal is behind the token's, refused typed with restart_from_catalog before any read.",
+	"input": {
+		"command": {
+			"id": "page-4",
+			"type": "get_recovery_page",
+			"token": "socket-1:1",
+			"admissionId": "attach-1",
+			"componentRef": "c-0000000000000001:000",
+			"requestId": "r-4",
+			"cursor": "p1:1:131072:ab18e4901131474d442d027507e29367"
+		},
+		"sessionId": "index.json session.idRule"
+	},
+	"expected": {
+		"id": "page-4",
+		"type": "response",
+		"command": "get_recovery_page",
+		"success": false,
+		"error": "recovery_cursor_out_of_range",
+		"errorCode": "recovery_cursor_out_of_range",
+		"errorData": {
+			"kind": "request_refused",
+			"reason": "cursor_out_of_range",
+			"hint": "restart_from_catalog"
+		}
+	}
+}

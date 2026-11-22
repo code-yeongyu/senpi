@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { childRuntime, makeSandbox, repoRoot } from "../../../../scripts/lib/common.mjs";
 import { startFakeModelServer } from "../../../../scripts/lib/fake-model-server.mjs";
+import { hostPinEnv } from "../../../../scripts/lib/equivalence-host-pin.mjs";
 import { API_PRESETS, hermeticEnv, writeMockModelsJson } from "../../../../scripts/lib/mock-loop-support.mjs";
 import { RpcClient } from "../../../../scripts/lib/rpc-client.mjs";
 
@@ -57,7 +58,9 @@ export async function startCaseRun(spec) {
 	}
 	const env = hermeticEnv(box.env);
 	for (const name of TERMINAL_ENV) delete env[name];
-	Object.assign(env, { TERM: "xterm-256color", EQ_BARRIER_ORIGIN: server.origin }, spec.env ?? {});
+	// hostPinEnv(): the determinism contract, every CLI child of this run renders the pinned host facts
+	// (scripts/lib/equivalence-host-pin.mjs).
+	Object.assign(env, { TERM: "xterm-256color", EQ_BARRIER_ORIGIN: server.origin }, hostPinEnv(), spec.env ?? {});
 	const baseArgs = ["--provider", preset.provider, "--model", preset.modelId, "--no-skills"];
 	const extensionArgs = (spec.extensions ?? []).flatMap((path) => ["--extension", path]);
 	const run = {
@@ -70,11 +73,6 @@ export async function startCaseRun(spec) {
 		sessionIds: [],
 		states: [],
 		effects: [],
-		/**
-		 * A settle barrier a case records when its startup surfaces race (`{ client, at, mcpServers, final }`); O6 then
-		 * compares the surfaces list through it (collectors.mjs). Unset for every other case.
-		 */
-		surfacesSettled: undefined,
 		/** Run-scoped prefixes a case allocates itself (a fixture server's origin), replaced like the sandbox root. */
 		extraRoots: [],
 		/** Cleanups a case registers (fixture servers it started); run after every child has exited. */

@@ -51,7 +51,11 @@ export function renderWebfetchResult(
 	const status = theme.fg(statusKey, `${details.status} ${details.statusText || "OK"}`);
 	const format = theme.fg("accent", details.format);
 	const size = theme.fg("muted", formatBytes(details.bytes));
-	const converted = details.converted ? theme.fg("dim", " converted") : "";
+	const converted = details.rendered
+		? theme.fg("dim", " rendered")
+		: details.converted
+			? theme.fg("dim", " converted")
+			: "";
 	const truncatedNote = details.outputTruncated ? theme.fg("warning", " truncated") : "";
 	const header = `${status} ${theme.fg("muted", "•")} ${format} ${theme.fg("muted", "•")} ${size}${converted}${truncatedNote}`;
 
@@ -120,6 +124,9 @@ function formatProgress(details: WebfetchProgressDetails): string {
 	if (details.phase === "converting") {
 		return `Converting ${url} to ${details.format}`;
 	}
+	if (details.phase === "rendering") {
+		return `Rendering ${url}: the static HTML is an empty app shell`;
+	}
 	return `Fetching ${url} as ${details.format} (${details.timeoutSeconds}s)`;
 }
 
@@ -128,7 +135,10 @@ function isWebfetchProgressDetails(details: WebfetchRenderDetails | unknown): de
 		typeof details === "object" &&
 		details !== null &&
 		"phase" in details &&
-		(details.phase === "fetching" || details.phase === "downloading" || details.phase === "converting")
+		(details.phase === "fetching" ||
+			details.phase === "downloading" ||
+			details.phase === "converting" ||
+			details.phase === "rendering")
 	);
 }
 

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { type ModuleHooks, registerHooks } from "node:module";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { enableSourceCompileCache } from "./source-compile-cache.ts";
 
 // Node strips TypeScript natively, but it does not apply the workspace source
 // aliases from tsconfig.json. Internal source processes preload this resolver so
@@ -41,7 +42,9 @@ export function registerWorkspaceSourceResolver(): void {
 	if (!paths) throw new Error(`Source runtime requires compilerOptions.paths in ${tsconfigPath}`);
 
 	const aliases: SourceAlias[] = Object.entries(paths)
-		.filter(([pattern]) => pattern.startsWith("@earendil-works/"))
+		.filter(
+			([pattern]) => pattern.startsWith("@earendil-works/") || pattern.startsWith("@code-yeongyu/senpi-machine-ops"),
+		)
 		.map(([pattern, replacements]) => {
 			const wildcard = pattern.indexOf("*");
 			if (wildcard !== -1 && pattern.indexOf("*", wildcard + 1) !== -1) {
@@ -102,7 +105,9 @@ function resolveSourcePath(repositoryRoot: string, replacement: string): string 
 
 // Preload form: internal source processes launch with `--import <this file>` (see
 // process.ts), so registration must already be active before their entrypoint runs.
-// Library imports of this module register explicitly through the exported function.
+// Library imports of this module register explicitly through the exported function, and never
+// enable the compile cache: it belongs to the launched process's own module graph.
 if (import.meta.url.endsWith(".ts") && process.execArgv.some((arg) => arg.includes("source-resolver"))) {
 	registerWorkspaceSourceResolver();
+	enableSourceCompileCache();
 }

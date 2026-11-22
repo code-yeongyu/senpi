@@ -1,8 +1,9 @@
 import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalKernelRunInput } from "../../tool/types.ts";
-import type { SessionEnvironment } from "../session-env.ts";
+import type { InheritedEnvironment, SessionEnvironment } from "../session-env.ts";
 import type { InvocationPermissions } from "../shared/invocation-authority.ts";
+import type { AttestKernelSpawn } from "../shared/session-spawn-attestation.ts";
 import type { JavaScriptInterruptBounds } from "./interrupt-bounds.ts";
 import type { CellDecision, CellOperation, CellRule } from "./permission-slots.mjs";
 
@@ -46,6 +47,8 @@ export interface JavaScriptKernelOptions {
 	readonly cwd: string;
 	readonly permissions?: InvocationPermissions & {
 		readonly decide: CellDecider;
+		/** Slot wait deadline in ms; production keeps the 2s default. Integration suites raise it above host load. */
+		readonly checkDeadlineMs?: number;
 	};
 	/** Integration marks direct tool admission DEAD too; the kernel host fences cells itself. */
 	readonly onRevocationFailed?: (event: RevocationFailedEvent) => void;
@@ -54,11 +57,15 @@ export interface JavaScriptKernelOptions {
 	 * wait on them. Absent, they stay zombies until the host's child reaper or process exit collects them.
 	 */
 	readonly collectOrphanedChildren?: (pids: readonly number[]) => Promise<unknown>;
+	/** Attests the kernel process and each child it reports to the session (senpi#6972); absent, none is recorded. */
+	readonly attestSpawn?: AttestKernelSpawn;
 	readonly parallelPoolWidth: number;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly workerEntryUrl?: URL;
 	/** Per-session PI_* values applied to the worker environment before the first cell runs. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** The host environment kernel children inherit, without the RPC host's supervisor hand-off (senpi#5635); defaults to process.env. */
+	readonly inheritedEnv?: InheritedEnvironment;
 	/** Opt-in child-process kernel; absent keeps the worker-thread kernel. */
 	readonly isolation?: "process";
 	/** Resolution root for the process-mode runtime (bun, then node); `""` names a machine with none on PATH. */
@@ -76,6 +83,8 @@ export interface JavaScriptKernelOptions {
 	readonly hostToolNames?: KernelToolNameSource;
 	/** `kernelTools.enabled`; false makes `tool(fn)` refuse with `tools_unavailable`. Unset keeps them on. */
 	readonly kernelToolsEnabled?: boolean;
+	/** The kill guard (senpi#5349): where the worker imports the judge from, and the agent host's pid. Absent = guard off. */
+	readonly killGuard?: { readonly moduleUrl: string | URL; readonly agentPid: number };
 	/** Tool names registered in another kernel language, denied as JS kernel-tool identifiers. */
 	readonly foreignLanguageNames?: KernelToolNameSource;
 	/** Post-cell collection, notice, and ceiling thresholds; absent leaves the worker's memory unmanaged. */

@@ -5,6 +5,7 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import type { SessionKind } from "../../core/extensions/types.ts";
 
 import type { PendingInputUpdate } from "../../core/pending-input-session.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 
 export type RpcExtensionEvent = {
 	type: "extension_event";
@@ -119,8 +120,23 @@ export type RpcSessionParkedEvent = {
 	sessionId: string;
 	/** Session file to reopen this session by. */
 	sessionPath: string;
-	/** `idle`: the idle sweep parked it; `unloaded`: `unload_session` did. Absent from older hosts. */
-	reason?: "idle" | "unloaded";
+	/**
+	 * `idle`: the idle sweep parked it; `unloaded`: `unload_session` did; `host_shutdown`: the host stopped with the session
+	 * retained, and the next host on the endpoint reopens it. Absent from older hosts.
+	 */
+	reason?: "idle" | "unloaded" | "host_shutdown";
+};
+
+/**
+ * Sent only to the connections a headless engine's quiet takeover let go (senpi#5732): this connection no longer holds
+ * the session, which goes on running for its new holder. Not the `session_released` transcript entry that
+ * `release_session` writes; that one is a session entry, this one is a connection record.
+ */
+export type RpcSessionReleasedEvent = {
+	type: "session_released";
+	/** Routing handle this connection held; another client holds it now. */
+	sessionId: string;
+	reason: "taken_over";
 };
 
 /**
@@ -184,6 +200,19 @@ export interface RpcSessionOpenedEvent {
  */
 export interface RpcLoadedSurfacesChangedEvent {
 	type: "loaded_surfaces_changed";
+}
+
+/** Emitted after `set_session_settled` writes the session's Done flag; `settledBy` is present only while settled. */
+export interface RpcSessionSettledChangedEvent {
+	type: "session_settled_changed";
+	settled: boolean;
+	settledBy?: ThreadSettledBy;
+}
+
+/** Emitted after `set_session_archived` writes the session's archived flag; `archived` is the flag now in force. */
+export interface RpcSessionArchivedChangedEvent {
+	type: "session_archived_changed";
+	archived: boolean;
 }
 
 /** Emitted after an account is added, removed, pinned, or blocked by refresh failure. */

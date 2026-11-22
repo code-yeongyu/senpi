@@ -151,6 +151,8 @@ export interface ProviderConfigInput {
 	 * used and blocked all of them (senpi#2081).
 	 */
 	ownsAccountSelection?: boolean;
+	/** Capability flag (see `ProviderConfig.localOnly`): served only on the machine holding the binary and login. Metadata only. */
+	localOnly?: boolean;
 }
 
 /** Ambient api-key auth hook for extension providers (see `ProviderConfigInput.ambientAuth`). */
@@ -460,15 +462,7 @@ function applyModelsJson(
 		if (existingIndex >= 0) models[existingIndex] = model;
 		else models.push(model);
 	}
-	const whitelist = config.whitelist ? new Set(config.whitelist) : undefined;
-	const blacklist = config.blacklist ? new Set(config.blacklist) : undefined;
-	const hideFree = config.hideFreeModels === true;
-	return models.filter(
-		(model) =>
-			(whitelist === undefined || whitelist.has(model.id)) &&
-			(blacklist === undefined || !blacklist.has(model.id)) &&
-			!(hideFree && !model.cost.unknown && model.cost.input === 0 && model.cost.output === 0),
-	);
+	return models;
 }
 
 function applyExtension(
@@ -589,7 +583,7 @@ export function composeModelProvider(
 	let refreshedExtensionModels: ProviderConfigInput["models"];
 	const currentExtension = (): ProviderConfigInput | undefined =>
 		extension && refreshedExtensionModels ? { ...extension, models: refreshedExtensionModels } : extension;
-	// models.json modelOverrides are the topmost user-config layer: they apply once,
+	// models.json overrides and visibility are the topmost user-config layer: they apply once,
 	// after custom-model upserts, extension model replacement, and legacy OAuth projection.
 	const getAllModels = (): AnyModel[] => {
 		let models = applyExtension(
@@ -608,6 +602,15 @@ export function composeModelProvider(
 				...models.filter((model) => !isModelType(model, "chat")),
 			];
 		}
+		const whitelist = config?.whitelist ? new Set(config.whitelist) : undefined;
+		const blacklist = config?.blacklist ? new Set(config.blacklist) : undefined;
+		const hideFree = config?.hideFreeModels === true;
+		models = models.filter(
+			(model) =>
+				(whitelist === undefined || whitelist.has(model.id)) &&
+				(blacklist === undefined || !blacklist.has(model.id)) &&
+				!(hideFree && !model.cost.unknown && model.cost.input === 0 && model.cost.output === 0),
+		);
 		// The user's models.json baseUrl is applied after every extension rewrite, modifyModels included.
 		models = applyUserBaseUrl(models, config);
 		return models.map((model) => {

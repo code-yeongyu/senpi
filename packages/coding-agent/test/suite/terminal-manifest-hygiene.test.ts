@@ -55,6 +55,16 @@ describe("terminal manifest hygiene", () => {
 		expect(persisted.monitors.map((entry) => [entry.monitorId, entry.suspended])).toEqual([["mon_A", true]]);
 	});
 
+	it("recordClosed (a graceful close, oh-my-openagent#14313) leaves nothing to restore", async () => {
+		const { writer, sessionDir, sessionId } = await writerFor();
+		const path = join(sessionDir, "extensions", "terminal", `${sessionId}.json`);
+		await writer.recordRegister({ monitorId: "mon_A", spec: persistentSpec("a") });
+		await writer.recordBackgroundStart("bash_1", "sleep 30", 1_000);
+		expect(existsSync(path)).toBe(true);
+		await writer.recordClosed();
+		expect(existsSync(path)).toBe(false);
+	});
+
 	it("seedFromDisk adopts the on-disk entries without writing, so the next transition keeps them", async () => {
 		const { writer, sessionDir, sessionId } = await writerFor();
 		const path = join(sessionDir, "extensions", "terminal", `${sessionId}.json`);

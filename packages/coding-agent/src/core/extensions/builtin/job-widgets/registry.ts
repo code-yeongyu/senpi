@@ -49,7 +49,12 @@ const INERT_HANDLE: JobWidgetSourceHandle = {
 export class JobWidgetRegistry {
 	readonly sessionId: string;
 	readonly #matcher: LineMatcher;
-	readonly #redact: JobWidgetRedactor;
+	/** Handed to every job and the publisher; it calls the current redactor, so a re-bind reaches them. */
+	readonly #redact: JobWidgetRedactor = {
+		text: (text) => this.#currentRedact.text(text),
+		source: () => this.#currentRedact.source(),
+	};
+	#currentRedact: JobWidgetRedactor;
 	readonly #controller: JobWidgetRequestController;
 	readonly #publisher: JobWidgetStatePublisher;
 	readonly #jobs = new Map<string, JobWidgetJob>();
@@ -61,7 +66,7 @@ export class JobWidgetRegistry {
 	constructor(options: JobWidgetRegistryOptions) {
 		this.sessionId = options.sessionId;
 		this.#matcher = options.matcher ?? defaultLineMatcher;
-		this.#redact = createWidgetRedactor(options.obfuscate);
+		this.#currentRedact = createWidgetRedactor(options.obfuscate);
 		this.#controller = new JobWidgetRequestController({
 			author: options.author,
 			matcher: this.#matcher,
@@ -110,6 +115,17 @@ export class JobWidgetRegistry {
 			if (entry) jobs.push(entry);
 		}
 		return { v: 1, sessionId: this.sessionId, jobs };
+	}
+
+	/**
+	 * Applies settings re-read on a re-bind (a reload): the author's start delay from the next request
+	 * on, the session's obfuscation for every state sent, every author request and every runtime started
+	 * after it. A reader already running keeps its own stateful source redactor, so a key block it is
+	 * inside is never split between two redactors.
+	 */
+	configure(options: Pick<JobWidgetRegistryOptions, "limits" | "obfuscate">): void {
+		this.#currentRedact = createWidgetRedactor(options.obfuscate);
+		this.#controller.configure(options);
 	}
 
 	/** Sends the current state on the next offer even if unchanged, for a listener that just bound. */

@@ -12,6 +12,7 @@ import { mkdir, rename, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { createDaemonDirectories, createHostDaemonPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 export async function deadEndpoint(socket: string, agentDir: string) {
 	const paths = createHostDaemonPaths({ socket, agentDir });
@@ -83,7 +84,7 @@ export async function heldZombie(
 		// What its pidfile recorded while it ran: a zombie keeps its start time.
 		const processStartTime = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
 			encoding: "utf8",
-			env: { ...process.env, LC_ALL: "C", LANG: "C" },
+			env: { ...hostSpawnEnv(), LC_ALL: "C", LANG: "C" },
 		}).trim();
 		if (!processStartTime) throw new Error(`no start time readable for zombie ${pid}`);
 		return { pid, processStartTime, release };

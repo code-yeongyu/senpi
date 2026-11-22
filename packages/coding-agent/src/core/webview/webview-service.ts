@@ -44,6 +44,8 @@ export class WebViewService {
 	readonly #retireChrome: (webViewClass: NativeWebViewClass) => Promise<void>;
 	readonly #onRetireFailure: ((message: string) => void) | undefined;
 	readonly #clients = new Map<string, WebViewServiceClient>();
+	// senpi#5936: one drop per client, so a release after the port-close drop awaits that same drop.
+	readonly #drops = new WeakMap<WebViewServiceClient, Promise<void>>();
 	#retiring: Promise<void> = Promise.resolve();
 	#chromeInUse = false;
 	// Views being constructed and not yet adopted by their client: Chrome must outlive them.
@@ -168,12 +170,24 @@ export class WebViewService {
 		}
 	}
 
-	async #drop(client: WebViewServiceClient): Promise<void> {
-		if (this.#clients.get(client.id) !== client) return await this.#retiring;
-		this.#clients.delete(client.id);
+	#drop(client: WebViewServiceClient): Promise<void> {
+		let dropped = this.#drops.get(client);
+		if (!dropped) {
+			dropped = this.#retireClient(client);
+			this.#drops.set(client, dropped);
+		}
+		return dropped;
+	}
+
+	/** The client stays findable until its launches settled and its Chrome retired, so its owner can await that. */
+	async #retireClient(client: WebViewServiceClient): Promise<void> {
 		client.release();
-		await client.settled();
-		await this.#retireIfIdle();
+		try {
+			await client.settled();
+			await this.#retireIfIdle();
+		} finally {
+			this.#clients.delete(client.id);
+		}
 	}
 
 	/** Retires Chrome once no view uses it and no launch is pending; resolves when retirement ends. */

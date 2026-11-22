@@ -1,4 +1,5 @@
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { initializationOrAbort } from "./auth-attempt.ts";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
 import { coldSeedCalibration, coldSeedOverflow, estimateColdSeedTokens } from "./cold-seed-budget.ts";
 import { buildPromptBlocks } from "./prompt-bridge.ts";
@@ -32,19 +33,24 @@ import {
 	sentMessageHashes,
 	sentMessages,
 } from "./session-sync.ts";
-import { createSessionTurnAttempt } from "./session-turn-attempt.ts";
+import { admitSettledTurn, createSessionTurnAttempt } from "./session-turn-attempt.ts";
 import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
 
 export type ResidentSessionStreamInput = {
 	model: Model<Api>;
 	context: Context;
 	streamOptions: SimpleStreamOptions;
+	recheckedAccounts?: Set<string>;
 	providerSettings: AnthropicSubscriptionProviderSettings;
 	pinnedAccount?: string;
 	buildOptions: Parameters<typeof queryWithAuthLane>[0]["buildOptions"];
 	customToolNameToSdk: ReadonlyMap<string, string>;
 	toolWatchNote?: string;
 	onResumeFallback: (error: unknown) => void;
+	onLongContextFallback?: () => void;
+	contextTokens?: () => number;
+	outputReserveTokens?: number;
+	onAttemptStart?: () => void;
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
 	/** Called once per attempt, before dispatch, with whether it re-sends the whole history and that re-send's bytes/4 estimate. */
 	onDispatchShape?: (coldSeed: boolean, estimatedTokens?: number) => void;
@@ -90,10 +96,13 @@ async function createResidentAttempt(
 	const sessionId = input.streamOptions.sessionId!;
 	const messages = sentMessages(input.context);
 	const hashes = sentMessageHashes(messages);
+	// Continuity and the delta are read from the settled previous turn, never from one still in flight.
+	const { binding, transcriptAvailable } = await admitSettledTurn(sessionId, input.streamOptions.signal, () =>
+		admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane),
+	);
 	const existing = getSession(sessionId);
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
-	const { binding, transcriptAvailable } = await admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane);
 	const servedLineage = getBinding(sessionId);
 	const lineageSeat = existing?.accountName ?? servedLineage?.accountName ?? binding?.accountName;
 	const seat = {
@@ -108,6 +117,7 @@ async function createResidentAttempt(
 		modelId: input.model.id,
 		fingerprint,
 		transcriptAvailable,
+		// claude-cli accounts share one transcript root through their `projects` link, like oauth-slots.
 		crossAccountResumeSupported: auth.authLane !== "config-dir",
 		idleExpired: existing ? isIdleExpired(existing) : false,
 		invalidationReason: bindingInvalidationReason(sessionId),
@@ -173,6 +183,20 @@ async function createResidentAttempt(
 			...fingerprint,
 			options: auth.options,
 		});
+	}
+	// A claude-cli account checks what its CLI initialized with before any prompt is pushed (senpi#4436).
+	if (auth.verifyInitialization && entry.query.initializationResult) {
+		try {
+			await auth.verifyInitialization(
+				await initializationOrAbort(entry.query.initializationResult(), input.streamOptions.signal),
+			);
+		} catch (error) {
+			closeSession(
+				sessionId,
+				input.streamOptions.signal?.aborted ? "initialization_aborted" : "initialization_refused",
+			);
+			throw error;
+		}
 	}
 	// Every branch above either reuses a subprocess whose token matched (delta)
 	// or spawned one with auth.options, so the entry now runs on this token.
@@ -258,6 +282,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		prompt: "",
 		query: getSdkBoundary().query,
 		providerSettings: input.providerSettings,
+		recheckedAccounts: input.recheckedAccounts,
 		env: input.streamOptions.env,
 		signal: input.streamOptions.signal,
 		sessionId: input.streamOptions.affinitySessionId ?? input.streamOptions.sessionId,
@@ -265,6 +290,10 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		pinnedAccount: input.pinnedAccount,
 		...(preferredAccount === undefined ? {} : { preferredAccount }),
 		buildOptions: input.buildOptions,
+		contextTokens: input.contextTokens,
+		outputReserveTokens: input.outputReserveTokens,
+		...(input.onLongContextFallback === undefined ? {} : { onLongContextFallback: input.onLongContextFallback }),
+		onAttemptStart: input.onAttemptStart,
 		createAttempt: (auth) => createResidentAttempt(input, auth),
 	});
 }

@@ -79,7 +79,7 @@ export function buildBlock(block: JobWidgetBlockSpec, ctx: BuildContext): JobWid
 			const value = aggregateSeries(series, block.agg, ctx.now, ctx.startTime) ?? 0;
 			const total = typeof block.total === "number" ? block.total : (buildValue(block.total, ctx).value ?? 0);
 			const fraction = total > 0 ? Math.min(1, Math.max(0, value / total)) : 0;
-			const text = `${formatWidgetNumber(value)}/${formatWidgetNumber(total, block.unit)}`;
+			const text = `${formatWidgetNumber(value)}/${formatWidgetNumber(total, meterUnit(block.unit, total))}`;
 			return { kind: "meter", label: block.label, value: fraction, text };
 		}
 		case "stat":
@@ -109,6 +109,20 @@ export function buildBlock(block: JobWidgetBlockSpec, ctx: BuildContext): JobWid
 			return { kind: "text", text: truncateText(series.text ?? series.line?.trim() ?? "", MAX_TEXT_CHARS) };
 		}
 	}
+}
+
+/**
+ * A meter's unit without a restated whole. Authors copy a job's `step 24/60` into the unit (`/60`,
+ * `of 60 steps`), which the count already carries (`24/60`), so a leading whole (`/60`, `/ 60`,
+ * `of 60`, `out of 60`, `60`) is dropped and any real unit after it (`steps`) stays.
+ */
+function meterUnit(unit: string | undefined, total: number): string | undefined {
+	if (!unit) return undefined;
+	const match = /^\s*(?:\/|out of\b|of\b)?\s*([^\s/]+)\s*(.*)$/i.exec(unit);
+	if (!match) return unit;
+	const wholes = new Set([String(total), formatWidgetNumber(total)]);
+	if (!wholes.has(match[1].replaceAll(",", ""))) return unit;
+	return match[2].trim() || undefined;
 }
 
 function buildSpark(block: JobWidgetSparkSpec, ctx: BuildContext): JobWidgetSparkBlock {

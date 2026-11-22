@@ -10,7 +10,7 @@
 | `SENPI_CODING_AGENT_SESSION_DIR` | Session storage dir. QA points it at the sandbox. |
 | `PI_OFFLINE` | `1` disables startup network operations. QA always sets it. |
 | `PI_TELEMETRY` | `0` disables install telemetry. QA always sets it. |
-| `PI_PACKAGE_DIR` | Override package asset dir (Nix/Guix). Not used by QA. |
+| `PI_PACKAGE_DIR` | Override package asset dir (Nix/Guix). `makeSandbox()` scrubs every inherited `*_PACKAGE_DIR`, so a QA child always resolves its own package (senpi#6839). |
 
 Names derive from `piConfig.name` ("senpi") in
 `packages/coding-agent/package.json`:

@@ -41,6 +41,7 @@ import {
 	streamEvent,
 } from "../../helpers/anthropic-subscription-scripted-sdk.ts";
 import { createHarness, type Harness } from "../harness.ts";
+import { cliAccountOf } from "../../support/claude-cli-test-slots.ts";
 
 const OWNER_ENV = "SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER";
 
@@ -171,7 +172,7 @@ describe("senpi#2746 one compaction owner per anthropic-subscription turn", () =
 		expectSingleOwner(serving, true);
 		expect(serving?.options?.env?.CLAUDE_CODE_TOTAL_TOKENS_REMINDER).toBe("off");
 		// The overlay is layered over the auth lane's environment, never replacing it.
-		expect(serving?.options?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("access-primary");
+		expect(cliAccountOf(serving?.options?.env)).toBe("primary");
 		expect(lastAssistant(lane.harness)).toMatchObject({ stopReason: "stop" });
 	}, 30_000);
 

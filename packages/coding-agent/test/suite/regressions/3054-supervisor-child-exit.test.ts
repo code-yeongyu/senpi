@@ -27,6 +27,7 @@ import { removeHostScratch } from "../../helpers/host-scratch-removal.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
 import { type GenerationScratch, generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
 import { processAlive } from "../../helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-child-exit-supervisor.ts");
 // lsof exits 1 with no output when nothing holds the path (socket-ownership.ts lsofSocketHolders).
@@ -79,7 +80,7 @@ async function rig(mode: string) {
 	});
 	const child = spawn(process.execPath, [fixture, mode, qa.socket, qa.agentDir], {
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...generationEnv(qa),
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
 			SENPI_RPC_HOST_INSTANCE_ID: instanceId,
