@@ -4,7 +4,7 @@
  * through the auth.json file lock. All tokens are dummy strings; every dir is a temp dir.
  */
 import { existsSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { renameCredentialAccount } from "../../../src/core/credential-accounts.ts";
 import type { AnthropicSubscriptionCredential } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
@@ -54,6 +54,22 @@ describe("senpi#5594 the account dir record follows a rename", () => {
 });
 
 describe("senpi#5594 concurrent writers and a re-login keep both accounts", () => {
+	it("restores the new label when the same slot is renamed just after the re-login commits it", async () => {
+		const { cli, authPath, storage } = await twoSignedInAccounts();
+		await renameCredentialAccount(storage, SCRIPTED_PROVIDER, "default", "Old label");
+		const otherProcess = AuthStorage.create(authPath);
+		const modify = storage.modify.bind(storage);
+		vi.spyOn(storage, "modify").mockImplementationOnce(async (...args) => {
+			const result = await modify(...args);
+			await renameCredentialAccount(otherProcess, SCRIPTED_PROVIDER, "default", "New label");
+			return result;
+		});
+
+		await loginWith(storage, cli)("default");
+		writeStale(authPath, staleEntry("default"));
+		expect((await loaded(authPath)).find((slot) => slot.name === "default")?.displayName).toBe("New label");
+	});
+
 	it("a re-login racing a rename and a block write from a second process keeps both accounts on their own dirs", async () => {
 		const { cli, agentDir, authPath, storage, signedIn } = await twoSignedInAccounts();
 		const [oldDefault, second] = signedIn;

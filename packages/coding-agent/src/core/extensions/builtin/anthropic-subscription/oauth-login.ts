@@ -394,24 +394,32 @@ export function createOAuthConfig(deps: {
 
 				const signedInAt = now();
 				const claimed: { slot?: ClaudeCliAccountSlot } = {};
+				let recordError: string | undefined;
 				await credentials.modify(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, async (stored) => {
 					const base = storedSubscription(stored) ?? current;
 					previous = base.accounts?.find((candidate) => candidate.name === name);
 					claimed.slot = signedInSlot(previous, name, dirId, status.profile, signedInAt);
 					written = claimed.slot;
+					// A rename uses this same lock. Publish the dir record before it can rename the slot.
+					try {
+						await writeAccountLink(agentDir(), {
+							dirId,
+							name,
+							signedInAt,
+							displayName: claimed.slot.displayName,
+						});
+					} catch (error) {
+						recordError = error instanceof Error ? error.message : String(error);
+					}
 					return withSlot(base, claimed.slot);
 				});
 				const slot = claimed.slot;
 				if (slot === undefined) throw new Error("Claude sign-in could not store its account");
-				// The record only lets a later stale write be undone: a failed write keeps the sign-in, and the next load's
-				// backfill writes the record again (senpi#5594).
-				await writeAccountLink(agentDir(), { dirId, name, signedInAt, displayName: slot.displayName }).catch(
-					(error: unknown) => {
-						callbacks.onProgress?.(
-							`Signed in, but the account dir record could not be written (${error instanceof Error ? error.message : String(error)}); the next start writes it again`,
-						);
-					},
-				);
+				if (recordError !== undefined) {
+					callbacks.onProgress?.(
+						`Signed in, but the account dir record could not be written (${recordError}); the next start writes it again`,
+					);
+				}
 				cancelled();
 				const model = connectionTestModel(cli.defaultModel?.());
 				callbacks.onProgress?.(`Testing the account with one turn on ${model}...`);
