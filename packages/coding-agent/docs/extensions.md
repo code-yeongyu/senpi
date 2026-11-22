@@ -3494,6 +3494,8 @@ A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate 
 
 `ctx.promptSurface` is the prompt surface (`"terminal"`, `"app"` or `"chat"`) of the session the running call belongs to, which says what that session's host does with a result. On a hand it is the brain session's, sent with the call. It is absent when the runtime knows none.
 
+`ctx.inlineHtml` says whether the client of the session the running call belongs to shows a `show_html_page` result to its reader inline: its UI declared the RPC client capability `inline_html` (`ctx.ui.capabilities.inlineHtml`). The prompt surface never implies it. On a hand it is the brain session's, sent with the call. It is absent when the runtime knows none.
+
 #### Prompt Cache Warning
 
 Activating a tool that includes `promptSnippet` or `promptGuidelines` rebuilds the system prompt. Even when the provider supports deferred schemas, changing the system prompt may invalidate the cached prefix. Lazily loaded tools should usually rely on their `description` and omit active-only prompt metadata to get the best cache performance.

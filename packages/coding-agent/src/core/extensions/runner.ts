@@ -752,6 +752,7 @@ export class ExtensionRunner {
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
 	private isModelIssuedToolCallFn: (toolCallId: string) => boolean = () => false;
 	private promptSurfaceOfFn: (toolCallId: string) => PromptSurface | undefined = () => undefined;
+	private inlineHtmlOfFn: (toolCallId: string) => boolean | undefined = () => this.rendersHtmlInline();
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
@@ -825,10 +826,13 @@ export class ExtensionRunner {
 		readonly isModelIssuedToolCall?: (toolCallId: string) => boolean;
 		/** Backs `ExtensionToolContext.promptSurface` on a runtime without a session: the brain's, sent with the call. */
 		readonly promptSurfaceOf?: (toolCallId: string) => PromptSurface | undefined;
+		/** Backs `ExtensionToolContext.inlineHtml` on a runtime without a session: the brain's, sent with the call. */
+		readonly inlineHtmlOf?: (toolCallId: string) => boolean | undefined;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
 		if (facts.isModelIssuedToolCall !== undefined) this.isModelIssuedToolCallFn = facts.isModelIssuedToolCall;
 		if (facts.promptSurfaceOf !== undefined) this.promptSurfaceOfFn = facts.promptSurfaceOf;
+		if (facts.inlineHtmlOf !== undefined) this.inlineHtmlOfFn = facts.inlineHtmlOf;
 		this.loopHookCallFn = facts.loopHookCall;
 		const send = facts.loopHookSend;
 		const wake = facts.loopWake;
@@ -1112,6 +1116,11 @@ export class ExtensionRunner {
 		this.uiBroker = broker;
 	}
 
+	/** Whether the UI this runner talks to shows a `show_html_page` result inline (`inline_html`, senpi#6346). */
+	rendersHtmlInline(): boolean {
+		return this.currentUIContext().capabilities?.inlineHtml === true;
+	}
+
 	private currentUIContext(): ExtensionUIContext {
 		if (this.uiBroker === undefined) return this.uiContext;
 		const presenter = this.uiBroker.presenter;
@@ -1147,6 +1156,10 @@ export class ExtensionRunner {
 		const questionFn = ui.question;
 		return inheritMcpMrtrPresentation(ui, {
 			...ui,
+			// A getter on the source (the RPC UI follows set_client_info) stays live through the wrapper.
+			get capabilities() {
+				return ui.capabilities;
+			},
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
 			input: (title, placeholder, opts) =>
@@ -2096,6 +2109,11 @@ export class ExtensionRunner {
 			promptSurface: {
 				get() {
 					return runner.promptSurfaceOfFn(toolCallId);
+				},
+			},
+			inlineHtml: {
+				get() {
+					return runner.inlineHtmlOfFn(toolCallId);
 				},
 			},
 			tools: {

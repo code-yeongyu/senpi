@@ -104,6 +104,7 @@ import {
 	EVAL_CELLS_CAPABILITY,
 	EXTENSION_EVENTS_CAPABILITY,
 	ENTRIES_TAIL_CAPABILITY,
+	INLINE_HTML_CAPABILITY,
 	INTERACTIVE_USER_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	PROVIDER_ACCOUNT_TEST_CAPABILITY,
@@ -727,7 +728,12 @@ export function createRpcConnectionHandler(
 	 * Create an extension UI context that uses the RPC protocol.
 	 */
 	const createExtensionUIContext = (): ExtensionUIContext => ({
-		capabilities: { secretInput: true },
+		// Read when asked: a later set_client_info can add or drop inline_html after the UI is bound.
+		get capabilities() {
+			return clientCapabilities?.includes(INLINE_HTML_CAPABILITY)
+				? ({ secretInput: true, inlineHtml: true } as const)
+				: ({ secretInput: true } as const);
+		},
 		question: (request, opts) =>
 			clientCapabilities?.includes(QUESTION_CAPABILITY)
 				? questions.ask(request, opts)
@@ -1377,6 +1383,7 @@ export function createRpcConnectionHandler(
 								"session_lifecycle",
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
+								INLINE_HTML_CAPABILITY,
 								"secret_input_v1",
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 								EFFECT_LEDGER_CAPABILITY,

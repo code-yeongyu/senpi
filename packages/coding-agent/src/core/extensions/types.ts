@@ -263,7 +263,11 @@ export interface QuestionResponse {
  */
 export interface ExtensionUIContext {
 	/** Implements private collection and typed refusal; a presenter is checked at call time. */
-	readonly capabilities?: { readonly secretInput?: true };
+	readonly capabilities?: {
+		readonly secretInput?: true;
+		/** The client shows a completed `show_html_page` call to its reader inline (`inline_html`, senpi#6346). */
+		readonly inlineHtml?: true;
+	};
 	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
@@ -866,6 +870,12 @@ export interface ExtensionToolContext extends ExtensionContext {
 	 * Absent when the runtime knows none.
 	 */
 	readonly promptSurface?: PromptSurface;
+	/**
+	 * Whether the client of the session the call belongs to shows a `show_html_page` result to its reader inline: its
+	 * UI declared the `inline_html` capability (senpi#6346). The prompt surface never implies it. On a hand it is the
+	 * brain session's, sent with the call. Absent when the runtime knows none.
+	 */
+	readonly inlineHtml?: boolean;
 }
 
 /**

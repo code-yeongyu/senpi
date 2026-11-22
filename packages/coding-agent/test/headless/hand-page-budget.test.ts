@@ -88,7 +88,7 @@ function olderHandImageOnly(pi: ExtensionAPI): void {
 }
 
 /**
- * A brain session (surface "app", no html-render loaded; the hand runs it) and the hand selection that links it to an
+ * A brain session (surface "app", its client renders pages inline, no html-render loaded; the hand runs it) and the hand selection that links it to an
  * in-process hand running the built-ins and `handExtensions`. `endRun` delivers the `agent_end` a run of the session
  * would; `listeners` counts who listens for it.
  */
@@ -115,6 +115,7 @@ function brainOnHand(dirs: HandDirs, handExtensions: ((pi: ExtensionAPI) => void
 		isStreaming: false,
 		sessionManager: SessionManager.inMemory(dirs.cwd),
 		promptSurface: "app" as const,
+		rendersHtmlInline: true,
 	};
 	const endRun = () => {
 		for (const listener of listeners)

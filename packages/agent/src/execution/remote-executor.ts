@@ -26,6 +26,8 @@ export interface HandCall {
 	readonly nested: NestedRequest;
 	/** The issuing session's prompt surface, when it sent one (see `RemoteInvoke.promptSurface`). */
 	readonly promptSurface?: string;
+	/** Whether the issuing session's client shows a page inline, when it sent that (see `RemoteInvoke.inlineHtml`). */
+	readonly inlineHtml?: boolean;
 }
 
 /**
@@ -192,6 +194,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 								signal: controller.signal,
 								nested: planes.requestFor(call.executionId, lane, controller.signal),
 								...(call.promptSurface === undefined ? {} : { promptSurface: call.promptSurface }),
+								...(call.inlineHtml === undefined ? {} : { inlineHtml: call.inlineHtml }),
 							})
 						: scope.file === undefined
 							? fileRefusal("unsupported", "this hand serves no file channel")

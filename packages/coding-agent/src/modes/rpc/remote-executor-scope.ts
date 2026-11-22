@@ -28,7 +28,10 @@ const handRun: { readonly context: HandRunContext; readonly flock: ReturnType<ty
 /** What the issuing session sent with a call; an unknown surface is dropped, never read as another one. */
 function callFacts(call: HandCall): LooplessCallFacts {
 	const surface = call.promptSurface;
-	return surface === "terminal" || surface === "app" || surface === "chat" ? { promptSurface: surface } : {};
+	return {
+		...(surface === "terminal" || surface === "app" || surface === "chat" ? { promptSurface: surface } : {}),
+		...(call.inlineHtml === undefined ? {} : { inlineHtml: call.inlineHtml }),
+	};
 }
 
 function notFound(name: string): AgentToolResult<unknown> {

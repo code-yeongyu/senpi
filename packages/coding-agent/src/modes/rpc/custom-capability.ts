@@ -210,6 +210,13 @@ export const RETRY_FALLBACK_COMMAND_CAPABILITY = "retry_fallback_command";
 export const PROMPT_SURFACE_CHAT_CAPABILITY = "prompt_surface_chat";
 
 /**
+ * Client opt-in (senpi#6346): this client shows a completed `show_html_page` call to its reader inline. A session whose
+ * extension UI is bound to such a connection tells the model the page was shown; any other session, whatever its
+ * prompt surface, is told the page was only written to a file.
+ */
+export const INLINE_HTML_CAPABILITY = "inline_html";
+
+/**
  * Env var carrying client capabilities to a single-connection stdio RPC host
  * (comma-separated). A launcher may set it from a client handshake; a plain
  * stdio client leaves it unset and sees byte-identical default behavior.

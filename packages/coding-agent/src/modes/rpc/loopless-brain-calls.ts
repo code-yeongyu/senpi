@@ -4,6 +4,8 @@ import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
 export interface LooplessCallFacts {
 	/** Its prompt surface: what its host does with the result, which the call's tool reports. */
 	readonly promptSurface?: PromptSurface;
+	/** Whether its client shows a `show_html_page` result inline (senpi#6346). */
+	readonly inlineHtml?: boolean;
 }
 
 /**
@@ -16,6 +18,7 @@ export function createBrainCalls() {
 	return {
 		isModelIssuedToolCall: (toolCallId: string): boolean => running.has(toolCallId),
 		promptSurfaceOf: (toolCallId: string): PromptSurface | undefined => running.get(toolCallId)?.promptSurface,
+		inlineHtmlOf: (toolCallId: string): boolean | undefined => running.get(toolCallId)?.inlineHtml,
 		run<T>(toolCallId: string, facts: LooplessCallFacts | undefined, call: () => Promise<T>): Promise<T> {
 			running.set(toolCallId, facts ?? {});
 			return call().finally(() => running.delete(toolCallId));

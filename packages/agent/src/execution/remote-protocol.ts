@@ -101,6 +101,11 @@ export interface RemoteInvoke {
 	 * reports what the session's host does with its result rather than what the hand's own environment says (senpi#6921).
 	 */
 	readonly promptSurface?: string;
+	/**
+	 * Whether the issuing session's client shows a `show_html_page` result inline (its `inline_html` capability), so the
+	 * tool on the hand reports what that client did with the page (senpi#6346).
+	 */
+	readonly inlineHtml?: boolean;
 }
 
 export interface RemoteAbort {
@@ -232,7 +237,8 @@ export function decodeRemoteMessage(payload: Uint8Array): RemoteHandMessage {
 				!isString(value.toolCallId) ||
 				!isString(value.name) ||
 				(value.sessionRef !== undefined && typeof value.sessionRef !== "string") ||
-				(value.promptSurface !== undefined && typeof value.promptSurface !== "string")
+				(value.promptSurface !== undefined && typeof value.promptSurface !== "string") ||
+				(value.inlineHtml !== undefined && typeof value.inlineHtml !== "boolean")
 			)
 				throw new RemoteProtocolError("malformed invoke");
 			return value as unknown as RemoteInvoke;

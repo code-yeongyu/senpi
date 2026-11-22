@@ -3069,6 +3069,18 @@ serves the same public name. The public SDK exports the writer such an app calls
 offers its host tool attachment (and the credential that serves it) only to a session on a host that names this
 capability; any other host keeps the standalone tool.
 
+#### Inline HTML pages (`inline_html`)
+
+A client that shows a completed `show_html_page` call to its reader inline (the OmO desktop renders it in the thread
+from the call's details) declares `inline_html` in `set_client_info.capabilities`, or in `RPC_CLIENT_CAPABILITIES` for
+a single-connection stdio host. The standalone tool's result then tells the model the page was shown inline above its
+reply; for any other session it says the page was written to a file and not displayed. The decision follows the
+connection the session's extension UI is bound to (the last one to attach), and a later `set_client_info` that adds or
+drops the capability applies to the next call. `open_session.promptSurface` never implies it: `app` only says how
+replies are formatted, so a client that opens with `app` and renders no pages leaves it out. On a hand (brain/hand
+split) the brain sends the value with each call. A host that honors the declaration advertises `inline_html` in
+`get_protocol_info`; an older host reads `app` as an inline display instead.
+
 #### Caller env per session (`session_env`)
 
 `open_session.env: Record<string, string>` is the per-spawn caller env channel (senpi#4381): the small, explicit set

@@ -1,6 +1,5 @@
 import type { Agent, AgentEvent, AgentToolCall, ToolHost } from "@earendil-works/pi-agent-core";
 import type { JsonObject, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
 import {
 	type HandedPageSession,
 	handedPageText,
@@ -14,7 +13,8 @@ export interface HandPageBudgetSession {
 	/** Its runs: when one ends, every page it handed is recorded or never will be. */
 	readonly agent: Pick<Agent, "subscribe">;
 	readonly sessionManager: HandedPageSession;
-	readonly promptSurface: PromptSurface;
+	/** Whether its client shows a page inline (`inline_html`, senpi#6346). */
+	readonly rendersHtmlInline: boolean;
 }
 
 type ResultContent = ToolResultMessage["content"];
@@ -156,7 +156,7 @@ function overBudget(
 	if (reservation.inlined) return undefined;
 	const text = handedPageText({
 		path: details.path,
-		shown: session.promptSurface === "app",
+		shown: session.rendersHtmlInline,
 		imagesInlined: false,
 		fitsPage: true,
 		alreadyHanded: reservation.alreadyHanded,

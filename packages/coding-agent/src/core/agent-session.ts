@@ -5354,6 +5354,11 @@ export class AgentSession {
 		return this._promptSurface ?? resolvePromptSurface(process.env);
 	}
 
+	/** Whether the client this session's UI is bound to shows a `show_html_page` result inline (senpi#6346). */
+	get rendersHtmlInline(): boolean {
+		return this._extensionRunner?.rendersHtmlInline() ?? false;
+	}
+
 	/**
 	 * Rebuilds the prompt for another surface (a later `open_session.promptSurface`). The next
 	 * turn's `before_agent_start` hands presets the new surface through `systemPromptOptions`.

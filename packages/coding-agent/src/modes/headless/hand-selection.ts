@@ -47,6 +47,8 @@ export interface HandSession {
 	readonly sessionManager: Pick<SessionManager, "appendCustomEntry" | "getEntries">;
 	/** Sent with each call to the hand, so a tool there reports what this session's host does (senpi#6921). */
 	readonly promptSurface: PromptSurface;
+	/** Sent with each call too, so show_html_page on the hand says whether this session's client showed the page. */
+	readonly rendersHtmlInline: boolean;
 }
 
 export interface HandSelection {
@@ -142,7 +144,11 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 	const linkTo = (device: string, session: HandSession): Remote => {
 		try {
 			return {
-				host: createRemoteToolHost({ ...directory.link(device), promptSurface: () => session.promptSurface }),
+				host: createRemoteToolHost({
+					...directory.link(device),
+					promptSurface: () => session.promptSurface,
+					inlineHtml: () => session.rendersHtmlInline,
+				}),
 				linked: true,
 			};
 		} catch {
