@@ -27,15 +27,16 @@ beforeEach(async () => {
 });
 
 /** The binding's async replace on the shared win32 profile: write a temp file, then rename it over the target. */
-function win32Files(sim: Win32SimFs): ProjectionFiles {
+function win32Files(sim: Win32SimFs): ProjectionFiles & { readonly sim: Win32SimFs } {
 	return {
+		sim,
 		async replace(target, contents) {
 			const temp = `${win32PathOf(target)}.tmp`;
-			await sim.writeFile(temp, contents);
+			await this.sim.writeFile(temp, contents);
 			try {
-				await sim.rename(temp, win32PathOf(target));
+				await this.sim.rename(temp, win32PathOf(target));
 			} catch (error) {
-				await sim.unlink(temp);
+				await this.sim.unlink(temp);
 				throw error;
 			}
 		},
@@ -85,6 +86,8 @@ describe.each<Win32OpenFileErrorCode>(["EPERM", "EBUSY"])(
 
 			expect(warnings).toHaveLength(2);
 			expect(await staleMark(file)).toBeUndefined();
+			const image = [session.getHeader(), ...session.getEntries()].map((entry) => JSON.stringify(entry)).join("\n");
+			expect(readFileSync(file)).toEqual(Buffer.from(`${image}\n`));
 			expect(SessionManager.open(file, dir).getEntries()).toEqual(session.getEntries());
 		});
 	},
