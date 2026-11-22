@@ -1,12 +1,12 @@
-import { type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
+import { type JsonObject, type JsonValue, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { isEvalControlRequest, normalizeEvalSummary, parseEvalRequest } from "../src/tool/eval-request.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
-import type { EvalToolInput, EvalToolRequest } from "../src/tool/types.ts";
+import type { EvalToolInput } from "../src/tool/types.ts";
 import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
 const TEACHING_ERROR =
-	"eval run requires summary — one line in the user's language: what you are working on and for what purpose";
+	"eval run requires summary (one line in the user's language): what you are working on and for what purpose";
 const SUMMARY_SCHEMA_DESCRIPTION =
 	"REQUIRED for run. One line in the language the user writes in: a progress update saying what you are doing and why, not a label for the code; shown in the TUI while the cell runs.";
 const LONG_SUMMARY = "s".repeat(300);
@@ -33,8 +33,8 @@ function parseError(params: unknown): TypeError {
 	try {
 		parseEvalRequest(params);
 	} catch (error) {
-		expect(error).toBeInstanceOf(TypeError);
-		return error as TypeError;
+		if (!(error instanceof TypeError)) throw error;
+		return error;
 	}
 	throw new Error("expected parseEvalRequest to throw");
 }
@@ -45,9 +45,22 @@ function prepareEvalArguments(tool: EvalTool, args: unknown): Record<string, unk
 	return { ...prepare(args) };
 }
 
+function isJsonValue(value: unknown): value is JsonValue {
+	if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+		return true;
+	if (Array.isArray(value)) return value.every(isJsonValue);
+	return typeof value === "object" && Object.values(value).every(isJsonValue);
+}
+
+function isJsonObject(value: Record<string, unknown>): value is JsonObject {
+	return Object.values(value).every(isJsonValue);
+}
+
 function validatePrepared(tool: EvalTool, prepared: Record<string, unknown>): Record<string, unknown> {
+	// Tool-call arguments are parsed JSON on the real path (ToolCall.arguments is a JsonObject).
+	if (!isJsonObject(prepared)) throw new Error("prepared eval arguments are not JSON");
 	const toolCall: ToolCall = { type: "toolCall", id: "call-1", name: "eval", arguments: prepared };
-	return validateToolArguments(tool, toolCall) as Record<string, unknown>;
+	return validateToolArguments(tool, toolCall);
 }
 
 describe("normalizeEvalSummary", () => {
@@ -121,9 +134,16 @@ describe("parseEvalRequest summary enforcement", () => {
 describe("eval tool schema", () => {
 	it("describes summary with the verbatim required-for-run guide and no length limit", () => {
 		const tool = buildTool();
-		const summary = tool.parameters.properties.summary as unknown as {
-			readonly description?: string;
-			readonly maxLength?: number;
+		const properties: unknown = tool.parameters.properties;
+		if (typeof properties !== "object" || properties === null || !("summary" in properties))
+			throw new Error("the eval schema has no summary field");
+		const raw: unknown = Object.getOwnPropertyDescriptor(properties, "summary")?.value;
+		if (typeof raw !== "object" || raw === null) throw new Error("the eval schema's summary field is not an object");
+		const description: unknown = Object.getOwnPropertyDescriptor(raw, "description")?.value;
+		const maxLength: unknown = Object.getOwnPropertyDescriptor(raw, "maxLength")?.value;
+		const summary = {
+			description: typeof description === "string" ? description : undefined,
+			maxLength: typeof maxLength === "number" ? maxLength : undefined,
 		};
 		expect(summary.description).toContain(SUMMARY_SCHEMA_DESCRIPTION);
 		expect(summary.maxLength).toBeUndefined();
@@ -175,7 +195,7 @@ describe("eval tool execute error path", () => {
 		const tool = buildTool();
 		const call = tool.execute(
 			"cell-1",
-			{ language: "js", code: "return 42" } as unknown as EvalToolRequest,
+			{ language: "js", code: "return 42" },
 			undefined,
 			undefined,
 			fakeExtensionContext(),

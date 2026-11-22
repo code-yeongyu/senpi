@@ -16,6 +16,7 @@ export function registerLookAtCommand(pi: ExtensionAPI, deps: LookAtCommandDeps)
 	pi.registerCommand("lookat", {
 		description: "View and manage the current-session look_at vision model chain.",
 		argumentHint: "[model1 [model2 ...]]",
+		requiresArguments: false,
 		handler: async (rawArgs, ctx) => {
 			const entries = parseEntries(rawArgs);
 			if (entries.length === 0) {

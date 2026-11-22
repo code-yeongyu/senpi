@@ -51,6 +51,11 @@ export class FileHookStateStorage implements HookStateStorage {
 		if (snapshot !== undefined) {
 			return snapshot;
 		}
+		// No state directory means no writer and nothing to revalidate. Locking would create it, leaving an
+		// empty config folder in every project a session merely reads.
+		if (!existsSync(dirname(path))) {
+			return emptyHookTrustState();
+		}
 
 		let release: () => void;
 		try {

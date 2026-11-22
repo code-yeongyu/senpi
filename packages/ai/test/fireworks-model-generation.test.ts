@@ -8,6 +8,7 @@ import type { ModelsDevReasoningOption } from "../scripts/models-dev-reasoning-o
 import { streamSimple } from "../src/api/anthropic-messages.ts";
 import { getSupportedThinkingLevels, hasApi } from "../src/models.ts";
 import type { Api, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const temporaryRoots: string[] = [];
@@ -39,14 +40,17 @@ function generateFireworksModels(
 			`globalThis.fetch = async (input) => {\n` +
 			`  const url = String(input);\n` +
 			`  if (url === "https://models.dev/api.json") return Response.json(catalog);\n` +
-			// The fork's generator also fetches the OpenGateway and NVIDIA NIM catalogs; serve
-			// them empty so a tolerated fetch failure never lands on stderr.
+			// Other provider feeds stay deterministic so their refreshes never land on stderr.
+			`  if (url === "https://models.dev/models.json?type=decision") return Response.json({ "typesafe/jev-latest": { name: "Jev", type: "decision", limit: { context: 64000, output: 0 } } });\n` +
 			`  if (\n` +
-			`    url === "https://openrouter.ai/api/v1/models" ||\n` +
+			`    url.startsWith("https://openrouter.ai/api/v1/models") ||\n` +
 			`    url === "https://ai-gateway.vercel.sh/v1/models" ||\n` +
-			`    url === "https://apis.opengateway.ai/v1/models" ||\n` +
 			`    url === "https://integrate.api.nvidia.com/v1/models"\n` +
 			`  ) return Response.json({ data: [] });\n` +
+			// OpenGateway requires a nonempty enriched catalog; this model has built-in metadata.
+			`  if (url === "https://apis.opengateway.ai/v1/models") return Response.json({ data: [{ id: "x-ai/grok-4-1-fast", endpoints: ["chat_completions"] }] });\n` +
+			`  if (url === "https://opengateway.ai/api/model-prices") return Response.json({ "x-ai/grok-4-1-fast": { provider: "x-ai", modelOwner: "x-ai", modelName: "grok-4-1-fast", inputCostPerToken: 0.000001, outputCostPerToken: 0.000001 } });\n` +
+			`  if (url === "https://radius.pi.dev/v1/config") return Response.json({ baseUrl: "https://radius.pi.dev", models: [{ id: "test", name: "Test", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 4096 }] });\n` +
 			`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
 			`};\n`,
 	);
@@ -118,18 +122,14 @@ describe("Fireworks model generation", () => {
 		expect(model.compat?.forceAdaptiveThinking).toBe(true);
 		expect(getSupportedThinkingLevels(model)).toEqual(["off", "low", "max"]);
 		let payload: Record<string, unknown> | undefined;
-		await streamSimple(
-			model,
-			{ messages: [{ role: "user", content: "test", timestamp: 0 }] },
-			{
-				apiKey: "test-fireworks-key",
-				reasoning: "max",
-				onPayload: (value) => {
-					payload = value as Record<string, unknown>;
-					throw new Error("payload captured");
-				},
+		await streamSimple(model, normalizeContext({ messages: [{ role: "user", content: "test", timestamp: 0 }] }), {
+			apiKey: "test-fireworks-key",
+			reasoning: "max",
+			onPayload: (value) => {
+				payload = value as Record<string, unknown>;
+				throw new Error("payload captured");
 			},
-		).result();
+		}).result();
 		expect(payload?.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload?.output_config).toEqual({ effort: "max" });
 	});
@@ -146,6 +146,30 @@ describe("Fireworks model generation", () => {
 			expect(model.compat?.forceAdaptiveThinking).toBeUndefined();
 			expect(model.thinkingLevelMap).toBeUndefined();
 		}
+	});
+
+	// senpi#6207: upstream may retire every live toggle-only row, so the budget-based path runs on a generated one.
+	it("keeps toggle-only Messages models without a verified fallback on budget-based thinking", async () => {
+		const model = generateFireworksModels({ "toggle-only": [{ type: "toggle" }] })[
+			"accounts/fireworks/models/toggle-only"
+		];
+		if (!hasApi(model, "anthropic-messages")) throw new Error("Expected Messages model");
+		expect(model.compat?.forceAdaptiveThinking).toBeUndefined();
+		let payload: Record<string, unknown> | undefined;
+		await streamSimple(model, normalizeContext({ messages: [{ role: "user", content: "test", timestamp: 0 }] }), {
+			apiKey: "test-fireworks-key",
+			reasoning: "high",
+			onPayload: (value) => {
+				payload = value as Record<string, unknown>;
+				throw new Error("payload captured");
+			},
+		}).result();
+		expect(payload?.thinking).toEqual({
+			type: "enabled",
+			budget_tokens: expect.any(Number),
+			display: "summarized",
+		});
+		expect(payload?.output_config).toBeUndefined();
 	});
 
 	// Regression for #9323: full hardcoded maps must not override updated catalog efforts.

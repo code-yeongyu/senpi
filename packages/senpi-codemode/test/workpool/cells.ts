@@ -66,3 +66,16 @@ export const handle: Readonly<Record<EvalLanguage, string>> = {
 	rb: "display(agent('fixture', handle: true))",
 	jl: 'display(agent("fixture", handle=true))',
 };
+
+export const mistypedTools: Readonly<Record<EvalLanguage, string>> = {
+	js: "await workpool(wpData.agent, 'typed', { tools: 'add' });",
+	py: "workpool(wpData['agent'], 'typed', tools='add')",
+	rb: "workpool(wpData['agent'], 'typed', tools: 'add')",
+	jl: 'workpool(wpData["agent"], "typed", tools="add")',
+};
+export const listedTools: Readonly<Record<EvalLanguage, string>> = {
+	js: "await workpool(wpData.agent, 'listed', { tools: ['add', 'mul'] });",
+	py: "workpool(wpData['agent'], 'listed', tools=['add', 'mul'])",
+	rb: "workpool(wpData['agent'], 'listed', tools: ['add', 'mul'])",
+	jl: 'workpool(wpData["agent"], "listed", tools=["add", "mul"])',
+};

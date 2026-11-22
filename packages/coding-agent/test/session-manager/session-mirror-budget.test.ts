@@ -64,11 +64,24 @@ describe("SessionManager resident mirror", () => {
 			return loadEntriesFromFile(filePath);
 		});
 		try {
-			session.getEntries();
-			session.getEntries();
-			expect(loadCount).toBe(2);
+			expect(session.getEntries().map((entry) => entry.type)).toEqual([
+				"message",
+				"message",
+				"message",
+				"compaction",
+			]);
+			// The first full read after the trim is kept and reused, and entries appended since still appear.
+			const laterId = session.appendMessage(userMsg("later"));
+			expect(
+				session
+					.getEntries()
+					.map((entry) => entry.id)
+					.at(-1),
+			).toBe(laterId);
+			expect(session.getEntries()).toHaveLength(5);
+			expect(loadCount).toBe(1);
 			session.buildSessionContext();
-			expect(loadCount).toBe(2);
+			expect(loadCount).toBe(1);
 		} finally {
 			restoreLoader();
 		}
@@ -131,7 +144,7 @@ describe("SessionManager resident mirror", () => {
 
 	it("resets trimmed state when replacing the session with a branched file", () => {
 		const session = SessionManager.create(tempDir, tempDir);
-		session.appendMessage(assistantMsg("ready"));
+		const readyId = session.appendMessage(assistantMsg("ready"));
 		const firstKeptEntryId = session.appendMessage(userMsg("before"));
 		session.appendMessage(assistantMsg("after"));
 		session.appendCompaction("summary", firstKeptEntryId, 100);
@@ -139,7 +152,8 @@ describe("SessionManager resident mirror", () => {
 
 		const branchedFile = session.createBranchedSession(firstKeptEntryId);
 		expect(branchedFile).toBeDefined();
-		expect(session.getEntries().map((entry) => entry.id)).toEqual([firstKeptEntryId]);
+		// The branch keeps the whole path, including what the compaction trimmed from the mirror (senpi#3519).
+		expect(session.getEntries().map((entry) => entry.id)).toEqual([readyId, firstKeptEntryId]);
 	});
 
 	it("bounds standalone resident stores when a backing directory exists", () => {
@@ -211,8 +225,7 @@ describe("SessionManager resident mirror", () => {
 		const blobsDir = session.getResidentStore().resolvedBlobsDir()!;
 		const sessionFile = session.getSessionFile()!;
 
-		// A second manager over the same file (the app-server loads a thread that is
-		// already open). Neither its open nor its disposal may take the cache the
+		// A second manager opens the same file. Neither its open nor its disposal may take the cache the
 		// first manager is still hydrating from.
 		const sibling = SessionManager.open(sessionFile, tempDir);
 		expect(readdirSync(blobsDir).some((name) => name.endsWith(".blob"))).toBe(true);

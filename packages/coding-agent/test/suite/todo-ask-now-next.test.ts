@@ -1,4 +1,4 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	createTodoSnapshot,
@@ -41,7 +41,9 @@ async function createTodoHarness(): Promise<Harness> {
 
 async function promptWithTodo(harness: Harness, prompt: string, ...calls: Record<string, unknown>[]): Promise<void> {
 	harness.setResponses([
-		...calls.map((params) => fauxAssistantMessage([fauxToolCall("todo", params)], { stopReason: "toolUse" })),
+		...calls.map((params) =>
+			fauxAssistantMessage([fauxToolCall("todo", params as JsonObject)], { stopReason: "toolUse" }),
+		),
 		fauxAssistantMessage("ok"),
 	]);
 	await harness.session.prompt(prompt);

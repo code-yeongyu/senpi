@@ -14,6 +14,10 @@ export const NEAR_DUPLICATE_TEXT_RETENTION_MAX = 512;
 const SAMPLE_LENGTH = 80;
 const WORD_PATTERN = /[\p{L}\p{N}#]+/gu;
 const FENCE_PATTERN = /^(?:```|~~~)/;
+// An indented line that is not a nested list item (two spaces or a tab, then not `- `, `* `, `+ `, `1. `, `1) `).
+const INDENTED_CODE = /^(?: {2,}|\t)(?![ \t]*(?:[-*+]|\d+[.)])[ \t])/;
+// A line ending in a block, statement or markup delimiter: `{`, `}`, `[`, `]`, `(`, `;`, `,`, `>` (oh-my-pi's set).
+const CODE_LINE_ENDINGS = new Set(["{", "}", "[", "]", "(", ";", ",", ">"]);
 
 interface ParagraphSignature {
 	readonly tokens: ReadonlySet<string>;
@@ -35,6 +39,7 @@ export interface NearDuplicateState {
 	lineHasContent: boolean;
 	lineStartOffset: number;
 	lineText: string;
+	lineLastChar: string;
 	length: number;
 	wordChars: number;
 	startOffset: number;
@@ -52,6 +57,7 @@ export function createNearDuplicateState(): NearDuplicateState {
 		lineHasContent: false,
 		lineStartOffset: 0,
 		lineText: "",
+		lineLastChar: "",
 		length: 0,
 		wordChars: 0,
 		startOffset: 0,
@@ -144,13 +150,24 @@ function completeParagraph(state: NearDuplicateState): DetectorMatch | null {
 	};
 }
 
+/**
+ * Code and markup repeat one skeleton with different literals, so a run of same-shaped lines (SVG elements, JSON
+ * objects) is not a narration loop. Lines shaped like code are left out of the paragraph, fenced or not, and a
+ * paragraph made only of them is never scored (senpi#2865; oh-my-pi v18.8.0 drops the same line shapes before its loop heuristics).
+ */
+function isCodeShapedLine(state: NearDuplicateState): boolean {
+	return INDENTED_CODE.test(state.lineText) || CODE_LINE_ENDINGS.has(state.lineLastChar);
+}
+
 function foldLine(state: NearDuplicateState): void {
+	const fence = FENCE_PATTERN.test(state.lineText.trimStart());
+	if (state.insideFence || fence) state.fenced = true;
+	if (fence) state.insideFence = !state.insideFence;
+	if (!state.fenced && isCodeShapedLine(state)) return;
 	if (state.length === 0) state.startOffset = state.lineStartOffset;
 	state.length += state.lineLength + 1;
 	state.wordChars += state.lineWordChars;
-	if (state.insideFence || FENCE_PATTERN.test(state.lineText.trimStart())) state.fenced = true;
 	if (state.retained.length < NEAR_DUPLICATE_TEXT_RETENTION_MAX) state.retained += `${state.lineText}\n`;
-	if (FENCE_PATTERN.test(state.lineText.trimStart())) state.insideFence = !state.insideFence;
 }
 
 function resetLine(state: NearDuplicateState, startOffset: number): void {
@@ -159,6 +176,7 @@ function resetLine(state: NearDuplicateState, startOffset: number): void {
 	state.lineHasContent = false;
 	state.lineStartOffset = startOffset;
 	state.lineText = "";
+	state.lineLastChar = "";
 }
 
 export function updateNearDuplicates(state: NearDuplicateState, entry: ScalarEntry): DetectorMatch | null {
@@ -170,7 +188,10 @@ export function updateNearDuplicates(state: NearDuplicateState, entry: ScalarEnt
 		return result;
 	}
 	const codePoint = entry.value.codePointAt(0) ?? 0;
-	if (!isAsciiWhitespace(codePoint)) state.lineHasContent = true;
+	if (!isAsciiWhitespace(codePoint)) {
+		state.lineHasContent = true;
+		state.lineLastChar = entry.value;
+	}
 	if (isAsciiAlphanumeric(codePoint) || (codePoint > 0x7f && !isBoxDrawing(codePoint))) state.lineWordChars += 1;
 	state.lineLength += entry.width;
 	if (state.lineText.length < NEAR_DUPLICATE_TEXT_RETENTION_MAX) state.lineText += entry.value;

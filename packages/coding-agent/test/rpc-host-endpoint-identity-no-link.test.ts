@@ -45,7 +45,13 @@ describe.skipIf(process.platform === "win32")("endpoint.json where link() is uns
 
 		await ensureEndpointIdentity(paths, qa.shard);
 		const first = await readFile(paths.endpointFile, "utf8");
-		expect(JSON.parse(first)).toEqual({ layout: 2, socket: qa.shard, created_at: expect.any(String) });
+		expect(JSON.parse(first)).toEqual({
+			layout: 2,
+			registry_version: 1,
+			endpoint_kind: "rpc_host",
+			socket: qa.shard,
+			created_at: expect.any(String),
+		});
 		await ensureEndpointIdentity(paths, qa.shard, { repair: true });
 		expect(await readFile(paths.endpointFile, "utf8")).toBe(first);
 
@@ -53,6 +59,8 @@ describe.skipIf(process.platform === "win32")("endpoint.json where link() is uns
 		await ensureEndpointIdentity(paths, qa.shard, { repair: true });
 		expect(JSON.parse(await readFile(paths.endpointFile, "utf8"))).toEqual({
 			layout: 2,
+			registry_version: 1,
+			endpoint_kind: "rpc_host",
 			socket: qa.shard,
 			created_at: expect.any(String),
 		});
@@ -70,6 +78,8 @@ describe.skipIf(process.platform === "win32")("endpoint.json where link() is uns
 		expect(linkState.attempts).toBeGreaterThanOrEqual(1);
 		expect(JSON.parse(await readFile(paths.endpointFile, "utf8"))).toEqual({
 			layout: 2,
+			registry_version: 1,
+			endpoint_kind: "rpc_host",
 			socket: qa.shard,
 			created_at: expect.any(String),
 		});

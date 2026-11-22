@@ -13,16 +13,22 @@ import type {
 	RetryStagePolicy,
 	RetryTieredHintStrategy,
 } from "@earendil-works/pi-ai/utils/retry-profile/types";
-import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
+import type {
+	TuiMode as RendererTuiMode,
+	ScrollViewScrollbar,
+	TerminalCapabilities,
+	WheelScrollLines,
+} from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
+import { isDeepStrictEqual } from "util";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
-import { stripBom } from "../utils/text.ts";
 import { envValue } from "./brand.ts";
 import type { CompactionModelSelector, CompactionSettings } from "./compaction-settings-access.ts";
 import {
@@ -31,10 +37,18 @@ import {
 	compactionReserveTokens,
 } from "./compaction-settings-access.ts";
 import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
+import type { ContextFileLimits } from "./context-files.ts";
+import {
+	MAX_ENGINE_TURNS_PER_RESUME_WINDOW,
+	MAX_ENGINE_TURNS_PER_USER_INPUT,
+	MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW,
+} from "./engine-turn-limit.ts";
+import { type HeldFileLock, lockWithLossHandling } from "./file-lock.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
 	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
 	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
@@ -55,13 +69,18 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import { parseSettingsJson } from "./settings-json.ts";
 import { withoutOverride } from "./settings-overrides.ts";
+import { removeRetiredSettingsKeys, writeRawScopedSettings } from "./settings-retired-keys.ts";
 import {
 	ASK_USER_DEFAULT_TIMEOUT_MINUTES,
 	ASK_USER_MAX_TIMEOUT_MINUTES,
 	ASK_USER_MIN_TIMEOUT_MINUTES,
 	type AskUserSettings,
+	type HandoffHintSettings,
 	type ImageSettings,
+	JOB_WIDGETS_DEFAULT_AUTHOR_AFTER_MS,
+	type JobWidgetsSettings,
 	type LookAtSettings,
 	type MarkdownSettings,
 	type MermaidRenderingMode,
@@ -73,6 +92,13 @@ import {
 	type TodoFirstTurnPlan,
 	type TodoSettings,
 } from "./settings-shapes.ts";
+import {
+	logStateError,
+	migrateSettingsState,
+	parseStateSettings,
+	readSettingsState,
+	STATE_KEYS,
+} from "./settings-state.ts";
 import {
 	type BranchSummarySettings,
 	isTerminalMouseMode,
@@ -87,6 +113,12 @@ export type * from "./settings-public-types.ts";
 
 export const DEFAULT_STREAM_START_TIMEOUT_MS = 300_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
+/**
+ * How long keep-alive bytes alone may hold a provider request without content (senpi#4608). Longer than any
+ * first-token latency observed through relays (a few minutes) and than Anthropic's 10-minute ceiling for a
+ * non-streaming request, well short of the 60-minute turn inactivity lease.
+ */
+const DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS = 900_000;
 
 /** Warn threshold for a single `session_shutdown` extension handler. */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
@@ -96,11 +128,27 @@ export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
  * hung handler still must not hold quit/reload/new/resume hostage.
  */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
+/**
+ * Total wait across every `session_shutdown` handler when the process quits (senpi#3711). Above the OmO memory
+ * extension's own 1500 ms shutdown drain, whose first step flushes the memory journal.
+ */
+export const DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS = 2_000;
+/** Warn threshold for one handler of an agent lifecycle event the session awaits before persisting (senpi#3650). */
+export const DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS = 60_000;
+/**
+ * Hard cap for one such handler. Above the 15 min summarization budget a blocking compaction in a `message_end`
+ * handler may legitimately use; past it the host stops waiting so the turn is persisted and queued input delivered.
+ */
+export const DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS = 1_200_000;
 
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
 
-/** Service tier remembered per model; "auto" is an explicit opt-out of an inherited priority tier. */
+/**
+ * Service tier remembered per model for `/fast`. "auto" is an explicit opt-out of an
+ * inherited priority tier. Ultrafast is an explicit selection, not a remembered tier:
+ * a stored "ultrafast" is dropped on read and never sent.
+ */
 export type ModelServiceTier = "auto" | "flex" | "priority";
 
 const THINKING_LEVEL_VALUES: ReadonlySet<string> = new Set<ThinkingLevel>([
@@ -132,6 +180,8 @@ export interface WarningSettings {
 }
 
 export type DefaultProjectTrust = "ask" | "always" | "never";
+/** true hides all startup output, "header" keeps only the startup header. */
+export type QuietStartup = boolean | "header";
 
 export type TransportSetting = Transport;
 
@@ -153,10 +203,6 @@ export type PackageSource =
 			hooks?: string[];
 	  };
 
-export interface ExperimentalSettings {
-	sharedHost?: boolean;
-}
-
 export interface Settings {
 	providers?: Record<string, ProviderConcurrencySettings>;
 	lastChangelogVersion?: string;
@@ -172,6 +218,7 @@ export interface Settings {
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
 	compaction?: CompactionSettings & { model?: string };
+	contextFiles?: ContextFileLimits;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
 	fallback?: FallbackCircuitSettings;
@@ -181,16 +228,21 @@ export interface Settings {
 	showCacheMissNotices?: boolean; // default: false - show prompt-cache miss and compaction cost notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
-	quietStartup?: boolean;
+	quietStartup?: QuietStartup; // default: false
 	tips?: boolean; // default: true
+	reducedMotion?: boolean; // default: false - keep decorative TUI indicators static
 	tipsHistory?: Record<string, number>; // tipId -> epoch ms last shown
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
+	tools?: { bash?: { redactSecretsInOutput?: boolean } }; // default: false; output only
+	credentialProxy?: { credentials?: unknown[] }; // global setting only; validated by core/credential-proxy/declarations.ts
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	enableAnalytics?: boolean; // default: false - opt-in analytics data sharing
+	enableSessionShare?: boolean; // default: true - false removes /share (global or project setting)
 	trackingId?: string; // analytics tracking identifier, generated when analytics is enabled
+	deviceId?: string; // stable UUID of this installation, created when a login first needs it; global setting only
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	enabledBuiltinExtensions?: string[]; // Optional allowlist of builtin extension ids to load (default: all)
 	disabledBuiltinExtensions?: string[]; // Builtin extension ids to skip loading
@@ -202,14 +254,22 @@ export interface Settings {
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
 	terminal?: TerminalSettings;
 	promptCache?: PromptCacheSettings;
+	handoffHint?: HandoffHintSettings;
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
+	jobWidgets?: JobWidgetsSettings;
+	/** Bounds on turns the engine starts without a user message (senpi#2967). */
+	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
+	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
+	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
+	/** A thread chain (A→B→A…) is refused past `chainCountLimit` hops; unset (the default) means unlimited. No cost limit. */
+	threads?: { chainCountLimit?: number };
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Legacy global model narrowing patterns (same format as --models CLI flag)
-	defaultTools?: string[]; // Initial built-in tool selection
+	defaultTools?: string[]; // Initial tool selection; `+name`/`-name` entries add to or remove from the inherited selection
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
@@ -226,11 +286,14 @@ export interface Settings {
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	sessionShutdownHandlerWarnMs?: number; // Warn when one session_shutdown extension handler runs this long; 0 disables the warning
 	sessionShutdownHandlerTimeoutMs?: number; // Abort and skip a session_shutdown extension handler after this long; 0 disables the cap
+	sessionShutdownQuitBudgetMs?: number; // Total wait across all session_shutdown handlers on quit; 0 disables the total budget
+	extensionEventHandlerWarnMs?: number; // Report an agent lifecycle extension handler still running after this long; 0 disables the warning
+	extensionEventHandlerTimeoutMs?: number; // Stop waiting on an agent lifecycle extension handler after this long; 0 disables the cap
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
-	experimental?: ExperimentalSettings;
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
+	fullscreenWheelScrollLines?: WheelScrollLines; // default: "auto"; lines per wheel event, 1-100
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -256,16 +319,52 @@ function deepMergeObjects(base: Record<string, unknown>, overrides: Record<strin
 	return result;
 }
 
+/** Tools enabled at startup when `defaultTools` does not change them (the fork default includes `grep`). */
+export const DEFAULT_TOOL_NAMES: readonly string[] = ["read", "bash", "edit", "write", "grep"];
+
+function isToolModifier(entry: unknown): boolean {
+	return typeof entry === "string" && (entry.startsWith("+") || entry.startsWith("-"));
+}
+
+/**
+ * Merge `defaultTools` of two settings layers. A list with plain tool names replaces the inherited
+ * one; a list of only `+name`/`-name` entries is appended, so it modifies the inherited selection.
+ */
+function mergeDefaultTools(base: string[] | undefined, overrides: string[] | undefined): string[] | undefined {
+	if (overrides === undefined) return base;
+	// Settings files are not validated; a malformed value replaces instead of throwing here.
+	if (!Array.isArray(base) || !Array.isArray(overrides) || !overrides.every(isToolModifier)) return overrides;
+	return [...base, ...overrides];
+}
+
+/**
+ * Resolve a merged `defaultTools` list: plain names replace `DEFAULT_TOOL_NAMES`, then `+name` adds
+ * and `-name` removes a tool, in list order.
+ */
+function resolveDefaultTools(entries: string[]): string[] {
+	const plain = entries.filter((entry) => !isToolModifier(entry));
+	const tools = plain.length > 0 || entries.length === 0 ? plain : [...DEFAULT_TOOL_NAMES];
+	for (const entry of entries) {
+		if (!isToolModifier(entry)) continue;
+		const name = entry.slice(1);
+		const index = tools.indexOf(name);
+		if (entry.startsWith("+") && index === -1 && name) tools.push(name);
+		else if (entry.startsWith("-") && index !== -1) tools.splice(index, 1);
+	}
+	return tools;
+}
+
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
 function deepMergeSettings(base: Settings, overrides: Settings): Settings {
-	const result = deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
+	const merged = deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
 	if (overrides.retry?.fallbackChains !== undefined) {
-		result.retry = {
-			...result.retry,
+		merged.retry = {
+			...merged.retry,
 			fallbackChains: structuredClone(overrides.retry.fallbackChains),
 		};
 	}
-	return result;
+	const defaultTools = mergeDefaultTools(base.defaultTools, overrides.defaultTools);
+	return defaultTools === undefined ? merged : { ...merged, defaultTools };
 }
 
 function resolveAskUserTimeoutMinutes(value: unknown): number {
@@ -299,84 +398,7 @@ export interface SettingsSourceSelection {
 
 export type SettingsSourceListener = (source: SettingsSourceSelection) => void;
 
-/** Parse JSON or JSONC without changing comment-like text inside strings. */
-export function parseSettingsJson(content: string): Record<string, unknown> {
-	content = stripBom(content);
-	const withoutComments: string[] = [];
-	let inString = false;
-	let escaped = false;
-
-	for (let index = 0; index < content.length; index += 1) {
-		const char = content[index];
-		const next = content[index + 1];
-		if (inString) {
-			withoutComments.push(char);
-			if (escaped) escaped = false;
-			else if (char === "\\") escaped = true;
-			else if (char === '"') inString = false;
-			continue;
-		}
-		if (char === '"') {
-			inString = true;
-			withoutComments.push(char);
-			continue;
-		}
-		if (char === "/" && next === "/") {
-			withoutComments.push(" ", " ");
-			index += 2;
-			while (index < content.length && content[index] !== "\n" && content[index] !== "\r") {
-				withoutComments.push(" ");
-				index += 1;
-			}
-			if (index < content.length) withoutComments.push(content[index]);
-			continue;
-		}
-		if (char === "/" && next === "*") {
-			withoutComments.push(" ", " ");
-			index += 2;
-			let closed = false;
-			for (; index < content.length; index += 1) {
-				if (content[index] === "*" && content[index + 1] === "/") {
-					withoutComments.push(" ", " ");
-					index += 1;
-					closed = true;
-					break;
-				}
-				withoutComments.push(content[index] === "\n" || content[index] === "\r" ? content[index] : " ");
-			}
-			if (!closed) throw new SyntaxError("Unterminated block comment in settings");
-			continue;
-		}
-		withoutComments.push(char);
-	}
-
-	const normalized = withoutComments;
-	inString = false;
-	escaped = false;
-	for (let index = 0; index < normalized.length; index += 1) {
-		const char = normalized[index];
-		if (inString) {
-			if (escaped) escaped = false;
-			else if (char === "\\") escaped = true;
-			else if (char === '"') inString = false;
-			continue;
-		}
-		if (char === '"') {
-			inString = true;
-			continue;
-		}
-		if (char !== ",") continue;
-		let nextIndex = index + 1;
-		while (nextIndex < normalized.length && /\s/.test(normalized[nextIndex])) nextIndex += 1;
-		if (normalized[nextIndex] === "}" || normalized[nextIndex] === "]") normalized[index] = " ";
-	}
-
-	const parsed: unknown = JSON.parse(normalized.join(""));
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-		throw new TypeError("Settings must contain a JSON object");
-	}
-	return parsed as Record<string, unknown>;
-}
+export { parseSettingsJson };
 
 const SELF_WRITE_TTL_MS = 15_000;
 const MAX_SELF_WRITES_PER_PATH = 8;
@@ -495,10 +517,37 @@ export function getInMemorySettingsPath(scope: SettingsScope): string {
 
 export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
+	/** The project trust exists only because the session runs Full access (senpi#3414): leaving it withdraws the trust. */
+	trustFromFullAccess?: boolean;
+	/** The launch named the project trust explicitly (`--approve`/`--no-approve`): nothing in the session may change it. */
+	projectTrustLocked?: boolean;
+}
+
+/** The project settings file as stored, read whether or not the project is trusted (reading runs nothing). */
+export interface ProjectSettingsFile {
+	path: string;
+	exists: boolean;
+	settings: Settings | null;
+	error: string | null;
 }
 
 export interface SettingsStorage {
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void;
+	/** Optional separate bookkeeping store. Backends without it retain legacy global persistence. */
+	withStateLock?(fn: (current: string | undefined) => string | undefined): void;
+	withStateLockAsync?(fn: (current: string | undefined) => string | undefined): Promise<void>;
+	tryWithStateLock?(fn: (current: string | undefined) => string | undefined): boolean;
+	/**
+	 * The same locked read-modify-write without blocking the caller's thread while another writer
+	 * holds the lock. Queued saves use it when present; `withLock` stays for synchronous callers.
+	 */
+	withLockAsync?(
+		scope: SettingsScope,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void>;
+	/** `withLock` when the lock is free right now; false (and nothing written) when it is held. */
+	tryWithLock?(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): boolean;
 	selectSource?(scope: SettingsScope): SettingsSourceSelection | undefined;
 }
 
@@ -517,6 +566,8 @@ function toSettingsError(scope: SettingsScope, error: unknown, path?: string): S
 		error: error instanceof Error ? error : new Error(String(error)),
 	};
 }
+
+class SettingsLockBusy extends Error {}
 
 export class FileSettingsStorage implements SettingsStorage {
 	private globalSettingsPath: string;
@@ -540,6 +591,15 @@ export class FileSettingsStorage implements SettingsStorage {
 		if (scope === "global") this.globalSettingsPath = path;
 		else this.projectSettingsPath = path;
 		return source;
+	}
+
+	private tryAcquireLockSync(path: string): () => void {
+		try {
+			return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+		} catch (error) {
+			if (isLockError(error)) throw new SettingsLockBusy();
+			throw error;
+		}
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
@@ -566,8 +626,123 @@ export class FileSettingsStorage implements SettingsStorage {
 		}
 	}
 
-	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void {
+	private async acquireLockWithRetry(path: string): Promise<HeldFileLock> {
+		const startedAt = Date.now();
+		let attempt = 0;
+		while (true) {
+			try {
+				return await lockWithLossHandling(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+			} catch (error) {
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
+					throw new CredentialStoreBusyError(path, waitedMs, error);
+				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+			}
+		}
+	}
+
+	/**
+	 * `withLock` for queued saves. Waiting on a busy lock used `Atomics.wait` on the UI thread: a
+	 * settings write per turn (tip history) froze typing for up to a second whenever the lock was
+	 * held elsewhere. The protocol is unchanged: lock-free read, merge, re-merge under the lock if
+	 * another writer won, then publish through a same-directory temp file and rename.
+	 */
+	async withLockAsync(
+		scope: SettingsScope,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void> {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
+		return this.withPathLockAsync(path, fn, underLock);
+	}
+
+	withStateLockAsync(fn: (current: string | undefined) => string | undefined): Promise<void> {
+		return this.withPathLockAsync(join(resolvePath(this.agentDir), "state.json"), fn);
+	}
+
+	private async withPathLockAsync(
+		path: string,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void> {
+		const readCurrent = async (): Promise<string | undefined> => {
+			try {
+				return await readFile(path, "utf-8");
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+				throw error;
+			}
+		};
+		const current = await readCurrent();
+		let next = fn(current);
+		if (next === undefined) return;
+		await mkdir(dirname(path), { recursive: true });
+		const lock = await this.acquireLockWithRetry(path);
+		try {
+			// The wait may have outlived the caller's permission to write (e.g. project trust revoked).
+			underLock?.();
+			const lockedContent = await readCurrent();
+			if (lockedContent !== current) next = fn(lockedContent);
+			if (next !== undefined) {
+				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+				try {
+					await writeFile(tempPath, next, "utf-8");
+					lock.assertHeld();
+					await rename(tempPath, path);
+					// After the rename: a failed publish must not mark identical content as our own write.
+					recordSelfWrite(path, next);
+				} catch (error) {
+					await rm(tempPath, { force: true });
+					throw error;
+				}
+			}
+		} finally {
+			await lock.release();
+		}
+	}
+
+	tryWithLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): boolean {
+		try {
+			this.withLock(scope, fn, false);
+			return true;
+		} catch (error) {
+			if (error instanceof SettingsLockBusy) return false;
+			throw error;
+		}
+	}
+
+	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined, waitForLock = true): void {
+		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
+		this.withPathLock(path, fn, waitForLock);
+	}
+
+	withStateLock(fn: (current: string | undefined) => string | undefined): void {
+		this.withPathLock(join(resolvePath(this.agentDir), "state.json"), fn);
+	}
+
+	tryWithStateLock(fn: (current: string | undefined) => string | undefined): boolean {
+		try {
+			this.withPathLock(join(resolvePath(this.agentDir), "state.json"), fn, false);
+			return true;
+		} catch (error) {
+			if (error instanceof SettingsLockBusy) return false;
+			throw error;
+		}
+	}
+
+	private withPathLock(
+		path: string,
+		fn: (current: string | undefined) => string | undefined,
+		waitForLock = true,
+	): void {
 		const dir = dirname(path);
 
 		// Read without the lock: writers publish atomically via temp+rename below, so
@@ -582,7 +757,7 @@ export class FileSettingsStorage implements SettingsStorage {
 		if (!existsSync(dir)) {
 			mkdirSync(dir, { recursive: true });
 		}
-		const release = this.acquireLockSyncWithRetry(path);
+		const release = waitForLock ? this.acquireLockSyncWithRetry(path) : this.tryAcquireLockSync(path);
 		try {
 			const underLock = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
 			if (underLock !== current) {
@@ -611,6 +786,12 @@ export class FileSettingsStorage implements SettingsStorage {
 export class InMemorySettingsStorage implements SettingsStorage {
 	private global: string | undefined;
 	private project: string | undefined;
+	private state: string | undefined;
+
+	withStateLock(fn: (current: string | undefined) => string | undefined): void {
+		const next = fn(this.state);
+		if (next !== undefined) this.state = next;
+	}
 
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void {
 		const current = scope === "global" ? this.global : this.project;
@@ -705,7 +886,7 @@ export class SettingsManager {
 			initialErrors.push(toSettingsError("project", projectLoad.error, settingsPaths.project));
 		}
 
-		return new SettingsManager(
+		const manager = new SettingsManager(
 			storage,
 			globalLoad.settings,
 			projectLoad.settings,
@@ -716,6 +897,9 @@ export class SettingsManager {
 			initialSources,
 			settingsPaths,
 		);
+		manager.trustFromFullAccess = options.trustFromFullAccess === true;
+		manager.projectTrustLocked = options.projectTrustLocked === true;
+		return manager;
 	}
 
 	/** Create an in-memory SettingsManager (no file I/O) */
@@ -737,10 +921,15 @@ export class SettingsManager {
 			return undefined;
 		});
 
-		if (!content) {
-			return {};
+		const raw = content ? parseSettingsJson(content) : {};
+		// A project file belongs to the user's repository: its retired keys are ignored, never rewritten.
+		if (removeRetiredSettingsKeys(raw) && scope === "global") writeRawScopedSettings(storage, scope);
+		if (scope === "global" && storage.withStateLock) {
+			// TODO(PR #3213 follow-up: state-fallback-removal): remove config fallback after the first migration release.
+			if ([...STATE_KEYS].some((key) => Object.hasOwn(raw, key))) migrateSettingsState(storage);
+			Object.assign(raw, readSettingsState(storage));
 		}
-		return SettingsManager.migrateSettings(parseSettingsJson(content));
+		return SettingsManager.migrateSettings(raw);
 	}
 
 	private static tryLoadFromStorage(
@@ -890,12 +1079,70 @@ export class SettingsManager {
 		return out;
 	}
 
+	/** A copy of the effective settings: global and project settings merged, with overrides. */
+	getSettings(): Settings {
+		return structuredClone(this.settings);
+	}
+
 	getGlobalSettings(): Settings {
 		return structuredClone(this.globalSettings);
 	}
 
 	getProjectSettings(): Settings {
 		return structuredClone(this.projectSettings);
+	}
+
+	/**
+	 * `contextFiles.globalPath` from the user's own layers only: session overrides, then global
+	 * settings. A project's `.senpi/settings.json` never redirects the user's global context file
+	 * (senpi#5567), so the project layer is deliberately skipped.
+	 */
+	getGlobalContextFilePath(): string | undefined {
+		return this.runtimeOverrides.contextFiles?.globalPath ?? this.globalSettings.contextFiles?.globalPath;
+	}
+
+	/** The project settings file at `path` as stored: parsed and migrated like a load, but never gated by trust. */
+	readProjectSettingsFile(path: string): ProjectSettingsFile {
+		let content: string | undefined;
+		try {
+			this.storage.withLock("project", (current) => {
+				content = current;
+				return undefined;
+			});
+			if (content === undefined) return { path, exists: false, settings: null, error: null };
+			return {
+				path,
+				exists: true,
+				settings: SettingsManager.migrateSettings(parseSettingsJson(content)),
+				error: null,
+			};
+		} catch (error) {
+			return { path, exists: content !== undefined, settings: null, error: String(error) };
+		}
+	}
+
+	/**
+	 * Writes one top-level key of the project settings file (`null` removes it) through the same trusted-only,
+	 * locked, merge-on-write path every project setter uses. Refuses a file that failed to load: that path skips
+	 * the write silently, which an explicit caller must not mistake for success.
+	 */
+	async setProjectSetting(key: string, value: unknown): Promise<void> {
+		this.assertProjectTrustedForWrite();
+		if (this.projectSettingsLoadError) {
+			throw new Error(
+				`Project settings file could not be read; refusing to write: ${this.projectSettingsLoadError.message}`,
+			);
+		}
+		const field = key as keyof Settings;
+		const recordedBefore = new Set(this.errors);
+		this.updateProjectSettings(field, (settings) => {
+			if (value === null) delete settings[field];
+			else (settings as Record<string, unknown>)[key] = value;
+		});
+		await this.flush();
+		// The queued write records its failure instead of throwing; an explicit caller is told.
+		const failure = this.errors.find((entry) => entry.scope === "project" && !recordedBefore.has(entry));
+		if (failure) throw failure.error;
 	}
 
 	getProviderSettings(): Record<string, ProviderConcurrencySettings> {
@@ -929,6 +1176,10 @@ export class SettingsManager {
 		);
 	}
 
+	getPromptCacheSessionAffinity(): boolean {
+		return this.settings.promptCache?.sessionAffinity ?? true;
+	}
+
 	getPromptCacheKeepAliveSettings(): Required<PromptCacheKeepAliveSettings> {
 		const configured = this.settings.promptCache?.keepAlive;
 		return {
@@ -948,9 +1199,51 @@ export class SettingsManager {
 		};
 	}
 
-	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
+	getJobWidgetsSettings(): { enabled: boolean; model: string | undefined; authorAfterMs: number } {
+		const configured = this.settings.jobWidgets;
+		const model = typeof configured?.model === "string" ? configured.model.trim() : "";
+		const after = configured?.authorAfterMs;
+		return {
+			enabled: typeof configured?.enabled === "boolean" ? configured.enabled : true,
+			model: model.length > 0 ? model : undefined,
+			authorAfterMs:
+				typeof after === "number" && Number.isFinite(after) && after >= 0
+					? Math.trunc(after)
+					: JOB_WIDGETS_DEFAULT_AUTHOR_AFTER_MS,
+		};
+	}
+
+	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number; maxPerResumeWindow: number } {
+		const configured = this.settings.engineTurns;
+		const limit = (value: unknown, fallback: number): number =>
+			typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
+		return {
+			maxPerUserInput: limit(configured?.maxPerUserInput, MAX_ENGINE_TURNS_PER_USER_INPUT),
+			maxPerResumeWindow: limit(configured?.maxPerResumeWindow, MAX_ENGINE_TURNS_PER_RESUME_WINDOW),
+			maxToolFreePerMinute: limit(configured?.maxToolFreePerMinute, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW),
+		};
+	}
+
+	getTurnInactivityMs(): number | undefined {
+		return this.settings.turn_inactivity_ms;
+	}
+
+	getTurnMaxRuntimeMs(): number | undefined {
+		return this.settings.turn_max_runtime_ms;
+	}
+
+	/** The user's thread chain count limit (`threads.chainCountLimit`, K8): a non-negative integer, else unlimited. */
+	getThreadChainCountLimit(): number | undefined {
+		const configured = this.settings.threads?.chainCountLimit;
+		return typeof configured === "number" && Number.isSafeInteger(configured) && configured >= 0
+			? configured
+			: undefined;
+	}
+
+	/** The user's `todo.firstTurnPlan`, else `fallback`: the default the active prompt preset declares. */
+	getTodoFirstTurnPlan(fallback: TodoFirstTurnPlan = "force"): TodoFirstTurnPlan {
 		const configured = this.settings.todo?.firstTurnPlan;
-		return configured === "remind" || configured === "off" ? configured : "force";
+		return configured === "force" || configured === "remind" || configured === "off" ? configured : fallback;
 	}
 
 	getTodoTurnEndBackstop(): boolean {
@@ -962,12 +1255,42 @@ export class SettingsManager {
 		return this.projectTrusted;
 	}
 
+	private projectTrustLocked = false;
+
+	/** True when the launch named the project trust explicitly; a trust decision saved in the session cannot apply. */
+	isProjectTrustLocked(): boolean {
+		return this.projectTrustLocked;
+	}
+
+	/**
+	 * True when this session's project trust came only from its Full access preset (never asked, never
+	 * saved): leaving Full access withdraws it, and going back restores it (senpi#3414, #3420).
+	 */
+	private trustFromFullAccess = false;
+
+	isTrustFromFullAccess(): boolean {
+		return this.trustFromFullAccess && this.projectTrusted;
+	}
+
+	/** True when a Full-access-only trust was withdrawn in this session and Full access may restore it. */
+	canRestoreFullAccessTrust(): boolean {
+		return this.trustFromFullAccess && !this.projectTrusted;
+	}
+
+	/** Counts project-trust changes; a reload compares it before installing what it loaded (#3420). */
+	private trustEpoch = 0;
+
+	getTrustEpoch(): number {
+		return this.trustEpoch;
+	}
+
 	setProjectTrusted(trusted: boolean): void {
 		if (this.projectTrusted === trusted) {
 			return;
 		}
 
 		this.projectTrusted = trusted;
+		this.trustEpoch += 1;
 		this.modifiedProjectFields.clear();
 		this.modifiedProjectNestedFields.clear();
 
@@ -1097,13 +1420,13 @@ export class SettingsManager {
 		this.modifiedProjectNestedFields.clear();
 	}
 
-	private enqueueWrite(scope: SettingsScope, task: () => void): void {
+	private enqueueWrite(scope: SettingsScope, task: () => void | Promise<void>): void {
 		this.writeQueue = this.writeQueue
-			.then(() => {
+			.then(async () => {
 				if (scope === "project") {
 					this.assertProjectTrustedForWrite();
 				}
-				task();
+				await task();
 				this.clearModifiedScope(scope);
 			})
 			.catch((error) => {
@@ -1124,9 +1447,11 @@ export class SettingsManager {
 		snapshotSettings: Settings,
 		modifiedFields: Set<keyof Settings>,
 		modifiedNestedFields: Map<keyof Settings, Set<string>>,
-	): void {
-		this.storage.withLock(scope, (current) => {
-			const currentFileSettings = current ? SettingsManager.migrateSettings(parseSettingsJson(current)) : {};
+		state = false,
+	): void | Promise<void> {
+		const merge = (current: string | undefined): string | undefined => {
+			const raw = state ? parseStateSettings(this.storage, current) : current ? parseSettingsJson(current) : {};
+			const currentFileSettings = SettingsManager.migrateSettings(structuredClone(raw));
 			const mergedSettings: Settings = { ...currentFileSettings };
 			for (const field of modifiedFields) {
 				const value = snapshotSettings[field];
@@ -1136,16 +1461,43 @@ export class SettingsManager {
 					const inMemoryNested = value as Record<string, unknown>;
 					const mergedNested = { ...baseNested };
 					for (const nestedKey of nestedModified) {
-						mergedNested[nestedKey] = inMemoryNested[nestedKey];
+						if (inMemoryNested[nestedKey] === undefined) delete mergedNested[nestedKey];
+						else mergedNested[nestedKey] = inMemoryNested[nestedKey];
 					}
 					(mergedSettings as Record<string, unknown>)[field] = mergedNested;
+				} else if (value === undefined) {
+					delete mergedSettings[field];
 				} else {
 					(mergedSettings as Record<string, unknown>)[field] = value;
 				}
 			}
 
-			return JSON.stringify(mergedSettings, null, 2);
-		});
+			// Compare parsed values, not serialized formatting: no-op saves preserve JSONC and whitespace.
+			return isDeepStrictEqual(currentFileSettings, mergedSettings)
+				? undefined
+				: JSON.stringify(mergedSettings, null, 2);
+		};
+		const storage = this.storage;
+		if (state && storage.withStateLock) {
+			if (!storage.withStateLockAsync || !storage.tryWithStateLock) {
+				storage.withStateLock(merge);
+				return;
+			}
+			if (storage.tryWithStateLock(merge)) return;
+			return storage.withStateLockAsync(merge);
+		}
+		if (!storage.withLockAsync || !storage.tryWithLock) {
+			storage.withLock(scope, merge);
+			return;
+		}
+		// Uncontended (the normal case): written before save() returns, as callers expect. Only when
+		// another writer holds the lock does the wait move off the UI thread.
+		if (storage.tryWithLock(scope, merge)) return;
+		return storage.withLockAsync(
+			scope,
+			merge,
+			scope === "project" ? () => this.assertProjectTrustedForWrite() : undefined,
+		);
 	}
 
 	private save(): void {
@@ -1159,8 +1511,27 @@ export class SettingsManager {
 		const modifiedFields = new Set(this.modifiedFields);
 		const modifiedNestedFields = this.cloneModifiedNestedFields(this.modifiedNestedFields);
 
-		this.enqueueWrite("global", () => {
-			this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields);
+		this.enqueueWrite("global", async () => {
+			if (this.storage.withStateLock) {
+				const stateFields = new Set([...modifiedFields].filter((key) => STATE_KEYS.has(key)));
+				if (stateFields.size > 0) {
+					try {
+						await this.persistScopedSettings(
+							"global",
+							snapshotGlobalSettings,
+							stateFields,
+							modifiedNestedFields,
+							true,
+						);
+					} catch (error) {
+						logStateError(this.storage, error);
+					}
+				}
+				for (const key of STATE_KEYS) modifiedFields.delete(key);
+			}
+			if (modifiedFields.size > 0) {
+				await this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields);
+			}
 		});
 	}
 
@@ -1176,9 +1547,9 @@ export class SettingsManager {
 		const snapshotProjectSettings = structuredClone(this.projectSettings);
 		const modifiedFields = new Set(this.modifiedProjectFields);
 		const modifiedNestedFields = this.cloneModifiedNestedFields(this.modifiedProjectNestedFields);
-		this.enqueueWrite("project", () => {
-			this.persistScopedSettings("project", snapshotProjectSettings, modifiedFields, modifiedNestedFields);
-		});
+		this.enqueueWrite("project", () =>
+			this.persistScopedSettings("project", snapshotProjectSettings, modifiedFields, modifiedNestedFields),
+		);
 	}
 
 	private updateProjectSettings(field: keyof Settings, update: (settings: Settings) => void): void {
@@ -1516,7 +1887,10 @@ export class SettingsManager {
 	}
 
 	getRetryFallbackSettings(): ResolvedRetryFallbackSettings {
-		return resolveRetryFallbackSettings(this.settings.retry);
+		// Chains in the session-only override layer (applyRetryFallbackProfile, or an SDK applyOverrides call) are the session's whole policy.
+		return resolveRetryFallbackSettings(this.settings.retry, {
+			sessionPolicy: this.runtimeOverrides.retry?.fallbackChains !== undefined,
+		});
 	}
 
 	getFallbackCircuitSettings(): ResolvedFallbackCircuitSettings {
@@ -1638,6 +2012,42 @@ export class SettingsManager {
 		this.globalSettings.sessionShutdownHandlerTimeoutMs = Math.floor(timeoutMs);
 		this.markModified("sessionShutdownHandlerTimeoutMs");
 		this.save();
+	}
+
+	/**
+	 * Total time the host waits on all `session_shutdown` handlers together when the
+	 * process quits; each handler's own cap still applies inside it. 0 disables it.
+	 */
+	getSessionShutdownQuitBudgetMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.sessionShutdownQuitBudgetMs, "sessionShutdownQuitBudgetMs") ??
+			DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS
+		);
+	}
+
+	setSessionShutdownQuitBudgetMs(budgetMs: number): void {
+		if (!Number.isFinite(budgetMs) || budgetMs < 0) {
+			throw new Error(`Invalid sessionShutdownQuitBudgetMs setting: ${String(budgetMs)}`);
+		}
+		this.globalSettings.sessionShutdownQuitBudgetMs = Math.floor(budgetMs);
+		this.markModified("sessionShutdownQuitBudgetMs");
+		this.save();
+	}
+
+	/** How long one agent lifecycle event handler may run before the host reports it as stalled. 0 disables. */
+	getExtensionEventHandlerWarnMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.extensionEventHandlerWarnMs, "extensionEventHandlerWarnMs") ??
+			DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS
+		);
+	}
+
+	/** Hard cap on one agent lifecycle event handler; past it the session's event queue moves on. 0 disables. */
+	getExtensionEventHandlerTimeoutMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.extensionEventHandlerTimeoutMs, "extensionEventHandlerTimeoutMs") ??
+			DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS
+		);
 	}
 
 	getProviderRetrySettings(): {
@@ -1770,6 +2180,19 @@ export class SettingsManager {
 		return Math.min(DEFAULT_STREAM_START_TIMEOUT_MS, idleTimeoutMs);
 	}
 
+	/**
+	 * Cap on keep-alive-only silence. While a provider keeps sending bytes (SSE pings, comment keep-alives) the
+	 * start and idle bounds do not end the request; this bounds how long that may last without any assistant
+	 * event. `retry.provider.keepAliveTimeoutMs` overrides the 15-minute default; 0 disables the cap.
+	 */
+	getAgentStreamKeepAliveTimeoutMs(): number | undefined {
+		const explicit = this.settings.retry?.provider?.keepAliveTimeoutMs;
+		if (explicit !== undefined) {
+			return explicit > 0 ? explicit : undefined;
+		}
+		return DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS;
+	}
+
 	getWebSocketConnectTimeoutMs(): number | undefined {
 		return parseTimeoutSetting(this.settings.websocketConnectTimeoutMs, "websocketConnectTimeoutMs");
 	}
@@ -1841,11 +2264,12 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getQuietStartup(): boolean {
-		return this.settings.quietStartup ?? false;
+	getQuietStartup(): QuietStartup {
+		const value = this.settings.quietStartup;
+		return value === true || value === "header" ? value : false;
 	}
 
-	setQuietStartup(quiet: boolean): void {
+	setQuietStartup(quiet: QuietStartup): void {
 		this.globalSettings.quietStartup = quiet;
 		this.markModified("quietStartup");
 		this.save();
@@ -1853,6 +2277,10 @@ export class SettingsManager {
 
 	getTipsEnabled(): boolean {
 		return this.settings.tips ?? true;
+	}
+
+	getReducedMotion(): boolean {
+		return this.settings.reducedMotion ?? false;
 	}
 
 	getTipsHistory(): Record<string, number> {
@@ -1892,6 +2320,10 @@ export class SettingsManager {
 		return this.settings.shellCommandPrefix;
 	}
 
+	getBashRedactSecretsInOutput(): boolean {
+		return this.settings.tools?.bash?.redactSecretsInOutput === true;
+	}
+
 	setShellCommandPrefix(prefix: string | undefined): void {
 		this.globalSettings.shellCommandPrefix = prefix;
 		this.markModified("shellCommandPrefix");
@@ -1928,6 +2360,10 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getEnableSessionShare(): boolean {
+		return this.settings.enableSessionShare ?? true;
+	}
+
 	getEnableAnalytics(): boolean {
 		return this.settings.enableAnalytics ?? false;
 	}
@@ -1945,6 +2381,20 @@ export class SettingsManager {
 			this.markModified("trackingId");
 		}
 		this.save();
+	}
+
+	/**
+	 * Stable ID of this installation, e.g. sent to OpenAI as its agent host ID.
+	 * Created on first use. Project settings are ignored so a committed project
+	 * settings file cannot give every clone the same ID.
+	 */
+	getOrCreateDeviceId(): string {
+		if (!this.globalSettings.deviceId) {
+			this.globalSettings.deviceId = randomUUID();
+			this.markModified("deviceId");
+			this.save();
+		}
+		return this.globalSettings.deviceId;
 	}
 
 	getPackages(): PackageSource[] {
@@ -2190,6 +2640,20 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getFullscreenWheelScrollLines(): WheelScrollLines {
+		const lines = this.settings.fullscreenWheelScrollLines;
+		return typeof lines === "number" && Number.isFinite(lines)
+			? Math.max(1, Math.min(100, Math.floor(lines)))
+			: "auto";
+	}
+
+	setFullscreenWheelScrollLines(lines: WheelScrollLines): void {
+		this.globalSettings.fullscreenWheelScrollLines =
+			lines === "auto" ? lines : Math.max(1, Math.min(100, Math.floor(lines)));
+		this.markModified("fullscreenWheelScrollLines");
+		this.save();
+	}
+
 	getImageAutoResize(): boolean {
 		return this.settings.images?.autoResize ?? true;
 	}
@@ -2239,13 +2703,11 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/** The resolved `defaultTools` selection, or undefined when no settings layer sets it. */
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
-		return tools ? [...tools] : undefined;
-	}
-
-	getExperimentalSharedHost(): boolean {
-		return this.settings.experimental?.sharedHost === true;
+		if (tools === undefined) return undefined;
+		return resolveDefaultTools(Array.isArray(tools) ? tools.filter((tool) => typeof tool === "string") : []);
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

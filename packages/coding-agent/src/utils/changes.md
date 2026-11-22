@@ -1,5 +1,361 @@
 # changes
 
+## 2026-11-19 - Agent children never inherit the RPC host's identity (senpi#7034)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getUserShellEnv()` (the base of `getShellEnv()`) spreads `childEnvironmentOf(process.env)` instead of `process.env`, so the bash tool, PTY terminal, monitors and `!` commands never carry the host's hand-off and carry the origin attribution instead.
+
+### Why
+
+- Every process a session started through its shell inherited the RPC host's identity and launch-default client capabilities (senpi#7034).
+
+### Why an extension could not handle it
+
+- `getShellEnv()` is the environment the built-in shell tools spawn with, before any extension can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the `return` of `getUserShellEnv()` and its new import.
+
+## 2026-11-16 - Agent shells never receive a declared credential (senpi#6828)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getShellEnv()` passes the user shell environment through `withCredentialProxy()` before the kill guard's layer. Every variable named in the user's global `credentialProxy.credentials`, and any other variable carrying one of those values, is set to a fixed placeholder; a declared `baseUrlEnv` points at the credential's loopback proxy route. `getUserShellEnv()` (the user's own `!` commands) is unchanged.
+
+### Why
+
+- The bash tool, PTY bash, monitors and the tool child all spawn with `getShellEnv()`, which handed every engine credential to every agent command (senpi#6828). Step 1 of the agent vault design: a credential is used only through the injection proxy.
+
+### Why an extension could not handle it
+
+- The environment is built here before any extension sees a spawn; an extension cannot remove a value from it.
+
+### Expected merge conflict zones
+
+- LOW: `getShellEnv()` body and its import block.
+
+## 2026-11-06 - Process start-time probes read in UTC (senpi#3067 L1)
+
+### What changed
+
+- `packages/coding-agent/src/utils/process-identity.ts`: `readProcessStartTime` gains an optional `timeZone: "UTC" = "UTC"` parameter and passes it through to `readProcessIdentity`, so every live-process start-time probe reads in UTC by construction. Legacy local-format records are still parsed as local time by `processStartTimeMs`.
+
+### Why
+
+- senpi#3067 L1: `holderPids` probes the live process in local form while `host-child.pid` records a UTC-tagged start time. During a DST fall-back the local time `01:30` happens twice and `Date.parse` takes the earlier offset, so a child started in the repeated hour reads one hour off and stops counting as a holder of its sessions. The same mixed-format comparison existed in every other `readProcessStartTime` consumer (pidfile matching, published claims, `rpc-public-key` records); all direct `readProcessIdentity` call sites already passed `"UTC"`.
+
+### Why an extension could not handle it
+
+- Process identity is read in core RPC/host plumbing before any extension loads, and no extension hook runs between the OS probe and the holder comparison.
+
+### Expected merge conflict zones
+
+- LOW: `readProcessStartTime` in `packages/coding-agent/src/utils/process-identity.ts` and its call sites in `packages/coding-agent/src/modes/rpc/`.
+
+## 2026-11-15 - The image byte sniffer moves to a module without Node imports (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/src/utils/mime.ts`: `detectSupportedImageMimeType` and its helpers move to `image-mime.ts`, re-exported here; this module keeps `detectSupportedImageMimeTypeFromFile`.
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- The sniffer is a core utility the built-in read tool imports.
+
+### Expected merge conflict zones
+
+- LOW: `mime.ts` is now the file reader plus a re-export.
+
+## 2026-11-13 - Binary installs read the update version from the latest GitHub Release (senpi#6633)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: when the running install is a standalone binary (`detectInstallMethod() === "bun-binary"`) and no branded channel is set, `getLatestPiRelease` reads `https://api.github.com/repos/code-yeongyu/senpi/releases/latest` and takes the version from `tag_name` (`readLatestReleaseVersion`, which refuses drafts and prereleases). npm-based installs keep npm `latest`; branded channels keep their dist-tag. `getLatestPiRelease`, `getLatestPiVersion` and `checkForNewPiVersion` accept an optional `installMethod`.
+
+### Why
+
+- A binary can only be updated from a GitHub Release, but its notice came from npm `latest`. Since senpi#6627 npm can publish before the release exists, which told binary users about a version they could not download.
+
+### Why an extension could not handle it
+
+- The startup update notice and `senpi update` call this module directly; no extension hook decides where the installable version comes from.
+
+### Expected merge conflict zones
+
+- LOW: the request URL and headers in `getLatestPiRelease` and the `checkForNewPiVersion` signature in `version-check.ts`.
+
+## 2026-11-06 - Copy reaches a remote viewer without SSH/Mosh markers (senpi#6108, PR #6109)
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard.ts`: `copyToClipboard()` also emits OSC 52 after a verified native or command clipboard write when stdout is a terminal, so the terminal that displays the session receives the text too. `isRemoteSession()` also treats `SSH_TTY` as a remote marker. Success still rests on a write that was verified or, as before, on OSC 52 where it is the only route (remote or display-less sessions); a failed local write with a terminal on stdout still throws.
+
+### Why
+
+- A persistent terminal session can be viewed from another machine while the program's environment carries no SSH/Mosh markers. On macOS the native write to the execution host's clipboard succeeded, OSC 52 was skipped, and the user saw "Copied!" while the viewing machine's clipboard was unchanged.
+
+### Why an extension could not handle it
+
+- `copyToClipboard()` is the core clipboard writer used by the interactive copy paths; an extension cannot change what the core writer sends to the terminal.
+
+### Expected merge conflict zones
+
+- LOW: `isRemoteSession()` and the OSC 52 condition near the end of `copyToClipboard()`.
+
+## 2026-11-01 - getShellEnv carries the kill guard's runtime layer (senpi#5349, PR #5358)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getShellEnv()` passes `getUserShellEnv()` (the previous `getShellEnv()` body, now also used for the user's own `!` commands) through `withKillGuardRuntime()`. While a session has the kill guard's runtime layer active, that function puts the shim directory first on `PATH`, sets `BASH_ENV` to the wrapper (keeping a user's own `BASH_ENV` in `SENPI_KILL_GUARD_USER_BASH_ENV`), exports the judge variables, and sets `SHLVL=1` when the environment has no usable level. bash skips `BASH_ENV` in a top-level shell whose stdin is a socket (its rshd rule; Node and libuv pipes are sockets) or that sshd started, and an inherited `SHLVL` makes every agent `bash -c` a nested shell. With no active layer the environment is unchanged.
+
+### Why
+
+- PTY bash, the core bash tool and monitors all spawn with `getShellEnv()`. Putting the shims there makes every agent command and its children judge `kill`, `pkill` and `killall` on their real argv.
+
+### Why an extension could not handle it
+
+- The environment is built here before any extension can intervene, and the core bash tool that SDK consumers get never passes through the terminal extension.
+
+### Expected merge conflict zones
+
+- LOW: `getShellEnv()`, the new `getUserShellEnv()` below it, and the new import.
+
+## 2026-11-02 - Order zero-padded and -1 CalVer versions (#5406, PR #5411)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: Senpi CalVer parsing accepts any `-N` revision with N >= 1 (`-1` equals the bare date, `-10` > `-9`) and compares month and day numerically, so `2026.11.02-1`, `2026.11.2-1` and `2026.11.2` are one release. When only one side is CalVer, the semver fallback receives that side in its canonical unpadded form.
+
+### Why
+
+- Release `2026.11.02-1` stamped a zero-padded version with a `-1` suffix. The pattern only accepted `-2` and higher, and semver rejects the padded `02`, so `isNewerPackageVersion` was always false: users on that release were never offered an update, and the self-update tests went red on main.
+
+### Why an extension could not handle it
+
+- Version ordering for the update check and `senpi update` runs in core bootstrap code before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `SENPI_CALVER_PATTERN` and `comparePackageVersions` in `packages/coding-agent/src/utils/version-check.ts`.
+
+## 2026-10-31 - Adopt Windows pipes by mode bits (#5137, PR #5142)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts`: exports `isFifoMode` and adopts an inherited descriptor when its file-type mode bits are FIFO, instead of `Stats.isFIFO()`, so adoption accepts every pair the parser accepts.
+
+### Why
+
+- On Windows source runtimes `Stats.isFIFO()` is false for real pipes, so a parsed pair was never adopted and the private channel silently stayed down.
+
+### Why an extension could not handle it
+
+- Private channel adoption runs during bootstrap, before extensions load.
+
+### Expected merge conflict zones
+
+- Inherited descriptor type checks.
+
+## 2026-10-29 - Compose and protect inherited pipe pairs (#4859)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts`: reads the first descriptor and writes the second, retaining partial-write handling and backpressure; destroying the Duplex closes both.
+- `packages/coding-agent/src/utils/private-fd-inherit.ts`: binds the Windows CRT descriptor-to-HANDLE conversion and `SetHandleInformation` synchronously through the existing Bun builtin boundary. Checks that each descriptor is open before touching FFI, even after loader caching, and returns false on loader, conversion or handle-information failures. Rejects null and signed or pointer-width unsigned INVALID_HANDLE_VALUE sentinels before any handle-information call.
+
+### Why
+
+- The Windows pair has two owners to dispose and must not leak into ordinary children.
+
+### Why an extension could not handle it
+
+- These helpers run at process receipt and supply core transport ownership.
+
+### Expected merge conflict zones
+
+- Inherited duplex construction and destruction.
+
+## 2026-10-29 - Shared inherited duplex adoption (senpi#4771)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts` (new): the Node socket / Bun file-stream adoption of an inherited pipe or socket, extracted from `mcp-presenter-bootstrap.ts` so MCP enrollment and named private descriptors share one implementation.
+
+### Why
+
+- One owner for inherited-descriptor adoption instead of two copies (#4749).
+
+### Why an extension could not handle it
+
+- It is used by core startup code before extensions load.
+
+### Expected merge conflict zones
+
+- None expected; new file.
+
+## 2026-10-27 - Bundled bun shims are written per engine trust generation (omo#10762)
+
+### What changed
+
+- `packages/coding-agent/src/utils/bundled-bun.ts`: the shim directory key and the shim bytes come from `bundled-bun-shim.ts`; with no adopted generation both are exactly as before.
+- `packages/coding-agent/src/utils/bundled-bun-shim.ts` (new): POSIX and `.cmd` shim writers. Under an adopted generation a shim sets `NODE_EXTRA_CA_CERTS` and the owned `SSL_CERT_FILE`/`SSL_CERT_DIR` closure only for its own exec, a server launch clears `NODE_USE_SYSTEM_CA` and `BUN_OPTIONS`, a fallback generation prints one degraded-import notice per generation, and an unencodable `.cmd` value yields a shim that exits 78 with the `set-tmpdir` action.
+- `packages/coding-agent/src/engine-trust/actions.ts` (new): the engine trust action catalog (reason or refusal code to action id and text).
+
+### Why
+
+- omo#10762, design r13 5.6 and 6.6: an agent's `bun` must use the engine's trust generation, never Bun's unfiltered system store or the OpenSSL default inputs, and the agent shell itself must never hold the generation.
+
+### Why an extension could not handle it
+
+- The shim directory is appended to the agent shell's PATH by the shell environment builder in `utils/shell.ts`, below the extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `shimFiles` and `materialize` in `bundled-bun.ts`.
+
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard-command.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-18 - `isWSL` recognizes `WSL_INTEROP` and injectable kernel-version paths (Refs senpi#3628)
+
+### What changed
+
+- `packages/coding-agent/src/utils/wsl.ts`: `isWSL` also accepts `WSL_INTEROP` as an env marker and takes an optional `procVersionPath` (default `/proc/version`) so callers and tests can pin the kernel-version file.
+
+### Why
+
+- `packages/coding-agent/src/utils/wsl.ts`: WSL sessions launched with a sanitized environment set `WSL_INTEROP` but not the two markers the helper read, and keybinding defaults could not test the `/proc/version` fallback without a fixture path.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/utils/wsl.ts`: clipboard interop and keybinding defaults call this leaf helper directly; extensions have no earlier hook.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/utils/wsl.ts`: the marker list and the optional parameter.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Move the shared PID identity, start-time parsing, liveness and validated signaling implementation unchanged out of the removed app-server directory. Native RPC and terminals remain its owners.
+
+- `packages/coding-agent/src/utils/process-identity.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-09 - Windows tree kills no longer use taskkill /T (senpi#2999 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `killWindowsProcessTree()` builds its `taskkill` arguments with `windowsTreeKillArgs()` from `@earendil-works/pi-agent-core/node`.
+  - It reads one bounded synchronous process listing (`listWindowsProcessRowsSync`) and kills the root plus its genuine descendants, pid by pid, with no `/T`.
+  - A process counts as a descendant only when it was created at or after the parent it names.
+  - A protected OS image or an ancestor of this process in the tree shrinks the kill to the root alone, or to nothing when the root is one of them.
+  - Without a listing it falls back to `/T` on the root.
+  - It stays synchronous, and keeps the absolute-path launcher candidates and the direct-pid fallback.
+
+### Why
+
+- `taskkill /T` adopts every process whose recorded `ParentProcessId` equals the root's pid. Windows never rewrites that field when a parent exits, and it reuses pids, so after a wraparound an older, unrelated process that names a long-dead parent can be killed with the tree.
+- #2353 showed the same pid-reuse adoption take down a CI runner through the WebView cleanup's own walk; #2991 fixed that walk. This applies the same rule to the remaining tree kills.
+
+### Why an extension could not handle it
+
+- The kill path is the core bash tool's and the shutdown registry's synchronous teardown, which runs before any extension can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the body of `killWindowsProcessTree()` and `taskkillHandledTree()` in `shell.ts` (its argument list changed), plus the new import. Upstream still spawns `taskkill /F /T /PID <pid>`; keep the computed argument list.
+
+## 2026-10-08 - Script children inherit runtime options, not caller entry modes (senpi#2599)
+
+### What changed
+
+- `packages/coding-agent/src/utils/runtime-exec-argv.ts`: shares the existing Node/Bun entry-mode filter outside RPC without changing its filtering contract.
+
+### Why
+
+An eval or print flag belongs to the embedding caller. Passing it before a child script entry replays the caller instead of starting that child; loader and runtime flags still have to reach the child.
+
+### Why an extension could not handle it
+
+Native process launchers construct their command before a child can load an extension.
+
+### Expected merge conflict zones
+
+- LOW: the shared runtime argument filter and its direct launch-site imports.
+
+## 2026-10-01 - Agent shells get a real `bun` inside a compiled executable (omo#9362)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getShellEnv()` returns its environment through `withBundledBunCommands()`. In a `bun build --compile` executable, that appends a directory to `PATH` holding `bun`/`bunx` scripts (`bun.cmd`/`bunx.cmd` on Windows), which run this executable with `BUN_BE_BUN=1`. Outside a compiled executable the environment is unchanged.
+- `packages/coding-agent/src/utils/bundled-bun.ts` (fork-only): detects a compiled executable from `Bun.main` (`/$bunfs/`, `<drive>:\~BUN\`), writes the scripts under `<agentDir>/bundled-bun/<execPath hash>/` with a `tmpdir()` fallback, and appends that directory to `PATH`.
+
+### Why
+
+- Bun Shell runs `bun` as `process.execPath` when `PATH` has no Bun. In a compiled engine that is the engine itself, so an eval cell's `bun test` booted a second agent and returned its reply as exit-0 output, while the bash tool's `/bin/sh` reported `bun: command not found`. The child cannot tell it was meant to be Bun, so the parent has to provide a real `bun`. Appending keeps a user's own Bun first, and `BUN_BE_BUN` is scoped to that one command, so engine self-spawns keep running the engine.
+
+### Why an extension could not handle it
+
+- `getShellEnv()` is the environment the built-in bash tool and terminal spawn with, before any extension can intervene; the eval extension reuses the same helper through the public `withBundledBunCommands` export.
+
+### Expected merge conflict zones
+
+- LOW: the `return` of `getShellEnv()` in `shell.ts` and its new import; upstream has no compiled-executable handling there.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tools and shell utilities
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts`: `utils/paths.ts`: `isLocalPath` treats `builtin:` as non-local. `utils/paths.ts`: `getFileContentRevision`.
+- `packages/coding-agent/src/utils/shell.ts`: `utils/shell.ts`: `sanitizeBinaryOutput` body is upstream's single-regex strip. `utils/shell.ts`: SYNC kill path kept (`killWindowsProcessTree`, `killProcessTree`, `killTrackedDetachedChildren`; landmine L32) plus the existing spawn-error (ENOENT/EACCES) guard; the `hasUnsafeDisplayCharacter` fast path stays in front of the upstream regex.
+- `packages/coding-agent/src/utils/syntax-highlight.ts`: `utils/syntax-highlight.ts`: `json` joins the eager highlight.js languages. `utils/syntax-highlight.ts`: extensionless highlight.js specifiers.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; tools and shell utils adopt upstream bash/read fixes and keep fork output shapes and hooks (plan D-15).
+
+### Why an extension could not handle it
+
+Built-in tool execution and shell handling are core tool implementations that extensions call, not replace.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-17 - Detect managed tools by stat, not by spawn (senpi#1781)
 
 ### What changed

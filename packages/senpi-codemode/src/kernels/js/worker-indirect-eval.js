@@ -1,7 +1,17 @@
-import { findShadowedGlobalName } from "./worker-shadow-guard.js";
+import { isKernelGlobal } from "./worker-shadow-guard.js";
+
+// A cell may declare a name the kernel or the platform already defines (`const log = []`, `const fetch = ...`). The
+// binding lives in a per-kernel user scope that later cells read through `with`, so it persists for the user's cells
+// while the kernel, its prelude and imported libraries keep the original global. `delete <name>` in a cell restores it.
+const USER_SCOPE_KEY = Symbol.for("senpi.kernel.userScope");
+const USER_SCOPE = "__senpiUserScope";
+// The persistence rewrite itself writes through `globalThis`, so that one name cannot be shadowed.
+const UNSHADOWABLE = new Set(["globalThis"]);
+let shadowedNames = null;
 
 export function indirectEval(source, filename) {
 	const withPragma = filename ? `${source}\n//# sourceURL=${filename}` : source;
+	// oxlint-disable-next-line eslint/no-eval -- The persistent kernel evaluates user cells in global scope to retain their bindings.
 	const geval = globalThis.eval;
 	return geval(withPragma);
 }
@@ -11,10 +21,31 @@ export async function awaitMaybePromise(value) {
 	return await value;
 }
 
-export function wrapUserCode(code) {
-	const persistentCode = persistTopLevelDeclarations(code);
-	if (scanTopLevelStatements(persistentCode).hasTopLevelReturn) return `(async () => {\n${persistentCode}\n})()`;
-	return `(async () => {\n${captureLastExpression(persistentCode)}\n})()`;
+/** Wraps a cell for persistent evaluation; `shadowed` receives the kernel-global names the cell declares. */
+export function wrapUserCode(code, shadowed = []) {
+	shadowedNames = shadowed;
+	let persistentCode;
+	try {
+		persistentCode = persistTopLevelDeclarations(code);
+	} finally {
+		shadowedNames = null;
+	}
+	const body = scanTopLevelStatements(persistentCode).hasTopLevelReturn ? persistentCode : captureLastExpression(persistentCode);
+	const scope = globalThis[USER_SCOPE_KEY];
+	if (shadowed.length === 0 && (scope === undefined || Object.keys(scope).length === 0)) return `(async () => {\n${body}\n})()`;
+	globalThis[USER_SCOPE_KEY] ??= Object.create(null);
+	return `(async (${USER_SCOPE}) => { with (${USER_SCOPE}) { return await (async () => {\n${body}\n})(); } })(globalThis[Symbol.for("senpi.kernel.userScope")])`;
+}
+
+function persistTarget(name) {
+	if (UNSHADOWABLE.has(name)) {
+		throw new Error(
+			`eval cell declares top-level \`${name}\`, which the JS kernel needs to keep cell variables between cells. Rename the binding (for example \`${name}Local\`).`,
+		);
+	}
+	if (!isKernelGlobal(name)) return `globalThis[${JSON.stringify(name)}]`;
+	if (shadowedNames !== null && !shadowedNames.includes(name)) shadowedNames.push(name);
+	return `${USER_SCOPE}[${JSON.stringify(name)}]`;
 }
 
 const IDENTIFIER_START_RE = /[$_\p{ID_Start}]/u;
@@ -267,14 +298,8 @@ function rewriteDeclaration(code, declarationStart, start, end, keyword) {
 		const bindings = [];
 		collectPatternNames(pattern, bindings);
 		if (bindings.length === 0) return undefined;
-		const shadowed = findShadowedGlobalName(bindings);
-		if (shadowed !== undefined) {
-			throw new Error(
-				`eval cell declares top-level \`${shadowed}\`, but a global with that name already exists in the JS kernel. Persisting it would replace that global for every later cell. Rename the binding (for example \`${shadowed}Local\`), or assign globalThis.${shadowed} explicitly if replacing it is truly intended.`,
-			);
-		}
 		if (preserveDeclaration) {
-			for (const name of bindings) assignments.push(`globalThis[${JSON.stringify(name)}] = ${name};`);
+			for (const name of bindings) assignments.push(`${persistTarget(name)} = ${name};`);
 			continue;
 		}
 		const target = rewriteBindingPattern(pattern);
@@ -296,7 +321,7 @@ function rewriteBindingPattern(source) {
 		const target = rewriteBindingPattern(pattern.slice(0, defaultStart));
 		return target === undefined ? undefined : `${target} = ${pattern.slice(defaultStart + 1).trim()}`;
 	}
-	if (IDENTIFIER_RE.test(pattern)) return `globalThis[${JSON.stringify(pattern)}]`;
+	if (IDENTIFIER_RE.test(pattern)) return persistTarget(pattern);
 	if (pattern.startsWith("{") && pattern.endsWith("}")) {
 		const properties = splitPatternElements(pattern.slice(1, -1)).map((property) => rewriteObjectBinding(property));
 		if (properties.some((property) => property === undefined)) return undefined;
@@ -720,6 +745,7 @@ function captureLastExpression(code) {
 	return `${head}return ${tail.replace(/;+$/u, "")};`;
 }
 
+// oxlint-disable-next-line eslint/no-misleading-character-class -- ECMAScript identifiers permit ZWNJ and ZWJ as individual continuation characters.
 const LABEL_PREFIX_RE = /^[\p{ID_Start}$_][\p{ID_Continue}\u200c\u200d$]*\s*:/u;
 
 function isStatementOnly(source) {

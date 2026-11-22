@@ -7,12 +7,9 @@ import {
 	rendezvousOrder,
 	selectAccount,
 } from "../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
+import { cliSlot } from "./support/claude-cli-test-slots.ts";
 
-const accounts: AccountSlot[] = [
-	{ name: "alpha", refresh: "", access: "", expires: 0, source: "login" },
-	{ name: "bravo", refresh: "", access: "", expires: 0, source: "login" },
-	{ name: "charlie", refresh: "", access: "", expires: 0, source: "login" },
-];
+const accounts: AccountSlot[] = [cliSlot("alpha"), cliSlot("bravo"), cliSlot("charlie")];
 
 const goldenSessionIds = ["session-01", "session-02", "session-03", "session-04", "session-05", "session-06"];
 
@@ -35,7 +32,7 @@ describe("Claude SDK OAuth account affinity", () => {
 	});
 
 	it("has the exact minimal-disruption reassignment set when the pool changes", () => {
-		const expanded = [...accounts, { name: "delta", refresh: "", access: "", expires: 0, source: "login" as const }];
+		const expanded = [...accounts, cliSlot("delta")];
 		const reassigned = goldenSessionIds.filter(
 			(sessionId) => selectAccount(accounts, { sessionId }).name !== selectAccount(expanded, { sessionId }).name,
 		);
@@ -78,9 +75,9 @@ describe("Claude SDK OAuth account affinity", () => {
 			expect((error as AllAccountsBlockedError).soonestUnblockAt).toBe(10_000);
 		}
 
-		const authBlocked = accounts.map((account) => ({ ...account, blockReason: "auth_error" }));
-		expect(() => selectAccount(authBlocked, { sessionId: "auth", now: Number.MAX_SAFE_INTEGER })).toThrow(
-			AllAccountsBlockedError,
-		);
+		// An auth block lasts until its re-probe time (senpi#3264), then the account is offered again.
+		const authBlocked = accounts.map((account) => ({ ...account, blockReason: "auth_error", blockedUntil: 20_000 }));
+		expect(() => selectAccount(authBlocked, { sessionId: "auth", now: 1_000 })).toThrow(AllAccountsBlockedError);
+		expect(selectAccount(authBlocked, { sessionId: "auth", now: 20_000 }).name).toBeDefined();
 	});
 });

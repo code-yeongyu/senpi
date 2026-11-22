@@ -5,7 +5,17 @@ import {
 	classifyCredentialFailure,
 	rateLimitCooldown,
 } from "../src/core/credential-pool/classify.ts";
-import { allAccountsBlockedGuidance } from "../src/core/extensions/builtin/anthropic-subscription/guidance.ts";
+import {
+	allAccountsBlockedGuidance,
+	singleAccountUnavailableGuidance,
+} from "../src/core/extensions/builtin/anthropic-subscription/guidance.ts";
+
+// 2026-09-30 12:00 in Asia/Seoul, so reset prose resolves to fixed cooldowns.
+// A zoneless reset reads as the host's local time, so its distance, and whether
+// it passes the 48 h cap, depends on the zone the suite runs in.
+const NOW_MS = Date.UTC(2026, 8, 30, 3, 0, 0);
+const HOUR_MS = 3_600_000;
+const FABLE_RESET_MS = new Date(2026, 9, 2, 9, 0, 0, 0).getTime() - NOW_MS;
 
 function status(code: number, message = `HTTP ${code}`): Error {
 	const error = new Error(message);
@@ -36,6 +46,113 @@ describe("credential error taxonomy", () => {
 		if (action.kind !== "failover" || action.block.reason !== "rate_limit") throw new Error("expected rate_limit");
 		expect(action.block.cooldownMs).toBe(COOLDOWN_BASE_MS * 4);
 		expect(action.block.retryAfterWasCapped).toBe(false);
+	});
+
+	test.each([
+		["codex usage limit", new Error("Codex error: The usage limit has been reached"), COOLDOWN_BASE_MS],
+		[
+			"claude session limit",
+			new Error("You've hit your session limit \u00b7 resets 12am (Asia/Seoul)"),
+			12 * HOUR_MS,
+		],
+		["weekly limit", new Error("You've hit your weekly limit \u00b7 resets 5am (Asia/Seoul)"), 17 * HOUR_MS],
+	] as const)("%s fails over with a rate-limit cooldown", (_label, error, cooldownMs) => {
+		// Subscription exhaustion reaches the pool as prose: no HTTP status, no
+		// `rate limit` wording. Without this vocabulary the failure default-denies
+		// to `fail_request`, so the exhausted credential is never blocked and the
+		// healthy sibling is never attempted.
+		const action = classifyCredentialFailure(error, { nowMs: NOW_MS });
+		expect(action.kind).toBe("failover");
+		if (action.kind !== "failover" || action.block.reason !== "rate_limit") throw new Error("expected rate_limit");
+		// The cooldown runs until the account's own reset time when the text names one.
+		expect(action.block.cooldownMs).toBe(cooldownMs);
+	});
+
+	test("overflow prose that names a limit still fails the request", () => {
+		// The rate-limit branch runs BEFORE the overflow branch, so the subscription
+		// vocabulary stays narrow: a provider that says `token limit` is reporting a
+		// context overflow, and blocking a healthy credential for it is wrong.
+		expect(classifyCredentialFailure(new Error("Your request exceeded model token limit: 262144")).kind).toBe(
+			"fail_request",
+		);
+	});
+
+	// Every account-scoped usage limit a supported provider is known to report as
+	// text alone, verbatim from where senpi produces or has observed it. None of
+	// these carries an HTTP status by the time the pool sees it (#1768).
+	test.each([
+		// openai-codex-responses.ts mapCodexEvents: an SSE `error` event becomes
+		// `Codex error: <message || code>`; the message form is the #1768 report.
+		["Codex SSE message", "Codex error: The usage limit has been reached"],
+		["Codex SSE code only", "Codex error: usage_limit_reached"],
+		["Codex SSE entitlement code only", "Codex error: usage_not_included"],
+		// #1969: the hard-quota 429 body, as formatted into the message text.
+		[
+			"OpenAI hard-quota body",
+			'OpenAI API error (429): {"type":"usage_limit_reached","message":"The usage limit has been reached"}',
+		],
+		// The bug watch re-confirmed both as fail_request on main (2026-09-30).
+		["bare usage limit sentence", "The usage limit has been reached"],
+		["reached your usage limit", "You've reached your usage limit"],
+		// openai-codex-responses.ts parseErrorResponse without resets_at (the reset
+		// form is in credential-pool-reset-cooldown.test.ts).
+		["ChatGPT friendly message", "You have hit your ChatGPT usage limit (plus plan)."],
+		// Claude Code subscription prose: #1768, anthropic-subscription-failover.test.ts,
+		// retry-fallback-usage-limit.test.ts.
+		["Claude session limit", "You've hit your session limit \u00b7 resets 12am (Asia/Seoul)", 12 * HOUR_MS],
+		["Claude weekly limit", "You've hit your weekly limit \u00b7 resets 5am (Asia/Seoul)", 17 * HOUR_MS],
+		["Claude 5-hour limit", "You've reached your 5-hour limit"],
+		// Names its family, so the block binds only Fable on the account (senpi#2555).
+		[
+			"Claude model weekly limit",
+			"You've hit your Fable weekly limit \u00b7 resets Oct 2, 9am",
+			FABLE_RESET_MS,
+			"fable",
+		],
+		// Claude Code terminal reasons (anthropic-subscription-failover.test.ts).
+		["Claude blocking_limit", "Claude Code error_during_execution: blocking_limit"],
+		["Claude rapid_refill_breaker", "Claude Code error_during_execution: rapid_refill_breaker"],
+		// OpenCode Go / free-tier subscription limits (packages/ai utils/retry.ts).
+		["OpenCode monthly limit", "Monthly usage limit reached"],
+		["OpenCode Go limit", 'GoUsageLimitError: {"type":"GoUsageLimitError"}'],
+		["OpenCode free-tier limit", 'FreeUsageLimitError: {"type":"FreeUsageLimitError"}'],
+		// github-copilot-errors.ts describeGitHubCopilotFailure, quota branch.
+		[
+			"GitHub Copilot quota",
+			"GitHub Copilot quota exceeded (HTTP 429): the plan's included usage or its additional-usage limit is used up, so premium models are refused until it resets or the limit is raised.",
+		],
+		// cursor-agent.test.ts: Cursor's Connect end-stream error (already covered).
+		["Cursor resource_exhausted", "Connect error resource_exhausted: quota exceeded"],
+	] as const)(
+		"%s is an account usage limit: fails over with a rate-limit cooldown",
+		(_label, message, cooldownMs?: number, modelFamily?: string) => {
+			expect(classifyCredentialFailure(new Error(message), { nowMs: NOW_MS })).toEqual({
+				kind: "failover",
+				block: {
+					reason: "rate_limit",
+					cooldownMs: Math.min(cooldownMs ?? COOLDOWN_BASE_MS, COOLDOWN_CAP_MS),
+					retryAfterWasCapped: (cooldownMs ?? COOLDOWN_BASE_MS) > COOLDOWN_CAP_MS,
+					resetSource: cooldownMs === undefined ? "default_backoff" : "reset_prose",
+					...(modelFamily === undefined ? {} : { modelFamily }),
+				},
+			});
+		},
+	);
+
+	// Text that names a limit but is not a spent account: each keeps the class it
+	// has on main, so a healthy credential is never blocked for it.
+	test.each([
+		// retry-profile-classifiers.test.ts: a warning, not exhaustion.
+		["approaching warning", "OpenAI API error (429): You are approaching your usage limit"],
+		// overflow.ts catalogue (Kimi, Kiro): the request is too large.
+		["Kimi token limit overflow", "Your request exceeded model token limit: 262144"],
+		["Kiro context limit overflow", "Model context limit reached. Conversation size exceeds model capacity."],
+		// retry-profile-classifiers.test.ts: NVIDIA NIM worker load, provider-side.
+		["NIM worker request limit", "ResourceExhausted: Worker local total request limit reached (288/48)"],
+		// anthropic-subscription errors.ts: a model entitlement, not a spent account.
+		["Anthropic usage credits", "Usage credits are required for this model."],
+	] as const)("%s is not an account usage limit: fails the request", (_label, message) => {
+		expect(classifyCredentialFailure(new Error(message))).toEqual({ kind: "fail_request" });
 	});
 
 	test.each([
@@ -102,14 +219,142 @@ describe("credential error taxonomy", () => {
 		expect(capped.retryAfterWasCapped).toBe(true);
 	});
 
-	test("lane all-blocked guidance for an auth-dominated pool classifies as auth_error, not rate_limit (omo#8383)", () => {
-		const action = classifyCredentialFailure(new Error(allAccountsBlockedGuidance(undefined, "auth_error")));
-		expect(action).toEqual({ kind: "failover", block: { reason: "auth_error" } });
+	test("lane all-blocked guidance never blocks the outer slot, auth-dominated or not (omo#8383, senpi#2081)", () => {
+		// The lane's own pool holds each account's reason and deadline; pinning its verdict on the outer
+		// slot that ran the attempt blocked every slot until re-login.
+		expect(classifyCredentialFailure(new Error(allAccountsBlockedGuidance(undefined, "auth_error")))).toEqual({
+			kind: "fail_request",
+		});
+		expect(classifyCredentialFailure(new Error(allAccountsBlockedGuidance(undefined)))).toEqual({
+			kind: "fail_request",
+		});
 	});
 
-	test("lane all-blocked guidance without an auth block stays a rate-limit cooldown", () => {
-		const action = classifyCredentialFailure(new Error(allAccountsBlockedGuidance(undefined)));
+	test("single-account guidance with fallback off fails the request like the pool guidance (senpi#3465, senpi#2081)", () => {
+		const account = { name: "primary", configured: true };
+		const auth = classifyCredentialFailure(
+			new Error(singleAccountUnavailableGuidance(account, undefined, "auth_error")),
+		);
+		expect(auth).toEqual({ kind: "fail_request" });
+		const limited = classifyCredentialFailure(
+			new Error(singleAccountUnavailableGuidance(account, Date.now() + 60_000)),
+		);
+		expect(limited).toEqual({ kind: "fail_request" });
+	});
+
+	test("fails the request for an account that is not configured instead of rotating to a cooldown (senpi#3672)", () => {
+		// No cooldown brings a missing account back, so the guidance carries no rate-limit or auth cause words.
+		const missing = singleAccountUnavailableGuidance({ name: "retired", configured: false }, undefined);
+		expect(classifyCredentialFailure(new Error(missing)).kind).toBe("fail_request");
+	});
+});
+
+describe("transient failures never classify as a permanent credential verdict (senpi#2081)", () => {
+	test.each([
+		["503 whose body mentions unauthorized", status(503, "503 Service Unavailable: upstream unauthorized")],
+		["502 whose body names an invalid key upstream", status(502, "Bad Gateway: invalid api key at upstream proxy")],
+		["504 whose body mentions billing", status(504, "Gateway Timeout while contacting billing service")],
+		["408 whose body mentions authentication_error", status(408, "Request Timeout (authentication_error)")],
+		["529 overloaded with an authentication_error type", status(529, "overloaded authentication_error")],
+	] as const)("%s retries the same slot instead of blocking it", (_label, error) => {
+		expect(classifyCredentialFailure(error, { nowMs: NOW_MS })).toEqual({ kind: "retry_same", maxAttempts: 2 });
+	});
+
+	test("a 429 whose body mentions an authentication error is a cooldown, not an auth block", () => {
+		const action = classifyCredentialFailure(status(429, "Too Many Requests: authentication_error upstream"), {
+			nowMs: NOW_MS,
+		});
 		expect(action.kind).toBe("failover");
 		if (action.kind === "failover") expect(action.block.reason).toBe("rate_limit");
+	});
+
+	test("a 403 that reports a rate limit for the token is a cooldown, not an auth block", () => {
+		const action = classifyCredentialFailure(status(403, "rate limit exceeded for this token"), { nowMs: NOW_MS });
+		expect(action.kind).toBe("failover");
+		if (action.kind === "failover") expect(action.block.reason).toBe("rate_limit");
+	});
+
+	test.each([
+		["mixed pool", allAccountsBlockedGuidance(NOW_MS + 60_000)],
+		["auth-only pool", allAccountsBlockedGuidance(NOW_MS + 900_000, "auth_error")],
+		[
+			"single blocked account",
+			singleAccountUnavailableGuidance({ name: "primary", configured: true }, NOW_MS + 900_000, "auth_error"),
+		],
+	] as const)("an account pool's own %s refusal fails the request without blocking the outer slot", (_label, text) => {
+		expect(classifyCredentialFailure(new Error(text), { nowMs: NOW_MS })).toEqual({ kind: "fail_request" });
+	});
+
+	test("an unknown, codeless custom-provider error never blocks a slot", () => {
+		const action = classifyCredentialFailure(
+			new Error(
+				"The provider returned an unexpected error. Action: send the message again; if it repeats, choose another model.",
+			),
+		);
+		expect(action).toEqual({ kind: "fail_request" });
+	});
+
+	test.each([
+		["401", status(401, "Unauthorized")],
+		["401 authentication_error body", status(401, '{"type":"error","error":{"type":"authentication_error"}}')],
+		["403 revoked token", status(403, "OAuth token has been revoked")],
+	] as const)("a genuine %s still blocks the slot as auth_error", (_label, error) => {
+		expect(classifyCredentialFailure(error)).toEqual({ kind: "failover", block: { reason: "auth_error" } });
+	});
+
+	test("a 403 that refuses one model the plan does not include fails the request without blocking the slot (senpi#3972)", () => {
+		// The maintainer's audit RED (issue #3972, comment 2026-10-23): a fake z.ai returns 403
+		// "Your subscription does not include access to model-a" for one model only. That refusal is
+		// a verdict on the model, not on the credential: the slot must stay selectable for model-b,
+		// so nothing may be persisted as auth_error.
+		expect(classifyCredentialFailure(status(403, "Your subscription does not include access to model-a"))).toEqual({
+			kind: "fail_request",
+		});
+		expect(classifyCredentialFailure(status(403, "model GLM-5.3 is not available on this plan"))).toEqual({
+			kind: "fail_request",
+		});
+		// The real z.ai refusal (review on #6275): "yet" sits in the middle and the
+		// sentence names no "model", so the model-word patterns cannot see it.
+		expect(
+			classifyCredentialFailure(
+				status(403, "Your current subscription plan does not yet include access to GLM-5.3"),
+			),
+		).toEqual({ kind: "fail_request" });
+		// Negative controls: an account-level refusal still blocks the slot, even
+		// when it names a model first (review on #6275: the old second pattern
+		// matched any "model ... not ... enabled" 403).
+		expect(
+			classifyCredentialFailure(status(403, "Access to model gpt-x denied: your account is not enabled")),
+		).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+		expect(classifyCredentialFailure(status(403, "your API key was disabled"))).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+		// Negative controls: an account-level refusal still blocks the slot.
+		expect(classifyCredentialFailure(status(403, "Your subscription has expired"))).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+		expect(classifyCredentialFailure(status(403, "account suspended for this credential"))).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+	});
+
+	test("a model-scoped refusal that arrives as 429 (z.ai code 1311) fails the request without a rate-limit cooldown (senpi#3972)", () => {
+		// The same plan-entitlement refusal, delivered with HTTP 429 instead of
+		// 403, is still a verdict on the model — not a throttle — so the slot
+		// must not take a rate_limit cooldown for it.
+		expect(
+			classifyCredentialFailure(
+				status(429, "Your current subscription plan does not yet include access to GLM-5.3"),
+			),
+		).toEqual({ kind: "fail_request" });
+		expect(classifyCredentialFailure(status(429, "model GLM-5.3 is not available on this plan"))).toEqual({
+			kind: "fail_request",
+		});
 	});
 });

@@ -8,10 +8,10 @@
  */
 
 import { createServer, type Server, type ServerResponse } from "node:http";
+import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { OAuthCredential } from "../types.ts";
 import { exchangeDevinAuthorizationCode } from "./devin-token.ts";
-import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 
 export const DEVIN_CALLBACK_PORT = 59653;
 export const DEVIN_CALLBACK_PATH = "/callback";

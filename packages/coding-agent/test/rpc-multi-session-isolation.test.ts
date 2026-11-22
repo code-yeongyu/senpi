@@ -21,6 +21,7 @@ import type { RpcSessionBinding } from "../src/modes/rpc/session-binding.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
 
 const roots: string[] = [];
@@ -167,11 +168,10 @@ function hostFixture() {
 		const durableSessionId = options.sessionManager.getSessionId();
 		streaming.set(durableSessionId, false);
 		registerApiProvider(provider("rpc-isolation-provider", owner));
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		return {
 			session: {
-				sessionManager: options.sessionManager,
-				agentDir: options.agentDir,
+				...fakeSessionBase(options),
 				model: undefined,
 				thinkingLevel: "off",
 				// Part of the wire state `open_session` projects; a router fixture still has to
@@ -191,7 +191,7 @@ function hostFixture() {
 				autoCompactionEnabled: false,
 				messages: [],
 				pendingMessageCount: 0,
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 				abort: async () => {},
 				abortBash: () => {},
 				waitForIdle: async () => {},

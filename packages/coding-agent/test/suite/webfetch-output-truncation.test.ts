@@ -6,7 +6,7 @@ import {
 	type WebfetchDetails,
 	webfetch,
 } from "../../src/core/extensions/builtin/webfetch/webfetch/tool.ts";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void;
 type WebfetchParams = Static<typeof webfetch.parameters>;
@@ -26,7 +26,7 @@ async function createFixtureServer(handler: RouteHandler): Promise<{ readonly ba
 }
 
 async function executeWebfetch(params: WebfetchParams) {
-	return webfetch.execute("tool", params, undefined, undefined, context);
+	return webfetch.execute("tool", params, undefined, undefined, context as ExtensionToolContext);
 }
 
 function textContent(result: Awaited<ReturnType<typeof executeWebfetch>>): string {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { StopReason } from "../src/api/devin-agent/gen/cascade_pb.ts";
 import { stream as devinStream } from "../src/api/devin-agent.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 import {
 	CONTEXT,
 	closeStubServers,
@@ -30,7 +31,9 @@ describe("devin-agent stream: deltas, stop reasons and failures", () => {
 			},
 		});
 
-		const events = await collect(devinStream({ ...MODEL, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...MODEL, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const done = events.at(-1);
 		expect(done?.type).toBe("done");
 		if (done?.type !== "done") throw new Error("expected done");
@@ -60,7 +63,9 @@ describe("devin-agent stream: deltas, stop reasons and failures", () => {
 			},
 		});
 
-		const events = await collect(devinStream({ ...MODEL, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...MODEL, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const done = events.at(-1);
 		expect(done?.type).toBe("done");
 		if (done?.type !== "done") throw new Error("expected done");
@@ -79,7 +84,9 @@ describe("devin-agent stream: deltas, stop reasons and failures", () => {
 			},
 		});
 
-		const events = await collect(devinStream({ ...MODEL, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...MODEL, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const last = events.at(-1);
 		expect(last?.type).toBe("error");
 		if (last?.type !== "error") throw new Error("expected error");
@@ -100,7 +107,9 @@ describe("devin-agent stream: deltas, stop reasons and failures", () => {
 			},
 		});
 
-		const events = await collect(devinStream({ ...MODEL, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...MODEL, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const done = events.at(-1);
 		expect(done?.type).toBe("done");
 		if (done?.type !== "done") throw new Error("expected done");
@@ -118,7 +127,9 @@ describe("devin-agent stream: deltas, stop reasons and failures", () => {
 			},
 		});
 
-		const events = await collect(devinStream({ ...MODEL, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...MODEL, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const done = events.at(-1);
 		expect(done?.type).toBe("done");
 		if (done?.type !== "done") throw new Error("expected done");
@@ -141,7 +152,9 @@ describe("devin-agent stream: deltas, stop reasons and failures", () => {
 			},
 		});
 
-		const events = await collect(devinStream({ ...MODEL, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...MODEL, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const done = events.at(-1);
 		expect(done?.type).toBe("done");
 		if (done?.type !== "done") throw new Error("expected done");
@@ -159,7 +172,9 @@ describe("devin-agent stream: deltas, stop reasons and failures", () => {
 			},
 		});
 
-		const events = await collect(devinStream({ ...MODEL, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...MODEL, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const terminal = events.at(-1);
 		expect(terminal?.type).toBe("error");
 		if (terminal?.type !== "error") throw new Error("expected error");
@@ -175,7 +190,9 @@ describe("devin-agent stream: deltas, stop reasons and failures", () => {
 			},
 		});
 
-		const events = await collect(devinStream({ ...MODEL, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...MODEL, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const last = events.at(-1);
 
 		expect(last?.type).toBe("error");
@@ -195,7 +212,10 @@ describe("devin-agent stream: deltas, stop reasons and failures", () => {
 		});
 
 		const events = await collect(
-			devinStream({ ...MODEL, baseUrl }, CONTEXT, { apiKey: "session-abc", signal: controller.signal } as never),
+			devinStream({ ...MODEL, baseUrl }, normalizeContext(CONTEXT), {
+				apiKey: "session-abc",
+				signal: controller.signal,
+			} as never),
 		);
 		const last = events.at(-1);
 

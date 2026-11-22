@@ -14,9 +14,9 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { VERSION } from "../../src/config.ts";
-import { readProcessStartTime, waitForStartTime } from "../../src/modes/app-server/daemon/process.ts";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
-import { killAndWait, reapProcessesUnder } from "./spawned-host-reaper.ts";
+import { readProcessStartTime, waitForStartTime } from "../../src/utils/process-identity.ts";
+import { collectSpawnedHosts, reapCollectedHosts } from "./spawned-host-reaper.ts";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
@@ -43,7 +43,8 @@ export async function sandbox(label: string, options: { canonicalSocket?: boolea
 	roots.push(root);
 	const agentDir = join(root, "agent");
 	const socket = options.canonicalSocket ? join(agentDir, "rpc", "rpc.sock") : join(root, "rpc.sock");
-	await mkdir(dirname(socket), { recursive: true });
+	// A canonical socket's directory is `<agentDir>/rpc`, part of the host's key root (senpi#4541).
+	await mkdir(dirname(socket), { recursive: true, mode: 0o700 });
 	const flatDir = join(agentDir, "rpc-host-daemon");
 	const canonical = join(await realpath(dirname(socket)), basename(socket));
 	const daemonDirName = createHash("sha256").update(canonical, "utf8").digest("hex").slice(0, 16);
@@ -52,12 +53,13 @@ export async function sandbox(label: string, options: { canonicalSocket?: boolea
 
 /** Kills every host these suites started - including the detached ones `ensureHost` spawned. */
 export async function sweepSandboxes(): Promise<void> {
-	for (const child of children.splice(0)) await killAndWait(child);
-	for (const root of roots.splice(0)) {
-		await chmod(root, 0o700).catch(() => undefined);
-		await reapProcessesUnder(root);
-		await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-	}
+	const spawned = children.splice(0);
+	const pending = roots.splice(0);
+	const scope = { children: spawned, roots: pending };
+	const collected = collectSpawnedHosts(scope);
+	for (const root of pending) await chmod(root, 0o700).catch(() => undefined);
+	await reapCollectedHosts(collected, scope);
+	for (const root of pending) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 export function ensureFixtureHost(qa: Sandbox) {

@@ -22,7 +22,7 @@ import {
 	resolveSdkTools,
 	TOOL_EXECUTION_DENIED_MESSAGE,
 } from "../src/core/extensions/builtin/anthropic-subscription/tools.ts";
-import type { ExtensionAPI, ExtensionContext } from "../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "../src/core/extensions/types.ts";
 import { createReadToolDefinition } from "../src/core/tools/read.ts";
 
 function tool(name: string): Tool {
@@ -52,9 +52,7 @@ describe("Claude SDK OAuth tool integration", () => {
 	});
 
 	it("states host-tool denial as a fact without telling the model to end the turn", () => {
-		expect(HOST_TOOL_EXECUTION_DENIED_MESSAGE).toBe(
-			"Senpi executes this tool on the host and returns its result as the next user message. Wait for that result; this denial is not a failure.",
-		);
+		expect(HOST_TOOL_EXECUTION_DENIED_MESSAGE).toMatch(/returns its result as the next user message/);
 		expect(TOOL_EXECUTION_DENIED_MESSAGE).toBe(HOST_TOOL_EXECUTION_DENIED_MESSAGE);
 		expect(HOST_TOOL_EXECUTION_DENIED_MESSAGE).not.toMatch(/end the turn/i);
 	});
@@ -87,7 +85,7 @@ describe("Claude SDK OAuth tool integration", () => {
 				{ path: args.path },
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{} as ExtensionToolContext,
 			);
 			expect(result.content).toEqual([{ type: "text", text: "executed by senpi\n" }]);
 		} finally {

@@ -1,6 +1,6 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { initTheme, ToolExecutionComponent } from "@code-yeongyu/senpi";
-import type { TUI } from "@earendil-works/pi-tui";
+import { TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
@@ -17,11 +17,18 @@ import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fa
 type ToolDefParam = NonNullable<ConstructorParameters<typeof ToolExecutionComponent>[4]>;
 type ExecResult = Parameters<ToolExecutionComponent["updateResult"]>[0];
 
+/** A real TUI over an in-memory terminal: the component renders against the same object the TUI mux uses. */
+async function renderOnlyTui(): Promise<TUI> {
+	const { VirtualTerminal } = await import("../../tui/test/virtual-terminal.ts");
+	return new TUI(new VirtualTerminal(80, 24));
+}
+
 const CODE = "d = {}\nd['favoriteModels'] = ['apitopia/kimi-k3']\nprint(d)";
 const OUTPUT = "{'favoriteModels': ['apitopia/kimi-k3']}";
 
+/** Each eval row starts with one lead-in: `╭─` for a framed row, `╶─` for a one-line live row (senpi#2802). */
 function countBoxes(lines: readonly string[]): number {
-	return lines.filter((line) => line.includes("╭─")).length;
+	return lines.filter((line) => line.includes("╭─") || line.includes("╶─")).length;
 }
 
 function stripAnsi(text: string): string {
@@ -33,11 +40,11 @@ function evalToolDef(): ToolDefParam {
 		name: "eval",
 		label: "Eval",
 		description: "eval",
-		parameters: { type: "object" } as unknown as ToolDefParam["parameters"],
-		execute: async () => ({ content: [] }),
-		renderCall: renderEvalCall as unknown as ToolDefParam["renderCall"],
-		renderResult: renderEvalResult as unknown as ToolDefParam["renderResult"],
-	} as unknown as ToolDefParam;
+		parameters: { type: "object" },
+		execute: async () => ({ content: [], details: undefined }),
+		renderCall: renderEvalCall,
+		renderResult: renderEvalResult,
+	};
 }
 
 function cellResult(status: "running" | "complete", output: string, durationMs: number, summary?: string): ExecResult {
@@ -61,9 +68,9 @@ describe("eval ToolExecutionComponent lifecycle", () => {
 		initTheme();
 	});
 
-	it("Given the pending -> running -> done lifecycle then exactly one framed box renders at every state", () => {
+	it("Given the pending -> running -> done lifecycle then exactly one framed box renders at every state", async () => {
 		// Given the real interactive tool-execution component for an eval call
-		const ui = { requestRender: () => {} } as unknown as TUI;
+		const ui = await renderOnlyTui();
 		const component = new ToolExecutionComponent(
 			"eval",
 			"eval-1",
@@ -75,10 +82,10 @@ describe("eval ToolExecutionComponent lifecycle", () => {
 		);
 		component.setArgsComplete();
 
-		// When it is pending (no result yet), the call lane owns the single frame
+		// When it has no result yet, the call lane owns the single streaming frame
 		const pending = component.render(80);
 		expect.soft(countBoxes(pending)).toBe(1);
-		expect.soft(stripAnsi(pending.join("\n"))).toContain("pending");
+		expect.soft(stripAnsi(pending.join("\n"))).toContain("streaming");
 
 		// When execution starts and streams a partial (running) result
 		component.markExecutionStarted();
@@ -89,15 +96,22 @@ describe("eval ToolExecutionComponent lifecycle", () => {
 		expect.soft(runningText).toContain("running");
 		expect.soft(runningText).not.toContain("pending");
 
-		// When the final result arrives
+		// When the final result arrives, the collapsed row is the one-line terminal summary (senpi#2933)
 		component.updateResult(cellResult("complete", OUTPUT, 12), false);
 		const done = component.render(80);
 		const doneText = stripAnsi(done.join("\n"));
+		const doneRows = done.map(stripAnsi).filter((line) => line.includes("eval py done"));
 		expect.soft(countBoxes(done)).toBe(1); // was 2: a stale pending frame stacked above the done frame
-		expect.soft(doneText).toContain("done");
+		expect.soft(doneRows).toHaveLength(1);
+		expect.soft(doneRows[0]).toMatch(/╶─ ✓/u);
 		expect.soft(doneText).not.toContain("pending");
 		expect.soft(doneText).not.toContain("running");
-		expect.soft(doneText).toContain("favoriteModels");
+		expect.soft(doneText).not.toContain("favoriteModels");
+
+		// When the row expands, the full output returns
+		component.setExpanded(true);
+		const expandedText = stripAnsi(component.render(80).join("\n"));
+		expect.soft(expandedText).toContain("favoriteModels");
 
 		component.stopAnimation();
 	});
@@ -166,8 +180,8 @@ describe("eval summary in transcript frames", () => {
 		vi.useRealTimers();
 	});
 
-	function summaryComponent(): ToolExecutionComponent {
-		const ui = { requestRender: () => {} } as unknown as TUI;
+	async function summaryComponent(): Promise<ToolExecutionComponent> {
+		const ui = await renderOnlyTui();
 		const component = new ToolExecutionComponent(
 			"eval",
 			"eval-summary",
@@ -181,44 +195,46 @@ describe("eval summary in transcript frames", () => {
 		return component;
 	}
 
-	function expectSummaryUnderHeader(lines: readonly string[], status: string): void {
+	function expectSummaryHeadline(lines: readonly string[], status: string): void {
 		const plain = lines.map(stripAnsi);
 		const headerIndex = plain.findIndex((line) => line.includes("eval py"));
 		expect(headerIndex).toBeGreaterThanOrEqual(0);
-		expect.soft(plain[headerIndex]).toContain(`eval py ${status}`);
-		expect.soft(plain[headerIndex]).not.toContain("collect progress");
-		expect.soft(plain[headerIndex + 1]?.replace("│", "").trim()).toBe("collect progress");
+		expect.soft(plain[headerIndex]).toMatch(new RegExp(`[╭╶]─ \\S collect progress · eval py ${status}`, "u"));
+		expect.soft(plain.filter((line) => line.includes("collect progress"))).toHaveLength(1);
 	}
 
-	it("Given a running eval with a summary when the frame renders then the header drops the label segment and the summary sits under it", () => {
+	it("Given a running eval with a summary when the frame renders then the header leads with the summary (senpi#2802)", async () => {
 		// Given the real interactive component streaming a running result whose cell carries a summary
-		const component = summaryComponent();
+		const component = await summaryComponent();
 		component.markExecutionStarted();
 		component.updateResult(cellResult("running", "", 0, "collect progress"), true);
 
 		// When the running frame renders
 		const lines = component.render(80);
 
-		// Then the header has no label segment and the muted summary line sits directly under it
-		expectSummaryUnderHeader(lines, "running");
+		// Then the header leads with the summary, shown once
+		expectSummaryHeadline(lines, "running");
 		component.stopAnimation();
 	});
 
-	it("Given a completed eval with a summary when the result frame renders then it carries the summary", () => {
+	it("Given a completed eval with a summary when the result row renders then the one-line row carries the summary (senpi#2933)", async () => {
 		// Given the real interactive component receiving its final result
-		const component = summaryComponent();
+		const component = await summaryComponent();
 		component.markExecutionStarted();
 		component.updateResult(cellResult("complete", OUTPUT, 12, "collect progress"), false);
 
-		// When the done frame renders
+		// When the done row renders
 		const lines = component.render(80);
 
-		// Then the result frame carries the summary under the title-less header
-		expectSummaryUnderHeader(lines, "done");
+		// Then the collapsed terminal row is one line leading with the summary
+		const plain = lines.map(stripAnsi);
+		const doneRows = plain.filter((line) => line.includes("eval py done"));
+		expect.soft(doneRows).toHaveLength(1);
+		expect.soft(doneRows[0]).toMatch(/╶─ ✓ collect progress · eval py done/u);
 		component.stopAnimation();
 	});
 
-	it("Given a six-line cell with a summary when collapsed then the summary line and a four-line code preview render", () => {
+	it("Given a six-line cell with a summary when collapsed and expanded then the one-line row and the full code render (senpi#2933)", () => {
 		// Given a finished cell whose code overflows the collapsed preview budget
 		const codeLines = ["a = 1", "b = 2", "c = 3", "d = 4", "e = 5", "f = 6"];
 		const details: EvalToolDetails = {
@@ -277,13 +293,13 @@ describe("eval summary in transcript frames", () => {
 			isError: false,
 		}).render(80);
 
-		// Then collapsed shows the summary plus exactly the last four code lines; expanded keeps the summary too
+		// Then the collapsed row is one line with the summary headline; expanded shows the full code
 		const collapsedText = collapsed.join("\n");
 		const expandedText = expanded.join("\n");
+		expect.soft(collapsed).toHaveLength(1);
 		expect.soft(collapsedText).toContain("tally rows");
-		expect.soft(collapsedText).toContain("2 earlier code lines");
-		for (const visibleLine of codeLines.slice(-4)) expect.soft(collapsedText).toContain(visibleLine);
-		for (const hiddenLine of codeLines.slice(0, 2)) expect.soft(collapsedText).not.toContain(hiddenLine);
+		expect.soft(collapsedText).toContain("eval py done");
+		for (const codeLine of codeLines) expect.soft(collapsedText).not.toContain(codeLine);
 		expect.soft(expandedText).toContain("tally rows");
 		for (const codeLine of codeLines) expect.soft(expandedText).toContain(codeLine);
 	});

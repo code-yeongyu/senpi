@@ -4,6 +4,7 @@ import type { Api, Model } from "../src/types.ts";
 
 const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"anthropic/claude-fable-5",
+	"anthropic/claude-haiku-5-5",
 	"anthropic/claude-opus-4-6",
 	"anthropic/claude-opus-4-7",
 	"anthropic/claude-opus-4-8",
@@ -11,7 +12,7 @@ const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"anthropic/claude-sonnet-4-6",
 	"anthropic/claude-sonnet-5",
 	"cloudflare-ai-gateway/claude-fable-5",
-	"fireworks/accounts/fireworks/models/deepseek-v4-flash-0731",
+	"fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
 	"fireworks/accounts/fireworks/models/gpt-oss-120b",
 	"fireworks/accounts/fireworks/models/qwen3p8-max",
 	"github-copilot/claude-opus-4.6",
@@ -22,10 +23,14 @@ const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"github-copilot/claude-sonnet-5",
 	"kimi-coding/k3",
 	"kimi-coding/k3-256k",
+	"kimi-coding/k3.1-pro",
+	"kimi-coding/k3.1-pro-highspeed",
 	"kimi-coding/kimi-for-coding",
 	"kimi-coding/kimi-for-coding-highspeed",
 	"kimi-coding/kimi-k2-thinking",
+	"opencode-go/claude-haiku-5-5",
 	"opencode/claude-fable-5",
+	"opencode/claude-haiku-5-5",
 	"opencode/claude-opus-4-6",
 	"opencode/claude-opus-4-7",
 	"opencode/claude-opus-4-8",
@@ -67,7 +72,9 @@ describe("Anthropic adaptive thinking model metadata", () => {
 					// Regression for #9323: Fireworks uses catalog effort metadata and
 					// verified fallbacks, not a fixed set of adaptive model names.
 					modelId.startsWith("fireworks/") ||
-					/(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|fable[-.]5|kimi-coding\/)/.test(modelId),
+					/(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|haiku[-.]5[-.]5|fable[-.]5|kimi-coding\/)/.test(
+						modelId,
+					),
 			),
 		);
 	});

@@ -4,7 +4,7 @@ Senpi saves conversations as sessions so you can continue work, branch from earl
 
 ## Session Storage
 
-Sessions auto-save to `~/.senpi/agent/sessions/`, organized by working directory. Each session is a JSONL file with a tree structure.
+Sessions auto-save to `~/.senpi/agent/sessions/`, organized by working directory. Each session is a JSONL file with a tree structure. The file is created when the first user message is sent, so a session is not lost if senpi exits before the first assistant response.
 
 ```bash
 senpi -c                  # Continue most recent session

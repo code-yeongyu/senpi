@@ -58,7 +58,7 @@ try {
 		.then(() => "UNEXPECTED-SUCCESS", (error: Error) => `${error.name}: ${error.message}`);
 	report.timeout = timeout;
 	requireMatch("timeout", timeout, /TimeoutError/u);
-	requireMatch("timeout state", timeout, /remains running|preserved/iu);
+	requireMatch("timeout state", timeout, /not restarted; variables from earlier cells are kept/iu);
 	const timeoutReadback = await kernel.run({ cellId: "qa-timeout-readback", code: "qaTimeoutMarker", timeoutMs: 5_000 });
 	report.timeoutReadback = timeoutReadback;
 	if (!timeoutReadback.ok || timeoutReadback.valueRepr !== "42")
@@ -80,7 +80,7 @@ try {
 	requireMatch("detach", textOf(detached), /detached/u);
 	const stopped = await tool.execute("qa-stop", { action: "stop", cell_id: "qa-detached" }, undefined, undefined, ctx);
 	report.stop = textOf(stopped);
-	requireMatch("stop state", textOf(stopped), /remains running|preserved/iu);
+	requireMatch("stop state", textOf(stopped), /not restarted; variables from earlier cells are kept/iu);
 	const stopReadback = await kernel.run({ cellId: "qa-stop-readback", code: "qaStopMarker", timeoutMs: 5_000 });
 	report.stopReadback = stopReadback;
 	if (!stopReadback.ok || stopReadback.valueRepr !== "7")

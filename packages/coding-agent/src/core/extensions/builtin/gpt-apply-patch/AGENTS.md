@@ -31,7 +31,7 @@ gpt-apply-patch/
 
 | Task | File |
 |------|------|
-| Fix a parse error from a real GPT output | `parser.ts` — add a regression test in `test/suite/gpt-apply-patch-extension.test.ts` |
+| Fix a parse error from a real GPT output | `parser.ts` — add a regression test in `test/suite/gpt-apply-patch-extension.test.ts` unless an existing owner test there already fails on the pre-fix code (see the root TEST AUTHORING GATE) |
 | Improve strict-seek tolerance | `seek-sequence.ts` |
 | Change render | `preview-format.ts` + `streaming-render.ts` |
 | Add a new file op (e.g. `*** Rename File:`) | `types.ts` + `parser.ts` + `apply.ts` |

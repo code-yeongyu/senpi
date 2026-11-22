@@ -4,7 +4,7 @@ import { GOAL_CONTINUATION_SCHEDULED_EVENT } from "../../../src/core/extensions/
 import { readGoal, writeGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
 import type { Goal } from "../../../src/core/extensions/builtin/goal/types.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../../src/core/extensions/builtin/monitor-state-event.ts";
-import type { ExtensionContext } from "../../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import {
 	cleanupGoalMonitorTempDirs,
@@ -72,7 +72,9 @@ describe("goal reload re-engagement (issue #934)", () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeGoalContext(notices, "thread-934-active-reload");
-		await tools.get("create_goal")?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx as ExtensionToolContext);
 		expect(sent).toHaveLength(0);
 
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
@@ -87,7 +89,9 @@ describe("goal reload re-engagement (issue #934)", () => {
 			const { tools, handlers, events, sent } = createGoalHarness();
 			const notices: string[] = [];
 			const ctx = await makeGoalContext(notices, "thread-934-wake-reload");
-			await tools.get("create_goal")?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx);
+			await tools
+				.get("create_goal")
+				?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx as ExtensionToolContext);
 			events.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-monitors", activeCount: 1 });
 			await events.flush();
 
@@ -108,7 +112,9 @@ describe("goal reload re-engagement (issue #934)", () => {
 			const { tools, handlers, events, sent } = harness;
 			const notices: string[] = [];
 			const ctx = await makeGoalContext(notices, "thread-934-drain-reload");
-			await tools.get("create_goal")?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx);
+			await tools
+				.get("create_goal")
+				?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx as ExtensionToolContext);
 			events.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-monitors", activeCount: 1 });
 			await events.flush();
 			await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
@@ -132,10 +138,18 @@ describe("goal reload re-engagement (issue #934)", () => {
 			await makeGoalContext(notices, "thread-934-blocked-reload"),
 			goalContinuationEntries(2),
 		);
-		await tools.get("create_goal")?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx as ExtensionToolContext);
 		await tools
 			.get("update_goal")
-			?.execute("u1", { status: "blocked", reason: "user interrupted the turn" }, undefined, undefined, ctx);
+			?.execute(
+				"u1",
+				{ status: "blocked", reason: "user interrupted the turn" },
+				undefined,
+				undefined,
+				ctx as ExtensionToolContext,
+			);
 
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 
@@ -161,7 +175,9 @@ describe("goal reload re-engagement (issue #934)", () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeGoalContext(notices, "thread-934-flooded-reload");
-		await tools.get("create_goal")?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx as ExtensionToolContext);
 		const floodedCtx = withBranchEntries(ctx, [userMessageEntry(), ...goalContinuationEntries(300)]);
 
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, floodedCtx);

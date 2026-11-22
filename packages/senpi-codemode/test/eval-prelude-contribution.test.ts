@@ -1,7 +1,12 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentToolResult, ExtensionContext, KernelPreludeContribution } from "@code-yeongyu/senpi";
+import type {
+	AgentToolResult,
+	ExtensionContext,
+	ExtensionToolContext,
+	KernelPreludeContribution,
+} from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import senpiCodemode, { type CodemodeExtensionAPI } from "../src/index.ts";
 import { fakeExtensionContext } from "./eval/fakes.ts";
@@ -54,6 +59,8 @@ class PreludeHostPi implements CodemodeExtensionAPI {
 		readonly handler: (event: unknown, ctx: ExtensionContext) => unknown;
 	}> = [];
 	readonly active = new Set<string>(["eval"]);
+	/** Registered tools the session reports as eval-only (`ToolInfo.evalOnly`). */
+	readonly evalOnly = new Set<string>();
 	evalTool: EvalTool | undefined;
 
 	registerTool(tool: EvalTool): void {
@@ -67,7 +74,11 @@ class PreludeHostPi implements CodemodeExtensionAPI {
 		return [...this.active];
 	}
 	getAllTools() {
-		return [{ name: "eval" }, { name: "fx", description: "fixture", kernelPrelude: FIXTURE_PRELUDE }];
+		return [
+			{ name: "eval" },
+			{ name: "fx", description: "fixture", kernelPrelude: FIXTURE_PRELUDE },
+			...[...this.evalOnly].map((name) => ({ name, exposure: "eval", evalOnly: true })),
+		];
 	}
 	executeTool = Object.assign(
 		async (toolName: string): Promise<AgentToolResult<unknown>> => {
@@ -94,13 +105,13 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function startSession(): Promise<{ readonly pi: PreludeHostPi; readonly ctx: ExtensionContext }> {
+async function startSession(): Promise<{ readonly pi: PreludeHostPi; readonly ctx: ExtensionToolContext }> {
 	const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-prelude-"));
 	await mkdir(join(cwd, ".senpi"), { recursive: true });
 	const pi = new PreludeHostPi();
 	senpiCodemode(pi);
 	const base = fakeExtensionContext();
-	const ctx: ExtensionContext = {
+	const ctx: ExtensionToolContext = {
 		...base,
 		cwd,
 		sessionManager: { ...base.sessionManager, getSessionId: () => "prelude", getSessionFile: () => undefined },
@@ -114,7 +125,7 @@ async function startSession(): Promise<{ readonly pi: PreludeHostPi; readonly ct
 }
 
 async function runCell(
-	session: { readonly pi: PreludeHostPi; readonly ctx: ExtensionContext },
+	session: { readonly pi: PreludeHostPi; readonly ctx: ExtensionToolContext },
 	language: EvalLanguageUnderTest,
 	code: string,
 ): Promise<string> {
@@ -195,5 +206,24 @@ describe("kernel prelude contribution in the eval prompt", () => {
 		expect(inactiveDescription).not.toContain(FIXTURE_DOC);
 		expect(activeDescription).toContain(FIXTURE_DOC);
 		expect(session.pi.evalTool?.description).not.toContain(FIXTURE_DOC);
+	});
+
+	// senpi#6886: a tool that becomes eval-only after the session started is named from the next turn on.
+	it("re-registers eval at the next turn when the eval-only tool set changes", async () => {
+		// Given
+		const session = await startSession();
+		const before = session.pi.evalTool?.description;
+		session.pi.evalOnly.add("thread_list");
+		await session.pi.emit("turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, session.ctx);
+		const added = session.pi.evalTool?.description;
+		session.pi.evalOnly.delete("thread_list");
+
+		// When
+		await session.pi.emit("turn_start", { type: "turn_start", turnIndex: 2, timestamp: 0 }, session.ctx);
+
+		// Then
+		expect(before).not.toContain("thread_list");
+		expect(added).toContain("Eval-only tools (absent from your direct tool list, reachable only here): thread_list.");
+		expect(session.pi.evalTool?.description).not.toContain("thread_list");
 	});
 });

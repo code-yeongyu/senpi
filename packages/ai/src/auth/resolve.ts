@@ -1,13 +1,18 @@
 import type { ProviderEnv } from "../types.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
-import { formatThrownValue } from "../utils/diagnostics.ts";
+import { ModelsError } from "../utils/models-error.ts";
+import { classifyOAuthRefreshFailure, OAuthRefreshUnavailableError } from "../utils/oauth-refresh-error.ts";
+import { readCredential, readSlotCredential } from "./credential-read.ts";
 import {
 	OAuthRefreshExchangeError,
 	OAuthRefreshStoreError,
 	projectOAuthSlot,
 	refreshOAuthCredential,
 } from "./oauth-refresh.ts";
-import { projectSlot } from "./pool/slots.ts";
+import { managedSentinelMaterials } from "./pool/slots.ts";
+
+export { ModelsError, type ModelsErrorCode } from "../utils/models-error.ts";
+
 import type {
 	ApiKeyAuth,
 	ApiKeyCredential,
@@ -19,8 +24,6 @@ import type {
 	OAuthCredential,
 	ProviderAuth,
 } from "./types.ts";
-
-export type ModelsErrorCode = "model_source" | "model_validation" | "provider" | "stream" | "auth" | "oauth";
 
 export interface AuthResolutionOverrides {
 	apiKey?: string;
@@ -54,26 +57,8 @@ export function providerNotConfiguredMessage(providerId: string): string {
 	return `${PROVIDER_NOT_CONFIGURED_PREFIX}${providerId}`;
 }
 
-export class ModelsError extends Error {
-	readonly code: ModelsErrorCode;
-
-	constructor(code: ModelsErrorCode, message: string, options?: { cause?: unknown }) {
-		super(withCauseDetail(message, options?.cause), options);
-		this.name = "ModelsError";
-		this.code = code;
-	}
-}
-
-/** Callers surface `error.message` only, so keep the underlying reason in it. */
-function withCauseDetail(message: string, cause: unknown): string {
-	if (cause === undefined || cause === null) return message;
-	const detail = formatThrownValue(cause).trim();
-	if (!detail || message.includes(detail)) return message;
-	return `${message}: ${detail}`;
-}
-
 /**
- * Auth resolution shared by the `Models` and `ImagesModels` collections.
+ * Auth resolution shared by all operations in a `Models` collection.
  * A stored credential owns the provider: ambient/env is consulted only when
  * nothing is stored. No silent env fallback after a failed refresh or for a
  * credential type without a matching handler.
@@ -116,10 +101,9 @@ async function resolveProviderAuthWithSignal(
 		);
 	}
 
-	const stored = await readCredential(credentials, provider.id, signal);
 	const slotName = overrides?.slotName;
 	if (slotName !== undefined) {
-		const projected = stored === undefined ? undefined : projectSlot(stored, slotName);
+		const projected = await readSlotCredential(credentials, provider.id, slotName, signal);
 		if (!projected) return undefined;
 		if (projected.type === "oauth" && provider.auth.oauth) {
 			return resolveStoredOAuth(
@@ -141,6 +125,7 @@ async function resolveProviderAuthWithSignal(
 		}
 		return undefined;
 	}
+	const stored = await readCredential(credentials, provider.id, signal);
 	if (stored) {
 		if (stored.type === "oauth" && provider.auth.oauth) {
 			return resolveStoredOAuth(
@@ -196,6 +181,9 @@ const DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000;
 export function oauthRefreshModelsError(error: unknown, providerId: string): ModelsError {
 	if (error instanceof ModelsError) return error;
 	if (error instanceof OAuthRefreshExchangeError) {
+		if (classifyOAuthRefreshFailure(error.cause) === "transient") {
+			return new OAuthRefreshUnavailableError(providerId, error.cause);
+		}
 		return new ModelsError("oauth", `OAuth refresh failed for ${providerId}`, { cause: error.cause });
 	}
 	const cause = error instanceof OAuthRefreshStoreError ? error.cause : error;
@@ -219,11 +207,24 @@ async function resolveStoredOAuth(
 	slotName?: string,
 	rejectedAccess?: string,
 ): Promise<AuthResult | undefined> {
+	// A retained registration is not an expired session to refresh.
+	if (stored.signedOut === true || (!stored.access && !stored.refresh)) return undefined;
 	const minimumValidityMs = Math.max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, minOAuthValidityMs ?? 0);
 	const expiresSoon = (credential: OAuthCredential) => Date.now() + minimumValidityMs >= credential.expires;
 	const isStale = (credential: OAuthCredential) =>
 		expiresSoon(credential) || (rejectedAccess !== undefined && credential.access === rejectedAccess);
 	let credential = stored;
+
+	// The sentinel marks a pool whose tokens live in its accounts; it is not a token, so a
+	// token endpoint can only reject it. Only a slot of the pool can authenticate.
+	const isManagedSentinel =
+		credential.refresh === credential.access && managedSentinelMaterials(providerId).includes(credential.access);
+	if (isManagedSentinel && isStale(credential)) {
+		throw new ModelsError(
+			"auth",
+			`The stored ${providerId} credential is a managed account-pool placeholder; resolve one of its accounts instead`,
+		);
+	}
 
 	if (isStale(credential)) {
 		let post: Credential | undefined;
@@ -239,6 +240,7 @@ async function resolveStoredOAuth(
 				owning: true,
 			});
 		} catch (error) {
+			signal.throwIfAborted();
 			throw oauthRefreshModelsError(error, providerId);
 		}
 		if (post?.type !== "oauth") return undefined; // logged out meanwhile
@@ -298,17 +300,5 @@ async function resolveApiKey(
 		return await apiKey.resolve({ ctx: authContext, credential, signal });
 	} catch (error) {
 		throw new ModelsError("auth", `API key auth failed for provider ${providerId}`, { cause: error });
-	}
-}
-
-async function readCredential(
-	credentials: CredentialStore,
-	providerId: string,
-	signal: AbortSignal,
-): Promise<Credential | undefined> {
-	try {
-		return await credentials.read(providerId, { signal });
-	} catch (error) {
-		throw new ModelsError("auth", `Credential store read failed for ${providerId}`, { cause: error });
 	}
 }

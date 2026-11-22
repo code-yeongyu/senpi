@@ -1,7 +1,7 @@
 // MCP model-visible activation semantics through the shared tool-search engine:
 // tool_search only lists catalog tools; the model's by-name call activates one.
 
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentTools, type TranscriptContext } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ToolSearchDocument } from "../../src/core/extensions/builtin/tool-search/engine/document.ts";
@@ -95,8 +95,8 @@ async function makeHarness(): Promise<Harness> {
 	return harness;
 }
 
-function mcpNames(context: { tools?: readonly { name: string }[] }): string[] {
-	return (context.tools ?? [])
+function mcpNames(context: TranscriptContext): string[] {
+	return getCurrentTools(context.messages)
 		.map((tool) => tool.name)
 		.filter((name) => name === "tool_search" || name.startsWith("mcp_"))
 		.sort();

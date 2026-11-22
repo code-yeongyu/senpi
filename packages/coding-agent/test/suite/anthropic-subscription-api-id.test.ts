@@ -12,6 +12,7 @@ type ProviderRegistration = {
 function captureRegisterProviderCall(): { args: [string, ProviderRegistration] } {
 	const calls: Array<{ args: [string, ProviderRegistration] }> = [];
 	const pi = {
+		cwd: process.cwd(),
 		registerProvider: (name: string, config: ProviderRegistration) => {
 			calls.push({ args: [name, config] });
 		},
@@ -36,6 +37,9 @@ describe("anthropic-subscription wire api id", () => {
 		expect(call.args[1].api).toBe("claude-sdk-oauth");
 		expect(call.args[1].baseUrl).toBe("claude-sdk-oauth");
 		expect(call.args[1].api).toBe(CLAUDE_SDK_OAUTH_API_ID);
-		expect(resolvePromptCacheTtlSeconds({ api: "claude-sdk-oauth" } as Model<Api>)).toBe(300);
+		// Only the Claude SDK lane reads Claude Code's own TTL override, so the frozen id must still reach that case.
+		const model = { api: "claude-sdk-oauth" } as Model<Api>;
+		expect(resolvePromptCacheTtlSeconds(model, { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" })).toBe(3600);
+		expect(resolvePromptCacheTtlSeconds(model, { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" })).toBe(300);
 	});
 });

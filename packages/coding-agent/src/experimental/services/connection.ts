@@ -157,6 +157,7 @@ class ServerServiceSourceImpl implements ServerServiceSource {
 		onError(error: Error): void;
 	}): RemoteServices {
 		if (this.#disposed) throw new Error("Server service source is disposed");
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let binding!: RoutedServiceBinding;
 		binding = new RoutedServiceBinding({
 			services: options.services,
@@ -272,6 +273,7 @@ class SessionServiceSourceImpl implements SessionServiceSource {
 		onError(error: Error): void;
 	}): RemoteServices {
 		if (this.#disposed) throw new Error("Session service source is disposed");
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let binding!: RoutedServiceBinding;
 		binding = new RoutedServiceBinding({
 			services: options.services,
@@ -361,13 +363,7 @@ export function createSessionServiceSource(client: Client, options: ServiceSourc
 }
 
 function publishReplacement<T extends object>(state: MutableReplicatedState<T>, value: T, context: Context): void {
-	const target = state.state as Record<string, unknown>;
-	const replacement = value as Record<string, unknown>;
-	for (const key of Object.keys(target)) {
-		if (!Object.hasOwn(replacement, key)) delete target[key];
-	}
-	Object.assign(target, replacement);
-	state.publish(context);
+	state.replace(context, value);
 }
 
 function toServerConnectionState(client: Client, attempt: number, error?: Error): ServerConnectionState {

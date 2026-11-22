@@ -36,22 +36,25 @@ export async function executeEvalControl(
 	return createDetachedControlResult(snapshot);
 }
 
-function createEvalListResult(cellManager: EvalDetachedCellManager): AgentToolResult<EvalListDetails> {
+export function listEvalCells(cellManager: EvalDetachedCellManager): EvalListedCell[] {
 	const { live, recent } = cellManager.list();
-	const snapshots = [...live, ...recent];
-	const cells: EvalListedCell[] = snapshots.map((snapshot) => {
+	return [...live, ...recent].map((snapshot) => {
 		const summary = snapshot.result.details.summary;
 		return {
 			cellId: snapshot.cellId,
 			language: snapshot.language,
 			state: snapshot.state,
 			startedAtMs: snapshot.startedAtMs,
-			...(snapshot.queuedBehind === undefined || snapshot.queuedBehind.length === 0
-				? {}
-				: { queuedBehind: [...snapshot.queuedBehind] }),
+			...(snapshot.queuedBehind === undefined ? {} : { queuedBehind: [...snapshot.queuedBehind] }),
 			...(summary ? { summary } : {}),
 		};
 	});
+}
+
+function createEvalListResult(cellManager: EvalDetachedCellManager): AgentToolResult<EvalListDetails> {
+	const { live, recent } = cellManager.list();
+	const snapshots = [...live, ...recent];
+	const cells = listEvalCells(cellManager);
 	const text = snapshots
 		.map((snapshot, index) => {
 			const cell = cells[index];
@@ -60,7 +63,7 @@ function createEvalListResult(cellManager: EvalDetachedCellManager): AgentToolRe
 				" ",
 			);
 			const elapsed = Math.floor(snapshot.result.details.durationMs / 1000);
-			const queued = cell.queuedBehind === undefined ? "" : ` queued behind ${cell.queuedBehind.join(", ")}`;
+			const queued = cell.queuedBehind === undefined ? "" : ` ${queuedPhrase(cell.queuedBehind, cell.language)}`;
 			return `${cell.cellId} ${cell.language} ${cell.state} ${elapsed}s${queued} - ${preview}`;
 		})
 		.join("\n");
@@ -76,11 +79,13 @@ export function resultAfterDetach(
 	otherLiveCells: number,
 ): AgentToolResult<EvalToolDetails> {
 	if (snapshot.state !== "detached" && snapshot.state !== "running") return createDetachedControlResult(snapshot);
-	const predecessors = snapshot.queuedBehind?.join(", ");
+	const queuedBehind = snapshot.queuedBehind;
 	const text =
-		predecessors === undefined
+		queuedBehind === undefined
 			? `Eval cell ${snapshot.cellId} detached and is running in the ${input.language} kernel (${otherLiveCells} other live cells). Completion arrives as a notification; do not re-run it. eval({ action: "peek" | "stop", cell_id }) or eval({ action: "list" }).`
-			: `Eval cell ${snapshot.cellId} is queued behind ${predecessors} in the ${input.language} kernel and detached; it runs after ${predecessors} and completes as one notification. peek/stop/list with eval({ action, cell_id })`;
+			: queuedBehind.length === 0
+				? `Eval cell ${snapshot.cellId} is detached and waiting for the ${input.language} kernel to be ready; it runs first once the kernel is ready and completes as one notification. peek/stop/list with eval({ action, cell_id })`
+				: `Eval cell ${snapshot.cellId} is queued behind ${queuedBehind.join(", ")} in the ${input.language} kernel and detached; it runs after ${queuedBehind.join(", ")} and completes as one notification. peek/stop/list with eval({ action, cell_id })`;
 	return {
 		content: [
 			{
@@ -162,6 +167,12 @@ export function resultForDetachedState(
 			...(details.jsonOutputs === undefined ? {} : { jsonOutputs: structuredClone(details.jsonOutputs) }),
 		},
 	};
+}
+
+function queuedPhrase(queuedBehind: readonly string[], language: string): string {
+	return queuedBehind.length === 0
+		? `waiting for the ${language} kernel to be ready`
+		: `queued behind ${queuedBehind.join(", ")}`;
 }
 
 function textContent(result: AgentToolResult<EvalToolDetails>): string {

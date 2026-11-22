@@ -7,6 +7,7 @@ import {
 	MIN_ANSWER_TOKENS,
 } from "../src/api/simple-options.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 import {
 	CONTEXT_WINDOW,
 	contextWithEstimate,
@@ -29,7 +30,7 @@ const model: Model<"openai-responses"> = {
 
 function captureExhaustion(context: Context): ContextWindowExhaustedError {
 	try {
-		buildBaseOptions(model, context);
+		buildBaseOptions(model, normalizeContext(context));
 	} catch (error) {
 		if (error instanceof ContextWindowExhaustedError) return error;
 		throw error;
@@ -41,8 +42,10 @@ describe("context exhaustion guard", () => {
 	it("refuses to clamp max tokens below the minimum answer room", () => {
 		const context = contextWithEstimate(FIRST_EXHAUSTED_ESTIMATE);
 
-		expect(() => clampMaxTokensToContext(model, context, model.maxTokens)).toThrow(ContextWindowExhaustedError);
-		expect(() => buildBaseOptions(model, context)).toThrow(ContextWindowExhaustedError);
+		expect(() => clampMaxTokensToContext(model, normalizeContext(context), model.maxTokens)).toThrow(
+			ContextWindowExhaustedError,
+		);
+		expect(() => buildBaseOptions(model, normalizeContext(context))).toThrow(ContextWindowExhaustedError);
 	});
 
 	it("names the estimate, the window, and the remedy in the error", () => {
@@ -59,27 +62,29 @@ describe("context exhaustion guard", () => {
 	it("admits a request that still has exactly the minimum answer room", () => {
 		const context = contextWithEstimate(LAST_ADMITTED_ESTIMATE);
 
-		expect(buildBaseOptions(model, context).maxTokens).toBe(MIN_ANSWER_TOKENS);
+		expect(buildBaseOptions(model, normalizeContext(context)).maxTokens).toBe(MIN_ANSWER_TOKENS);
 	});
 
 	it("keeps an explicitly small max tokens request on a small context", () => {
 		const context: Context = { messages: [{ role: "user", content: "OK", timestamp: 1 }] };
 
-		expect(buildBaseOptions(model, context, { maxTokens: 1 }).maxTokens).toBe(1);
+		expect(buildBaseOptions(model, normalizeContext(context), { maxTokens: 1 }).maxTokens).toBe(1);
 	});
 
 	it("skips the guard for models without a known context window", () => {
 		const context = contextWithEstimate(FIRST_EXHAUSTED_ESTIMATE);
 
-		expect(buildBaseOptions({ ...model, contextWindow: 0 }, context).maxTokens).toBe(model.maxTokens);
+		expect(buildBaseOptions({ ...model, contextWindow: 0 }, normalizeContext(context)).maxTokens).toBe(
+			model.maxTokens,
+		);
 	});
 
 	it("keeps the legacy one-token floor for windows smaller than the guard geometry", () => {
 		const context: Context = { messages: [{ role: "user", content: "OK", timestamp: 1 }] };
 
-		expect(buildBaseOptions({ ...model, contextWindow: 1000 }, context).maxTokens).toBe(1);
-		expect(() => buildBaseOptions({ ...model, contextWindow: CONTEXT_GUARD_MIN_WINDOW }, context)).toThrow(
-			ContextWindowExhaustedError,
-		);
+		expect(buildBaseOptions({ ...model, contextWindow: 1000 }, normalizeContext(context)).maxTokens).toBe(1);
+		expect(() =>
+			buildBaseOptions({ ...model, contextWindow: CONTEXT_GUARD_MIN_WINDOW }, normalizeContext(context)),
+		).toThrow(ContextWindowExhaustedError);
 	});
 });

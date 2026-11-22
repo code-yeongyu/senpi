@@ -4,8 +4,11 @@
  * A shared host opens many sessions in one agent dir, and every open ran the
  * same package discovery: ~68 ms of loop CPU per open on the daemon, repeated
  * N-way for N concurrent opens (senpi#1844). The product depends only on the
- * agent dir, the cwd, the settings content and the CLI-supplied extension
- * sources - never on the session - so it is memoized on exactly those inputs.
+ * agent dir, the cwd, the project trust state, the settings content and the
+ * CLI-supplied extension sources - never on the session - so it is memoized on
+ * exactly those inputs. Trust is its own input: resolution reads it directly, and
+ * with no project settings file an untrusted and a trusted pass share every other
+ * input (senpi#2371).
  *
  * The memo stores the PROMISE, not the value: N concurrent opens with one key
  * await a single resolution instead of racing N of them.
@@ -23,6 +26,7 @@ const memo = new Map<string, Promise<unknown>>();
 export interface ResolvedPathsMemoKeyInput {
 	readonly agentDir: string;
 	readonly cwd: string;
+	readonly projectTrusted: boolean;
 	readonly globalSettings: unknown;
 	readonly projectSettings: unknown;
 	readonly additionalExtensionPaths: readonly string[];

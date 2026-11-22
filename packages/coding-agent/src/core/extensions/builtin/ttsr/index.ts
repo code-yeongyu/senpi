@@ -1,5 +1,7 @@
 import { getKeybindings } from "@earendil-works/pi-tui";
 
+import { enginePauseSinceLastTurn } from "../../../engine-paused.ts";
+import { createSessionLogger } from "../../../session-log.ts";
 import type { AgentEndEvent, ExtensionAPI, ExtensionContext, MessageUpdateEvent } from "../../types.ts";
 import { appendRuleActivation, registerRuleActivationRenderer } from "../rule-activation/index.ts";
 import { parseRuleActivationDetails, RULE_ACTIVATION_ENTRY_TYPE } from "../rule-activation/types.ts";
@@ -8,6 +10,12 @@ import { registerTtsrCommands, type TtsrPublicState } from "./commands.ts";
 import { claimAbort, createGenerationState, markUserCancelled } from "./coordinator.ts";
 import { REPETITIVE_TURNS_RULE_NAME } from "./detectors/repetitive-turns.ts";
 import { discoverTtsrRulesSync } from "./discovery.ts";
+import {
+	ruleAlreadyCorrected,
+	TTSR_LOOP_STOPPED_ENTRY_TYPE,
+	TTSR_LOOP_STOPPED_EVENT,
+	ttsrLoopStoppedNotice,
+} from "./follow-up-limit.ts";
 import { TtsrManager } from "./manager.ts";
 import { getTtsrStreamDelta } from "./message-update.ts";
 import { REPETITIVE_TURNS_RULE_CONTENT } from "./prompts.ts";
@@ -264,7 +272,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		return undefined;
 	});
 
-	pi.on("agent_settled", () => {
+	pi.on("agent_settled", (_event, ctx) => {
 		if (pendingNudge === null || genState.userCancelled || settlingAgentEnd?.abortSource === "user") {
 			pendingNudge = null;
 			settlingAgentEnd = null;
@@ -272,6 +280,29 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		}
 		const nudge = pendingNudge;
 		pendingNudge = null;
+		const [rule] = nudge.details.rules;
+		if (rule !== undefined && ruleAlreadyCorrected(ctx.sessionManager.getEntries(), rule)) {
+			const logger = createSessionLogger(ctx.agentDir);
+			pi.appendEntry(TTSR_LOOP_STOPPED_ENTRY_TYPE, { rules: nudge.details.rules, at: Date.now() });
+			pi.events.emit(TTSR_LOOP_STOPPED_EVENT, { rules: nudge.details.rules });
+			ctx.ui.notify(ttsrLoopStoppedNotice(rule), "warning");
+			try {
+				if (!enginePauseSinceLastTurn(ctx.sessionManager.getEntries())) {
+					pi.appendEntry("engine-paused", {
+						reason: "repetition",
+						rule,
+						customType: TTSR_INJECTION_CUSTOM_TYPE,
+						at: Date.now(),
+					});
+				}
+			} catch (error) {
+				logger.warn("engine_turn_record_write_failed", {
+					kind: "engine-paused",
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+			return;
+		}
 		pi.sendMessage(nudge, { triggerTurn: true });
 	});
 }

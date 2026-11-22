@@ -7,7 +7,7 @@ import { join, relative } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import { loadExtensionFromFactory, loadExtensions } from "../../src/core/extensions/loader.ts";
-import type { QuestionResponse } from "../../src/core/extensions/types.ts";
+import type { ExtensionToolContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { createTestResourceLoader } from "../utilities.ts";
 import { createHarness } from "./harness.ts";
 
@@ -133,10 +133,10 @@ describe("herdr builtin host integration", () => {
 			await f.start();
 			expect(f.requests.map(({ method }) => method)).toEqual([
 				"pane.report_metadata",
-				"pane.report_agent_session",
 				"pane.report_agent",
+				"pane.report_agent_session",
 			]);
-			expect(f.requests.at(-1)?.params.state).toBe("idle");
+			expect(f.requests.findLast(({ method }) => method === "pane.report_agent")?.params.state).toBe("idle");
 			const response = Promise.withResolvers<QuestionResponse>();
 			const base = f.runner.createContext();
 			const ctx = { ...base, ui: { ...base.ui, question: () => response.promise }, hasUI: true };
@@ -160,13 +160,13 @@ describe("herdr builtin host integration", () => {
 				},
 				controller.signal,
 				undefined,
-				ctx,
+				ctx as unknown as ExtensionToolContext,
 			);
 			await blocked;
 			expect(f.requests.at(-1)?.params).toMatchObject({
 				source: "custom:senpi",
 				state: "blocked",
-				message: "Auth — Which flow?",
+				message: "Auth - Which flow?",
 			});
 			const settled = once(f.received, "request", { signal: AbortSignal.timeout(5000) });
 			response.resolve({ status: "cancelled", answers: {}, unanswered: ["q1"] });

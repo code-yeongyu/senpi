@@ -7,6 +7,7 @@ import askUserExtension from "./ask-user/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
 import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
+import chatReplyScrubExtension from "./chat-reply-scrub/index.ts";
 import compactionExtension from "./compaction/index.ts";
 import configReloadExtension from "./config-reload/index.ts";
 import cursorCliOauthExtension from "./cursor-cli-oauth/index.ts";
@@ -15,17 +16,22 @@ import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
 import gptAccountExtension from "./gpt-account.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
+import handoffHintExtension from "./handoff-hint/index.ts";
 import helpExtension from "./help/index.ts";
 import herdrExtension from "./herdr/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
+import killGuardExtension from "./kill-guard/index.ts";
+import credentialProxyExtension from "./credential-proxy/index.ts";
 import importReproExtension from "./import-repro.ts";
+import jobWidgetsExtension from "./job-widgets/extension.ts";
 import lookAtExtension from "./look-at/index.ts";
 import loopExtension from "./loop/index.ts";
 import loopGuardExtension from "./loop-guard/index.ts";
 import mcpExtension from "./mcp/index.ts";
 import modelFallbackExtension from "./model-fallback/index.ts";
+import movedPathGuardExtension from "./moved-path-guard/index.ts";
 import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
 import openaiImageGenExtension from "./openai-image-gen/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
@@ -35,6 +41,7 @@ import promptUrlWidgetExtension from "./prompt-url-widget.ts";
 import reasoningExtension from "./reasoning/index.ts";
 import recommendedModelsExtension from "./recommended-models/index.ts";
 import redrawsExtension from "./redraws.ts";
+import relocateSessionExtension from "./relocate-session/index.ts";
 import repositoryIdentityExtension from "./repository-identity.ts";
 import piRulesExtension from "./rules/index.ts";
 import scheduleExtension from "./schedule/index.ts";
@@ -45,6 +52,7 @@ import toolPairGuardExtension from "./tool-pair-guard/index.ts";
 import toolSearchExtension from "./tool-search/index.ts";
 import tpsExtension from "./tps.ts";
 import ttsrExtension from "./ttsr/index.ts";
+import vertexModelGardenExtension from "./vertex-model-garden/index.ts";
 import videoInExtension from "./video-in/index.ts";
 import webfetchExtension from "./webfetch/index.ts";
 import websearchExtension from "./websearch/index.ts";
@@ -66,6 +74,12 @@ export const globalDefaultExtensionFactories = {
 export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Loop guard owns the first veto opportunity so repeated calls never re-run hooks or permission prompts.
 	{ id: "loop-guard", factory: loopGuardExtension },
+	// Ahead of hooks and permission-system: a path the desktop moved is refused before any hook runs or prompt asks.
+	{ id: "moved-path-guard", factory: movedPathGuardExtension },
+	// Beside moved-path-guard for the same reason: a signal it refuses never reaches a hook or a permission prompt.
+	{ id: "kill-guard", factory: killGuardExtension },
+	// Withholds declared credentials before any tool can spawn a child; the proxy starts at session start.
+	{ id: "credential-proxy", factory: credentialProxyExtension },
 	{ id: "hooks", factory: hooksExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
@@ -75,6 +89,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Follows imagegen so the native injector's bypass wiring observes the registered client tool.
 	{ id: "openai-image-gen", factory: openaiImageGenExtension },
 	{ id: "prompt-preset", factory: promptPresetExtension },
+	// Follows prompt-preset (both key on the prompt surface) so later message_end handlers see the scrubbed reply.
+	{ id: "chat-reply-scrub", factory: chatReplyScrubExtension },
 	{ id: "todowrite", factory: todowriteExtension },
 	{ id: "redraws", factory: redrawsExtension },
 	{ id: "anthropic-web-search", factory: anthropicWebSearchExtension },
@@ -90,6 +106,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Terminal follows bash-timeout so its injected default reaches the PTY bash, and follows
 	// anthropic-bash so mutual-exclusion (companion step-aside) is evaluated after it registers.
 	{ id: "terminal", factory: terminalExtension },
+	// Beside terminal, the main host of its jobs; terminal reaches it only through the session registry, so order is not load-bearing.
+	{ id: "job-widgets", factory: jobWidgetsExtension },
 	{ id: "tool-pair-guard", factory: toolPairGuardExtension },
 	{ id: "compaction", factory: compactionExtension },
 	{ id: "history-search", factory: historySearchExtension },
@@ -107,6 +125,10 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Durable counterpart of `loop`: writes job files a separate `senpi schedule run` fires later.
 	{ id: "schedule", factory: scheduleExtension },
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
+	// After cache-keepalive: its warm pings move the cache expiry the hint waits for.
+	{ id: "handoff-hint", factory: handoffHintExtension },
+	// Asks the session's host to continue it on another computer; without a host it only answers "stay here".
+	{ id: "relocate-session", factory: relocateSessionExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
 	// Provider-neutral account listing; sits before the provider lanes so their
@@ -116,6 +138,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "claude-sdk-oauth", factory: anthropicSubscriptionExtension },
 	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },
+	// Provider-only lane beside the other provider registrations; no hooks, so order is not load-bearing.
+	{ id: "vertex-model-garden", factory: vertexModelGardenExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before catalog feeders observe them.
 	{ id: "config-reload", factory: configReloadExtension },
 	// Shared catalog wiring loads before MCP, which feeds its tools into the shared catalog as the final builtin.

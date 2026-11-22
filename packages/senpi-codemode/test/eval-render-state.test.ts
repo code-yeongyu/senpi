@@ -318,14 +318,14 @@ describe("eval renderer state", () => {
 			.join("\n");
 
 		// Then
-		expect.soft(callText).toContain("eval py running");
+		expect.soft(callText).toContain("eval py streaming");
 		expect.soft(callText).toContain("resettable");
 		expect.soft(callText).toContain("reset");
 		expect.soft(callText).toContain("timeout 3s");
-		expect.soft(resultText).toContain("eval py pending ○");
-		expect.soft(resultText).toMatch(/eval py running [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
-		expect.soft(resultText).toContain("eval py done ✓ · 1m 1s");
-		expect.soft(resultText).toContain("eval py error ✗ · 1h 2m");
+		expect.soft(resultText).toMatch(/[╭╶]─ ○ \S.* · eval py pending/u);
+		expect.soft(resultText).toMatch(/[╭╶]─ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \S.* · eval py running/u);
+		expect.soft(resultText).toContain("✓ finished · eval py done · 1m 1s");
+		expect.soft(resultText).toContain("✗ broken · eval py error · 1h 2m");
 	});
 });
 
@@ -365,7 +365,7 @@ describe("eval completed-cell throughput badge", () => {
 			.join("\n");
 
 		// Then
-		expect(text).toContain("eval py done ✓ · 2 calls · 1.00 calls/s · 2s · timeout 420s");
+		expect(text).toContain("✓ work() · eval py done · 2 calls · 1.00 calls/s · 2s · timeout 420s");
 	});
 
 	it("Given zero tool calls when rendered finally then header omits the calls and calls-per-second segments", () => {
@@ -405,7 +405,7 @@ describe("eval completed-cell throughput badge", () => {
 		// Then
 		expect(text).not.toContain("calls/s");
 		expect(text).not.toContain("0 calls");
-		expect(text).toContain("eval py done ✓ · <1s");
+		expect(text).toContain("✓ work() · eval py done · <1s");
 	});
 
 	it("Given singular tool-call count when rendered then call noun stays singular", () => {
@@ -533,7 +533,7 @@ describe("eval completed-cell throughput badge", () => {
 
 		// Then
 		expect(text).not.toContain("calls/s");
-		expect((text.match(/eval py done ✓/gu) ?? []).length).toBe(2);
+		expect((text.match(/eval py done/gu) ?? []).length).toBe(2);
 	});
 
 	it("Given legacy details without throughput fields when rendered finally then headers stay unchanged", () => {
@@ -569,7 +569,7 @@ describe("eval completed-cell throughput badge", () => {
 			.join("\n");
 
 		// Then
-		expect(text).toContain("eval py done ✓ · 2s");
+		expect(text).toContain("✓ work() · eval py done · 2s");
 		expect(text).not.toContain("calls/s");
 	});
 });

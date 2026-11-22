@@ -3,6 +3,8 @@ import { getBuiltinModel as getModel } from "../src/providers/all.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const mockState = vi.hoisted(() => ({
 	createParams: undefined as Record<string, unknown> | undefined,
 	requestOptions: undefined as Record<string, unknown> | undefined,
@@ -70,7 +72,7 @@ describe("Anthropic onPayload request metadata", () => {
 	it("forwards hook-added headers to SDK request options without leaking metadata into the body", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 
-		const stream = streamAnthropic(model, context, {
+		const stream = streamAnthropic(model, normalizeContext(context), {
 			apiKey: "fake-key",
 			onPayload: (payload) => ({
 				...(payload as Record<string, unknown>),
@@ -91,7 +93,7 @@ describe("Anthropic onPayload request metadata", () => {
 		async (modelId) => {
 			const model = getModel("anthropic", modelId);
 
-			const stream = streamAnthropic(model, context, {
+			const stream = streamAnthropic(model, normalizeContext(context), {
 				apiKey: "fake-key",
 				onPayload: (payload) => ({
 					...(payload as Record<string, unknown>),
@@ -125,7 +127,7 @@ describe("Anthropic onPayload request metadata", () => {
 	it("normalizes hook-returned legacy thinking for Claude Opus 4.6 before SDK request", async () => {
 		const model = getModel("anthropic", "claude-opus-4-6");
 
-		const stream = streamAnthropic(model, context, {
+		const stream = streamAnthropic(model, normalizeContext(context), {
 			apiKey: "fake-key",
 			thinkingEnabled: true,
 			effort: "high",
@@ -145,7 +147,7 @@ describe("Anthropic onPayload request metadata", () => {
 	it("preserves hook-returned legacy thinking for non-adaptive models", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 
-		const stream = streamAnthropic(model, context, {
+		const stream = streamAnthropic(model, normalizeContext(context), {
 			apiKey: "fake-key",
 			thinkingEnabled: true,
 			thinkingBudgetTokens: 4096,
@@ -173,7 +175,7 @@ describe("Anthropic onPayload request metadata", () => {
 			},
 		};
 
-		const stream = streamAnthropic(model, context, {
+		const stream = streamAnthropic(model, normalizeContext(context), {
 			apiKey: "fake-key",
 			interleavedThinking: true,
 			headers: {
@@ -198,7 +200,7 @@ describe("Anthropic onPayload request metadata", () => {
 	});
 
 	it("strips native computer-use tools from Cloudflare Anthropic routes after payload hooks run", async () => {
-		const stream = streamAnthropic(cloudflareAnthropicModel, context, {
+		const stream = streamAnthropic(cloudflareAnthropicModel, normalizeContext(context), {
 			apiKey: "fake-key",
 			onPayload: (payload) => ({
 				...(payload as Record<string, unknown>),

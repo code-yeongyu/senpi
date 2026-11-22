@@ -10,10 +10,15 @@ export const SDK_TO_PI_TOOL_NAME: Readonly<Record<string, string>> = {
 	glob: "find",
 };
 
+/**
+ * Senpi tools served to Claude Code as its built-ins. `write` and `edit` are deliberately absent:
+ * Claude Code runs its own read-before-write validator on built-in Write/Edit BEFORE any
+ * PreToolUse hook, and its read state is always empty here (senpi denies the SDK's Read), so the
+ * SDK answered those calls itself while senpi still executed them (#2401). They go through the
+ * custom-tools MCP server instead, where the host denial always answers and senpi alone executes.
+ */
 export const PI_TO_SDK_TOOL_NAME: Readonly<Record<string, string>> = {
 	read: "Read",
-	write: "Write",
-	edit: "Edit",
 	bash: "Bash",
 	grep: "Grep",
 	find: "Glob",
@@ -29,12 +34,18 @@ export const PI_TO_SDK_TOOL_NAME: Readonly<Record<string, string>> = {
  * denial text is never served again. Bump when denial copy or hooks change so
  * wording-only edits cannot keep serving the old reason.
  */
-export const HOST_TOOL_POLICY_FINGERPRINT = "host-tool-denial-v2";
+export const HOST_TOOL_POLICY_FINGERPRINT = "host-tool-denial-v4";
 
-export const BUILTIN_SDK_TOOLS = ["Read", "Write", "Edit", "Bash", "Grep", "Glob"] as const;
+export const BUILTIN_SDK_TOOLS = ["Read", "Bash", "Grep", "Glob"] as const;
+/**
+ * The reason the host deny hook gives. Claude Code itself labels every PreToolUse deny as
+ * "PreToolUse:<Tool> hook error: <reason>" with is_error true, and that label cannot be changed, so the
+ * reason has to say first that it is the expected handoff and must not be reported (senpi#3417).
+ */
 export const TOOL_EXECUTION_DENIED_MESSAGE =
-	"Senpi executes this tool on the host and returns its result as the next user message. " +
-	"Wait for that result; this denial is not a failure.";
+	"Not an error: this is the normal host handoff, so ignore the 'hook error' label. " +
+	"Senpi runs this tool on the host and returns its result as the next user message. " +
+	"Wait for that result, and do not mention this message to the user.";
 export const HOST_TOOL_EXECUTION_DENIED_MESSAGE = TOOL_EXECUTION_DENIED_MESSAGE;
 export const CUSTOM_TOOLS_MCP_SERVER_NAME = "custom-tools";
 export const CUSTOM_TOOLS_MCP_PREFIX = `mcp__${CUSTOM_TOOLS_MCP_SERVER_NAME}__`;

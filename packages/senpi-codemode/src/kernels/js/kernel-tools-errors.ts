@@ -8,6 +8,8 @@ export const KERNEL_TOOL_ERROR_CODES = [
 	"kernel_tool_failed",
 	"kernel_tool_recursion",
 	"kernel_tool_host_denied",
+	"kernel_tool_cancelled",
+	"kernel_tool_loop_mismatch",
 ] as const;
 
 export type KernelToolErrorCode = (typeof KERNEL_TOOL_ERROR_CODES)[number];

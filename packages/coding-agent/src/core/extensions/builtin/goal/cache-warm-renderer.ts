@@ -43,7 +43,7 @@ function titleLine(data: GoalCacheWarmupEntryData): string {
 		case "scheduled":
 			return `⚡ Cache-warm wait${iterationText} · ${wakeSources}`;
 		case "resumed":
-			return `⚡ Cache-warm wake${iterationText} · ${formatExpectedWake(data.dueAtMs, data.waitedMs ?? data.delayMs)} · ${wakeSources}`;
+			return `⚡ Cache-warm wake${iterationText} · waited ${formatWakeDuration(data.waitedMs ?? data.delayMs)} · ${wakeSources}`;
 	}
 }
 
@@ -65,7 +65,14 @@ function whyLine(data: GoalCacheWarmupEntryData): string {
 				: `${backstop} - the goal resumes as soon as a wake source delivers; the ${formatCacheTtl(data.cache.ttlSeconds)} prompt-cache TTL may elapse first.`;
 		}
 		case "resumed":
-			return "Woke on schedule to keep pursuing the goal.";
+			switch (data.wakeCause) {
+				case "timer":
+					return "The stall backstop fired; queued the goal continuation.";
+				case "sources-drained":
+					return "Wake sources finished; queued the goal continuation.";
+				case undefined:
+					return "Queued the goal continuation; the wake trigger was not recorded.";
+			}
 	}
 }
 
@@ -83,19 +90,18 @@ function expandedLine(data: GoalCacheWarmupEntryData): string {
 function warmLine(data: GoalCacheWarmupEntryData): string | undefined {
 	const cache = data.cache;
 	if (cache === undefined || cache.cachedTokens <= 0) return undefined;
-	const tokens = `~${formatWarmTokenCount(cache.cachedTokens)} tokens`;
+	const body = `Prior turn: ~${formatWarmTokenCount(cache.cachedTokens)} cache-read/write tokens (cumulative)`;
 	if (cache.cacheLifetime === "best-effort") {
-		return `${tokens} were cached after the prior turn · provider caching is best-effort, with no expiry to beat`;
+		return `${body} · provider caching is best-effort; next cache hit unverified`;
 	}
 	const ttlMayHaveElapsed =
 		cache.ttlSeconds !== undefined && (data.waitedMs ?? data.delayMs) >= cache.ttlSeconds * 1000;
 	if (ttlMayHaveElapsed) {
-		return `${tokens} were cached after the prior turn · prompt-cache TTL may have elapsed before this wake`;
+		return `${body} · prompt-cache TTL may have elapsed; next cache hit unverified`;
 	}
-	const body = data.phase === "scheduled" ? `${tokens} kept warm` : `${tokens} stayed warm in the prompt cache`;
 	const saved =
 		cache.estimatedSavedUsd !== undefined && cache.estimatedSavedUsd > 0
-			? ` · est. ${formatSavedUsd(cache.estimatedSavedUsd)} saved vs a cold re-read`
+			? ` · est. ${formatSavedUsd(cache.estimatedSavedUsd)} discount if reused`
 			: "";
-	return `${body}${saved}`;
+	return `${body}${saved} · next cache hit unverified`;
 }

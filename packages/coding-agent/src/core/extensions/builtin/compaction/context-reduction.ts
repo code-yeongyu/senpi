@@ -20,6 +20,7 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, TextContent, ToolResultMessage } from "@earendil-works/pi-ai";
+import { inheritSessionContextEntryId } from "../../../session-manager.ts";
 
 const DEFAULT_READ_TOOL_NAMES = ["read", "Read", "read_file"];
 const DEFAULT_SEARCH_TOOL_NAMES = ["grep", "Grep", "glob", "Glob"];
@@ -48,7 +49,7 @@ const DEFAULT_MAX_ASSISTANT_TEXT_TOKENS = 500;
 const DEFAULT_MIN_SAVINGS_TOKENS = 100;
 const DEFAULT_KEEP_RECENT_TOOL_RESULTS = 3;
 const DEFAULT_CLEARED_PLACEHOLDER = "[tool result cleared]";
-const DEFAULT_REPLACEMENT_TEMPLATE = "[response shrunk — {original_tokens} → {shrunk_tokens} tokens]";
+const DEFAULT_REPLACEMENT_TEMPLATE = "[response shrunk - {original_tokens} → {shrunk_tokens} tokens]";
 
 const MAX_HINTS_IN_LABEL = 5;
 const MAX_HINT_LENGTH = 80;
@@ -361,10 +362,13 @@ export function collapseConsecutiveToolResults(
 			const result = nextMessages[op.resultIndex];
 			if (result.role !== "toolResult") continue;
 			const images = result.content.filter((c): c is ImageContent => c.type === "image");
-			nextMessages[op.resultIndex] = {
-				...result,
-				content: [{ type: "text", text: label } as TextContent, ...images],
-			};
+			nextMessages[op.resultIndex] = inheritSessionContextEntryId(
+				{
+					...result,
+					content: [{ type: "text", text: label } as TextContent, ...images],
+				},
+				result,
+			);
 		}
 		tokensSaved += Math.max(0, originalTokens - collapsedTokens);
 		collapsedGroups.push({
@@ -448,10 +452,13 @@ export function microCompactAssistantText(
 		const shrunk = buildShrunkText(originalText, originalTokens, maxAssistantTextTokens, template);
 		const saved = originalTokens - shrunk.tokens;
 		if (saved < minSavingsTokens) continue;
-		result[i] = {
-			...assistant,
-			content: [{ type: "text", text: shrunk.text } as TextContent],
-		};
+		result[i] = inheritSessionContextEntryId(
+			{
+				...assistant,
+				content: [{ type: "text", text: shrunk.text } as TextContent],
+			},
+			msg,
+		);
 		tokensSaved += saved;
 		messagesModified += 1;
 	}
@@ -493,10 +500,13 @@ export function clearOldToolResults(
 		const originalText = extractContentText(original.content);
 		const originalTokens = approxTextTokens(originalText);
 		const images = original.content.filter((c): c is ImageContent => c.type === "image");
-		result[idx] = {
-			...original,
-			content: [{ type: "text", text: replacementText } as TextContent, ...images],
-		};
+		result[idx] = inheritSessionContextEntryId(
+			{
+				...original,
+				content: [{ type: "text", text: replacementText } as TextContent, ...images],
+			},
+			msg,
+		);
 		const savings = originalTokens - replacementTokens;
 		if (savings > 0) tokensSaved += savings;
 		toolResultsCleared += 1;

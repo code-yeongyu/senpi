@@ -179,11 +179,15 @@ describe("Claude SDK OAuth continuity observations", () => {
 		const sessionId = "observability-healthy";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
 		const user2 = { role: "user" as const, content: "two", timestamp: 3 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(sink.observations).toEqual([
@@ -197,12 +201,16 @@ describe("Claude SDK OAuth continuity observations", () => {
 		const sink = observationSink();
 		const sessionId = "observability-tainted";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		markTainted(sessionId, "compaction");
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), { role: "user", content: "two", timestamp: 3 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(sink.observations.at(-1)).toMatchObject({ kind: "flatten", reason: "tainted_compaction" });
@@ -213,12 +221,16 @@ describe("Claude SDK OAuth continuity observations", () => {
 		const sink = observationSink();
 		const sessionId = "observability-close-cause";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		closeSession(sessionId, "model_selected");
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), { role: "user", content: "two", timestamp: 3 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(sink.observations.at(-1)).toMatchObject({ kind: "fork", reason: "model_selected" });
@@ -242,14 +254,17 @@ describe("Claude SDK OAuth continuity observations", () => {
 			{ messages: [user1, assistant("a1", 2), user2, assistant("a2", 4), user3] },
 		];
 		for (const contextValue of contexts) {
-			await streamAnthropicSubscription(model, contextValue, mainOptions(sessionId)).result();
+			await streamAnthropicSubscription(model, contextValue, {
+				cwd: process.cwd(),
+				...mainOptions(sessionId),
+			}).result();
 		}
 		recordBranchInfo(sessionId, { oldLeafId: "old", newLeafId: "new" });
 		const before = sink.observations.length;
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(sink.observations.length - before).toBe(1);
@@ -272,13 +287,13 @@ describe("Claude SDK OAuth continuity observations", () => {
 			await streamAnthropicSubscription(
 				model,
 				{ messages: [{ role: "user", content: "one", timestamp: 1 }] },
-				mainOptions("observability-disabled"),
+				{ cwd: process.cwd(), ...mainOptions("observability-disabled") },
 			).result();
 		} finally {
 			delete process.env.SENPI_CLAUDE_SDK_OAUTH_RESUME;
 		}
 
-		expect(sink.observations).toEqual([{ kind: "disabled", reason: "resume_mode_off" }]);
+		expect(sink.observations).toEqual([{ kind: "disabled", reason: "resume_mode_off", settingSource: "env" }]);
 	});
 
 	it("emits one terminal error observation when every attempt fails", async () => {
@@ -295,12 +310,18 @@ describe("Claude SDK OAuth continuity observations", () => {
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "one", timestamp: 1 }] },
-			mainOptions("observability-terminal-error"),
+			{ cwd: process.cwd(), ...mainOptions("observability-terminal-error") },
 		).result();
 
-		const terminal = sink.observations.filter((observation) => observation.kind === "flatten");
-		expect(sink.observations.at(-1)).toEqual({ kind: "flatten", reason: "query_failed" });
+		// A failed turn re-sent nothing that succeeded, so it must not read as a flatten (a full re-send).
+		const terminal = sink.observations.filter((observation) => observation.kind === "failed");
+		expect(sink.observations.at(-1)).toEqual({ kind: "failed", reason: "query_failed" });
 		expect(terminal).toHaveLength(1);
+		expect(sink.observations.filter((observation) => observation.kind === "flatten")).toEqual([]);
+		expect(sink.logged.at(-1)).toEqual({
+			event: "claude_sdk_oauth_session_continuity",
+			data: { kind: "failed", reason: "query_failed", sessionId: "observability-terminal-error" },
+		});
 		expect(JSON.stringify(sink.observations)).not.toContain("sk-ant-secret");
 	});
 
@@ -311,13 +332,31 @@ describe("Claude SDK OAuth continuity observations", () => {
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "one", timestamp: 1 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(sink.logged).toEqual([
 			{
+				event: "claude_sdk_oauth_session_auth",
+				data: {
+					sessionId,
+					agentDir: expect.stringMatching(/^dir:[0-9a-f]{8}$/),
+					agentDirSource: expect.any(String),
+					agentDirRule: "environment",
+					seat: expect.stringMatching(/^[0-9a-f]{8}$/),
+					accountSource: "ambient",
+				},
+			},
+			{
 				event: "claude_sdk_oauth_session_continuity",
-				data: { kind: "bootstrap", reason: "registry_miss", count: 1 },
+				data: {
+					kind: "bootstrap",
+					reason: "registry_miss",
+					count: 1,
+					// The serving seat as a digest; a first turn has no earlier seat to compare (oh-my-openagent#10304).
+					seat: expect.stringMatching(/^[0-9a-f]{8}$/),
+					sessionId,
+				},
 			},
 		]);
 	});
@@ -331,6 +370,19 @@ describe("Claude SDK OAuth continuity observations", () => {
 		);
 		expect(sanitizeCloseCause("Anthropic Subscription interrupted turn did not terminate")).toBe("abort_timeout");
 		expect(sanitizeCloseCause(new Error("weird failure with token sk-ant-oops"))).toBe("other");
+	});
+
+	it("names the senpi session on the close log line", () => {
+		const sink = observationSink();
+		recordPendingCloseCause("close-log-session", "thinking_level_selected");
+		consumePendingCloseCause("close-log-session");
+
+		expect(sink.logged).toEqual([
+			{
+				event: "claude_sdk_oauth_session_close",
+				data: { reason: "thinking_level_selected", sessionId: "close-log-session" },
+			},
+		]);
 	});
 
 	it("consumes a pending close cause exactly once", () => {

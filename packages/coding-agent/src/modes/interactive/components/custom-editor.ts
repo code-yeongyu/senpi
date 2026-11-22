@@ -2,6 +2,7 @@ import {
 	Editor,
 	type EditorOptions,
 	type EditorTheme,
+	isWarpWslSession,
 	type TUI,
 	truncateToWidth,
 	visibleWidth,
@@ -139,8 +140,11 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
-		// Check for clipboard paste keybinding
-		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
+		// Warp on WSL sends an empty bracketed paste for a clipboard bitmap.
+		if (
+			this.keybindings.matches(data, "app.clipboard.pasteImage") ||
+			(data === "\x1b[200~\x1b[201~" && isWarpWslSession())
+		) {
 			this.onPasteImage?.();
 			return;
 		}

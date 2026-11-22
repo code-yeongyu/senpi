@@ -7,6 +7,7 @@
  * `Authorization: Bearer` header; see kimi-region.ts for the host table.
  */
 
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { sleep } from "../../utils/sleep.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
@@ -216,7 +217,7 @@ async function refreshToken(oauthHost: string, refreshTokenValue: string, signal
 			await sleep(1000 * 2 ** (attempt - 1), signal);
 		}
 		if (signal.aborted) {
-			throw new Error("Kimi Code token refresh aborted");
+			throw new Error("Kimi Code token refresh aborted", { cause: signal.reason });
 		}
 
 		let response: Response;
@@ -244,20 +245,33 @@ async function refreshToken(oauthHost: string, refreshTokenValue: string, signal
 		if (response.ok) {
 			return parseTokenResponse(json, "refresh");
 		}
+		const oauthError = typeof json?.error === "string" ? json.error : undefined;
 
-		// Unauthorized: the stored credential is dead; Models clears it and prompts re-login.
-		if (response.status === 401 || response.status === 403 || json?.error === "invalid_grant") {
+		// Unauthorized: the stored credential is dead; Models clears it and prompts re-login. The decision
+		// and the OAuth code travel on the error, so the credential pool never has to read this prose.
+		if (response.status === 401 || response.status === 403 || oauthError === "invalid_grant") {
 			const description = typeof json?.error_description === "string" ? `: ${json.error_description}` : "";
-			throw new Error(`Kimi Code token refresh unauthorized (status ${response.status})${description}`);
+			throw new OAuthTokenEndpointError(
+				`Kimi Code token refresh unauthorized (status ${response.status})${description}`,
+				response.status,
+				{ oauthError, credentialRefused: true },
+			);
 		}
 
 		if (isRetryableRefreshFailure(response) && attempt < REFRESH_MAX_RETRIES) {
-			lastError = new Error(`Kimi Code token refresh failed with status ${response.status}`);
+			lastError = new OAuthTokenEndpointError(
+				`Kimi Code token refresh failed with status ${response.status}`,
+				response.status,
+			);
 			continue;
 		}
 
 		const text = JSON.stringify(json);
-		throw new Error(`Kimi Code token refresh failed with status ${response.status}${text ? `: ${text}` : ""}`);
+		throw new OAuthTokenEndpointError(
+			`Kimi Code token refresh failed with status ${response.status}${text ? `: ${text}` : ""}`,
+			response.status,
+			{ oauthError },
+		);
 	}
 
 	throw lastError ?? new Error("Kimi Code token refresh failed");

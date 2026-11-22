@@ -4,10 +4,11 @@ import {
 	evaluateGoalContinuation,
 	GOAL_CONTINUATION_CAP,
 	GOAL_LENGTH_RECOVERY_LIMIT,
+	GOAL_NO_PROGRESS_CONTINUATION_LIMIT,
 	GOAL_REPETITION_HASH_STREAK,
 	GOAL_STALL_TOOLLESS_THRESHOLD,
-	GOAL_UNATTENDED_CONTINUATION_LIMIT,
 	GOAL_USER_GRACE_DELAY_MS,
+	hasGoalTodoProgress,
 	hashAssistantText,
 	normalizeAssistantText,
 } from "../../src/core/extensions/builtin/goal/continuation.ts";
@@ -95,30 +96,45 @@ describe("goal continuation verdict", () => {
 		expect(evaluateGoalContinuation(input)).toEqual({ kind: "deny", reason });
 	});
 
-	it("denies with unattended at the limit on every counted path and admits below it", () => {
-		const atLimit = makeGoal({ unattendedContinuations: GOAL_UNATTENDED_CONTINUATION_LIMIT });
+	it("denies with no-progress at the limit on every counted path and admits below it", () => {
+		const atLimit = makeGoal({ noProgressContinuations: GOAL_NO_PROGRESS_CONTINUATION_LIMIT });
 		for (const path of ["immediate", "userGrace", "sessionStart", "systemRecovery", "providerRecovery"] as const) {
 			expect(evaluateGoalContinuation(makeInput({ goal: atLimit, path }))).toEqual({
 				kind: "deny",
-				reason: "unattended",
+				reason: "no-progress",
 			});
 		}
 		expect(
 			evaluateGoalContinuation(
-				makeInput({ goal: makeGoal({ unattendedContinuations: GOAL_UNATTENDED_CONTINUATION_LIMIT - 1 }) }),
+				makeInput({ goal: makeGoal({ noProgressContinuations: GOAL_NO_PROGRESS_CONTINUATION_LIMIT - 1 }) }),
 			),
 		).toMatchObject({ kind: "continue" });
 	});
 
-	it("exempts the monitor-delayed path from the unattended limit", () => {
+	it("exempts the monitor-delayed path from the no-progress limit", () => {
 		expect(
 			evaluateGoalContinuation(
 				makeInput({
-					goal: makeGoal({ unattendedContinuations: GOAL_UNATTENDED_CONTINUATION_LIMIT }),
+					goal: makeGoal({ noProgressContinuations: GOAL_NO_PROGRESS_CONTINUATION_LIMIT }),
 					path: "monitorDelayed",
 				}),
 			),
 		).toMatchObject({ kind: "continue" });
+	});
+
+	it("has no fixed count cap: any number of unattended continuations is admitted", () => {
+		expect(
+			evaluateGoalContinuation(makeInput({ goal: makeGoal({ unattendedContinuations: 10_000 }) })),
+		).toMatchObject({ kind: "continue" });
+	});
+
+	it("counts a changed todo state as progress but not changed narration alone", () => {
+		expect(
+			hasGoalTodoProgress({ lastContinuationSignature: "goal-1:2/5:aaa", currentSignature: "goal-1:1/5:aaa" }),
+		).toBe(true);
+		expect(
+			hasGoalTodoProgress({ lastContinuationSignature: "goal-1:2/5:aaa", currentSignature: "goal-1:2/5:bbb" }),
+		).toBe(false);
 	});
 
 	it("admits below the continuation cap and denies at the boundary", () => {
@@ -265,7 +281,7 @@ describe("goal continuation verdict", () => {
 		expect(GOAL_STALL_TOOLLESS_THRESHOLD).toBe(3);
 		expect(GOAL_REPETITION_HASH_STREAK).toBe(3);
 		expect(GOAL_LENGTH_RECOVERY_LIMIT).toBe(1);
-		expect(GOAL_UNATTENDED_CONTINUATION_LIMIT).toBe(150);
+		expect(GOAL_NO_PROGRESS_CONTINUATION_LIMIT).toBe(60);
 		expect(GOAL_USER_GRACE_DELAY_MS).toBe(10_000);
 	});
 });

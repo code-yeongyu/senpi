@@ -35,6 +35,7 @@ describe("rules dynamic cross-target dedup", () => {
 
 	const actions: ExtensionActions = {
 		registerLazyToolActivator: () => {},
+		getSettings: () => ({}),
 		sendMessage: () => {},
 		sendUserMessage: () => {},
 		appendEntry: (customType, data) => appendedEntries.push({ customType, data }),

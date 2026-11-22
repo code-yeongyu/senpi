@@ -75,7 +75,10 @@ export class GoalDirectInputLifecycle {
 
 		if (currentGoal.status !== "active") return;
 		const reset = await resetContinuationStreak(ref, { unattended: true });
-		if (reset !== null) this.#dependencies.refreshGoalUi(ctx, reset);
+		if (reset !== null) {
+			this.#dependencies.beginAgentGoalAccounting(reset);
+			this.#dependencies.refreshGoalUi(ctx, reset);
+		}
 		if (this.#suppressedLoadResumeArmed) {
 			this.#suppressedLoadResumeArmed = false;
 			await this.#dependencies.resumeAfterSuppressedLoad?.(ctx, reset ?? currentGoal);

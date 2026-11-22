@@ -19,7 +19,7 @@ const SENPI_SESSION_ID = "senpi-session-1";
 const CWD = "/repo";
 const ASSISTANT_UUID = "uuid-a2";
 
-function persistedBinding(): ContinuityBinding {
+function persistedBinding(overrides: Partial<ContinuityBinding> = {}): ContinuityBinding {
 	return {
 		senpiSessionId: SENPI_SESSION_ID,
 		sdkSessionId: SDK_SESSION_ID,
@@ -30,6 +30,7 @@ function persistedBinding(): ContinuityBinding {
 		modelId: "claude-opus-4-5",
 		systemPromptHash: "prompt-v1",
 		toolsetHash: "tools-v1",
+		...overrides,
 	};
 }
 
@@ -197,6 +198,19 @@ describe("claude-sdk-oauth restored security", () => {
 			};
 			overrideSdkBoundary(boundary);
 			expect(await verifyRestoredTranscript(persistedBinding(), CWD, "config-dir")).toBe(false);
+		});
+
+		// senpi#2858: a restored binding whose newest assistant was never recorded used to skip the check.
+		it("rejects a restored binding with no recorded assistant turn, even for a matching transcript of the same session", async () => {
+			overrideSdkBoundary({
+				getSessionMessages: async () => [
+					sdkMessage({ type: "user", uuid: "uuid-u1", session_id: SDK_SESSION_ID }),
+					sdkMessage({ type: "assistant", uuid: "uuid-unrecorded", session_id: SDK_SESSION_ID }),
+				],
+			});
+			// The shape the store restores (`bindingFromStored`): no recorded assistant means no mapped boundary.
+			const restored = persistedBinding({ lastAssistantUuid: null, assistantUuidByIndex: [] });
+			expect(await verifyRestoredTranscript(restored, CWD, "oauth-slots")).toBe(false);
 		});
 
 		it("returns true for a matching top-level assistant", async () => {

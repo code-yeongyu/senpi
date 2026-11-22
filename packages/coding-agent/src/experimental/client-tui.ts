@@ -425,6 +425,7 @@ export class ExperimentalClientTui implements Component {
 					name: command.name,
 					description: command.description,
 					...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
+					...(command.requiresArguments === undefined ? {} : { requiresArguments: command.requiresArguments }),
 					...(command.getArgumentCompletions === undefined
 						? {}
 						: {
@@ -744,6 +745,7 @@ export async function runClientTui(command: ClientCommand, options: RunClientTui
 		tuiMode: "fullscreen",
 		showHardwareCursor: settingsManager.getShowHardwareCursor(),
 		logDirectory: agentDir,
+		fullscreenWheelScrollLines: settingsManager.getFullscreenWheelScrollLines(),
 	});
 	tui.setClearOnShrink(settingsManager.getClearOnShrink());
 	let component: ExperimentalClientTui | undefined;
@@ -783,7 +785,7 @@ export async function runClientTui(command: ClientCommand, options: RunClientTui
 		tui.setFocus(component);
 		tuiStarted = true;
 		tui.start();
-		await themeController.applyFromSettings();
+		themeController.applyFromSettings();
 		await finished;
 	} finally {
 		themeController.dispose();

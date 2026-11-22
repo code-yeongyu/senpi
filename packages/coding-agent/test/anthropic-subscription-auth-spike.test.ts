@@ -2,17 +2,30 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const SPIKE = join(__dirname, "../../../.agents/skills/senpi-qa/scripts/anthropic-subscription-auth-spike.mjs");
+const SPIKES_DIR = join(__dirname, "../../../.agents/skills/senpi-qa/scripts");
+const spike = (name: string) => join(SPIKES_DIR, `anthropic-subscription-${name}-spike.mjs`);
+const SPIKE = spike("auth");
+
+describe("claude-sdk-oauth live spikes", () => {
+	// Every live spike must exit early unless SENPI_LIVE_CLAUDE_SDK_OAUTH=1, so a default run never touches credentials.
+	it.each(["auth", "autocompact", "native-inline", "persistent-query", "reattach", "sysprompt"])(
+		"%s spike is skipped by default and never touches credentials",
+		(name) => {
+			const output = execFileSync(process.execPath, [spike(name)], {
+				env: {
+					PATH: process.env.PATH,
+					TMPDIR: process.env.TMPDIR,
+					TEMP: process.env.TEMP,
+					TMP: process.env.TMP,
+				},
+				encoding: "utf8",
+			});
+			expect(output).toContain("SKIPPED");
+		},
+	);
+});
 
 describe("claude-sdk-oauth live auth spike", () => {
-	it("is skipped by default and never touches credentials", () => {
-		const output = execFileSync(process.execPath, [SPIKE], {
-			env: { PATH: process.env.PATH },
-			encoding: "utf8",
-		});
-		expect(output).toContain("SKIPPED");
-	});
-
 	it.runIf(process.env.SENPI_LIVE_CLAUDE_SDK_OAUTH === "1")(
 		"accepts one multi-account lane against the seeded sandbox",
 		() => {
@@ -21,6 +34,9 @@ describe("claude-sdk-oauth live auth spike", () => {
 			const output = execFileSync(process.execPath, [SPIKE], {
 				env: {
 					PATH: process.env.PATH,
+					TMPDIR: process.env.TMPDIR,
+					TEMP: process.env.TEMP,
+					TMP: process.env.TMP,
 					SENPI_LIVE_CLAUDE_SDK_OAUTH: "1",
 					SENPI_CODING_AGENT_DIR: sandbox as string,
 				},

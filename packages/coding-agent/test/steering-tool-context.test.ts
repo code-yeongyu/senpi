@@ -23,6 +23,16 @@ async function bounded<T>(promise: Promise<T>): Promise<T> {
 }
 
 type Invocation = { context: ExtensionContext; cancellation: AbortSignal | undefined };
+
+/** Private AgentSession members these tests drive directly. */
+type SteeringInternals = {
+	_queueSteer(text: string): Promise<void>;
+	readonly _eventListeners: readonly unknown[];
+};
+
+function internals(harness: Harness): SteeringInternals {
+	return harness.session as unknown as SteeringInternals;
+}
 const harnesses: Harness[] = [];
 afterEach(() => {
 	for (const harness of harnesses.splice(0)) harness.cleanup();
@@ -190,7 +200,7 @@ describe("follow-up and abort remain distinct", () => {
 		const subscribe = harness.session.subscribe.bind(harness.session);
 		const registration = vi.spyOn(harness.session, "subscribe").mockImplementationOnce((listener) => {
 			const unsubscribe = subscribe(listener);
-			void harness.session["_queueSteer"]("during-subscribe");
+			void internals(harness)._queueSteer("during-subscribe");
 			return unsubscribe;
 		});
 		const execution = harness.session.executeTool("signal_probe", {});
@@ -207,12 +217,12 @@ describe("follow-up and abort remain distinct", () => {
 
 	it("cleans up a thrown tool without reporting a successful tool result", async () => {
 		const { harness, started, release } = await fixture();
-		const listeners = harness.session["_eventListeners"].length;
+		const listeners = internals(harness)._eventListeners.length;
 		const execution = harness.session.executeTool("signal_probe", {});
 		const { context } = await bounded(started.promise);
 		release.reject(new Error("fixture failure"));
 		expect((await bounded(execution)).details).toEqual({ isError: true });
-		expect(harness.session["_eventListeners"]).toHaveLength(listeners);
+		expect(internals(harness)._eventListeners).toHaveLength(listeners);
 		await harness.session.steer("after-error");
 		expect(context.steeringSignal?.aborted).toBe(false);
 	});
@@ -224,7 +234,7 @@ describe("follow-up and abort remain distinct", () => {
 			const { context } = await bounded(started.promise);
 			expect(context.steeringSignal).toBeInstanceOf(AbortSignal);
 			harness.session.dispose();
-			await harness.session["_queueSteer"]("after-disposal");
+			await internals(harness)._queueSteer("after-disposal");
 			expect(context.steeringSignal?.aborted).toBe(false);
 		} finally {
 			release.resolve();

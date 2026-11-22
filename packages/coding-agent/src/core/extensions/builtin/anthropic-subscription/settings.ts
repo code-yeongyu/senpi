@@ -1,11 +1,22 @@
 import { getAgentDir } from "../../../../config.ts";
 import { getFileContentRevision } from "../../../../utils/paths.ts";
+import { type AccountStrategy, parseAccountStrategy } from "../../../credential-pool/selection-order.ts";
 import { getSettingsPath, type Settings, SettingsManager } from "../../../settings-manager.ts";
 import type { SettingSource } from "./sdk-boundary.ts";
+import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 
 export type AnthropicSubscriptionSystemPromptMode = "preset-append" | "full" | "override";
 export type AnthropicSubscriptionResumeMode = "auto" | "off";
 export type AnthropicSubscriptionTokenInjection = "oauth-slots" | "config-dir" | "ambient";
+/** Who compacts a resident lane: senpi's compaction stack (default) or the Claude Agent SDK's native auto-compact. */
+export type AnthropicSubscriptionCompactionOwner = "senpi" | "sdk";
+
+/** The one place the default lives: senpi owns compaction unless `compactionOwner: "sdk"` opts out. */
+export function resolveCompactionOwner(
+	settings: Pick<AnthropicSubscriptionProviderSettings, "compactionOwner">,
+): AnthropicSubscriptionCompactionOwner {
+	return settings.compactionOwner ?? "senpi";
+}
 
 export interface AnthropicSubscriptionProviderSettings {
 	/**
@@ -23,7 +34,11 @@ export interface AnthropicSubscriptionProviderSettings {
 	readonly settingSources?: SettingSource[];
 	readonly strictMcpConfig?: boolean;
 	readonly pinnedAccount?: string;
+	/** Allow automatic switching to another managed account after failure. Defaults to true. */
+	readonly accountFallback?: boolean;
+	readonly accountStrategy?: AccountStrategy;
 	readonly tokenInjection?: AnthropicSubscriptionTokenInjection;
+	readonly compactionOwner?: AnthropicSubscriptionCompactionOwner;
 }
 
 export type ResolvedSystemPromptMode = {
@@ -42,6 +57,15 @@ type SettingsWithAnthropicSubscriptionProvider = Settings & {
 type Environment = Readonly<Record<string, string | undefined>>;
 
 const systemPromptModeSources = new WeakMap<AnthropicSubscriptionProviderSettings, "env">();
+
+/** Which layer set `resumeMode`: the environment variable, project settings, or global settings. */
+export type ResumeModeSource = "env" | "project" | "global";
+const resumeModeSources = new WeakMap<AnthropicSubscriptionProviderSettings, ResumeModeSource>();
+
+/** The layer that set `resumeMode`; settings built outside the loader report "global". */
+export function resumeModeSource(settings: AnthropicSubscriptionProviderSettings): ResumeModeSource {
+	return resumeModeSources.get(settings) ?? "global";
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -73,6 +97,10 @@ function parseTokenInjection(value: unknown): AnthropicSubscriptionTokenInjectio
 	return value === "oauth-slots" || value === "config-dir" || value === "ambient" ? value : undefined;
 }
 
+function parseCompactionOwner(value: unknown): AnthropicSubscriptionCompactionOwner | undefined {
+	return value === "senpi" || value === "sdk" ? value : undefined;
+}
+
 function parseEnvironmentBoolean(value: string | undefined): boolean | undefined {
 	if (value === undefined) return undefined;
 	switch (value.toLowerCase()) {
@@ -101,7 +129,10 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 	const settingSources = parseSettingSources(value.settingSources);
 	const strictMcpConfig = typeof value.strictMcpConfig === "boolean" ? value.strictMcpConfig : undefined;
 	const pinnedAccount = parseNonEmptyString(value.pinnedAccount);
+	const accountFallback = typeof value.accountFallback === "boolean" ? value.accountFallback : undefined;
+	const accountStrategy = parseAccountStrategy(value.accountStrategy, "anthropicSubscriptionProvider.accountStrategy");
 	const tokenInjection = parseTokenInjection(value.tokenInjection);
+	const compactionOwner = parseCompactionOwner(value.compactionOwner);
 	return {
 		...(enabled !== undefined ? { enabled } : {}),
 		...(appendSystemPrompt !== undefined ? { appendSystemPrompt } : {}),
@@ -111,7 +142,10 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 		...(settingSources !== undefined ? { settingSources } : {}),
 		...(strictMcpConfig !== undefined ? { strictMcpConfig } : {}),
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
+		...(accountFallback !== undefined ? { accountFallback } : {}),
+		...(accountStrategy !== undefined ? { accountStrategy } : {}),
 		...(tokenInjection !== undefined ? { tokenInjection } : {}),
+		...(compactionOwner !== undefined ? { compactionOwner } : {}),
 	};
 }
 
@@ -123,6 +157,8 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 	const tokenInjection = parseTokenInjection(environment.SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION);
 	const settingSources = parseEnvironmentSettingSources(environment.SENPI_CLAUDE_SDK_OAUTH_SETTING_SOURCES);
 	const pinnedAccount = parseNonEmptyString(environment.SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT);
+	const accountFallback = parseEnvironmentBoolean(environment.SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK);
+	const compactionOwner = parseCompactionOwner(environment.SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER);
 	return {
 		...(enabled !== undefined ? { enabled } : {}),
 		...(systemPromptMode !== undefined ? { systemPromptMode } : {}),
@@ -131,6 +167,8 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 		...(tokenInjection !== undefined ? { tokenInjection } : {}),
 		...(settingSources !== undefined ? { settingSources } : {}),
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
+		...(accountFallback !== undefined ? { accountFallback } : {}),
+		...(compactionOwner !== undefined ? { compactionOwner } : {}),
 	};
 }
 
@@ -160,12 +198,25 @@ export function loadAnthropicSubscriptionProviderSettings(
 	const global = settingsManager.getGlobalSettings() as SettingsWithAnthropicSubscriptionProvider;
 	const project = settingsManager.getProjectSettings() as SettingsWithAnthropicSubscriptionProvider;
 	const environmentSettings = parseEnvironmentSettings(environment);
+	const projectSettings = parseProviderSettings(
+		project.anthropicSubscriptionProvider ?? project.claudeSdkOauthProvider,
+	);
 	const settings = {
 		...parseProviderSettings(global.anthropicSubscriptionProvider ?? global.claudeSdkOauthProvider),
-		...parseProviderSettings(project.anthropicSubscriptionProvider ?? project.claudeSdkOauthProvider),
+		...projectSettings,
 		...environmentSettings,
 	};
 	if (environmentSettings.systemPromptMode !== undefined) systemPromptModeSources.set(settings, "env");
+	if (settings.resumeMode !== undefined) {
+		resumeModeSources.set(
+			settings,
+			environmentSettings.resumeMode !== undefined
+				? "env"
+				: projectSettings.resumeMode !== undefined
+					? "project"
+					: "global",
+		);
+	}
 	return settings;
 }
 
@@ -176,7 +227,10 @@ function settingsFingerprint(path: string): string {
 let cachedAnthropicSubscriptionManager: { cwd: string; key: string; manager: SettingsManager } | undefined;
 
 /** Load settings from Senpi's configured global and project settings.json paths. */
-export function loadAnthropicSubscriptionProviderSettingsFromDisk(cwd: string): AnthropicSubscriptionProviderSettings {
+export function loadAnthropicSubscriptionProviderSettingsFromDisk(
+	sessionCwd: string,
+): AnthropicSubscriptionProviderSettings {
+	const cwd = requireAnthropicSubscriptionCwd(sessionCwd);
 	// fallbackEligible() calls this per candidate probe; cache the manager by
 	// (cwd, settings content revision) and re-apply env live to avoid locked disk reads.
 	const agentDir = getAgentDir();

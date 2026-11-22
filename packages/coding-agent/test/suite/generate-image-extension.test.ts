@@ -1,4 +1,11 @@
-import type { AssistantImages, ImagesContext, ImagesModel, Model, ProviderImagesOptions } from "@earendil-works/pi-ai";
+import type {
+	AssistantImages,
+	ImageApi,
+	ImageModel,
+	ImagesContext,
+	Model,
+	ProviderImagesOptions,
+} from "@earendil-works/pi-ai";
 import { registerImagesApiProvider, unregisterImagesApiProviders } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ImageGenAuthRegistry } from "../../src/core/extensions/builtin/imagegen/auth.ts";
@@ -132,7 +139,7 @@ function registerStubImagesProvider(): StubController {
 		{
 			api: "openai-images" as const,
 			async generateImages(
-				model: ImagesModel<"openai-images">,
+				model: ImageModel<ImageApi>,
 				_context: ImagesContext,
 				_options?: ProviderImagesOptions,
 			): Promise<AssistantImages> {

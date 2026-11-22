@@ -1,5 +1,6 @@
-import type { KernelToHostMessage } from "../../bridge/protocol.ts";
+import type { EvalStatusEvent, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { JavaScriptRunInput } from "./kernel-contract.ts";
+import { crashedResult } from "./worker-host.ts";
 
 type ResultMessage = Extract<KernelToHostMessage, { type: "result" }>;
 
@@ -14,6 +15,7 @@ export interface PendingJavaScriptRun {
 	interruptResult: ResultMessage | null;
 	interruptAck: PromiseWithResolvers<void> | null;
 	settledByWorker: boolean;
+	shellWaitActive: boolean;
 }
 
 export class JavaScriptRunQueue {
@@ -40,6 +42,7 @@ export class JavaScriptRunQueue {
 			interruptResult: null,
 			interruptAck: null,
 			settledByWorker: false,
+			shellWaitActive: false,
 		});
 		return promise;
 	}
@@ -51,6 +54,13 @@ export class JavaScriptRunQueue {
 		this.#active = next;
 		next?.input.onStarted?.();
 		return next;
+	}
+
+	acknowledgeInterrupt(event: EvalStatusEvent): void {
+		const active = this.#active;
+		if (!active || event.cellId !== active.input.cellId) return;
+		active.shellWaitActive = event.shellWaitActive === true;
+		active.interruptAck?.resolve();
 	}
 
 	remove(cellId: string, reason = "interrupted"): boolean {
@@ -72,6 +82,12 @@ export class JavaScriptRunQueue {
 	durationMs(run: PendingJavaScriptRun, finishedAtMs: number): number {
 		if (run.startedAtMs === null) return 0;
 		return Math.max(0, Math.round(finishedAtMs - run.startedAtMs));
+	}
+
+	/** Settles `run` as crashed with `error`: the worker died under it. */
+	settleCrashed(run: PendingJavaScriptRun, error: Error): void {
+		this.releaseActive(run);
+		this.settle(run, crashedResult(run.input.cellId, error, this.durationMs(run, performance.now())));
 	}
 
 	releaseActive(run: PendingJavaScriptRun): boolean {

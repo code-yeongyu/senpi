@@ -44,9 +44,10 @@ export async function createExperimentalServerServices(options: {
 	const refreshNow = async (context: Context): Promise<void> => {
 		const sessions = await options.list(context);
 		revision += 1;
-		directory.state.revision = revision;
-		directory.state.sessions = sessions;
-		directory.publish(context);
+		directory.change(context, (draft) => {
+			draft.revision = revision;
+			draft.sessions = sessions;
+		});
 	};
 	const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
 		const result = mutationTail.catch(() => {}).then(operation);

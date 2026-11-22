@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import type { AskUserVariant, QuestionRequest, QuestionResponse } from "./schema.ts";
 
 export const ASK_USER_SETTLED_EVENT = "ask-user:settled";
+export const ASK_USER_CLOSED_EVENT = "ask-user:closed";
 export const ASK_USER_ASKED_EVENT = "ask-user:asked";
 /** UI-only session metadata; never included in the model-facing answer frame. */
 export const ASK_USER_QUESTION_ENTRY = "ask-user:question";
@@ -24,6 +25,25 @@ export type AskUserSettledEvent = {
 	readonly response: QuestionResponse;
 	readonly variant: AskUserVariant;
 };
+
+export type AskUserClosedEvent = {
+	readonly requestId: string;
+	readonly status: QuestionResponse["status"];
+	readonly resolvedBy?: QuestionResponse["resolvedBy"];
+};
+
+/** Every terminal outcome, including cancellations that remain silent to settled listeners. */
+export function emitAskUserClosed(
+	pi: Pick<ExtensionAPI, "events">,
+	requestId: string,
+	response: Pick<QuestionResponse, "status" | "resolvedBy">,
+): void {
+	pi.events.emit(ASK_USER_CLOSED_EVENT, {
+		requestId,
+		status: response.status,
+		...(response.resolvedBy !== undefined ? { resolvedBy: response.resolvedBy } : {}),
+	} satisfies AskUserClosedEvent);
+}
 
 /** Publish only; the active hooks builtin owns preparation and command execution. */
 export function emitAskUserNotification(

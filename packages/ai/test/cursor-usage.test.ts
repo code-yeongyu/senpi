@@ -6,6 +6,8 @@ import { AgentServerMessageSchema } from "../src/api/cursor-agent/gen/agent_pb.t
 import { frameConnectMessage, stream as streamCursorAgent } from "../src/api/cursor-agent.ts";
 import type { Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const neverAbortedSignal = new AbortController().signal;
 
 function buildModel(baseUrl: string): Model<"cursor-agent"> {
@@ -112,7 +114,7 @@ async function startServer(handler: (stream: http2.ServerHttp2Stream) => void): 
 async function collectMessage(baseUrl: string) {
 	const stream = streamCursorAgent(
 		buildModel(baseUrl),
-		{ messages: [{ role: "user", content: "hello", timestamp: 0 }] },
+		normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 0 }] }),
 		{ signal: neverAbortedSignal, apiKey: "test-token" },
 	);
 	for await (const _event of stream) {

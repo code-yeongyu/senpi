@@ -1,7 +1,10 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { isTurnStuckOnContextOverflow } from "../../../compaction/stuck-overflow.ts";
+import { ENGINE_PAUSED_ENTRY_TYPE, enginePauseSinceLastTurn } from "../../../engine-paused.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
+import { createSessionLogger } from "../../../session-log.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
+import { isRecord } from "../../../work-custody-record.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { getLatestPhasesFromBranchEntries } from "../todotools/state.ts";
 import {
@@ -16,25 +19,22 @@ import {
 	CONTINUATION_CAP_BLOCKED_REASON,
 	continuationCapRecoveryHint,
 	LENGTH_EXHAUSTED_BLOCKED_REASON,
+	NO_PROGRESS_BLOCKED_REASON,
 	REPETITION_BLOCKED_REASON,
-	UNATTENDED_CONTINUATION_BLOCKED_REASON,
 } from "./continuation-recovery.ts";
-import { buildContinuationPrompt } from "./prompt.ts";
-import { recordContinuationDelivered, updateGoal } from "./store.ts";
+import { recordContinuationDelivered, recordGoalContinuationStopped } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
 import { openTodoTaskContents } from "./todo-gate.ts";
 import type { Goal } from "./types.ts";
 
 type ContinuingGoalContinuationVerdict = Extract<GoalContinuationVerdict, { kind: "continue" }>;
 
+export const GOAL_STALE_STOP_NOTICE =
+	"Goal auto-continuation stopped because progress is stale. Send a message or run /goal resume to continue.";
+
 type GoalContinuationDeliveryOptions = {
 	readonly input: Omit<GoalContinuationInput, "goal">;
 	readonly content: (verdict: ContinuingGoalContinuationVerdict) => string;
-	readonly markContinuationPending: () => void;
-};
-
-export type SessionStartContinuationOptions = {
-	readonly continuationPending: boolean;
 	readonly markContinuationPending: () => void;
 };
 
@@ -72,6 +72,10 @@ export async function admitAndQueueGoalContinuation(
 	goal: Goal,
 	options: GoalContinuationDeliveryOptions,
 ): Promise<Goal | null> {
+	if (goal.status === "active" && ctx.engineTurnsHeld?.()) {
+		ctx.noteHeldWake?.("goal");
+		return goal;
+	}
 	const verdict = evaluateGoalContinuation({ goal, ...options.input });
 	if (verdict.kind === "deny") return handleDeniedContinuation(pi, ctx, goal, options.input, verdict.reason);
 
@@ -82,48 +86,14 @@ export async function admitAndQueueGoalContinuation(
 		goalStoreRef(ctx.sessionManager, ctx.cwd),
 		options.input.currentSignature,
 		goal.id,
-		{ countUnattended: options.input.path !== "monitorDelayed" },
+		options.input.limitWait === true
+			? { countUnattended: false, countStreak: false }
+			: { countUnattended: options.input.path !== "monitorDelayed" },
 	);
 	if (recordedGoal === null) return null;
 	options.markContinuationPending();
 	queueHiddenGoalPrompt(pi, options.content(verdict));
 	return recordedGoal;
-}
-
-/** Routes startup and resume continuations through the same verdict and delivery accounting as agent-end paths. */
-export async function queueGoalContinuation(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	goal: Goal,
-	options: SessionStartContinuationOptions,
-): Promise<Goal | null> {
-	const signature = buildCurrentGoalContinuationSignature(
-		ctx,
-		goal,
-		lastAssistantTextFromEntries(ctx.sessionManager.getBranch()),
-	);
-	return admitAndQueueGoalContinuation(pi, ctx, goal, {
-		input: {
-			isIdle: ctx.isIdle(),
-			hasPendingMessages: ctx.hasPendingMessages(),
-			path: "sessionStart",
-			lastStopReason: undefined,
-			lastTurnWasMalformedToolUse: false,
-			consecutiveContinuations: goal.consecutiveContinuations ?? 0,
-			lastContinuationSignature: goal.lastContinuationSignature,
-			currentSignature: signature,
-			consecutiveLengthRecoveries: 0,
-			recentNormalizedOutputHashes: [],
-			toollessContinuationStreak: 0,
-			continuationPending: options.continuationPending,
-			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(
-				ctx,
-				lastAssistantFromEntries(ctx.sessionManager.getBranch()),
-			),
-		},
-		content: () => buildContinuationPrompt(goal),
-		markContinuationPending: options.markContinuationPending,
-	});
 }
 
 export function buildCurrentGoalContinuationSignature(
@@ -143,21 +113,6 @@ export function lastAssistantText(messages: readonly AgentMessage[]): string {
 		if (message?.role === "assistant") return textContent(message);
 	}
 	return "";
-}
-
-function lastAssistantTextFromEntries(entries: readonly SessionEntry[]): string {
-	const assistant = lastAssistantFromEntries(entries);
-	return assistant === undefined ? "" : textContent(assistant);
-}
-
-function lastAssistantFromEntries(
-	entries: readonly SessionEntry[],
-): Extract<AgentMessage, { role: "assistant" }> | undefined {
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (entry?.type === "message" && entry.message.role === "assistant") return entry.message;
-	}
-	return undefined;
 }
 
 export function isLastTurnStuckOnContextOverflow(
@@ -180,23 +135,144 @@ async function handleDeniedContinuation(
 	goal: Goal,
 	input: Omit<GoalContinuationInput, "goal">,
 	reason: Extract<GoalContinuationVerdict, { kind: "deny" }>["reason"],
-): Promise<Goal> {
+): Promise<Goal | null> {
+	if (goal.status !== "active" || reason === "not-eligible" || reason === "single-flight") return goal;
+	const logger = createSessionLogger(ctx.agentDir);
+	const at = Date.now();
 	const blockedReason = blockedReasonForContinuationGuard(reason);
-	if (blockedReason === undefined) return goal;
-
-	const blocked = await updateGoal(
+	const stopped = await recordGoalContinuationStopped(
 		goalStoreRef(ctx.sessionManager, ctx.cwd),
-		{ status: "blocked", reason: blockedReason },
-		"model",
+		goal,
+		at,
+		blockedReason,
+		{
+			reason,
+			consecutiveContinuations: input.consecutiveContinuations,
+			unattendedContinuations: goal.unattendedContinuations ?? 0,
+			noProgressContinuations: goal.noProgressContinuations ?? 0,
+		},
 	);
-	if (ctx.hasUI) ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
-	pi.events?.emit("goal_continuation_guard_tripped", {
-		goalId: goal.id,
-		reason,
-		count: input.consecutiveContinuations,
-		unattendedContinuations: goal.unattendedContinuations ?? 0,
-	});
-	return blocked;
+	if (!stopped.recorded) return stopped.goal;
+	// Preserve the guard's existing side effects even if publishing the additive entries fails.
+	if (reason === "stale" && ctx.hasUI) ctx.ui.notify(GOAL_STALE_STOP_NOTICE, "info");
+	if (blockedReason !== undefined) {
+		if (ctx.hasUI) ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
+		pi.events?.emit("goal_continuation_guard_tripped", {
+			goalId: goal.id,
+			reason,
+			count: input.consecutiveContinuations,
+			unattendedContinuations: goal.unattendedContinuations ?? 0,
+			noProgressContinuations: goal.noProgressContinuations ?? 0,
+		});
+	}
+	try {
+		pi.appendEntry("goal-continuation-stopped", {
+			goalId: goal.id,
+			reason,
+			consecutiveContinuations: input.consecutiveContinuations,
+			unattendedContinuations: goal.unattendedContinuations ?? 0,
+			noProgressContinuations: goal.noProgressContinuations ?? 0,
+			at,
+		});
+	} catch (error) {
+		logger.warn("goal_continuation_record_write_failed", {
+			kind: "goal-continuation-stopped",
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+	try {
+		if (
+			(reason === "stale" || reason === "repetition") &&
+			!enginePauseSinceLastTurn(ctx.sessionManager.getBranch())
+		) {
+			pi.appendEntry("engine-paused", {
+				reason: reason === "stale" ? "goal-stale" : "goal-repeat",
+				customType: GOAL_CONTINUATION_MESSAGE_TYPE,
+				count: input.consecutiveContinuations,
+				at,
+			});
+		}
+	} catch (error) {
+		logger.warn("goal_continuation_record_write_failed", {
+			kind: "engine-paused",
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+	return stopped.goal;
+}
+
+/**
+ * senpi#3015: the stop claim and the session entries are two separate writes, so a crash
+ * between them leaves the claim without its entries. On session start the claim still
+ * stands, so re-append the missing entries once from the payload the claim captured.
+ * A claim whose entries already landed is left alone; a claim recorded before the
+ * payload existed cannot be rebuilt and is left alone too.
+ */
+export async function recoverMissingGoalContinuationStop(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	goal: Goal,
+): Promise<void> {
+	const at = goal.continuationStoppedAt;
+	const detail = goal.continuationStoppedDetail;
+	if (at === undefined || detail === undefined) return;
+	const branch = ctx.sessionManager.getBranch();
+	const logger = createSessionLogger(ctx.agentDir);
+	if (!hasStopEntrySince(branch, goal.id, at)) {
+		try {
+			pi.appendEntry("goal-continuation-stopped", {
+				goalId: goal.id,
+				reason: detail.reason,
+				consecutiveContinuations: detail.consecutiveContinuations,
+				unattendedContinuations: detail.unattendedContinuations,
+				noProgressContinuations: detail.noProgressContinuations,
+				at,
+			});
+		} catch (error) {
+			logger.warn("goal_continuation_record_write_failed", {
+				kind: "goal-continuation-stopped",
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+	if (detail.reason !== "stale" && detail.reason !== "repetition") return;
+	if (hasEnginePausedEntrySince(branch, at) || enginePauseSinceLastTurn(branch)) return;
+	try {
+		pi.appendEntry(ENGINE_PAUSED_ENTRY_TYPE, {
+			reason: detail.reason === "stale" ? "goal-stale" : "goal-repeat",
+			customType: GOAL_CONTINUATION_MESSAGE_TYPE,
+			count: detail.consecutiveContinuations,
+			at,
+		});
+	} catch (error) {
+		logger.warn("goal_continuation_record_write_failed", {
+			kind: ENGINE_PAUSED_ENTRY_TYPE,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+}
+
+function hasStopEntrySince(branch: readonly SessionEntry[], goalId: string, sinceAt: number): boolean {
+	return branch.some(
+		(entry) =>
+			entry?.type === "custom" &&
+			entry.customType === "goal-continuation-stopped" &&
+			isRecord(entry.data) &&
+			entry.data.goalId === goalId &&
+			typeof entry.data.at === "number" &&
+			entry.data.at >= sinceAt,
+	);
+}
+
+function hasEnginePausedEntrySince(branch: readonly SessionEntry[], sinceAt: number): boolean {
+	return branch.some(
+		(entry) =>
+			entry?.type === "custom" &&
+			entry.customType === ENGINE_PAUSED_ENTRY_TYPE &&
+			isRecord(entry.data) &&
+			typeof entry.data.at === "number" &&
+			entry.data.at >= sinceAt,
+	);
 }
 
 function blockedReasonForContinuationGuard(
@@ -205,8 +281,8 @@ function blockedReasonForContinuationGuard(
 	switch (reason) {
 		case "cap":
 			return CONTINUATION_CAP_BLOCKED_REASON;
-		case "unattended":
-			return UNATTENDED_CONTINUATION_BLOCKED_REASON;
+		case "no-progress":
+			return NO_PROGRESS_BLOCKED_REASON;
 		case "repetition":
 			return REPETITION_BLOCKED_REASON;
 		case "length-exhausted":

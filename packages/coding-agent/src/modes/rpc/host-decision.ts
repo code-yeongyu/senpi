@@ -10,7 +10,8 @@
  *   I2 - compatibility is `protocolVersion` + capabilities, NEVER a version-string compare,
  *        and "is my build newer?" is `compareEngineOrdinal`, never `serverVersion`. An
  *        ordinal that cannot be compared (a build without git metadata, a host that reports
- *        none) is EQUAL, and since a handoff needs STRICTLY greater, such a pair attaches.
+ *        none, an ordinal outside senpi CalVer such as a compiled omo's `[5, 1, 78]`, senpi#7040) is
+ *        EQUAL, and since a handoff needs STRICTLY greater, such a pair attaches.
  *
  * The profile rule is the third guard: a handoff additionally requires the candidate's
  * extension set to be a SUPERSET of the running host's. Handing off to a narrower generation
@@ -21,6 +22,7 @@
 import {
 	compareEngineOrdinal,
 	type EngineBuildIdentity,
+	engineIdentityOf,
 	type EngineOrdinal,
 } from "../../core/engine-build-identity.ts";
 import {
@@ -28,6 +30,7 @@ import {
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 } from "./custom-capability.ts";
+import { describeHostHolder, type HostHolder } from "./host-holder.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
 
@@ -41,6 +44,13 @@ export const HOST_PROTOCOL_VERSION = 1;
  * its sessions. A host without it is attach-only - it is never renamed, signalled or upgraded.
  */
 export const GENERATION_HANDOFF_CAPABILITY = "generation_handoff";
+
+/**
+ * HOST capability (senpi#4602): every rename or remove this host makes on its public socket entry runs under the
+ * endpoint's mutation fence and re-reads the endpoint owner token. Only a predecessor that advertises it is handed
+ * off with the owner-token guard; an older one gets today's handoff and its late-rename race.
+ */
+export const ENDPOINT_OWNER_FENCE_CAPABILITY = "endpoint_owner_fence";
 
 /** What a daemon session needs from a host before any client may attach to it. */
 export const REQUIRED_HOST_CAPABILITIES = [
@@ -85,7 +95,11 @@ export type HostDecision =
 			readonly reason: "no_host" | "restart_own_host";
 			readonly upgradeable: false;
 	  }
-	| { readonly action: "refuse"; readonly reason: "protocol" | "capability"; readonly upgradeable: false }
+	| {
+			readonly action: "refuse";
+			readonly reason: "protocol" | "capability" | "host_stopping";
+			readonly upgradeable: false;
+	  }
 	| {
 			readonly action: "fallback";
 			readonly reason: "capability" | "engine_mismatch";
@@ -105,7 +119,15 @@ export type HostDecision =
 export type AttachOnlyDecision = Extract<HostDecision, { action: "start" | "reuse" | "refuse" }>;
 
 /** Why an ensure refused. The decision's own refusals plus the one only a pidfile can produce. */
-export type HostRefusalReason = "protocol" | "capability" | "foreign_writer" | "legacy_host" | "host_busy";
+export type HostRefusalReason =
+	| "protocol"
+	| "capability"
+	| "foreign_writer"
+	| "legacy_host"
+	| "host_busy"
+	| "host_stopping"
+	| "host_stalled"
+	| "endpoint_occupied";
 
 /**
  * An ensure that found an unusable host and refused to act on it. A refusal is FINAL by design:
@@ -115,12 +137,27 @@ export type HostRefusalReason = "protocol" | "capability" | "foreign_writer" | "
 export class HostEnsureRefusedError extends Error {
 	readonly socket: string;
 	readonly reason: HostRefusalReason;
+	/** What only the caller knows: which process is in the way, and how to clear it. */
+	readonly detail: string | undefined;
+	/** The generation in the way, when its registration names one (`foreign_writer`). */
+	readonly holder: HostHolder | undefined;
 
-	constructor(socket: string, reason: HostRefusalReason, host: HostProtocolInfo | undefined) {
-		super(`RPC socket ${socket} refused: ${reason} - ${refusalDetail(reason, host)}`);
+	constructor(
+		socket: string,
+		reason: HostRefusalReason,
+		host: HostProtocolInfo | undefined,
+		detail?: string,
+		holder?: HostHolder,
+	) {
+		const heldBy = holder ? ` (held by ${describeHostHolder(holder)})` : "";
+		super(
+			`RPC socket ${socket} refused: ${reason} - ${refusalDetail(reason, host)}${detail ? `: ${detail}` : ""}${heldBy}`,
+		);
 		this.name = "HostEnsureRefusedError";
 		this.socket = socket;
 		this.reason = reason;
+		this.detail = detail;
+		this.holder = holder;
 	}
 }
 
@@ -133,11 +170,17 @@ function refusalDetail(reason: HostRefusalReason, host: HostProtocolInfo | undef
 			return `the running host is missing ${JSON.stringify(missing)}; it owns the socket, so no second host is started`;
 		}
 		case "foreign_writer":
-			return "its pidfile was written by another process, so this one may not signal it; stop that host explicitly instead";
+			return "another process registered the host on this socket; it accepts connections but did not answer as a host, and this one may not signal it - stop that host explicitly (host stop --force), then ensure again";
 		case "legacy_host":
-			return "a host from before the per-socket daemon directory is still running on this endpoint; it is never signalled, and no second host is started beside it";
+			return "a host from before the per-socket daemon directory is still running; it is drained and replaced only while it holds no session, and no second host is started beside it";
 		case "host_busy":
 			return "its socket accepts connections but did not answer inside the probe budget: a live host under load, which is never ended to make room for a replacement";
+		case "host_stopping":
+			return "this generation is stopping; wait for its exit before launching a successor";
+		case "endpoint_occupied":
+			return "another process accepts connections on this socket but does not answer as a host, and no host registration names it; it is never removed while it listens, so quit the process holding it and ensure again";
+		case "host_stalled":
+			return "nothing reaches its socket, but its process is alive and its own loop-lag watchdog measured a recent stall: a stalled host is still serving its sessions, so it is neither stopped nor replaced";
 		default:
 			return assertNever(reason);
 	}
@@ -161,6 +204,7 @@ export function decideHostAction(
 	if (host === undefined) {
 		return { action: "start", reason: client.startedByUs ? "restart_own_host" : "no_host", upgradeable: false };
 	}
+	if (host.lifecycle === "stopping") return { action: "refuse", reason: "host_stopping", upgradeable: false };
 	if (host.protocolVersion !== client.protocolVersion) {
 		return { action: "refuse", reason: "protocol", upgradeable: false };
 	}
@@ -194,24 +238,37 @@ export function decideHostAction(
 /** A strictly newer build whose extensions cover everything the host loads - the only handoff candidate. */
 function supersedes(client: HostDecisionClient, host: HostProtocolInfo): boolean {
 	if (host.engineOrdinal === undefined) return false;
-	const hostIdentity: EngineBuildIdentity = {
-		text: host.engineVersion ?? "",
-		ordinal: host.engineOrdinal,
-		scheme: host.engineOrdinal[4] > 0 ? "epoch" : "nodef",
-	};
-	if (compareEngineOrdinal(client.identity, hostIdentity) <= 0) return false;
+	if (compareEngineOrdinal(client.identity, engineIdentityOf(host.engineVersion ?? "", host.engineOrdinal)) <= 0)
+		return false;
 	return covers(client.launchProfile, host.launch_profile);
 }
 
 function profileWarning(client: HostDecisionClient, host: HostProtocolInfo): HostDecisionWarning | undefined {
 	if (client.launchProfile === undefined || host.launch_profile === undefined) return "profile_mismatch_attached";
 	if (client.launchProfile.profile_id === host.launch_profile.profile_id) return undefined;
-	return covers(client.launchProfile, host.launch_profile) ? "profile_mismatch_attached" : "profile_narrower_attached";
+	const clientCoversHost = covers(client.launchProfile, host.launch_profile);
+	// The same plugin set installed under another root differs only in path: nothing to warn about.
+	if (clientCoversHost && covers(host.launch_profile, client.launchProfile)) return undefined;
+	return clientCoversHost ? "profile_mismatch_attached" : "profile_narrower_attached";
 }
 
+/**
+ * The role of a launch-profile extension: the engine plugin's files are identified from the last
+ * `plugin` path segment on (`plugin`, `plugin/extensions/<name>.js`), so two installs of the same
+ * plugin set under different roots (a runtime directory per build) name the same roles. Every other
+ * extension keeps its whole path: only the plugin's location is build-specific.
+ */
+function extensionRole(extension: string): string {
+	const segments = extension.split(/[\\/]+/);
+	const pluginAt = segments.lastIndexOf("plugin");
+	return pluginAt < 0 ? extension : segments.slice(pluginAt).join("/");
+}
+
+/** Profile compatibility only: runtime identity (`runtimeBuildId`, the engine ordinal) is decided elsewhere. */
 function covers(candidate: RpcLaunchProfile | undefined, running: RpcLaunchProfile | undefined): boolean {
 	if (candidate === undefined || running === undefined) return false;
-	return running.core.extensions.every((extension) => candidate.core.extensions.includes(extension));
+	const candidateRoles = new Set(candidate.core.extensions.map(extensionRole));
+	return running.core.extensions.every((extension) => candidateRoles.has(extensionRole(extension)));
 }
 
 /** True when both builds are the same released version and only their build epoch differs. */

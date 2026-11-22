@@ -11,8 +11,9 @@ import {
 	convertResponsesTools,
 	processResponsesStream,
 } from "../src/api/openai-responses-shared.ts";
-import type { AssistantMessage, Context, Model, Tool, ToolCall } from "../src/types.ts";
+import type { AssistantMessage, Model, Tool, ToolCall } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function makeModel(): Model<"openai-responses"> {
 	return {
@@ -204,7 +205,7 @@ describe("constrained tool sampling", () => {
 			name: "sample_tool",
 			arguments: { payload: "abc" },
 		};
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [
 				{
 					role: "assistant",
@@ -225,8 +226,9 @@ describe("constrained tool sampling", () => {
 					timestamp: Date.now(),
 				},
 			],
-		};
-		for (const invalidArguments of [{}, { payload: 42 }]) {
+		});
+		const invalidArgumentsList: ToolCall["arguments"][] = [{}, { payload: 42 }];
+		for (const invalidArguments of invalidArgumentsList) {
 			replayedToolCall.arguments = invalidArguments;
 			expect(() =>
 				convertResponsesMessages(makeModel(), context, new Set(["openai"]), {
@@ -252,6 +254,40 @@ describe("constrained tool sampling", () => {
 			call_id: "call_1",
 			output: "done",
 		});
+	});
+
+	// earendil-works/radius#115: a gateway forwards another model's history as a foreign provider.
+	it("drops foreign item ids when replaying grammar calls as custom Responses items", () => {
+		const context = normalizeContext({
+			messages: [
+				{
+					role: "assistant",
+					api: "pi-messages",
+					provider: "radius",
+					model: "gpt-other",
+					content: [{ type: "toolCall", id: "call_1|ctc_1", name: "sample_tool", arguments: { payload: "abc" } }],
+					usage: makeUsage(),
+					stopReason: "toolUse",
+					timestamp: Date.now(),
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call_1|ctc_1",
+					toolName: "sample_tool",
+					content: [{ type: "text", text: "done" }],
+					isError: false,
+					timestamp: Date.now(),
+				},
+			],
+		});
+
+		const messages = convertResponsesMessages(makeModel(), context, new Set(["openai"]), {
+			grammarToolInputProperties: new Map([["sample_tool", "payload"]]),
+		});
+
+		const call = messages.find((item) => "type" in item && item.type === "custom_tool_call");
+		expect(call).toMatchObject({ type: "custom_tool_call", call_id: "call_1", input: "abc" });
+		expect(call && "id" in call ? call.id : undefined).toBeUndefined();
 	});
 
 	it("keeps grammar input JSON deltas append-only", () => {

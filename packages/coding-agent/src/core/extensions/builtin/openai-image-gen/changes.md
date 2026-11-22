@@ -1,3 +1,23 @@
+## 2026-09-30 - Native images on ChatGPT subscriptions
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/openai-image-gen/gate.ts` enables native image generation for `openai-codex-responses` models on the official HTTPS `chatgpt.com` endpoint, honoring an explicit compatibility opt-out.
+- Existing payload arbitration replaces the client Images API tool with the native server tool; existing response parsing and file externalization are reused.
+- Added subscription endpoint and request-model transition regressions in `test/suite/chatgpt-image-generation.test.ts`.
+
+### Why
+
+- Subscription sessions previously fell through to an unrelated Images API gateway because the native gate accepted only `openai-responses`.
+
+### Why an extension could not handle it
+
+- The change is implemented in the existing builtin extension that owns native image-tool arbitration; no core change or second injector is needed.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/openai-image-gen/gate.ts` capability predicate.
+
 ## 2026-09-10 - Native tool follows the Sunburst default
 
 ### What changed

@@ -710,7 +710,11 @@ describe("runtime structural drive", () => {
 			ready,
 			{ kind: "run", promptEntryIds: ["tip"] },
 			{
-				entries: [{ id: "tip", parentId: null, type: "message", message: user("large prompt") }],
+				entries: [
+					{ id: "question", parentId: null, type: "message", message: user("earlier question") },
+					{ id: "answer", parentId: "question", type: "message", message: fauxAssistantMessage("answer") },
+					{ id: "tip", parentId: "answer", type: "message", message: user("large prompt") },
+				],
 			},
 		);
 		fixture.faux.setResponses([
@@ -738,6 +742,118 @@ describe("runtime structural drive", () => {
 		const response = await fixture.session.getEntry(fixture.lane.state.tipId!, BACKGROUND_CONTEXT);
 		expect(response).toMatchObject({ type: "message", message: { stopReason: "error" } });
 		expect(fixture.events.map((event) => event.type)).toContain("compaction_start");
+	});
+
+	it.each([
+		["nothing precedes the cut", { enabled: true, reserveTokens: 1_000, keepRecentTokens: 1 }, false],
+		["compaction is disabled", { enabled: false, reserveTokens: 1_000, keepRecentTokens: 1 }, true],
+	])("fails an overflow without compacting when %s", async (_name, compaction, withHistory) => {
+		const fixture = await createFixture();
+		const ready = {
+			...runScope(compaction),
+			at: "assistant.ready",
+			generationContext: {
+				stepId: "step",
+				triggerEntryId: "tip",
+				configuration: fixture.configuration,
+				streamOptions: {},
+				retryPolicy: { maxAttempts: 2, baseDelayMs: 10, maxAgentDelayMs: 30_000 },
+				overflowRecoveryUsed: false,
+			},
+			nextAttempt: 1,
+		} as const;
+		const history: NewEntry[] = withHistory
+			? [
+					{ id: "question", parentId: null, type: "message", message: user("earlier question") },
+					{ id: "answer", parentId: "question", type: "message", message: fauxAssistantMessage("answer") },
+				]
+			: [];
+		await installOperation(
+			fixture,
+			ready,
+			{ kind: "run", promptEntryIds: ["tip"] },
+			{
+				entries: [
+					...history,
+					{ id: "tip", parentId: history.at(-1)?.id ?? null, type: "message", message: user("large prompt") },
+				],
+			},
+		);
+		fixture.faux.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "prompt exceeds the context window" }),
+		]);
+
+		await runGeneration(fixture.lane, fixture.drive, ready);
+		expect(fixture.events.some((event) => event.type === "compaction_start")).toBe(false);
+		expect(fixture.events).toContainEqual(expect.objectContaining({ type: "run_end", status: "failed" }));
+		expect(fixture.faux.state.callCount).toBe(1);
+	});
+
+	it("does not compact again on usage measured before the newest compaction", async () => {
+		const fixture = await createFixture();
+		const model = fixture.faux.getModel();
+		const answer = fauxAssistantMessage("answer");
+		const measured = {
+			...answer,
+			usage: { ...answer.usage, input: model.contextWindow, totalTokens: model.contextWindow },
+		};
+		const checkpoint: CheckpointOperation = {
+			...runScope({ enabled: true, reserveTokens: 1_000, keepRecentTokens: 1 }),
+			at: "checkpoint",
+			continuation: { kind: "need_assistant", overflowRecoveryUsed: false },
+			triggerEntryId: "next",
+		};
+		await installOperation(
+			fixture,
+			checkpoint,
+			{ kind: "run", promptEntryIds: ["next"] },
+			{
+				entries: [
+					{ id: "question", parentId: null, type: "message", message: user("question") },
+					{ id: "answer", parentId: "question", type: "message", message: measured },
+					{
+						id: "compacted",
+						parentId: "answer",
+						type: "compaction",
+						summary: "summary",
+						retainedTail: [user("question"), measured],
+						tokensBefore: model.contextWindow,
+						fromHook: false,
+					},
+					{ id: "next", parentId: "compacted", type: "message", message: user("next prompt") },
+				],
+			},
+		);
+
+		expect(await runCheckpoint(fixture.lane, fixture.drive, checkpoint)).toEqual({ kind: "continue" });
+		expect(currentState(fixture).at).toBe("assistant.ready");
+		expect(fixture.events.some((event) => event.type === "compaction_start")).toBe(false);
+	});
+
+	it("starts no threshold compaction when no history precedes the cut", async () => {
+		const fixture = await createFixture();
+		const model = fixture.faux.getModel();
+		const checkpoint: CheckpointOperation = {
+			...runScope({ enabled: true, reserveTokens: model.contextWindow, keepRecentTokens: 1_000_000 }),
+			at: "checkpoint",
+			continuation: { kind: "need_assistant", overflowRecoveryUsed: false },
+			triggerEntryId: "answer",
+		};
+		await installOperation(
+			fixture,
+			checkpoint,
+			{ kind: "run", promptEntryIds: ["question"] },
+			{
+				entries: [
+					{ id: "question", parentId: null, type: "message", message: user("question") },
+					{ id: "answer", parentId: "question", type: "message", message: fauxAssistantMessage("answer") },
+				],
+			},
+		);
+
+		expect(await runCheckpoint(fixture.lane, fixture.drive, checkpoint)).toEqual({ kind: "continue" });
+		expect(currentState(fixture).at).toBe("assistant.ready");
+		expect(fixture.events.some((event) => event.type === "compaction_start")).toBe(false);
 	});
 
 	it("publishes a hook compaction and terminal cleanup atomically without assistant lifecycle", async () => {

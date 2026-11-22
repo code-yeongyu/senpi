@@ -23,6 +23,7 @@ import {
 } from "../src/api/cursor-agent.ts";
 import type { AssistantMessageEvent, Message, Model, ToolResultMessage } from "../src/types.ts";
 import { isCursorExecResolved } from "../src/utils/block-symbols.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 import { registerCursorExecLifecycleTests } from "./cursor-agent-exec-lifecycle.cases.ts";
 
 const neverAbortedSignal = new AbortController().signal;
@@ -139,7 +140,7 @@ async function collectStream(baseUrl: string, options: CursorAgentOptions, conte
 	const events: AssistantMessageEvent[] = [];
 	const stream = streamCursorAgent(
 		buildModel(baseUrl),
-		context ?? { messages: [{ role: "user", content: "hello", timestamp: 0 }] },
+		normalizeContext(context ?? { messages: [{ role: "user", content: "hello", timestamp: 0 }] }),
 		{ signal: neverAbortedSignal, ...options },
 	);
 	for await (const event of stream) {
@@ -375,7 +376,7 @@ describe("cursor-agent wire protocol", () => {
 		const events: AssistantMessageEvent[] = [];
 		const stream = streamCursorAgent(
 			buildModel(baseUrl),
-			{ messages: [{ role: "user", content: "hello", timestamp: 0 }] },
+			normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 0 }] }),
 			{ apiKey: "test-token", signal: controller.signal },
 		);
 		for await (const event of stream) {

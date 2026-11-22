@@ -1,4 +1,4 @@
-import type { Op } from "./delta/index.ts";
+import type { Draft, Op } from "./delta/index.ts";
 import type { RemoteServiceProvider } from "./services/provider.ts";
 
 export type { RemoteServiceError } from "./services/errors.ts";
@@ -42,18 +42,81 @@ export interface ReplicatedStateDelivery {
 }
 
 export interface ReplicatedState<T> {
-	/** Immutable value, or undefined until hydration. Later updates do not mutate previously returned values. */
+	/**
+	 * Contract-immutable value, or undefined until hydration. It is not frozen and may share containers with an
+	 * in-process provider; consumers must not mutate it. Later updates do not mutate previously returned values.
+	 */
 	readonly value: T | undefined;
-	/** Listener values are immutable and may structurally share unchanged data with other revisions. */
+	/**
+	 * Each subscription serializes callbacks, awaiting hydration before updates. Values are immutable and may
+	 * share unchanged revision data. At most 100 deliveries wait behind the running callback; overflow keeps
+	 * only the newest pending value/context/delivery, so update sequences may skip. Failures are reported in
+	 * isolation and delivery continues. Unsubscribe discards pending work without aborting or joining a callback.
+	 */
+	subscribe(listener: (value: T, context: Context, delivery: ReplicatedStateDelivery) => Promise<void>): () => void;
 	subscribe(listener: (value: T, context: Context, delivery: ReplicatedStateDelivery) => void): () => void;
 }
 
 export interface MutableReplicatedState<T extends object> extends ReplicatedState<T> {
 	readonly value: T;
-	/** Mutable tracked state. All writes must go through this proxy. */
-	readonly state: T;
-	/** Publish the changes made through {@link state} since the previous publication. */
-	publish(context: Context): void;
+	/**
+	 * Atomically publish one synchronous overlay mutation. Draft handles are unusable after the callback returns.
+	 * Values placed through the draft are cloned by value; assigning `undefined` to an object property deletes it.
+	 */
+	change(context: Context, mutate: (draft: Draft<T>) => void): void;
+	/**
+	 * Atomically take immutable ownership of an alias-free strict-JSON replacement.
+	 * The caller must not mutate the transferred root after this call.
+	 */
+	replace(context: Context, value: T): void;
+}
+
+/** One immutable authoritative revision committed after an attachment snapshot. */
+export interface ReplicatedStateSourceFrame<T> {
+	/** Monotonic source cursor. The first frame after a snapshot must be `snapshot.cursor + 1`. */
+	readonly cursor: number;
+	/** The exact immutable value produced by this commit. */
+	readonly value: T;
+	/** The exact immutable operation batch that produced `value` from the preceding source revision. */
+	readonly ops: readonly Op[];
+	readonly context: Context;
+}
+
+export interface ReplicatedStateSourceAttachment<T> {
+	/** Fixed immutable snapshot captured at the atomic attachment boundary. */
+	readonly snapshot: { readonly value: T; readonly cursor: number };
+	/**
+	 * Install the sole listener and synchronously drain every buffered frame in source commit order.
+	 * This method is single-use. After it begins, every new committed frame must also be delivered in order
+	 * until disposal, including commits made reentrantly while a prior frame is being delivered.
+	 */
+	activate(listener: (frame: ReplicatedStateSourceFrame<T>) => void): void;
+	/** Stop delivery and release source resources. Disposal must be idempotent. */
+	dispose(): void;
+}
+
+/**
+ * An authoritative immutable revision source.
+ *
+ * `attach()` must synchronously and atomically capture one snapshot and register the returned attachment to buffer
+ * every later committed frame. The snapshot must include every commit before that boundary; buffered frames must
+ * include every commit after it, with no overlap or gap. Snapshot values, frame values, and operation batches are
+ * immutable and remain valid after delivery. Chord only publishes these references; it never applies or re-diffs them.
+ */
+export interface ReplicatedStateSource<T> {
+	attach(): ReplicatedStateSourceAttachment<T>;
+}
+
+export interface ReplicatedStateSourceOptions {
+	/** Receives source-contract and publication-listener failures without throwing them into the source. */
+	readonly onError?: (error: Error) => void;
+}
+
+/** A synchronously hydrated publication-only state backed by one source attachment. */
+export interface AttachedReplicatedState<T> extends ReplicatedState<T> {
+	readonly value: T;
+	/** Idempotently release the source attachment. The last published value remains readable. */
+	dispose(): void;
 }
 
 declare const SERVICE_TYPE: unique symbol;
@@ -68,15 +131,24 @@ export interface Service<T> {
 	readonly [SERVICE_TYPE]?: (value: T) => T;
 }
 
+/** JSON with readonly containers, such as other packages' recursive JSON types. */
+type ReadonlyJsonValue =
+	| null
+	| boolean
+	| number
+	| string
+	| readonly ReadonlyJsonValue[]
+	| { readonly [key: string]: ReadonlyJsonValue };
+
+// A type assignable to readonly JSON is valid as is. Walking a recursive JSON type instead, for example one with
+// readonly arrays, would never terminate.
 type InvalidJsonPart<T> =
 	IsAny<T> extends true
 		? T
 		: unknown extends T
 			? never
-			: [T] extends [JsonValue]
-				? [JsonValue] extends [T]
-					? never
-					: InvalidJsonStructure<T>
+			: [T] extends [ReadonlyJsonValue]
+				? never
 				: InvalidJsonStructure<T>;
 
 type InvalidJsonProperty<T> = [Exclude<T, undefined>] extends [never] ? T : InvalidJsonPart<Exclude<T, undefined>>;
@@ -157,6 +229,8 @@ export type ServiceProviderUpdate =
 			readonly sequence: number;
 			readonly ops: readonly Op[];
 	  }
+	/** Full subscription rebaseline after overflow; every state is a root replacement at its new sequence. */
+	| { readonly type: "reset"; readonly snapshot: ServiceSubscriptionSnapshot }
 	| { readonly type: "unavailable" }
 	| { readonly type: "replaced"; readonly snapshot: ServiceInstanceSnapshot }
 	| { readonly type: "spawned"; readonly instance: ServiceInstanceSnapshot }
@@ -171,6 +245,7 @@ export type ServiceCall = {
 };
 
 export interface ServiceSubscription {
+	/** Atomic baseline. Later updates buffer until activation, with a full reset on pending delivery 101. */
 	readonly snapshot: ServiceSubscriptionSnapshot;
 	activate(): void;
 	close(context?: Context): void | Promise<void>;
@@ -215,7 +290,10 @@ export interface FacetEnvironment {
 	provide<T>(service: Service<T>, implementation: NoInfer<T>): void;
 	/** Declare ownership of a multi-instance service and return its deferred spawning capability. */
 	provideMany<T>(service: Service<T>): ServiceSpawner<T>;
-	/** Create initialized mutable state suitable for exposing through a service implementation. */
+	/**
+	 * Create initialized mutable state by taking immutable ownership of an alias-free strict-JSON root.
+	 * The caller must not mutate `initial` after this call.
+	 */
 	replicatedState<T extends object>(initial: T): MutableReplicatedState<T>;
 	/** Give the facet ownership of a resource cleanup function. */
 	own(disposal: () => void | Promise<void>): void;

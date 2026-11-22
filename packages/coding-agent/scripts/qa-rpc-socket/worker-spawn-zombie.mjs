@@ -37,7 +37,7 @@ import { parseArgs } from "../../src/cli/args.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
-import { cleanupAllAndWait, installCleanupHooks, makeScratch } from "../qa-app-server/lib/env.mjs";
+import { cleanupAllAndWait, installCleanupHooks, makeScratch } from "../qa-shared/lib/env.mjs";
 
 const runtime = flag("--runtime") ?? "in-process";
 const kase = flag("--case") ?? "bash";

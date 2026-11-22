@@ -1,4 +1,5 @@
 import type { StreamFn } from "@earendil-works/pi-agent-core";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import type {
 	Api,
 	AssistantMessage,
@@ -9,6 +10,7 @@ import type {
 	ThinkingLevel,
 } from "@earendil-works/pi-ai/compat";
 import { completeSimple, type RetryPolicy, retryAssistantCall } from "@earendil-works/pi-ai/compat";
+import { withoutServerSearch } from "./extensions/builtin/server-search-fallback.ts";
 import { initialTitleReasoning, mandatoryReasoningRetryLevel } from "./session-title-reasoning.ts";
 
 interface SessionTitleAuth {
@@ -146,6 +148,7 @@ function buildTitleOptions(
 ): SimpleStreamOptions {
 	const titleOptions: SimpleStreamOptions = {
 		...options.baseOptions,
+		onPayload: withoutServerSearch(options.baseOptions?.onPayload),
 		sessionId: options.sessionId,
 		cacheRetention: options.model.cacheRetention === "none" ? "none" : "short",
 		maxTokens: reasoning === undefined ? TITLE_MAX_TOKENS : REASONING_TITLE_MAX_TOKENS,
@@ -180,7 +183,7 @@ async function completeTitle(
 	if (streamFn === undefined) {
 		return completeSimple(model, context, options);
 	}
-	const stream = await streamFn(model, context, options);
+	const stream = await streamFn(model, normalizeContext(context), options);
 	return stream.result();
 }
 

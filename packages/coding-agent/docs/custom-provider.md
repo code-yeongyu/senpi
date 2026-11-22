@@ -185,6 +185,10 @@ When `models` is provided, it **replaces** all existing models for that provider
 
 `apiKey` and custom header values use the same config value syntax as `models.json`: `!command` at the start executes a command for the whole value, `$ENV_VAR` and `${ENV_VAR}` interpolate environment variables, `$$` emits a literal `$`, and `$!` emits a literal `!`.
 
+The `$file`, `$env` and `$concat` reference objects that [`models.json`](models.md#value-resolution) accepts work only in configuration files: `models.json`, `auth.json`, `mcp.json`, and a custom models file you point senpi at. A reference object in a value passed to `registerProvider` is refused before anything is read: resolving it throws a `ConfigReferenceError` with `reason` `"forbidden"`, even when the user's own config for the same provider uses references. An MCP server that an extension declares with a reference object is skipped, with a diagnostic carrying the same error.
+
+Every resolved value is treated as sensitive and redacted from outbound text for the process lifetime, including non-secret values such as paths. Values shorter than four characters are not redacted. For MCP servers, put secrets in `env.*` or `headers`, not `args[]`, because resolved arguments are visible in the process list.
+
 ## Unregister Provider
 
 Use `pi.unregisterProvider(name)` to remove a provider that was previously registered via `pi.registerProvider(name, ...)`:
@@ -419,25 +423,31 @@ For providers with non-standard APIs, implement `streamSimple`. Study the existi
 
 ### Stream Pattern
 
+The stream receives a normalized `TranscriptContext`. System prompts and tool declarations live in transcript system messages, so read them with `getCurrentSystemPrompt(context.messages)` and `getCurrentTools(context.messages)` instead of `context.systemPrompt` and `context.tools`. When the provider exposes parsed stream events, await `options.onProviderStreamEvent?.(providerEvent, model)` for each one before normalizing it.
+
 All providers follow the same pattern:
 
 ```typescript
 import {
   type AssistantMessage,
   type AssistantMessageEventStream,
-  type Context,
   type Model,
   type SimpleStreamOptions,
+  type TranscriptContext,
   calculateCost,
   createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
 } from "@earendil-works/pi-ai";
 
 function streamMyProvider(
   model: Model<any>,
-  context: Context,
+  context: TranscriptContext,
   options?: SimpleStreamOptions
 ): AssistantMessageEventStream {
   const stream = createAssistantMessageEventStream();
+  const systemPrompt = getCurrentSystemPrompt(context.messages);
+  const tools = getCurrentTools(context.messages);
 
   (async () => {
     // Initialize output message
@@ -684,7 +694,7 @@ interface ProviderConfig {
   /** Custom streaming implementation for non-standard APIs. */
   streamSimple?: (
     model: Model<Api>,
-    context: Context,
+    context: TranscriptContext,
     options?: SimpleStreamOptions
   ) => AssistantMessageEventStream;
 

@@ -1,10 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
-import { CONFIG_DIR_NAME } from "../config.ts";
-import { canonicalizePath, canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
+import { canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { linkedWorktreeMainCheckoutDir } from "./linked-worktree-checkout.ts";
+import { fsErrorCode } from "./tools/fs-error-code.ts";
+import { holdTrustStoreLockInRealm, inTrustStoreWriteTurn, trustStoreLockHeldInRealm } from "./trust-store-writers.ts";
+
+export { hasTrustRequiringProjectResources, projectAgentsSkillDirs } from "./trust-requiring-resources.ts";
 
 export type ProjectTrustDecision = boolean | null;
 
@@ -13,9 +17,16 @@ export interface ProjectTrustStoreEntry {
 	decision: boolean;
 }
 
-export interface ProjectTrustUpdate {
+/** The nearest entry at or above a folder; `decision: null` is an explicit "no decision, none inherited" entry. */
+export interface ProjectTrustNearestEntry {
 	path: string;
 	decision: ProjectTrustDecision;
+}
+
+export interface ProjectTrustUpdate {
+	path: string;
+	/** `null` removes the folder's entry; `"no_inherit"` saves an explicit `null` for it (see `findNearestTrustEntry`). */
+	decision: ProjectTrustDecision | "no_inherit";
 }
 
 export interface ProjectTrustOption {
@@ -26,16 +37,6 @@ export interface ProjectTrustOption {
 }
 
 type TrustFile = Record<string, boolean | null | undefined>;
-
-const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
-	"settings.json",
-	"extensions",
-	"skills",
-	"prompts",
-	"themes",
-	"SYSTEM.md",
-	"APPEND_SYSTEM.md",
-] as const;
 
 function normalizeCwd(cwd: string): string {
 	const resolved = resolvePath(cwd);
@@ -51,11 +52,17 @@ function normalizeCwd(cwd: string): string {
 	}
 }
 
-function findNearestTrustEntry(data: TrustFile, cwd: string): ProjectTrustStoreEntry | null {
+/**
+ * The nearest entry at or above `cwd`. An explicit `null` saved for a folder (`set_project_trust`'s `no_inherit`) is an
+ * entry as well: it holds no decision, and the walk stops there, so neither a folder above it nor, for a linked
+ * worktree, the main checkout decides for it. Readers older than that skip a `null` and keep walking: they inherit as
+ * before, and never fail on it.
+ */
+function findNearestTrustEntry(data: TrustFile, cwd: string): ProjectTrustNearestEntry | null {
 	let currentDir = normalizeCwd(cwd);
 	while (true) {
 		const value = data[currentDir];
-		if (value === true || value === false) {
+		if (value === true || value === false || value === null) {
 			return { path: currentDir, decision: value };
 		}
 
@@ -103,6 +110,21 @@ export function getProjectTrustOptions(cwd: string, options?: { includeSessionOn
 		trustOptions.push({ label: "Do not trust (this session only)", trusted: false, updates: [] });
 	}
 	return trustOptions;
+}
+
+/**
+ * `set_project_trust`'s `no_inherit`: no decision for the folder, and none inherited from a folder above it or, for a
+ * linked worktree, from its main checkout, so the folder is decided as if nothing were saved (Full access trusts it,
+ * a session that may ask asks). `/trust` never offers it.
+ */
+export function getProjectTrustNoInheritOption(cwd: string): ProjectTrustOption {
+	const trustPath = normalizeCwd(cwd);
+	return {
+		label: "No decision, and none inherited",
+		trusted: false,
+		updates: [{ path: trustPath, decision: "no_inherit" }],
+		savedPath: trustPath,
+	};
 }
 
 function readTrustFile(path: string): TrustFile {
@@ -176,7 +198,13 @@ function acquireTrustLockSync(path: string): () => void {
 	throw new Error("Failed to acquire trust store lock");
 }
 
+function absentAsUndefined(error: unknown): undefined {
+	if (fsErrorCode(error) === "ENOENT") return undefined;
+	throw error;
+}
+
 function withTrustFileLock<T>(path: string, fn: () => T): T {
+	if (trustStoreLockHeldInRealm(path)) return fn();
 	const release = acquireTrustLockSync(path);
 	try {
 		return fn();
@@ -186,70 +214,116 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 }
 
 /**
- * Returns true when cwd has project-local resources that must be gated by
- * project trust: trust-requiring entries under cwd/.pi, or .agents/skills in
- * cwd or one of its ancestors. Returns false when no such project resources
- * exist. The user/global ~/.agents/skills directory is always treated as a
- * trusted user resource and is ignored here, even when cwd is $HOME.
+ * Runs `write` holding the store lock across its awaits, after every earlier write of this realm. The lock is taken
+ * and recorded as this realm's in one synchronous step, so a synchronous reader of the realm never meets it unrecorded.
  */
-export function hasTrustRequiringProjectResources(cwd: string): boolean {
-	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
-	const userAgentsSkillsDir = join(homeDir, ".agents", "skills");
-	let currentDir = canonicalizePath(resolvePath(cwd));
-
-	const configDir = join(currentDir, CONFIG_DIR_NAME);
-	if (TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry)))) {
-		return true;
-	}
-
-	while (true) {
-		const agentsSkillsDir = join(currentDir, ".agents", "skills");
-		if (agentsSkillsDir !== userAgentsSkillsDir && existsSync(agentsSkillsDir)) {
-			return true;
+function withTrustFileWriteLock(path: string, write: () => Promise<void>): Promise<void> {
+	return inTrustStoreWriteTurn(path, async () => {
+		const release = acquireTrustLockSync(path);
+		const releaseHold = holdTrustStoreLockInRealm(path);
+		try {
+			await write();
+		} finally {
+			releaseHold();
+			release();
 		}
-
-		const parentDir = dirname(currentDir);
-		if (parentDir === currentDir) {
-			return false;
-		}
-		currentDir = parentDir;
-	}
+	});
 }
 
 export class ProjectTrustStore {
 	private trustPath: string;
+	/** Counts the writes made through `setMany`, by any process; bumped under the store lock. */
+	private generationPath: string;
 
 	constructor(agentDir: string) {
 		this.trustPath = join(resolvePath(agentDir), "trust.json");
+		this.generationPath = `${this.trustPath}.generation`;
+	}
+
+	/**
+	 * Changes on every write made through `setMany` by an engine that has this generation file, in any process or
+	 * engine copy: each such write bumps it under the store lock before it writes `trust.json`, so a value read
+	 * before the write never equals one read after it. Any other writer (an older engine sharing the agent
+	 * directory, another program editing `trust.json`) changes it only when it changes the file's modification
+	 * time or size.
+	 */
+	async revision(): Promise<string> {
+		const stats = await stat(this.trustPath, { bigint: true }).catch(absentAsUndefined);
+		return `${await this.readGeneration()}:${stats === undefined ? "absent" : `${stats.mtimeNs}:${stats.size}`}`;
+	}
+
+	private async readGeneration(): Promise<number> {
+		const text = await readFile(this.generationPath, "utf-8").catch(absentAsUndefined);
+		if (text === undefined) return 0;
+		const generation = Number.parseInt(text, 10);
+		return Number.isSafeInteger(generation) && generation >= 0 ? generation : 0;
 	}
 
 	get(cwd: string): ProjectTrustDecision {
-		return this.getEntry(cwd)?.decision ?? null;
+		return this.getNearestEntry(cwd)?.decision ?? null;
 	}
 
+	/** The nearest saved decision at or above `cwd`; `null` also when the nearest entry holds no decision. */
 	getEntry(cwd: string): ProjectTrustStoreEntry | null {
+		const entry = this.getNearestEntry(cwd);
+		return entry === null || entry.decision === null ? null : { path: entry.path, decision: entry.decision };
+	}
+
+	getNearestEntry(cwd: string): ProjectTrustNearestEntry | null {
 		return withTrustFileLock(this.trustPath, () => {
 			const data = readTrustFile(this.trustPath);
 			return findNearestTrustEntry(data, cwd);
 		});
 	}
 
-	set(cwd: string, decision: ProjectTrustDecision): void {
-		this.setMany([{ path: cwd, decision }]);
+	async set(cwd: string, decision: ProjectTrustDecision): Promise<void> {
+		await this.setMany([{ path: cwd, decision }]);
 	}
 
-	setMany(decisions: ProjectTrustUpdate[]): void {
-		withTrustFileLock(this.trustPath, () => {
+	async setMany(decisions: ProjectTrustUpdate[]): Promise<void> {
+		await withTrustFileWriteLock(this.trustPath, async () => {
 			const data = readTrustFile(this.trustPath);
 			for (const { path, decision } of decisions) {
 				const key = normalizeCwd(path);
 				if (decision === null) {
 					delete data[key];
 				} else {
-					data[key] = decision;
+					data[key] = decision === "no_inherit" ? null : decision;
 				}
 			}
+			// Bumped first and replaced whole: a failed bump saves nothing, and a reader never sees a half-written count.
+			const nextGeneration = `${this.generationPath}.next`;
+			await writeFile(nextGeneration, `${(await this.readGeneration()) + 1}\n`, "utf-8");
+			await rename(nextGeneration, this.generationPath);
 			writeTrustFile(this.trustPath, data);
 		});
 	}
+}
+
+/**
+ * What is saved for a folder: a decision, `"no_inherit"` for the explicit no-decision entry
+ * (`set_project_trust`'s `no_inherit`), or `null` when nothing is saved. The two undecided values stay
+ * apart because only `null` may be filled in by an answer the process kept without saving it.
+ */
+export type SavedProjectTrust = boolean | "no_inherit" | null;
+
+/**
+ * What is saved for `cwd`: the store's own entry (the folder or the nearest folder above it), and only
+ * when it has none and `cwd` is inside a linked git worktree, the main checkout's entry for the
+ * matching folder. An entry saved for the worktree or above it always wins, including the explicit
+ * no-decision entry, which leaves the folder undecided.
+ */
+export async function getSavedProjectTrustState(store: ProjectTrustStore, cwd: string): Promise<SavedProjectTrust> {
+	const own = store.getNearestEntry(cwd);
+	if (own !== null) return own.decision ?? "no_inherit";
+	const mainCheckoutDir = await linkedWorktreeMainCheckoutDir(cwd);
+	if (mainCheckoutDir === undefined) return null;
+	const main = store.getNearestEntry(mainCheckoutDir);
+	return main === null ? null : (main.decision ?? "no_inherit");
+}
+
+/** The saved decision for `cwd` (`getSavedProjectTrustState`), with both undecided values as `null`. */
+export async function getSavedProjectTrust(store: ProjectTrustStore, cwd: string): Promise<ProjectTrustDecision> {
+	const saved = await getSavedProjectTrustState(store, cwd);
+	return saved === "no_inherit" ? null : saved;
 }

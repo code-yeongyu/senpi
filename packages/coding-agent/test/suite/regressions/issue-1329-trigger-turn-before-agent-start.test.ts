@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, getMessageText, type Harness } from "../harness.ts";
 
@@ -46,11 +46,17 @@ describe("issue #1329: trigger-turn custom messages enter before_agent_start", (
 		harnesses.push(harness);
 		harness.setResponses([
 			(context) => {
-				providerRequests.push({ messages: context.messages, systemPrompt: context.systemPrompt });
+				providerRequests.push({
+					messages: context.messages,
+					systemPrompt: getCurrentSystemPrompt(context.messages),
+				});
 				return fauxAssistantMessage("normal complete");
 			},
 			(context) => {
-				providerRequests.push({ messages: context.messages, systemPrompt: context.systemPrompt });
+				providerRequests.push({
+					messages: context.messages,
+					systemPrompt: getCurrentSystemPrompt(context.messages),
+				});
 				return fauxAssistantMessage("wake complete");
 			},
 		]);
@@ -102,6 +108,7 @@ describe("issue #1329: trigger-turn custom messages enter before_agent_start", (
 
 		expect(harness.faux.state.callCount).toBe(0);
 		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+		expect(harness.session.workObligations.active).toMatchObject([{ state: "queued" }]);
 		expect(
 			harness.session.messages.some((message) => message.role === "custom" && getMessageText(message) === "wake"),
 		).toBe(false);

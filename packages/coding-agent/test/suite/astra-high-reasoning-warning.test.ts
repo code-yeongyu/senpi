@@ -14,13 +14,13 @@ const ASTRA_MODEL_IDS = [
 const EFFORTS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 describe.each(ASTRA_MODEL_IDS)("Astra warning policy for %s", (id) => {
-	it.each(EFFORTS)("warns only at max when effort is %s", (effort) => {
+	it.each(EFFORTS)("warns only above high when effort is %s", (effort) => {
 		// Given an Astra model variant and a selected effort.
 		const model = { id };
 		// When the existing warning policy is evaluated.
 		const warns = shouldWarnHighReasoning(model, effort);
-		// Then Astra warns only at its highest reasoning level.
-		expect(warns).toBe(effort === "max");
+		// Then Astra warns at xhigh and max, and stays quiet at high and below.
+		expect(warns).toBe(effort === "xhigh" || effort === "max");
 	});
 });
 

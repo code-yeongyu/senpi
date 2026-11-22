@@ -1,6 +1,6 @@
-import { Box, Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
-import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { sharedMarkdownTheme, theme } from "../theme/theme.ts";
 import { AskUserAnswerChip, parseAskUserAnswerFrame } from "./ask-user-answer-chip.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
@@ -20,7 +20,7 @@ export class UserMessageComponent extends Container {
 
 	constructor(
 		text: string,
-		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		markdownTheme: MarkdownTheme = sharedMarkdownTheme(),
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
 		answerHeaders: readonly string[] = [],
@@ -41,25 +41,30 @@ export class UserMessageComponent extends Container {
 
 	private rebuild(): void {
 		this.clear();
-		const contentBox = new Box(this.outputPad, 1, (content: string) => theme.bg("userMessageBg", content));
-		contentBox.addChild(
-			new Markdown(
-				this.text,
-				0,
-				0,
-				this.markdownTheme,
-				{
-					color: (content: string) => theme.fg("userMessageText", content),
-				},
-				{
-					preserveOrderedListMarkers: true,
-					preserveBackslashEscapes: true,
-					transform: createMarkdownTransform("user", false, this.markdownTransformers),
-				},
-			),
+		// The Markdown pads and colors its own background: a Box around it would keep a second full-width copy of every
+		// line, with identical output.
+		const contentBox = new Markdown(
+			this.text,
+			this.outputPad,
+			1,
+			this.markdownTheme,
+			{
+				color: (content: string) => theme.fg("userMessageText", content),
+				bgColor: (content: string) => theme.bg("userMessageBg", content),
+			},
+			{
+				preserveOrderedListMarkers: true,
+				preserveBackslashEscapes: true,
+				transform: createMarkdownTransform("user", false, this.markdownTransformers),
+			},
 		);
 		const answer = parseAskUserAnswerFrame(this.text);
 		this.addChild(answer ? new AskUserAnswerChip(answer, this.answerHeaders, contentBox) : contentBox);
+	}
+
+	/** Output is the zone-marked render of the content box, so it changes only with that subtree. */
+	override getRenderRevision(): number | undefined {
+		return this.childRenderRevision();
 	}
 
 	override render(width: number): string[] {

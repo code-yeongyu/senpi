@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { on, once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { z } from "zod";
 
 const repo = resolve(import.meta.dir, "..");
@@ -15,6 +16,11 @@ const version = z
 // `bin.pi` ships this one file, and whichever runtime installed the package executes it: npm
 // installs run it on Node through its shebang, `bun install -g` runs the same file on Bun.
 const runtimes = ["node", "bun"] as const;
+// Help/extension spawns measured up to ~30 s under load (senpi#5952); the spawn gets this, its test 10 s more.
+const SPAWN_BUDGET_MS = 60_000;
+// The --cpu-prof spawn respawns the bundle and writes a profile: 12-21 s at ~2.6 load per core, 46 s and one
+// 74.5 s overrun at 3-4 (senpi#6013). The spawn gets 2x that overrun, its test 10 s more.
+const PROFILED_SPAWN_BUDGET_MS = 150_000;
 const responseSchema = z.object({
 	type: z.string(), id: z.string().optional(), success: z.boolean().optional(),
 	data: z.unknown().optional(), error: z.unknown().optional(),
@@ -41,7 +47,8 @@ function createState(): string {
 
 function hermeticEnv(state: string): Record<string, string> {
 	return {
-		PATH: process.env.PATH ?? "", HOME: join(state, "home"), TMPDIR: state,
+		PATH: process.env.PATH ?? "", HOME: join(state, "home"), TMPDIR: state, TEMP: state, TMP: state,
+		JITI_RESPECT_TMPDIR_ENV: "1",
 		SENPI_CODING_AGENT_DIR: state, PI_OFFLINE: "1",
 	};
 }
@@ -53,9 +60,37 @@ beforeAll(() => {
 	expect(result.status, result.stderr).toBe(0);
 }, 130_000);
 
-// A downstream installer (oh-my-openagent) rewrites these declarations byte-for-byte inside the
-// installed bundle, so emitting must keep one literal `claudeCodeVersion="X.Y.Z"` per emitting file.
-test("keeps the claudeCodeVersion declarations a downstream installer rewrites", () => {
+test("loads the embedded JavaScript grammar from an isolated Node bundle", () => {
+	const state = mkdtempSync(join(tmpdir(), "senpi-node-bundle-grammar-"));
+	try {
+		const bundle = join(state, "bundle");
+		cpSync(join(repo, "packages/coding-agent/dist/bundle"), bundle, { recursive: true });
+		const engineChunk = readdirSync(join(bundle, "chunks")).find(
+			(path) => path.startsWith("engine-") && path.endsWith(".js"),
+		);
+		expect(engineChunk).toBeDefined();
+		const probe = [
+			`const engine = await import(${JSON.stringify(pathToFileURL(join(bundle, "chunks", engineChunk!)).href)});`,
+			'const folder = await engine.loadTreeSitterFolder("js", { cache: false, fallback: { id: "heuristic", version: "1", fold: () => ({ status: "raw" }) } });',
+			'console.log(folder?.id ?? "undefined");',
+		].join(" ");
+		for (const runtime of runtimes) {
+			const result = spawnSync(runtime, ["--input-type=module", "-e", probe], {
+				cwd: state,
+				encoding: "utf8",
+				env: hermeticEnv(state),
+			});
+			expect(result.status, `${runtime}: ${result.stderr}`).toBe(0);
+			expect(result.stdout.trim(), runtime).toBe("tree-sitter-wasm");
+		}
+	} finally {
+		rmSync(state, { recursive: true, force: true });
+	}
+});
+
+// The engine no longer advertises a Claude Code version (senpi#5131), so no bundled file declares
+// `claudeCodeVersion="X.Y.Z"` and oh-my-openagent's installer no longer rewrites one (omo#11964).
+test("emits no claudeCodeVersion declaration", () => {
 	// Given
 	const bundle = join(repo, "packages/coding-agent/dist/bundle");
 	// When
@@ -67,7 +102,7 @@ test("keeps the claudeCodeVersion declarations a downstream installer rewrites",
 		)
 		.sort();
 	// Then
-	expect(declaringFiles).toEqual([expect.stringMatching(/^anthropic-messages-.+\.js$/), "session-worker.js"]);
+	expect(declaringFiles).toEqual([]);
 });
 
 describe.each(runtimes)("the Node bundle under %s", (runtime) => {
@@ -89,7 +124,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		try {
 			// When
 			const result = spawnSync(runtime, ["--cpu-prof", "--cpu-prof-dir", state, cli, "--model", "nope/nope", "-p", "hi"], {
-				encoding: "utf8", env: hermeticEnv(state), timeout: 60_000,
+				encoding: "utf8", env: hermeticEnv(state), timeout: PROFILED_SPAWN_BUDGET_MS,
 			});
 			// Then: the agent ran and rejected the model, rather than the entry failing to resolve itself.
 			const output = `${result.stdout}${result.stderr}`;
@@ -98,21 +133,21 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		} finally {
 			rmSync(state, { recursive: true, force: true });
 		}
-	}, 70_000);
+	}, PROFILED_SPAWN_BUDGET_MS + 10_000);
 
 	test("prints help and exits successfully", () => {
 		// Given
 		const state = createState();
 		try {
 			// When
-			const result = spawnSync(runtime, [cli, "--help"], { encoding: "utf8", env: hermeticEnv(state), timeout: 30_000 });
+			const result = spawnSync(runtime, [cli, "--help"], { encoding: "utf8", env: hermeticEnv(state), timeout: SPAWN_BUDGET_MS });
 			// Then
 			expect(result.status, result.stderr).toBe(0);
 			expect(result.stdout.length).toBeGreaterThan(0);
 		} finally {
 			rmSync(state, { recursive: true, force: true });
 		}
-	});
+	}, SPAWN_BUDGET_MS + 10_000);
 
 	test("loads an external TypeScript extension and lists the flag it registers", () => {
 		// Given: a fresh agent dir, so the help fast path misses its per-extension-set cache and
@@ -124,7 +159,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		try {
 			// When
 			const result = spawnSync(runtime, [cli, "--extension", extension, "--help"], {
-				encoding: "utf8", env: hermeticEnv(state), timeout: 60_000,
+				encoding: "utf8", env: hermeticEnv(state), timeout: SPAWN_BUDGET_MS,
 			});
 			// Then
 			expect(result.status, result.stderr).toBe(0);
@@ -133,7 +168,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 			rmSync(extensionDir, { recursive: true, force: true });
 			rmSync(state, { recursive: true, force: true });
 		}
-	});
+	}, SPAWN_BUDGET_MS + 10_000);
 
 	test("opens and closes a shared session when the bundle receives RPC commands", async () => {
 		// Given: isolated state, with no provider request or user extensions.

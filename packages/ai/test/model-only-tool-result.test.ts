@@ -26,6 +26,8 @@ import { stream as piMessages } from "../src/api/pi-messages.ts";
 import { fauxAssistantMessage, fauxToolCall } from "../src/providers/faux.ts";
 import type { Api, Context, Model, TextContent, ToolResultMessage } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const notice = "MODEL_ONLY_SENTINEL \r\n UTF-8: \uD55C\uAE00 \uD83D\uDC08\n";
 const captureStop = "model-only-payload-captured";
 
@@ -80,32 +82,32 @@ const adapters = [
 	{
 		name: "anthropic-messages",
 		run: (ctx: Context, onPayload: Capture) =>
-			anthropic(model("anthropic-messages"), ctx, { apiKey: "qa-key", onPayload }).result(),
+			anthropic(model("anthropic-messages"), normalizeContext(ctx), { apiKey: "qa-key", onPayload }).result(),
 	},
 	{
 		name: "openai-completions",
 		run: (ctx: Context, onPayload: Capture) =>
-			completions(model("openai-completions"), ctx, { apiKey: "qa-key", onPayload }).result(),
+			completions(model("openai-completions"), normalizeContext(ctx), { apiKey: "qa-key", onPayload }).result(),
 	},
 	{
 		name: "openai-responses/shared",
 		run: (ctx: Context, onPayload: Capture) =>
-			responses(model("openai-responses"), ctx, { apiKey: "qa-key", onPayload }).result(),
+			responses(model("openai-responses"), normalizeContext(ctx), { apiKey: "qa-key", onPayload }).result(),
 	},
 	{
 		name: "azure-openai-responses/shared",
 		run: (ctx: Context, onPayload: Capture) =>
-			azure(model("azure-openai-responses"), ctx, { apiKey: "qa-key", onPayload }).result(),
+			azure(model("azure-openai-responses"), normalizeContext(ctx), { apiKey: "qa-key", onPayload }).result(),
 	},
 	{
 		name: "openai-codex-responses/shared",
 		run: (ctx: Context, onPayload: Capture) =>
-			codex(model("openai-codex-responses"), ctx, { apiKey: token, onPayload }).result(),
+			codex(model("openai-codex-responses"), normalizeContext(ctx), { apiKey: token, onPayload }).result(),
 	},
 	{
 		name: "bedrock-converse-stream",
 		run: (ctx: Context, onPayload: Capture) =>
-			bedrock(model("bedrock-converse-stream"), ctx, {
+			bedrock(model("bedrock-converse-stream"), normalizeContext(ctx), {
 				apiKey: "qa-key",
 				region: "us-east-1",
 				onPayload,
@@ -114,22 +116,22 @@ const adapters = [
 	{
 		name: "google-generative-ai/shared",
 		run: (ctx: Context, onPayload: Capture) =>
-			google(model("google-generative-ai"), ctx, { apiKey: "qa-key", onPayload }).result(),
+			google(model("google-generative-ai"), normalizeContext(ctx), { apiKey: "qa-key", onPayload }).result(),
 	},
 	{
 		name: "google-vertex/shared",
 		run: (ctx: Context, onPayload: Capture) =>
-			vertex(model("google-vertex"), ctx, { apiKey: "qa-key", onPayload }).result(),
+			vertex(model("google-vertex"), normalizeContext(ctx), { apiKey: "qa-key", onPayload }).result(),
 	},
 	{
 		name: "mistral-conversations",
 		run: (ctx: Context, onPayload: Capture) =>
-			mistral(model("mistral-conversations"), ctx, { apiKey: "qa-key", onPayload }).result(),
+			mistral(model("mistral-conversations"), normalizeContext(ctx), { apiKey: "qa-key", onPayload }).result(),
 	},
 	{
 		name: "pi-messages",
 		run: (ctx: Context, onPayload: Capture) =>
-			piMessages(model("pi-messages"), ctx, { apiKey: "qa-key", onPayload }).result(),
+			piMessages(model("pi-messages"), normalizeContext(ctx), { apiKey: "qa-key", onPayload }).result(),
 	},
 ];
 
@@ -163,7 +165,7 @@ describe("model-only tool-result wire identity (#2041)", () => {
 			const requests = [false, true].map((marked) =>
 				buildDevinChatRequest({
 					model: model("devin-agent"),
-					context: context(marked, true),
+					context: normalizeContext(context(marked, true)),
 					apiKey: "qa-key",
 					cascadeId: "qa-cascade",
 				}),

@@ -5,6 +5,7 @@ import {
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 // senpi#1628: the Bun WebSocket fires an `error` event with no message for an
 // unclean disconnect and only the `close` event that follows carries the code
@@ -97,7 +98,7 @@ const IDLE_TIMEOUT_MS = 300_000;
 const NO_CLOSE_BOUND_MS = 1_000;
 
 async function runStream(): Promise<{ stopReason: string; errorMessage?: string }> {
-	const result = await streamOpenAICodexResponses(model, context, {
+	const result = await streamOpenAICodexResponses(model, normalizeContext(context), {
 		apiKey: mockToken(),
 		transport: "auto",
 		timeoutMs: IDLE_TIMEOUT_MS,

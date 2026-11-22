@@ -69,6 +69,8 @@ describe("restoring a pi agent directory an earlier start moved away", () => {
 		const { "migrations-state.json": _state, ...agentAfter } = treeDigest(home.agentDir);
 		const { "migrations-state.json": _stateBefore, ...agentBeforeWithoutState } = agentBefore;
 		expect(agentAfter).toEqual(agentBeforeWithoutState);
+		const state = JSON.parse(fs.readFileSync(path.join(home.agentDir, "migrations-state.json"), "utf-8"));
+		expect(state.legacyPiAgentDir.copiedAt).toEqual(expect.any(Number));
 	});
 
 	it("recreates a ~/.pi/agent that was renamed away by a start that predates the migrations state file", () => {

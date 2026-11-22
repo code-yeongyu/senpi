@@ -49,7 +49,7 @@ describe("provider stream-start stall user surface", () => {
 		//    and the session is interactive again once the turn settles.
 		expect(uncaught).toEqual([]);
 		expect(unhandled).toEqual([]);
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_idle");
+		expect(harness.events.filter((event) => event.type !== "session_lifecycle").at(-1)?.type).toBe("agent_idle");
 
 		// 2. The watchdog still bounds every attempt, and the retry in flight is
 		//    reported as a retry rather than as the answer to the turn.

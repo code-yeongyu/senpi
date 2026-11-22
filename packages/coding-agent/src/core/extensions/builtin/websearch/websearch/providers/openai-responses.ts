@@ -1,30 +1,10 @@
 import { providerUrl } from "../provider-endpoints.ts";
 import type { BuiltSearchRequest, JsonObject, SearchResultItem } from "../types.ts";
 import type { BuildContext, ProviderModule } from "./shared.ts";
-import {
-	appendDomainFilters,
-	collect,
-	contentHeaders,
-	getArray,
-	getObject,
-	getString,
-	result,
-	unique,
-} from "./shared.ts";
+import { appendDomainFilters, collect, contentHeaders, getArray, getObject, getString, result } from "./shared.ts";
 
 function searchOnlyPrompt(query: string): string {
 	return `Find web pages matching any of these search terms or quoted phrases. If the query contains OR, search each alternative independently. Return only relevant source URLs, one per line. Query: ${query}`;
-}
-
-function resultsFromTextUrls(text: string | undefined): SearchResultItem[] {
-	if (!text) return [];
-	const urls = text.match(/https?:\/\/[^\s)\]}>"]+/g) ?? [];
-	return collect(
-		unique(urls).map((url) => {
-			const cleaned = url.replace(/[.,;:]+$/, "");
-			return result(cleaned, cleaned, text);
-		}),
-	);
 }
 
 export function buildResponsesRequest({
@@ -57,6 +37,8 @@ export function buildResponsesRequest({
 	};
 }
 
+// Only search output is a source: URLs the model wrote in its answer text were never returned by a
+// search and may be invented (senpi#2337).
 export function normalizeResponsesPayload(
 	data: JsonObject,
 	options: { citationsFallback: boolean },
@@ -92,8 +74,6 @@ export function normalizeResponsesPayload(
 			return { ...source, snippet: text };
 		});
 	}
-	const textUrls = resultsFromTextUrls(text);
-	if (textUrls.length > 0) return textUrls;
 	if (!options.citationsFallback) return annotationResults;
 	return collect(
 		getArray(data.citations).map((raw) => {

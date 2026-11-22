@@ -58,31 +58,36 @@ export function createModelsService(
 			const index = levels.indexOf(current);
 			const next = levels[(index + 1) % levels.length] ?? "off";
 			await lane.setThinkingLevel(next, context);
-			state.state.configuration = await readConfiguration(context);
-			state.publish(context);
+			const configuration = await readConfiguration(context);
+			state.change(context, (draft) => {
+				draft.configuration = configuration;
+			});
 		},
 		async getThinkingLevels(context) {
 			return [...(await readThinkingLevels(context))];
 		},
 		async refresh(context) {
-			state.state.refresh = { status: "refreshing" };
-			state.publish(context);
+			state.change(context, (draft) => {
+				draft.refresh = { status: "refreshing" };
+			});
 			const refresh = modelRuntime?.refresh({ signal: context.abortSignal });
 			if (refresh === undefined) {
 				const [catalog, configuration] = await Promise.all([readCatalog(context), readConfiguration(context)]);
-				state.state.catalog = catalog;
-				state.state.configuration = configuration;
-				state.state.refresh = { status: "done" };
-				state.publish(context);
+				state.change(context, (draft) => {
+					draft.catalog = catalog;
+					draft.configuration = configuration;
+					draft.refresh = { status: "done" };
+				});
 				return;
 			}
 			const result = await refresh;
 			const errors = Object.fromEntries([...result.errors].map(([id, error]) => [id, error.message]));
 			const [catalog, configuration] = await Promise.all([readCatalog(context), readConfiguration(context)]);
-			state.state.catalog = catalog;
-			state.state.configuration = configuration;
-			state.state.refresh = Object.keys(errors).length === 0 ? { status: "done" } : { status: "warning", errors };
-			state.publish(context);
+			state.change(context, (draft) => {
+				draft.catalog = catalog;
+				draft.configuration = configuration;
+				draft.refresh = Object.keys(errors).length === 0 ? { status: "done" } : { status: "warning", errors };
+			});
 		},
 		async select(model, context) {
 			const selected = modelRuntime?.getModel(model.provider, model.modelId);
@@ -90,8 +95,10 @@ export function createModelsService(
 			await lane.setModel({ provider: selected.provider, modelId: selected.id }, context);
 			settingsManager?.setDefaultModelAndProvider(selected.provider, selected.id);
 			await settingsManager?.flush();
-			state.state.configuration = await readConfiguration(context);
-			state.publish(context);
+			const configuration = await readConfiguration(context);
+			state.change(context, (draft) => {
+				draft.configuration = configuration;
+			});
 		},
 		async selectThinking(level, context) {
 			const levels = await readThinkingLevels(context);
@@ -99,18 +106,21 @@ export function createModelsService(
 				throw new Error(`Thinking level ${level} is unavailable; choose one of: ${levels.join(", ")}`);
 			}
 			await lane.setThinkingLevel(level, context);
-			state.state.configuration = await readConfiguration(context);
-			state.publish(context);
+			const configuration = await readConfiguration(context);
+			state.change(context, (draft) => {
+				draft.configuration = configuration;
+			});
 		},
 	};
 	return {
 		service,
 		async activate(context) {
 			const [catalog, configuration] = await Promise.all([readCatalog(context), readConfiguration(context)]);
-			state.state.catalog = catalog;
-			state.state.configuration = configuration;
-			state.state.refresh = { status: "idle" };
-			state.publish(context);
+			state.change(context, (draft) => {
+				draft.catalog = catalog;
+				draft.configuration = configuration;
+				draft.refresh = { status: "idle" };
+			});
 		},
 	};
 }

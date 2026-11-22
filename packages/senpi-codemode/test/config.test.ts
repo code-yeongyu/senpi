@@ -90,6 +90,43 @@ describe("codemode settings", () => {
 		}
 	});
 
+	it("Given a settings file with a key from a newer version when settings load then the other settings still apply and the unknown key gets one warning", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-future-key-"));
+		try {
+			await mkdir(join(root, ".senpi"), { recursive: true });
+			await writeFile(
+				join(root, ".senpi", "codemode.json"),
+				JSON.stringify({ futureKey: 1, runBudgetSeconds: 120 }),
+			);
+
+			const loaded = await loadCodemodeSettings({ cwd: root, homeDir: root });
+
+			expect(loaded.settings.runBudgetSeconds).toBe(120);
+			expect(loaded.warnings).toHaveLength(1);
+			expect(loaded.warnings[0]).toContain("futureKey");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("Given an unknown key inside a known setting when settings load then the file still falls back to defaults with a warning", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-nested-unknown-"));
+		try {
+			await mkdir(join(root, ".senpi"), { recursive: true });
+			await writeFile(
+				join(root, ".senpi", "codemode.json"),
+				JSON.stringify({ runBudgetSeconds: 120, taskTools: { task: "task", futureNested: true } }),
+			);
+
+			const loaded = await loadCodemodeSettings({ cwd: root, homeDir: root });
+
+			expect(loaded.settings.runBudgetSeconds).toBe(defaultCodemodeSettings.runBudgetSeconds);
+			expect(loaded.warnings.some((warning) => warning.includes("Falling back to codemode defaults"))).toBe(true);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("accepts a positive numeric maxDetachedCells setting", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-cap-"));
 		try {
@@ -223,7 +260,7 @@ describe("codemode settings", () => {
 		}
 	});
 
-	it("rejects unknown settings keys with a warning", async () => {
+	it("ignores an unknown top-level key with a warning and keeps today's defaults", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
 		try {
 			const projectDir = join(root, "project");
@@ -235,7 +272,7 @@ describe("codemode settings", () => {
 
 			expect(loaded.settings).toEqual(defaultCodemodeSettings);
 			expect(loaded.warnings).toHaveLength(1);
-			expect(loaded.warnings[0]).toContain("Invalid codemode settings");
+			expect(loaded.warnings[0]).toContain('Unknown codemode setting "unknown"');
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

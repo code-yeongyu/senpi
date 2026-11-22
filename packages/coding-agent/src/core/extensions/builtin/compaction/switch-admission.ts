@@ -1,10 +1,13 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ModelChangeOrigin } from "../../../model-change-origin.ts";
 import type { ModelUsabilityBudgetProjection } from "./model-usability-budget.ts";
 
 export interface PendingModelSwitch {
 	readonly model: Model<Api>;
 	readonly projection: ModelUsabilityBudgetProjection;
 	readonly persistDefault: boolean;
+	/** What asked for the switch; the applied switch records it as held (senpi#2870). */
+	readonly origin: ModelChangeOrigin;
 	readonly notice: string;
 }
 
@@ -12,6 +15,7 @@ export function createPendingModelSwitch(input: {
 	model: Model<Api>;
 	projection: ModelUsabilityBudgetProjection;
 	persistDefault: boolean;
+	origin: ModelChangeOrigin;
 }): PendingModelSwitch {
 	return {
 		...input,

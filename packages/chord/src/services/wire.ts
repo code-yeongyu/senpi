@@ -31,6 +31,7 @@ export type WireServiceProviderUpdate =
 			readonly sequence: number;
 			readonly ops: readonly WireOp[];
 	  }
+	| { readonly type: "reset"; readonly snapshot: WireServiceSubscriptionSnapshot }
 	| { readonly type: "unavailable" }
 	| { readonly type: "replaced"; readonly snapshot: WireServiceInstanceSnapshot }
 	| { readonly type: "spawned"; readonly instance: WireServiceInstanceSnapshot }
@@ -150,6 +151,19 @@ function assertProviderUpdate(value: unknown, assertOp: (value: unknown) => void
 			if (update.instance !== undefined) assertAddress(update.instance);
 			for (const op of update.ops) assertOp(op);
 			return;
+		case "reset": {
+			assertKeys(update, ["type", "snapshot"], [], "reset update");
+			assertSubscriptionSnapshot(update.snapshot, assertOp);
+			const snapshot = update.snapshot as WireServiceSubscriptionSnapshot;
+			for (const instance of snapshot.instances) {
+				for (const member of instance.members) {
+					if (member.kind === "state" && (member.ops.length !== 1 || member.ops[0]?.[0] !== "r")) {
+						throw new TypeError("Service reset must contain full root replacements");
+					}
+				}
+			}
+			return;
+		}
 		case "unavailable":
 			assertKeys(update, ["type"], [], "unavailable update");
 			return;

@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { inheritSessionContextEntryId } from "../../../session-manager.ts";
 import { estimateTotalTokens, pruneOldMessagesToBudget, SUMMARIZATION_INPUT_BUDGET_RATIO } from "./overflow-retry.ts";
 import * as truncation from "./tool-truncation.ts";
 
@@ -16,7 +17,7 @@ export function pruneToolResults(messages: AgentMessage[], contextWindow: number
 		if (message.role !== "toolResult") return message;
 		const pruned = prunedResults[resultIndex];
 		resultIndex++;
-		return pruned ? { ...message, content: pruned.content } : message;
+		return pruned ? inheritSessionContextEntryId({ ...message, content: pruned.content }, message) : message;
 	});
 }
 
@@ -32,7 +33,7 @@ export function truncateContextMessages(messages: AgentMessage[]): AgentMessage[
 		if (message.role !== "toolResult") return message;
 		const truncated = truncatedResults[resultIndex];
 		resultIndex++;
-		return truncated ? { ...message, content: truncated.content } : message;
+		return truncated ? inheritSessionContextEntryId({ ...message, content: truncated.content }, message) : message;
 	});
 }
 

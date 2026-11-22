@@ -1,5 +1,6 @@
+import { readCodemodeKernelRows, readMainThreadHeapBytes } from "../../core/memory-report/kernel-registry-read.ts";
 import { type ProcessFootprint, type ProcessFootprintMeasure, readOwnFootprint } from "../../core/process-footprint.ts";
-import type { RpcHostMemoryPressureEvent } from "./rpc-types.ts";
+import type { RpcHostKernelMemory, RpcHostMemoryPressureEvent } from "./rpc-types.ts";
 
 /** Environment override for the memory warning threshold (compared with the footprint), in megabytes. */
 export const HOST_RSS_WARN_MB_ENV = "SENPI_RPC_HOST_RSS_WARN_MB";
@@ -11,11 +12,15 @@ export const HOST_MEMORY_STDERR_INTERVAL_MS = 5 * 60_000;
 
 const BYTES_PER_MEGABYTE = 1024 * 1024;
 
-/** One sample: the footprint that decides pressure, and the RSS `ps` would show beside it. */
+/** One sample: the footprint that decides pressure, the RSS `ps` would show beside it, and the heap split. */
 export interface HostMemoryReading {
 	readonly footprintMb: number;
 	readonly measure: ProcessFootprintMeasure;
 	readonly rssMb: number;
+	/** Main-thread heap in bytes: `bun:jsc heapSize()` when the runtime offers it, else `heapUsed`. */
+	readonly main: { readonly heapBytes: number };
+	/** Every kernel the codemode extension's registry holds, mapped to its session; a vanished kernel is absent. */
+	readonly kernels: readonly RpcHostKernelMemory[];
 }
 
 export interface HostMemorySamplerOptions {
@@ -38,6 +43,14 @@ export interface HostMemorySamplerOptions {
 	readonly readFootprint?: () => ProcessFootprint;
 	/** Reported beside the footprint; never decides pressure. */
 	readonly readRssBytes?: () => number;
+	/**
+	 * Live kernels, read from the codemode extension's process-global registry without importing it.
+	 * The host injects the accessor at start; a host without the extension lists none. Main-thread
+	 * only on Bun: `process.memoryUsage().heapUsed` never includes a kernel worker's heap.
+	 */
+	readonly readKernels?: () => readonly RpcHostKernelMemory[];
+	/** Main-thread heap in bytes; defaults to `bun:jsc heapSize()` when available, else `heapUsed`. */
+	readonly readMainHeap?: () => number;
 	readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -66,6 +79,8 @@ export class HostMemorySampler {
 	private readonly now: () => number;
 	private readonly readFootprint: () => ProcessFootprint;
 	private readonly readRssBytes: () => number;
+	private readonly readKernels: () => readonly RpcHostKernelMemory[];
+	private readonly readMainHeap: () => number;
 	private readonly warnMb: number;
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private pressure = false;
@@ -82,6 +97,8 @@ export class HostMemorySampler {
 		this.now = options.now ?? Date.now;
 		this.readFootprint = options.readFootprint ?? readOwnFootprint;
 		this.readRssBytes = options.readRssBytes ?? (() => process.memoryUsage.rss());
+		this.readKernels = options.readKernels ?? readCodemodeKernelRows;
+		this.readMainHeap = options.readMainHeap ?? readMainThreadHeapBytes;
 		this.warnMb = parsePositiveInteger(env[HOST_RSS_WARN_MB_ENV]) ?? DEFAULT_HOST_RSS_WARN_MB;
 	}
 
@@ -105,6 +122,8 @@ export class HostMemorySampler {
 			footprintMb: Math.round(footprint.bytes / BYTES_PER_MEGABYTE),
 			measure: footprint.measure,
 			rssMb: Math.round(this.readRssBytes() / BYTES_PER_MEGABYTE),
+			main: { heapBytes: this.readMainHeap() },
+			kernels: this.readKernels(),
 		};
 		if (reading.footprintMb <= this.warnMb) {
 			this.idleReported = false;
@@ -126,7 +145,15 @@ export class HostMemorySampler {
 			this.onIdlePressure?.(reading);
 		}
 		const { footprintMb, measure, rssMb } = reading;
-		this.emit({ type: "host_memory_pressure", rssMb, footprintMb, measure, sessions });
+		this.emit({
+			type: "host_memory_pressure",
+			rssMb,
+			footprintMb,
+			measure,
+			sessions,
+			main: reading.main,
+			kernels: reading.kernels,
+		});
 		const now = this.now();
 		if (this.lastLoggedAt !== undefined && now - this.lastLoggedAt < HOST_MEMORY_STDERR_INTERVAL_MS) return;
 		this.lastLoggedAt = now;

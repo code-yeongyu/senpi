@@ -1,8 +1,9 @@
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources/messages.js";
+import { CONVERSATION_HISTORY_CLOSER } from "./prompt-bridge.ts";
 
 const ULTRAWORK_MODE_OPEN_TAG = "<ultrawork-mode>";
 const ULTRAWORK_MODE_CLOSE_TAG = "</ultrawork-mode>";
-const SUPERSEDED_PLACEHOLDER = "[ultrawork directive superseded; the latest ultrawork directive block below applies]";
+const REPEATED_PLACEHOLDER = "[ultrawork directive repeated; identical to the ultrawork directive just above]";
 
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -73,40 +74,40 @@ export function serializedPayloadBytes(blocks: readonly ContentBlockParam[]): nu
 }
 
 /**
- * Collapse repeated `<ultrawork-mode>...</ultrawork-mode>` directive spans in a
- * serialized prompt to the single most recent copy; earlier spans become a
- * one-line placeholder. Without this, every flatten/bootstrap re-send bills
- * ~17KB per duplicate (issue #494's 875KB prompt was 73% such duplicates).
+ * Collapse repeated `<ultrawork-mode>...</ultrawork-mode>` directive spans in a serialized
+ * prompt. Without this, every flatten/bootstrap re-send bills ~17KB per duplicate (issue #494's
+ * 875KB prompt was 73% such duplicates).
  *
- * Invariants (load-bearing): spans match WITHIN a single text block — a lone
- * open tag in one block and a close tag in another never form a span; the LAST
- * span in serialization order is kept; the input array is never mutated, so
- * continuity hashes (derived from `context.messages` in `session-sync.ts`, not
- * from this serialized output) are unaffected.
+ * Invariants (load-bearing):
+ * - Spans match WITHIN a single text block; a lone open tag in one block and a close tag in
+ *   another never form a span.
+ * - Inside the replayed history (before `CONVERSATION_HISTORY_CLOSER`), a directive identical to the
+ *   directive just before it becomes a placeholder; a directive whose text differs is kept in full,
+ *   so the newest wording is always present and an A, B, A sequence keeps all three. Each decision
+ *   depends only on earlier blocks, so a rebuilt prompt stays a byte prefix of the next one and
+ *   reads its history from the prompt cache (senpi#2982). Keeping the last copy instead rewrote an
+ *   earlier block every time a new directive arrived.
+ * - After the closer (the current turn), nothing is collapsed: the active directive stays in full.
+ * - Other block fields (`cache_control`) are preserved, and the input array is never mutated, so
+ *   continuity hashes (derived from `context.messages` in `session-sync.ts`) are unaffected.
  */
 export function dedupeUltraworkBlocks(blocks: readonly ContentBlockParam[]): DedupeResult {
 	if (hasNestedDirective(blocks)) return { blocks: [...blocks], collapsedDirectives: 0 };
-
-	let total = 0;
-	for (const block of blocks) {
-		if (block.type === "text") total += countSpans(block.text);
-	}
-	if (total === 0) return { blocks: [...blocks], collapsedDirectives: 0 };
-
-	let remaining = total;
-	const next: ContentBlockParam[] = [];
-	for (const block of blocks) {
-		if (block.type !== "text") {
-			next.push(block);
-			continue;
-		}
-		next.push({
-			type: "text",
-			text: block.text.replace(ULTRAWORK_SPAN_PATTERN, (match) => {
-				remaining -= 1;
-				return remaining === 0 ? match : SUPERSEDED_PLACEHOLDER;
-			}),
+	const closerIndex = blocks.findIndex((block) => block.type === "text" && block.text === CONVERSATION_HISTORY_CLOSER);
+	let previous: string | undefined;
+	let collapsedDirectives = 0;
+	const next = blocks.map((block, index): ContentBlockParam => {
+		if (block.type !== "text" || index >= closerIndex) return block;
+		if (countSpans(block.text) === 0) return block;
+		const text = block.text.replace(ULTRAWORK_SPAN_PATTERN, (match) => {
+			if (match !== previous) {
+				previous = match;
+				return match;
+			}
+			collapsedDirectives += 1;
+			return REPEATED_PLACEHOLDER;
 		});
-	}
-	return { blocks: next, collapsedDirectives: total - 1 };
+		return { ...block, text };
+	});
+	return { blocks: next, collapsedDirectives };
 }

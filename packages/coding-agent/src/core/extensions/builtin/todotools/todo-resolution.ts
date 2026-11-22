@@ -22,11 +22,11 @@ export function resolveTaskOrError(
 		if (!hit) {
 			if (/^task-\d+$/.test(content)) {
 				errors.push(
-					`Task "${content}" not found. Tasks are referenced by content, not by IDs — pass the task's full text from the previous result.`,
+					`Task "${content}" not found. Tasks are referenced by content, not by IDs: pass the task's full text from the previous result.`,
 				);
 			} else {
 				const totalTasks = phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
-				const hint = totalTasks === 0 ? " (todo list is empty — was it replaced or not yet created?)" : "";
+				const hint = totalTasks === 0 ? " (todo list is empty: was it replaced or not yet created?)" : "";
 				errors.push(`Task "${content}" not found${hint}`);
 			}
 		}
@@ -37,7 +37,7 @@ export function resolveTaskOrError(
 	if (resolution.hit) {
 		if (resolution.corrected) {
 			corrections.push(
-				`[auto-matched] task "${content}" -> "${resolution.hit.task.content}" — pass the exact text from the previous todo result next time`,
+				`[auto-matched] task "${content}" -> "${resolution.hit.task.content}": pass the exact text from the previous todo result next time`,
 			);
 		}
 		return resolution.hit;
@@ -55,12 +55,12 @@ export function resolveTaskOrError(
 	}
 	if (/^task-\d+$/.test(content)) {
 		errors.push(
-			`Task "${content}" not found. Tasks are referenced by content, not by IDs — pass the task's full text from the previous result.`,
+			`Task "${content}" not found. Tasks are referenced by content, not by IDs: pass the task's full text from the previous result.`,
 		);
 		return undefined;
 	}
 	const totalTasks = phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
-	const hint = totalTasks === 0 ? " (todo list is empty — was it replaced or not yet created?)" : "";
+	const hint = totalTasks === 0 ? " (todo list is empty: was it replaced or not yet created?)" : "";
 	const suggestion = resolution.suggestion ? ` Did you mean "${resolution.suggestion}"?` : "";
 	errors.push(`Task "${content}" not found${hint}${suggestion}`);
 	return undefined;
@@ -86,7 +86,7 @@ export function resolvePhaseOrError(
 	if (resolution.hit) {
 		if (resolution.corrected) {
 			corrections.push(
-				`[auto-matched] phase "${name}" -> "${resolution.hit.name}" — pass the exact text from the previous todo result next time`,
+				`[auto-matched] phase "${name}" -> "${resolution.hit.name}": pass the exact text from the previous todo result next time`,
 			);
 		}
 		return resolution.hit;

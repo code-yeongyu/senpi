@@ -4,13 +4,23 @@ import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { loadMcpSdkAuth } from "../sdk.lazy.ts";
 import { safeDelay } from "../wrap.ts";
 import { isInvalidGrant, isTransientTokenError, OAuthFlowError } from "./oauth-errors.ts";
+import { oauthFetch } from "./oauth-fetch.ts";
 import {
-	type McpOAuthProvider,
+	canonicalAuthorizationServerIssuer,
+	credentialsMatchIssuer,
+	validatedAuthorizationServerIssuer,
+} from "./oauth-issuer.ts";
+import {
 	mergeTokensIntoStoredAuth,
-	REFRESH_LEEWAY_MS,
 	storedAuthToTokens,
-} from "./oauth-provider.ts";
+	storedGrantIssuer,
+	validGrantProof,
+	withGrantAuthorization,
+} from "./oauth-grant.ts";
+import type { McpOAuthProvider } from "./oauth-provider.ts";
 import type { McpStoredAuth } from "./token-store.ts";
+
+const REFRESH_LEEWAY_MS = 5 * 60 * 1000;
 
 export interface RefreshManagerOptions {
 	fetchFn?: FetchLike;
@@ -50,7 +60,7 @@ export class McpRefreshManager {
 	}
 
 	async ensureFresh(): Promise<OAuthTokens | undefined> {
-		const record = this.#provider.store.read();
+		const record = await this.#provider.store.readAsync();
 		if (record?.accessToken === undefined) return undefined;
 		if (!isTokenStale(record, Date.now())) return storedAuthToTokens(record);
 		return this.refresh();
@@ -84,6 +94,21 @@ export class McpRefreshManager {
 
 	async #doRefresh(current: McpStoredAuth, refreshToken: string): Promise<OAuthTokens> {
 		const info = await this.#discover();
+		// senpi#2940: a refresh token is presented only to the authorization server that issued it. A grant bound
+		// elsewhere, or one that cannot be attributed at all, is a continuity break: drop it and require a fresh
+		// sign-in rather than refreshing silently against whatever server discovery now names.
+		const issuer = storedGrantIssuer(current);
+		const authorizationServer = validatedAuthorizationServerIssuer(info, this.#provider.serverName);
+		if (issuer === undefined || !credentialsMatchIssuer(current, authorizationServer)) {
+			this.#provider.store.writeUnlocked(undefined);
+			throw new OAuthFlowError(
+				"needs_auth",
+				issuer === undefined
+					? `MCP server ${this.#provider.serverName} has a saved sign-in with no record of the authorization server that issued it; credentials cleared, re-authentication required.`
+					: `MCP server ${this.#provider.serverName} now uses authorization server ${authorizationServer}, but its saved sign-in was issued by ${issuer}; credentials cleared, re-authentication required.`,
+				{ serverName: this.#provider.serverName },
+			);
+		}
 		const clientInformation = this.#provider.clientInformation();
 		if (clientInformation === undefined) {
 			throw new OAuthFlowError("needs_auth", `MCP server ${this.#provider.serverName} is not registered`, {
@@ -91,6 +116,7 @@ export class McpRefreshManager {
 			});
 		}
 		const resource = new URL(current.resource ?? this.#provider.serverUrl);
+		const proof = validGrantProof(current, this.#provider.grantContext);
 		const { refreshAuthorization } = await loadMcpSdkAuth();
 		const maxRetries = this.#options.maxRetries ?? 2;
 		for (let attempt = 0; ; attempt++) {
@@ -100,11 +126,33 @@ export class McpRefreshManager {
 					clientInformation,
 					refreshToken,
 					resource,
-					fetchFn: this.#options.fetchFn,
+					fetchFn: oauthFetch(this.#options.fetchFn),
 				});
-				this.#provider.store.writeUnlocked(mergeTokensIntoStoredAuth(current, tokens, this.#provider.serverUrl));
-				return tokens;
+				if (
+					tokens.issuer !== undefined &&
+					canonicalAuthorizationServerIssuer(tokens.issuer) !==
+						canonicalAuthorizationServerIssuer(authorizationServer)
+				) {
+					this.#provider.store.writeUnlocked(undefined);
+					throw new OAuthFlowError("needs_auth", "MCP refresh response names a different issuer.", {
+						serverName: this.#provider.serverName,
+					});
+				}
+				const next = mergeTokensIntoStoredAuth(
+					{ ...current, issuer: authorizationServer, resource: resource.href, refreshScope: proof?.refreshScope },
+					{
+						...tokens,
+						issuer: authorizationServer,
+						scope: tokens.scope === undefined ? proof?.refreshScope : tokens.scope,
+					},
+				);
+				const committed = withGrantAuthorization(next, this.#provider.grantContext, current);
+				this.#provider.store.writeUnlocked(committed);
+				const result = storedAuthToTokens(committed);
+				if (result === undefined) throw new OAuthFlowError("needs_auth", "MCP refresh returned no access token.");
+				return result;
 			} catch (error) {
+				if (error instanceof OAuthFlowError) throw error;
 				if (isInvalidGrant(error)) {
 					// Terminal: drop credentials so the next use forces a clean re-auth.
 					this.#provider.store.writeUnlocked(undefined);
@@ -138,6 +186,6 @@ export class McpRefreshManager {
 	async #discover(): Promise<OAuthServerInfo> {
 		if (this.#options.discover !== undefined) return this.#options.discover(this.#provider.serverUrl);
 		const { discoverOAuthServerInfo } = await loadMcpSdkAuth();
-		return discoverOAuthServerInfo(this.#provider.serverUrl, { fetchFn: this.#options.fetchFn });
+		return discoverOAuthServerInfo(this.#provider.serverUrl, { fetchFn: oauthFetch(this.#options.fetchFn) });
 	}
 }

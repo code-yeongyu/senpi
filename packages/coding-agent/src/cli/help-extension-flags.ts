@@ -26,7 +26,6 @@ export async function resolveHelpExtensionFlags(options: {
 		cwd: options.cwd,
 		agentDir: options.agentDir,
 		settingsManager: options.settingsManager,
-		sharedHostEnabled: false,
 		additionalExtensionPaths: [...options.additionalExtensionPaths],
 		noExtensions: options.noExtensions,
 		noSkills: true,

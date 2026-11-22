@@ -3,6 +3,9 @@ import { type Static, Type } from "typebox";
 import type { KernelMemoryThresholds } from "../bridge/memory-protocol.ts";
 import type { CodemodeSettings, Environment } from "./settings.ts";
 
+// The longest delay setTimeout honours (2^31 - 1 ms); a longer one fires after 1 ms.
+export const MAX_IDLE_PARK_MINUTES = 35_791;
+
 export const memorySettingsSchema = Type.Object(
 	{
 		gcWatermarkMb: Type.Optional(Type.Number({ minimum: 0 })),
@@ -10,6 +13,7 @@ export const memorySettingsSchema = Type.Object(
 		ceilingMb: Type.Optional(Type.Number({ minimum: 0 })),
 		retainedResultsMb: Type.Optional(Type.Number({ minimum: 0 })),
 		retainedImagesMb: Type.Optional(Type.Number({ minimum: 0 })),
+		idleParkMinutes: Type.Optional(Type.Number({ minimum: 0, maximum: MAX_IDLE_PARK_MINUTES })),
 	},
 	{ additionalProperties: false },
 );
@@ -27,6 +31,8 @@ export interface CodemodeMemorySettings {
 	readonly retainedResultsMb: number;
 	/** Disk budget (MiB) for settled-cell images spilled under the session artifacts dir; 0 keeps only the count cap. */
 	readonly retainedImagesMb: number;
+	/** Minutes with no cell running or queued before a kernel is closed and restarted on the next cell; absent or 0 never parks. */
+	readonly idleParkMinutes?: number;
 }
 
 export const DEFAULT_MEMORY_GC_WATERMARK_MB = 256;
@@ -67,6 +73,7 @@ export function mergeMemorySettings(input: CodemodeMemorySettingsInput | undefin
 		ceilingMb: input?.ceilingMb ?? defaults.ceilingMb,
 		retainedResultsMb: input?.retainedResultsMb ?? defaults.retainedResultsMb,
 		retainedImagesMb: input?.retainedImagesMb ?? defaults.retainedImagesMb,
+		...(input?.idleParkMinutes === undefined ? {} : { idleParkMinutes: input.idleParkMinutes }),
 	};
 }
 
@@ -91,6 +98,7 @@ export function validatedMemorySettings(input: CodemodeMemorySettingsInput | und
 			...defaults,
 			retainedResultsMb: merged.retainedResultsMb,
 			retainedImagesMb: merged.retainedImagesMb,
+			...(merged.idleParkMinutes === undefined ? {} : { idleParkMinutes: merged.idleParkMinutes }),
 		},
 		warnings: [warning],
 	};

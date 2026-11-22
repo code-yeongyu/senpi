@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { Container, type TuiMouseEvent, visibleWidth } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchMouseEvent } from "../../../tui/src/tui.ts";
-import { formatUserMessage } from "../../src/core/extensions/builtin/ask-user/format.ts";
-import type { QuestionResponse } from "../../src/core/extensions/types.ts";
+import { askUserAnswerDisplayText, formatUserMessage } from "../../src/core/extensions/builtin/ask-user/format.ts";
+import type { ExtensionToolContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { type SessionEntry, SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { UserMessageComponent } from "../../src/modes/interactive/components/user-message.ts";
@@ -124,26 +124,18 @@ describe("ask-user answer chips", () => {
 			comment: "Use the existing flow",
 			unanswered: ["q1"],
 		};
-		const component = new UserMessageComponent(
-			formatUserMessage(response, "chip-request", questions),
-			undefined,
-			1,
-			[],
-			["Auth"],
-		);
+		const content = formatUserMessage(response, "chip-request", questions);
+		if (typeof content === "string") throw new Error("a comment leaves the frame block");
+		const component = new UserMessageComponent(askUserAnswerDisplayText(content) ?? "", undefined, 1, [], ["Auth"]);
 		expect(plain(component)).toEqual(['↳ Auth: "Use the existing flow"']);
 	});
 	it.each(["timed_out", "cancelled"] as const)(
 		"renders %s with the retained header and no invented answer",
 		(status) => {
 			const response: QuestionResponse = { status, answers: {}, unanswered: ["q1"] };
-			const component = new UserMessageComponent(
-				formatUserMessage(response, "chip-request", questions),
-				undefined,
-				1,
-				[],
-				["Auth"],
-			);
+			const frame = formatUserMessage(response, "chip-request", questions);
+			if (typeof frame !== "string") throw new Error("an answer without typed words is one framed string");
+			const component = new UserMessageComponent(frame, undefined, 1, [], ["Auth"]);
 			expect(plain(component)).toEqual(["↳ Auth: (no answer)"]);
 		},
 	);
@@ -166,7 +158,7 @@ describe("ask-user answer chips", () => {
 			{ questions, waitForAnswer: false },
 			controller.signal,
 			undefined,
-			ctx,
+			ctx as ExtensionToolContext,
 		);
 		const settled = delivery.settled(ctx, "chip-request");
 		await execution;
@@ -181,7 +173,7 @@ describe("ask-user answer chips", () => {
 		await settled;
 		expect(delivery.deliveries).toEqual([{ content: frame, options: { deliverAs: "followUp" } }]);
 	});
-	it.each(["answered", "timed_out"] as const)(
+	it.each(["answered", "timed_out", "comment-submitted"] as const)(
 		"renders a saved %s frame as a chip through session replay",
 		(status) => {
 			const root = mkdtempSync(join(tmpdir(), "ask-user-chip-replay-"));
@@ -207,7 +199,11 @@ describe("ask-user answer chips", () => {
 				},
 			});
 			const response: QuestionResponse =
-				status === "answered" ? answered : { status, answers: {}, unanswered: ["q1"] };
+				status === "answered"
+					? answered
+					: status === "comment-submitted"
+						? { status, answers: {}, comment: "Use the existing flow", unanswered: ["q1"] }
+						: { status, answers: {}, unanswered: ["q1"] };
 			writer.appendMessage({
 				role: "user",
 				content: formatUserMessage(response, "chip-request", questions),
@@ -219,7 +215,12 @@ describe("ask-user answer chips", () => {
 			const host = replayHost(loaded);
 			host.renderSessionEntries(loaded.getBranch());
 			const lines = host.chatContainer.render(80).map((line) => stripAnsi(line).trimEnd());
-			expect(lines).toContain(status === "answered" ? "↳ Auth: OAuth" : "↳ Auth: (no answer)");
+			const chip = {
+				answered: "↳ Auth: OAuth",
+				timed_out: "↳ Auth: (no answer)",
+				"comment-submitted": '↳ Auth: "Use the existing flow"',
+			};
+			expect(lines).toContain(chip[status]);
 			expect(lines.some((line) => line.includes("[Answer to question"))).toBe(false);
 		},
 	);

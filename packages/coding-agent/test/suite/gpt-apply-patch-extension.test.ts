@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getCurrentTools, normalizeContext } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { streamOpenAICompletions } from "../../../ai/src/providers/openai-completions.ts";
@@ -439,7 +440,7 @@ describe("gpt-apply-patch builtin extension", () => {
 		await harness.session.bindExtensions({});
 		harness.setResponses([
 			(context) => {
-				providerToolNames = (context.tools ?? []).map((tool) => tool.name);
+				providerToolNames = getCurrentTools(context.messages).map((tool) => tool.name);
 				return {
 					role: "assistant",
 					content: [{ type: "text", text: "done" }],
@@ -534,8 +535,8 @@ describe("gpt-apply-patch builtin extension", () => {
 				"/tmp",
 			),
 		).toEqual([
-			{ permission: "edit", patterns: ["src/app.ts"], always: ["src/app.ts"] },
-			{ permission: "edit", patterns: ["src/new.ts"], always: ["src/new.ts"] },
+			{ permission: "edit", patterns: ["src/app.ts"], always: ["src/app.ts"], executed: ["/tmp/src/app.ts"] },
+			{ permission: "edit", patterns: ["src/new.ts"], always: ["src/new.ts"], executed: ["/tmp/src/new.ts"] },
 		]);
 	});
 
@@ -646,13 +647,17 @@ describe("gpt-apply-patch builtin extension", () => {
 		let capturedTools: unknown;
 
 		// when: the JSON variant flows through completions conversion without throwing
-		const acceptStream = streamOpenAICompletions(createCompletionsModel(), createUserContext([jsonTool]), {
-			apiKey: "test-key",
-			onPayload(payload) {
-				capturedTools = (payload as { tools?: unknown }).tools;
-				throw new Error("capture-sentinel");
+		const acceptStream = streamOpenAICompletions(
+			createCompletionsModel(),
+			normalizeContext(createUserContext([jsonTool])),
+			{
+				apiKey: "test-key",
+				onPayload(payload) {
+					capturedTools = (payload as { tools?: unknown }).tools;
+					throw new Error("capture-sentinel");
+				},
 			},
-		});
+		);
 		const acceptResult = await acceptStream.result();
 
 		// then
@@ -678,7 +683,7 @@ describe("gpt-apply-patch builtin extension", () => {
 		// when
 		const rejectStream = streamOpenAICompletions(
 			createCompletionsModel(),
-			createUserContext([jsonTool, otherFreeformTool]),
+			normalizeContext(createUserContext([jsonTool, otherFreeformTool])),
 			{ apiKey: "test-key" },
 		);
 		const rejectResult = await rejectStream.result();
@@ -700,7 +705,10 @@ describe("gpt-apply-patch builtin extension", () => {
 		await harness.session.bindExtensions({});
 		harness.setResponses([
 			(context) => {
-				providerTools = (context.tools ?? []).map((tool) => ({ name: tool.name, freeform: tool.freeform }));
+				providerTools = getCurrentTools(context.messages).map((tool) => ({
+					name: tool.name,
+					freeform: tool.freeform,
+				}));
 				return {
 					role: "assistant",
 					content: [{ type: "text", text: "done" }],
@@ -832,7 +840,9 @@ describe("gpt-apply-patch builtin extension", () => {
 		if (!jsonTool.prepareArguments || !freeformTool.prepareArguments) throw new Error("prepareArguments missing");
 		const jsonArgs = jsonTool.prepareArguments({ input: patch });
 		const freeformArgs = freeformTool.prepareArguments(patch);
-		const expected = [{ permission: "edit", patterns: ["src/app.ts"], always: ["src/app.ts"] }];
+		const expected = [
+			{ permission: "edit", patterns: ["src/app.ts"], always: ["src/app.ts"], executed: ["/tmp/src/app.ts"] },
+		];
 
 		expect(parserRegistry.parse("apply_patch", jsonArgs, "/tmp")).toEqual(expected);
 		expect(parserRegistry.parse("apply_patch", freeformArgs, "/tmp")).toEqual(expected);

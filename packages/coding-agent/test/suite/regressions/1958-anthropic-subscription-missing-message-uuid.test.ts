@@ -4,7 +4,9 @@ import type {
 	SDKUserMessage,
 	SdkQueryHandle,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
+import { decideNativeContinuity } from "../../../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
 import {
+	type ContinuityBinding,
 	forgetBinding,
 	getBinding,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/session-reattach.ts";
@@ -34,14 +36,14 @@ function failingQuery(error: Error): SdkQueryHandle {
 	} as unknown as SdkQueryHandle;
 }
 
-function seedEntry(error: Error) {
+function seedEntry(error: Error, accountName: string) {
 	overrideSessionRegistryBoundary({
 		queryFactory: () => failingQuery(error),
 		scheduleReap: () => ({ cancel: () => {}, unref: () => {} }),
 	});
 	const entry = getOrCreateSession({
 		senpiSessionId: SESSION_ID,
-		accountName: "account-a",
+		accountName,
 		modelId: "claude-test",
 		toolsetHash: "toolset",
 		systemPromptHash: "prompt",
@@ -54,18 +56,22 @@ function seedEntry(error: Error) {
 	return entry;
 }
 
-async function runFailingTurn(error: Error): Promise<void> {
-	const entry = seedEntry(error);
-	const attempt = createSessionTurnAttempt(
+async function runFailingTurn(
+	error: Error,
+	attempt: { accountName: string; servedLineage?: ContinuityBinding } = { accountName: "account-a" },
+): Promise<void> {
+	const entry = seedEntry(error, attempt.accountName);
+	const turn = createSessionTurnAttempt(
 		entry,
 		{ role: "user", content: [{ type: "text", text: "next turn" }] } as SDKUserMessage["message"],
 		["hash-1", "hash-2", "hash-3"],
 		undefined,
 		{ emit: () => {} },
+		attempt.servedLineage,
 	);
 	await expect(async () => {
 		const drained: SDKMessage[] = [];
-		for await (const message of attempt.messages as AsyncIterable<SDKMessage>) drained.push(message);
+		for await (const message of turn.messages as AsyncIterable<SDKMessage>) drained.push(message);
 		return drained;
 	}).rejects.toThrow();
 }
@@ -88,14 +94,56 @@ describe("issue #1958: a rejected assistant UUID is never republished", () => {
 		expect(binding?.assistantUuidByIndex?.some(([, uuid]) => uuid === DEAD_UUID)).toBe(false);
 	});
 
-	// The surviving entry is recorded, not yet consumed: the decision table still flattens on a
-	// null lastAssistantUuid until senpi#1973 lands, so this asserts the recorded state only.
-	it("keeps an earlier mapped boundary recorded in the checkpoint for recovery (#1973)", async () => {
+	it("retries the same turn by forking at the surviving earlier boundary (#1973)", async () => {
 		await runFailingTurn(missingMessageError(DEAD_UUID));
 
 		const binding = getBinding(SESSION_ID);
-		expect(binding).toBeDefined();
 		expect(binding?.assistantUuidByIndex?.some(([, uuid]) => uuid === LIVE_UUID)).toBe(true);
+		expect(
+			decideNativeContinuity({
+				entry: undefined,
+				binding,
+				currentHashes: ["hash-1", "hash-2", "hash-3"],
+				accountName: "account-a",
+				modelId: "claude-test",
+				fingerprint: { systemPromptHash: "prompt", toolsetHash: "toolset" },
+				transcriptAvailable: true,
+				crossAccountResumeSupported: true,
+			}),
+		).toEqual({
+			kind: "fork",
+			sdkSessionId: binding?.sdkSessionId,
+			atUuid: LIVE_UUID,
+			from: 1,
+			reason: "timeout_retry",
+		});
+	});
+
+	it("drops it from the served lineage a failed attempt on another account keeps (senpi#4304)", async () => {
+		const servedLineage: ContinuityBinding = {
+			senpiSessionId: SESSION_ID,
+			sdkSessionId: "served-session",
+			sdkSessionIdConfirmed: true,
+			sentCount: 2,
+			sentHashes: ["hash-1", "hash-2"],
+			lastAssistantUuid: DEAD_UUID,
+			assistantUuidByIndex: [
+				[1, LIVE_UUID],
+				[2, DEAD_UUID],
+			],
+			accountName: "account-a",
+			modelId: "claude-test",
+			systemPromptHash: "prompt",
+			toolsetHash: "toolset",
+		};
+		await runFailingTurn(missingMessageError(DEAD_UUID), { accountName: "account-b", servedLineage });
+
+		expect(getBinding(SESSION_ID)).toMatchObject({
+			accountName: "account-a",
+			sdkSessionId: "served-session",
+			lastAssistantUuid: null,
+			assistantUuidByIndex: [[1, LIVE_UUID]],
+		});
 	});
 
 	it("still republishes the checkpoint unchanged for an unrelated failure", async () => {

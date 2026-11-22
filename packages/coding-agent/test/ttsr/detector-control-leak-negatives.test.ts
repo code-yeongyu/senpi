@@ -106,11 +106,17 @@ describe("detector-control-leak hard negatives", () => {
 		expectNoLeakMatchEverywhere(runSplitMatrix(fixture, tokens));
 	});
 
-	it("B-N10 SGML(div) x8 outside quotation fires", () => {
+	it("B-N10 SGML(div) x8 outside quotation is markup and stays silent (omo#10789)", () => {
 		const token = sgml("div");
 		const fixture = `${PLAIN_PROSE_PREFIX} ${joined(token, 8, " ")}`;
+		expectNoLeakMatchEverywhere(runSplitMatrix(fixture, [token]));
+	});
+
+	it("B-N10 tokenizer SGML(/s) x8 outside quotation fires", () => {
+		const token = sgml("/s");
+		const fixture = `${PLAIN_PROSE_PREFIX} ${joined(token, 8, " ")}`;
 		expectLeakMatchEverywhere(runSplitMatrix(fixture, [token]), {
-			tokenId: "sgml:div",
+			tokenId: "sgml:/s",
 			occurrences: 4,
 			context: "normal",
 			anomalyStartOffset: PLAIN_PROSE_PREFIX.length + 1,

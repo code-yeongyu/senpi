@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
-import { getModel } from "../src/compat.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
 import { fireworksCompletionsModels, requireModels } from "./fireworks-catalog.ts";
 
@@ -111,10 +111,10 @@ describe("openai-completions prompt caching", () => {
 	) {
 		const message = await streamOpenAICompletions(
 			model,
-			{
+			normalizeContext({
 				systemPrompt: "sys",
 				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
-			},
+			}),
 			{ apiKey: "test-key", ...options },
 		).result();
 
@@ -124,6 +124,38 @@ describe("openai-completions prompt caching", () => {
 			message,
 		};
 	}
+
+	it("leaves usage.reasoning unset when the provider reports no reasoning breakdown (senpi#3879)", async () => {
+		mockState.usage = { prompt_tokens: 100, completion_tokens: 10 };
+
+		const { message } = await captureRequest();
+
+		expect(message.usage.reasoning).toBeUndefined();
+	});
+
+	it("leaves usage.reasoning unset when the provider sends a null reasoning count (senpi#3879)", async () => {
+		mockState.usage = {
+			prompt_tokens: 100,
+			completion_tokens: 10,
+			completion_tokens_details: { reasoning_tokens: null as unknown as number },
+		};
+
+		const { message } = await captureRequest();
+
+		expect(message.usage).not.toHaveProperty("reasoning");
+	});
+
+	it("keeps a reported zero reasoning count as 0 (senpi#3879)", async () => {
+		mockState.usage = {
+			prompt_tokens: 100,
+			completion_tokens: 10,
+			completion_tokens_details: { reasoning_tokens: 0 },
+		};
+
+		const { message } = await captureRequest();
+
+		expect(message.usage.reasoning).toBe(0);
+	});
 
 	it("parses flat cached_tokens from Kimi usage as cache-read tokens", async () => {
 		mockState.usage = {
@@ -229,6 +261,14 @@ describe("openai-completions prompt caching", () => {
 			expect(headers["x-session-affinity"]).toBe("fireworks-session");
 		},
 	);
+
+	it("sends Baseten session affinity for built-in catalog models", async () => {
+		const model = getModel("baseten", "zai-org/GLM-5.2");
+		const { headers } = await captureRequest({ sessionId: "baseten-catalog-session" }, model);
+
+		expect(headers["x-session-affinity"]).toBe("baseten-catalog-session");
+		expect(headers["x-client-request-id"]).toBe("baseten-catalog-session");
+	});
 
 	it("uses OpenAI no-session format when configured", async () => {
 		const model = createModel({

@@ -1,4 +1,4 @@
-import type { Api, Context, Model } from "../types.ts";
+import type { Api, Model, TranscriptContext } from "../types.ts";
 import { estimateContextTokens } from "../utils/estimate.ts";
 
 export const CONTEXT_SAFETY_TOKENS = 4096;
@@ -31,7 +31,7 @@ export class ContextWindowExhaustedError extends Error {
  * {@link MIN_ANSWER_TOKENS}: such a request can only return a truncated tool call or an
  * empty "length" stop while still billing the whole prompt.
  */
-export function clampMaxTokensToContext(model: Model<Api>, context: Context, maxTokens: number): number {
+export function clampMaxTokensToContext(model: Model<Api>, context: TranscriptContext, maxTokens: number): number {
 	if (model.contextWindow <= 0) {
 		return Number.isFinite(maxTokens) && maxTokens > 0
 			? Math.max(MIN_MAX_TOKENS, Math.floor(maxTokens))

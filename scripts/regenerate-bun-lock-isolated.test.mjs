@@ -56,6 +56,20 @@ function writeRepoFixture(root) {
 	return root;
 }
 
+const STALE_RANGE_LOCK = `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "packages/agent": {
+      "name": "@earendil-works/pi-agent-core",
+      "version": "2026.9.12",
+      "dependencies": {
+        "@earendil-works/pi-ai": "^2026.9.11",
+      },
+    },
+  },
+}
+`;
+
 describe("collectWorkspaceManifestPaths", () => {
 	it("collects the root manifest plus every workspace manifest at its repository-relative path", () => {
 		// Given
@@ -256,6 +270,85 @@ describe("regenerateBunLock", () => {
 				}),
 			/produced no bun\.lock in the island/,
 		);
+	});
+
+	it("repairs stale workspace ranges in the seed before Bun resolves (senpi#2352)", () => {
+		// Given: a release bumped the agent's pi-ai range, but bun.lock still records the previous one.
+		tempDir = mkdtempSync(join(tmpdir(), "bun-lock-stale-range-"));
+		const repoRoot = join(tempDir, "repo");
+		writeRepoFixture(repoRoot);
+		writeJson(join(repoRoot, "packages", "agent", "package.json"), {
+			name: "@earendil-works/pi-agent-core",
+			version: "2026.9.12",
+			dependencies: { "@earendil-works/pi-ai": "^2026.9.12" },
+		});
+		write(join(repoRoot, "bun.lock"), STALE_RANGE_LOCK);
+		const seeds = [];
+
+		// When: a fake Bun that, like Bun 1.4.2, keeps whatever range the seed records.
+		const result = regenerateBunLock({
+			repoRoot,
+			islandParent: tempDir,
+			check: true,
+			runBun: (islandRoot) => {
+				seeds.push(readFileSync(join(islandRoot, "bun.lock"), "utf8"));
+				return "1.4.2";
+			},
+		});
+
+		// Then
+		assert.equal(seeds.length, 2);
+		assert.equal(seeds[0], STALE_RANGE_LOCK.replace('"^2026.9.11"', '"^2026.9.12"'));
+		assert.equal(result.changed, true);
+		assert.deepEqual(
+			result.repaired.map(({ workspace, name, recorded }) => [workspace, name, recorded]),
+			[["packages/agent", "@earendil-works/pi-ai", "^2026.9.11"]],
+		);
+		assert.equal(readFileSync(join(repoRoot, "bun.lock"), "utf8"), STALE_RANGE_LOCK);
+	});
+
+	it("fails when a second Bun pass would still rewrite the lockfile", () => {
+		// Given
+		tempDir = mkdtempSync(join(tmpdir(), "bun-lock-fixed-point-"));
+		const repoRoot = join(tempDir, "repo");
+		writeRepoFixture(repoRoot);
+		let pass = 0;
+
+		// When / Then
+		assert.throws(
+			() =>
+				regenerateBunLock({
+					repoRoot,
+					islandParent: tempDir,
+					runBun: (islandRoot) => {
+						pass += 1;
+						writeFileSync(join(islandRoot, "bun.lock"), `{"lockfileVersion": 1, "workspaces": {}, "pass": ${pass}}\n`);
+						return "1.4.2";
+					},
+				}),
+			/did not reach a fixed point/,
+		);
+		assert.equal(readFileSync(join(repoRoot, "bun.lock"), "utf8"), '{"lockfileVersion": 1, "workspaces": {}}\n');
+	});
+
+	it("fails when the resolved lockfile still disagrees with a workspace manifest", () => {
+		// Given: the stale range points at a registry release, so the seed repair must leave it to Bun.
+		tempDir = mkdtempSync(join(tmpdir(), "bun-lock-mismatch-"));
+		const repoRoot = join(tempDir, "repo");
+		writeRepoFixture(repoRoot);
+		writeJson(join(repoRoot, "packages", "agent", "package.json"), {
+			name: "@earendil-works/pi-agent-core",
+			version: "2026.9.12",
+			dependencies: { "@earendil-works/pi-ai": "^0.84.4" },
+		});
+		write(join(repoRoot, "bun.lock"), STALE_RANGE_LOCK);
+
+		// When / Then
+		assert.throws(
+			() => regenerateBunLock({ repoRoot, islandParent: tempDir, runBun: () => "1.4.2" }),
+			/workspaces\["packages\/agent"\]\.dependencies\.@earendil-works\/pi-ai: bun\.lock \^2026\.9\.11, package\.json \^0\.84\.4/,
+		);
+		assert.equal(readFileSync(join(repoRoot, "bun.lock"), "utf8"), STALE_RANGE_LOCK);
 	});
 
 	it("refuses to resolve when an npm lockfile reaches the island", () => {

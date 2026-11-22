@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildBashTimeoutPrompt } from "../../src/core/extensions/builtin/bash-timeout/timeout.ts";
 import { buildTerminalPromptSection } from "../../src/core/extensions/builtin/terminal/prompt.ts";
+import { monitorSourceOf } from "../../src/core/extensions/builtin/terminal/tools/monitor-rpc.ts";
 
 /**
  * The eval-only policy hides `bash`, `powershell`, `workflow` and `monitor` from the
@@ -52,41 +52,37 @@ describe("eval-only prose call forms", () => {
 		});
 
 		it("preserves the monitor branch teaching in both branches", () => {
+			// The one-source rule the prompt teaches is enforced by the tool, so it is pinned there, not by wording.
+			expect(monitorSourceOf({ description: "d", command: "c", path: "p" })).toHaveProperty("error");
+			expect(monitorSourceOf({ description: "d" })).toHaveProperty("error");
+			expect(monitorSourceOf({ description: "d", target: "children" })).toBe("rpc");
 			for (const evalOnly of [true, false]) {
 				const section = buildTerminalPromptSection({ evalOnly });
 
-				expect(section, `evalOnly=${evalOnly}`).toContain("XOR");
 				expect(section, `evalOnly=${evalOnly}`).toContain("event");
 				expect(section, `evalOnly=${evalOnly}`).toMatch(/fires only/);
 			}
 		});
 	});
 
-	describe("bash timeout policy section", () => {
-		const defaults = { defaultSeconds: 1800, maxSeconds: 1800 };
+	describe("bash timeout facts in the terminal section (senpi#5335)", () => {
+		it("names the configured foreground window and default timeout", () => {
+			const section = buildTerminalPromptSection({
+				evalOnly: true,
+				foregroundWindowSeconds: 25,
+				defaultTimeoutSeconds: 7,
+			});
 
-		it("names no monitor call form at all; the terminal section owns the wait routing", () => {
-			const prompt = buildBashTimeoutPrompt(defaults, { foregroundWindowSeconds: 60 });
-
-			expect(prompt).not.toContain("monitor(");
-			expect(prompt).not.toContain("tool.bash(");
+			expect(section).toContain("25s");
+			expect(section).toContain("default 7)");
+			expect(section).toContain("process kill deadline");
 		});
 
-		it("keeps the kill-deadline contract", () => {
-			const prompt = buildBashTimeoutPrompt(defaults, { foregroundWindowSeconds: 60 });
+		it("omits the bash detach and timeout facts when no PTY bash tool is live", () => {
+			const section = buildTerminalPromptSection({ evalOnly: true, ptyBash: false });
 
-			expect(prompt).toContain("## Bash Tool Timeout Policy");
-			expect(prompt).toContain("process kill deadline");
-			expect(prompt).toContain("Default timeout: 1800s (30 min)");
-			expect(prompt).toContain("auto-detaches alive");
-			expect(prompt).not.toContain("tmux");
-		});
-
-		it("omits the detach rules when no PTY bash tool is live", () => {
-			const prompt = buildBashTimeoutPrompt(defaults, {});
-
-			expect(prompt).not.toContain("auto-detaches alive");
-			expect(prompt).toContain("## Bash Tool Timeout Policy");
+			expect(section).not.toContain("auto-detaches");
+			expect(section).not.toContain("run_in_background");
 		});
 	});
 });

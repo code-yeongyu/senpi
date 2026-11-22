@@ -4,7 +4,7 @@ import { inspect } from "node:util";
 import { getDebugLogPath } from "../config.ts";
 import { redactSensitiveOutput } from "./sensitive-output.ts";
 
-function appendDebugLogEntry(header: string, text: string): void {
+export function appendDebugLogEntry(header: string, text: string): void {
 	const debugLogPath = getDebugLogPath();
 	const prefix = `[${new Date().toISOString()}] ${header}\n`;
 	const redactedText = redactSensitiveOutput(text);

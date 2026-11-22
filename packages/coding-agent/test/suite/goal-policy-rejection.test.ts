@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CHATGPT_SUBSCRIPTION_MODELS } from "../../../ai/src/providers/chatgpt-subscription.models.ts";
 import { readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
-import type { AgentEndEvent } from "../../src/core/extensions/types.ts";
+import type { AgentEndEvent, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	cleanupGoalMonitorTempDirs,
 	createGoalHarness,
@@ -34,7 +34,13 @@ async function setupGoal() {
 	const ctx = await makeGoalContext([], "policy-rejection");
 	const create = harness.tools.get("create_goal");
 	if (create === undefined) throw new Error("create_goal was not registered");
-	await create.execute("create", { objective: "Preserve unfinished work" }, undefined, undefined, ctx);
+	await create.execute(
+		"create",
+		{ objective: "Preserve unfinished work" },
+		undefined,
+		undefined,
+		ctx as ExtensionToolContext,
+	);
 	const goal = await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd));
 	await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
 	return { harness, ctx, goal };

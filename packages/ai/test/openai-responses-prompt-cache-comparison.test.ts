@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { getModel } from "../src/compat.ts";
 import type { AssistantMessage, Message, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 interface CapturedPromptCachePayload {
 	prompt_cache_options?: Record<string, unknown>;
@@ -41,18 +42,14 @@ async function capturePromptCacheOptions(
 	vi.spyOn(globalThis, "fetch").mockResolvedValue(
 		new Response("data: [DONE]\n\n", { status: 200, headers: { "content-type": "text/event-stream" } }),
 	);
-	const events = streamOpenAIResponses(
-		model,
-		{ systemPrompt: "sys", messages },
-		{
-			apiKey: "test-key",
-			sessionId: "session-2096",
-			cacheRetention,
-			onPayload: (payload) => {
-				captured = payload as CapturedPromptCachePayload;
-			},
+	const events = streamOpenAIResponses(model, normalizeContext({ systemPrompt: "sys", messages }), {
+		apiKey: "test-key",
+		sessionId: "session-2096",
+		cacheRetention,
+		onPayload: (payload) => {
+			captured = payload as CapturedPromptCachePayload;
 		},
-	);
+	});
 	for await (const event of events) {
 		if (event.type === "done" || event.type === "error") break;
 	}
@@ -78,7 +75,7 @@ describe("openai-responses prompt_cache_options.comparison_response_id", () => {
 			comparison_response_id: "resp_previous",
 		});
 		await expect(capturePromptCacheOptions(luna, messages, "long")).resolves.toEqual({
-			ttl: "30m",
+			ttl: "12h",
 			comparison_response_id: "resp_previous",
 		});
 	});

@@ -36,14 +36,19 @@ describe("build-all", () => {
 			"packages/pty",
 			"packages/telemetry",
 			"packages/protocol",
+			"packages/realm-registry",
 			"packages/ai",
 			"packages/client",
+			"packages/machine-ops",
 			"packages/agent",
 			"packages/session-backends/sqlite-node",
 			"packages/coding-agent",
 			"packages/server",
 		]);
 		assert.ok(index("packages/ai") > index("packages/telemetry"));
+		assert.ok(index("packages/ai") > index("packages/realm-registry"));
+		assert.ok(index("packages/machine-ops") > index("packages/realm-registry"));
+		assert.ok(index("packages/coding-agent") > index("packages/realm-registry"));
 		assert.ok(index("packages/agent") > index("packages/ai"));
 		assert.ok(index("packages/client") > index("packages/protocol"));
 		assert.ok(index("packages/session-backends/sqlite-node") > index("packages/agent"));
@@ -89,7 +94,13 @@ describe("build-all", () => {
 
 		// Then
 		assert.equal(packageJson.name, "@earendil-works/pi-pty");
-		assert.deepEqual(phaseOne, ["packages/tui", "packages/pty", "packages/telemetry", "packages/protocol"]);
+		assert.deepEqual(phaseOne, [
+			"packages/tui",
+			"packages/pty",
+			"packages/telemetry",
+			"packages/protocol",
+			"packages/realm-registry",
+		]);
 		assert.deepEqual(BUILD_PHASES[0], ["packages/chord"]);
 	});
 
@@ -149,7 +160,11 @@ describe("build-all", () => {
 		assert.match(buildScript, /shx cp -r src\/providers\/data dist\/providers\/data$/);
 		assert.match(scripts["generate-models"], /generate-models\.ts/);
 		assert.match(prepublishScript, /generate-models\.ts/);
-		assert.match(prepublishScript, /generate-image-models\.ts/);
+		// D-3: generate-models.ts now emits the image catalog (including the fork OpenAI image rows) itself.
+		assert.match(
+			readFileSync(join(root, "packages/ai/scripts/generate-models.ts"), "utf8"),
+			/const OPENAI_IMAGE_MODELS: ImageModel<"openai-images">\[\]/,
+		);
 		assert.notEqual(ignoreCheck.status, 0);
 		assert.ok(readdirSync(join(root, "packages/ai/src/providers/data")).some((file) => file.endsWith(".json")));
 	});

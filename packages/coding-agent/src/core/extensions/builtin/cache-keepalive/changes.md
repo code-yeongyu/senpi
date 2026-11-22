@@ -1,5 +1,114 @@
 # Cache Keep-Alive Extension Changes
 
+## 2026-11-06 - Keep-alive warms an opted-in Anthropic-compatible gateway (senpi#1248)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`: `isWarmSupportedModel` calls the shared `supportsAnthropicCacheWarming()` from `@earendil-works/pi-ai` instead of the local `isAnthropicApiBaseUrl(model.baseUrl)` check, and the import list drops `isAnthropicApiBaseUrl`.
+
+### Why
+
+- The hostname-only check kept every gateway seat cold, so a session on an Anthropic-compatible proxy whose model sets `compat.supportsLongCacheRetention: true` never got a refreshing ping even though its requests do carry `cache_control` (senpi#1248).
+
+### Why an extension could not handle it
+
+- The builtin is the caller.
+
+### Expected merge conflict zones
+
+- LOW: the `@earendil-works/pi-ai` import block and `isWarmSupportedModel`.
+
+## 2026-10-27 - Keepalive authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`: `getApiKeyAndHeaders` receives the session id.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call.
+
+## 2026-10-27 - The keep-alive ping splits the system prompt like the real request (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`: the warm request carries the session's `ctx.getSystemPromptStablePrefix()` when the current prompt starts with it.
+
+### Why
+
+- A ping whose system blocks differ from the real request would write its own cache entry instead of keeping the real one warm (senpi#2389).
+
+### Why an extension could not handle it
+
+- This is the keep-alive builtin's own request assembly.
+
+### Expected merge conflict zones
+
+- LOW: the `warm(...)` call in `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`.
+
+## 2026-10-18 - Do not arm provider work for size inspection (senpi#3483)
+
+### What changed
+
+- `index.ts`: `session_start.sizesOnly` skips prewarm and startup activity arming.
+
+### Why
+
+A diagnostic must not arm a provider request if a user extension emits activity during startup.
+
+### Why an extension could not handle it
+
+This built-in owns the warm-request subscriptions.
+
+### Expected merge conflict zones
+
+- `index.ts`: `session_start` before `prewarm.start`.
+
+## 2026-10-11 - Arm prewarm until the first user activity (senpi#3140)
+
+### What changed
+
+- `session-prewarm.ts`: session start only arms one opportunity. The first draft activity can fire it when keep-alive is enabled and the model is eligible; prompt admission consumes it without a warm call. The setting is checked again after asynchronous prefix preparation. Model selection retargets an unused opportunity and cancels stale work; parking and shutdown cancel pending work.
+- `index.ts` and `startup-activity-gate.ts`: reset prewarm and wait for first host activity before arming keep-alive from restored history. Model selection and parked-session resumption cannot bypass the startup gate. Successful completed turns release it, so idle keep-alive after completed extension-driven turns retains its existing behavior. Reload and shutdown dispose the previous activity subscription.
+
+### Why
+
+- Launching, resuming, forking, or reloading a session is not user intent to call a provider. The old unconditional startup prewarm also ignored disabled keep-alive.
+
+### Why an extension could not handle it
+
+- This is the builtin extension. It consumes the subscription-only host activity hook while retaining the existing preview-safe prefix builder and usage accounting. `promptCache.keepAlive.enabled` defaults to `false`, so prewarm is off by default.
+
+### Expected merge conflict zones
+
+- `session-prewarm.ts`: state, activity subscription, and lifecycle subscriptions; `index.ts`: `session_start` ordering.
+
+## 2026-09-30 - Keep-alive pings arm after the run settles and send the turn's tools (senpi#2389)
+
+### What changed
+
+- `index.ts`: `agent_end` records the completed turn and marks it for arming; a new `agent_settled` handler arms the keep-alive once the session reports idle. The ping's tool list now comes from `ctx.getPromptCachePrefixRequest()`, which builds the agent's tools in request order through `buildProviderContext` with the fields the turn sends; when that build is skipped, the ping falls back to the previous active-tool assembly.
+
+### Why
+
+- `agent_end` handlers run while the run is still active, so `arm()` saw `isIdle() === false`, stood down with `agent-busy`, and nothing re-armed it: the keep-alive never pinged in a real session. The ping also listed tools in registry order without the fields the turn sends, so an armed ping would write a different cache prefix than the turn it keeps warm.
+
+### Why an extension could not handle it
+
+- This is the builtin keep-alive extension itself; the fix uses only existing extension APIs (`agent_settled`, `getPromptCachePrefixRequest`).
+
+### Expected merge conflict zones
+
+- `cache-keepalive/index.ts`: the `agent_end` handler and the tool assembly inside `ping()`.
+
 ## 2026-09-24 - Prewarm the OpenAI GPT-5.6+ prompt cache at session start (senpi#2096)
 
 ### What changed

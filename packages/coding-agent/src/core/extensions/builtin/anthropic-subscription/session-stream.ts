@@ -1,9 +1,13 @@
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { initializationOrAbort } from "./auth-attempt.ts";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
+import { coldSeedCalibration, coldSeedOverflow, estimateColdSeedTokens } from "./cold-seed-budget.ts";
 import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
+import { seatDigest } from "./seat-digest.ts";
+import { reattachRecoveringCheckpoint } from "./session-checkpoint-recovery.ts";
 import { type ContinuityDecision, decideNativeContinuity } from "./session-continuity.ts";
 import {
 	type ContinuityObservation,
@@ -13,7 +17,7 @@ import {
 	sanitizeTerminalFailure,
 	stageContinuityDecision,
 } from "./session-observability.ts";
-import { bindingFromEntry, bindingInvalidationReason, getBinding, reattachSession } from "./session-reattach.ts";
+import { bindingFromEntry, bindingInvalidationReason, getBinding } from "./session-reattach.ts";
 import {
 	type AnthropicSubscriptionSessionEntry,
 	closeSession,
@@ -29,20 +33,27 @@ import {
 	sentMessageHashes,
 	sentMessages,
 } from "./session-sync.ts";
-import { createSessionTurnAttempt } from "./session-turn-attempt.ts";
+import { admitSettledTurn, createSessionTurnAttempt } from "./session-turn-attempt.ts";
 import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
 
 export type ResidentSessionStreamInput = {
 	model: Model<Api>;
 	context: Context;
 	streamOptions: SimpleStreamOptions;
+	recheckedAccounts?: Set<string>;
 	providerSettings: AnthropicSubscriptionProviderSettings;
 	pinnedAccount?: string;
 	buildOptions: Parameters<typeof queryWithAuthLane>[0]["buildOptions"];
 	customToolNameToSdk: ReadonlyMap<string, string>;
 	toolWatchNote?: string;
 	onResumeFallback: (error: unknown) => void;
+	onLongContextFallback?: () => void;
+	contextTokens?: () => number;
+	outputReserveTokens?: number;
+	onAttemptStart?: () => void;
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
+	/** Called once per attempt, before dispatch, with whether it re-sends the whole history and that re-send's bytes/4 estimate. */
+	onDispatchShape?: (coldSeed: boolean, estimatedTokens?: number) => void;
 };
 
 function userMessage(content: SDKUserMessage["message"]["content"]): SDKUserMessage["message"] {
@@ -85,10 +96,19 @@ async function createResidentAttempt(
 	const sessionId = input.streamOptions.sessionId!;
 	const messages = sentMessages(input.context);
 	const hashes = sentMessageHashes(messages);
+	// Continuity and the delta are read from the settled previous turn, never from one still in flight.
+	const { binding, transcriptAvailable } = await admitSettledTurn(sessionId, input.streamOptions.signal, () =>
+		admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane),
+	);
 	const existing = getSession(sessionId);
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
-	const { binding, transcriptAvailable } = await admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane);
+	const servedLineage = getBinding(sessionId);
+	const lineageSeat = existing?.accountName ?? servedLineage?.accountName ?? binding?.accountName;
+	const seat = {
+		seat: seatDigest(auth.accountName),
+		...(lineageSeat === undefined ? {} : { seatChanged: lineageSeat !== auth.accountName }),
+	};
 	const decision = decideNativeContinuity({
 		entry: existing ? entrySnapshot(existing, residentHashes) : undefined,
 		binding,
@@ -97,6 +117,7 @@ async function createResidentAttempt(
 		modelId: input.model.id,
 		fingerprint,
 		transcriptAvailable,
+		// claude-cli accounts share one transcript root through their `projects` link, like oauth-slots.
 		crossAccountResumeSupported: auth.authLane !== "config-dir",
 		idleExpired: existing ? isIdleExpired(existing) : false,
 		invalidationReason: bindingInvalidationReason(sessionId),
@@ -131,13 +152,14 @@ async function createResidentAttempt(
 			: undefined;
 		try {
 			if (!binding) throw new Error("Anthropic Subscription continuity binding is unavailable");
-			entry = await reattachSession({
+			({ entry, from } = await reattachRecoveringCheckpoint({
 				binding,
 				options: auth.options,
 				...(decision.kind === "fork" ? { atUuid: decision.atUuid } : {}),
 				...(input.streamOptions.signal ? { signal: input.streamOptions.signal } : {}),
-			});
-			from = decision.from;
+				currentHashes: hashes,
+				authLane: auth.authLane,
+			}));
 		} catch (error) {
 			if (input.streamOptions.signal?.aborted) throw error;
 			input.onResumeFallback(error);
@@ -162,6 +184,20 @@ async function createResidentAttempt(
 			options: auth.options,
 		});
 	}
+	// A claude-cli account checks what its CLI initialized with before any prompt is pushed (senpi#4436).
+	if (auth.verifyInitialization && entry.query.initializationResult) {
+		try {
+			await auth.verifyInitialization(
+				await initializationOrAbort(entry.query.initializationResult(), input.streamOptions.signal),
+			);
+		} catch (error) {
+			closeSession(
+				sessionId,
+				input.streamOptions.signal?.aborted ? "initialization_aborted" : "initialization_refused",
+			);
+			throw error;
+		}
+	}
 	// Every branch above either reuses a subprocess whose token matched (delta)
 	// or spawned one with auth.options, so the entry now runs on this token.
 	entry.credentialDigest = auth.credentialDigest;
@@ -169,38 +205,69 @@ async function createResidentAttempt(
 	const flattenResult = flatten
 		? dedupeUltraworkBlocks(buildPromptBlocks(input.context, input.customToolNameToSdk, input.toolWatchNote))
 		: undefined;
+	const estimatedTokens = flattenResult ? estimateColdSeedTokens(input.context, flattenResult.blocks) : undefined;
+	input.onDispatchShape?.(flattenResult !== undefined, estimatedTokens);
+	const overBudget =
+		estimatedTokens !== undefined
+			? coldSeedOverflow(input.model, estimatedTokens, coldSeedCalibration(sessionId))
+			: undefined;
+	if (overBudget) {
+		// Never dispatch a re-send that cannot fit: the SDK cannot compact a single
+		// exchange, so the overflow must reach senpi's own compaction instead. The
+		// calibration learned from this session's earlier rejection sizes it the way
+		// the API counts, so a compacted re-send that is still too long is refused
+		// here instead of costing another round trip.
+		closeSession(sessionId, "cold_seed_over_budget");
+		throw overBudget;
+	}
 	const blocks = flattenResult
 		? flattenResult.blocks
 		: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
 	const payloadBytes = flattenResult ? serializedPayloadBytes(flattenResult.blocks) : undefined;
+	const divergedPath =
+		observedReason === "assistant_rewritten" ? (existing?.pendingForkDivergedPath ?? undefined) : undefined;
 	const staged = stageContinuityDecision(
-		observeSessionSyncDecision({
-			kind: observedKind,
-			reason: observedReason,
-			deltaMessages: flatten ? hashes.length : hashes.length - from,
-			firstTurn,
-			senpiSessionId: sessionId,
-			...(payloadBytes !== undefined ? { payloadBytes } : {}),
-			...(flattenResult?.collapsedDirectives !== undefined
-				? { collapsedDirectives: flattenResult.collapsedDirectives }
-				: {}),
-		}),
+		{
+			...observeSessionSyncDecision({
+				kind: observedKind,
+				reason: observedReason,
+				deltaMessages: flatten ? hashes.length : hashes.length - from,
+				firstTurn,
+				senpiSessionId: sessionId,
+				...(payloadBytes !== undefined ? { payloadBytes } : {}),
+				...(flattenResult?.collapsedDirectives !== undefined
+					? { collapsedDirectives: flattenResult.collapsedDirectives }
+					: {}),
+				...(divergedPath === undefined ? {} : { divergedPath }),
+			}),
+			...seat,
+		},
+		sessionId,
 		input.onContinuityDecision,
 		// The pending close cause is consumed only when the staged observation
 		// actually emits (attempt retained) — a discarded attempt leaves the
 		// cause pending for the next admission.
 		() => consumePendingCloseCause(sessionId),
 	);
-	return createSessionTurnAttempt(entry, userMessage(blocks), hashes, input.streamOptions.signal, staged);
+	return createSessionTurnAttempt(
+		entry,
+		userMessage(blocks),
+		hashes,
+		input.streamOptions.signal,
+		staged,
+		servedLineage,
+	);
 }
 
 export async function* residentSessionMessages(input: ResidentSessionStreamInput): AsyncGenerator<SDKMessage> {
 	try {
 		yield* residentAuthLaneMessages(input);
 	} catch (error) {
-		// Every attempt failed: the turn yields exactly one terminal observation.
+		// Every attempt failed: the turn yields exactly one terminal observation. It is `failed`,
+		// not `flatten`: nothing was re-sent, and the retry checkpoint still resumes the lineage.
 		emitContinuityObservation(
-			{ kind: "flatten", reason: sanitizeTerminalFailure(error) },
+			{ kind: "failed", reason: sanitizeTerminalFailure(error) },
+			input.streamOptions.sessionId,
 			input.onContinuityDecision,
 		);
 		throw error;
@@ -208,15 +275,25 @@ export async function* residentSessionMessages(input: ResidentSessionStreamInput
 }
 
 function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncIterable<SDKMessage> {
+	const sessionId = input.streamOptions.sessionId;
+	const preferredAccount =
+		sessionId === undefined ? undefined : (getSession(sessionId)?.accountName ?? getBinding(sessionId)?.accountName);
 	return queryWithAuthLane({
 		prompt: "",
 		query: getSdkBoundary().query,
 		providerSettings: input.providerSettings,
+		recheckedAccounts: input.recheckedAccounts,
 		env: input.streamOptions.env,
 		signal: input.streamOptions.signal,
 		sessionId: input.streamOptions.affinitySessionId ?? input.streamOptions.sessionId,
+		model: input.model.id,
 		pinnedAccount: input.pinnedAccount,
+		...(preferredAccount === undefined ? {} : { preferredAccount }),
 		buildOptions: input.buildOptions,
+		contextTokens: input.contextTokens,
+		outputReserveTokens: input.outputReserveTokens,
+		...(input.onLongContextFallback === undefined ? {} : { onLongContextFallback: input.onLongContextFallback }),
+		onAttemptStart: input.onAttemptStart,
 		createAttempt: (auth) => createResidentAttempt(input, auth),
 	});
 }

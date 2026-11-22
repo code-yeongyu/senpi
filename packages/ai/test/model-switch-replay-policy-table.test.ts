@@ -43,13 +43,14 @@ import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts"
 import { streamSimple as streamPi } from "../src/api/pi-messages.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 import { APPLY_PATCH_TOOL, HISTORY, makeModel, PATCH } from "./model-switch-replay-fixtures.ts";
 
 const bedrockModel = getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0");
 
 async function captureBedrockPayload(context: Context): Promise<unknown> {
 	let payload: unknown;
-	const stream = streamBedrock(bedrockModel, context, {
+	const stream = streamBedrock(bedrockModel, normalizeContext(context), {
 		cacheRetention: "none",
 		signal: AbortSignal.abort(),
 		onPayload: (candidate) => {
@@ -68,13 +69,17 @@ async function captureBedrockPayload(context: Context): Promise<unknown> {
 
 async function captureMistralPayload(context: Context): Promise<unknown> {
 	let payload: unknown;
-	const stream = streamMistral(makeModel("mistral-conversations", "mistral", "mistral-target"), context, {
-		apiKey: "fake-api-key",
-		onPayload: (candidate) => {
-			payload = candidate;
-			throw new Error("payload captured before transport");
+	const stream = streamMistral(
+		makeModel("mistral-conversations", "mistral", "mistral-target"),
+		normalizeContext(context),
+		{
+			apiKey: "fake-api-key",
+			onPayload: (candidate) => {
+				payload = candidate;
+				throw new Error("payload captured before transport");
+			},
 		},
-	});
+	);
 	await stream.result();
 	if (payload === undefined) {
 		throw new Error("Mistral payload was not captured");
@@ -84,7 +89,7 @@ async function captureMistralPayload(context: Context): Promise<unknown> {
 
 async function capturePiPayload(context: Context): Promise<unknown> {
 	let payload: unknown;
-	const stream = streamPi(makeModel("pi-messages", "pi", "pi-target"), context, {
+	const stream = streamPi(makeModel("pi-messages", "pi", "pi-target"), normalizeContext(context), {
 		apiKey: "fake-api-key",
 		onPayload: (candidate) => {
 			payload = candidate;
@@ -106,10 +111,14 @@ describe("model-switch replay policy table", () => {
 		// When
 		const customReplay = convertResponsesMessages(
 			model,
-			{ messages: HISTORY, tools: [APPLY_PATCH_TOOL] },
+			normalizeContext({ messages: HISTORY, tools: [APPLY_PATCH_TOOL] }),
 			new Set(["openai"]),
 		);
-		const functionReplay = convertResponsesMessages(model, { messages: HISTORY }, new Set(["openai"]));
+		const functionReplay = convertResponsesMessages(
+			model,
+			normalizeContext({ messages: HISTORY }),
+			new Set(["openai"]),
+		);
 
 		// Then
 		expect(customReplay).toMatchObject([
@@ -134,10 +143,14 @@ describe("model-switch replay policy table", () => {
 		// When
 		const customReplay = convertResponsesMessages(
 			model,
-			{ messages: HISTORY, tools: [APPLY_PATCH_TOOL] },
+			normalizeContext({ messages: HISTORY, tools: [APPLY_PATCH_TOOL] }),
 			new Set(["openai"]),
 		);
-		const functionReplay = convertResponsesMessages(model, { messages: HISTORY }, new Set(["openai"]));
+		const functionReplay = convertResponsesMessages(
+			model,
+			normalizeContext({ messages: HISTORY }),
+			new Set(["openai"]),
+		);
 
 		// Then
 		expect(customReplay).toMatchObject([
@@ -160,7 +173,7 @@ describe("model-switch replay policy table", () => {
 		const model = makeModel("google-vertex", "google-vertex", "gemini-target");
 
 		// When
-		const replay = convertGoogleMessages(model, { messages: HISTORY });
+		const replay = convertGoogleMessages(model, normalizeContext({ messages: HISTORY }));
 
 		// Then
 		expect(replay).toMatchObject([

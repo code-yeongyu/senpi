@@ -12,6 +12,8 @@ import {
 import type { Context, Model } from "../src/types.ts";
 import { isProviderStreamStallError, isRetryableAssistantError } from "../src/utils/retry.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 interface Event {
 	readonly type: string;
 }
@@ -162,7 +164,7 @@ describe("completion stall through the Codex SSE stream", () => {
 			vi.fn(async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })),
 		);
 
-		const resultPromise = streamOpenAICodexResponses(model, context, {
+		const resultPromise = streamOpenAICodexResponses(model, normalizeContext(context), {
 			apiKey: mockToken(),
 			transport: "sse",
 			timeoutMs: 300_000,

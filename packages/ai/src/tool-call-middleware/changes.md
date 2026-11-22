@@ -1,36 +1,57 @@
 # Tool Call Middleware Changes
 
-## 2026-09-28 - Preserve overlapping native tool calls during recovery
+## 2026-10-26 - Recovery wrappers carry capture records with remapped indices (senpi#4307, part of #4272)
 
 ### What changed
 
-- `packages/ai/src/tool-call-middleware/recovery-content-lifecycle.ts` tracks active
-  native tool calls by content index, with monotonically increasing starts and
-  independently ordered completions. Text and thinking content remain sequential.
-- `packages/ai/src/tool-call-middleware/recovery-stream-wrapper.ts` passes the
-  content kind into lifecycle admission.
+- `recovery-event-stream.ts`: `RecoveryAssistantMessageEventStream` captures its own pushes, carries a capture already
+  attached to a pushed event onto its snapshot, relays scoped 1:1 copies (`relaying`: only the step's first push of
+  the source's type relays the source record, any later one records nothing), and registers a records reader that
+  keeps its cancellation lifecycle.
+- `recovery-stream-terminal.ts`, `recovery-stream-failure.ts`: a terminal that removes tool calls (superseded by a
+  server fallback receipt, aborted, cancelled, invalid event order) or forwards the unprojected source marks the first
+  index whose block vanished or moved as `rewrittenFrom` on its capture; records sent for that index and above
+  before the terminal are dropped by the reader.
+- `recovery-stream-wrapper.ts`, `recovery-native-projection.ts`: the invoke recovery reads source records in order.
+  Thinking and native tool-call events, which the projection copies from source blocks read after later deltas,
+  carry the source's emission-time block facts at the outer index; projection-built text and recovered calls are
+  captured at their own push. Source controls are remapped to the outer block that copies their source block, held
+  until an unannounced block is projected (a held control for a native call follows that call's start, as for
+  thinking), and dropped for prose the projection rebuilds.
+- `protocols/kimi-xtml/thinking-recovery-stream.ts`: passes every event through unchanged and relays the rewritten
+  terminal's capture. A record (event capture or control) crosses at its source index only while that index names an
+  existing block that no earlier thinking split can move in the rewritten terminal; a record before `start`, naming
+  no block, or behind an open or splitting thinking block is dropped, never guessed, and a block that lost one record
+  loses all its later ones.
+- `stream-wrapper.ts`: the legacy text-tool middleware captures its own pushes; it rebuilds every block from parser
+  output, so no source record is forwarded.
 
 ### Why
 
-- `packages/ai/src/tool-call-middleware/recovery-content-lifecycle.ts` previously
-  treated a second active native call as malformed. Valid Kimi Responses streams
-  start multiple calls before closing them, causing `Invalid native tool call
-  event order` and dropping every call. This addresses senpi#2203 without
-  disabling leaked-text recovery or accepting duplicate/post-end events.
-- `packages/ai/src/tool-call-middleware/recovery-stream-wrapper.ts` must distinguish
-  native calls from content whose text parser requires sequential delivery.
-
-### Why an extension could not handle it
-
-- `packages/ai/src/tool-call-middleware/recovery-content-lifecycle.ts` and
-  `packages/ai/src/tool-call-middleware/recovery-stream-wrapper.ts` reject the
-  provider stream before the agent loop or extensions receive executable calls.
+- Until this change these wrappers dropped every carrier and control (S02a-1's enforced downgrade), so a Claude id,
+  a Kimi id or a text-tool-call model delivered no internal records.
 
 ### Expected merge conflict zones
 
-- `packages/ai/src/tool-call-middleware/recovery-content-lifecycle.ts`: lifecycle
-  admission and active-call tracking.
-- `packages/ai/src/tool-call-middleware/recovery-stream-wrapper.ts`: `canStart`.
+- None upstream: the directory is fork-only.
+
+## 2026-10-21 - Preserve request context across legacy projection (omo#10792)
+
+### What changed
+
+- `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`: legacy usage cloning preserves an explicitly supplied `contextUsage`, including `null`, while keeping absent fields absent.
+
+### Why
+
+- `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`: dropping the request measurement would make downstream context readers reinterpret cumulative billing as context.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`: middleware projects provider messages before consumers see them.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`, `cloneLegacyUsage`.
 
 ## 2026-09-08 - Preserve server fallback boundaries during recovery
 

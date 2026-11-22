@@ -2,6 +2,7 @@ import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, expect, it } from "vitest";
 import { getPendingQuestions } from "../../src/core/extensions/builtin/ask-user/registry.ts";
 import { emitSessionShutdownEvent } from "../../src/core/extensions/runner.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
 import { ASK_USER_WIDGET_KEY } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "../../src/modes/interactive/components/ask-user-question.ts";
@@ -17,7 +18,8 @@ beforeAll(() => {
 });
 afterEach(() => {
 	for (const delivery of deliveries.splice(0)) {
-		for (const entry of getPendingQuestions(delivery.harness.sessionManager.getSessionId())) entry.cancel();
+		for (const entry of getPendingQuestions(delivery.harness.sessionManager.getSessionId()))
+			entry.cancel("session_closed");
 		delivery.harness.cleanup();
 	}
 });
@@ -52,7 +54,7 @@ it("restores the draft into the reattached TUI component after reload", async ()
 		},
 		undefined,
 		undefined,
-		context,
+		context as ExtensionToolContext,
 	);
 	mode.pressEditorKey("\x1ba");
 	const component = mode.editorContainer.children.find((child) => child instanceof AskUserQuestionComponent);

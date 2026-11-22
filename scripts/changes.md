@@ -1,3 +1,1426 @@
+## 2026-11-21 - The release ships the committed model catalog and never regenerates it (senpi#2287)
+
+### What changed
+
+- `scripts/release.mjs`: the test-evidence step no longer regenerates the model catalog, re-checks the provider defaults or commits a release-only catalog commit; it waits for the release commit's green "Check and test" as before. `--tested-sha` is gone: `--sha <sha> --shard-results <dir>` releases the commit the forced-suite matrix jobs tested, which is now always the dispatched commit, and preflight requires HEAD reachable from origin/main with no catalog-child exception.
+- `scripts/local-release.mjs`: the local release smoke no longer regenerates the catalog or runs `check:provider-defaults` before its check; it builds and packs the committed catalog, as the release does.
+
+### Why
+
+- The regeneration was the single root cause of four release failure modes measured 2026-11-07..21: the refusal that asked for `force_tests` (runs 44873606382, 44755112301), the 25-28 min forced cuts it forced, the pinned merge-back conflict on `providers/data/.manifest.json` and `openrouter.json` (run 44870406986, senpi#6119), and models a test pins dropped by an untested regeneration (senpi#2287, senpi#4127). Catalog changes reach main through the refresh workflows' own PRs, whose CI tests them.
+
+### Why an extension could not handle it
+
+- This is release tooling. Extensions do not run in the release workflow.
+
+### Expected merge conflict zones
+
+- LOW: the module docblock, `preflight` and `main()` of `scripts/release.mjs`; the check/test block of `scripts/local-release.mjs`.
+
+## 2026-11-21 - Publish-only accepts a version already shipped by a concurrent run (senpi#1831)
+
+### What changed
+
+- `scripts/publish.mjs`: captures npm publish errors and uses the existing bounded registry retry to verify the exact `name@version` after a duplicate-version conflict. It continues only when the registry returns the requested version and never retries the publish.
+- `scripts/publish-command.mjs`: distinguishes duplicate-version conflicts from other failures and preserves the original publish error when registry verification cannot confirm the version.
+
+### Why
+
+- A pre-publish registry lookup can miss a concurrent publication. The next PUT then conflicts even though another run already shipped the version.
+
+### Why an extension could not handle it
+
+- The release workflow calls the repository's publish script directly; no extension runs on that path.
+
+### Expected merge conflict zones
+
+- LOW: the publish loop in `scripts/publish.mjs`.
+
+## 2026-11-16 - release-finalize.mjs joins the binary and npm halves of a release (senpi#6851)
+
+### What changed
+
+- `scripts/release-finalize.mjs` (new): reads the Build Binaries run's staging and smoke jobs and the publish run's `release` job, then does one of the following.
+  - If either half is still running, it does nothing (exit 0).
+  - Otherwise it publishes the draft (and does nothing more when the release is already public), or runs `release-smoke-failure-issue.mjs` when the smoke failed after npm, or runs `release-draft-cleanup.sh` when staging or npm failed. Each of these exits non-zero.
+- `scripts/release-draft-cleanup.sh`: a new `PUBLISH_RELEASE_RESULT` env carries the publish run's `release` job result. When it is set, it decides instead of the run status, because the run stays in progress while its finalize job runs.
+- `scripts/release-smoke-failure-issue.mjs`: opens no second issue when one with the same title exists.
+- `scripts/await-dispatched-run.sh` and its test: removed; nothing polls the publish run any more.
+- Tests:
+  - `scripts/release-finalize.test.mjs` (new) covers the state readers, the decision table and the script against fake `gh`/`npm`.
+  - `scripts/build-binaries-release-recovery.test.mjs`, `scripts/build-binaries-npm-dispatch.test.mjs`, `scripts/release-smoke-failure-issue.test.mjs` and `scripts/release-draft-cleanup.test.mjs` pin the new graph, the shared concurrency group and the new cases.
+
+### Why
+
+- A runner must not idle while the publish run works, and the release must still finish exactly as before.
+
+### Why an extension could not handle it
+
+- These are the repository's own release scripts.
+
+### Expected merge conflict zones
+
+- LOW: the publish-run branch of `scripts/release-draft-cleanup.sh`.
+
+## 2026-11-16 - A dry run with a CI-basis receipt previews the refusal of a red hosted run (senpi#6859 follow-up)
+
+### What changed
+
+- `scripts/release-ci-evidence.mjs`: with `--dry-run --ci-basis-receipt`, when the previewed hosted "Check and test" run concluded red, the dry run logs `the live run would refuse: CI failed on <sha>: ...; a ci_basis_receipt waives only the wait for hosted CI, not a red result` instead of `no CI wait (...)`. The live refusal and the preview share one message (`receiptRefusal`).
+
+### Why
+
+- Review of senpi#6867 (LOW L1): the dry run said the release would go ahead while the live run stops on that red run.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the dry-run branch and the receipt branch of `secureCiEvidence`.
+
+## 2026-11-16 - A CI-basis receipt waives the hosted CI wait, not a red hosted run (senpi#6859 follow-up)
+
+### What changed
+
+- `scripts/release-ci-evidence.mjs`: with `--ci-basis-receipt`, `secureCiEvidence` reads the pinned commit's "Check and test" runs once (no polling, no wait) and stops the release when that run concluded red; an unfinished, missing, superseded or unreadable run is waived as before.
+- `scripts/release-cli-args.mjs`: `--ci-basis-receipt` refuses a blank or space-padded id.
+
+### Why
+
+- Review of senpi#6861 (LOWs L1, L2): the receipt waives the wait for hosted CI; it must not override a hosted result that is already known to be red, and the CLI must refuse the same blank ids the workflow refuses.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the receipt branch at the end of `secureCiEvidence` and the receipt checks in `parseArgs`.
+
+## 2026-11-16 - release.mjs --ci-basis-receipt skips only the hosted CI wait (senpi#6859)
+
+### What changed
+
+- `scripts/release-cli-args.mjs`: new `--ci-basis-receipt <id>`; it needs `--sha` and refuses `--force-tests` and `--tested-sha`.
+- `scripts/release-ci-evidence.mjs`, `scripts/release.mjs`: with a receipt, `secureCiEvidence` logs `test gate: hosted CI wait waived by ci_basis_receipt <id> for the pinned commit <sha>` and returns instead of calling `awaitCiEvidence`. The catalog regeneration and its force_tests rule, the pinned-commit checks and the platform gate still run.
+
+### Why
+
+- The release workflow's receipt step (senpi#6859) needs a way to tell the release CLI that the hosted CI wait was waived for the pinned commit.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the option table of `parseArgs` and the tail of `secureCiEvidence`.
+
+## 2026-11-16 - The release refuses while a macOS/Windows job is red on main (senpi#6834)
+
+### What changed
+
+- `scripts/release.mjs`: after the test evidence (all three paths: CI evidence, `--force-tests`, `--tested-sha`), `assertPlatformsGreen` (`scripts/release-ci-evidence.mjs`) reads the latest settled main push run of each workflow with macOS/Windows legs (`scripts/ci-platform-red.mjs`) and refuses before the version commit when one has a failed macOS/Windows job or cannot be read. A dry run only reports it.
+
+### Why
+
+- Pull requests no longer run macOS/Windows (senpi#6834), so main is where those legs are tested; a release must not ship over a red one.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the line after the evidence block in `main()` of `release.mjs`.
+
+## 2026-11-13 - run-workspaces --alongside runs one workspace next to the others (senpi#6649)
+
+### What changed
+
+- `scripts/run-workspaces.mjs`: `--alongside <workspace>` runs that workspace in its own lane while the other selected workspaces run one at a time in path order in a second lane; refused together with `--parallel`; a selection that leaves the workspace out runs as before.
+- `scripts/run-workspaces-lanes.mjs` (new): the second lane starts only when `os.availableParallelism()` (or `RUN_WORKSPACES_PARALLELISM`) is at least 8, else the run stays sequential; both lanes share one signal fan-out and the second lane starts nothing after a signal.
+- `scripts/package-manager.mjs`: `createSignalFanout()` exposes `signalled()`.
+
+### Why
+
+- Lets the root `test` script use idle cores without oversubscribing small machines (senpi#6646).
+
+### Why an extension could not handle it
+
+- These are root orchestration scripts; no extension hook runs workspace scripts.
+
+### Expected merge conflict zones
+
+- LOW: the argument parser and the dispatch block in `runWorkspaces` in `run-workspaces.mjs`; the fan-out object in `createSignalFanout`.
+
+## 2026-11-15 - Entry-graph budget for the pi-agent-core read-folders subpath (senpi#6740)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: `./read-folders` of `packages/agent` is budgeted at 10 files and may not reach `packages/ai/`, the agent loop, the harness runtime or env.
+
+### Why
+
+- The subpath exists so a Worker bundle of the tools does not pull the AI package; the budget keeps it that way.
+
+### Why an extension could not handle it
+
+- Repository checks are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `packages/agent` block of `BUDGETS`.
+
+## 2026-11-15 - runRelease spawns its live run from main without a dead option (senpi#6691 review)
+
+### What changed
+
+- `scripts/registry-preflight.test.mjs`: `runRelease` loses the `{ ref }` option no caller passes since #6691's L1 fix removed the refusal case; it pins the live run to `refs/heads/main` inline, where the two preflight cases need it.
+
+### Why
+
+- senpi#6691's review left one LOW: the option was dead code, kept only for a future caller.
+
+### Why an extension could not handle it
+
+- Release tooling tests; extensions do not run in them.
+
+### Expected merge conflict zones
+
+- LOW: the `runRelease` helper in `scripts/registry-preflight.test.mjs`.
+
+## 2026-11-14 - The registry preflight tests set their own ref (senpi#6690)
+
+### What changed
+
+- `scripts/registry-preflight.test.mjs`: the stub environment strips `GITHUB_ACTIONS` and `GITHUB_REF`, so no spawned `release.mjs`/`publish.mjs` inherits the runner's pair, and `runRelease` sets the pair per case (a live run from `refs/heads/main`, the state the registry preflight needs behind the live-run ref guard; the guard's own refusal cases stay in `release-ref-guard.test.mjs`). The `publish.mjs` case keeps the explicit pair it already set.
+
+### Why
+
+- The two `release.mjs registry preflight` cases inherited the CI job's `GITHUB_REF`, so on every pull-request run the senpi#6645 ref guard stopped `release.mjs` before the registry preflight the cases test (senpi#6690); main's own run was green only because its ref is `refs/heads/main`.
+
+### Why an extension could not handle it
+
+- Release tooling tests; extensions do not run in them.
+
+### Expected merge conflict zones
+
+- LOW: the `runRelease` helper and the `withStubs` env in `scripts/registry-preflight.test.mjs` (senpi#6662 touches neighboring release scripts, not this file).
+
+## 2026-11-13 - The forced release suite runs as matrix jobs on the tested commit (senpi#6642)
+
+### What changed
+
+- `scripts/release.mjs`: a new `--tested-sha <sha>` option (with `--sha` and `--shard-results <dir>`) releases the commit the forced-suite matrix jobs of `publish-npm.yml` tested. It skips the catalog regeneration and the in-job suite. Before stamping it refuses unless HEAD is that commit, `--sha` is on main's first-parent history, the tested commit is `--sha` itself or one commit whose only parent is `--sha` and whose diff touches only `REGENERATED_CATALOG_PATHS`, and every matrix job's result file reports a pass with tests on it. `--tested-sha` refuses `--force-tests`. Usage and argument parsing moved to `release-cli-args.mjs`, logging and git calls to `release-commands.mjs`, and the CI and tested-commit evidence to `release-ci-evidence.mjs`. Every other path behaves as before.
+- `scripts/release-pin.mjs`: `assertReleasableCommit`, the read-only checks of `pinReleaseCommit`, is exported for the tested-commit path.
+- `scripts/release-test-gate.mjs`: `catalogCommitMessage` names the release-only catalog commit in both paths. `REGENERATED_CATALOG_PATHS` now selects only what `packages/ai/scripts/generate-models.ts` writes: `models.generated.ts`, `providers/data/` and `providers/*.models.ts`, instead of all of `providers/`, which also holds hand-written provider code. `isRegeneratedCatalogPath` counts a `*.models.ts` shard only when it carries the generator's header; fork-owned shards such as `kimi-coding.models.ts` are hand-written. `changedCatalogPaths` lists the changed generator files, and both catalog commits stage exactly those. `scripts/model-catalog-refresh.mjs` reads the same narrower pathspec.
+- `scripts/release-forced-test-suite.mjs`: `FORCED_SHARD_JOBS` (6) is the matrix's coding-agent shard count, and `runForcedTestSuite` takes an `observe` line hook. The in-job `--force-tests` path keeps its 2 shards.
+- `scripts/release-forced-prepare.mjs` (new): the prepare job. It pins `--sha`, regenerates and checks the catalog, commits a changed catalog on the release only, bundles that commit, and writes `base_sha`, `tested_sha`, `tested_tree`, `version` and `bundle`. When nothing changed, it outputs the dispatched commit and writes no bundle. The base commit is resolved once there and printed in full as a log line and the `base_sha` output. With `force_tests`, every later job and `release.mjs --sha` use that output, including when the dispatch named a sha.
+- `scripts/release-forced-test-part.mjs` (new): one matrix job. It runs `rest` (scripts and every workspace but coding-agent) or coding-agent `--shard=i/6` on the tested commit only, and writes its result file.
+- `scripts/release-forced-suite-results.mjs` (new): writes the per-part result files and checks all of them. `scripts/release-tested-lineage.mjs` (new): the lineage rule. It also provides `assertHeadOnOriginMain`, which `release.mjs` `preflight` now calls (senpi#6645): a release refuses unless HEAD is reachable from the freshly fetched origin/main, or is the single catalog-only child of a commit that is. A local branch named `main` no longer satisfies preflight on its own, because `git checkout -B main` can name any commit. `scripts/release-ref-guard.mjs` (new) adds `assertLiveRunOnMain`. Inside GitHub Actions (`GITHUB_ACTIONS=true`), `release.mjs` and `publish.mjs` refuse a run that is not a dry run unless `GITHUB_REF` is `refs/heads/main`; a missing `GITHUB_REF` also refuses. Local runs are unaffected. This lock is independent of the workflow's step conditions, which also give the release step an empty push token and an uncredentialed origin on any other ref. `changedCatalogPaths` parses `git status --porcelain -z`, so paths that git would quote, and staged renames, come back as stageable paths.
+
+### Why
+
+- A forced cut spent 74.6 of its 89.6 min running the suite in the one release job, with coding-agent in two shards on four vCPUs. Six shard jobs and one rest job each get their own runner, so the suite's wall time falls to about one shard. The release still tags only the tree those jobs tested.
+
+### Why an extension could not handle it
+
+- This is release tooling. Extensions do not run in the release workflow.
+
+### Expected merge conflict zones
+
+- MEDIUM: the imports and `main()` of `scripts/release.mjs`. Code that sat in the moved helpers now lives in `release-cli-args.mjs`, `release-commands.mjs` and `release-ci-evidence.mjs`.
+
+## 2026-11-13 - A release refuses a publish-set package the npm registry does not know (senpi#6636)
+
+### What changed
+
+- `scripts/npm-registry.mjs`: `assertRegistryPackagesKnown(names, lookup)` asks the registry about every value of `registryPackageNames` (`npm view <name> name` by default) and throws one error that lists every unknown name and the two manual first-publish steps. A registry failure other than a 404 propagates unchanged, so it is never read as known or unknown. `queryWithRetry` retries a failure that is not a 404 a fixed number of times (3 attempts, a short fixed pause; a 404 is never retried) for the caller that passes it. Run directly (`node scripts/npm-registry.mjs`), the module performs that check and exits 1 on an unknown name.
+- `scripts/release.mjs`: calls it first, before the pinned build, the catalog regeneration, the forced suite and any commit, tag or push; `--dry-run` runs it too.
+- `scripts/publish.mjs`: calls it right after the publish arguments are resolved, before any package is staged, packed or published, with the retrying lookup: it runs after the tag is pushed, where one registry timeout would fail the publish and cost the version.
+
+### Why
+
+- npm trusted publishing cannot do a package's first publish. A release that reached `npm publish` with an unknown name published part of the set and stopped there, after the tag was pushed (senpi#6636, senpi#5784).
+
+### Why an extension could not handle it
+
+- Release and publish tooling is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the first lines of `main()` in `release.mjs`, the line after `publishArgs` in `publish.mjs`, and the end of `npm-registry.mjs`.
+
+## 2026-11-12 - The bundle resolves the MCP SDK's zod imports to one pinned zod, whatever the install layout (senpi#6497)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: the plugin list carries `zodSingleCopyPlugin` (`scripts/bundle-zod-single-copy-plugin.mjs`), which redirects every `zod`, `zod/v4`, `zod/v4-mini` and `zod/v3` import made by the MCP SDK's own modules to the zod that `packages/coding-agent` depends on (4.6.7); an import the pinned copy cannot serve fails the build instead of falling back to the hoisted copy, and a package nested under the SDK's own `node_modules` is not redirected. After emitting, the build runs `assertBundleZodCores` (`scripts/bundle-zod-core-guard.mjs`): every emitted file is scanned for zod cores older than 4.6.6, and the only allowed ones are pinned by file, version and count (one 4.6.2 in the Claude agent SDK's chunk, one in the session worker); a missing or empty bundle fails the scan.
+- `scripts/build-coding-agent-bundle.test.mjs`, `scripts/bundle-zod-single-copy-plugin.test.mjs`, `scripts/bundle-zod-core-guard.test.mjs`, `scripts/mcp-sdk-zod-lock.test.mjs`: the plugin against an npm-style hoisted 4.0.0 `zod/v4` (redirect, fail-closed, nested package left alone), the guard against the bypass cases (missing bundle, no `.js`, a second 4.6.2, a 4.6.2 outside the pinned files), the built bundle, and both lockfiles' resolution of the SDK's zod.
+
+### Why
+
+- Release builds install with npm, whose lockfile hoisted zod 3.25.76 to the root; the MCP SDK's `zod/v4` then bundled a zod 4.0.0 core that parses remote MCP server responses. bun installs hid it.
+- The standalone binaries (`npm ci` + `bun build --compile`) do not go through esbuild, so the plugin alone could not protect them; the lockfile refresh below does, and the guard fails any build that ships a new stale copy.
+- The Claude agent SDK embeds its own minified zod (4.6.2) inside `sdk.mjs`; that copy is not an import and cannot be redirected, so it is pinned as the one allowed exposure.
+
+### Why an extension could not handle it
+
+- The bundle build is core.
+
+### Expected merge conflict zones
+
+- LOW: the import list and `commonBuildOptions` plugin list in `scripts/build-coding-agent-bundle.mjs`.
+
+## 2026-11-11 - correction to the senpi#4312 publish.mjs entry (senpi#6434)
+
+### What changed
+
+- `scripts/senpi-publish-pack-checks.mjs`: no code change. The senpi#4312 entry lists `SOCKET_SECRET_BRIDGE_TARGETS` among the module's additions as if it were public. In fact the module exports only `socketSecretBridgeFile(target)`, which validates the target against a module-private list, plus the `options.requiredSocketSecretTargets` check that rejects a senpi tarball missing a named bridge.
+
+### Why
+
+- The senpi#4312 entry read as if `SOCKET_SECRET_BRIDGE_TARGETS` were an exported API (review follow-up, sisyphuslabs/omo-desktop-app#4199). Fragments never edit an existing tracker entry, so the correction is its own entry.
+
+### Why an extension could not handle it
+
+- Publishing runs in the release tooling, outside the agent runtime.
+
+### Expected merge conflict zones
+
+- None: tracker text only.
+
+## 2026-11-11 - The realm-registry package joins the build, release and publish sets; realm census (omo#12965)
+
+### What changed
+
+- `scripts/release-packages.mjs`, `scripts/registry-packages.mjs`, `scripts/local-release.mjs`, `scripts/senpi-publish-pack-checks.mjs`, `scripts/build-all.mjs`: `packages/realm-registry` (`@earendil-works/pi-realm-registry`, published as `@code-yeongyu/senpi-realm-registry`) is versioned in lockstep, built in the first phase, packed, published and pack-checked like telemetry.
+- `scripts/check-entry-graphs.mjs`: knows the package's source directory.
+- `scripts/check-realm-census.mjs`, `scripts/realm-census-roots.mjs`, `scripts/realm-census-population.mjs`, `scripts/realm-census-initializers.mjs`, `scripts/realm-census-source.mjs`, `scripts/realm-census.json` (new): the realm census. Every workspace package whose code runs in the engine realm is a root, and every module-scope binding or static class field in a root that can hold state must be classified in the table. An unclassified, stale or reclassified entry, a root set that differs from the table, or an `AsyncLocalStorage` kept per copy without a recorded ground fails `bun run check`.
+
+### Why
+
+- pi-ai ships on its own and machine-ops is vendored into the engine tarball, so the helper they both import has to be a published package. The census makes a new cross-copy table an explicit review decision instead of something a review has to notice.
+
+### Why an extension could not handle it
+
+- Release and check tooling is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the package lists in the release scripts. MEDIUM: `scripts/realm-census.json`, which every PR that adds, renames or removes module-scope state in a root must update.
+
+## 2026-11-10 - The bundle build refuses a redaction module copy without the shared registry (senpi#6334)
+
+### What changed
+
+- `scripts/bundle-redaction-registry-guard.mjs` (new): `assertRedactionRegistryCopies(bundleDir)` finds every emitted `.js` file that defines `rememberResolvedReferenceValue` and fails unless each one carries the registry slot key, or when no file defines it.
+- `scripts/build-coding-agent-bundle.mjs`: `buildBundle` runs the guard after `validateExternalImports`.
+
+### Why
+
+- `scripts/bundle-redaction-registry-guard.mjs`: the bundle emits the redaction module more than once (shared chunk and the self-contained session-worker entry); a copy keeping a private set would not redact values another copy resolved (code-yeongyu/oh-my-openagent#12965).
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs`: release bundle tooling.
+
+### Expected merge conflict zones
+
+- LOW: the guard import and the one call after `validateExternalImports(metafiles)` in `scripts/build-coding-agent-bundle.mjs`.
+
+## 2026-11-06 - The forced release suite runs coding-agent as parallel shards (senpi#6139)
+
+### What changed
+
+- `scripts/release-forced-test-suite.mjs` (new): `planForcedTestSuite` and `runForcedTestSuite`. The forced suite runs `npm run test:scripts`, then each other workspace's `test` script one at a time (`run-workspaces.mjs --workspace <path> test`), then `packages/coding-agent` as `FORCED_CODING_AGENT_SHARDS` (2) parallel `test -- --shard=i/2` runs, so every test still runs once. Each step runs under `release-forced-test-supervisor.mjs` with one shared 110-minute budget. The log gets a wall line per step and a total wall line. A failed step fails the suite after every step ran. A timeout names each step still running and its elapsed minutes.
+- `scripts/release.mjs`: `runForcedTests` and `main` are async and await `runForcedTestSuite` from the new module.
+- `scripts/release-test-gate.mjs`: `runForcedTestSuite` and `FORCED_TEST_SUITE_TIMEOUT_MS` moved to `release-forced-test-suite.mjs`.
+- `scripts/release-forced-test-supervisor.mjs`: header comment names its new caller.
+
+### Why
+
+- `scripts/release-forced-test-suite.mjs`: a forced release on 2026-11-06 (run 42284532624) spent 98.8 min in coding-agent alone and was stopped by the 110-minute cap with "the in-job suite hung", though nothing hung. Every release that regenerates the model catalog needs `force_tests`. With `CI` set, each coding-agent vitest run uses two fork workers, so two shards fill the 4-vCPU release runner without oversubscribing it. That brings the suite to about 60 min.
+
+### Why an extension could not handle it
+
+- `scripts/release-forced-test-suite.mjs`: the release orchestration and its test gate are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/release.mjs` `runForcedTests`, `main` and the forced-suite import; `scripts/release-test-gate.mjs` imports.
+
+## 2026-11-05 - Standalone compiles keep linkedom's optional canvas external (senpi#6045)
+
+### What changed
+
+- `scripts/build-binaries.sh`: both release `bun build --compile` commands pass `--external canvas`; the "Building trusted native dependencies" step (`npm rebuild canvas --foreground-scripts`) is removed.
+- `scripts/bun-release-externals.mjs` (new): `bunReleaseExternalFlags`, the one externals list every JS/TS Bun build of the release entry graph spreads (`compiled-extension-load.test.ts`, `bun-bundle-provider-coverage.test.ts`, both `release-graph-*.test.ts`, the QA `compiled-generations.mjs`). `build-binaries-flags.test.mjs` pins the shell and `build:binary` commands to it and fails any script that builds the release graph without spreading it.
+
+### Why
+
+- `bun build --compile` resolved canvas's `require('../build/Release/canvas.node')` even behind linkedom's optional `try/catch`, so the build rebuilt canvas first. On Windows a failed prebuilt download fell back to a node-gyp build that cannot find `cairo.h`, failing `Compiled extensions (Windows)` (senpi#6045). senpi never needs canvas: linkedom falls back to its JS shim, as the Node bundle already does.
+
+### Why an extension could not handle it
+
+- The release compile recipe is build tooling, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one flag on each of the two compile lines, the removed two-line rebuild step, and one new module.
+
+## 2026-11-04 - senpi vendors machine-ops instead of publishing it (senpi#5784)
+
+### What changed
+
+- `scripts/registry-packages.mjs`: `@code-yeongyu/senpi-machine-ops` leaves the npm publish set.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: vendors `packages/machine-ops/dist/src` under `vendor/senpi-machine-ops/` in the senpi tarball and rewrites the emitted root and `/in-process-holder` imports to relative paths, the same way it already handles client/protocol. Each vendored workspace now names its manifest and its entry files, and the leak check matches only quoted specifiers, so a comment that names a vendored package no longer fails staging.
+- `scripts/prepare-senpi-publish-manifest.mjs`: the staged senpi manifest drops the machine-ops dependency with client/protocol, so it no longer pins machine-ops to an exact version.
+- `scripts/senpi-publish-pack-checks.mjs`: the senpi tarball must carry the vendored machine-ops entries, and the published-package file check no longer lists machine-ops.
+- `scripts/publish-registry-dependencies.test.mjs`: every registry package source must have a `CHANGELOG.md` next to its `package.json`.
+
+### Why
+
+- #5603 added machine-ops to the publish set without `packages/machine-ops/CHANGELOG.md`, so the v2026.11.4-1 Build Binaries run failed at "Prepare GitHub release payload" (`release-notes.mjs extract --published`). The package was also never on npm, and npm trusted publishing cannot do a first publish. senpi's tools import it at runtime (`packages/coding-agent/src/core/tools/machine.ts`), so it ships inside the senpi tarball instead.
+
+### Why an extension could not handle it
+
+- Release and publish tooling is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the package lists in `registry-packages.mjs`, `prepare-senpi-publish-manifest.mjs` and `senpi-publish-pack-checks.mjs`.
+
+## 2026-11-03 - Release scripts carry the machine-ops workspace (senpi#5592)
+
+### What changed
+
+- `scripts/release-packages.mjs`: `packages/machine-ops/package.json` joins the lockstep CalVer set.
+- `scripts/local-release.mjs`: local release builds and packs `@code-yeongyu/senpi-machine-ops`.
+- `scripts/registry-packages.mjs`, `scripts/prepare-senpi-publish-manifest.mjs`, `scripts/senpi-publish-pack-checks.mjs`, `scripts/build-all.mjs`: the package is published under its own name with an exact version in the senpi manifest, its tarball must carry `dist/src/index.js` and the conformance entry, and it builds after pty.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- Release and build tooling is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the package lists in `release-packages.mjs`, `local-release.mjs`, `registry-packages.mjs` and `build-all.mjs`.
+
+## 2026-10-26 - publish.mjs requires the socket-secret bridge it is told to (senpi#4312)
+
+### What changed
+
+- `scripts/publish.mjs`: new `--require-socket-secret-bridge=win32-<arch>[,...]` flag, passed to `assertSenpiPackedWorkspaceFiles` for the senpi tarball.
+- `scripts/senpi-publish-pack-checks.mjs`: `SOCKET_SECRET_BRIDGE_TARGETS`, `socketSecretBridgeFile(target)`, and an `options.requiredSocketSecretTargets` check that rejects a senpi tarball missing a named bridge.
+
+### Why
+
+- The bridge has no runtime fallback (sisyphuslabs/omo-desktop-app#4199), so unlike the PTY prebuild a missing target must block the publish, the best-effort arm64 build included.
+
+### Why an extension could not handle it
+
+- Publishing runs in the release tooling, outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: argument parsing at the top of `publish.mjs` and `validatePack`.
+
+## 2026-11-03 - Loopless worker entry in the release binaries (senpi#5438)
+
+### What changed
+
+- `scripts/build-binaries.sh`: both `bun build --compile` lines (Windows and the other platforms) add `./src/modes/rpc/loopless-worker.ts` after `./src/modes/rpc/session-worker.ts`.
+
+### Why
+
+- Release binaries must contain every worker entry the runtime can start; the loopless worker isolate is new (senpi#5413).
+
+### Why an extension could not handle it
+
+- This is the release binary build itself.
+
+### Expected merge conflict zones
+
+- LOW: the two compile lines, which other worker entries also extend.
+
+## 2026-10-30 - pi-ai ./models entry budget +3 (senpi#3975)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: `./models` budget 33 -> 36 for `provider-diagnostic.ts`, `utils/provider-diagnostic-vocabulary.ts` and `utils/provider-diagnostic-carrier.ts`, reached from `api/lazy.ts`.
+
+### Why
+
+- senpi#3975: `lazyStream` must keep a validated attached diagnostic.
+
+### Why an extension could not handle it
+
+- Repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` budget comment.
+
+## 2026-10-27 - pi-ai models entry budget covers the login-id leaf (senpi#4099)
+
+### What changed
+
+- `check-entry-graphs.mjs`: the `@earendil-works/pi-ai/models` entry budget is 32 files: `auth/pool/login-id.ts`, the one-function leaf `models.ts` now imports so `Models.login` stamps a fresh `loginId` on the credential it commits.
+
+### Why
+
+- The lightweight models entry owns the login write path, so it carries the stamp a sign-in writes.
+
+### Why an extension could not handle it
+
+- The entry-graph budget is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` budget comment and its `maxFiles` line.
+
+## 2026-11-01 - Kill guard judge entry shipped in the npm bundle (senpi#5349, PR #5358)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: a `kill-guard-check` lazy entry (in `scripts/bundle-entry-points.mjs`) emits `core/kill-guard/check-entry.js` as `kill-guard-check.js`. The build fails when `core/kill-guard/runtime.js` lands in a different directory, because that module resolves the entry by URL.
+
+### Why
+
+- On an npm install the runtime shims run the judge as the host's runtime plus this entry script.
+
+### Why an extension could not handle it
+
+- This is the release bundle build itself.
+
+### Expected merge conflict zones
+
+- LOW: `lazyEntryPoints` in `scripts/bundle-entry-points.mjs` next to the `kill-guard` entry, and the directory checks in `buildBundle`.
+
+## 2026-11-01 - Kill guard judge shipped as its own module in every layout (senpi#5349, PR #5354)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: the build fails when the judge (`kill-guard.js`, emitted by a new `kill-guard` lazy entry in `scripts/bundle-entry-points.mjs`) and the chunk `core/kill-guard/host.js` lands in are in different directories.
+- `scripts/build-binaries.sh`: both release `bun build --compile` commands embed `./src/core/kill-guard/index.ts`.
+- `scripts/create-source-archive.sh`: the source archive requires `packages/coding-agent/src/core/kill-guard/index.ts`.
+
+### Why
+
+- A codemode worker cannot resolve the `@code-yeongyu/senpi` peer specifier in every layout, so the host hands it a URL to the judge's own file, which must exist in the npm bundle, the compiled binary and the source archive.
+
+### Why an extension could not handle it
+
+- These are the release build scripts themselves.
+
+### Expected merge conflict zones
+
+- LOW: `lazyEntryPoints` in `scripts/bundle-entry-points.mjs`, the path-identity directory check in `buildBundle`, the two compile lines and the required-path list.
+
+## 2026-11-02 - Refuse a release version the shipped update checker cannot order (#5406, PR #5411)
+
+### What changed
+
+- `scripts/release-version-guard.mjs`: new guard. It imports `comparePackageVersions` from the tree's own `packages/coding-agent/src/utils/version-check.ts` and refuses a version unless that checker orders it equal to itself and never before the bare release of its date. `node scripts/release-version-guard.mjs <version>` exits 1 with the reason.
+- `scripts/release.mjs`: `main()` runs the guard as a subprocess right after the version is resolved, explicit or auto-computed, so a pinned `--sha` cut checks the pinned tree's checker.
+- `.github/workflows/publish-npm.yml`: the release job runs the guard on an explicit version after installing dependencies, before any release or publish step; in publish-only that is the tag's tree.
+
+### Why
+
+- `2026.11.02-1` was cut while its own update checker could not parse it, so installs of that release never saw a newer version. The cut now asks the checker it ships instead of trusting a separate pattern.
+
+### Why an extension could not handle it
+
+- The release script and workflow are repository tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the imports and `main()` of `scripts/release.mjs`; the release job's steps after `Install dependencies` in `publish-npm.yml`.
+
+## 2026-10-29 - Static check that every bundle and binary entry has a source file (senpi#4892)
+
+### What changed
+
+- `scripts/bundle-entry-points.mjs` (new): owns the bundle's required-inputs list (`bundleRequiredInputs`) and `lazyEntryPoints`, both moved unchanged out of `scripts/build-coding-agent-bundle.mjs`.
+- `scripts/build-coding-agent-bundle.mjs`: `buildBundle()` reads its required inputs from `bundleRequiredInputs()` and its lazy entries from `lazyEntryPoints()` in the new module. Build output is unchanged.
+- `scripts/bundle-entry-paths.test.mjs` (new): maps every required input, lazy entry, `packages/*/dist/*.js` output lookup in the bundle script, and every `bun build --compile` entrypoint in `scripts/build-binaries.sh` and the `build:binary` script back to its source file, and names each one that has none.
+
+### Why
+
+- A PR that deleted or renamed a listed module passed its focused tests and review, and only the full build failed (`Bundle input is missing: ...`). The static check fails at the PR's own script tests in milliseconds.
+
+### Why an extension could not handle it
+
+- The bundle and binary builds are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the required-inputs loop in `buildBundle()`; new lazy entries now go in `scripts/bundle-entry-points.mjs`.
+
+## 2026-10-29 - Ratchet client response dispatch after removing its unchecked assertion (S15a-2, part of #4272)
+
+### What changed
+
+- `scripts/lint-ratchet.baseline.json`: Lower rpc-client.ts's non-null-assertion count from 2 to 1 after extracting checked response dispatch.
+
+### Why
+
+- `scripts/lint-ratchet.baseline.json`: The removed pending-request assertion must not be reintroduced.
+
+### Why an extension could not handle it
+
+- `scripts/lint-ratchet.baseline.json`: This is the repository's static lint budget.
+
+### Expected merge conflict zones
+
+- `scripts/lint-ratchet.baseline.json`: Preserve the lower rpc-client.ts assertion count when merging client changes.
+
+## 2026-10-30 - The coding-agent bundle no longer requires the removed Anthropic OAuth flow (senpi#4436, S7)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: `packages/ai/dist/auth/oauth/anthropic.js` is gone from the required bundle inputs and from `lazyEntryPoints`.
+
+### Why
+
+- senpi#4436 (R7) deleted `packages/ai/src/auth/oauth/anthropic.ts`, so `npm run build` failed with `Bundle input is missing: packages/ai/dist/auth/oauth/anthropic.js` and emitted no `dist/bundle`. `load.ts` no longer lazily imports `./anthropic.ts`, so the load.ts cross-check needs no lazy entry for it.
+
+### Why an extension could not handle it
+
+- The release bundle's input list is build tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the required-inputs list in `buildBundle` and the `lazyEntryPoints` map; an upstream re-add of an `anthropic` lazy entry lands on deleted source and must stay removed.
+
+## 2026-10-28 - Ship the path identity worker in the bundle, the binaries and the source archive (senpi#4391)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` emits `path-identity-worker` as a lazy entry beside the permission host's chunk, checks that the two share a directory (as it does for the image-resize worker), and lists the built worker in its input check.
+- `scripts/build-binaries.sh` (both platform branches) and `scripts/create-source-archive.sh` pass `src/core/extensions/builtin/permission-system/path-identity-worker.ts` as an explicit compile entry, mirroring `image-resize-worker`.
+
+### Why
+
+- The permission system resolves path identity in a worker started from a file beside its host module; without these entries the npm bundle and the compiled binaries would not contain the worker.
+
+### Why an extension could not handle it
+
+- The bundle, binary and source-archive builds are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `lazyEntryPoints` list and the compile entry lists next to `image-resize-worker`.
+
+## 2026-10-27 - Account for the capture responsibility split (part of #4272)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs` accounts for the two browser-safe capture leaves: `./models` reaches 33 files and `./utils/event-stream` reaches 8.
+
+### Why
+
+- `scripts/check-entry-graphs.mjs` measures module count; the mandatory 250-code-line split moves existing capture construction to one leaf and shares the frontier contract in another. No new external dependency, barrel reachability, wildcard budget increase, or forbid-rule change.
+
+### Why an extension could not handle it
+
+- `scripts/check-entry-graphs.mjs` is repository validation tooling.
+
+### Expected merge conflict zones
+
+- The two named budgets in `scripts/check-entry-graphs.mjs`.
+
+## 2026-10-26 - pi-ai models entry budget covers the provider-error boundary (senpi#4282)
+
+### What changed
+
+- `check-entry-graphs.mjs`: the `@earendil-works/pi-ai/models` entry budget is 31 files: `utils/provider-error.ts`, which `event-stream.ts` now imports to redact every provider error at the stream boundary, and the token-wise redactor it runs, split by responsibility into `utils/secret-redaction.ts`, `utils/secret-classifier.ts` and `utils/secret-lexer.ts`, alongside main's `utils/assistant-capture.ts`. A wildcard budget may name one expanded export in `overrides`: `./utils/event-stream` reaches 6 files and `./utils/provider-error` 4, while every other `./utils/*` entry stays at 3.
+
+### Why
+
+- The lightweight models entry runs provider streams, so it carries the redaction those streams apply.
+
+### Why an extension could not handle it
+
+- The entry-graph budget is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` and `./utils/*` budget blocks, and the two lines that read a budget's `maxFiles`.
+
+## 2026-10-25 - The ./models entry budget admits the capture leaf (senpi#4277, part of #4272)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `packages/ai` `./models` budget rises from 26 to 27 files for
+  `utils/assistant-capture.ts`, reached through `api/lazy.ts` -> `utils/event-stream.ts`.
+
+### Why
+
+- `utils/event-stream.ts` must import the capture module to freeze carriers at `push`; the module itself has only
+  type imports, so the graph grows by exactly that one leaf.
+
+### Why an extension could not handle it
+
+- The budget is a repository gate that runs in `bun run check`, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` entry in `BUDGETS` (one comment line and `maxFiles`).
+
+## 2026-10-22 - The pi-ai `./models` entry graph admits two reference leaves (senpi#3858)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 26 files (was 24 after senpi#3378). The added files are `auth/credential-read.ts`, the credential-store read that `auth/resolve.ts` wraps in `ModelsError`, and `utils/config-reference-error.ts`, the typebox-free error a slot read raises for an unresolved reference; the reasons are recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+- `scripts/check-entry-graphs.mjs`: a slot-scoped request must refuse a projected key that is still an unresolved reference with a typed error, and `./models` reaches `auth/resolve.ts`, so both leaves join its graph. Both stay inside the forbid rules: neither reaches `providers/`, `models.generated.ts` or the typebox helpers.
+
+### Why an extension could not handle it
+
+- `scripts/check-entry-graphs.mjs`: entry-graph budgets are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/check-entry-graphs.mjs`: the `./models` row, which senpi#3292 and senpi#3378 also raised.
+
+## 2026-10-20 - Per-PR change fragments replace direct changes.md and [Unreleased] edits (senpi#3610)
+
+### What changed
+
+- `scripts/release.mjs`: calls `compileFragments` (from `scripts/sync-changes-fragments.mjs`) only at the release cut, right before `stampChangelogs`, on the pinned tree when `--sha` is set; `stageChangedFiles` already stages their deletion (`git ls-files -d`).
+- `scripts/changes-fragments.mjs`, `scripts/changes-fragments-gate.mjs`, `scripts/sync-changes-fragments.mjs`, `scripts/check-pr-changelog-facts.mjs` (new, fork-only): fragment parsing and compile planning, gate facts, the `compile` / `from-diff` CLI, and the PR fact collection moved out of `check-pr-changelog.mjs`. `check-pr-changelog.mjs` counts a fragment's CHANGELOG block as that package's entry and its tracker blocks as coverage; once the base carries `changes/unreleased/README.md`, a PR that adds to an existing tracker or an `[Unreleased]` section fails. `audit-changes-md.mjs` counts entries still waiting in fragments. There is no standalone compile workflow; `from-diff` preserves added lines, including repeated headings and blanks.
+- `scripts/upstream-release-worthy.mjs`: evaluates a read-only compile preview so pending package fragments can trigger a release without first being written into `[Unreleased]`.
+
+### Why
+
+- Every PR wrote to the same top lines of the same trackers and `[Unreleased]` sections, so each merge into `main` made the other open PRs conflict there, and a release cut could strand a bullet in a released section (senpi#3123).
+
+### Why an extension could not handle it
+
+- The release script and the PR gate are repository tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `stampChangelogs` call site in `scripts/release.mjs`.
+
+## 2026-10-23 - Windows signal forwarding does not block on CIM (senpi#4057)
+
+### What changed
+
+- `scripts/package-manager.mjs`, `scripts/windows-process-tree.mjs`: signal forwarding asynchronously queries CIM with a one-second timeout, then feeds the result through the existing creation-time-checked explicit-PID planner; failures still permit only the root.
+- `scripts/run-tests.mjs`, `scripts/run-workspaces.mjs`: drain pending forwarding before re-raising a signal so early child exit cannot abandon cleanup.
+
+### Why
+
+- `scripts/package-manager.mjs`: synchronous five-second CIM probes serialized across children inside Ctrl-C handlers.
+
+### Why an extension could not handle it
+
+- `scripts/package-manager.mjs`: repository package-manager and test-runner signal handling.
+
+### Expected merge conflict zones
+
+- `scripts/package-manager.mjs`: signal forwarding and child close handling.
+
+## 2026-10-23 - Local release regeneration keeps the last good OpenGateway catalog (senpi#4067)
+
+### What changed
+
+- `scripts/local-release.mjs`: its `generate-models` run passes `-- --keep-last-good-opengateway`, the same opt-in as the release's `runGenerateModels`.
+
+### Why
+
+- `scripts/local-release.mjs`: an OpenGateway feed break must not stop a release; the dedicated OpenGateway refresh workflow is what fails on it.
+
+### Why an extension could not handle it
+
+- `scripts/local-release.mjs`: release tooling runs outside the runtime.
+
+### Expected merge conflict zones
+
+- `scripts/local-release.mjs`: the `generate-models` call before `check:provider-defaults`.
+
+## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: a third esbuild pass emits `packages/coding-agent/dist/modes/rpc/host-supervisor-entry.js` self-contained (splitting off) as `dist/bundle/host-supervisor.js` beside `cli.js`; its metafile joins the external-import check, the runtime manifest hash and the size summary.
+
+### Why
+
+- `scripts/build-coding-agent-bundle.mjs`: a bundled supervisor started through `cli.js` kept the whole CLI graph resident (69-71 MB per supervisor against 8.5 MB for its own graph), and the desktop runs one per thread host (omo-desktop-app#3359).
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs`: the bundle layout is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs`: the input check list and the end of `buildBundle`.
+
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `scripts/biome/model-type-comparison.grit`: removed. The same check runs as the oxlint JS plugin `scripts/oxlint/model-type-comparison.ts` (`senpi/model-type-comparison`); it reports exactly the shapes the Grit pattern reports. The pattern itself moves to `scripts/oxlint/parity/model-type-comparison.grit`, kept only so `node scripts/oxlint-biome-parity.mjs --update` can regenerate Biome's verdicts; `scripts/oxlint-biome-parity.test.mjs` fails when any ported rule (this one, `biome-port/no-implicit-any-let` or `biome-port/no-string-case-mismatch`) flags different corpus lines than Biome 2.5.14.
+
+### Why
+
+- Biome is no longer installed (senpi#3976), so the Grit plugin cannot run.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- None expected: the Grit file is fork-only and upstream does not carry it.
+
+
+## 2026-10-22 - The native grep probe tests never build the addon inside a CI test hook (senpi#3978)
+
+### What changed
+
+- `scripts/native-grep-addon.mjs`: `resolveNativeGrepAddon` picks the exported path, then a local addon, and otherwise builds locally, but refuses in CI with a message naming the missing "Build native grep addon" step. `scripts/native-grep-addon.test.mjs` covers the four cases.
+- `scripts/probe-native-grep.test.mjs`: the `before()` hook uses the resolver. A failed local build now reports how to build the addon or set `SENPI_GREP_NATIVE_PATH`.
+
+### Why
+
+- `scripts/probe-native-grep.test.mjs`: in CI the hook ran a cold release build with a 300 s timeout, so a slow runner failed all six tests with a bare `spawnSync npm ETIMEDOUT` that named no cause.
+
+### Why an extension could not handle it
+
+- `scripts/probe-native-grep.test.mjs`: repository test scripts.
+
+### Expected merge conflict zones
+
+- None expected: the change is local to this repository's CI and test scripts.
+
+## 2026-10-19 - Release commands that read large output no longer fail with ENOBUFS
+
+### What changed
+
+- `scripts/release.mjs`: `captureCommand` and the CI check-run lookup read command output through `captureOutput` (`scripts/release-capture.mjs`), which raises `execFileSync`'s buffer from the 1 MiB default to 256 MiB.
+
+### Why
+
+- `scripts/release.mjs`: the pinned v2026.10.19-1 release (run 39296257099) passed its forced suite and checks, then died merging main back: `git show origin/main:packages/coding-agent/CHANGELOG.md` failed with `spawnSync git ENOBUFS` because that file is over 1 MiB. Nothing was pushed.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `captureCommand` and `lookupCiCheckRuns`.
+
+## 2026-10-19 - A release never pushes a regenerated model catalog to main before testing it
+
+### What changed
+
+- `scripts/release.mjs`: when the catalog regeneration changes the catalog, the release commits it on the release only and requires `--force-tests` (the `force_tests` dispatch input); the forced suite and `npm run check` then run on that tree before anything is pushed, and `main` is pushed once, at the end. Without `--force-tests` such a release stops before it commits, tags or pushes. Before, the catalog commit was pushed to `main` first so CI would test it.
+
+### Why
+
+- `scripts/release.mjs`: the v2026.10.19-1 release pushed a regenerated catalog that no longer listed `deepseek/deepseek-r1`, which a test pinned, so `main` failed typecheck for every PR (#3734) before any check of the release had run.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `secureCiEvidence`.
+
+## 2026-10-19 - A release can be cut from an exact commit, not only from main at dispatch (senpi#3609)
+
+### What changed
+
+- `scripts/release.mjs`: a new `--sha <sha>` option (the `sha` input of `publish-npm.yml`) releases that exact commit. `pinReleaseCommit` in `release-git.mjs` refuses anything but a full 40-character sha, checks that `origin/main` contains it, then checks it out as `main`. The release stamps, commits and tags on that tree; the existing `syncRemoteMainBeforePush` still merges the newer main only after the tag, so later merges never reach the tagged commit. In pinned mode a cancelled CI run on the commit stops the release instead of moving it to main's tip, and a regenerated model catalog is committed on the release only and requires `force_tests`. Without `--sha` nothing changes.
+- `scripts/release-pin.mjs` (review of #3731): the pinned commit must be one of main's own first-parent commits (a merged PR's head is refused); the read-only checks also run in a dry run. When the pinned tree differs from the job's checkout, it is reinstalled and rebuilt before the forced suite. After the tag, `syncPinnedReleaseIntoMain` merges main with `--no-commit` and rebuilds each CHANGELOG.md (`release-pinned-changelog.mjs`): main's [Unreleased] keeps the entries merged after the pinned commit, and the version's section is the tag's own, so main never claims the release shipped them. The sha reaches the workflow shell through `env`.
+
+### Why
+
+- `scripts/release.mjs`: the release always took main's tip at dispatch, so a release could not ship the commit a full local suite had just verified once anything merged after it; the only way to keep the evidence valid was to freeze main, which is no longer allowed.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration and its workflow are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `parseArgs`, `secureCiEvidence`, the top of `main()` and the final sync before the pushes; the `workflow_dispatch` inputs and the `Run release` step in `publish-npm.yml`.
+
+## 2026-10-16 - A forced release tests its code before stamping the version and changelogs (senpi#3446)
+
+### What changed
+
+- `scripts/release.mjs`: with `--force-tests`, the suite (clean, build, then `CI=1 npm test`) runs right after the test-evidence step (catalog regeneration and its commit), before any version bump or CHANGELOG stamping. The release still cleans and builds again after stamping. Without `--force-tests` the order of commands is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: the suite used to run after `stampChangelogs`, so any test that reads a real CHANGELOG.md saw no `[Unreleased]` section; the v2026.10.16 forced release (run 38824836070) failed on `scripts/model-catalog-refresh.test.mjs`. CI always tests the unstamped commit, so the forced path never matched it.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `main()`'s step list and `runForcedTests`.
+
+## 2026-10-15 - The forced release test suite is bounded and dispatchable (senpi#3426, Refs senpi#2291)
+
+### What changed
+
+- `scripts/release.mjs`: `runForcedTests` (the `--force-tests` path) runs the suite through `runForcedTestSuite` from `release-test-gate.mjs` instead of `runCommand("npm", ["test"], { CI: "1" })`. The suite runs under a 110-minute budget as the leader of its own process group (`release-forced-test-supervisor.mjs`), and a timeout kills the whole group and fails with a named error. The default path, which waits for the release commit's green "Check and test" run, is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: when GitHub-hosted macOS runners are backlogged, the release commit's "Check and test" never reports and the release fails after 40 minutes without publishing (two v2026.10.16 attempts on 2026-10-15). `--force-tests` is the existing fallback, but the workflow could not pass it, and the in-job suite once hung silently in packages/ai vitest until the job timeout killed it (senpi#2291). The budget is about twice the serial cost estimated from green main CI (the ubuntu Test jobs sum to 56.8-62.7 min).
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: the release orchestration and its workflow are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `runForcedTests` and the `release-test-gate.mjs` import; the `release` job's `timeout-minutes` and inputs in `publish-npm.yml`.
+
+## 2026-10-15 - The ./models entry graph reaches the cost-card leaf (senpi#3378)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 24 files (was 23 after senpi#3292). The added file is `model-cost.ts`, the type-only leaf that picks the cost card in force; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+- senpi#3378: `calculateCost` in `models.ts` selects the dated card, which brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+- The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`, which senpi#3292 also raised.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired generated protocol-tree example from the runtime dependency auditor comment; the audit rules are unchanged.
+
+- `scripts/check-runtime-deps.mjs`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-12 - System-temp scan safeguards have mutation-tested contracts (Refs senpi#3064)
+
+### What changed
+
+- Add real snapshot/check contracts for a foreign job's preexisting `sj-*` directory and a new nonrepository system-temp name. Both remain intact and the guard passes.
+- Removing the baseline filter or repository-name filter independently makes the corresponding contract fail.
+
+### Why
+
+- System scans must detect our new entries without failing on preexisting jobs or newly created unrelated names.
+
+### Why an extension could not handle it
+
+- The guard is CI/bootstrap tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- `scripts/test-temp-system.test.mjs`: keep the controlled system-temp fixture scoped away from concurrent live jobs.
+
+## 2026-10-12 - Temp guards report surviving owners and system escapes (Refs senpi#3064)
+
+### What changed
+
+- `scripts/test-temp-guard.mjs`: count before retiring recorded roots, print surviving root contents, fail when any root needed retirement, and scan both pre-export temp and POSIX `/tmp` for new repository-created names. Unknown system names are reported without failing; shared system entries are never removed.
+- `scripts/test-temp-guard.mjs`: remove speculative scan/journal caps and the exact-single-entry scope check; retain prefix and baseline protection before deleting creator-owned roots.
+- `scripts/run-tests.mjs`: allocate a short system-temp root when inherited TMPDIR leaves no room for the 103-byte fallback socket; report cleanup failure without skipping signal-handler removal or leftover reporting.
+- `scripts/node-bundle-smoke.test.ts`: the grammar probe uses the existing hermetic environment, including owned temp variables.
+- `scripts/ci-test-temp-workflow.test.mjs`: structurally require every CI test-runtime step to sit between snapshot setup and an always-run final count.
+
+### Why
+
+- `scripts/test-temp-guard.mjs`: retiring a late root into a green result hid leaked processes; checking only the exclusive scope missed callers that ignored TMPDIR. Remaining fixture migration is tracked in senpi#3138, so this PR references rather than closes #3064.
+
+### Why an extension could not handle it
+
+- `scripts/run-tests.mjs`, `scripts/test-temp-guard.mjs`: temporary ownership and CI checks run before agent extensions.
+
+### Expected merge conflict zones
+
+- `scripts/run-tests.mjs`, `scripts/test-temp-guard.mjs`: run-root allocation, snapshot fields, final count and cleanup ordering.
+
+## 2026-10-10 - Test invocations own their temporary storage (senpi#3064)
+
+### What changed
+
+- `scripts/run-tests.mjs`: launch test processes with a private TMPDIR/TEMP/TMP before Vitest initializes, remove that root after child exit, and forward catchable interrupts to the child's process group before teardown. CI compares sorted top-level temp names after cleanup, bounded at 100000 entries, and fails with each leftover name.
+- `scripts/vitest-temp.ts`: shared file-scoped fixture creation registers teardown even when an assertion fails.
+- `scripts/vitest-temp-setup.ts`: register Vitest hooks only in framework setup; the fixture registry and harness also load in plain Bun subprocess workers without importing Vitest.
+- `scripts/test-temp-guard.mjs`: the bounded top-level scanner is shared by the launcher and a snapshot/check CLI. A job-final check can report residue even if the launcher itself was killed.
+- `scripts/test-temp-guard.mjs`, `scripts/run-tests.mjs`: snapshot setup creates an ownership journal exported explicitly to subsequent CI steps. Job teardown removes only roots recorded by their creator, including roots recreated after per-invocation teardown; unregistered entries still fail and are never removed.
+- `scripts/test-temp-guard.mjs`: CI snapshot setup gives the job an exclusive, short temp parent instead of counting unrelated macOS daemon directories in the shared host temp tree. It reports remaining job entries, removes only that newly allocated job parent on success or failure, and restores the previous temp environment for post-job actions. No system-directory name exceptions or shared-temp sweeps are used.
+- `scripts/test-temp-guard.mjs`: allocate npm's default Node compile cache inside the owned job parent at setup; it remains enabled during tests and is removed with that parent at teardown rather than becoming an unowned temp entry.
+- `scripts/run-tests.mjs`, `scripts/node-bundle-cursor-exec.test.ts`, `scripts/node-bundle-smoke.test.ts`, `scripts/node-bundle-reinstall.test.ts`: keep jiti's pnpm cwd workaround from ignoring owned TMPDIR via JITI_RESPECT_TMPDIR_ENV; hermetic bundle and compiled-probe child environments preserve TMPDIR/TEMP/TMP on every OS.
+
+### Why
+
+- Vitest 5 forks write SSR transform copies into its core temp directory independently of cacheDir. Its core directory survives normal close; workers killed before project close also leave copies. Test fixtures without teardown add smaller directories.
+
+### Why an extension could not handle it
+
+- These are test-process bootstrap and fixture ownership rules, not agent runtime extension behavior.
+
+### Expected merge conflict zones
+
+- Test command wiring in package manifests and workflows; Vitest's temp-copy implementation should be rechecked after dependency upgrades.
+
+## 2026-10-11 - Allow exact restoration of tagged released changelog sections (senpi#3126)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs`: collect tagged section slices for changed released sections using the same changelog path at `refs/tags/v<section name>`. Accept a differing section only when its name stays in place and its full slice equals the tagged bytes. Only plain CalVer section names qualify, and the tag must exist as that exact ref (`show-ref --verify`), so revision syntax such as `~1` never resolves another commit. Missing tags, and tags that lack the changelog, provide no exemption.
+- `scripts/check-pr-changelog.test.mjs`: pure verdict cases and a real tagged CLI fixture cover restoration, non-tag edits, absent tags, whitespace differences, a revision-syntax name, a non-CalVer name with a matching tag, and a tag without the changelog file.
+
+### Why
+
+- The PR base can contain an entry added after a release shipped. Comparing only against that base rejected restoring the shipped section while moving the misplaced entry to Unreleased.
+
+### Why an extension could not handle it
+
+- The required PR changelog gate runs in repository tooling, outside the extension runtime.
+
+### Expected merge conflict zones
+
+- `scripts/check-pr-changelog.mjs`: section parsing, released-section verdict, and `collectPrFacts` changelog collection.
+- `scripts/check-pr-changelog.test.mjs`: released-section unit cases and the #2609 CLI fixture.
+
+## 2026-10-09 - The agent ./harness/env/nodejs entry graph allows one more file (senpi#2999)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-agent-core` `./harness/env/nodejs` budget is 6 files (was 5). The added file is `harness/env/windows-process-tree.ts`, the leaf that plans Windows process-tree kills from one process listing with creation-time-checked parentage, used instead of `taskkill /T`. It imports only `node:child_process`; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+`NodeExecutionEnv` kills command trees through it, so the entry graph grows by exactly that one module.
+
+### Why an extension could not handle it
+
+Entry-graph budgets are repository tooling.
+
+### Expected merge conflict zones
+
+- The `./harness/env/nodejs` row in `check-entry-graphs.mjs`.
+
+## 2026-10-08 - The release reuses the release commit's sharded CI instead of re-running the suite (senpi#2943)
+
+### What changed
+
+- `scripts/release.mjs`: the release regenerates the model catalog and checks the provider defaults first. A manifest change that is only the `generatedAt` stamp is restored. If the catalog really changed, it is committed alone and pushed to `main`. The release then waits (`awaitCiEvidence`) for that commit's green "Check and test" run, CI's fan-in of every shard and required job, instead of running `CI=1 npm test` in the job:
+  - red stops the release before it commits, tags or pushes;
+  - a run cancelled by a newer `main` push follows `main` forward, but only when the new tip contains the commit;
+  - no result within 40 minutes fails with the reason.
+  A failed fan-in's workflow run is looked up (`lookupWorkflowRun`), so a cancellation is not mistaken for red CI. `CI=1 npm test` runs only with `--force-tests`.
+- `scripts/release-test-gate.mjs` holds the pure decisions: `planCiEvidence`, `awaitCiEvidence`, `isTimestampOnlyManifestChange`, `discardTimestampOnlyCatalogChange`. `decideTestGate` and `isCiCheckGreen` are gone.
+- `.github/workflows/publish-npm.yml`: `timeout-minutes` 90 to 60.
+
+### Why
+
+The catalog was regenerated inside the release job, after `main`'s CI, so a changed catalog was a tree CI never tested. Since senpi#2645 that forced a serial in-job suite, which outgrew 50 minutes. Every regeneration also re-stamped the manifest, so every release looked like catalog drift.
+
+### Why an extension could not handle it
+
+Release orchestration is repository tooling.
+
+### Expected merge conflict zones
+
+- `main()` and the test-gate section of `scripts/release.mjs`; the `release` job comment and timeout in `publish-npm.yml`.
+
+## 2026-10-15 - The ./models entry graph reaches the generation-4 thinking leaf (senpi#3292)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 23 files (was 22). The added file is `google-thinking-generation.ts`, a type-only leaf that gives a generation-4 row with no level map its low/medium/high levels; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+senpi#3292: generation-4 rows reject a thinking budget with HTTP 400, so `getSupportedThinkingLevels` in `models.ts` must know their levels even when the catalog row ships no map. That brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`.
+
+## 2026-10-07 - The ./models entry graph allows one more file (senpi#2893)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 22 files (was 21). The added file is `utils/oauth-refresh-error.ts`, the typed transient/permanent refresh classification that `auth/resolve.ts` raises; the reason is recorded beside the budget.
+
+### Why
+
+senpi#2893: a transient OAuth refresh failure must be typed where it happens. `resolve.ts` raises that type, so its module joins the `./models` graph.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`.
+
+## 2026-10-03 - Publish-only releases ship the full native PTY prebuild matrix (senpi#1193)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: the Stage step selects each addon by name (`senpi_pty.*` / `senpi_grep.*`) instead of copying the first sorted `.node` file, and stages the PTY addon at the loader-relative `native/prebuilds/<host>/senpi_pty.<host>.node` inside the artifact while the grep addon stays flat for its own consumers.
+- `.github/workflows/publish-npm.yml`: the publish-only job downloads the same-commit native matrix into an untracked scratch root, then a new staging step copies every target's PTY addon into `packages/pty/native/prebuilds/<target>/` before packing, and passes `--require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64` to the publish script.
+- `scripts/publish.mjs`: accepts `--require-native-prebuilds=<target>[,...]` and forwards the required set to the published-workspace pack check; unknown arguments are still rejected.
+- `scripts/senpi-publish-pack-checks.mjs`: `assertPublishedWorkspacePackFiles` takes an optional `requiredNativePrebuildTargets` list and throws, naming the missing `native/prebuilds/<target>/senpi_pty.<target>.node`, when a required target is absent from the `@earendil-works/pi-pty` tarball. Targets outside the list keep the warn-only pipe-fallback behavior, so the best-effort win32-arm64 row never fails a publish.
+
+### Why
+
+- The native workflow built the six-target matrix, but the publish path never
+  consumed it: `publish.mjs` only warned about the runner's own host target, so
+  the published `@code-yeongyu/senpi-pty` tarball shipped a single committed
+  darwin-arm64 prebuild and every Linux user silently fell back to the pipe
+  backend (senpi#1193). The pack check must fail the publish when a required
+  release-built target is missing instead of warning.
+
+### Why an extension could not handle it
+
+- Native compilation, GitHub Actions artifact staging, and npm tarball
+  validation all run in release tooling before any Senpi runtime extension
+  loads.
+
+### Expected merge conflict zones
+
+- `.github/workflows/native-prebuilds.yml`: the Stage artifact step.
+- `.github/workflows/publish-npm.yml`: the download, staging, and publish steps
+  of the publish-only job.
+- `scripts/publish.mjs`: the argument parser and `validatePack`.
+- `scripts/senpi-publish-pack-checks.mjs`:
+  `assertPublishedWorkspacePackFiles` and the prebuild file maps.
+
+
+## 2026-10-03 - A release stops when a catalog regeneration drops a provider default (senpi#2645)
+
+### What changed
+
+- `scripts/release-artifacts.mjs`: new `runProviderDefaultsCheck` runs `npm --prefix packages/coding-agent run check:provider-defaults` (the "default model selection" tests in `test/model-resolver.test.ts`, with `CI=1`).
+- `scripts/release.mjs`: runs it right after `runGenerateModels`.
+- `scripts/local-release.mjs`: runs the same check right after its own `generate-models`.
+- `scripts/release-test-gate.mjs`: new `catalogChangedSinceHead(cwd)` (`git status` over `packages/ai/src/models.generated.ts` and `packages/ai/src/providers`, untracked files included). `decideTestGate` takes `catalogChanged` and never skips when it is true.
+- `scripts/release.mjs`: reads `catalogChangedSinceHead` right after the regeneration, before anything is committed, and passes it to the test gate.
+
+### Why
+
+- `scripts/release.mjs`, `scripts/local-release.mjs`, `scripts/release-artifacts.mjs`: the release regenerates the model catalog from the network and then may skip its test gate because HEAD already has a green "Check and test" run, but that run tested the pre-regeneration catalog. v2026.10.4 shipped an `nvidia` default its new catalog no longer had, and `main` went red only after the release commit. The check runs on the regenerated catalog, before anything is committed or tagged. And whenever the regeneration changed the catalog, the test gate now runs the full suite instead of trusting HEAD's pre-regeneration CI, so every regeneration-induced failure, not just a dropped default, stops the release.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`, `scripts/local-release.mjs`, `scripts/release-artifacts.mjs`: release tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: the step list in `main()` around `runGenerateModels`, and `runTests`.
+- `scripts/release-test-gate.mjs`: `decideTestGate`'s branch order.
+- `scripts/local-release.mjs`: the `generate-models` block.
+
+## 2026-10-03 - The changelog gate fails a PR that removes existing change-log lines (senpi#2609)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs`: for every `changes.md` tracker the PR changes, `collectPrFacts` counts the base file's non-blank lines that are missing from the head (by content, with multiplicity, so diff alignment around a prepend is not a removal), and a deleted tracker counts all of them. Any removal fails the gate, naming the file and the count. For a `CHANGELOG.md`, a base `[Unreleased]` bullet that no longer appears anywhere in the head fails the gate unless a new `[Unreleased]` bullet is recognizably its edited form, one for one: it cites every issue/PR the old bullet cited (a credit or a reword keeps those), or it starts with the old bullet's full text (a credit or link appended to a bullet that cited nothing). Release stamping (the bullets move into the new released section) and in-place credits and rewords pass; deleting a bullet fails, including deleting another PR's bullet while adding this PR's own. A bullet that cites nothing can be extended but not reworded. Released sections keep their existing check.
+- `scripts/check-pr-changelog.test.mjs`: CLI cases for a tracker rewritten to only its new entry (#2598's shape), a deleted tracker, a deleted `[Unreleased]` bullet, another PR's bullet deleted while this PR adds its own, and the cases that must still pass: plain prepends, release stamping, a bullet credited or reworded in place, and a bullet that cited nothing gaining a credit.
+
+### Why
+
+- `scripts/check-pr-changelog.mjs`: the gate only read a tracker's added lines, so #2598 passed with `packages/ai/src/changes.md` cut from 5,756 lines to 18 and `packages/coding-agent/changes.md` from 1,516 to 19.
+
+### Why an extension could not handle it
+
+- Repository tooling; no extension surface reaches the PR gate.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/check-pr-changelog.mjs`, `checkPrChangelog`'s violation chain, `collectPrFacts` and `main`'s facts plumbing.
+
+## 2026-10-03 - Release notes cover every published package (senpi#2585)
+
+### What changed
+
+- `scripts/release-notes.mjs`: `extract` accepts `--changelog` more than once. With several changelogs, each package's non-empty section for the version is emitted in the given order under `## <published package name>` (the registry name from `registry-packages.mjs`, else the manifest name), and relative links resolve against that package's directory. A single `--changelog` (or the default) produces the same output as before, and a version with no section in any changelog still yields `Release <version>`. `--published` selects the changelog of every workspace package (`release-packages.mjs`) that `registry-packages.mjs` publishes, coding-agent first, so the release list has one source of truth.
+- `scripts/release-notes.test.mjs`: fixture-monorepo tests for the single and combined output, and for `--published` including every published package's section while leaving an unpublished package out.
+
+### Why
+
+- `scripts/release-notes.mjs`: the GitHub release body held only the coding-agent section, so the other packages' notes and contributor credits for the same version were dropped (v2026.10.2 lost 24 bullets across ai, senpi-codemode, tui and agent).
+
+### Why an extension could not handle it
+
+- Release tooling, not runtime behavior; no extension surface reaches the tag pipeline.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/release-notes.mjs`, `parseOptions` and `extractReleaseNotes`.
+
+## 2026-10-01 - Changelog gate reads changelogs larger than one mebibyte
+
+### What changed
+
+- `scripts/changes-md-git.mjs`: `runGit` gives git an explicit 64 MiB output budget and names that budget if output ever exceeds it.
+
+### Why
+
+- The 2026.10.1-3 release grew `packages/coding-agent/CHANGELOG.md` past spawnSync's 1 MiB default buffer, so the PR gate's `git show HEAD:<changelog>` failed with ENOBUFS on every PR that touched that changelog.
+
+### Why an extension could not handle it
+
+- Repository tooling, not runtime behavior; no extension surface reaches the changelog gate.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/changes-md-git.mjs`, `runGit`.
+
+## 2026-10-01 - Preserve sidecar dependency resolution and staging ownership (senpi#2452)
+
+### What changed
+
+- `scripts/copy-codemode-sidecar.mjs` mirrors source package nesting, audits every staged dependency edge, follows present optional dependencies, and tracks staged package paths rather than clearing the entire output install. Before removing or writing anything it refuses a symlinked segment on any owned path (including `node_modules` itself), and it removes `node_modules/@code-yeongyu/senpi-codemode` only when the ownership journal lists it or, with no journal, when it is the earlier copier's layout (a codemode manifest with `@babel/parser` nested inside); any other existing codemode package is refused.
+- `scripts/copy-codemode-sidecar.test.mjs` and `scripts/copy-codemode-sidecar-closure.test.mjs` cover nested shadowing, workspace resolution, selected-file links, diagnostics, optional payloads, owned cleanup, store-linked dependencies that the edge audit must reject, diamond graphs that share one staged package, host virtual packages reached transitively, and tampered ownership journals. `scripts/copy-codemode-sidecar-ownership.test.mjs` covers a symlinked output `node_modules`, an unowned codemode package with no journal, and replacement of the earlier journal-less layout.
+- The ownership journal `.codemode-sidecar.json` (a JSON list of relative `node_modules` paths) is written next to the staged `node_modules`, so it now ships in `packages/coding-agent/dist` and in every release platform directory. This is intended: a rerun into the same output, including an extracted or reused release directory, removes only the paths it staged before and never touches packages it did not stage.
+- `scripts/build-binaries.sh` copies the archive manifest after guarded sidecar staging. `scripts/build-binaries-staging.test.mjs` executes that staging block against an isolated filesystem fixture.
+
+### Why
+
+- Traversal-order hoisting could silently change a descendant's resolved version; whole-install cleanup could delete unrelated output packages.
+
+### Why an extension could not handle it
+
+- Release asset staging runs before runtime extensions load.
+
+### Expected merge conflict zones
+
+- The dependency traversal and sidecar cleanup in `scripts/copy-codemode-sidecar.mjs`.
+
+## 2026-10-01 - Release path stops running the removed image-model generator (senpi#2484)
+
+### What changed
+
+- `scripts/release.mjs` and `scripts/release-artifacts.mjs`: `runGenerateImageModels` (`npm --prefix packages/ai run generate-image-models`) is removed from the release sequence.
+
+### Why
+
+- The upstream v0.99.1 sync folded image models into `generate-models` and removed the `generate-image-models` script and `image-models.generated.ts`, so the release would fail at that step; `generate-models` already regenerates the image models.
+
+### Why an extension could not handle it
+
+- Repository release scripts.
+
+### Expected merge conflict zones
+
+- LOW: the step list in `release.mjs` main and the `release-artifacts.mjs` exports.
+
+## 2026-09-30 - Drop the dead deletions input and a test-only pack-check seam (senpi#2447)
+
+### What changed
+
+- `scripts/changes-md-git.mjs` `parseNameStatus` no longer returns `deletions`, and `check-pr-changelog.mjs` and `audit-changes-md.mjs` stop passing it. Deleted paths stay in `changedFiles`.
+- `scripts/senpi-publish-pack-checks.mjs`: `assertPublishedWorkspacePackFiles` drops its `options.nativePrebuildTargets` argument, and `publishedWorkspacePackageChecks` its `nativeTargets` parameter. Neither is exported any more, and nor is `SUPPORTED_NATIVE_PREBUILD_TARGETS`.
+
+### Why
+
+- `normalizeTrackerPolicy` never read `deletions`, so it was dead data.
+- The only production caller (`scripts/publish.mjs`) passes two arguments, so the all-OS target seam and both exports existed only for tests.
+- Gate verdicts are unchanged.
+
+### Why an extension could not handle it
+
+- Repository scripts, CI and native crate test code.
+
+### Expected merge conflict zones
+
+- LOW: `parseNameStatus` in `changes-md-git.mjs` and the `publishedWorkspacePackageChecks` signature.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `scripts/build-binaries.sh`: `scripts/build-binaries.sh`: fork compile flags kept; no codemode worker entrypoint.
+- `scripts/build-coding-agent-bundle.mjs`: `scripts/build-coding-agent-bundle.mjs`: fork `buildBundle()` kept; adopted the `meta` and `openai-chatgpt` lazy OAuth entries and the check that every `importOAuthModule()` flow in `packages/ai/src/auth/oauth/load.ts` has a lazy entry; no codemode worker; upstream compile-cache launcher not adopted.
+- `scripts/check-browser-smoke.mjs`: `scripts/check-browser-smoke.mjs`, `scripts/check-entry-graphs.mjs`: OURS; upstream durable browser-bundle smoke and the durable/codemode/mcp workspace entries dropped (D-2, D-7).
+- `scripts/check-entry-graphs.mjs`: `scripts/check-browser-smoke.mjs`, `scripts/check-entry-graphs.mjs`: OURS; upstream durable browser-bundle smoke and the durable/codemode/mcp workspace entries dropped (D-2, D-7).
+- `scripts/check-runtime-deps.mjs`: `scripts/check-ts-relative-imports.mjs`, `scripts/check-runtime-deps.mjs`: OURS (classic TypeScript API via @typescript/typescript6).
+- `scripts/check-ts-relative-imports.mjs`: `scripts/check-ts-relative-imports.mjs`, `scripts/check-runtime-deps.mjs`: OURS (classic TypeScript API via @typescript/typescript6).
+- `scripts/local-release.mjs`: `scripts/local-release.mjs`: fork package list kept; no durable/codemode/mcp packages.
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): upstream features excluded on record
+
+### What changed
+
+Upstream paths below are not added (or stay deleted) in this sync; `.github/agent/upstream-exclusions.txt` lists them for mechanical re-exclusion after every upstream merge.
+
+- `scripts/durable-browser-smoke-entry.ts` (not added / kept deleted)
+
+### Why
+
+The fork keeps one implementation per capability: its own builtin mcp, tool-search and senpi-codemode instead of upstream's codemode/MCP/tool-search built-ins and packages (plan D-2, owner default Q1); builtin cache-keepalive instead of upstream cache warming, whose default spends paid refreshes (D-5, Q3); report-bug skills instead of `/bug` uploads to Radius (D-6, Q4); no `packages/durable`, which nothing in the fork imports (D-7). Paths the fork had already deleted (core/index.ts, core/radius.ts, session-share.ts, tui latex.ts, providers/openai-codex.ts, npm-shrinkwrap.json) stay deleted.
+
+### Why an extension could not handle it
+
+Exclusion is a repository-level decision about which upstream files exist at all; an extension can add behavior but cannot remove files an upstream merge adds.
+
+### Expected merge conflict zones
+
+Every upstream release that touches these paths re-adds or modifies them: re-run `git rm -rqf --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)` after the merge and extend the list (with a dated block here) when upstream adds a new file to an excluded feature.
+
+## 2026-09-29 - Published packages ship no sourcemaps (senpi#2362)
+
+### What changed
+
+- `scripts/senpi-publish-pack-checks.mjs`: the senpi pack gate and every published alias package check reject any `*.map` in the tarball.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: the vendored client/protocol copy skips `*.map`.
+
+### Why
+
+- The maps reference workspace `src/` files that are never published, so they cannot resolve for consumers; they were 17.9 MiB of the senpi tarball alone.
+
+### Why an extension could not handle it
+
+- Publish tooling.
+
+### Expected merge conflict zones
+
+- LOW: `assertPublishedWorkspacePackFiles`, `assertSenpiPackedWorkspaceFiles`, `copyVendoredTypeWorkspaces`.
+
+## 2026-09-29 - Publish the real @code-yeongyu/senpi dependency manifest instead of a flattened bundle (senpi#2360)
+
+### What changed
+
+- `scripts/prepare-senpi-publish-manifest.mjs`: `stagePublishManifest` writes the source dependency list (vendored `pi-client`/`pi-protocol` removed, fork workspaces rewritten to their exact `npm:@code-yeongyu/senpi-*` aliases), deletes `bundleDependencies`/`bundledDependencies`, and rejects local specs and unpublished fork packages. The staged-`node_modules` listing, platform-constrained filter and optional-family promotion are gone.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: only vendors client/protocol under `vendor/` and stages the manifest; the workspace/runtime-closure copies into `packages/coding-agent/node_modules` are removed.
+- `scripts/senpi-publish-pack-checks.mjs` (new): the senpi pack gate (no `node_modules`, no `npm-shrinkwrap.json`, no bundle fields, fork deps through aliases, vendored files present) and per-alias-package loader-file checks (agent-core tree-sitter assets, pty `native/index.js` and warned-optional prebuild, codemode sources) moved from the bundled copies to the packages that now ship them.
+- `scripts/publish.mjs`: validates each package against those checks; `materializeMissingPublishRuntime` is no longer called.
+- Removed: `scripts/prepare-senpi-publish-dependencies.mjs`, `scripts/prepare-senpi-publish-placements.mjs`, `scripts/materialize-publish-runtime.mjs`, `scripts/generate-coding-agent-shrinkwrap.mjs`, `scripts/unpublished-bundled-workspaces.mjs` (no-op since the desktop workspaces left the bundle) and their tests.
+- `scripts/registry-packages.mjs`, `scripts/release-packages.mjs`, `scripts/local-release.mjs`: comments no longer describe the removed bundle; no behavior change.
+- `scripts/check-lockfile-commit.mjs`: the lockfile-commit hint points at the coding-agent install-lock instead of the removed shrinkwrap.
+- `scripts/release.mjs`, `scripts/release-artifacts.mjs`: no shrinkwrap step and no stale-bundle-overlay `npm ci`; root `package.json` drops `check:shrinkwrap`/`shrinkwrap:coding-agent` and the shrinkwrap step of `refresh-lock`.
+
+### Why
+
+- Every fork workspace is published under its own name at the lockstep version, so the bundle no longer protects installs from the old ETARGET on registry-absent workspace specs. It only cost space and time: bun installs every declared dependency from the registry and keeps the bundled copy too (700 MiB, 11.1 s cold), and npm unpacks a 27k-file tarball (137 s).
+
+### Why an extension could not handle it
+
+- Release and publish tooling.
+
+### Expected merge conflict zones
+
+- MEDIUM: `stagePublishManifest` and `prepareSenpiBundledWorkspaces`; `validatePack` in `publish.mjs`.
+
+## 2026-09-29 - The bundle names its build for the runtime snapshot (#2358)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: after both esbuild passes, writes `dist/bundle/runtime-manifest.json` with `buildId` (the first 16 hex digits of a SHA-256 over every emitted file's path and bytes) and `externals` (`collectExternalPackages`: the non-builtin package names the bundle imports at runtime).
+
+### Why
+
+- The CLI keys its runtime snapshot by build and verifies that the snapshot resolves the bundle's externals exactly as the install does (#2358).
+
+### Why an extension could not handle it
+
+- The manifest describes the build output itself.
+
+### Expected merge conflict zones
+
+- LOW: the end of `buildBundle()` after `validateExternalImports`.
+
+## 2026-09-29 - bun.lock regeneration converges and matches every workspace manifest (senpi#2352)
+
+### What changed
+
+- `scripts/bun-lock-workspace-specifiers.mjs` (new): parses bun.lock, lists every workspace dependency specifier that differs from its manifest, and rewrites the stale ones that can only resolve to the local workspace.
+- `scripts/regenerate-bun-lock-isolated.mjs`: repairs those specifiers in the seeded island lock before Bun runs, runs `bun install --lockfile-only` twice and fails unless the second pass changes nothing, then fails on any remaining manifest mismatch. `--check` names the stale specifiers.
+- `scripts/release-artifacts.mjs`: `runPackageLockRefresh` refreshes bun.lock with `node scripts/regenerate-bun-lock-isolated.mjs` instead of an in-place `bun install --lockfile-only`.
+
+### Why
+
+- One seeded Bun 1.4.2 pass after a version bump keeps the previous workspace ranges; a second pass fixes only the workspaces something depends on, and leaf workspaces keep the stale range forever. Release v2026.9.29 committed such a lock, so a fresh clone's `bun install` dirtied it.
+
+### Why an extension could not handle it
+
+- Release and lockfile tooling.
+
+### Expected merge conflict zones
+
+- LOW: `runPackageLockRefresh` in `release-artifacts.mjs`; `regenerateBunLock` in `regenerate-bun-lock-isolated.mjs`.
+
+## 2026-09-26 - Cover Node bundle tree-sitter grammar loading (senpi#2032)
+
+### What changed
+
+- `node-bundle-smoke.test.ts`: the isolated published-bundle smoke test now imports the emitted tree-sitter engine chunk under Node and Bun and requires the embedded JavaScript grammar to resolve on both runtimes.
+
+### Why
+
+- The Node npm bundle previously skipped its embedded grammar while Bun loaded it, so this runtime-specific regression could pass existing CLI smoke tests unnoticed.
+
+### Why an extension could not handle it
+
+- The regression is in the build artifact's embedded asset resolution and must be exercised by the bundle smoke harness itself.
+
+### Expected merge conflict zones
+
+- LOW: the runtime matrix in `node-bundle-smoke.test.ts`.
+
 ## 2026-09-28 - Drop the desktop packages from build, bundle and release tooling (senpi#2128)
 
 ### What changed
@@ -146,6 +1569,24 @@ The bundle script runs at build time, outside the extension runtime entirely.
 ### Expected merge conflict zones
 
 - The assertion block at the end of `compiledLoaderProbeSource`, whenever upstream changes loader caching.
+
+## 2026-09-21 - Reject changes to released changelog sections (#1884)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs` compares committed CHANGELOG sections against the PR merge base, rejecting released additions, edits and deletions with their path, line and section.
+
+### Why
+
+- `scripts/check-pr-changelog.mjs` previously accepted any changed changelog filename, including entries that could never appear in a future release. Only the existing Unreleased block's release stamp may introduce a new released section.
+
+### Why an extension could not handle it
+
+- `scripts/check-pr-changelog.mjs` runs in CI, outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/check-pr-changelog.mjs` fact collection and verdict composition.
 
 ## 2026-09-21 - run-workspaces gains --parallel with prefixed lanes and shared signal forwarding (senpi#1895)
 
@@ -1470,3 +2911,82 @@ pid), stop -> `stopped` (socket removed).
 ### Expected merge conflict zones
 
 - NONE: fork-only scripts.
+
+## 2026-10-02 - Fork budget for the lightweight models entry (upstream v1.0.0 sync)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the upstream `packages/ai` `./models` entry budget is kept with its forbid list, and its `maxFiles` is set to 21 instead of upstream's 15.
+
+### Why
+
+The fork's `packages/ai/src/models.ts` also carries credential-pool slots, the models store, the catalog max lookup and credential refresh, so the entry reaches 21 files. The forbid list still holds (no providers, generated catalog, index, validation or TypeBox helpers) and the lightweight entry still runs a faux completion without TypeBox, catalogs or SDKs. The budget stops further growth.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository check script, not runtime behaviour.
+
+### Expected merge conflict zones
+
+The `BUDGETS["packages/ai"]["./models"]` object when upstream retunes its budget.
+
+## 2026-10-02 - Fork browser smoke entry kept; codemode binary smoke not taken (upstream v1.0.0 sync)
+
+### What changed
+
+- `scripts/browser-smoke-entry.ts`
+- `scripts/smoke-test-codemode-binary.mjs`
+
+`browser-smoke-entry.ts` stays as in the fork (upstream added durable entries to it). `smoke-test-codemode-binary.mjs` smoke-tests upstream's codemode package, which the fork excludes, and is not added.
+
+### Why
+
+The fork's browser smoke covers the fork's packages; upstream's codemode package is replaced by the fork's own eval extension.
+
+### Why an extension could not handle it
+
+These are repository check scripts, not runtime behaviour.
+
+### Expected merge conflict zones
+
+Upstream edits to the browser smoke entry list; keep the fork's entries.
+
+## 2026-10-02 - Adopted upstream binary build script (upstream v1.0.0 sync)
+
+### What changed
+
+- `scripts/build-binaries.sh`
+
+The upstream build script change is kept.
+
+### Why
+
+Repository build tooling from upstream; the fork does not modify it.
+
+### Why an extension could not handle it
+
+Build tooling is not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream edits to scripts/build-binaries.sh at the next sync.
+
+## 2026-10-11 - Changelog gate reports every violation (senpi#3055, senpi#3123)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs`: collect every changed released section across all changed changelogs, every tracker removal, and every Unreleased-removal violation. Return a `violations` array and retain the string `reason`, joined with "; ". The CLI preserves its first failure line and prints each violation on its own line before the existing remediation.
+- `scripts/check-pr-changelog.test.mjs`: extend the #2609 CLI fixture with a simultaneous released-section edit and tracker removal, and verify aggregation across sections and files plus the returned reason contract.
+
+### Why
+
+- `scripts/check-pr-changelog.mjs`: #3055 both misplaced a changelog bullet in a released section and removed existing tracker lines. The first-only violation chain masked the tracker removal until the released-section problem was fixed, requiring another push. Reporting all existing checks changes no policy; per-PR fragments remain the longer-term work in #3123.
+
+### Why an extension could not handle it
+
+- `scripts/check-pr-changelog.mjs`: the PR gate runs as repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `scripts/check-pr-changelog.mjs`: released-section detection, `checkPrChangelog` aggregation, and CLI failure output.
+- `scripts/check-pr-changelog.test.mjs`: the #2609 CLI fixture and aggregation assertions.

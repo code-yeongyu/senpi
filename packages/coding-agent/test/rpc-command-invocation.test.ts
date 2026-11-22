@@ -1,6 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
+import { UnknownCommandError } from "../src/core/unknown-command.ts";
 import { createHarness, getUserTexts, type Harness } from "./suite/harness.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
 
@@ -112,7 +113,8 @@ describe("RPC command invocation events", () => {
 		harnesses.push(harness);
 		harness.setResponses([() => fauxAssistantMessage("done"), () => fauxAssistantMessage("done")]);
 
-		await harness.session.prompt("/unknown");
+		await expect(harness.session.prompt("/unknown")).rejects.toBeInstanceOf(UnknownCommandError);
+		await harness.session.prompt("/unknown", { unknownCommandAsText: true });
 		await harness.session.prompt("$HOME is literal");
 
 		expect(harness.eventsOfType("command_invocation")).toEqual([]);

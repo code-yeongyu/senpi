@@ -3,9 +3,9 @@ import type {
 	AssistantMessage,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
-	Context,
 	CursorExecHandlers,
 	ImageContent,
+	JsonValue,
 	Message,
 	Model,
 	ProviderDiagnostic,
@@ -14,13 +14,35 @@ import type {
 	ThinkingSelection,
 	Tool,
 	ToolResultMessage,
+	TranscriptContext,
 	Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
+import type { DurableStore } from "./durable/store.ts";
+import type { ExecutionPipelineWitness, ExecutionScope, ToolHost } from "./execution/tool-host.ts";
+
+/**
+ * Opens a new, empty store for one tool batch, which the batch claims at epoch 1. A batch never reuses another's
+ * store: a call's command ID is the model's call ID, and providers reuse those across turns.
+ */
+export type BatchStoreFactory = () => DurableStore;
+
+export type {
+	ExecutionPipelineWitness,
+	ExecutionScope,
+	ToolHost,
+	ToolHostCall,
+	ToolHostOptions,
+	ToolHostResult,
+} from "./execution/tool-host.ts";
 
 /**
  * Stream function used by the agent loop. `Models.streamSimple` satisfies
  * this shape.
+ *
+ * The loop passes a normalized transcript: the system prompt and tool
+ * declarations are carried by the transcript's system messages, never by
+ * `context.systemPrompt` or `context.tools`.
  *
  * Contract:
  * - Must not throw or return a rejected promise for request/model/runtime failures.
@@ -30,7 +52,7 @@ import type { Static, TSchema } from "typebox";
  */
 export type StreamFn = (
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
 
@@ -51,6 +73,8 @@ export type ToolExecutionMode = "sequential" | "parallel";
  *
  * - "all": drain and inject every queued message at that point.
  * - "one-at-a-time": drain and inject only the oldest queued message, leaving the rest queued for later drain points.
+ *   A run of consecutive app-defined notices (any role other than user, assistant, toolResult or system)
+ *   is drained together as that oldest entry, so a burst of background events takes one turn.
  */
 export type QueueMode = "all" | "one-at-a-time";
 
@@ -82,13 +106,17 @@ export interface BeforeToolCallResult {
  * - `isError`: if provided, replaces the tool result error flag
  * - `usage`: if provided, replaces the tool result usage
  * - `terminate`: if provided, replaces the early-termination hint
+ * - `structuredContent`: if provided, replaces the structured content. If `content` is provided
+ *   without it, the structured content is dropped, because it may no longer match the content.
+ *   Return it along with `content` to keep it.
  *
- * Omitted fields keep the original executed tool result values.
+ * Other omitted fields keep the original executed tool result values.
  * There is no deep merge for `content`, `details`, or `usage`.
  */
 export interface AfterToolCallResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
+	structuredContent?: JsonValue;
 	isError?: boolean;
 	/** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
 	usage?: Usage;
@@ -127,11 +155,11 @@ export interface AfterToolCallContext {
 	context: AgentContext;
 }
 
-/** Context passed to `shouldStopAfterTurn`. */
-export interface ShouldStopAfterTurnContext {
+/** Context passed to completed-turn callbacks. */
+export interface AgentTurnContext {
 	/** The assistant message that completed the turn. */
 	message: AssistantMessage;
-	/** Tool result messages passed to the preceding `turn_end` event. */
+	/** Tool result messages emitted for the completed turn. */
 	toolResults: ToolResultMessage[];
 	/** Current agent context after the turn's assistant message and tool results have been appended. */
 	context: AgentContext;
@@ -139,10 +167,38 @@ export interface ShouldStopAfterTurnContext {
 	newMessages: AgentMessage[];
 }
 
+/** Decision returned by {@link FinishTurn}. Returning undefined preserves normal scheduling. */
+export type AgentTurnDecision = { action: "continue" } | { action: "end" };
+
+/**
+ * Called after a completed assistant turn and all of its tool-result messages, but before `turn_end`.
+ * On a normal turn, `{ action: "continue" }` ensures one next provider request. Tool-result, steering, or
+ * follow-up scheduling can satisfy that request and adds no extra request; otherwise the loop continues once
+ * with the current context. Error and aborted responses remain hard exits.
+ */
+export type FinishTurn = (
+	turn: AgentTurnContext,
+	signal?: AbortSignal,
+) => AgentTurnDecision | void | Promise<AgentTurnDecision | undefined> | Promise<void>;
+
+/** One model step as the loop finished it: its terminal assistant message and the provider tool results emitted for it. */
+export interface StepCommit {
+	readonly message: AssistantMessage;
+	readonly providerToolResults: readonly ToolResultMessage[];
+}
+
+/**
+ * Makes one finished model step durable before the loop acts on it. A rejection leaves the loop with no further
+ * events and no tool dispatch for that step.
+ */
+export type StepCommitFn = (step: StepCommit) => Promise<void>;
+
 /** Replacement runtime state used by the agent loop before starting another provider request. */
 export interface AgentLoopTurnUpdate {
 	/** Context for the next provider request. */
 	context?: AgentContext;
+	/** Messages to append before the next provider request, with normal lifecycle events. */
+	messages?: AgentMessage[];
 	/** Model for the next provider request. */
 	model?: Model<any>;
 	/** Thinking level for the next provider request. */
@@ -153,7 +209,26 @@ export interface AgentLoopTurnUpdate {
 	abortServerSideFallback?: boolean;
 }
 
-export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
+/** Runtime state available immediately before a conversational provider request. */
+export interface PrepareRequestContext {
+	context: AgentContext;
+	model: Model<any>;
+	thinkingLevel: ThinkingLevel;
+}
+
+/** Replacement runtime state for the provider request being prepared. */
+export type AgentRequestUpdate = Omit<AgentLoopTurnUpdate, "messages">;
+
+/**
+ * Called immediately before every conversational provider request, including the first.
+ * Pending messages have already been appended and emitted when this callback runs.
+ */
+export type PrepareRequest = (
+	request: PrepareRequestContext,
+	signal?: AbortSignal,
+) => AgentRequestUpdate | void | Promise<AgentRequestUpdate | undefined> | Promise<void>;
+
+export interface PrepareNextTurnContext extends AgentTurnContext {}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
@@ -180,6 +255,13 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 */
 	streamStartTimeoutMs?: number;
 
+	/**
+	 * Bytes the provider reports through `onTransportActivity` (SSE pings, keep-alive comments) keep the start and
+	 * idle bounds from firing while they keep arriving within one bound. This caps how long keep-alives alone may
+	 * hold a request without any assistant event. Unset or non-positive values leave keep-alives unbounded.
+	 */
+	streamKeepAliveTimeoutMs?: number;
+
 	/** Provider/SDK timeout override for only the first request in this loop invocation. */
 	initialRequestTimeoutMs?: number;
 
@@ -189,7 +271,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	/**
 	 * Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.
 	 *
-	 * Each AgentMessage must be converted to a UserMessage, AssistantMessage, or ToolResultMessage
+	 * Each AgentMessage must be converted to a SystemMessage, UserMessage, AssistantMessage, or ToolResultMessage
 	 * that the LLM can understand. AgentMessages that cannot be converted (e.g., UI-only notifications,
 	 * status messages) should be filtered out.
 	 *
@@ -247,24 +329,35 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 
 	/**
-	 * Called after each turn fully completes and `turn_end` has been emitted.
-	 *
-	 * If it returns true, the loop emits `agent_end` and exits before polling steering or follow-up queues,
-	 * without starting another LLM call. The current assistant response and any tool executions finish normally.
-	 * This callback sees the completed-turn context and runs before `prepareNextTurn`.
-	 *
-	 * Use this to request a graceful stop after the current turn, e.g. before context gets too full.
-	 *
-	 * Contract: must not throw or reject. Throwing interrupts the low-level agent loop without producing a normal event sequence.
+	 * Called after the assistant message and all tool-result messages have been emitted, immediately before `turn_end`.
+	 * `{ action: "end" }` ends the run without polling queues or preparing another request.
+	 * On a normal turn, `{ action: "continue" }` ensures one next provider request. Tool-result, steering, or
+	 * follow-up scheduling can satisfy that request and adds no extra request; otherwise the loop continues once
+	 * with the current context. Returning undefined preserves normal scheduling. Error and aborted responses remain
+	 * hard exits.
 	 */
-	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
+	finishTurn?: FinishTurn;
+
+	/**
+	 * Called once per model step, after the step's provider tool results are emitted and before the loop decides
+	 * whether the turn ends or dispatches tools; it covers success and terminal-failure messages alike. Unset on
+	 * every local assembly; a hosted brain host sets it to commit the step durably.
+	 */
+	commitStep?: StepCommitFn;
+
+	/**
+	 * Called immediately before every conversational provider request, including the first.
+	 * Pending messages have already been appended. The returned context, model, and thinking level
+	 * replace the runtime values for this and later requests in the run. This hook does not poll queues.
+	 */
+	prepareRequest?: PrepareRequest;
 
 	/**
 	 * Called after each completed assistant turn, including a normal stop response, before the loop decides whether another provider request starts.
 	 * A terminating-tool continuation emits its `turn_start` boundary first so queue owners can clear
 	 * or replace pending input before preparation finishes and the continuation is admitted.
-	 * `shouldStopAfterTurn` and an empty terminating tool batch can end the run before preparation.
-	 * Return replacement context/model/thinking state to affect the next turn.
+	 * `finishTurn` returning `{ action: "end" }` and an empty terminating tool batch can end the run before preparation.
+	 * Return replacement context/model/thinking state or messages to append to affect the next turn.
 	 * Return undefined to keep using the current context/config.
 	 */
 	prepareNextTurn?: (
@@ -274,7 +367,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	/**
 	 * Returns steering messages to inject into the conversation mid-run.
 	 *
-	 * Called after the current assistant turn finishes executing its tool calls, unless `shouldStopAfterTurn` exits first.
+	 * Called after the current assistant turn finishes executing its tool calls, unless `finishTurn` ends the run.
 	 * If messages are returned, they are added to the context before the next LLM call.
 	 * Tool calls from the current assistant message are not skipped.
 	 *
@@ -304,6 +397,13 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	restorePendingMessages?: (queue: "steering" | "followUp", messages: AgentMessage[]) => Promise<void> | void;
 
 	/**
+	 * Called with the queued messages the loop is about to put into the context, after they were drained and
+	 * before any of them is inserted or sent. A rejection keeps them out of this turn (they are restored), so a
+	 * message is never seen by a provider without its consumption committed first (senpi#3549).
+	 */
+	commitQueuedConsumption?: (queue: "steering" | "followUp", messages: AgentMessage[]) => Promise<void>;
+
+	/**
 	 * Tool execution mode.
 	 * - "sequential": execute tool calls one by one
 	 * - "parallel": preflight tool calls sequentially, then execute allowed tools in concurrent waves;
@@ -314,6 +414,24 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Default: "parallel"
 	 */
 	toolExecution?: ToolExecutionMode;
+	/** Unprepared batch boundary. Omitted selects the prepared pipeline (batch coordinator + prepared executor) in this process. */
+	toolHost?: ToolHost;
+	/**
+	 * Opens each batch's execution ledger for the default (prepared) pipeline. The loop builds no store itself: with no
+	 * `toolHost` and no factory, a tool batch fails closed with `BatchStoreMissingError`. The package entry's `Agent` and
+	 * `agentLoop` default it to `openMemoryBatchStore`.
+	 */
+	batchStoreFactory?: BatchStoreFactory;
+	/**
+	 * Runs once per call on the prepared pipeline, after the call is frozen and before it executes, with the arguments
+	 * object `beforeToolCall` saw and the frozen copy the tool will receive. A host whose `beforeToolCall` binds facts to
+	 * that object (an approval, a symbol property) moves them here. Synchronous and must not throw. With no `toolHost`
+	 * and no hook, a tool batch fails closed with `PreflightCarryMissingError`; the package entry's `Agent` and
+	 * `agentLoop` default it to `noPreflightCarry` (senpi#5795).
+	 */
+	afterToolFreeze?: (prepared: unknown, frozen: unknown) => void;
+	executionScope?: ExecutionScope;
+	onExecutionPipeline?: (witness: ExecutionPipelineWitness) => Promise<void> | void;
 
 	/**
 	 * Optional migration guidance for tool names intentionally removed by an extension.
@@ -396,8 +514,17 @@ export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessag
  * assigned arrays before storing them.
  */
 export interface AgentState {
-	/** System prompt sent with each model request. */
+	/**
+	 * Base system prompt sent with each model request (fork: assignable; the loop folds it into the
+	 * leading system message through `normalizeContext()`). Later transcript system messages with
+	 * `content` or `sections` still apply on top of it.
+	 */
 	systemPrompt: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions; see
+	 * {@link AgentContext.systemPromptStablePrefix} (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
@@ -409,12 +536,21 @@ export interface AgentState {
 	thinkingSelection?: ThinkingSelection;
 	/** First reasoning effort on the branch, used to preserve Responses cache prefixes. */
 	reasoningBaseline?: string;
-	/** Available tools. Assigning a new array copies the top-level array. */
+	/**
+	 * Executable tools. Assigning a new array copies the top-level array.
+	 *
+	 * Differences from the tools declared in the transcript are announced to the model
+	 * with a system message before the next request.
+	 */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];
 	/** Tool list the provider receives when it differs from `tools`; see {@link AgentContext.declaredTools}. */
 	declaredTools?: AgentTool<any>[];
-	/** Conversation transcript. Assigning a new array copies the top-level array. */
+	/**
+	 * Conversation transcript. Assigning a new array copies the top-level array.
+	 *
+	 * System messages in the transcript carry the prompt and tool declarations.
+	 */
 	set messages(messages: AgentMessage[]);
 	get messages(): AgentMessage[];
 	/**
@@ -434,25 +570,40 @@ export interface AgentState {
 }
 
 /** Final or partial result produced by a tool. */
-export interface AgentToolResult<T> {
+export interface AgentToolResult<T = JsonValue | undefined> {
 	/** Text or image content returned to the model. */
 	content: (TextContent | ImageContent)[];
 	/** Arbitrary structured details for logs or UI rendering. */
 	details: T;
+	/**
+	 * Machine-readable result matching the tool's `outputSchema`, for programmatic callers. Not sent
+	 * to the model; `content` remains the model-facing result.
+	 */
+	structuredContent?: JsonValue;
 	/** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
 	usage?: Usage;
-	/** Names of tools introduced by this result and available from this transcript point onward. */
-	addedToolNames?: string[];
+	/**
+	 * Report a failure without throwing. The model sees `content` as an error result, like a thrown
+	 * error, but `details` and `structuredContent` are kept for the UI and programmatic callers.
+	 */
+	isError?: boolean;
 	/**
 	 * Hint that the agent should stop after the current tool batch.
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
 	 */
 	terminate?: boolean;
 	/**
-	 * Report a failure without throwing: `true` marks this result as a tool error while keeping
-	 * `content` and `details` intact for the model and renderers. Omitted or `false` means success.
+	 * Names of tools introduced by this result and available from this transcript point onward
+	 * (fork lazy-tool activation and tool-search native deferred loading).
 	 */
-	isError?: boolean;
+	addedToolNames?: string[];
+}
+
+/** Final outcome of a tool call after hooks ran. */
+export interface AgentToolCallOutcome {
+	toolCall: AgentToolCall;
+	result: AgentToolResult<any>;
+	isError: boolean;
 }
 
 /**
@@ -472,7 +623,15 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	 * Must return an object that matches `TParameters`.
 	 */
 	prepareArguments?: (args: unknown) => Static<TParameters>;
-	/** Execute the tool call. Throw on failure instead of encoding errors in `content`. */
+	/**
+	 * JSON Schema of `structuredContent` in successful results. Tools that declare it should always
+	 * set `structuredContent`.
+	 */
+	outputSchema?: TSchema;
+	/**
+	 * Execute the tool call. Throw on failure, or return a result with `isError: true`; do not only
+	 * describe the failure in `content`.
+	 */
 	execute: (
 		toolCallId: string,
 		params: Static<TParameters>,
@@ -493,11 +652,21 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 
 /** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
-	/** System prompt included with the request. */
-	systemPrompt: string;
+	/**
+	 * Fork shorthand for the leading system message; `buildProviderContext` folds it with
+	 * `normalizeContext()`. Upstream-built contexts carry the prompt in transcript system messages.
+	 */
+	systemPrompt?: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions, followed by content that is not
+	 * (memory, MCP instructions). Providers with block-level prompt caching put the system breakpoint at
+	 * its end so another session can read it from cache. Ignored unless `systemPrompt` starts with it
+	 * (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
-	/** Tools available for this run. */
+	/** Tools available for execution in this run. */
 	tools?: AgentTool<any>[];
 	/**
 	 * Superset of `tools` to declare to the provider, keeping the tool prefix byte-stable while the
@@ -521,8 +690,8 @@ export type AgentEvent =
 	// Turn lifecycle - a turn is one assistant response + any tool calls/results
 	| { type: "turn_start" }
 	| { type: "turn_end"; message: AgentMessage; toolResults: ToolResultMessage[] }
-	// Message lifecycle - emitted for user, assistant, and toolResult messages
-	| { type: "message_start"; message: AgentMessage }
+	// Message lifecycle - emitted for system, user, assistant, and toolResult messages
+	| { type: "message_start"; message: AgentMessage; streaming?: true }
 	// Only emitted for assistant messages during streaming
 	| { type: "message_update"; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }
 	| { type: "message_end"; message: AgentMessage }

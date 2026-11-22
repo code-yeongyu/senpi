@@ -238,6 +238,26 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("deviceId", () => {
+		it("creates one global device ID and reuses it in later processes", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ deviceId: "project-device" }),
+			);
+			const first = SettingsManager.create(projectDir, agentDir);
+
+			const deviceId = first.getOrCreateDeviceId();
+			await first.flush();
+
+			expect(deviceId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+			expect(first.getOrCreateDeviceId()).toBe(deviceId);
+			expect(SettingsManager.create(projectDir, agentDir).getOrCreateDeviceId()).toBe(deviceId);
+			expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "dark", deviceId });
+		});
+	});
+
 	describe("packages migration", () => {
 		it("should keep local-only extensions in extensions array", () => {
 			const settingsPath = join(agentDir, "settings.json");
@@ -486,6 +506,28 @@ describe("SettingsManager", () => {
 			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamStartTimeoutMs()).toBe(300_000);
+		});
+
+		it("should default the keep-alive-only cap to 15 minutes", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamKeepAliveTimeoutMs()).toBe(900_000);
+		});
+
+		it.each([
+			[120_000, 120_000],
+			[0, undefined],
+		])("should read retry.provider.keepAliveTimeoutMs %s as a cap of %s", (configured, expected) => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ retry: { provider: { keepAliveTimeoutMs: configured } } }),
+			);
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamKeepAliveTimeoutMs()).toBe(expected);
 		});
 
 		it("should prefer retry.provider.streamStartTimeoutMs for the agent stream start timeout", () => {
@@ -868,6 +910,27 @@ describe("SettingsManager", () => {
 		expect(reloadedManager.getFullscreenCopyOnSelect()).toBe(true);
 	});
 
+	// #9758: wheel scrolling defaults to auto, persists line counts, and ignores invalid values.
+	it("persists fullscreen wheel scroll lines", async () => {
+		const manager = SettingsManager.create(projectDir, agentDir);
+		expect(manager.getFullscreenWheelScrollLines()).toBe("auto");
+
+		manager.setFullscreenWheelScrollLines(3);
+		await manager.flush();
+		expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")).fullscreenWheelScrollLines).toBe(3);
+
+		for (const [value, expected] of [
+			[7.9, 7],
+			[0, 1],
+			[1000, 100],
+			["fast", "auto"],
+			[null, "auto"],
+		] as const) {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ fullscreenWheelScrollLines: value }));
+			expect(SettingsManager.create(projectDir, agentDir).getFullscreenWheelScrollLines()).toBe(expected);
+		}
+	});
+
 	describe("outputPad", () => {
 		it("should default to 1 and persist binary values", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
@@ -1003,6 +1066,53 @@ describe("SettingsManager", () => {
 			expect(SettingsManager.inMemory({ defaultTools: [] }).getDefaultTools()).toEqual([]);
 			expect(SettingsManager.inMemory().getDefaultTools()).toBeUndefined();
 		});
+
+		it("applies +name and -name to the default selection", () => {
+			expect(SettingsManager.inMemory({ defaultTools: ["+codemode", "-write"] }).getDefaultTools()).toEqual([
+				"read",
+				"bash",
+				"edit",
+				"grep",
+				"codemode",
+			]);
+			expect(SettingsManager.inMemory({ defaultTools: ["read", "+grep", "+read"] }).getDefaultTools()).toEqual([
+				"read",
+				"grep",
+			]);
+		});
+
+		it("layers project modifiers on top of the global selection", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ defaultTools: ["read", "bash", "+codemode"] }),
+			);
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ defaultTools: ["-codemode", "+tool_search"] }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getDefaultTools()).toEqual(["read", "bash", "tool_search"]);
+
+			manager.applyOverrides({ defaultTools: ["+codemode"] });
+			expect(manager.getDefaultTools()).toEqual(["read", "bash", "tool_search", "codemode"]);
+		});
+
+		it("applies project modifiers to the built-in defaults without a global setting", () => {
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ defaultTools: ["+codemode"] }),
+			);
+
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual([
+				"read",
+				"bash",
+				"edit",
+				"write",
+				"grep",
+				"codemode",
+			]);
+		});
 	});
 
 	describe("getSessionDir", () => {
@@ -1096,13 +1206,13 @@ describe("SettingsManager", () => {
 			await manager.flush();
 
 			expect(manager.getModelThinkingLevel("openai", "gpt-5.5")).toBe("xhigh");
-			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			const saved = JSON.parse(readFileSync(join(agentDir, "state.json"), "utf-8"));
 			expect(saved.modelThinkingLevels).toEqual({ "openai/gpt-5.5": "xhigh" });
-			expect(saved.theme).toBe("dark");
+			expect(JSON.parse(readFileSync(settingsPath, "utf-8")).theme).toBe("dark");
 		});
 
 		it("preserves the last non-off level when the effective level becomes off", async () => {
-			const settingsPath = join(agentDir, "settings.json");
+			const settingsPath = join(agentDir, "state.json");
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			manager.setModelThinkingLevel("openai", "gpt-5.5", "high");
@@ -1119,7 +1229,7 @@ describe("SettingsManager", () => {
 		});
 
 		it("keeps ids containing slashes and colons opaque", async () => {
-			const settingsPath = join(agentDir, "settings.json");
+			const settingsPath = join(agentDir, "state.json");
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			manager.setModelThinkingLevel("openrouter", "z-ai/glm-5.2:exacto", "high");
@@ -1143,7 +1253,7 @@ describe("SettingsManager", () => {
 
 			expect(manager.getModelThinkingLevel("openai", "gpt-5.5")).toBeUndefined();
 			expect(manager.getModelThinkingLevel("anthropic", "opus")).toBe("medium");
-			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			const saved = JSON.parse(readFileSync(join(agentDir, "state.json"), "utf-8"));
 			expect(saved.modelThinkingLevels).toEqual({ "anthropic/opus": "medium" });
 		});
 
@@ -1202,14 +1312,14 @@ describe("SettingsManager", () => {
 
 			// Another session writes a DIFFERENT model key between our load and our save.
 			writeFileSync(
-				settingsPath,
-				JSON.stringify({ theme: "dark", modelThinkingLevels: { "anthropic/opus": "low" } }),
+				join(agentDir, "state.json"),
+				JSON.stringify({ modelThinkingLevels: { "anthropic/opus": "low" } }),
 			);
 
 			manager.setModelThinkingLevel("openai", "gpt-5.5", "xhigh");
 			await manager.flush();
 
-			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			const saved = JSON.parse(readFileSync(join(agentDir, "state.json"), "utf-8"));
 			expect(saved.modelThinkingLevels).toEqual({ "anthropic/opus": "low", "openai/gpt-5.5": "xhigh" });
 		});
 
@@ -1219,14 +1329,14 @@ describe("SettingsManager", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			writeFileSync(
-				settingsPath,
-				JSON.stringify({ theme: "dark", modelLastOnThinkingLevels: { "anthropic/opus": "low" } }),
+				join(agentDir, "state.json"),
+				JSON.stringify({ modelLastOnThinkingLevels: { "anthropic/opus": "low" } }),
 			);
 
 			manager.setModelLastOnThinkingLevel("openai", "gpt-5.5", "xhigh");
 			await manager.flush();
 
-			expect(JSON.parse(readFileSync(settingsPath, "utf-8")).modelLastOnThinkingLevels).toEqual({
+			expect(JSON.parse(readFileSync(join(agentDir, "state.json"), "utf-8")).modelLastOnThinkingLevels).toEqual({
 				"anthropic/opus": "low",
 				"openai/gpt-5.5": "xhigh",
 			});
@@ -1246,7 +1356,7 @@ describe("SettingsManager", () => {
 		});
 
 		it("writes global settings only, ignoring project scope", async () => {
-			const globalPath = join(agentDir, "settings.json");
+			const globalPath = join(agentDir, "state.json");
 			const projectPath = join(projectDir, CONFIG_DIR_NAME, "settings.json");
 			writeFileSync(projectPath, JSON.stringify({ theme: "project" }));
 			const manager = SettingsManager.create(projectDir, agentDir);
@@ -1263,7 +1373,7 @@ describe("SettingsManager", () => {
 
 	describe("per-model service tier memory", () => {
 		it("round-trips and deletes tiers per model key", async () => {
-			const settingsPath = join(agentDir, "settings.json");
+			const settingsPath = join(agentDir, "state.json");
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getModelServiceTier("openai", "gpt-5.5")).toBeUndefined();
@@ -1308,14 +1418,14 @@ describe("SettingsManager", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			writeFileSync(
-				settingsPath,
-				JSON.stringify({ theme: "dark", modelServiceTiers: { "openai/other": "priority" } }),
+				join(agentDir, "state.json"),
+				JSON.stringify({ modelServiceTiers: { "openai/other": "priority" } }),
 			);
 
 			manager.setModelServiceTier("openai", "gpt-5.5", "flex");
 			await manager.flush();
 
-			expect(JSON.parse(readFileSync(settingsPath, "utf-8")).modelServiceTiers).toEqual({
+			expect(JSON.parse(readFileSync(join(agentDir, "state.json"), "utf-8")).modelServiceTiers).toEqual({
 				"openai/other": "priority",
 				"openai/gpt-5.5": "flex",
 			});
@@ -1349,24 +1459,6 @@ describe("routine settings keys", () => {
 		writeFileSync(settingsPath, JSON.stringify(next, null, 2));
 		return excludeRoutineOnlySettingsChanges([settingsPath], contents, agentDir, projectDir, logger);
 	}
-
-	it("suppresses reload for per-model thinking level changes", () => {
-		expect(
-			classify({ theme: "dark" }, { theme: "dark", modelThinkingLevels: { "openai/gpt-5.5": "xhigh" } }),
-		).toEqual([]);
-	});
-
-	it("suppresses reload for per-model last-on thinking level changes", () => {
-		expect(
-			classify({ theme: "dark" }, { theme: "dark", modelLastOnThinkingLevels: { "openai/gpt-5.5": "xhigh" } }),
-		).toEqual([]);
-	});
-
-	it("suppresses reload for per-model service tier changes", () => {
-		expect(
-			classify({ theme: "dark" }, { theme: "dark", modelServiceTiers: { "openai/gpt-5.5": "priority" } }),
-		).toEqual([]);
-	});
 
 	it("still reloads for non-routine key changes", () => {
 		expect(

@@ -101,9 +101,6 @@ else
     echo "==> Skipping package build (--skip-build)"
 fi
 
-echo "==> Building trusted native dependencies..."
-npm rebuild canvas --foreground-scripts
-
 node scripts/prepare-bun-compile-assets.mjs
 
 # Build identity (engineBuildIdentity(): packages/coding-agent/src/core/engine-build-identity.ts).
@@ -144,15 +141,16 @@ for platform in "${PLATFORMS[@]}"; do
     fi
 
     # Bun compiled executables only embed worker scripts when they are passed as
-    # explicit build entrypoints. The runtime can still use new URL(...), but the
-    # worker must be present in the compiled executable.
+    # explicit build entrypoints. Bun places them at their path relative to the
+    # common directory of all entrypoints, so the main entry must stay in dist/
+    # for the worker specifiers in the runtime to resolve.
     #
     # Disable cwd bunfig.toml autoload so project preload scripts cannot crash the
     # standalone binary before pi starts (see #7684).
     if [[ "$platform" == windows-* ]]; then
-        bun build --compile --splitting --compile-autoload-package-json --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --define "SENPI_BUILD_EPOCH=$BUILD_EPOCH" --define "SENPI_BUILD_SHA7=\"$BUILD_SHA7\"" --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
+        bun build --compile --splitting --compile-autoload-package-json --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --external canvas --define "SENPI_BUILD_EPOCH=$BUILD_EPOCH" --define "SENPI_BUILD_SHA7=\"$BUILD_SHA7\"" --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/modes/rpc/loopless-worker.ts ./src/utils/image-resize-worker.ts ./src/core/extensions/builtin/permission-system/path-identity-worker.ts ./src/core/kill-guard/index.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
     else
-        bun build --compile --splitting --compile-autoload-package-json --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --define "SENPI_BUILD_EPOCH=$BUILD_EPOCH" --define "SENPI_BUILD_SHA7=\"$BUILD_SHA7\"" --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi"
+        bun build --compile --splitting --compile-autoload-package-json --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --external canvas --define "SENPI_BUILD_EPOCH=$BUILD_EPOCH" --define "SENPI_BUILD_SHA7=\"$BUILD_SHA7\"" --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/modes/rpc/loopless-worker.ts ./src/utils/image-resize-worker.ts ./src/core/extensions/builtin/permission-system/path-identity-worker.ts ./src/core/kill-guard/index.ts --outfile "$OUTPUT_DIR/$platform/pi"
         if [[ "$platform" == darwin-* ]] && command -v codesign >/dev/null 2>&1; then
             codesign --remove-signature "$OUTPUT_DIR/$platform/pi" 2>/dev/null || true
             codesign --force --sign - "$OUTPUT_DIR/$platform/pi"
@@ -164,7 +162,6 @@ echo "==> Creating release archives..."
 
 # Copy shared files to each platform directory
 for platform in "${PLATFORMS[@]}"; do
-    cp package.json "$OUTPUT_DIR/$platform/"
     cp README.md "$OUTPUT_DIR/$platform/"
     cp CHANGELOG.md "$OUTPUT_DIR/$platform/"
     cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm "$OUTPUT_DIR/$platform/"
@@ -176,6 +173,7 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r docs "$OUTPUT_DIR/$platform/"
     cp -r examples "$OUTPUT_DIR/$platform/"
     node "../../scripts/copy-codemode-sidecar.mjs" "$OUTPUT_DIR/$platform"
+    cp package.json "$OUTPUT_DIR/$platform/"
 
     # Copy the persistent-terminal PTY native prebuild next to the compiled binary at the
     # sidecar path its loader probes: native/prebuilds/<platform>-<arch>/senpi_pty.<host>.node.

@@ -1,15 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
-import type { AssistantMessage, Context, Model, SimpleStreamOptions } from "../src/types.ts";
+import type { AssistantMessage, Context, Model, SimpleStreamOptions, ThinkingLevelMap } from "../src/types.ts";
 
 interface MistralPayload {
 	promptMode?: "reasoning";
-	reasoningEffort?: "none" | "high";
+	reasoningEffort?: string;
 	messages?: Array<{ role?: string; content?: unknown }>;
 	promptCacheKey?: string;
 }
 
-function makeModel(id: string, reasoning: boolean): Model<"mistral-conversations"> {
+const NONE_HIGH_LEVELS: ThinkingLevelMap = {
+	off: "none",
+	minimal: null,
+	low: null,
+	medium: null,
+	high: "high",
+	xhigh: null,
+	max: null,
+};
+const GLM_5_2_LEVELS: ThinkingLevelMap = { ...NONE_HIGH_LEVELS, max: "max" };
+const GLM_5_3_LEVELS: ThinkingLevelMap = { ...NONE_HIGH_LEVELS, off: null, low: "low", max: "max" };
+
+function makeModel(
+	id: string,
+	reasoning: boolean,
+	thinkingLevelMap?: ThinkingLevelMap,
+): Model<"mistral-conversations"> {
 	return {
 		id,
 		name: id,
@@ -17,6 +33,7 @@ function makeModel(id: string, reasoning: boolean): Model<"mistral-conversations
 		provider: "mistral",
 		baseUrl: "http://127.0.0.1:9",
 		reasoning,
+		...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 128000,
@@ -61,63 +78,69 @@ async function capturePayload(
 }
 
 describe("Mistral reasoning mode selection", () => {
-	it("uses reasoning_effort for Mistral Small 4", async () => {
-		const payload = await capturePayload(makeModel("mistral-small-2603", true), { reasoning: "medium" });
-
-		expect(payload.reasoningEffort).toBe("high");
-		expect(payload.promptMode).toBeUndefined();
-	});
-
-	it("omits reasoning controls for Mistral Small 4 when thinking is off", async () => {
-		const payload = await capturePayload(makeModel("mistral-small-2603", true));
-
-		expect(payload.reasoningEffort).toBeUndefined();
-		expect(payload.promptMode).toBeUndefined();
-	});
-
-	it("uses prompt_mode for Magistral reasoning models", async () => {
+	it("uses prompt_mode for reasoning models without a thinking level map (Magistral)", async () => {
 		const payload = await capturePayload(makeModel("magistral-medium-latest", true), { reasoning: "medium" });
 
 		expect(payload.promptMode).toBe("reasoning");
 		expect(payload.reasoningEffort).toBeUndefined();
 	});
 
-	// Regression for #9375: Mistral-hosted GLM-5.2 ignores prompt_mode.
-	describe("zai-glm-5-2", () => {
+	it("omits reasoning controls for Magistral when thinking is off", async () => {
+		const payload = await capturePayload(makeModel("magistral-medium-latest", true));
+
+		expect(payload.promptMode).toBeUndefined();
+		expect(payload.reasoningEffort).toBeUndefined();
+	});
+
+	// Regression for #8700 and #9375: Medium and GLM-5.2 ignore Magistral's prompt_mode.
+	describe.each(["mistral-small-2603", "mistral-medium-latest", "zai-glm-5-2"] as const)("%s", (modelId) => {
+		const map = modelId === "zai-glm-5-2" ? GLM_5_2_LEVELS : NONE_HIGH_LEVELS;
+
 		it("uses reasoning_effort when thinking is enabled", async () => {
-			const payload = await capturePayload(makeModel("zai-glm-5-2", true), { reasoning: "medium" });
+			const payload = await capturePayload(makeModel(modelId, true, map), { reasoning: "high" });
 
 			expect(payload.reasoningEffort).toBe("high");
 			expect(payload.promptMode).toBeUndefined();
 		});
 
-		it("omits reasoning controls when thinking is off", async () => {
-			const payload = await capturePayload(makeModel("zai-glm-5-2", true));
-
-			expect(payload.reasoningEffort).toBeUndefined();
-			expect(payload.promptMode).toBeUndefined();
-		});
-	});
-
-	// Regression for #8700: Medium aliases must use reasoning_effort, not Magistral's prompt_mode.
-	describe.each(["mistral-medium-2604", "mistral-medium-latest"] as const)("%s", (modelId) => {
-		it("uses reasoning_effort when thinking is enabled", async () => {
-			const payload = await capturePayload(makeModel(modelId, true), { reasoning: "medium" });
+		it("clamps unsupported levels to a supported effort", async () => {
+			const payload = await capturePayload(makeModel(modelId, true, map), { reasoning: "low" });
 
 			expect(payload.reasoningEffort).toBe("high");
-			expect(payload.promptMode).toBeUndefined();
 		});
 
-		it("omits reasoning controls when thinking is off", async () => {
-			const payload = await capturePayload(makeModel(modelId, true));
+		it("sends reasoning_effort none when thinking is off", async () => {
+			const payload = await capturePayload(makeModel(modelId, true, map));
 
-			expect(payload.reasoningEffort).toBeUndefined();
+			expect(payload.reasoningEffort).toBe("none");
 			expect(payload.promptMode).toBeUndefined();
 		});
 	});
 
-	// Regression for #8700: the Medium prefix must still respect the model's reasoning capability.
-	it("omits reasoning controls for non-reasoning Medium models", async () => {
+	// Regression for #9678: requested levels must reach Mistral-hosted GLM models.
+	it("sends max for GLM-5.2", async () => {
+		const payload = await capturePayload(makeModel("zai-glm-5-2", true, GLM_5_2_LEVELS), { reasoning: "max" });
+
+		expect(payload.reasoningEffort).toBe("max");
+	});
+
+	describe("zai-glm-5-3", () => {
+		it.each(["low", "high", "max"] as const)("sends reasoning_effort %s", async (level) => {
+			const payload = await capturePayload(makeModel("zai-glm-5-3", true, GLM_5_3_LEVELS), { reasoning: level });
+
+			expect(payload.reasoningEffort).toBe(level);
+			expect(payload.promptMode).toBeUndefined();
+		});
+
+		it("maps medium to high", async () => {
+			const payload = await capturePayload(makeModel("zai-glm-5-3", true, GLM_5_3_LEVELS), { reasoning: "medium" });
+
+			expect(payload.reasoningEffort).toBe("high");
+		});
+	});
+
+	// Regression for #8700: reasoning controls must respect the model's reasoning capability.
+	it("omits reasoning controls for non-reasoning models", async () => {
 		const payload = await capturePayload(makeModel("mistral-medium-2505", false), { reasoning: "medium" });
 
 		expect(payload.reasoningEffort).toBeUndefined();

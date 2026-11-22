@@ -3,7 +3,6 @@ import { buildDetachedCellNotification } from "./detached-cell-notification.ts";
 
 export interface PendingDetachedNotification {
 	readonly snapshot: () => EvalDetachedCellSnapshot | Promise<EvalDetachedCellSnapshot>;
-	readonly spillPath: string | undefined;
 }
 
 export class DetachedNotificationQueue {
@@ -30,7 +29,7 @@ export class DetachedNotificationQueue {
 		const flush = Promise.resolve().then(async () => {
 			const pending = this.#pending.splice(0);
 			const notifications = await Promise.all(
-				pending.map(async (item) => await buildDetachedCellNotification(await item.snapshot(), item.spillPath)),
+				pending.map(async (item) => buildDetachedCellNotification(await item.snapshot())),
 			);
 			this.#notifier?.notify(notifications);
 		});

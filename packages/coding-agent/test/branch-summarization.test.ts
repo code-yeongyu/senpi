@@ -132,7 +132,10 @@ describe("branch summarization custom messages", () => {
 
 		// then
 		expect(streamSimpleMock).toHaveBeenCalledOnce();
-		const promptText = streamSimpleMock.mock.calls[0][1].messages[0].content[0].text;
+		// streamSimple receives a TranscriptContext (A2 C-AI-2): the summarization prompt leads as a system message.
+		const summaryMessages = streamSimpleMock.mock.calls[0][1].messages;
+		expect(summaryMessages[0].role).toBe("system");
+		const promptText = summaryMessages[1].content[0].text;
 		expect(promptText).toContain("Investigate compaction regression.");
 		expect(promptText).toContain("I am checking branch summarization.");
 		expect(promptText).toContain("Remember the branch-specific observation.");

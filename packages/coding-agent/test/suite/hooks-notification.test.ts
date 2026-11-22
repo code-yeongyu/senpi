@@ -9,7 +9,7 @@ import { parseHookOutput } from "../../src/core/extensions/builtin/hooks/output-
 import { createHookTrustEntry, hookTrustId } from "../../src/core/extensions/builtin/hooks/trust.ts";
 import type { HookSourceMetadata, HookTrustEntry } from "../../src/core/extensions/builtin/hooks/types.ts";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
-import type { ExtensionContext, QuestionResponse } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const SOURCE: HookSourceMetadata = {
@@ -143,7 +143,7 @@ describe("builtin hooks Notification event", () => {
 					},
 					undefined,
 					undefined,
-					ctx,
+					ctx as ExtensionToolContext,
 				);
 				expect(result.details).toMatchObject({ status: "timed_out" });
 				await completed.promise;

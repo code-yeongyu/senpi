@@ -1,3 +1,224 @@
+## 2026-11-15 - A read-folders subpath without the agent loop (senpi#6740)
+
+### What changed
+
+- `packages/agent/package.json`: new `./read-folders` export (`src/read-folders.ts`): the read folder, `prepareReadFolder` and `createDefaultReadSummary`, without the agent loop or the AI package.
+
+### Why
+
+- The worker-safe read core folds like the local read tool; through the root entry it would pull the AI package (all providers, and a guarded `node:fs` require) into a Worker bundle.
+
+### Why an extension could not handle it
+
+- Package exports are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one added entry in the `exports` map.
+
+## 2026-11-11 - Test alias for the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/agent/vitest.config.ts`: aliases `@earendil-works/pi-realm-registry` to its source, like telemetry. `vitest.benchmark.config.ts` and `vitest.harness.config.ts` get the same alias.
+
+### Why
+
+- pi-ai imports the helper, and this package's tests load pi-ai from source.
+
+### Why an extension could not handle it
+
+- Test configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the alias list.
+
+## 2026-10-30 - Conformance archive producer scripts (senpi#5059)
+
+### What changed
+
+- `packages/agent/package.json`: adds the `pack:conformance` and `check:conformance-archive` scripts and the `@types/bun` development dependency the producer scripts typecheck against.
+
+### Why
+
+- `packages/agent/package.json`: the producer runs on Bun and needs a named entry point plus a typecheck of its Bun-only scripts.
+
+### Why an extension could not handle it
+
+- `packages/agent/package.json`: package scripts and development dependencies live only in the package manifest.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/package.json` scripts and devDependencies.
+
+## 2026-10-29 - Bun SQLite host for the durable-core conformance suite (senpi#4744, fixes #4740)
+
+### What changed
+
+- `packages/agent/vitest.config.ts`: aliases `@earendil-works/pi-agent-core/conformance` to `src/conformance/index.ts`, so the `bun-sqlite` conformance host (`packages/session-backends/sqlite-bun`) and the STORE/KILL-STORE cases load one copy of the store contract and its `DurableStoreError`.
+
+### Why
+
+- `packages/agent/vitest.config.ts`: the Bun SQLite backend imports the contract through the package's public `./conformance` subpath; without the alias Vitest resolves it to the unbuilt `dist/`, and the cases would not recognize the backend's errors.
+
+### Why an extension could not handle it
+
+- `packages/agent/vitest.config.ts`: test module resolution is configured before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `resolve.alias` list in `packages/agent/vitest.config.ts`.
+
+## 2026-10-29 - Conformance suite export for the durable core (senpi#4727, fixes #4726)
+
+### What changed
+
+- `packages/agent/package.json`: adds the `./conformance` export (`dist/conformance/index.{js,d.ts}`): the durable-core conformance case registry, mapping validation, manifest export, suite hash and suite runner from `src/conformance/`.
+
+### Why
+
+- `packages/agent/package.json`: every host of the durable core (a Durable Object host and a Bun host) runs one conformance suite, and hosts outside this package load it through a public subpath (packages/agent/docs/durable-core-adr.md).
+
+### Why an extension could not handle it
+
+- `packages/agent/package.json`: the package loader resolves exports before extensions run, and the suite is consumed by hosts, not by sessions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/package.json` exports map.
+
+## 2026-10-27 - Export the win32 simulation profile for tests (senpi#4510)
+
+### What changed
+
+- `packages/agent/package.json`: adds the `./testing/win32-sim` export (`dist/testing/win32-sim.{js,d.ts}`), a test-support subpath that product code does not import.
+
+### Why
+
+- `packages/agent/package.json`: suites in other packages (session backends, transport, headless host, hand recovery) need one shared, code-level simulation of Windows behavior that runs on any host.
+
+### Why an extension could not handle it
+
+- `packages/agent/package.json`: package subpaths resolve before extensions load; test suites in other workspaces import the profile through the package manifest.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/package.json` exports map.
+
+## 2026-10-26 - Remove the internal channel subpath (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/agent/package.json`: removes the internal-events export from the manifest used by pack and publish.
+
+### Why
+
+- `packages/agent/package.json`: every exports entry is public npm API; the session now uses a construction capability.
+
+### Why an extension could not handle it
+
+- `packages/agent/package.json`: the package loader resolves exports before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/package.json` exports map.
+
+## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
+
+### What changed
+
+- `packages/agent/package.json`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+
+### Why
+
+- Vitest SSR copies and interrupted fixture writes must not accumulate in the OS temp directory.
+
+### Why an extension could not handle it
+
+- Test-process bootstrap is repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
+
+## 2026-09-30 - Keep the docs/ mobile-handoff prototype out of the agent test run (senpi#2447)
+
+### What changed
+
+- `packages/agent/vitest.config.ts`: `exclude` adds `docs/**`, and keeps vitest's defaults through `configDefaults.exclude`.
+
+### Why
+
+- `docs/mobile-handoff/01-harness/01-delta/delta.test.ts` is historical prototype evidence (its `delta.md` says so), not production source.
+- It ran 54 tests in every agent CI run. About 40 of them repeat `packages/chord/test/delta.test.ts` word for word, and one contradicts production: the prototype keeps delete-then-set, while chord collapses it.
+- The file stays on disk, because `delta.bench.ts` and `delta.examples.ts` import `delta-impl.ts`, and deleting an upstream-owned file would conflict on the next sync.
+
+### Why an extension could not handle it
+
+- Test runner configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `test` block of `packages/agent/vitest.config.ts`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): retired pico handoff
+
+### What changed
+
+- `packages/agent/docs/pico/pico-handoff.md` stays deleted. Upstream commit `4819cc877e` replaced the approved implementation handoff with `pico-simple-handoff.md`, `pico-rendering.md`, and `pico-simple-blockers.md`.
+
+### Why
+
+The old handoff was deleted upstream after its decisions were incorporated into the newer pico documents; restoring it would revive superseded guidance.
+
+### Why an extension could not handle it
+
+This is repository documentation, outside the runtime extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the retired path if a later upstream merge reintroduces it. Keep the newer pico documents as the source of truth.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `packages/agent/package.json`: Root `package.json`: fork scripts kept (`build-all.mjs` build, the fork `check` chain with conflict-marker/bun-lock/install-lock/claude-sdk-platform-lock gates, `run-workspaces.mjs` launchers, `refresh-lock`, `preinstall`); devDependencies kept (biome 2.5.14, @types/node 26.6.2, typescript 7.0.2, @typescript/typescript6, tsx 4.23.13, vitest + @vitest/coverage-v8 5.0.1). Adopted from upstream: `generate:models` runs generate-models only (the `generate-image-models` chain dropped for the D-3 image-model unification), and `test:scripts` also runs the adopted upstream `scripts/model-catalog-protocol.test.ts`. Not adopted: codemode/mcp/durable build phases, the tsx removal. `packages/agent/package.json`: `@earendil-works/chord` exact 0.85.1 -> 0.99.1 (D-12, chord moves to upstream 0.99.1); adopted upstream `./experimental/pico3` export and `build: tsc`; bench scripts keep tsx.
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-29 - Published tarball excludes sourcemaps (senpi#2362)
+
+### What changed
+
+- `packages/agent/package.json`: `files` excludes `dist/**/*.map`.
+
+### Why
+
+- The maps point at `src/`, which is not published, so they cannot resolve for consumers and only add install size.
+
+### Why an extension could not handle it
+
+- Package publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `files` list in `package.json`.
+
 # changes
 
 ## 2026-09-21 - Migrate the test runner to Vitest 5 (senpi#1895)

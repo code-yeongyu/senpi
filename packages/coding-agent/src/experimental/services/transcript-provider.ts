@@ -1,4 +1,4 @@
-import { defineFacet, type Facet, type MutableReplicatedState } from "@earendil-works/chord";
+import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
 	type AgentLane,
@@ -26,17 +26,11 @@ export function createTranscriptService(
 	let rebase: Promise<void> | undefined;
 	let rebaseError: Error | undefined;
 
-	const publishSnapshot = (
-		next: LaneSnapshot,
-		event: LaneWatchEvent | null,
-		context: Parameters<typeof state.publish>[0],
-	): void => {
-		state.state.snapshot = next as LaneTranscriptSnapshot;
-		state.state.event = event;
-		state.publish(context);
+	const publishSnapshot = (next: LaneSnapshot, event: LaneWatchEvent | null, context: Context): void => {
+		state.replace(context, { snapshot: next as LaneTranscriptSnapshot, event });
 	};
 
-	const scheduleRebase = (context: Parameters<typeof state.publish>[0]): void => {
+	const scheduleRebase = (context: Context): void => {
 		if (rebase !== undefined) return;
 		const activeWatch = watch;
 		if (activeWatch === undefined) return;
@@ -56,15 +50,17 @@ export function createTranscriptService(
 		);
 	};
 
-	const onEvent = (event: HarnessEvent, context: Parameters<typeof state.publish>[0]): void => {
+	const onEvent = (event: HarnessEvent, context: Context): void => {
 		if (rebaseError !== undefined) throw rebaseError;
 		const forwarded = toLaneWatchEvent(event);
 		if (forwarded === undefined) return;
-		const snapshot = state.state.snapshot;
-		if (snapshot === null) throw new Error("Transcript service is not active");
-		if (reduceLaneSnapshot(snapshot, event) === "rebase") scheduleRebase(context);
-		state.state.event = forwarded;
-		state.publish(context);
+		if (state.value.snapshot === null) throw new Error("Transcript service is not active");
+		let needsRebase = false;
+		state.change(context, (draft) => {
+			needsRebase = reduceLaneSnapshot(draft.snapshot as unknown as LaneSnapshot, event) === "rebase";
+			draft.event = forwarded;
+		});
+		if (needsRebase) scheduleRebase(context);
 	};
 
 	return {

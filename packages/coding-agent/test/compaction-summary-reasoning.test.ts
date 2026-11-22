@@ -1,5 +1,13 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	type Context,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	type Model,
+	normalizeContext,
+	type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type CompactionPreparation,
@@ -160,15 +168,11 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("preserves caller affinity and cache retention while splitting request identity", async () => {
-		await completeSummarization(
-			createModel(false),
-			{ systemPrompt: "Summarize", messages: [] },
-			{
-				sessionId: "current-routing-session",
-				cacheRetention: "long",
-				toolChoice: "auto",
-			},
-		);
+		await completeSummarization(createModel(false), normalizeContext({ systemPrompt: "Summarize", messages: [] }), {
+			sessionId: "current-routing-session",
+			cacheRetention: "long",
+			toolChoice: "auto",
+		});
 
 		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
 			affinitySessionId: "current-routing-session",
@@ -178,23 +182,27 @@ describe("generateSummary reasoning options", () => {
 		expect(streamSimpleMock.mock.calls[0][2]?.sessionId).not.toBe("current-routing-session");
 	});
 
-	it("preserves the standalone split-turn summary prompt", async () => {
+	it("preserves the previous summary without an empty history request for a split turn", async () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: [],
 			turnPrefixMessages: messages,
 			isSplitTurn: true,
 			tokensBefore: 100,
+			previousSummary: "previous checkpoint",
 			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};
 
-		await compact(preparation, createModel(false), "test-key");
+		const result = await compact(preparation, createModel(false), "test-key");
 
-		const requestContext = streamSimpleMock.mock.calls[0][1] as Context;
+		expect(streamSimpleMock).toHaveBeenCalledTimes(1);
+		expect(result.summary).toContain("previous checkpoint");
+		const requestContext = streamSimpleMock.mock.calls[0][1] as TranscriptContext;
 		const prompt = JSON.stringify(requestContext.messages);
-		expect(prompt).toContain("This is the PREFIX of a turn that was too large to keep");
-		expect(prompt).toContain("<conversation>");
+		// Regression test for #9652: clear boundaries and continuation wording avoid the reasoning-extraction false positive.
+		expect(prompt).toContain("# Conversation\\n[User]: Summarize this.");
+		expect(prompt).toContain("# Instructions\\nThe messages above are earlier context from an ongoing conversation.");
 	});
 
 	it("appends instructions to a cache-friendly source context", async () => {
@@ -250,10 +258,10 @@ describe("generateSummary reasoning options", () => {
 			},
 		);
 
-		const requestContext = streamSimpleMock.mock.calls[0][1] as Context;
-		expect(requestContext.systemPrompt).toBe(sourceContext.systemPrompt);
-		expect(requestContext.tools).toBe(sourceContext.tools);
-		expect(requestContext.messages.slice(0, -1)).toEqual(sourceContext.messages);
+		const requestContext = streamSimpleMock.mock.calls[0][1] as TranscriptContext;
+		expect(getCurrentSystemPrompt(requestContext.messages)).toBe(sourceContext.systemPrompt);
+		expect(getCurrentTools(requestContext.messages)).toEqual(sourceContext.tools);
+		expect(requestContext.messages.slice(1, -1)).toEqual(sourceContext.messages);
 		const instruction = JSON.stringify(requestContext.messages.at(-1));
 		expect(instruction).toContain("existing structured summary of earlier conversation history");
 		expect(instruction).toContain("PRESERVE all existing information from the previous summary");
@@ -314,10 +322,10 @@ describe("generateSummary reasoning options", () => {
 			{ sourceContext, requestOptions: { sessionId: "routing-session" } },
 		);
 
-		const requestContext = streamSimpleMock.mock.calls[0][1] as Context;
+		const requestContext = streamSimpleMock.mock.calls[0][1] as TranscriptContext;
 		const prompt = JSON.stringify(requestContext.messages);
-		expect(requestContext.systemPrompt).not.toBe(sourceContext.systemPrompt);
-		expect(requestContext.tools).toBeUndefined();
+		expect(getCurrentSystemPrompt(requestContext.messages)).not.toBe(sourceContext.systemPrompt);
+		expect(getCurrentTools(requestContext.messages)).toEqual([]);
 		expect(prompt).toContain("<conversation>");
 		expect(prompt).toContain("more characters truncated");
 		expect(prompt).not.toContain("x".repeat(3000));
@@ -378,13 +386,13 @@ describe("generateSummary reasoning options", () => {
 			},
 		);
 
-		const requestContext = streamSimpleMock.mock.calls[0][1] as Context;
+		const requestContext = streamSimpleMock.mock.calls[0][1] as TranscriptContext;
 		const prompt = JSON.stringify(requestContext.messages);
-		expect(requestContext.systemPrompt).not.toBe(turnPrefixSourceContext.systemPrompt);
-		expect(requestContext.tools).toBeUndefined();
-		expect(prompt).toContain("This is the PREFIX of a turn that was too large to keep");
+		expect(getCurrentSystemPrompt(requestContext.messages)).not.toBe(turnPrefixSourceContext.systemPrompt);
+		expect(getCurrentTools(requestContext.messages)).toEqual([]);
+		expect(prompt).toContain("# Instructions\\nThe messages above are earlier context from an ongoing conversation.");
 		expect(prompt).toContain("more characters truncated");
-		expect(prompt).not.toContain("source conversation may also contain complete earlier turns");
+		expect(prompt).not.toContain("Summarize only the final, incomplete turn");
 		expect(streamSimpleMock.mock.calls[0][2]).toMatchObject({
 			cacheRetention: "none",
 		});
@@ -446,8 +454,8 @@ describe("generateSummary reasoning options", () => {
 			{ turnPrefixSourceContext },
 		);
 
-		const requestContext = streamSimpleMock.mock.calls[0][1] as Context;
-		expect(requestContext.messages.slice(0, -1)).toEqual(turnPrefixSourceContext.messages);
+		const requestContext = streamSimpleMock.mock.calls[0][1] as TranscriptContext;
+		expect(requestContext.messages.slice(1, -1)).toEqual(turnPrefixSourceContext.messages);
 		const instruction = JSON.stringify(requestContext.messages.at(-1));
 		expect(instruction).toContain("Summarize only the final, incomplete turn");
 		expect(instruction).toContain("last user-role request before this instruction");

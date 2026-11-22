@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CONTEXT_OVERFLOW_BLOCKED_REASON } from "../../../src/core/extensions/builtin/goal/continuation-recovery.ts";
 import { readGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../../src/core/extensions/builtin/goal/store-ref.ts";
-import type { ExtensionContext } from "../../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 import {
 	cleanupGoalMonitorTempDirs,
 	createGoalHarness,
@@ -22,7 +22,7 @@ const OVERFLOW_ERROR =
 async function createActiveGoal(ctx: ExtensionContext, harness: ReturnType<typeof createGoalHarness>): Promise<void> {
 	await harness.tools
 		.get("create_goal")
-		?.execute("c1", { objective: "Finish the migration" }, undefined, undefined, ctx);
+		?.execute("c1", { objective: "Finish the migration" }, undefined, undefined, ctx as ExtensionToolContext);
 	await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
 }
 

@@ -12,6 +12,7 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { askUserAnswerDisplayText } from "../../../core/extensions/builtin/ask-user/format.ts";
 import type { SessionTreeNode } from "../../../core/session-manager.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -339,6 +340,7 @@ class TreeList implements Component {
 
 		this.filteredNodes = this.flatNodes.filter((flatNode) => {
 			const entry = flatNode.node.entry;
+			if (entry.type === "usage") return false;
 			const isCurrentLeaf = entry.id === this.currentLeafId;
 
 			// Skip assistant messages with only tool calls (no text) unless error/aborted
@@ -358,6 +360,7 @@ class TreeList implements Component {
 			// Entry types hidden in default view (settings/bookkeeping)
 			const isSettingsEntry =
 				entry.type === "label" ||
+				entry.type === "context_edit" ||
 				entry.type === "custom" ||
 				entry.type === "model_change" ||
 				entry.type === "model_change_rejected" ||
@@ -611,6 +614,9 @@ class TreeList implements Component {
 			case "custom":
 				parts.push("custom", entry.customType);
 				break;
+			case "context_edit":
+				parts.push("context edit", entry.replacement === null ? "omit" : "replace", entry.targetId);
+				break;
 			case "label":
 				parts.push("label", entry.label ?? "");
 				break;
@@ -793,7 +799,10 @@ class TreeList implements Component {
 				const role = msg.role;
 				if (role === "user") {
 					const msgWithContent = msg as { content?: unknown };
-					const content = normalize(this.extractContent(msgWithContent.content));
+					const answer = Array.isArray(msgWithContent.content)
+						? askUserAnswerDisplayText(msgWithContent.content)
+						: undefined;
+					const content = normalize(answer?.slice(0, 200) ?? this.extractContent(msgWithContent.content));
 					result = theme.fg("accent", "user: ") + content;
 				} else if (role === "assistant") {
 					const msgWithContent = msg as { content?: unknown; stopReason?: string; errorMessage?: string };
@@ -854,6 +863,9 @@ class TreeList implements Component {
 				break;
 			case "custom":
 				result = theme.fg("dim", `[custom: ${entry.customType}]`);
+				break;
+			case "context_edit":
+				result = theme.fg("dim", `[context ${entry.replacement === null ? "omit" : "replace"}: ${entry.targetId}]`);
 				break;
 			case "label":
 				result = theme.fg("dim", `[label: ${entry.label ?? "(cleared)"}]`);

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, JsonValue, Usage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEventBus } from "../../src/core/event-bus.ts";
 import { formatUserMessage } from "../../src/core/extensions/builtin/ask-user/format.ts";
@@ -11,6 +11,7 @@ import type { QuestionRequest, QuestionResponse } from "../../src/core/extension
 import type {
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionToolContext,
 	SessionStartEvent,
 	ToolDefinition,
 } from "../../src/core/extensions/types.ts";
@@ -161,9 +162,10 @@ async function emitStart(
 	handlers: Map<string, StartHandler[]>,
 	reason: SessionStartEvent["reason"],
 	context: ExtensionContext,
+	sizesOnly?: boolean,
 ) {
 	for (const handler of handlers.get("session_start") ?? []) {
-		await handler({ type: "session_start", reason }, context);
+		await handler({ type: "session_start", reason, ...(sizesOnly ? { sizesOnly } : {}) }, context);
 	}
 }
 
@@ -233,12 +235,19 @@ describe("ask-user resume", () => {
 			await emitStart(installed.handlers, "new", context);
 			const tool = installed.tools.get("ask_user_question");
 			if (!tool) throw new Error("missing tool");
-			const result = await tool.execute(CALL_ID, { ...ARGS, waitForAnswer: false }, undefined, undefined, context);
+			const result = await tool.execute(
+				CALL_ID,
+				{ ...ARGS, waitForAnswer: false },
+				undefined,
+				undefined,
+				context as ExtensionToolContext,
+			);
 			manager.appendMessage({
 				role: "toolResult",
 				toolCallId: CALL_ID,
 				toolName: "ask_user_question",
 				...result,
+				details: result.details as JsonValue,
 				isError: false,
 				timestamp: 3,
 			});
@@ -275,7 +284,7 @@ describe("ask-user resume", () => {
 			await emitStart(installed.handlers, "resume", ctx(manager));
 			await emitStart(installed.handlers, "reload", ctx(manager));
 			expect(blocked).toEqual([
-				{ active: true, id: CALL_ID, label: "Library — Which library?" },
+				{ active: true, id: CALL_ID, label: "Library - Which library?", kind: "question" },
 				{ active: false, id: CALL_ID },
 			]);
 			expect(installed.userMessages).toEqual([formatUserMessage(ORPHANED, CALL_ID, CANONICAL_QUESTIONS)]);
@@ -300,6 +309,62 @@ describe("ask-user resume", () => {
 		await emitStart(handlers, "resume", ctx(sessionManager, question));
 		expect(question).toHaveBeenCalledOnce();
 		expect(userMessages).toHaveLength(1);
+	});
+
+	// senpi#4764: a restarted CLI opens an existing session file with
+	// session_start reason "startup" (the initial runtime passes no explicit
+	// event), so the dangling question must be re-presented there too, not
+	// only on the switch_session "resume" path.
+	it("re-presents a dangling ask_user_question once on startup", async () => {
+		const sessionManager = await danglingSession();
+		const { userMessages, received, handlers } = install(sessionManager);
+		const question = vi.fn(async (request: QuestionRequest) => {
+			expect(request.requestId).toBe(CALL_ID);
+			expect(request.questions).toEqual(CANONICAL_QUESTIONS);
+			return ANSWER;
+		});
+		await emitStart(handlers, "startup", ctx(sessionManager, question));
+		expect(question).toHaveBeenCalledOnce();
+		expect(resumedIds(sessionManager)).toEqual([CALL_ID]);
+		expect(await received.promise).toBe(formatUserMessage(ANSWER, CALL_ID, CANONICAL_QUESTIONS));
+		await emitStart(handlers, "startup", ctx(sessionManager, question));
+		expect(question).toHaveBeenCalledOnce();
+		expect(userMessages).toHaveLength(1);
+	});
+
+	// Diagnostic sizes-only startup starts no turn, so it must not restore.
+	it("does not restore a dangling question on sizes-only startup", async () => {
+		const sessionManager = await danglingSession();
+		const { userMessages, handlers } = install(sessionManager);
+		const question = vi.fn(async () => ANSWER);
+		await emitStart(handlers, "startup", ctx(sessionManager, question), true);
+		expect(question).not.toHaveBeenCalled();
+		expect(resumedIds(sessionManager)).toEqual([]);
+		expect(userMessages).toEqual([]);
+	});
+
+	// The sizes-only early return must also hold on a reason that restores
+	// on main (unlike startup, which main never restored at all).
+	it("does not restore a dangling question on sizes-only resume", async () => {
+		const sessionManager = await danglingSession();
+		const { userMessages, handlers } = install(sessionManager);
+		const question = vi.fn(async () => ANSWER);
+		await emitStart(handlers, "resume", ctx(sessionManager, question), true);
+		expect(question).not.toHaveBeenCalled();
+		expect(resumedIds(sessionManager)).toEqual([]);
+		expect(userMessages).toEqual([]);
+	});
+
+	// Review follow-up on senpi#5700: a headless startup (print mode) has no
+	// question UI, so restoring would settle the question as orphaned, start
+	// an unasked model turn, and mark it resumed so a later interactive open
+	// could never re-ask it. Headless startup must restore nothing at all.
+	it("does not restore a dangling question on headless startup", async () => {
+		const sessionManager = await danglingSession();
+		const { userMessages, handlers } = install(sessionManager);
+		await emitStart(handlers, "startup", ctx(sessionManager));
+		expect(resumedIds(sessionManager)).toEqual([]);
+		expect(userMessages).toEqual([]);
 	});
 
 	it("delivers one orphaned-after-restart message when resume has no UI", async () => {

@@ -36,14 +36,20 @@ function replyErrorText(kernel: FakeKernel): string {
 	return String(error.message);
 }
 
-function runFailingCall(toolName: string, listTools?: () => readonly (typeof BATCH_TOOL)[]) {
+function runFailingCall(
+	toolName: string,
+	listTools?: () => readonly (typeof BATCH_TOOL)[],
+	failure: Error = new Error(
+		`Validation failed for tool "${toolName}":\n  - steps: must have required properties steps`,
+	),
+) {
 	const kernel = new FakeKernel([
 		{ type: "tool-call", callId: "call-1", toolName, args: { app: "Safari" } },
 		errorResult("cell-1", "tool call failed"),
 	]);
 	const executeTool = Object.assign(
 		vi.fn(async (): Promise<ToolResult> => {
-			throw new Error(`Validation failed for tool "${toolName}":\n  - steps: must have required properties steps`);
+			throw failure;
 		}),
 		{ isToolAvailable: () => true },
 	);
@@ -89,6 +95,51 @@ describe("kernel tool-call argument failures", () => {
 		);
 
 		expect(replyErrorText(kernel)).not.toContain("Expected parameters:");
+	});
+});
+
+function executeToolFailure(code: string, message: string): Error {
+	return Object.assign(new Error(message), { code });
+}
+
+describe("kernel tool-call denials (senpi#2700)", () => {
+	it("delivers a blocked call's denial without the parameter schema", async () => {
+		const denial = "The user rejected permission to use this specific tool call.";
+		const { kernel, tool } = runFailingCall(
+			"mcp_computer_use_batch",
+			() => [BATCH_TOOL],
+			executeToolFailure("blocked", denial),
+		);
+
+		await tool.execute(
+			"cell-1",
+			{ language: "js", code: 'await tool.mcp_computer_use_batch({app: "Safari"})', summary: "denied call" },
+			undefined,
+			undefined,
+			fakeExtensionContext(),
+		);
+
+		expect(replyErrorText(kernel)).toBe(denial);
+	});
+
+	it("still appends the parameter schema to an invalid-arguments failure", async () => {
+		const { kernel, tool } = runFailingCall(
+			"mcp_computer_use_batch",
+			() => [BATCH_TOOL],
+			executeToolFailure("invalid_params", "steps: must have required properties steps"),
+		);
+
+		await tool.execute(
+			"cell-1",
+			{ language: "js", code: 'await tool.mcp_computer_use_batch({app: "Safari"})', summary: "bad arguments" },
+			undefined,
+			undefined,
+			fakeExtensionContext(),
+		);
+
+		const message = replyErrorText(kernel);
+		expect(message).toContain("must have required properties steps");
+		expect(message).toContain("Expected parameters:");
 	});
 });
 

@@ -4,6 +4,8 @@ import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, Model } from "../src/types.ts";
 import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 interface AnthropicToolChoicePayload {
 	tools?: unknown[];
 	tool_choice?: unknown;
@@ -81,6 +83,16 @@ const context: Context = {
 	],
 };
 
+// Models with upstream native tool changes (decisions.md L2d) also declare upstream's stable
+// deferred placeholder; the caller's tools are every declaration except that placeholder.
+const DEFERRED_TOOL_PLACEHOLDER_NAME = "__pi_deferred_placeholder__";
+
+function callerToolNames(payload: AnthropicToolChoicePayload): unknown[] {
+	return (payload.tools ?? [])
+		.map((tool) => (typeof tool === "object" && tool !== null && "name" in tool ? tool.name : tool))
+		.filter((name) => name !== DEFERRED_TOOL_PLACEHOLDER_NAME);
+}
+
 function withPayloadCapture(model: Model<"anthropic-messages">): Model<"anthropic-messages"> {
 	return { ...model, baseUrl: "http://127.0.0.1:9" };
 }
@@ -98,7 +110,7 @@ async function capturePayload(
 	model: Model<"anthropic-messages">,
 	toolChoice: "auto" | "any" | "none" | { type: "tool"; name: string },
 ): Promise<AnthropicToolChoicePayload> {
-	const stream = streamAnthropic(withPayloadCapture(model), context, {
+	const stream = streamAnthropic(withPayloadCapture(model), normalizeContext(context), {
 		apiKey: "fake-key",
 		toolChoice,
 	});
@@ -123,7 +135,7 @@ describe("Anthropic tool_choice compatibility", () => {
 	it("omits forced any tool_choice for Claude Fable while preserving tools", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-fable-5"), "any");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
@@ -133,21 +145,21 @@ describe("Anthropic tool_choice compatibility", () => {
 			name: "get_weather",
 		});
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
 	it("keeps auto tool_choice for Claude Fable", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-fable-5"), "auto");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toEqual({ type: "auto" });
 	});
 
 	it("omits forced any tool_choice for Claude Opus 5.5 while preserving tools", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-opus-5-5"), "any");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
@@ -160,21 +172,21 @@ describe("Anthropic tool_choice compatibility", () => {
 
 		const payload = await capturePayload(model, { type: "tool", name: "get_weather" });
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
 	it("keeps auto tool_choice for Claude Opus 5.5", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-opus-5-5"), "auto");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toEqual({ type: "auto" });
 	});
 
 	it("keeps forced named tool_choice for Claude Opus 5", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-opus-5"), "any");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toEqual({ type: "any" });
 	});
 
@@ -184,7 +196,7 @@ describe("Anthropic tool_choice compatibility", () => {
 			name: "get_weather",
 		});
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toEqual({ type: "tool", name: "get_weather" });
 	});
 
@@ -193,10 +205,14 @@ describe("Anthropic tool_choice compatibility", () => {
 			new HttpStatusError(400, "tool_choice forces tool use is not compatible with this model"),
 		);
 
-		const response = await streamAnthropic(withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")), context, {
-			apiKey: "fake-key",
-			toolChoice: { type: "tool", name: "get_weather" },
-		}).result();
+		const response = await streamAnthropic(
+			withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")),
+			normalizeContext(context),
+			{
+				apiKey: "fake-key",
+				toolChoice: { type: "tool", name: "get_weather" },
+			},
+		).result();
 
 		expect(response.stopReason).toBe("stop");
 		expect(mockState.createCalls).toHaveLength(2);
@@ -209,10 +225,14 @@ describe("Anthropic tool_choice compatibility", () => {
 			new HttpStatusError(400, "Thinking may not be enabled when tool_choice forces tool use."),
 		);
 
-		const response = await streamAnthropic(withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")), context, {
-			apiKey: "fake-key",
-			toolChoice: { type: "tool", name: "get_weather" },
-		}).result();
+		const response = await streamAnthropic(
+			withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")),
+			normalizeContext(context),
+			{
+				apiKey: "fake-key",
+				toolChoice: { type: "tool", name: "get_weather" },
+			},
+		).result();
 
 		expect(response.stopReason).toBe("stop");
 		expect(mockState.createCalls).toHaveLength(2);
@@ -221,7 +241,7 @@ describe("Anthropic tool_choice compatibility", () => {
 
 	it("remembers an unconditional refusal for the model but not one that blames thinking (senpi#2218)", async () => {
 		const forceWeather = (model: Model<"anthropic-messages">) =>
-			streamAnthropic(withPayloadCapture(model), context, {
+			streamAnthropic(withPayloadCapture(model), normalizeContext(context), {
 				apiKey: "fake-key",
 				toolChoice: { type: "tool", name: "get_weather" },
 			}).result();
@@ -260,7 +280,7 @@ describe("Anthropic tool_choice compatibility", () => {
 			name: "get_weather",
 		});
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
@@ -272,7 +292,7 @@ describe("Anthropic tool_choice compatibility", () => {
 
 		const payload = await capturePayload(model, "auto");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 });

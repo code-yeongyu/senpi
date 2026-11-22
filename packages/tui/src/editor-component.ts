@@ -3,6 +3,12 @@ import type { EditorImageState } from "./image-markers.ts";
 import type { EditorPasteState } from "./paste-markers.ts";
 import type { Component } from "./tui.ts";
 
+/** What a submission carried before the editor trimmed it for `onSubmit`. */
+export interface EditorSubmitDetails {
+	/** The submitted text with paste markers expanded, before trimming. */
+	readonly rawText: string;
+}
+
 /**
  * Interface for custom editor components.
  *
@@ -28,8 +34,8 @@ export interface EditorComponent extends Component {
 	// Callbacks (required)
 	// =========================================================================
 
-	/** Called when user submits (e.g., Enter key) */
-	onSubmit?: (text: string) => void;
+	/** Called when user submits (e.g., Enter key); `details` is absent when an editor does not report it. */
+	onSubmit?: (text: string, details?: EditorSubmitDetails) => void;
 
 	/** Called when text changes */
 	onChange?: (text: string) => void;

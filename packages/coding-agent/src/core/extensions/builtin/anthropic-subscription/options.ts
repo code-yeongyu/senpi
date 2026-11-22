@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Api, Context, Model, SimpleStreamOptions, ThinkingBudgets, ThinkingLevel } from "@earendil-works/pi-ai";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
 import {
@@ -9,19 +10,24 @@ import {
 	PROJECT_RULES_REGION_START_MARKER,
 	PROJECT_RULES_START_MARKER,
 } from "../rules/rules/constants.ts";
+import { sdkModelId } from "./context-window.ts";
 import { presetAppendDeprecationGuidance } from "./guidance.ts";
+import { claudeCodeQueryEnvironment } from "./query-environment.ts";
+import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import type { EffortLevel, Options, SettingSource, ThinkingConfig } from "./sdk-boundary.ts";
 import {
 	type AnthropicSubscriptionProviderSettings,
 	type AnthropicSubscriptionSystemPromptMode,
 	type AnthropicSubscriptionTokenInjection,
 	loadAnthropicSubscriptionProviderSettingsFromDisk,
+	resolveCompactionOwner,
 	resolveSystemPromptMode,
 } from "./settings.ts";
 import { loadOverrideSystemPrompt, resolveCustomSystemPrompt } from "./system-prompt.ts";
 import { BUILTIN_SDK_TOOLS, canUseTool, HOST_TOOL_DENIAL_HOOKS } from "./tools.ts";
 
-export type AnthropicSubscriptionAuthLane = AnthropicSubscriptionTokenInjection;
+/** `claude-cli`: a CLI-store account, whose own config dir links `projects` to the shared transcript root (senpi#4436). */
+export type AnthropicSubscriptionAuthLane = AnthropicSubscriptionTokenInjection | "claude-cli";
 
 export interface AnthropicSubscriptionQueryOptionsInput {
 	readonly model: Model<Api>;
@@ -148,17 +154,44 @@ function extractAgentsAppend(cwd: string): string | undefined {
 	}
 }
 
+function claudeSkillsPath(path: string, cwd: string): string {
+	const targets = [
+		[join(getAgentDir(), "skills"), "~/.claude/skills"],
+		[join(cwd, CONFIG_DIR_NAME, "skills"), ".claude/skills"],
+	] as const;
+	for (const [root, claudeRoot] of targets) {
+		const inside = relative(root, path);
+		if (inside !== "" && (/^\.\.(?:[\\/]|$)/.test(inside) || isAbsolute(inside))) continue;
+		const candidate = inside === "" ? claudeRoot : `${claudeRoot}/${inside.split(sep).join("/")}`;
+		return resolvesToSameFile(candidate, path, cwd, homedir()) ? candidate : path;
+	}
+	return path;
+}
+
+function expandDisplayPath(candidate: string, cwd: string, home: string): string {
+	if (candidate === "~") return home;
+	if (candidate.startsWith("~/")) return join(home, candidate.slice(2));
+	return isAbsolute(candidate) ? candidate : resolve(cwd, candidate);
+}
+
+function resolvesToSameFile(candidate: string, path: string, cwd: string, home: string): boolean {
+	try {
+		return realpathSync(expandDisplayPath(candidate, cwd, home)) === realpathSync(expandDisplayPath(path, cwd, home));
+	} catch {
+		return false;
+	}
+}
+
+// The catalog names each skill root once in `<skill_roots>` and locates skills by `rN/` alias, so the roots carry the
+// paths; a catalog without that table carries absolute `<location>` paths instead.
 function rewriteSkillsLocations(skillsBlock: string, cwd: string): string {
-	const globalSkillsRoot = join(getAgentDir(), "skills");
-	const projectSkillsRoot = join(cwd, CONFIG_DIR_NAME, "skills");
-	return skillsBlock.replace(/<location>([^<]+)<\/location>/g, (_match, location: string) => {
-		if (location.startsWith(globalSkillsRoot)) {
-			return `<location>~/.claude/skills/${relative(globalSkillsRoot, location).replace(/^\.+/, "")}</location>`;
-		}
-		if (location.startsWith(projectSkillsRoot)) {
-			return `<location>.claude/skills/${relative(projectSkillsRoot, location).replace(/^\.+/, "")}</location>`;
-		}
-		return `<location>${location}</location>`;
+	const withRoots = skillsBlock.replace(/<skill_roots>[\s\S]*?<\/skill_roots>/, (table) =>
+		table.replace(/<(r\d+)>([^<]+)<\/\1>/g, (_match, alias: string, root: string) => {
+			return `<${alias}>${claudeSkillsPath(root, cwd)}</${alias}>`;
+		}),
+	);
+	return withRoots.replace(/<location>([^<]+)<\/location>/g, (_match, location: string) => {
+		return `<location>${claudeSkillsPath(location, cwd)}</location>`;
 	});
 }
 
@@ -217,7 +250,7 @@ function resolveSettingSources(
 }
 
 export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscriptionQueryOptionsInput): Options {
-	const cwd = input.cwd ?? process.cwd();
+	const cwd = requireAnthropicSubscriptionCwd(input.cwd);
 	const providerSettings = input.providerSettings ?? loadAnthropicSubscriptionProviderSettingsFromDisk(cwd);
 	const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
 	const resolvedMode = resolveSystemPromptMode(providerSettings);
@@ -248,18 +281,23 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 	const toolLessRequest = input.streamOptions?.toolChoice === "none";
 	const emptyToolContext = (input.context.tools?.length ?? 0) === 0;
 	const strictMcpConfig = toolLessRequest || (providerSettings.strictMcpConfig ?? !appendSystemPrompt);
+	const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 	const queryOptions: Options = {
 		cwd,
-		model: input.model.id,
+		model: sdkModelId(input.model),
 		tools: toolLessRequest || emptyToolContext ? [] : input.tools ? [...input.tools] : [...BUILTIN_SDK_TOOLS],
 		permissionMode: "dontAsk",
 		includePartialMessages: true,
 		canUseTool,
 		hooks: HOST_TOOL_DENIAL_HOOKS,
 		systemPrompt,
-		settings: { autoCompactEnabled: true },
+		// Exactly one compaction owner: senpi by default, so Claude Code's native auto-compact is off
+		// (senpi's overflow recovery covers the hard limit); `compactionOwner: "sdk"` hands it back.
+		// configFingerprint hashes `settings`, so an owner change restarts the resident process.
+		settings: { autoCompactEnabled: !senpiOwnsCompaction },
 		settingSources: resolveSettingSources(providerSettings, mode, authLane),
 	};
+	queryOptions.env = claudeCodeQueryEnvironment(input.model, senpiOwnsCompaction);
 	if (input.pathToClaudeCodeExecutable) queryOptions.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;
 	if (toolLessRequest) queryOptions.maxTurns = 1;
 	if (strictMcpConfig) queryOptions.extraArgs = { "strict-mcp-config": null };

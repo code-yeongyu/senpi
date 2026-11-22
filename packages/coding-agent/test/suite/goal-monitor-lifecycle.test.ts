@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { GOAL_WAIT_STATUS_KEY } from "../../src/core/extensions/builtin/goal/wait-ticker.ts";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
@@ -33,7 +33,7 @@ async function createActiveMonitorHarness(threadId: string): Promise<ActiveMonit
 	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	await harness.tools
 		.get("create_goal")
-		?.execute("create", { objective: "Keep monitoring" }, undefined, undefined, ctx);
+		?.execute("create", { objective: "Keep monitoring" }, undefined, undefined, ctx as ExtensionToolContext);
 	harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 	await harness.events.flush();
 	return { harness, ctx, notices, state, status };
@@ -87,7 +87,7 @@ describe("goal monitor continuation lifecycle", () => {
 		await endCleanTurn(completed.harness, completed.ctx);
 		await completed.harness.tools
 			.get("update_goal")
-			?.execute("complete", { status: "complete" }, undefined, undefined, completed.ctx);
+			?.execute("complete", { status: "complete" }, undefined, undefined, completed.ctx as ExtensionToolContext);
 		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		expect(completed.harness.sent).toHaveLength(0);
 

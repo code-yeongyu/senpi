@@ -112,4 +112,44 @@ describe("JavaScriptKernel memory management", () => {
 			expect(next.memory?.notice).toBeDefined();
 		});
 	});
+
+	it("Given three settled cells when the kernel is read between them then it keeps the last frame's heap and a memory query answers without a cell", async () => {
+		await withKernel({ ...lowered, ceilingBytes: 0 }, async (kernel) => {
+			expect(kernel.lastLiveBytes).toBeUndefined();
+			for (const mebibytes of [8, 24, 40]) {
+				const result = await run(kernel, float64Global(`step${mebibytes}`, mebibytes));
+				const frameBytes = result.memory?.liveBytes ?? 0;
+				expect(kernel.lastLiveBytes).toBe(frameBytes);
+
+				const reading = await kernel.queryMemory();
+
+				expect(reading?.measure).toBe("heap");
+				expect(reading?.liveBytes ?? 0).toBeGreaterThan(frameBytes / 10);
+				expect(reading?.liveBytes ?? 0).toBeLessThan(frameBytes * 10);
+				expect(kernel.lastLiveBytes).toBe(reading?.liveBytes);
+			}
+			expect(kernel.queueSnapshot().activeCellId).toBeNull();
+		});
+	});
+
+	it.runIf(workerOwnsIdleCollection(process.versions.bun))(
+		"Given a dropped large global when the idle collection runs then the kernel's last-known heap is the collected size",
+		async () => {
+			await withKernel({ ...lowered, ceilingBytes: 0 }, async (kernel, nextCollection) => {
+				await run(kernel, float64Global("transient", 120));
+				await run(kernel, "delete globalThis.transient; 0");
+
+				const idleLive = await nextCollection();
+
+				expect(kernel.lastLiveBytes).toBe(idleLive);
+			});
+		},
+	);
+
+	it("Given a kernel whose worker never started when its memory is queried then it answers nothing instead of starting one", async () => {
+		await withKernel(lowered, async (kernel) => {
+			await expect(kernel.queryMemory()).resolves.toBeUndefined();
+			expect(kernel.lastLiveBytes).toBeUndefined();
+		});
+	});
 });

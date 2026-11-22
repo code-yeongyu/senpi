@@ -4,6 +4,8 @@ import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
 import { getModel } from "../src/compat.ts";
 import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 // senpi#2311 / omo#8662: a Copilot Business or Enterprise account must be served by its own
 // API host. GitHub answers a request on another plan's host with `421 Misdirected Request`.
 
@@ -109,7 +111,7 @@ describe("GitHub Copilot requests go to the account's own API host", () => {
 		let message = "";
 		for await (const event of streamCompletions(
 			getModel("github-copilot", "kimi-k3"),
-			{ messages: [{ role: "user", content: "hi", timestamp: 0 }] },
+			normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 0 }] }),
 			{ apiKey: tokenFor("biz5") },
 		)) {
 			if (event.type === "error") message = event.error.errorMessage ?? "";

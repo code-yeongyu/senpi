@@ -31,7 +31,7 @@ describe("RPC queued input source", () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);
 		cleanup = harness.cleanup;
-		const steer = vi.spyOn(harness.runtimeHost.session, "steer").mockResolvedValue(undefined);
+		const steer = vi.spyOn(harness.runtimeHost.session, "steer").mockResolvedValue("queued");
 		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
 
 		await handler.handleInputLine(
@@ -54,7 +54,7 @@ describe("RPC queued input source", () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);
 		cleanup = harness.cleanup;
-		const followUp = vi.spyOn(harness.runtimeHost.session, "followUp").mockResolvedValue(undefined);
+		const followUp = vi.spyOn(harness.runtimeHost.session, "followUp").mockResolvedValue("queued");
 		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
 
 		await handler.handleInputLine(

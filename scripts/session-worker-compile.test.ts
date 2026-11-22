@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { rmSyncRetry } from "./rm-sync-retry.mjs";
 
 const client = resolve(import.meta.dir, "../packages/coding-agent/src/modes/rpc/session-worker-client.ts");
 const strategies = [
@@ -109,7 +110,9 @@ try {
 			expect(result.status, result.stderr).toBe(0);
 			expect(JSON.parse(result.stdout)).toEqual({ workers: 2, sharedValues: [41, 42], exitCodes: [0, 0] });
 		} finally {
-			rmSync(scratch, { recursive: true, force: true });
+			// Windows can hold a file the relocated workers just used; teardown must not decide the result (senpi#2657).
+			const cleanup = rmSyncRetry(scratch);
+			if (!cleanup.removed) console.warn(`left scratch directory ${scratch}: ${String(cleanup.error)}`);
 		}
 	}, 45_000);
 }

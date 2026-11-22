@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
 import type { AssistantMessage, CacheRetention, Message, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 // Regression for #2114: Bedrock Converse rejects adjacent same-role messages, so the adapter must fold them.
 
@@ -52,18 +53,14 @@ function assistant(content: AssistantMessage["content"]): AssistantMessage {
 
 async function capturePayload(messages: Message[], cacheRetention: CacheRetention = "none"): Promise<WirePayload> {
 	let captured: WirePayload | undefined;
-	const events = streamBedrock(
-		claudeModel,
-		{ systemPrompt: "You are helpful.", messages },
-		{
-			cacheRetention,
-			signal: AbortSignal.abort(),
-			onPayload: (payload) => {
-				captured = payload as WirePayload;
-				return payload;
-			},
+	const events = streamBedrock(claudeModel, normalizeContext({ systemPrompt: "You are helpful.", messages }), {
+		cacheRetention,
+		signal: AbortSignal.abort(),
+		onPayload: (payload) => {
+			captured = payload as WirePayload;
+			return payload;
 		},
-	);
+	});
 	for await (const event of events) {
 		if (event.type === "error") break;
 	}

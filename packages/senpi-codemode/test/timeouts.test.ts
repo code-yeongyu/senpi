@@ -71,7 +71,8 @@ describe("codemode timeout infrastructure", () => {
 			vi.advanceTimersByTime(1);
 			expect(interrupted).toEqual(["stuck-bridge-cell"]);
 			expect(watchdog.signal.aborted).toBe(true);
-			expect((watchdog.signal.reason as Error).name).toBe("TimeoutError");
+			const reason: unknown = watchdog.signal.reason;
+			expect(reason instanceof Error && reason.name).toBe("TimeoutError");
 		});
 
 		it("fires the paused deadline exactly once and stays settled", () => {

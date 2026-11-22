@@ -33,6 +33,17 @@ export class SessionWorkBarrier {
 	private activeWorkResolve: (() => void) | undefined = undefined;
 	private activeWorkDepth = 0;
 
+	private readonly onActiveChange: () => void;
+
+	/**
+	 * `onActiveChange` runs when the last holder releases the barrier: work it held (compaction admission, reload,
+	 * extension binding) is a lifecycle fact, and its end must be an edge. Its start is not signalled here: every
+	 * holder that makes the session busy raises its own start edge, and a start edge would recompute during restore.
+	 */
+	constructor(onActiveChange: () => void = () => {}) {
+		this.onActiveChange = onActiveChange;
+	}
+
 	get hasActiveWork(): boolean {
 		return this.activeWork !== undefined;
 	}
@@ -65,6 +76,7 @@ export class SessionWorkBarrier {
 			this.activeWork = undefined;
 			this.activeWorkResolve = undefined;
 			resolveWork?.();
+			this.onActiveChange();
 		};
 	}
 

@@ -11,11 +11,21 @@
  * A directory none of them names is still reported, with `socket: null`: the ensure lock is keyed by
  * a longer hash of the socket's transport address and cannot be rebuilt from the 16-hex name, so such
  * a directory can be shown but never addressed. Reading only (I3): nothing here writes or unlinks.
+ *
+ * `endpoint_kind` comes from `endpoint.json` alone. A record written before the field existed, and
+ * every other source (only a host writes `settings.json`), reads as `rpc_host`.
  */
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { HOST_DAEMON_LAYOUT, hostDaemonDirectoryPaths, socketNamesDirectory } from "./host-daemon-paths.ts";
+import {
+	createHostDaemonPaths,
+	type EndpointKind,
+	HOST_DAEMON_LAYOUT,
+	hostDaemonDirectoryPaths,
+	socketNamesDirectory,
+} from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
+import { isTuiControlSocket } from "./tui-socket.ts";
 
 export type HostEndpointIdentitySource = "endpoint" | "settings" | "generation-settings" | "unknown";
 
@@ -26,6 +36,8 @@ export interface HostEndpointEntry {
 	readonly dir: string;
 	/** Which file supplied `socket`. */
 	readonly identity: HostEndpointIdentitySource;
+	/** What serves the endpoint, per `endpoint.json`; `rpc_host` for a legacy record or any other source. */
+	readonly endpoint_kind: EndpointKind;
 }
 
 const ENDPOINT_DIRECTORY_NAME = /^[0-9a-f]{16}$/;
@@ -47,21 +59,44 @@ export async function listHostEndpoints(agentDir: string): Promise<readonly Host
 
 async function identifyEndpoint(dir: string): Promise<HostEndpointEntry> {
 	const paths = hostDaemonDirectoryPaths(dir);
-	const named = await socketNamedBy(paths.endpointFile, dir);
-	if (named !== undefined) return { socket: named, dir, identity: "endpoint" };
-	const booted = await socketNamedBy(paths.settingsFile, dir);
-	if (booted !== undefined) return { socket: booted, dir, identity: "settings" };
+	const named = await recordNaming(paths.endpointFile, dir);
+	if (named !== undefined) {
+		return { socket: named.socket, dir, identity: "endpoint", endpoint_kind: endpointKindOf(named.record) };
+	}
+	const booted = await recordNaming(paths.settingsFile, dir);
+	if (booted !== undefined) return { socket: booted.socket, dir, identity: "settings", endpoint_kind: "rpc_host" };
 	const generations = await readdir(paths.generationsDir).catch(() => [] as string[]);
 	for (const instanceId of generations.sort()) {
-		const recorded = await socketNamedBy(join(paths.generationsDir, instanceId, "settings.json"), dir);
-		if (recorded !== undefined) return { socket: recorded, dir, identity: "generation-settings" };
+		const recorded = await recordNaming(join(paths.generationsDir, instanceId, "settings.json"), dir);
+		if (recorded !== undefined) {
+			return { socket: recorded.socket, dir, identity: "generation-settings", endpoint_kind: "rpc_host" };
+		}
 	}
-	return { socket: null, dir, identity: "unknown" };
+	return { socket: null, dir, identity: "unknown", endpoint_kind: "rpc_host" };
 }
 
-async function socketNamedBy(file: string, dir: string): Promise<string | undefined> {
+/**
+ * What serves `socket`, from disk and its name alone - it contacts nothing. `tui` when the socket has a
+ * terminal control socket's name (`t-<16hex>.sock`: a terminal that exited leaves no record, and the
+ * name still says no host belongs there) or its directory's `endpoint.json` says so.
+ */
+export async function endpointKindOfSocket(socket: string, agentDir: string): Promise<EndpointKind> {
+	if (isTuiControlSocket(socket)) return "tui";
+	const paths = createHostDaemonPaths({ socket, agentDir });
+	const named = await recordNaming(paths.endpointFile, paths.dir);
+	return named === undefined ? "rpc_host" : endpointKindOf(named.record);
+}
+
+function endpointKindOf(record: Record<string, unknown>): EndpointKind {
+	return record.endpoint_kind === "tui" ? "tui" : "rpc_host";
+}
+
+async function recordNaming(
+	file: string,
+	dir: string,
+): Promise<{ readonly socket: string; readonly record: Record<string, unknown> } | undefined> {
 	const record = parseJson(await readFileOrUndefined(file).catch(() => undefined));
 	const socket = record?.socket;
-	if (typeof socket !== "string" || socket === "") return undefined;
-	return socketNamesDirectory(socket, basename(dir)) ? socket : undefined;
+	if (record === undefined || typeof socket !== "string" || socket === "") return undefined;
+	return socketNamesDirectory(socket, basename(dir)) ? { socket, record } : undefined;
 }

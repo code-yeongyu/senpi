@@ -33,6 +33,27 @@ describe("eval result live ticker", () => {
 		vi.useRealTimers();
 	});
 
+	// Regression: senpi#2503. Quiet cells receive no host spinner frames.
+	it("animates a quiet running cell between elapsed-second updates without a host spinner", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(T0);
+		const frames: string[] = [];
+		const component = renderEvalResult(
+			evalResult(detailsWithStatus("running"), "running"),
+			{ expanded: false, isPartial: true },
+			undefined,
+			resultContext({ invalidate: () => frames.push(renderLines(component)[0] ?? "") }),
+		);
+		const initial = renderLines(component)[0];
+
+		vi.advanceTimersByTime(100);
+
+		expect(frames).toHaveLength(1);
+		expect(frames[0]).not.toBe(initial);
+		expect(frames[0]).toContain("running");
+		expect(frames[0]).toContain("<1s");
+	});
+
 	it("does not arm the repaint ticker for a detached cell card", () => {
 		vi.useFakeTimers();
 		renderEvalResult(

@@ -69,6 +69,15 @@ export function createServiceStateEncoder(): ServiceStateEncoder {
 		},
 		encodeUpdate(update) {
 			switch (update.type) {
+				case "reset":
+					codecs.reset();
+					return {
+						...update,
+						snapshot: {
+							...update.snapshot,
+							instances: update.snapshot.instances.map((instance) => encodeInstance(instance, codecs)),
+						},
+					};
 				case "state":
 					return { ...update, ops: codecs.get(update.instance, update.member).encode(update.ops) };
 				case "replaced":
@@ -99,6 +108,15 @@ export function createServiceStateDecoder(): ServiceStateDecoder {
 		},
 		decodeUpdate(update) {
 			switch (update.type) {
+				case "reset":
+					codecs.reset();
+					return {
+						...update,
+						snapshot: {
+							...update.snapshot,
+							instances: update.snapshot.instances.map((instance) => decodeInstance(instance, codecs)),
+						},
+					};
 				case "state":
 					return { ...update, ops: codecs.get(update.instance, update.member).decode(update.ops) };
 				case "replaced":

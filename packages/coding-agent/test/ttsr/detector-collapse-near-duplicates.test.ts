@@ -135,6 +135,44 @@ describe("near-duplicate paragraph frequency detector", () => {
 		expect(perChar(fenced).match).toBeNull();
 	});
 
+	// senpi#2865: same-shaped code or markup outside a fence is not a narration loop.
+	it("does not count unfenced repetitive SVG markup", () => {
+		const svg = (index: number) =>
+			[
+				`<rect id="tile-${index}" x="${index * 37}" y="${(index * 53) % 400}" width="${20 + index}" height="${30 + index}" fill="#${(index * 1234567).toString(16).slice(0, 6)}" stroke="none"/>`,
+				`<text x="${index * 37 + 4}" y="${((index * 53) % 400) + 18}" font-size="12">label ${index}</text>`,
+			].join("\n");
+		expect(perChar(joinParagraphs(Array.from({ length: 14 }, (_, index) => svg(index)))).match).toBeNull();
+	});
+
+	it("does not count unfenced repetitive JSON objects", () => {
+		const json = (index: number) =>
+			`{"id": ${index}, "name": "item-${index}", "price": ${(index * 3.7).toFixed(2)}, "tags": ["alpha", "beta"], "stock": ${index * 11}},`;
+		expect(perChar(joinParagraphs(Array.from({ length: 14 }, (_, index) => json(index)))).match).toBeNull();
+	});
+
+	it("still catches a prose narration loop that has code lines between its paragraphs", () => {
+		const parts = Array.from({ length: 24 }, (_, index) =>
+			index % 2 === 0 ? paraphraseOfOneAction(index) : `  const batch${index} = await send(images[${index}]);`,
+		);
+		expect(perChar(joinParagraphs(parts)).match?.detail.mechanism).toBe("near-duplicate-paragraphs");
+	});
+
+	it("still scores a prose paragraph that carries one code-shaped line", () => {
+		const parts = Array.from({ length: 24 }, (_, index) => `${paraphraseOfOneAction(index)}\n  sendBatch(${index});`);
+		expect(perChar(joinParagraphs(parts)).match?.detail.mechanism).toBe("near-duplicate-paragraphs");
+	});
+
+	it("still catches a prose narration loop whose paragraphs end in a parenthesis", () => {
+		const parts = Array.from({ length: 24 }, (_, index) => `${paraphraseOfOneAction(index)} (retrying)`);
+		expect(perChar(joinParagraphs(parts)).match?.detail.mechanism).toBe("near-duplicate-paragraphs");
+	});
+
+	it("still catches a narration loop written as indented nested list items", () => {
+		const parts = Array.from({ length: 24 }, (_, index) => `- step ${index}\n  - ${paraphraseOfOneAction(index)}`);
+		expect(perChar(joinParagraphs(parts)).match?.detail.mechanism).toBe("near-duplicate-paragraphs");
+	});
+
 	it("does not watch tool argument streams", () => {
 		expect(perChar(INCIDENT, "tool").match).toBeNull();
 		expect(perChar(INCIDENT, "thinking").match?.detail.mechanism).toBe("near-duplicate-paragraphs");

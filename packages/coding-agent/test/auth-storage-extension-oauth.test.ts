@@ -43,7 +43,7 @@ describe("AuthStorage extension OAuth providers", () => {
 			onAuth: async () => {},
 			onManualCodeInput: async () => "",
 		} as never);
-		expect(await storage.read("anthropic-subscription")).toEqual(credential);
+		expect(await storage.read("anthropic-subscription")).toEqual({ ...credential, loginId: expect.any(String) });
 	});
 
 	test("unregisterOAuthProvider hides the provider again", () => {
@@ -63,7 +63,8 @@ describe("AuthStorage extension OAuth providers", () => {
 			fakeOAuth("x", { type: "oauth", access: "", refresh: "", expires: 0 }),
 		);
 		const ids = storage.getOAuthProviders().map((p) => p.id);
-		expect(ids).toContain("anthropic");
+		expect(ids).toContain("github-copilot");
 		expect(ids).toContain("anthropic-subscription");
+		expect(ids).not.toContain("anthropic");
 	});
 });

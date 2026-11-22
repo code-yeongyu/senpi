@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import {
 	getNativePtyCandidatePaths,
 	getNativePtyHost,
-	getNativePtySentinelExport,
 	loadNativePty,
 	type NativePtyBinding,
 	NativePtySentinelMismatchError,
@@ -58,10 +57,6 @@ describe("loadNativePty", () => {
 		expect(result.native).toStrictEqual(native);
 		expect(result.diagnostic).toBeNull();
 		expect(attempted).toEqual([candidate(host)]);
-	});
-
-	it("derives the sentinel export from the ABI version", () => {
-		expect(getNativePtySentinelExport(abiVersion)).toBe(sentinelExport);
 	});
 
 	it("returns a native-unavailable diagnostic when every candidate is missing", () => {

@@ -17,6 +17,7 @@ anchor most suites).
 | Code preview layout | `code-preview.ts` -> `display-code.ts` (JS: `display-js*.ts` Bun-only masked `Bun.Transpiler`; Python: `display-python*.ts` user interpreter, background + repaint) |
 | Status events, execution events | `status-events.ts`, `eval-execution-event.ts` |
 | Interrupt, capture | `interrupt-note.ts`, `call-capture.ts` |
+| Magic cells | `magic-cells.ts` (parsing), `magic-cell-host.ts` (`%pip`, `%bun`/`%npm`, `%environment`), `load-cell.ts` (`%load`); installs live in `../environments/` |
 
 ## CONVENTIONS
 

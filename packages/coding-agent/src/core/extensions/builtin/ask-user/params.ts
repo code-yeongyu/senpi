@@ -51,6 +51,12 @@ export const CODEX_PARAMS = Type.Object(
 			description:
 				"Set true to pause here until the user answers; set false to keep working and receive the answer later as a user message.",
 		}),
+		required: Type.Optional(
+			Type.Boolean({
+				description:
+					"Set true when the answer decides whether you take an action (for example, which of two irreversible paths to take, or whether to proceed): with no answer, that action is not taken.",
+			}),
+		),
 	},
 	{ additionalProperties: false },
 );
@@ -104,4 +110,10 @@ export const CLAUDE_PARAMS = Type.Object({
 		description:
 			"Set true to pause here until the user answers; set false to keep working and receive the answer later as a user message.",
 	}),
+	required: Type.Optional(
+		Type.Boolean({
+			description:
+				"Set true when the answer decides whether you take an action (for example, which of two irreversible paths to take, or whether to proceed): with no answer, that action is not taken.",
+		}),
+	),
 });

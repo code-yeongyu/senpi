@@ -31,6 +31,10 @@ export class InstanceDirectory<TEntry extends InstanceDirectoryEntry> {
 		return this.#observers.size;
 	}
 
+	values(): IterableIterator<TEntry> {
+		return this.#entries.values();
+	}
+
 	get(key: string): TEntry | undefined {
 		return this.#entries.get(key);
 	}

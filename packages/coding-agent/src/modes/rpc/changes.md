@@ -1,3 +1,8990 @@
+## 2026-11-12 - A multi-session switch takes the replacement's hold first; the resident writer reads the boot instant asynchronously (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry-switch.ts`: the replacement runtime's hold is taken with `holdRuntimeSession` and passed into its constructor BEFORE the switched runtime releases its own, as before, so the shared holder record never disappears in between; a throwing construction releases the new hold.
+- `packages/coding-agent/src/modes/rpc/host-handover-resident-writer.ts`: `currentResidentWriter` is async, and the handover verdict closure resolves the boot instant before it reads or records a verdict; a writer that looks like another boot is checked against a fresh read first.
+- `packages/coding-agent/src/modes/rpc/session-router-residency.ts`: awaits `currentResidentWriter()` while retaining the separate `live` flag on handover records.
+
+### Why
+
+- The boot instant is read asynchronously (senpi#3152), and the session hold moved out of the runtime's constructor.
+
+### Why an extension could not handle it
+
+- The RPC registry and handover are host internals.
+
+### Expected merge conflict zones
+
+- LOW: `createEntrySwitchSession` and `currentResidentWriter`.
+
+## 2026-11-20 - A generation handoff never runs a session twice, hands every session over at its next turn boundary, and alarms when overdue (senpi#7098)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: a claim this host publishes carries `strict_transfer: true` and STANDS while its owner runs, attached or not; the owner removes it when the session parks or closes. A claim without the flag keeps the #1893 rule (a superseded, detached owner is reclaimable).
+- `packages/coding-agent/src/modes/rpc/session-drain-hold.ts` (`holdUnattendedTurns` -> `holdDrainedTurns`), `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts`: each drain pass holds the automatic turns of every open session, attached ones too, so each session parks at its next turn boundary and the drained generation exits.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts` (`SupervisorDrain` `overdue`, `recordDrainOverdue`), `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-crash-record.ts`: every handoff-grace expiry while the generation still drains appends `{ kind: "rpc-host-drain-overdue", generation, drainingForMs }` to `crashes.jsonl` and asks for another drain pass; `isHostCrash` counts only terminal records.
+- `packages/coding-agent/src/modes/rpc/predecessor-endpoint.ts`, `predecessor-peer.ts`, `predecessor-routes.ts`, `predecessor-route-table.ts`, `predecessor-discovery.ts`, `predecessor-attach.ts`, `predecessor-switch.ts`, `predecessor-wire.ts` (new), `host-handover-parked.ts` (`isHandoverParkedEntry` exported), `session-router-open.ts`, `session-router-routing.ts`, `session-registry*.ts`, `multi-session-host.ts` and the attachment/read paths: a successor that meets a standing strict-transfer claim of a live predecessor attaches to that session on the predecessor's authenticated private endpoint and forwards commands and records under its own handle; when the predecessor parks it, the successor reopens the park under the same handle (a routed open waits for that switch at most the close grace window). `list_sessions` names the `generation` and `hostInstanceId` that holds each routed row. The listing asks the predecessor with a deadline (`PREDECESSOR_DISCOVERY_TIMEOUT_MS`) and treats a predecessor that exits or stalls mid-answer as contributing no routed rows; rows and parks it sends are parsed, not cast. A command waiting for the switch answers `generation_switch_pending` after the close grace window, or the reason the switch could not finish. Every other predecessor request is bounded too (`PREDECESSOR_REQUEST_TIMEOUT_MS`, the host's stall threshold): a late answer is followed by a liveness probe, and a predecessor that answers neither is cut with `predecessor_request_timeout`; a narrowing declaration it does not install cuts that copy and is still acknowledged.
+
+### Why
+
+- During a handoff the predecessor keeps every session still mid-turn, and a detached retained lane runs its turns with no client attached. Reading `attached: false` as "parked" let a reopen on the successor build a second runtime over a file the predecessor was still writing (forked transcript, deliveries admitted by two processes, `unknown_session` and steer timeouts through the public socket). Attached sessions kept chaining automatic turns, so the predecessor never exited, and its grace expiry left nothing on record.
+
+### Why an extension could not handle it
+
+- Path claims, the drain, the supervisor's grace timer, socket authentication and routing handles are the RPC host's own.
+
+### Expected merge conflict zones
+
+- MEDIUM: the shared host's socket setup in `multi-session-host.ts` and the session router's open, close and listing paths. LOW: `standingOwner()` in `host-reservations.ts`, `SupervisorDrain.drain()`.
+
+## 2026-11-20 - A host's supervisor runs in its own systemd scope, never its caller's unit (senpi#7099)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-unit-placement.ts` (new): `placeHostLaunch` starts a generation's supervisor as `systemd-run --user --scope --unit=senpi-host-<instanceId>.scope --collect --quiet -- <argv>` when `systemctl --user is-system-running` answers for the spawn environment, `systemd-run` is on its `PATH` and a throwaway probe scope starts (a manager refusing transient scopes keeps the unplaced spawn); otherwise the launch is unchanged. `readHostUnit` reads `/proc/<pid>/cgroup` into `{ cgroup, name, own }`.
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the initial start and a handoff's successor spawn through `placeHostLaunch` with the environment they already built.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`, `packages/coding-agent/src/modes/rpc/host-status-all.ts`: each generation row carries `unit`.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: `host ensure` and `host handoff` print `unit`, plus `lifetime_tied_to` naming the unit whose stop would end the host when it is not the generation's own.
+
+### Why
+
+- A supervisor is setsid'd but stays in its caller's cgroup on Linux. Started from a transient unit (a terminal's per-terminal service, an ssh scope, a CI job), it was SIGTERMed when that unit stopped: crash record `{ kind: "rpc-host", code: 143, detection: "supervisor", stopIntent: false }` and every session lost. `systemd-run --scope` execs the argv in place, so the pid and every inherited descriptor stay as they were; no live process is moved between cgroups.
+
+### Why an extension could not handle it
+
+- How the host supervisor is spawned is owned by the RPC host's ensure and handoff paths.
+
+### Expected merge conflict zones
+
+- LOW: the spawn call in `startHost()` and `startSuccessor()`, the `generations` reads in `host-status.ts` / `host-status-all.ts`, and the ensure/handoff payloads in `host-runner.ts`.
+
+## 2026-11-20 - Session status snapshots report last known activity (senpi#6415)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-status-source.ts` and `packages/coding-agent/src/modes/rpc/session-status.ts`: expose the registry's last activity time to the status stream for both in-process and worker sessions.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: when no status change has been recorded, snapshot rows use that activity time if known and otherwise keep the subscription-time fallback. A recorded change still takes precedence.
+
+### Why
+
+- A subscription could make an idle session appear freshly active to remote session lists.
+
+### Why an extension could not handle it
+
+- The stamp is built inside the host's session status stream.
+
+### Expected merge conflict zones
+
+- LOW: the registry entry projection and the snapshot timestamp fallback.
+
+## 2026-11-16 - get_auth_providers says when the sign-in store is busy (senpi#6841)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_auth_providers` awaits `readWhileBusy()` first, then adds `storeBusy: true` while another process holds `auth.json`'s lock.
+- `packages/coding-agent/src/modes/rpc/rpc-read-response-types.ts`: the response type gains `storeBusy?: true`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/rpc-read-response-types.ts`: a client could not tell a busy store from a missing sign-in, so it showed "not connected" instead of saying the store is busy and reading again.
+
+### Why an extension could not handle it
+
+- The RPC response shape is owned by the RPC mode; an extension cannot add a field to it.
+
+### Expected merge conflict zones
+
+- LOW: the `get_auth_providers` case in `connection-handler.ts`, and its response type.
+
+## 2026-11-16 - A worker that keeps answering progress is not quarantined; a quarantined session answers a typed retryable refusal until its worker exits (senpi#6452)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-requests.ts`: the no-progress deadline is re-armed when the worker starts owing a timed answer after owing none, and by `noteProgress()` on any inbound worker message, which also re-arms pending non-control (open-path) timers. A request sent while another is still owed shares that deadline; idle time while the worker owes nothing is never charged, so a request sent after the open on a quiet session (`prompt_surface`, `browser_engine`, `permission_preset`) gets the full budget instead of a 0 ms timer. Interrupt and extension-UI timers (`controlMs`) are not touched by progress: an unanswered abort is still cut at 5 s while the worker streams. The timeout values are unchanged.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: `receive()` calls `noteProgress()`, so a request that merely runs long under load is not a dead worker.
+- `packages/coding-agent/src/modes/rpc/worker-session-open.ts`: an open naming a quarantined entry (same session path or durable id) answers the documented `session_path_in_use` code (the path is still in use) with `detail { reason: "session_quarantined", action: "retry", retry_after_ms }`. It retires nothing: the entry, its claim and its grants stay until the worker's real exit, whose callback releases the claim (bounded by the close grace window) and then drops the entry and its reservations; only an open after that reopens the session from its file. The quarantine is matched by the requested spelling or by the reservation key the host already resolved it to, so a platform whose temp paths are symlinks (macOS `/var` -> `/private/var`) answers exactly what Linux does.
+
+### Why
+
+- A slow-but-alive worker was quarantined by the fixed open budget, and the session then refused every attach with a bare `session_closing` (senpi#6452: `rpc-worker-permission-preset` intermittently red on main, ~1 in 3 in a built environment and under load).
+- A quarantined worker may still be writing the session file (stuck in a syscall), so a second worker on the same file must wait for its exit; releasing its grants at the refusal would let two writers share one file and leak the old worker's claim.
+
+### Expected merge conflict zones
+
+- LOW: the `receive()` entry in `session-worker-client.ts`, the open-path preamble in `worker-session-open.ts`, and `request()` / `noteProgress()` in `session-worker-requests.ts`.
+
+## 2026-11-14 - One check for `interrupt`'s `background` field
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/pause-command-validation.ts`: `interruptBackgroundError(background)` holds the `background must be "stop".` check; `validatePauseCommand` uses it, and so does the terminal control endpoint.
+
+### Why
+
+- The terminal control endpoint passed the field through unchecked while the RPC host refused any value but `"stop"`.
+
+### Why an extension could not handle it
+
+- `interrupt` is an RPC host command.
+
+### Expected merge conflict zones
+
+- LOW: the `interrupt` check in `validatePauseCommand`.
+
+## 2026-11-19 - the protocol-info test expects the unload_graceful capability (senpi#7077)
+
+### What changed
+
+- `packages/coding-agent/test/suite/rpc-multi-session-protocol-info.test.ts`: the pinned capability list of "advertises multi-session capability before any session is opened" names `unload_graceful` right after `unload_refuse_deliveries`, where `host-capabilities.ts` emits it.
+
+### Why
+
+- senpi#7046 added the `unload_graceful` host capability and left this test's pinned list as it was, so the forced suite of the 2026.11.19-4 release run failed on one deep-equal (coding-agent shard 10/10).
+
+### Why an extension could not handle it
+
+- The list is asserted by a core test of the host's own `get_protocol_info` answer; no extension surface reaches it.
+
+### Expected merge conflict zones
+
+- LOW: the capability list in this test grows by one line per new host capability.
+
+## 2026-11-19 - The park record says whether the session was live (senpi#7020)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: `HandoverParkedEntry.live?: true`, validated by `isEntry` (older readers ignore it).
+- `packages/coding-agent/src/modes/rpc/session-router-residency.ts`: `recordRetainedSession` takes `live` (default: `resident`); every resident stamp is live.
+- `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts`, `session-router-close.ts`: a handoff drain park and a clean-stop park are live; an idle-sweep park is not; an unload rewrites the entry without it.
+- `packages/coding-agent/src/modes/rpc/session-registry-types.ts`, `session-registry-opening.ts`, `session-registry-attach.ts`, `worker-session-open.ts`, `worker-session-registry.ts`: `RpcSessionOpenOptions.unattached`: an open no connection asked for starts at 0 attachments, and when it lands on an already-open session it adds none. `reopenParked` sets it.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `session-registry-types.ts`, `session-registry-opening.ts`: `reopenParked` opens a live entry with the host-internal launch-profile flag `continued` (never read from the wire), which reaches `session_start` as `continued`, instead of `attended: false`; an entry without `live` reopens unattended as before.
+
+### Why
+
+- The successor could not tell a session that was working when its host went away from one that had been idle-parked, so it held all of them.
+- Every restored session counted one attachment no connection owned and nothing could release: listings showed `attachments: 1` with no client, `host session close` answered `closed: false`, and the next handoff's drain never held the session's automatic turns.
+
+### Why an extension could not handle it
+
+- The park record and the successor's reopen are the RPC host's.
+
+### Expected merge conflict zones
+
+- LOW: one field and one validation line in the park record; one parameter in `recordRetainedSession`; the `reopenParked` body.
+
+## 2026-11-19 - `unload_session { graceful, waitMs }` (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-graceful-close.ts` (new): the fence (hold, closed admission, queued input taken), the event-driven bounded drain, the reopen after an expired drain, and the clean-stop record.
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: `graceful` waits for `turn_active`/`work_pending` instead of refusing or interrupting, and stops `extension_work` cleanly. An expired drain is refused `turn_active` with `timed_out`, `open`, `admission: "reopened"`, `turn` and `waited_ms`. `graceful` with `interrupt` is refused `unsupported`.
+- `packages/coding-agent/src/modes/rpc/admit-external-message-command.ts`: closed admission is refused typed `session_closing`.
+- `packages/coding-agent/src/modes/rpc/session-release-interrupt.ts`: `takeQueuedInput` takes `abortWillFollow`.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `rpc-effect-answer-types.ts`, `rpc-input-validation.ts`, `method-classes-schema-host.ts`, `custom-capability.ts`, `host-capabilities.ts`: the fields, the answer, the validation, the schema and the `unload_graceful` capability.
+
+### Why
+
+- oh-my-openagent#14313.
+
+### Why an extension could not handle it
+
+- `unload_session` is the host's own command.
+
+### Expected merge conflict zones
+
+- LOW: `unloadSession`/`claimAndUnload` in `session-unload.ts`; the unload capability lines in `host-capabilities.ts`.
+
+## 2026-11-19 - Agent children never inherit the RPC host's identity (senpi#7034)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-identity-env.ts`: owns the hand-off list (`HOST_WATCH_ENV_NAMES`, `HOST_HANDOFF_ENV_NAMES`, now also `SENPI_RPC_CLIENT_CAPABILITIES` as `RPC_CLIENT_CAPABILITIES_ENV`), `isHostHandoffEnvName`, `childEnvironmentOf`, the origin name `SENPI_RPC_ORIGIN_HOST_INSTANCE`, `presentInstanceId` and `publishHostInstanceId`. The module stays import-free.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: re-exports `RPC_CLIENT_CAPABILITIES_ENV` from the owner module.
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts`: the watch-name suffixes derive from `HOST_WATCH_ENV_NAMES`.
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: `TRANSIENT_ENV_NAMES` spreads the owner list plus the origin name, and `daemonEnvIsAllowed` also refuses any `isHostHandoffEnvName`.
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: `originHostInstance()` reads the host's own instance id, else the origin.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `runSocketHost` publishes a self-chosen instance id into its env so its children's origin matches what its occupancy compares.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the stdio child's base env is `childEnvironmentOf(process.env)`.
+- `packages/coding-agent/src/modes/rpc/tool-child/client.ts`: the tool child's resolved env goes through `childEnvironmentOf`.
+
+### Why
+
+- A session's shell tool and eval cells showed `SENPI_RPC_HOST_GENERATION`, `_INSTANCE_ID`, `_DAEMON_DIR` and `SENPI_RPC_CLIENT_CAPABILITIES`; a senpi or test harness started from there took the outer host's identity unless the caller scrubbed the env by hand (senpi#7034, senpi#6889).
+
+### Why an extension could not handle it
+
+- The names are written by the host's ensure and supervisor and read by the RPC client; the child environments are built in core before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the touched lines only; upstream has no RPC host hand-off.
+
+## 2026-11-19 - A handoff never hands a newer-engine host down to an older engine (senpi#7018)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHostLocked` refuses `older_engine` (new `HandoffRefusal`, `upgradeable: false`) before it spawns anything, when the successor's engine is strictly older than the running host's advertised `engineOrdinal` by `compareEngineOrdinal`. The successor's engine is `successorEngine` (new option, default this process's build). `allowDowngrade` (new option) is the caller's explicit consent and skips the check. A host that advertises no ordinal is not judged.
+- `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: `IdleHandoverRequest` gains `targetEngine` and `allowDowngrade`, `HostIdentityView` gains `engine`. `begin` refuses `older_engine` after `already_current` when the requester's engine is older than the host's, or when the request states no engine (a CLI before this guard).
+- `packages/coding-agent/src/modes/rpc/host-handover-wire.ts`: `parseBeginHandover` reads `target_engine` (`{ text, ordinal }`) and `allow_downgrade`; `performIdleHandover` passes them to `handoffHost`.
+- `packages/coding-agent/src/modes/rpc/host-handover-request.ts`: the CLI sends its own engine as `target_engine`, and `allow_downgrade` when asked.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: the handoff request carries `allowDowngrade` into `handoffHost`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the idle handover's identity reports `engine: engineBuildIdentity()`.
+- `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`: the ordinal parse is exported as `parseEngineOrdinal` for the `target_engine` parse.
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `supersedes` builds the host's identity with the shared `engineIdentityOf`.
+
+### Why
+
+- On a device whose default host ran a newer engine (`2026.11.18-2`), an older desktop runtime (engine `2026.11.18`) asked for a handover, and the newer host performed it: every session moved to the older engine and lost `find_session`. `handoffHostLocked` was "forced by design" with no engine check, and `begin_handover` did not say which engine the successor runs. The newer host is the process that performs an idle handover, so judging the request there also protects against already-shipped older callers.
+
+### Why an extension could not handle it
+
+- The handoff and the idle handover run inside the RPC host and its CLI before any extension loads, and the decision to replace the endpoint's generation is not exposed to extensions.
+
+### Expected merge conflict zones
+
+- LOW: `host-handoff.ts` (`HandoffHostOptions`, `HandoffRefusal`, `handoffHostLocked`), `host-idle-handover.ts` (`begin`), `host-handover-wire.ts` (`parseBeginHandover`, `performIdleHandover`), `host-runner.ts` (`handoffOutcome`).
+
+## 2026-11-19 - resume_session accepts unlessStopped (senpi#7016)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `method-classes-schema-session.ts`, `pause-command-validation.ts`: `resume_session` accepts an optional boolean `unlessStopped`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: passes `unlessStopped` to `beginResume`.
+- `packages/coding-agent/src/modes/rpc/rpc-pause-response-types.ts`: the `resume_session` answer `reason` gains `stopped`.
+
+### Why
+
+- A session reopened after an interrupted run is continued remotely by `resume_session`; a caller that is not the person (another session's thread tool) sets `unlessStopped` so a person's Stop stays theirs to release.
+
+### Why an extension could not handle it
+
+- The RPC command schema, validation and dispatch are host-owned.
+
+### Expected merge conflict zones
+
+- LOW: the `resume_session` field lists in the four files.
+
+## 2026-11-18 - unload_session can refuse to drop a busy session's unwritten deliveries (senpi#7004)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: `deliveries: "refuse"` refuses a busy session (any `turn_active` blocker) holding admitted deliveries not yet written with `work_pending` before anything is interrupted; every delivery-caused `work_pending` refusal names the ids in `pending.deliveries`, recorded on a failed effect and replayed.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `method-classes-schema-host.ts`, `rpc-input-validation.ts`: the `deliveries` field (`"refuse"`).
+- `packages/coding-agent/src/modes/rpc/rpc-effect-answer-types.ts`, `effect-record.ts`, `effect-ledger.ts`: `RpcUnloadAnswer.pending` and the effect record's `pending`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: capability `unload_refuse_deliveries`.
+
+### Why
+
+- An interrupting unload hands back unread deliveries (#6971), and a non-interrupting one never named them, so a client closing a stuck session dropped its unread messages without knowing which (oh-my-openagent#14234).
+
+### Why an extension could not handle it
+
+- The unload's blocker check, the interrupt and the admission ledger live in the RPC host; an extension cannot see or veto them before the interrupt.
+
+### Expected merge conflict zones
+
+- LOW: fork-only RPC host files; `session-unload.ts` blockers and the `work_pending` row of `docs/rpc.md`.
+
+## 2026-11-18 - The handover reopen watch waits for a draining predecessor (senpi#6988)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: `reopenHandoverParkedSessions` no longer ends on the quiet streak or the budget while another generation of the endpoint is alive (`predecessorAlive`, from each other generation's `host.pid` and host child record); once none is, it makes one final pass and returns. Past the streak/budget it polls every 2 s.
+
+### Why
+
+- A retained session mid-turn when the drain starts parks only after its turn settles, which can be minutes after the successor bound; the watch had already returned, the park stayed on disk and the session answered `unknown_session` by its durable id after an update.
+
+### Why an extension could not handle it
+
+- The handover-parked record and the successor's reopen watch are host internals with no extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, the watch loop exits and the new `predecessorAlive` helper.
+
+## 2026-11-18 - An interrupt hands back deliveries the aborted run left queued (#6971)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release-interrupt.ts`: once its bounded settle ends and the session is idle, `abortAndSettle` hands back every queued `session_control_delivery` carrier through `AgentSession.takeQueuedDeliveries` and returns the delivery ids it dropped. This includes a carrier the abort queued again under its engine ticket. A busy session hands back nothing.
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: an interrupting unload reports those ids as `dropped.deliveries` in every later answer (unloaded or refused), and records them on its effect (`done` or `failed`), so a replay names them too.
+- `packages/coding-agent/src/modes/rpc/effect-record.ts`, `effect-ledger.ts`: `RpcEffectRecord.dropped` / `EffectStatus.dropped`, and a `dropped` transition patch.
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: an interrupting release adds them to its existing `dropped.deliveries`.
+- `packages/coding-agent/src/modes/rpc/rpc-effect-answer-types.ts`: `RpcUnloadAnswer.dropped`.
+
+### Why
+
+- An aborted run leaves its queued follow-ups for a person's next turn. A delivery admitted while that run was busy stayed `pending` in the admission ledger with nothing to run it, and every forced, interrupting unload was refused `work_pending` (oh-my-openagent#14169).
+
+### Why an extension could not handle it
+
+- The unload's final check and the admission ledger are engine-owned; an extension cannot reach either.
+
+### Expected merge conflict zones
+
+- `abortAndSettle` and the interrupt branches of `unloadSession` / `releaseSession`.
+- The effect record schema.
+
+## 2026-11-18 - Re-land: `set_project_trust` takes `no_inherit` (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`: #6823 again: `set_project_trust` accepts `no_inherit`. `writeProjectTrust` awaits the now asynchronous `ProjectTrustStore.setMany`.
+
+### Why
+
+- #6823 was reverted (#6954) for synchronous fs calls on the RPC session path; it re-lands with asynchronous trust store I/O.
+
+### Why an extension could not handle it
+
+- `set_project_trust` is an RPC core command.
+
+### Expected merge conflict zones
+
+- LOW: `writeProjectTrust` and the `set_project_trust` schema literal.
+
+## 2026-11-11 - find_session answers which session file carries a durable id (senpi#6429)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/find-session.ts` (new): `find_session { durableSessionId }` answers `{ found: { sessionPath, cwd, open } }`, `{ ambiguous: true }` or `{ unknown: true }`. It reads only this host's own session folder (`<agentDir>/sessions/<folder>/`), never a path from the request, and only each file's first line, its header. It counts the session files first and answers `find_session_too_many` past 20,000 before reading any of them; a live session and its own file are one candidate. A missing, empty or non-string id is `invalid_argument`; a host built with no agent directory answers `find_session_unsupported`; every host this package starts has one.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-host-response-types.ts`: the request and its answer.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: `find_session` is `device_admin`, as a path-naming `open_session` is, which moves `RPC_METHOD_CLASSES_DIGEST`.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`: its bounded inbound schema.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: multi-session hosts advertise `find_session`.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: dispatch, with the session registry's agent directory, or the host's own when the registry carries none, and its listed sessions. A host that runs its sessions in workers has no directory on its registry and used to answer `find_session_unsupported` while advertising the capability; it now answers.
+- `packages/coding-agent/src/modes/rpc/session-move-router.ts`: unchanged in behaviour, and a comment says why it reads the registry's directory only: `move_session` stays refused on a host that runs its sessions in workers.
+- `packages/coding-agent/scripts/rpc-inbound-samples.ts` and the regenerated `docs/engine-socket/fixtures/rpc-inbound-samples.json`: its sample row.
+
+### Why
+
+- A client keeps a session's routing key and durable id, not its path. When the session closes, for example a move given back after its release, the key names nothing, every command that takes a durable id works only on an open session, and `open_session` needs the path, so the session was intact on disk and could not be reopened from the client. The lookup existed only inside the engine's own CLI (`host-session-ref.ts`).
+
+### Why an extension could not handle it
+
+- Host-level RPC commands, the method-class table that decides a delegated connection's standing, and the capability list are the multi-session host's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the host command and response unions, the method-class table (and with it the pinned digest in `rpc-delegated-connection.test.ts`), the capability list, the routing chain, and the inbound-sample table and fixture. Any other PR that adds a host command moves the same digest and fixture: regenerate both after merging.
+
+## 2026-11-18 - The leaf guard's hold prediction reuses the session's predicate (senpi#6957)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/automatic-input-gate.ts`: `automaticInputWouldBeHeld` returns `!interactiveUser && session.automaticInputHoldLive()` instead of repeating the hold check.
+
+### Why
+
+- With its own copy of the predicate, the `prompt` leaf guard's prediction could drift from the hold it predicts.
+
+### Why an extension could not handle it
+
+- Command admission happens in the RPC connection handler before any extension hook sees the prompt.
+
+### Expected merge conflict zones
+
+- LOW: `automaticInputWouldBeHeld` in `automatic-input-gate.ts`.
+
+## 2026-11-18 - Revert: `set_project_trust` `no_inherit` (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`, `method-classes-schema-session.ts` and `rpc-session-command-types.ts` no longer accept `no_inherit`.
+
+### Why
+
+- #6823 added five synchronous fs calls on the RPC session path (`existsSync` and `readFileSync` in `readGeneration`, `renameSync` and `writeFileSync` in `setMany`, `statSync` in `revision`), which breaks the frozen, shrink-only no-sync baseline (`test/suite/no-sync-in-session-path.test.ts`). It merged on a runner exit code while its filed receipt was red. It re-lands with those calls asynchronous.
+
+### Why an extension could not handle it
+
+- This reverts core code that #6823 changed.
+
+### Expected merge conflict zones
+
+- LOW: the same lines #6823 touched.
+
+## 2026-11-17 - A prompt can name the leaf it was decided at (senpi#6922)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: `prompt` accepts optional `expectedLeafId`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `prompt` case calls `refusePromptAtMovedLeaf` (new `prompt-expected-leaf.ts`) before chain admission, notice holding or turn admission. A stale `expectedLeafId` is refused `stale_leaf` with the edit commands' `assertExpectedLeaf` message, compared against `lifecycleEditLeaf` so lifecycle bookkeeping after the turn end is not a move. Combining it with `streamingBehavior` is refused `invalid_argument`, because a queued prompt runs at a later leaf. From a connection without `interactive_user`, it is also refused `invalid_argument` while a Stop or run hold is live (`automaticInputWouldBeHeld` in `automatic-input-gate.ts`), because the hold would keep the prompt as a notice for a later turn at another leaf; nothing is stored. Nothing is appended or sent on either refusal.
+
+### Why
+
+- A client that decides to run a prompt at one leaf (a desktop "Run it" on an unanswered prompt) could check the leaf, but an entry landing between that check and the prompt made it run from wherever the session had moved.
+
+### Why an extension could not handle it
+
+- Command admission happens in the RPC connection handler before any extension hook sees the prompt; an `input` handler runs after the command is already accepted.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `prompt` case in `connection-handler.ts`; the `prompt` schema field list.
+
+## 2026-11-17 - read_user_skill_file / write_user_skill_file: user-global skills through the one trust gate (senpi#6901)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/user-skill-commands.ts`: new. `read_user_skill_file` / `write_user_skill_file` read and edit the file of a user-global skill the engine lists for the session, by name: one under the agent dir's `skills` root or `~/.agents/skills`. The file is taken relative to the root's real path and resolved segment by segment with `lstat`, so a link, a `..` path or a file outside every root is refused (`user_skill_file_not_allowed`). Writes are etag-guarded and serialized per file. A write from this device's own connection commits at once.
+- `packages/coding-agent/src/modes/rpc/user-skill-approval.ts`: new. A write from a connection that speaks for another device (`connectionRoles.originOf`: a delegated principal or a declared `remoteOrigin`) commits only once THIS device approves it through the session's local grant presentation, which only a local attached client registers. The question names the origin device, the real path and the unified diff (the whole content for a new file; a diff over 20,000 characters is cut and says so). Choices are "Allow this change" / "Deny", with no "always". No presenter or no answer refuses with `user_skill_write_unconfirmed`, a denial with `user_skill_write_declined`. Every remote attempt appends one line to `<agentDir>/audit/user-skill-writes.jsonl` (`at`, origin device, `path`, `sha256Before`, `sha256After`, `decision`).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: dispatches both verbs; the write passes the connection's origin. `refreshGrantPresentation` registers no grant presentation for a connection that speaks for another device (`connectionRoles.originOf`), and `set_client_info` refreshes it when a `remoteOrigin` is declared, so a classic handler stops presenting the moment its connection declares one.
+- `packages/coding-agent/src/modes/rpc/security-presentations.ts`: `routeWorkerGrant` takes the raiser only when it is a local presenter (`#localPresenter`: `grant_select` and not remote); a remote or delegated raiser falls back to a local presenter or the grant is refused. Before, on the worker session runtime, a remote requester advertising `grant_select` received its own user-skill question and could approve its own write (review H1).
+- Every remote `write_user_skill_file` attempt is audited once, including one refused before the question (`decision: "refused"`, `reason`), and an audit line that cannot be written is reported as `auditError` beside the real outcome, never instead of it (review L1, L2).
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`, `method-classes-schema-session.ts`, `rpc-session-command-types.ts`, `rpc-read-response-types.ts`, `rpc-mutation-response-types.ts`: both verbs are `device_admin`, with their schemas and response types.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `session-command-activity.ts`: `read_user_skill_file` is an observing read, like `read_project_skill_file`.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `user_skill_not_listed`, `user_skill_file_not_allowed`, `user_skill_write_declined`, `user_skill_write_unconfirmed`.
+
+### Why
+
+- Duty ruling on omo-desktop-app#7981: remote clients may write user-global skill files through the same single trust gate as #6127. A write whose origin is this device is pre-trusted; one from another device needs confirmation naming the origin device and the target path. LEAD conditions: the confirmation is answered only on the target device (the requester can never answer it, no "always allow"), containment by real path with link and `..` escapes refused, the prompt shows the diff, and one local audit entry per remote write.
+
+### Why an extension could not handle it
+
+- RPC verbs, their method classes and the connection's origin live in the RPC host; an extension cannot add a classed RPC verb or read which device a connection speaks for.
+
+### Expected merge conflict zones
+
+- MEDIUM: `routeWorkerGrant` in `security-presentations.ts` and `refreshGrantPresentation` in `connection-handler.ts` (locality checks).
+- MEDIUM: the method tables (`method-classes.ts`, `method-classes-schema-session.ts`, the command/response unions) when another verb lands at the same time; the `connection-handler.ts` switch next to the project skill cases.
+
+## 2026-11-17 - read_project_file / write_project_file serve the folder's .omo/omo.jsonc (senpi#6896)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-file-path.ts`: the allowlist also admits `.omo/omo.jsonc` at the workspace root (per-agent and per-category model routing), with the same canonical-path and link-free resolution as the instruction files.
+- `packages/coding-agent/src/modes/rpc/project-file-commands.ts`: `write_project_file` commits through `commitGuardedWrite` (`project-write-gate.ts`): trust read again at commit, this machine's permission decision for a `write` of the path, and the version re-checked after it. A `project_file_not_allowed` refusal carries `errorData.reason`: `not_listed` or `unsafe`.
+
+### Why
+
+- A remote desktop reads and writes a copy's model routing the way it edits Rules; that file decides which models run, so its writes need the same per-write gate as the folder MCP and skill-file writes (senpi#6485). An engine that predates the path sends no `reason`, so a client names that machine's update instead of a refusal on disk.
+
+### Why an extension could not handle it
+
+- The project-file verbs and their path policy are RPC host commands; extensions cannot widen them.
+
+### Expected merge conflict zones
+
+- LOW: `parseProjectFilePath` in `project-file-path.ts`; `writeChecked` in `project-file-commands.ts`.
+
+## 2026-11-16 - `set_project_trust` takes `no_inherit` (desktop pull request worktrees)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`: `set_project_trust` accepts `no_inherit`, which saves the explicit no-decision entry for the session's folder. `get_project_trust` never lists it. It adds no trust to the session it is sent in: a trust that came only from Full access stays, any other trust goes unless a `project_trust` handler decides the folder is trusted; such a handler never refuses it.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`: the `no_inherit` literal.
+
+### Why
+
+- The desktop marks a pull-request worktree of another repository with it before the head is checked out, instead of saving "do not trust". An engine without it answers `invalid_argument`, which tells the desktop to fall back to `do_not_trust`.
+
+### Why an extension could not handle it
+
+- `set_project_trust` is an RPC core command.
+
+### Expected merge conflict zones
+
+- LOW: `writeProjectTrust` and the `set_project_trust` schema literal.
+
+## 2026-11-17 - A loopless runtime marks eval-only tools too (senpi#6886)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: `getAllTools` projects through `toolInfosOf` with the registry's armed eval-only set, as a session does.
+- `packages/coding-agent/src/modes/rpc/hand-tool-catalog.ts`: `evalOnly` comes from `registeredEvalOnlyToolNames`.
+
+### Why
+
+- A session and a loopless runtime project `pi.getAllTools()` the same way.
+
+### Why an extension could not handle it
+
+- The loopless runtime's registry facts are bound by the runtime factory.
+
+### Expected merge conflict zones
+
+- LOW: the `bindSessionlessFacts` call in `runtime-factory-loopless.ts`.
+
+## 2026-11-16 - unload_session parks a run only when no tool body is executing (senpi#6831)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: the parked predicate (a run whose only work is an unanswered dialog, unloaded without `interrupt`) also requires that no tool body is executing (`session.toolDispatcher.executing === 0`). A run with a body executing answers `turn_active` unless `interrupt: true`, even when a dialog is open.
+- `packages/coding-agent/src/core/tool-dispatch/tool-dispatcher.ts`: `ToolDispatcher.executing` counts the bodies dispatched through `run` that have not settled. `BaseToolDispatcher.run` does the counting and delegates to the subclass's `dispatch`.
+
+### Why
+
+- A running tool can open a dialog (an MCP elicitation) while another call of its batch is still working; the unload treated that run as parked and aborted the work (review L1 on senpi#6684). A dialog cannot be attributed to the body that caused it, so any executing body rules out parked; the permission prompt of senpi#6683 runs before any body of its batch is released and still unloads.
+
+### Why an extension could not handle it
+
+- The refusal is decided inside the RPC host's unload command, and the running-body count lives in the session's tool dispatcher; no extension sees either.
+
+### Expected merge conflict zones
+
+- LOW: `blockers()` in `session-unload.ts`; `BaseToolDispatcher.run` and the two subclasses' `dispatch` in `tool-dispatcher.ts`.
+
+## 2026-11-15 - Session settled (Done) flag on list_sessions rows and set_session_settled (senpi#6768)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `rpc-session-command-types.ts`, `rpc-mutation-response-types.ts`, `method-classes.ts`, `method-classes-schema-session.ts`, `rpc-client.ts`, `rpc-client-events.ts`, `rpc-session-event-types.ts`, `rpc-types.ts`: the session-scoped `set_session_settled { settled, by? }` command (class `drive`). `by` is the desktop app's `ThreadSettledBy` (`user`, `agent`, `pr-merged`, `pr-closed`, `inactivity`); an unknown kind or a malformed field is refused with `invalid_argument`. The command writes the `session_settled` custom entry and emits `session_settled_changed`.
+- `session-registry-types.ts`, `session-worker-protocol.ts`, `session-worker-snapshot.ts`, `session-worker.ts`: every `list_sessions` row carries `settled` (always) and `settledBy` (only when settled); worker snapshots carry both.
+- `session-status.ts`, `session-status-source.ts`: the `settle` cause, and `settled` / `settledBy` on the status row. Rows read the flag straight from the live session or the worker snapshot, like `activity` and `model`.
+
+### Why
+
+- The approved cross-device Done rule: Done lives in the session file on the engine that holds the session, and every device's thread list reads it from the listing row.
+
+### Why an extension could not handle it
+
+- `list_sessions` rows, RPC commands and the status stream belong to the RPC host.
+
+### Expected merge conflict zones
+
+- LOW: fork-only RPC files, next to #6677's `archived` lines.
+
+## 2026-11-15 - Late loop-hook and tool-side results go to the scope's wake outbox; a locked state-file store (senpi#5778, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loop-hook-call.ts`: `createLoopHookCall(late)` sends what a call's work does after the call ended (messages, notices, #6751's entries and user messages) to `late(sessionId)`; the per-session hold that rode the next reply (`LATE_PER_SESSION`, `dropped`) is removed. A held Stop's stop state and block follow-up therefore reach an idle loop as wakes (senpi#6770 L1).
+- `packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts`: a reply no longer carries `droppedLate`.
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: `LooplessRuntimeProfile.wake`; the runtime binds the scope's wake route (`loopWake`), the loop-hook call's late route and the presentation broker's late notices.
+- `packages/coding-agent/src/modes/rpc/remote-executor-scope.ts`: `HandWakes`; `LooplessHandOptions.wakes`. Each scope's runtime offers to its own scope, and disposing a scope closes it in the outbox (its retention starts).
+- `packages/coding-agent/src/modes/rpc/state-file-store.ts` (new): `openStateFileStore`, a durable state store in one owner-only JSON file that keeps documents and the owner epoch, never the log, so the file and every rewrite are bounded by the state (#6767 review H1). Every mutation is a locked read-check-write against the disk (`ownership-safe-lock.ts`), so a stale epoch is refused (L1). `claimStateStore` claims the next epoch. The hand-link endpoint's store (#6758) converges on it.
+
+### Why
+
+- Held late items were lost when the reply carrying them never reached the loop, when the scope was disposed, or when the session made no further call (senpi#5778); tool-side late work had no path at all (senpi#6763). The first outbox file kept the memory store's whole log and an older process could still overwrite it.
+
+### Why an extension could not handle it
+
+- The loop-hook call, the scope runtimes and the hand's durable state are hand internals.
+
+### Expected merge conflict zones
+
+- HIGH: `createLoopHookCall` and `LoopHookEffects` in `loop-hook-call.ts` (#6751's region).
+
+## 2026-11-15 - A hand tells a remote loop its tool list (describe_tools, senpi#6749)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/hand-tool-catalog.ts` (new): `describeHandTools` answers `{ tools, active, evalOnly, context }` with every tool the hand serves, nothing left out. `withToolCatalog` serves the `describe_tools` loop hook (payload `{ sessionId, idle, scope }`) beside the extension loop hooks, on any hand.
+- `packages/coding-agent/src/modes/hand/tool-catalog.ts`: each declaration carries `sessionBound` (a boolean).
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: `runLoopHooks` is `withToolCatalog(extensionLoopHooks(...), ...)` over the runtime's registry, tool selection and resource loader.
+- `packages/coding-agent/src/modes/rpc/loopless-runtime-settings.ts`: `looplessToolFilters` becomes `looplessToolSelection` (`{ filters, initialActiveToolNames }`), resolved by the session's `resolveToolSelection`.
+
+### Why
+
+- senpi#6749: a hosted loop has to show its model exactly the tools a local session on the hand's machine shows. Nothing carried that list, the eval-only routing or the machine's context files and skills.
+
+### Why an extension could not handle it
+
+- The loop-hook lane and the loopless runtime's registry are the hand's own.
+
+### Expected merge conflict zones
+
+- LOW: the `runLoopHooks` member of the loopless runtime and the `buildToolRegistry` call above it.
+
+## 2026-11-15 - A hand serves agent_end through the session port (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loop-hook-call.ts`: the session port.
+  - `run(binding, dispatch)` takes one `LoopHookCallBinding` (`{ sessionId, cwd, idle, carried?, endsTurn? }`) instead of five positional arguments.
+  - A call may carry `{ leafId, handEntries }` (`CarriedSession`): the hand-authored custom entries after the loop's last compaction. The read-only session answers `getLeafId` and `reduceHistory` over exactly those, during the call and afterwards for the call's own work (its async context, e.g. a Stop held for background work); from any other context after the call they throw `LoopHookCallEndedError`. The session's identity (`getSessionId`, `getSessionFile`, `getCwd`) stays bound to the call only.
+  - After a call with `endsTurn` (an `agent_end`) ended, `isIdle` answers `true` until the loop starts another call for that session, then `false`; other calls keep the idle value they carried.
+  - `appendEntry` and `sendUserMessage` are captured as `entries` and `userMessages` effects, and late ones are held under the existing per-session bound. Past the bound one held effect is dropped per overflow: the oldest notice, then message, then user message, and an entry only when nothing else is held.
+  - `hasPendingMessages` answers only for user messages the call (or its work) sent, never for late ones of earlier calls that ride its reply.
+- `packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts`: `extensionLoopHooks` serves `agent_end` (`{ messages, aborted?, leafId, handEntries }`) as a call that ends the turn, and every reply carries `entries` and `userMessages` when present. Its doc comment lists every served event and the provenance filter.
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: binds `loopHookWrite`.
+
+### Why
+
+- senpi#5898: the user's Stop hooks never ran for a hosted loop. On a hand, the Stop path's reads (`getLeafId`, `reduceHistory`) and writes (`appendEntry`, `sendUserMessage`) are loop-side.
+- #6751 review: a Stop held for the hand's live background work ran after its call ended, where the call-bound readers threw, `isIdle` stayed at the value carried during the turn and the signal was aborted, so its stop state and follow-up were lost. A held late stop-state entry could be dropped before messages, lowering the Stop reentry count.
+
+### Why an extension could not handle it
+
+- The loop-hook lane and the call's session facts belong to the loopless runtime.
+
+### Expected merge conflict zones
+
+- MEDIUM: `extensionLoopHooks` event branches and `dispatchLoopHook` (other #5898 slices add events there).
+
+## 2026-11-15 - A hand serves session_start for a hosted loop; user hooks by provenance (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts` (new, moved from `loopless-tool-handlers.ts` unchanged except as listed): `extensionLoopHooks` also serves `session_start` (payload `{ sessionId, idle, scope, reason, previousSessionFile? }`), so the user's SessionStart shell hooks and user extensions' `session_start` handlers run on the hand and what they send rides the reply as `sent`. Every event the hand serves now dispatches through `userLoopHooks(runner)`: `isUserLoopHook` by path AND not shipped by the loader, so a bundled builtin (codemode) no longer runs as a user hook on the hand.
+- `packages/coding-agent/src/modes/rpc/loop-hook-call.ts` (new): `LoopHookCall`, `createLoopHookCall`, `LATE_PER_SESSION`, `LoopHookCallEndedError` and the call's effects types, moved unchanged from `loopless-tool-handlers.ts`.
+- `packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts`: keeps `TwoSidedHome` and `extensionToolHandlers` only (it was over the file-size ceiling).
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: imports from the new modules.
+
+### Why
+
+- senpi#5898: a hosted session forwarded only `input`, `before_agent_start` and `before_provider_request` to the hand, so the user's SessionStart hooks never ran for a hosted loop; and the path-only filter let codemode's `session_start` run on the hand, where it failed with `model is loop-side and not bound`.
+
+### Why an extension could not handle it
+
+- The loop-hook lane and its event table are the loopless runtime's own; an extension cannot add an event the hand serves.
+
+### Expected merge conflict zones
+
+- MEDIUM: any change to `extensionLoopHooks` or the loop-hook call on `main` lands in the new files, not in `loopless-tool-handlers.ts`.
+
+## 2026-11-14 - unload_session ends a run parked on an unanswered prompt (senpi#6683)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: a run that is streaming, with no compaction or session work, while a dialog it raised (a permission prompt) is still unanswered is no longer a `turn_active` refusal. The unload aborts it, which cancels the dialog, waits for it to settle (the bounded `interrupt` settle), then unloads. A run doing real work still answers `turn_active` unless `interrupt: true`.
+
+### Why
+
+- A remote close (`unload_session`) of a session waiting for an approval was refused `turn_active`, so nobody away from that machine could end it (senpi#6683, oh-my-openagent#13441).
+
+### Why an extension could not handle it
+
+- The refusal is decided inside the RPC host's unload command; no extension sees or can answer it.
+
+### Expected merge conflict zones
+
+- LOW: `blockers()` and the `standing` refusal in `session-unload.ts`.
+
+## 2026-11-14 - Session archived flag; archived, activity and model on list_sessions rows (senpi#6677)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `rpc-session-command-types.ts`, `rpc-mutation-response-types.ts`, `method-classes.ts`, `method-classes-schema-session.ts`, `rpc-client.ts`, `rpc-client-events.ts`, `rpc-session-event-types.ts`, `rpc-types.ts`: the session-scoped `set_session_archived { archived }` command (class `drive`), which writes the `session_archived` custom entry and emits `session_archived_changed`.
+- `session-registry-types.ts`, `session-registry.ts`, `worker-session-registry.ts`, `session-worker-protocol.ts`, `session-worker-snapshot.ts`, `session-worker.ts`: every `list_sessions` row carries `archived`, `activity` (`running` | `idle`) and `model` when known; worker snapshots carry `archived`.
+- `session-status.ts`, `session-status-source.ts`: the `archive` cause and `archived` on the status row.
+- Review L1: `test/suite/rpc-session-archived-worker.test.ts` proves a worker-isolate session (`createHostCore` with `workerConfiguration`) publishes the `archive` cause and lists `archived: true`.
+
+### Why
+
+- Thread lists on every device need each session's archived flag, whether a turn runs, and its model, without a get_state per session (cross-device thread-list audit; the approved thread state model).
+
+### Why an extension could not handle it
+
+- `list_sessions` rows, RPC commands and the status stream belong to the RPC host.
+
+### Expected merge conflict zones
+
+- LOW: fork-only RPC files; `session-status.ts` next to #6672's `rename` cause.
+
+## 2026-11-12 - A move's `sealed_by.target` is left out when the sealing release named no device (senpi#6539's review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-landed.ts`: `wireLanded` leaves `target` out of `sealed_by` when the ownership rule reads no device (an empty string in the session file, or no field). It is the one producer of the field, for `status` and for a `move_fenced` refusal's `errorData`.
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`: `RpcMoveSealedBy.target` is optional; absent means the release named no device.
+- `packages/coding-agent/docs/rpc.md`: the same, where `sealed_by` is described.
+
+### Why
+
+- `release_session` takes `target` as optional. `sealed_by.target` goes on the wire for the first time with senpi#6539, and for a release that named no device it would have been an empty string inside a field that otherwise holds a device's name. The session file is unchanged: a release still writes the empty string there.
+
+### Why an extension could not handle it
+
+- It is the host's own answer and wire type.
+
+### Expected merge conflict zones
+
+- LOW: `wireLanded` in `session-move-landed.ts`; the `RpcMoveSealedBy` interface in `session-move-wire.ts`.
+
+## 2026-11-12 - move_session status says whether the landed copy can still be written (senpi#6473)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`: `RpcMoveLanded` gains `writable` and, beside `writable: false`, `sealed_by` (`RpcMoveSealedBy`: `move_id`, `state`, `target`); the capability `move_session_status_writable`.
+- `packages/coding-agent/src/modes/rpc/session-move-landed.ts`: `wireLanded` writes the two fields from the landed file's ownership, so `status` and the `move_fenced` refusal's `errorData` both carry them.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the capability is advertised.
+- `packages/coding-agent/docs/rpc.md`: the `status` row and a paragraph on `writable` and `sealed_by`.
+
+### Why
+
+- Where a move landed is read from that move's own entries. After a later move released the session from the host, the path was still answered for a copy that is read-only there, and a client that bound it was refused `session_moved_away`.
+
+### Why an extension could not handle it
+
+- The answer is the host's own `move_session` reply.
+
+### Expected merge conflict zones
+
+- LOW: `RpcMoveLanded` in `session-move-wire.ts`, `wireLanded` in `session-move-landed.ts`, the capability list in `host-capabilities.ts`.
+
+## 2026-11-12 - A fenced refusal is never replaced by a failed read of where the move landed (review of senpi#6451)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-landed.ts`: `landedWhenFenced` answers nothing when the record or the landed file cannot be read, so the refusal it was adding to still goes out as `move_fenced`.
+- `packages/coding-agent/docs/rpc.md`, `packages/coding-agent/src/modes/rpc/session-move-wire.ts`: the landed fields are described for every `move_fenced` refusal of an accepted move (a refused `import` and a refused `prepare`), as the code adds them.
+- Correction to the entry for senpi#6451: `MoveFencedError` and the move id it keeps are in `packages/coding-agent/src/core/session-move/move-record.ts`, not in `move-ledger.ts` as that entry says in two places; senpi#6451 left `move-ledger.ts` unchanged.
+
+### Why
+
+- A read that only adds detail to a refusal ran in the error handler and could throw, and the caller then lost the `move_fenced` code.
+
+### Why an extension could not handle it
+
+- It is the engine's own `move_session` handler.
+
+### Expected merge conflict zones
+
+- LOW: `landedWhenFenced` in `session-move-landed.ts`.
+
+## 2026-11-12 - The import's sessionDir check refuses a folder the host cannot use, and a move release refuses state a bundle cannot carry (senpi#6267, senpi#6469)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-import.ts`: `sessionDirRefusal` treats only ENOENT as "not there yet"; a file in its place, any other failure to look at it, and a folder the host may not write into refuse the request.
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: a `move` release asks `assertMoveFits` after its extensions staged their state and before the seal; state or a resident blob deeper than the cap answers `release_failed` and the session stays live.
+- `packages/coding-agent/src/modes/rpc/open-retention.test.ts` (new): the retention rule for the open an import asks for.
+
+### Why
+
+- A `sessionDir` behind a permission error or a symlink loop was treated as absent, and a folder that could be read but not written passed: the import began receiving and then failed, settling the move `failed`.
+- The release is what seals a session for a move; refusing only at the export would leave a session sealed that no receiver takes.
+
+### Why an extension could not handle it
+
+- It is the host's own request check.
+
+### Expected merge conflict zones
+
+- LOW: `sessionDirRefusal`; the `move` branch of `releaseSession` before `claimAndRelease`.
+
+## 2026-11-06 - Holder probes read in UTC (senpi#3067 L1)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: the comment on the holder comparison now says the probe reads in UTC (senpi#3067 L1); the probe itself changed in `packages/coding-agent/src/utils/process-identity.ts`, where `readProcessStartTime` defaults to UTC. Legacy local-format records still parse as local time: the comparison is on the parsed instant, never the raw text.
+
+### Why
+
+- The old comment said the probe reads the local form, which was the L1 bug: a UTC-tagged `host-child.pid` record compared against a local-form probe misreads by one hour in a DST fall-back hour.
+
+### Why an extension could not handle it
+
+- The session-path holder lookup runs in core RPC plumbing before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the holder comparison comment in `host-reservations.ts`.
+
+## 2026-11-16 - The engine runs the local relay host's device operations (`machine_op`) (senpi#6752)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/machine-op/` (new): `machine_op`, `machine_op_result`, `machine_op_owner`, `machine_op_health` and `machine_op_cancel`. `handler.ts` owns one machine-ops instance (state dir `<agentDir>/machine`, read cap 16,772,963 bytes as the relay host's), one engine-owned terminal registry over the `TerminalManager` the `bash` tools use (`machine-terminals.ts`, `live-handle.ts`), the op_id answer cache (`answer-cache.ts`: 4,096 answers, 24 hours, each bound to its sender; a repeat answers the first outcome, one in flight joins it, another sender's is refused `machine_op_conflict`) and each running op's abort (its optional `deadline_ms`, `machine_op_cancel`, host shutdown). The decoders, run steps, scope handling and terminal wire (`op-args.ts`, `terminal-args.ts`, `core-ops.ts`, `executor.ts`, `terminal-ops.ts`, `terminal-wait.ts`, `terminal-input.ts`, `real-path.ts`) are the relay host's, ported so every result keeps its shape; `env_overlay` is laid last over a `shell` or `exec_command` child's environment.
+- `packages/coding-agent/src/modes/rpc/delegated-connection.ts`, `delegation-wire.ts`, `delegated-answer.ts`: the five records are answered only on a launch-proven connection that declared no delegation (verdict `machine_op`); any other connection gets `machine_op_not_authorized` and nothing runs. They stay out of `RPC_METHOD_CLASS`, so `RPC_METHOD_CLASSES_DIGEST` is unchanged.
+- Security review round 1: writes carry bytes inline only (no file carrier); the result, cancel and terminal ops check the request's `sender` (`machine_op_conflict`, `not_owner`, lifted only by the relay host's `cross_owner: true`); a shell with no cwd runs in the scope root; an `exec_command` whose first wait is aborted kills its terminal; `kill_terminal` waits at most `MACHINE_TERMINAL_KILL_WAIT_MS` (5 s); a state dir that cannot be made answers `machine_op_unavailable` and is retried.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` builds the handler, answers the `machine_op` verdict through it, and both host shutdown paths dispose it (terminals end with the host). An op in flight or a live machine terminal keeps the host from being idle: the router's empty-exit gate and `HostCoreGate`'s idle handover (`host-core-gate.ts` `busy` hook) both consult `MachineOpHandler.busy()`. The idle decision and the end of the host are one step for machine work: `host-idle-handover.ts` calls `holdNewWork` in the same synchronous step as the idle check that starts the switch (and `releaseNewWork` when the handover is blocked), and the empty-exit hook holds machine ops before the host's exit path runs; a held handler refuses a new `machine_op` `machine_op_unavailable`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: a multi-session host advertises `machine_op_v1`.
+- `scripts/realm-census.json`: the new module's load-time constants are classified `constant`.
+
+### Why
+
+- One execution engine per machine: the relay host keeps envelopes, admission, grants, the run-once ledger, audit, blob relay and deadlines, and hands only the run step of each device op to the engine, whose terminals then outlive a relay host restart.
+
+### Why an extension could not handle it
+
+- The records are host-level and gated by the connection's launch proof and delegation state, which only the RPC host core sees.
+
+### Expected merge conflict zones
+
+- LOW: the `inspect` branch order in `delegated-connection.ts`, the verdict union in `delegation-wire.ts`, `handleParsed` and the two shutdown functions in `multi-session-host.ts`, the capability list in `host-capabilities.ts`.
+
+## 2026-11-12 - RPC clients edit the folder's project MCP servers and skill files (senpi#6485)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-mcp-commands.ts`: new. `get_project_mcp_servers` (the project MCP file as stored, with `parseError` and an etag) and `set_project_mcp_servers` (`patch` merged one level deep, `null` removes, other keys kept; candidate checked with the MCP loader's own steps before the write; a file that does not parse is never written over; `ifEtag` required).
+- `packages/coding-agent/src/modes/rpc/project-skill-commands.ts`: new. `read_project_skill_file` / `write_project_skill_file` for the file of a skill the engine lists, only while that file lies inside the session folder; resolved segment by segment with `lstat`, so a folder link or file link that leaves the folder is refused.
+- `packages/coding-agent/src/modes/rpc/project-write-gate.ts`: new. The gates every such write passes before it commits: trust read per write (the session's live trust, and the saved decision unless a launch flag or Full access decided it), the permission system's dispatch authorizer asked for a `write` of that path (same decision as the write tool, fenced right before the rename), and the expected version re-checked after the decision.
+- `packages/coding-agent/src/modes/rpc/project-file-store.ts`: new. The stored-bytes helpers (`readStored`, `etagOf`, `replaceAtomically`, the per-file write queue) moved out of `project-file-commands.ts`, unchanged, so all project file verbs share them.
+- `packages/coding-agent/src/modes/rpc/project-file-commands.ts`: imports those helpers instead of defining them.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the four cases.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-read-response-types.ts`, `rpc-mutation-response-types.ts`: the wire types.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `project_file_permission_denied`, `project_mcp_config_unparseable`, `project_mcp_config_invalid`, `project_skill_not_listed`.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: all four verbs `device_admin` (the digest moves).
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: their inbound schemas.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `session-command-activity.ts`: the two reads join the read allow-lists.
+- `packages/coding-agent/src/modes/rpc/project-expected-cwd.ts`: both writes take the optional `expectedCwd` the other project writes take (senpi#6659); stated for another folder, the write is refused with `project_cwd_mismatch` and nothing is written.
+- `packages/coding-agent/src/modes/rpc/project-skill-commands.ts`: a listed skill under the agent dir is refused even when that dir lies inside the session folder (a cwd of `$HOME`).
+
+### Why
+
+- A client that reaches a folder only through its engine (a desktop on another machine) could list the folder's MCP servers and skills but not edit them; these verbs give remote and local clients the same edit path, with the same trust and permission decisions the machine's own session applies.
+
+### Why an extension could not handle it
+
+- The RPC method-class table, the inbound schemas and the attachment gate are core; an extension request is not classed per method for a remote caller.
+
+### Expected merge conflict zones
+
+- LOW: the `write_project_file` neighbourhood in `connection-handler.ts`, `method-classes.ts`, the schema table and the error-code union.
+
+## 2026-11-14 - `interrupt { background: "stop" }`
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`, `rpc-session-command-types.ts`, `pause-command-validation.ts`: `interrupt` takes `background?: "stop"`; any other value is refused.
+- `packages/coding-agent/src/modes/rpc/session-control-actions-data.ts`: `interruptRunningTurn` takes the field; once the turn stopped it calls `session.stopRunBackgroundJobs(turnId)` and answers `background: { stopped, failed }`, both lists empty for an idle session or another turn's id. `InterruptOutcome` carries it.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: both `interrupt` branches (plain and `intent: "stop"`) pass the field.
+- `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`: the `interrupt` response data is `InterruptOutcome`.
+
+### Why
+
+- A client that interrupts a remote thread needs the work that turn left running stopped too, and to be told what was stopped.
+
+### Why an extension could not handle it
+
+- `interrupt` is an RPC host command.
+
+### Expected merge conflict zones
+
+- LOW: the `interrupt` case in `connection-handler.ts` and `interruptRunningTurn`.
+
+## 2026-11-14 - open_session refuses a cwd that is not a directory, typed (senpi#6686)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: after the open's folder is resolved (named or from the session file's header), a folder that exists but is not a directory answers `session_cwd_not_directory` with `errorData { cwd }`, before the registry opens or creates anything. A missing folder, or one the host cannot stat, keeps today's answer.
+- `packages/coding-agent/docs/rpc.md`: the code in the open_session cwd section and the error list.
+
+### Why
+
+- A caller on another device cannot stat this host's paths, so only the host can refuse a file cwd; a typed code lets it say which argument to fix (oh-my-openagent#13400).
+
+### Why an extension could not handle it
+
+- The open's routing runs before any session, and so before any extension, exists.
+
+### Expected merge conflict zones
+
+- LOW: the lines after `openSessionFolder` in `open()`.
+
+## 2026-11-14 - A rename publishes a session_status (senpi#6672)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-status.ts`: a new `SessionStatusCause` value, `rename`. `causeOfRecord` maps `session_info_changed` (from `set_session_name` or a generated title) to it, so the status stream publishes the session's new name.
+- `packages/coding-agent/docs/rpc.md`: `rename` added to the `lastChange.cause` list.
+
+### Why
+
+- Subscribers learn a session's name only from `session_status`. A renamed session therefore kept its old (often empty) name in every listing built from the stream, including the relay's account-wide thread list on the user's other devices.
+
+### Why an extension could not handle it
+
+- The status stream and its cause mapping belong to the RPC host; an extension cannot add a status publish.
+
+### Expected merge conflict zones
+
+- LOW: `session-status.ts` is fork-only.
+
+## 2026-11-11 - A released session leaves no handover-parked entry (senpi#6444)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-close.ts`: `tearDownReleased`, the teardown of `release_session`, drops the session's entry in the endpoint's handover-parked record (`clearRetainedRecord`) before it finishes the close, as `close` does. Nothing else in the release changes.
+- `packages/coding-agent/docs/rpc.md`: "Retained sessions across a host restart" names `release_session` beside `close_session` and a reclaim as the ends that remove the entry.
+- `packages/coding-agent/test/suite/regressions/6444-release-for-move-drops-retained-record.test.ts` (new); `test/suite/rpc-release-host-support.ts` gains an opt-in `handoverParked` option that builds the release host with its endpoint's daemon directory.
+
+### Why
+
+- The entry a retained open writes was left behind by a release. Once the releasing host process was gone, the next host on the endpoint reopened the released session at startup through `reopenParked`, which opens unattended, and so wrote an `unattended` hold into a file another runtime had been handed. `SessionEventWriter.releaseSession` already says a released file must not be reopened here.
+
+### Why an extension could not handle it
+
+- The handover-parked record and the release teardown are the RPC host's own; no extension hook runs between the release's claim and its close.
+
+### Expected merge conflict zones
+
+- None upstream: `modes/rpc/session-router-close.ts` and the handover-parked record are fork-only. LOW against other RPC work: the finalizer branch of `tearDownReleased`.
+
+## 2026-11-14 - comparableFolder's docstring says what a bare drive root becomes (senpi#6664)
+
+### What changed
+
+- `project-expected-cwd.ts`: the docstring now says a bare drive root becomes `X:\` (`C:`, `C:/` and `c:\` all become `C:\`), which is what the code does; `docs/rpc.md` loses a stray blank line before "The folder a project write is for". The docstring also names which roots keep a separator: a bare POSIX or drive root, not a UNC share root; it quotes the drive-root value like every other value, and it is rewrapped. Prose only, no behaviour change.
+
+### Why
+
+- senpi#6659's review (LOWs L3 and L4) and senpi#6664's review (LOWs L1 and L2).
+
+## 2026-11-14 - A project write can state the folder it is for (senpi#6659)
+
+### What changed
+
+- `set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`. When it is given and the session's working directory is another folder (only trailing separators of the path's own style dropped on both sides, a Windows drive letter compared without case, a bare root kept; nothing trimmed), the write is refused with `project_cwd_mismatch` and nothing is written (`project-expected-cwd.ts`, checked in `connection-handler.ts` before dispatch). A present `expectedCwd` that is not a string is refused with `invalid_argument`. Without it, the write goes as before. `docs/rpc.md` documents the field and both errors on the three writes.
+- Tests: `test/rpc/project-expected-cwd.test.ts`; the project-file host harness moved to `test/rpc/projectHost.ts`.
+
+### Why
+
+- A remote client reaches a session by a key that can since name another session. Reading the session's state and then writing is two requests, so the session can change between them; stating the folder on the write itself lets the engine refuse a write meant for another project.
+
+### Must not break
+
+- Absent `expectedCwd` is today's behaviour. `set_project_mcp_servers` and `write_project_skill_file` should take the same guard wherever they land.
+
+## 2026-11-11 - move_session status answers from the file at the landing it is given (senpi#6436)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-request.ts`: `status` parses `landing: { cwd, sessionFileName, sessionDir? }` (`parseStatusFile`); the parsed request names at most one file, `sessionPath` or `landing` (`StatusNamedFile`). `landing` with `sessionPath`, a `cwd` or `sessionDir` that is not absolute, and a `sessionFileName` that is not a plain session file name are `invalid_move_request`.
+- `packages/coding-agent/src/modes/rpc/session-move-landed.ts`: `statusFile` resolves a landing to the path `import` lands a session at, from the same three values and this host's agent directory, with the path function that makes no folder; `statusAnswer` takes the file the request named.
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts`: the `status` case passes that file.
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: `RpcMoveStatusLanding` on the `status` command, its inbound schema, and the capability `move_session_status_landing`.
+- `packages/coding-agent/docs/rpc.md`: the `status` row and the paragraph and table on `landing`.
+
+### Why
+
+- A move's record can be lost while its session landed. `status` then answers `declined: no_record`, and a sender that takes that as "never arrived" takes the session back, leaving two writable copies. A `status` that names the landing answers `accepted` from the file, so `no_record` is answered only when no landing is there.
+- The landing is where a session of that name lands, so a move back to a host the session was on before finds the copy the earlier move left. That file is not this move's landing; answering `move_mismatch` for it would leave such a move with no answer a sender can act on.
+
+### Why an extension could not handle it
+
+- `move_session` and the move ledger are the RPC host's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the `status` variant in `session-move-wire.ts`, `session-move-request.ts` and `method-classes-schema-host.ts`, and the capability list in `host-capabilities.ts`, against other move work that adds fields beside them.
+
+## 2026-11-11 - move_session status answers where an accepted move landed (senpi#6436)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-landed.ts` (new): `statusAnswer` adds `session_path`, `session_id` and `cwd` (or `landed_file: "gone"`) beside an `accepted` answer; `landedWhenFenced` gives the same fields to the `errorData` of an `import` refused `move_fenced` because its move already landed, with `revoked: true` when that copy was sealed.
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts`: `status` answers through `statusAnswer`, and a refusal carries what `landedWhenFenced` returns.
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the type `RpcMoveLanded` and the capability `move_session_status_landed_path`.
+- `packages/coding-agent/docs/rpc.md`: the `status` row and a paragraph on where an accepted move landed.
+
+### Why
+
+- Only the `import`'s own answer named the landed session. A caller that lost that answer and no longer had the bundle could not bind a session that had landed: `status` answered `{ state: "accepted" }` and a landed file nobody opened is in no listing.
+
+### Why an extension could not handle it
+
+- The landing target is the hidden part of the host's move record; no extension reads the move ledger.
+
+### Expected merge conflict zones
+
+- LOW: the `status` case and the refusal in `session-move-commands.ts`, `RpcMoveRecord` in `session-move-wire.ts`, and the capability list in `host-capabilities.ts`.
+
+## 2026-11-11 - move_session answers a repository identity and checks it at prepare (senpi#6435)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`: op `identity` in two forms (`sessionPath` or `cwd`, exactly one), `cwd` and `repository` on op `prepare`, the answer shape `{ repository? }`, and the capabilities `move_session_identity` and `move_session_prepare_repository`. The `identity` answer's `repository` is typed `RpcRepositoryIdentity`, the one name for that wire shape.
+- `packages/coding-agent/src/modes/rpc/session-move-request.ts`: parses both, including the identity shape; a `repository` without `cwd`, a relative path, both identity forms at once or neither is `invalid_move_request` before anything is read.
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts`: `prepare` goes through `prepareMove`, and `identity` reads either this host's session folder or the named folder. The `identity` answer is a plain copy in the wire shape.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`: the two new `move_session` union members and the bounded repository shape. The method class is unchanged: `move_session` stays `connection_local` needing `device_admin` on a delegated connection, so `identity` needs what `export` needs.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: both capabilities are advertised by multi-session hosts.
+
+### Why
+
+- A client has to be able to decide a move before it releases anything, and it can only do that if the engine answers the two identities and compares them where the move is readied. The capabilities let an older client keep today's order against an older host.
+
+### Why an extension could not handle it
+
+- `move_session`, its capability list and the host's own method-class table are the RPC host's surface.
+
+### Expected merge conflict zones
+
+- LOW: the `move_session` union in `session-move-wire.ts` and `method-classes-schema-host.ts`, the op switch in `session-move-commands.ts`, and the capability list in `host-capabilities.ts`.
+
+## 2026-11-11 - An open_session by path with no cwd works where the file's header says (senpi#6427)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/open-session-folder.ts` (new): `openSessionFolder` decides the folder an `open_session` works in. A `cwd` the open names wins. An open that names none and a `sessionPath` at which a session file exists takes the folder that file's header names; any other open takes the host's default.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: `open` puts that folder into the launch profile before the registry sees it, so the in-process and the worker runtime, the listed row, `session_opened` and a later park all carry it. The registry maps a folder the desktop moved (`resolveMovedProfile`) and refuses one that is not on this host (`assertSessionCwdExists`), as it does for a named `cwd`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the capability `open_session_header_cwd`.
+- `packages/coding-agent/src/core/session-header-cwd.ts` (new): `readHeaderCwd` reads the folder a session file's header names, finding that header as the session manager does (blank and unparseable leading lines skipped, the first parsed entry decides). Only ENOENT and ENOTDIR mean "no file yet"; every other failure to read an existing file throws, so an unreadable file is never taken for one that names no folder.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: the folder is decided inside the open's `try`, so a refusal from it is answered as the open's failure.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/docs/rpc.md`: what an omitted `cwd` means, and that an open never falls back to the host's folder for a file it could not read.
+
+### Why
+
+- From this PR's review: a `cwd` of `null` reached the decision as a named folder where the launch profile treats it as none, so such an open failed where it used to work; the header was read strictly from line 1 with every error swallowed, so a blank first line (and an unreadable file) opened in the host's folder; and a moved-path probe whose step timed out read the old spelling unmapped and fell back to the host's folder, which is this PR's own defect on a stalled mount.
+- The launch profile's `cwd` was `command.cwd ?? host default`, never undefined, and the registry passed it to `SessionManager.open` as the override that beats the header. A session reopened by path alone therefore ran in the folder the host was started in: its tools ran there and its file gained a rules scan of that folder. Every caller that re-opens a session after a host restart with only its path hit this.
+
+### Why an extension could not handle it
+
+- The folder is fixed by the host's launch profile before any extension of the session loads.
+
+### Expected merge conflict zones
+
+- LOW: the first lines of `open` in `session-router-open.ts`, and the capability list in `host-capabilities.ts`.
+
+## 2026-11-11 - the socket-secret publish wrapper fails typed on every bridge failure (senpi#6434)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-secret-publish.ts` (new): `publishSocketSecretNoReplace`, `SocketSecretPublishError` and the publish result types move here from `socket-secret-native.ts`, which re-exports them, so existing imports keep working.
+- `publishSocketSecretNoReplace` throws `SocketSecretPublishError` in three more cases. A binding call that throws (the bridge's `unsupported platform`, or an N-API argument conversion) becomes `bridge call threw: ...` and keeps the original error as `cause`. A non-object result becomes `unexpected bridge result ...` instead of a `TypeError` from reading `stagingLeftBehind`. A truthy `failure` or `stagingLeftBehind` that is not an object with the expected field types (`step` string and `code` number; `path` string and `windowsError` number) also becomes `unexpected bridge result: ...`, instead of a typed error with `undefined` fields.
+
+### Why
+
+- The bridge result crosses a native boundary, and every failure of a public-secret publication must reach the caller as the typed error (review follow-up for senpi#4312 and senpi#6434, sisyphuslabs/omo-desktop-app#4199).
+
+### Why an extension could not handle it
+
+- The socket-secret bridge loader runs in the RPC host lifecycle, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: the re-export lines at the top of `socket-secret-native.ts`; `socket-secret-publish.ts` is new.
+
+## 2026-11-11 - move_session carries a small bundle inline, and import lands and opens where the caller says (senpi#6267)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`, `packages/coding-agent/src/modes/rpc/session-move-request.ts`: `export` takes `inline` and `inlineMaxBytes`; `import` takes `files` in place of `bundleDir`, plus `sessionDir` and `open`. Five capability strings (`move_session_export_inline`, `move_session_import_files`, `move_session_import_session_dir`, `move_session_import_open`, and `move_session_inline_max_bytes:<n>`, which states the cap) and the inline limits (`MOVE_INLINE_MAX_BYTES`, 1 MiB; `MOVE_INLINE_MAX_FILES`, 1,024).
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts`: `export` answers `inline_files` when the bundle fits, read under the move lock. The `import` op moved to `packages/coding-agent/src/modes/rpc/session-move-import.ts` (new), which takes the bundle as a folder or inline, lands it in `sessionDir` when given, and opens the landed session when asked, in the folder the import named (`cwd`), not the host's own (senpi#6427). `sessionDirRefusal` refuses a `sessionDir` with a file in its place or above it as a request error, before the move is touched.
+- `packages/coding-agent/src/modes/rpc/session-move-router.ts` (new): the router's move port, moved out of `packages/coding-agent/src/modes/rpc/session-router-routing.ts`, plus the open an import asks for, behind the draining check and the compact admission gate an `open_session` meets.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-router-open-result.ts`: an open can reply as another command (`OpenReplyAs`), so the import's answer carries the open's data at the keys `open_session` uses and leaves on the session's queue like an `open_session` reply.
+- `packages/coding-agent/src/modes/rpc/open-retention.ts` (new), `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the line-receipt rule that retains an open on a delegated connection, and an unasked one on a machine-owned host (senpi#5808), moved out of the host's line handler into `withOpenRetention`, which also covers the open an `import` asks for.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the inbound schema for the new fields and the advertised capabilities.
+- `packages/coding-agent/docs/rpc.md`: the `export` and `import` rows, and "Moving without a bundle folder" at the end of the `move_session` chapter.
+
+### Why
+
+- A move between two hosts paid transport round trips that only carried the bundle folder (a listing and reads on the way out, writes and a removal on the way in), and one more to open the landed session. With the bundle inline a move whose source is remote goes from 6-7 round trips to 4, and one whose target is remote from 4-5 to 2.
+
+### Why an extension could not handle it
+
+- `move_session` and its capability list are the RPC host's own surface, and the open runs on the router's own open path.
+
+### Expected merge conflict zones
+
+- LOW: the `move_session` union in `method-classes-schema-host.ts` and `session-move-wire.ts`, the capability list in `host-capabilities.ts`, the `gate.dispatch` call in `multi-session-host.ts`'s line handler, the `export` branch of `session-move-commands.ts`, and the reply at the end of `open()` in `session-router-open.ts`.
+
+## 2026-11-10 - The attachment gate admits the forwarder's peer lane; the roles refusal names peer_agent (senpi#6305)
+
+### What changed
+
+- `session-attachment-gate.ts`: `attachmentGate` lets an `admit_external_message` through when the connection's host-mode delegation was granted `peer_agent` by the forwarder (`ConnectionRoles.grantedByForwarder`). The relay daemon's peer lane delivers an agent's message without attaching to the session, and `SENPI_RPC_REQUIRE_ATTACH=1` would otherwise refuse it. Every other command on that connection still needs an attachment.
+- `delegation-declaration.ts`: the duplicate-role refusal lists `peer_agent` among the declarable roles.
+- `test/suite/regressions/6305-peer-agent-attachment-gate.test.ts`: under `SENPI_RPC_REQUIRE_ATTACH=1`, a `peer_agent` connection's admit passes, an admit from a delegated connection without the role is refused, and a `prompt` from the `peer_agent` connection is refused.
+- `peer_agent` is an admission fact only (senpi#6347): it decides whether the attachment gate admits the peer lane's `admit_external_message`, never which permission a turn runs under. A cross-account delivery on that lane still asks.
+
+## 2026-11-09 - The bun:sqlite declaration moves out of coding-agent (senpi#6255)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/bun-sqlite.d.ts` (kept as a reference to the single source): the `Database` class declaration moved to `packages/session-backends/sqlite-bun/src/bun-sqlite.d.ts`, the single source for the workspace's `bun:sqlite` declaration. `packages/coding-agent/src/modes/rpc/ownership-safe-lock.ts` resolves `bun:sqlite` through that shared declaration — via the reference in this file under the coding-agent build tsconfig, and via the session-backends include under the root tsconfig; no other file referenced the old declaration file.
+
+### Why
+
+- The class was declared in the wrong package: a standalone consumer of the sqlite-bun package never loaded this file, so the package did not type-check on its own (senpi#5996).
+
+### Why an extension could not handle it
+
+- The declaration is a compile-time property of the packages' own sources; no extension event sees it.
+
+### Expected merge conflict zones
+
+- LOW: `ownership-safe-lock.ts` (the only coding-agent value user of `bun:sqlite`).
+
+## 2026-10-26 - gc keeps a Windows endpoint whose socket secret cannot be read (senpi#4293)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: on win32 `socketSilence` returns `credential_unavailable` instead of `socket_absent` when the socket secret is missing or has the wrong length; `endpointInUse` reports it as the new `EndpointInUse` value for the public socket and for every `.next-*` successor bind.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: `gcEndpoint` keeps such an endpoint with reason `credential_unavailable`, without the stale-engine judgement; the header's reason table lists it.
+
+### Why
+
+- The win32 pipe name derives from the secret, so a failed credential read proves nothing about whether a host still serves the pipe. Reading it as `socket_absent` let gc delete a live endpoint's directory (sisyphuslabs/omo-desktop-app#4199, design test 7).
+
+### Why an extension could not handle it
+
+- gc evidence and endpoint removal run in the RPC host lifecycle, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: `socketSilence` and `endpointInUse` in `host-gc-evidence.ts`, and the keep condition in `gcEndpoint`.
+
+## 2026-11-10 - Same-account devices follow the host's own setting (senpi#6342)
+
+### What changed
+
+- `delegation-declaration.ts`, `connection-roles.ts`: a host-mode or legacy `declare_delegation` may state `principal.sameAccount: true`. It is fixed for the record's life, because a later declaration must name the same principal, and `ConnectionRoles.sameAccount` reads it.
+- `connection-handler.ts`: a new `turnOrigin()` treats a same-account delegated connection as local for the permission rule. That covers its prompts, follow-ups, steers and `admit_external_message` deliveries.
+  - A delegated connection without the statement stays cross-account and keeps asking.
+  - The connection's own origin is unchanged for admission, so the `remote_origin` stamp, ledger keys and the delegated-without-device refusal behave as before.
+- `delegated-drive-origin.ts`, `connection-handler.ts`: a cross-account acting record's own handling runs in a record scope (`runInRecordScope`, `recordTurnOrigin`), instead of marking the whole session. Only a run or message that the record's own handling creates counts as delegated. The scope belongs to that record's async context, so no other record can change or clear it. The first run the record starts takes its origin and closes the scope, so engine work that only descends from that run opens its own turn, and a record that starts no run leaves nothing behind.
+- `admit-external-message-command.ts`: the turn a delivery opens is the connection's turn origin. `peer_agent` no longer changes permissions; it remains only an admission fact.
+- `custom-capability.ts`, `host-capabilities.ts`: hosts advertise `same_account_delegation_v1`.
+- Tests:
+  - `6342-same-account-follows-host-setting.test.ts`:
+    - after a remote device's command, a later engine-started turn runs on the host setting;
+    - a same-account device's prompt runs on the host setting;
+    - a same-account device's delivery runs on the host setting, with an agent sender or no sender;
+    - a device not stated as same-account still asks, for a prompt and a delivery alike;
+    - a cross-account `peer_agent` agent delivery still asks.
+  - `remote-permission-delegated-default.test.ts`: the cases that pinned the sticky marker now pin its absence.
+  - `6305-peer-delivery-receiver-preset.test.ts`: removed, superseded by the cases above.
+
+### Why
+
+The relay states which devices belong to the host's own account. Their work then follows the host setting, and every other device keeps asking.
+
+### Why an extension could not handle it
+
+Delegation records and connection roles are parsed and enforced inside the RPC host, before any extension sees the command.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts`: `handleCommand` and its caller, and the `admit_external_message` case.
+- `delegation-declaration.ts`: `parseDeclaration` and `samePrincipal`.
+
+## 2026-11-09 - A hand runs a hosted loop's request hooks (custody CK21, senpi#6278)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts`: `extensionLoopHooks` serves `before_provider_request` (payload `{ sessionId, idle, input }`, the input in CK21's closed envelope): the user's request hooks (the same `isUserLoopHook` set as `input` and `before_agent_start`, now exported) run on the payload with the loop's effective model, inside a loop-hook call bound to that session, and the reply is `{ output }` with the payload they produced.
+
+### Why
+
+A hosted loop's request hooks run on the user's machine, in the same extension instances as its tool and loop hooks (#5849).
+
+### Why an extension could not handle it
+
+The loop-hook link and the events it serves are the hand runtime itself.
+
+### Expected merge conflict zones
+
+- LOW: the event branches of `extensionLoopHooks`.
+
+## 2026-11-10 - Claim an invisible, already-built host session (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-park-ledger.ts` and `packages/coding-agent/src/modes/rpc/session-router-park.ts` own up to four speculative profiles, coalesce builds, expire ready parks after 60 seconds, consume them once, and replace successful claims in the background.
+- `packages/coding-agent/src/modes/rpc/host-park-ledger.ts` reserves scheduled replacements against the same cap, so another profile cannot steal a claimed profile's replacement slot before its background build starts. An explicit park for that reserved profile consumes its scheduled timer rather than building twice.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts` builds every park through the existing open, without an owner or reply. `packages/coding-agent/src/modes/rpc/session-router-open-result.ts` shares its connection barrier, capabilities, ownership, publication and exact success payload with claims.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-status-source.ts` and `packages/coding-agent/src/modes/rpc/session-binding.ts` keep speculative entries out of public metadata, events, counts and durable identity checks. Claim promotes the existing runtime; `packages/coding-agent/src/modes/rpc/session-registry-attach.ts` shares its live profile application.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-router-close.ts` and `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts` own speculative teardown independently of durable handover parks. Drain and stop fence builds and replacements before waiting for disposal.
+- `packages/coding-agent/src/modes/rpc/session-connection-context.ts` lets host-owned construction leave the asking connection's transport and delegation scope. A claim configures its prebuilt binding with the opener's capabilities through the existing capability replacement helper.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts` and `packages/coding-agent/src/modes/rpc/host-observe-request.ts` carry the capability-gated commands. The corresponding response, routing and delivery paths preserve the ordinary open payload and delegated retention semantics.
+- Review fixes: the first park can create `extensions/goal/no-session`; configuration watching now rearms a newly created extensions directory without reloading every live session for that container alone. This prevents the reload output cascade that stalled and closed the delegated opener's socket. `packages/coding-agent/src/modes/rpc/session-router-park.ts` returns `claimed: false` for `attended: false`, `packages/coding-agent/docs/rpc.md` describes attended construction, and `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts` logs a rejected post-close drain sweep.
+- Suite fixes: remove only `session-router-open.ts#open` from the unused-export baseline now that speculative construction calls it. The routing test supplies the registry's required `peek` lookup. Attach/reclaim shutdown tests wait for the held teardown to begin before capturing state, so the shutdown's own close claim cannot be mistaken for mutation by a refused request; their wire-code and no-new-attachment assertions remain intact.
+- The legacy admission golden changes only `get_protocol_info.method_classes`: `claim_session` and `park_session` are advertised as `device_admin`, with the corresponding digest. Discovery must describe the complete method table even without an admission ID; existing method classifications, request bytes, session frames and subscription frames stay pinned. No golden normalization or production lifecycle behavior changes.
+
+### Why
+
+- Warm loads services but leaves runtime construction on the caller's open path. A ready claim reuses the already-built runtime and binding. A miss never builds or waits for a build.
+- Speculation must not look like user work, hold idle exit open, collide with a durable identity, or reappear in a successor. Build-only options and compact admissions miss rather than introducing alternative construction or admission paths.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts` preserves the host context merge, session kind, media setup and binding that the second successor-open path previously skipped in senpi#3368.
+
+- A park is built attended (no `unattended` hold), so a claimed session's lifecycle matches an ordinary open (`done`, no holds, not paused) and nothing held is persisted to its file (#6350 review). A park being claimed or closed answers `full`, not `already_parked`; a park close that fails during drain is logged and the drain sweep still runs.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/session-router-open.ts` own registry visibility, connection ownership, lifecycle teardown and the host's open response before a caller has a session.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts` and `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+- LOW: the new park modules, registry option shapes, host command schemas, capability list and observation predicate.
+
+## 2026-11-10 - admit_external_message marks an agent's relayed delivery as a peer turn (senpi#6305)
+
+### What changed
+
+- `admit-external-message-command.ts`: `deliveryTurnMark` returns `peer` only when the connection is delegated and the forwarder granted it `peer_agent` (`ConnectionRoles.grantedByForwarder`, read from the live authority word, never from the record or a client claim); the record's `sender.kind` of `agent` is only a consistency check.
+- `connection-authority.ts`, `delegation-declaration.ts`, `connection-roles.ts`: `peer_agent` is a third host-mode role (word bit 2; retired moves to bit 3 and the epoch field to 28 bits), declarable only in `declare_delegation`, never claimable with `set_client_info`, and ignored on a legacy-mode delegation.
+- `custom-capability.ts`, `host-capabilities.ts`: hosts advertise `peer_agent_role_v1`, so a forwarder declares the role only to an engine that understands it. A steer still joins the running turn; every other delivery keeps the connection's origin, so a non-agent or sender-less delivery from a remote device still asks.
+- `test/suite/regressions/6305-peer-delivery-receiver-preset.test.ts`: on a host whose default preset is `full-access`, an agent's delivery from a remote device's connection runs its gated call without asking, while an `external` sender and a delivery with no sender still ask.
+
+## 2026-11-09 - RPC clients read and edit the workspace's instruction files (senpi#6297)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-file-path.ts`: new. The allowlist (`AGENTS.md`/`CLAUDE.md` at any depth, `.omo/rules/**`; canonical relative paths only, never through `.git` or `node_modules`) and the resolution that walks the path segment by segment with `lstat` from the real workspace root, refusing any symlink or non-folder on the way; missing parent folders are created one at a time and re-checked.
+- `packages/coding-agent/src/modes/rpc/project-file-commands.ts`: new. `read_project_file` (opens with `O_NOFOLLOW`, a missing file is `exists: false`) and `write_project_file` (trust-gated, `ifEtag` required with `null` to create, sha256 etag compare, temp file + rename, one write at a time per file); 512 KiB cap, under the host's 1,000,000-character message limit.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the two cases, refusals with `errorData`.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-read-response-types.ts`, `rpc-mutation-response-types.ts`: the wire types.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `project_file_not_allowed`, `project_file_conflict`, `project_file_too_large`, `project_file_write_failed`.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: both verbs `device_admin` (the digest moves).
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: their inbound schemas.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `session-command-activity.ts`: `read_project_file` joins the read allow-lists.
+
+### Why
+
+- A client driving an engine on another machine (a desktop app's remote workspace) has no filesystem there, so it could not edit Rules at all; one engine verb gives local and remote clients the same edit path.
+
+### Why an extension could not handle it
+
+- The RPC method-class table, the inbound schemas and the attachment gate are core; an extension request is not classed per method for a remote caller.
+
+### Expected merge conflict zones
+
+- LOW: the `set_project_setting` neighbourhood in `connection-handler.ts`, `method-classes.ts`, the schema table and the error-code union.
+
+## 2026-11-10 - A host child receives its supervisor's adopted engine trust generation (senpi#6312)
+
+### What changed
+
+- `packages/coding-agent/src/engine-trust/hand-off.ts`: `adoptedEngineTrustHandOff()` is the former private `trustHandOff()` of `host-spawn-environment.ts`, moved and exported (also from `engine-trust/index.ts`): the adopted generation's hand-off, or nothing when this process adopted none.
+- `packages/coding-agent/src/modes/rpc/host-spawn-environment.ts`: `initialHostEnvironment` and `successorHostEnvironment` spread `adoptedEngineTrustHandOff()`; behavior unchanged.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `HostChildOptions.trustHandOff` is required and `hostChildEnvironment` spreads it after `process.env`. `loadHostChildTrustHandOff()` builds it through the same `adoptedEngineTrustHandOff()`, loading `engine-trust/adopted.ts` and, only after an adoption, `engine-trust/hand-off.ts` lazily.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor passes `trustHandOff: await loadHostChildTrustHandOff()` to `spawnHostChild`.
+
+### Why
+
+- A supervisor started by `initialHostEnvironment` or `successorHostEnvironment` adopts the hand-off marker, and the adopter's restore deletes the marker and the closure from its `process.env`. `hostChildEnvironment` built only from `process.env`, so the host child arrived with no marker, imported trust again and re-exec'd. The exec closed every inherited descriptor above stdio, including the startup pipe (senpi#4602): the child never reported `host_bootstrap` and the supervisor failed with `internal_ready reported before its phase was granted` (omo#12951).
+- The lazy load keeps the supervisor's static graph unchanged (79 modules). A static import of the hand-off measured 179 (95 of them zod), and a static import of `host-spawn-environment.ts` reaches the forbidden `@earendil-works/pi-ai` barrel through `host-daemon-env.ts`.
+
+### Why an extension could not handle it
+
+- The host child's environment is built by the lifecycle supervisor before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `HostChildOptions` and the `hostChildEnvironment` return literal in `host-lifecycle-launch.ts`; the `spawnHostChild` call in `host-lifecycle.ts`.
+
+## 2026-11-09 - An applied close_session carries its authority receipt (senpi#6280)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer-lifecycle.ts`: `reserveCloseResponse()`'s `complete()` stamps the close command's own reply with `withReceipt()` before handing it to `closeSession()` (the finalizer) or `appendClosedResponse()` (a non-finalizer close). The reservation counts the stamped reply's bytes. Host-driven closes (idle eviction, host shutdown, worker failure) still pass their reply to `closeSession()` unstamped, because they can run inside an unrelated command and must not carry that command's receipt.
+
+### Why
+
+- On a role-bound (host-mode) delegated connection, every response to a `relayExec`-numbered record carries the `authority` receipt, and a forwarder settles exec-numbered forwards by it. The applied close is written by the writer itself instead of being returned through dispatch, so it skipped `withReceipt()`: the session closed, but the forwarder never saw the answer and timed out at its deadline (senpi#6280).
+
+### Why an extension could not handle it
+
+- The close reply is written by the RPC host's session event writer; no extension sees or can rewrite host wire replies.
+
+### Expected merge conflict zones
+
+- LOW: the `withReceipt` import and the `bytes` computation and `complete()` body of `reserveCloseResponse()` in `session-event-writer-lifecycle.ts`.
+
+## 2026-11-09 - Hide the console window for the hand-run git probe on Windows (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/hand-run-local-repo.ts`: the `git config` execFile now passes `windowsHide: true`.
+
+### Why
+
+- `git` is a console-subsystem exe on Windows; the probe flashed a console window on every hand run.
+
+### Why an extension could not handle it
+
+- The probe is RPC mode's own repository inspection, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in the probe.
+
+## 2026-11-08 - A failed host-token mint retries before the cached token expires (senpi#5919)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-host-token.ts`: the failed-mint retry wait is now capped at 1 s before the cached token's `exp` (`RETRY_BEFORE_EXP_MS`), so the 5 s floor can no longer push the attempt past expiry; the cap keeps a 250 ms minimum wait (`RETRY_MIN_WAIT_MS`) so a failure in the last second cannot arm the next retry at 0 ms and hammer a failing issuer back-to-back until `exp`; without a valid cached token the retry stays at the 60 s bound.
+- `packages/coding-agent/test/suite/regressions/issue-5919-short-life-retry.test.ts`: new. A 4 s token whose re-mint fails at two thirds of its lifetime retries within the remaining ~3 s instead of waiting the 5 s floor; a second case drives a 3 s token with every re-mint failing and asserts retries stay at least 250 ms apart with a bounded mint count through `exp`. The test clock is faked and pinned to a whole second so the armed refresh cannot slip under its bound.
+
+### Why
+
+- With under ~5 s of token life left, the retry was armed at the 5 s floor and landed up to ~5 s after `exp`, leaving the sealed route without a host token for that window (senpi#5919).
+
+### Why an extension could not handle it
+
+- The retry timer is owned by the host-token cache itself; no extension schedules or observes it.
+
+### Expected merge conflict zones
+
+- LOW: the failure branch of `mint` in `secret-host-token.ts`.
+
+## 2026-11-08 - A relayed delivery reads like a same-machine delivery; the device stays in metadata (senpi#6250)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/admit-external-message-command.ts`: a delivery admitted on a connection that speaks for a remote device is written with the caller's `text` unchanged, exactly as on a local connection. The engine-written `[Relayed message from remote device ...]` line (`provenanceLine`, with its `claimedSender` sentence) is removed. The device stays engine-stamped in the entry's `details.remote_origin`; the per-device ledger key, the `already_admitted` dedupe, the `command_line` sender refusal, the fail-closed refusal of a delegated connection that names no device, and the delivery's turn origin are unchanged.
+
+### Why
+
+An agent does not need to know that a message from another session crossed devices (product decision, 2026-11-08): a cross-device delivery should read exactly like a session-to-session delivery on the same machine. The origin remains engine-stamped where code reads it, never in what the model reads.
+
+### Why an extension could not handle it
+
+The text the engine writes into a `session_control_delivery` entry for an RPC-admitted record is engine-owned; an extension cannot rewrite it.
+
+### Expected merge conflict zones
+
+- LOW: `admit-external-message-command.ts` (the `text` field of the admitted input and the removed helpers).
+
+## 2026-11-08 - `admit_external_message`: a relayed peer-agent message admitted as a delivery (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/admit-external-message-wire.ts` (new): the record (`deliveryId`, `text`, `sender?`, `displayText?`, `deliverAs`, `expectedTurnId?` string, `whenIdle?`, `chainCount?`), its reply `{ kind, turnId }`, and the field check both validators run (closed sender shapes, a record naming `remote_origin` refused).
+- `packages/coding-agent/src/modes/rpc/admit-external-message-command.ts` (new): the handler. It runs the K8 chain guard first, refuses a `command_line` sender from a remote device, keys the ledger as `rpc:local/<id>` or `device:<deviceId>/<id>`, answers `already_admitted` for an id the transcript holds, stamps the connection's remote device and engine provenance on a remote delivery, and marks the delivery with the connection's turn origin. A delegated connection that names no device is refused (`delegated_origin_unknown`), never admitted as local; the device's `deviceName` and `deviceId` and the claimed `session_id` and `platform` are JSON-quoted in the provenance line, so a newline or `]` in them cannot add a line or close the header.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-delivery.ts` (new): the inbound schema; `method-classes-schema-session.ts` spreads it in.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: `admit_external_message: "drive"` (the method-classes digest moves).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the case, fed with `ConnectionRoles.originOf` and the connection origin.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-response-types.ts`, `rpc-input-validation.ts`: the record, its response and its field check joined to the existing unions and validator.
+- `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: the record is new work, like `wake`.
+
+### Why
+
+A client relaying one agent's message to a session on another device could only send it as a user prompt (`role: "user"`, the `input` event, slash dispatch), never as the delivery `pi.session.admitExternalMessage` writes in process (#6233). The security design gate made the engine-stamped origin, the namespaced and restart-safe ledger, the per-lane approval origin and the chain guard binding.
+
+### Why an extension could not handle it
+
+The RPC record table, the method-class table and the connection's authenticated origin are engine-owned; an extension cannot add a session record or read which device a connection speaks for.
+
+### Expected merge conflict zones
+
+- LOW: `connection-handler.ts` (one case beside `wake`), `method-classes.ts` (one table row), the two union files.
+
+## 2026-11-08 - Tool-child terminal jobs carry the background auto-reap (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tool-child/terminal-jobs.ts`: the job args carry `backgroundAutoReapMinutes` into the child's tool context; the `background_start` wake carries the command and the reap age, the `background_exit` wake carries `autoReapedAfterMinutes`, and a failed reap is sent as a `background_reap_failed` wake with its reason.
+
+### Why
+
+- The reap runs where the session's process group lives, which is the tool child under `--tool-runtime child`; the server needs the reap age for its age notices and the reap for the completion notice (senpi#6201).
+
+### Why an extension could not handle it
+
+- The tool child's terminal jobs are the host's own runtime, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `parseArgs`, `exitSummary` and `contextFor` in `terminal-jobs.ts`.
+
+## 2026-11-08 - RPC input carries its connection's origin (senpi#6206)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-roles.ts`: `isDelegated` (host view, a worker's retained descriptor, or a carried legacy delegation) and `noteCarriedDelegation`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `prompt` and `follow_up` pass whether their connection is delegated; every record is passed to `noteDelegatedRecord` before dispatch.
+- `packages/coding-agent/src/modes/rpc/delegated-drive-origin.ts` (new): a delegated record whose method class is `drive` or `device_admin` marks the session remote-driven, decided by the method-class table.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: a bind or command that carries a delegation (either mode) marks its connection delegated in the isolate.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: passes `connectionOrigin` into the session.
+- `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`: a host-level preset folded into an open is marked `host_default`.
+- `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`, `worker-session-registry.ts`: only a client-named preset moves an attached session (an embedder's folded host default does not), and naming one clears the host-default marker.
+
+### Why
+
+- The delegated default needs the starting record's connection, and an embedder's host-level preset must not exempt a remote device's session (remote approval-mode work, tracked privately).
+
+### Why an extension could not handle it
+
+- Connection identity lives in the RPC host.
+
+### Expected merge conflict zones
+
+- LOW: the `prompt`, `follow_up` and `compact` cases of the connection handler.
+
+## 2026-11-08 - An in-process open waits, bounded, for the warms of its cwd in flight (senpi#6199)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-warm.ts`: `HostWarmer.inFlight(cwd)` settles once every load of that cwd in flight NOW has (a snapshot: later warms and other cwds are not in it); `createRegistryWarm` returns `{ warm, inFlight }`; `waitForWarms(warming, boundMs, cwd)` races that wait against a deadline and returns `"settled" | "warm_wait_deadline"`, reporting the deadline on stderr.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: `RpcSessionRegistry.openSession` takes that snapshot for its cwd once and, when a warm is loading, waits through `waitForWarms` bounded by `closeGraceMs` (the closing-reservation wait's bound) before it opens; past the bound it opens anyway.
+
+### Why
+
+- Extension loads now yield the host loop between modules (senpi#6199), so an `open_session` can arrive while the boot load (senpi#6147) or a client's `warm` is still loading. Its factories must not run beside that load: the boot load is the host's first, and an extension that claims a private channel there must not race a second instance. The synchronous import used to give this order by accident.
+- Only a warm of the same cwd loads that cwd's extensions beside the open, so a warm of another cwd, or one that starts after the open began waiting, is not waited on; and an extension factory that never settles (there is no factory timeout) must not stall every `open_session` on the shared host, so the wait is bounded (independent review MEDIUM).
+
+### Why an extension could not handle it
+
+- The order is between two host-driven extension loads; an extension sees only its own factory call.
+
+### Expected merge conflict zones
+
+- LOW: `RpcSessionRegistry`'s constructor `warm` assignment and the head of `openSession`; `createRegistryWarm`'s return.
+
+## 2026-11-08 - A host that binds its own socket registers its endpoint before it serves (senpi#6190)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-bare-endpoint-registration.ts`: new. `bindRegisteredEndpoint` takes the endpoint's ensure lock (`acquireHostEnsureLock`, 10 s wait), writes the endpoint's daemon directories, layout marker and `endpoint.json` (`createDaemonDirectories`, first writer wins), binds, then releases. A lock it cannot get, or a record it cannot write, is logged and the host still binds. An abstract socket binds unchanged.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `runSocketHost` binds through it when no supervisor started the host (`hostWatchdogBinding() === undefined`: `--mode rpc --listen`, `--headless`); a supervised host binds exactly as before.
+
+### Why
+
+- Only `host ensure` wrote `endpoint.json`, and `host gc` (operator or the pass after any ensure) removes a dead endpoint's whole directory. A host that binds its own socket never wrote it back, so after one outage it served while every registry reader (`host status --all`, a relay device service) found nothing until the file was rewritten by hand.
+- Binding inside the ensure lock is what keeps a gc from undoing the write: gc judges and removes under that lock, so it either finished before the write or finds the socket bound and keeps the endpoint.
+- A supervised host is skipped because its ensure already wrote the record and holds that lock while it starts the host.
+
+### Why an extension could not handle it
+
+- The record must exist before the host's first command, and the bind happens inside the host core before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `listen(server, socketPath, secret)` line in `runSocketHost` and the import block of `multi-session-host.ts`.
+
+## 2026-11-07 - Retained sessions survive a host restart (senpi#6190)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-residency.ts` (new): `recordRetainedSession` writes a retained session's handover-parked entry stamped with this host instance (and, while the session is open here, with the process holding it) and drops the key it was recorded under before; `syncRetainedRecord` runs after every successful open (and after an accepted `set_session_context`): a retained session is recorded as resident, a non-retained open by path clears an earlier park of that path (the clear `openPhysicalWithBarrier` used to do); `followRetainedRecord` moves the entry when the session switches transcripts; `clearRetainedRecord` removes every key on close and reclaim.
+- `packages/coding-agent/src/modes/rpc/host-handover-resident-writer.ts` (new): the holding-process stamp (host, boot, pid, process start) and a per-watch liveness probe built on the session writer claims' rules.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: the writer's `afterRecord` hook calls `followRetainedRecord`; reclaim calls `clearRetainedRecord`; `RpcSessionEntry.recordedPath` remembers the key.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-router-routing.ts`, `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts`: call those helpers; the idle/handoff park writes its entry through `recordRetainedSession`.
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: entries carry the optional `residentWriter` stamp; the reopen watch skips an entry whose stamped process is still alive (a handoff's draining predecessor parks it first); `clearInheritedParkedSession` removes an inherited entry after its reopen unless the reopen re-recorded it for this host, so a restored session is restored again after the next restart.
+- `packages/coding-agent/src/modes/rpc/session-router-close.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-event-types.ts`, `packages/coding-agent/src/modes/rpc/session-status.ts`: `dispose` claims each session's close in the tick the stop starts (before any await, like `close`, so a late attach or reclaim is fenced against a stable entry), then ends its running turn with `abortForHostShutdown()` (bounded by the 10 s default close grace, so a run its abort cannot release never holds the stop), then parks every retained session of a socket host (`session_parked { reason: "host_shutdown" }`, its entry rewritten) instead of closing it; other sessions still close with `reason: "host_shutdown"`.
+
+### Why
+
+- The next host on an endpoint reopens every entry an earlier process left in the handover-parked record, but only a park wrote one, so a retained session that was resident when the host was killed or stopped vanished from `list_sessions`, and a relay mirroring that listing answered `session_not_found` until someone re-opened it by hand (senpi#6190). A clean stop also told attached clients the session had ended (`session_closed`).
+
+### Why an extension could not handle it
+
+- Session residency, the handover record and the shutdown teardown all live in the RPC host's router; no extension hook runs at host startup or shutdown with access to them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `dispose` and `close` in `session-router-close.ts`, the success tail of `open` in `session-router-open.ts`, and `writer.afterRecord` in `session-router-context.ts`.
+- LOW: `reopenOne` in `host-handover-reopen.ts`, `setSessionContext` in `session-router-routing.ts`, the `session_parked` reason union.
+
+## 2026-11-07 - The RPC workspace verbs leave the synchronous trust path (senpi#6185)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`: uses `createHeadlessProjectTrustContext` and `hasTrustRequiringProjectResourcesAsync`; `readProjectTrust` is async.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: awaits `readProjectTrust`.
+
+### Why
+
+- The RPC session path must not block the shared host (`test/suite/no-sync-in-session-path.test.ts`); #6177 had reached synchronous fs from these verbs.
+
+### Why an extension could not handle it
+
+- The verbs and the session path's import graph are core RPC.
+
+### Expected merge conflict zones
+
+- LOW: the `get_project_trust` case in `connection-handler.ts`.
+
+## 2026-11-07 - RPC clients trust a workspace and read/write its project settings (senpi#6176)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`: new. `get_project_trust` / `set_project_trust` (the `/trust` choices, saved through `ProjectTrustStore.setMany`, applied with `AgentSession.applyProjectTrustChange` inside `AgentSessionRuntime.runInProjectTrustChangeOrder`; refused with `project_trust_locked` under `--approve`/`--no-approve`, and with `project_trust_extension_decided` when a pre-trust extension's `project_trust` handler decides the other way, saving and applying nothing) and `get_project_settings` / `set_project_setting` (the project settings file read as stored; one top-level key written through `SettingsManager.setProjectSetting`).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the four cases.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-read-response-types.ts`, `rpc-mutation-response-types.ts`: the wire types.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `project_trust_locked`, `project_trust_extension_decided`, `project_not_trusted`, `project_settings_unreadable`, `project_settings_write_failed`.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: `get_project_trust` observe; `set_project_trust`, `get_project_settings`, `set_project_setting` device_admin (the digest moves).
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: their inbound schemas.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `session-command-activity.ts`: the two reads join the read allow-lists.
+- `packages/coding-agent/src/modes/rpc/loopless-runtime-settings.ts`: passes `projectTrustLocked` from the launch flag.
+
+### Why
+
+- An RPC session resolves trust without a UI, so a project is never trusted over RPC and its settings, skills, prompts, extensions and MCP servers never load for the desktop app, local or remote; no verb could save a decision or edit project settings.
+
+### Why an extension could not handle it
+
+- Trust decides which extensions load at all, and the session rebuild and the RPC method-class table are core; an extension cannot run before the trust decision it would be making.
+
+### Expected merge conflict zones
+
+- LOW: the `get_loaded_surfaces` neighbourhood in `connection-handler.ts`, `method-classes.ts` and the schema table.
+
+## 2026-11-07 - A prompt, steer or follow_up without a string message is refused at the boundary (senpi#6171)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `rpcCommandPayloadError` refuses `prompt`, `steer` and `follow_up` whose `message` is missing or not a string with `message must be a string.`, after every existing check, so a command that was already refused keeps its refusal text.
+
+### Why
+
+- senpi#6171: such a command passed validation and the session threw a raw `TypeError` (`text.startsWith` on a non-string) during prompt preprocessing; the client got that runtime error instead of the boundary's refusal, and the interactive control endpoint already refused the same input.
+
+### Why an extension could not handle it
+
+- Inbound RPC validation runs in the connection handler before any session or extension sees the command.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `rpcCommandPayloadError` in `rpc-input-validation.ts`.
+
+## 2026-11-07 - The settle a sealed session owes names no turn (senpi#6157)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-open-turns.ts`: the per-session turn ledger and `turnOf` are gone; `note` takes the record type and reason only.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `settleBeforeSeal` writes each owed `agent_settled { reason: "session_closed" }` without `turnId`, the bytes it wrote before senpi#6151.
+
+### Why
+
+- senpi#6157: the owed settle is a legacy record too, so it stays off the legacy wire like the session's own settle (#4272 T5).
+
+### Why an extension could not handle it
+
+- The owed settle is written by the host's session writer as it seals the session.
+
+### Expected merge conflict zones
+
+- LOW: `SessionOpenTurns.note`/`take` and `settleBeforeSeal`.
+
+## 2026-11-07 - The settle a sealed session owes names its turn (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-open-turns.ts`: `note` remembers the `turnId` each session's last `agent_start` carried; `turnOf(sessionId)` reads it, and `take` forgets it.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `enqueue` passes the record's `turnId` to the ledger, and `settleBeforeSeal` stamps it on each owed `agent_settled { reason: "session_closed" }`.
+
+### Why
+
+- oh-my-openagent#12719: a turn a close, park or release cut short still ends once per `turnId` for a remote watcher.
+
+### Why an extension could not handle it
+
+- The owed settle is written by the host's session writer as it seals the session.
+
+### Expected merge conflict zones
+
+- LOW: `SessionOpenTurns.note`/`take` and `settleBeforeSeal`.
+
+## 2026-11-07 - A multi-session host handed a private-fd table loads its extensions at boot (senpi#6147)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-boot-extensions.ts` (new): `warmAtBootForPrivateFds` starts the registry's `warm` for the host's default profile (host cwd and context, no kind) when the launch carried a private descriptor table (`privateTablePresent()`). The call is fire-and-forget, and a failure is logged as one stderr line.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` also returns the registry's `warm`. The socket host starts the boot load right after it listens, and the stdio host starts it after it attaches its reader.
+
+### Why
+
+- A multi-session host loaded extensions only on `open_session` or `warm`, so an extension that claims its private channel during registration never ran before a session opened. The omo desktop waits for that channel's first frame before opening a session (oh-my-openagent#12702, #12705). The boot load is the default-profile warm, so a later `warm` of that profile joins it or answers `already_warm`. Without a table nothing changes.
+
+### Why an extension could not handle it
+
+- An extension cannot run before the host loads it, and when the host loads it is exactly what this changes.
+
+### Expected merge conflict zones
+
+- LOW: the `createHostCore` return object and the end of `runStdioHost` / `runSocketHost` in `multi-session-host.ts`.
+
+## 2026-11-07 - Shutdown recovery keeps the pre-signal error (senpi#3067 L4)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: the `reapChildAfterFailure` call in `stopChild`'s catch logs only the recovery error; the original error is logged once by `performShutdown`'s catch when the rethrow reaches it, so the same line is no longer printed twice. The original is still rethrown and reported.
+- `packages/coding-agent/test/suite/regressions/3067-recovery-keeps-original.test.ts`: the recovery's signals go through a stubbed `process.kill` (no real signal to a reaped pid), and the timer loop advances until shutdown settles within a 120 s bound instead of a fixed 40 turns.
+
+### Why
+
+- senpi#3067 L4: when the shutdown fails before the child is signalled and the recovery itself throws, the recovery error replaced the original — `performShutdown` logged the recovery error as the shutdown failure and the original error never appeared anywhere, so the cause of the shutdown was lost.
+
+### Why an extension could not handle it
+
+- The supervisor teardown runs in core RPC plumbing before any extension loads, and no extension hook runs between the shutdown failure and its recovery.
+
+### Expected merge conflict zones
+
+- LOW: the `stopChild` catch in `host-lifecycle-shutdown.ts`.
+
+## 2026-11-06 - A claimed question refuses a late progress draft (senpi#5960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: a question's `progress` path now honors the claim that `respond` already takes (the first answer wins). Once an answer has won, `extension_ui_progress` answers `question_already_resolved` instead of overwriting the selections that answer is settling with. Before a claim it applies as before: it copies the draft, rearms the idle timer and emits `question_updated`.
+
+### Why
+
+- `respond` already made the first answer win, but `extension_ui_progress` was outside that claim: a draft that arrived while the winner's `beforeAnswer` ran rewrote `answers`, so a winner answering A with a draft B landing during admission settled as `answered` with B's selections (item 3 of #5960).
+
+### Why an extension could not handle it
+
+- The claim and the draft both live in the RPC connection's question bridge; the extension raising the question sees neither.
+
+### Expected merge conflict zones
+
+- LOW: the `progress` closure inside `ask` and the `progress` method of `ConnectionQuestionBridge`.
+
+## 2026-11-06 - Connection roles over a delegated connection: an authority word per incarnation (omo-relay-daemon#307)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-authority.ts`, `delegation-record.ts`, `delegation-resolve.ts`, `command-authority.ts` (new, fork-only): the authority word of a role-bound delegated connection (`Int32` in a `SharedArrayBuffer`: `epoch << 3 | retired << 2 | mask`, incarnation stamped in slot 1), the socket-lifetime delegation record (incarnations, retire on detach and close, exhaustion), the worker's scalar incarnation resolution, and the one-snapshot-per-command `CommandAuthority` with its `authority` receipt and `relayExec` intake.
+- `packages/coding-agent/src/modes/rpc/delegation-declaration.ts`, `delegated-connection.ts`, `delegated-answer.ts`: `declare_delegation.roles` (each of `interactive_user`, `task_parent` at most once) makes the connection role-bound for its life; a later declaration only narrows roles (`delegation_fixed` otherwise, and on a connection that started without roles); every successful reply of a role-bound connection echoes `data.roles`. `detach_connection` on a role-bound connection retires the current incarnation at line receipt and issues the next with the same roles ceiling; the record is closed (not deleted) at physical close and deleted only by `forget`. An invalid `relayExec` is refused `delegation_malformed`.
+- `packages/coding-agent/src/modes/rpc/connection-roles.ts`: claims are kept per incarnation; `declare(connection, capabilities, incarnation)` returns `declared | fixed | stale` and is the single stale check every claim-creating path reaches; `isStale` is its side-effect-free preflight. A delegated connection's origin is its principal (a forwarded `remoteOrigin` is accepted and ignored). `has` reads the running command's single snapshot.
+- `packages/coding-agent/src/modes/rpc/session-connection-context.ts`, `session-event-writer-state.ts`, `session-event-writer-connections.ts`, `session-event-writer.ts`: each line captures its connection's delegation descriptor at its start; responses to a record that carried `relayExec` get the `authority` receipt; `unregisterConnection` closes the delegation record instead of dropping it.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a role-bound line runs inside one `CommandAuthority`, with `relayExec` taken out before inspect; a socket whose incarnations ran out is ended after its detach answer is flushed, through the connection's sink (`endExhaustedConnections`), whose half-close delivers bytes still buffered in the transport instead of destroying them.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: a session worker is created outside the opening command's authority (`outsideCommand`), because on Node a Worker's listeners keep the async context it was built in and would stamp that command's receipt onto every later response it forwards.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `session-router-attachments.ts`: the host roles read the writer's live records; the record and its claims are forgotten only in the socket-gone branch of the release.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `session-worker-signals.ts`, `session-worker-credit.ts`, `session-worker-client.ts`, `session-worker.ts`, `worker-client-capabilities.ts`: `bind`/`command` carry the captured descriptor and `exec`; the `capabilities` message carries the declaring command's incarnation; credit code `stale` (4) answers a declaration from a retired incarnation, which the worker turns into a command-local `delegation_incarnation_stale` refusal (`declareOnHost`). The host answers it BEFORE the compact-selection check and commits the claim only after that check.
+- `packages/coding-agent/src/modes/rpc/compact-negotiation.ts`, `compact-socket-commands.ts`, `connection-handler.ts`: `set_client_info` passes the command's incarnation to every declaration; the host-level declaration runs the stale preflight before `CompactSelection.declare`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `host-capabilities.ts`: multi-session hosts advertise `delegation_roles_v1`.
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: reads the tri-state `declare` result (`declared` only).
+
+### Why
+
+- A relay forwarder needs the viewer's interactive role (`hold_input`, `withdraw_held_input`, Stop, pause) to stop counting the moment the host turns the viewer's command authority off, including for records already admitted to a session worker, and needs an execution-time receipt of the roles that admitted each record.
+
+### Why an extension could not handle it
+
+- Role checks, delegation inspection, the session-worker protocol and response routing are RPC host internals; no extension API reaches them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `connection-handler.ts` `set_client_info` branch and the `clientInfo.setCapabilities` option type; `multi-session-host.ts` `createHostCore` line handler; `session-worker.ts` `bind`/`command` cases; `session-worker-protocol.ts` message unions.
+- LOW: `connection-roles.ts` (rewritten around per-incarnation claims), `delegated-connection.ts` declaration branch, `session-event-writer.ts` `enqueue`/`enqueueControl` entry.
+
+## 2026-11-06 - Settle only offered sealed secret requests (senpi#6062)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`: settled frames are limited to the request's offered holders. Requests ending before key generation completes emit no unmatched holder frame.
+- Deterministic key-failure and settle-before-key tests cover the asynchronous request latch.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`: a holder snapshot alone does not prove a request was offered.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`: the holder source owns request delivery and settlement.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`, `SealedSecretHolders.settle`.
+
+## 2026-11-05 - A failed compact current-state retire is reported, never an unhandled rejection (senpi#6068)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-lane-current.ts`: `retire()` reports a rejected state retire once on stderr (`senpi rpc acceptance: compact current state retire failed: <reason>`) and keeps the rejecting cleanup for `idle()` joiners; `fail()` shares the reason formatting.
+
+### Why
+
+- The lane's other retire paths already handled their cleanup rejection; this one did not, so a refused spool reclaim on session close or after a fold failure was an unhandled rejection of the host process.
+
+### Why an extension could not handle it
+
+- The compact current state is internal to the RPC acceptance lane; no extension sees its retire.
+
+### Expected merge conflict zones
+
+- LOW: `retire()` and the module-level `reasonOf` at the end of `compact-lane-current.ts`.
+
+## 2026-11-05 - A host that answers "stopping" during startup readiness is reported as stopping (senpi#6017)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-startup-run.ts`: when the last readiness reply carries `lifecycle: "stopping"`, `driveStartupToReady` fails the start with a cause that names the stop (and the supervisor's exit, when it exited) instead of the "incompatible host" diagnostic. A ready host whose protocol or capabilities do not match keeps the incompatible diagnostic unchanged.
+
+### Why
+
+- A supervisor that began stopping before its launcher verified it answers from its own admission (`capabilities: []` plus `socket_auth` from the public filter). The readiness gate printed that reply as a protocol mismatch, while `decideHostAction` already reads the same reply as `host_stopping`.
+
+### Why an extension could not handle it
+
+- The readiness gate runs inside `ensureHost`, before any session or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the message helpers next to `exitMessage` and the explicit-cause block at the end of `driveStartupToReady`.
+
+## 2026-10-30 - Selected OAuth account operations and account state (part of #5003)
+
+### What changed
+
+- `login_start` accepts an optional immutable `slotId` for shared-runtime reauthorization over the existing prompt transport.
+- `logout` forwards optional `slotId` and returns the revocation status. `get_provider_accounts` carries the same active, paused and Usage-link projection as the terminal.
+- `packages/coding-agent/docs/rpc.md` documents the additive request and response fields.
+
+### Why
+
+- RPC clients need the same per-account lifecycle and truthful state as `/gpt-account`, without receiving credentials.
+
+### Why an extension could not handle it
+
+- The typed RPC command handler owns these requests and responses.
+
+### Expected merge conflict zones
+
+- OAuth login handling, account listing, logout response and wire type definitions.
+
+## 2026-11-05 - Shared sealed answer route, terminal answers and S5-4 gate folds (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-answer-route.ts` is new: `answerSealedFrame`, the 7.1 handling of one `mcp_presenter_secret_answer` frame, shared by the RPC host and the terminal.
+- `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`: `answerSealed` delegates to the shared route.
+- `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`:
+  - `input` reports the request id through an optional `created` callback;
+  - `answerLocal` answers a request from the terminal's own input and leaves a receipt, so a later sealed answer is `already_answered`.
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-5: terminal (S3-6b) parity needs the RPC host's sealed answer handling on the terminal's control endpoint. The four LOWs of S5-4's design-conformance gate moved into the PRs that own the code: three into #5956, the HPKE zeroing into #5937.
+
+### Why an extension could not handle it
+
+- The secret prompt latch, the sealed answer checks and the worker isolate protocol are host internals of the RPC mode.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-05 - Sealed secret answers on the worker runtime (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-secret-route.ts` is new: `WorkerSecretRoutes`, the isolate's secret route, moved out of `session-worker.ts`. It covers:
+  - `raiser` and `sealed` from the host's select;
+  - `accepts` is raiser-only;
+  - the request key's `secret_sealed_offer` and the settle with outcome and winning grant;
+  - `answer` runs 7.1 steps 3 and 6 at the isolate's latch, with its own step-up `jti` cache.
+- `packages/coding-agent/src/modes/rpc/session-worker-host-secrets.ts` is new: `WorkerHostSecrets`, the host half, moved out of `session-worker-client.ts`. It covers:
+  - select with the 5.2 semantics, reporting `raiser` and `sealed`;
+  - bounded frames, with the sealed offer signed and fanned out;
+  - the settle fan-out;
+  - authenticated sealed answers forwarded only for held ids, one in flight and four queued per id.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts` changes:
+  - adds `secret_sealed_answer` and `secret_sealed_result`;
+  - `secret_settled` carries `outcome` and `winnerGrant`.
+- `packages/coding-agent/src/modes/rpc/session-worker-requests.ts`: a sealed answer is a control-class request.
+- `packages/coding-agent/src/modes/rpc/secret-sealed-answers.ts`: the open takes the plain `SealedAnswer` data, so the isolate opens the same values the host checked.
+- `packages/coding-agent/src/modes/rpc/session-worker-host-secrets.ts` also:
+  - admits the isolate's `secret_settled` once per held id, with a known outcome, and a winner only among the grants whose answers the host forwarded for that id;
+  - refuses a malformed `secret_sealed_offer` instead of relaying it as a raiser frame;
+  - re-checks a queued answer's grant before forwarding it;
+  - unbinds its latch when the worker exits;
+  - relays the isolate's sealed answer result only in the shapes its latch can produce, rebuilt field by field.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts`: a secret reply's `type` and `id` are written after its fields, so no field replaces them.
+- `packages/coding-agent/src/modes/rpc/session-worker-secrets.ts`: `isSealedOffer` requires a 32-byte base64url `hpkePk`.
+- `packages/coding-agent/src/modes/rpc/session-worker-secrets.ts`: `secret_sealed_offer` is admitted once per id within `secretFrameBytes`, and `isSealedOffer` is added.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts` and `session-worker-client.ts`: use the two new modules.
+- `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`:
+  - `SealedAnswer` is plain data;
+  - the latch takes a claim context (grant re-check, `jti` cache);
+  - the route gains `raiser`;
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`:
+  - `answer` returns data and `admitJti` is added;
+  - `settle` compares grant ids;
+  - a settled offer is retired, taking no more token records while staying answerable for `replay` until forgotten.
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-4: the worker runtime, the default for stdio hosts and embedders, accepts sealed answers with the request key confined to the isolate that owns the latch (design 5.5).
+
+### Why an extension could not handle it
+
+- Worker isolates, their host protocol and the secret prompt latch are host internals of the RPC mode.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-05 - list_hands and select_hand on a headless engine (senpi#5938)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/hand-selection-commands.ts` (new): `list_hands { sessionId? }` and `select_hand { sessionId, device | null }`, answered from `RpcHostSessionDefaults.handSelection`. Refusals: `hand_selection_unsupported` (no directory), `unknown_session`, `session_closing` (a session already ending takes no new choice), `hand_not_listed`, `hand_unreachable` (with `errorData.device`).
+- `session-router-routing.ts` dispatches both commands. `session-router-host-reads.ts` adds `hand_selection` to `get_protocol_info.capabilities` only when a hand selection is set. `custom-capability.ts` adds `HAND_SELECTION_CAPABILITY`.
+- `multi-session-host.ts` and `session-router-types.ts`: `handSelection` option and default.
+- `rpc-host-command-types.ts` and `rpc-host-response-types.ts`: the two records and their answers.
+- `method-classes-schema-host.ts`: their schemas.
+- `method-classes.ts`: `list_hands` is `observe`; `select_hand` is `device_admin`, because it moves where the session's tools run.
+- `session-attachment-gate.ts`: `list_hands` is exempt as a read.
+- `scripts/rpc-inbound-samples.ts` and the regenerated `docs/engine-socket/fixtures/rpc-inbound-samples.json` carry one sample each.
+
+### Why
+
+- senpi#5938, R4: a client (the desktop executor picker, sisyphuslabs/omo-desktop-app#5885) had no way to see which hands a headless engine can reach, or to choose one for a session.
+
+### Why an extension could not handle it
+
+- Host-level RPC commands, the capability list and the method-class table are owned by the multi-session host.
+
+### Expected merge conflict zones
+
+- LOW: the `dispatch` chain in `session-router-routing.ts`, the host schema and class tables, and `answerProtocolInfo`.
+
+## 2026-11-05 - Sealed secret answers accepted at the latch (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-answers.ts` is new. It handles `mcp_presenter_secret_answer`:
+  - shape parsing;
+  - the strict envelope-signature check;
+  - the step-up token check through the injected authority, with the host checks (account, device, host device, `jti` named in the transcript, expiry no later than the deadline);
+  - the open-and-unpad used at the latch.
+- `packages/coding-agent/src/modes/rpc/secret-sealed-hpke.ts` is new: the RFC 9180 base-mode open for DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-256-GCM, with strict X25519 public values.
+- `packages/coding-agent/src/modes/rpc/ed25519-strict.ts` is new: strict Ed25519 verification (canonical points, no small-order points, a prime-order public key, `S < L`) before the native equation.
+- `packages/coding-agent/src/modes/rpc/secret-sealed.ts`: `secretRequestHash`, the HPKE info and AAD, the answer and cancel transcripts, `unpadSecretValue`, and the `mcp_presenter_secret_settled` record type.
+- `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`:
+  - `respondSealed` runs the claim at the latch synchronously: `jti` admission, pending and deadline, grant re-check, then the open.
+  - Receipts carry the principal, so `replay` needs the same answer id and principal, and `answeredUiRequests` stays raiser-only.
+  - The route gains `sealedOutcome` and `bindSealedResponder`.
+- `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`: `answerSealed` checks that the sender holds an eligible grant in the request's snapshot, answers a settled request from its receipt, then hands the authority's result to the session's latch. It also sends every holder the settle.
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`:
+  - `eligible`, `principalOf`, `answer` and `settle` (`elsewhere` is false only for the winning grant);
+  - each offered request keeps its `req` and deadline;
+  - a per-incarnation step-up `jti` cache.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts` and `session-event-writer.ts`: the private-record handler moves to the presenter surface and routes `mcp_presenter_secret_answer`, replying on the sender's connection only.
+- Review fold:
+  - `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`: `dispose()` ends every prompt and releases the session's sealed latch; `close()` keeps the latch bound because the connection reuses the set on every rebind.
+  - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: final teardown calls `dispose()`.
+  - `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`: unbinding a route removes only that route's own latch.
+  - `packages/coding-agent/src/modes/rpc/secret-sealed-answers.ts`, `secret-sealed.ts` and `secret-sealed-hpke.ts`: the open zeroes the plaintext itself (no copies; zeroed on a failed open too).
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-3: a same-account presenter's sealed answer is accepted, opened only by the host that raised the prompt, and settled for every holder.
+
+### Why an extension could not handle it
+
+- The secret prompt latch, the presenter grants and the injected account authority are host internals of the RPC mode.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-05 - Secret prompts fan out, sealed, to same-account holders (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed.ts` is new. It implements the request binding of omo-relay-spec decision 0022 (`B`, `displayHash`, the `omo-secret-request-v1` transcript), generates the per-request X25519 key, and defines the private record types.
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts` is new: `SealedSecretHolders`.
+  - Sealed-holder eligibility (current account-principal grant with `secret_input_v1`, attestation not lapsed, valid host token).
+  - Signed `mcp_presenter_secret_request` fan-out to each holder.
+  - `mcp_presenter_secret_token` on every host token re-mint.
+  - Grant-change notifications.
+- `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`:
+  - The owner record gains `raiser` and a sealed snapshot. A raiser-refused prompt with sealed holders proceeds.
+  - `accepts` is raiser-only; `available` is true while the raiser is live or any holder's grant is current. `detach` keeps a prompt that holders still hold.
+  - A sealed-only prompt never writes a raiser lane, and the notice excludes holders.
+  - `route(session, sealed)`: only an opted-in route adds holders.
+- `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`: a prompt with holders gets a per-request key, kept in its pending entry, and is offered to them (`sealed`, `offerSealed` on the route).
+- `packages/coding-agent/src/modes/rpc/secret-host-token.ts`: adds `hostPk`, `hostJkt`, `signRequest` (only for a binding that names this host instance and key) and `onToken`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: the token cache moves into `SealedSecretHolders`, now the public `sealed` field; the `secretHostToken` accessor is removed.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-grants.ts` and `mcp-presenter-authority.ts`: `secretCandidates` and `isCurrent`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-host-surface.ts` and `session-event-writer-presenters.ts`: `attachSealedSecrets`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` and `session-binding.ts`: the in-process session binding opts its secret route into sealed holders; a worker isolate's route does not.
+- `packages/coding-agent/src/modes/rpc/raiser-notices.ts` and `security-presentations.ts`: `raised` takes the list of excluded connections.
+- `packages/coding-agent/src/modes/rpc/mcp-form-dialog.ts`: the presenter frame union includes the sealed secret records.
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-2: a same-account presenter answers a host's secret prompt sealed end to end. This row sends the signed request to eligible holders; answer acceptance follows in S5-3.
+
+### Why an extension could not handle it
+
+- Secret prompt routing, the presenter grants and the injected account authority are host internals of the RPC mode; no extension sees them.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-05 - Thread calls carry their chain count and meet the user's limit (senpi#5923)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`: `prompt`, `steer` and `follow_up` take an optional `chainCount`.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: the three schemas accept `chainCount`, a positive safe integer.
+- `packages/coding-agent/src/modes/rpc/chain-admission.ts` is new: `admitInputChain()` admits an input's `chainCount` with `admitChainCall()` against `settingsManager.getThreadChainCountLimit()`, or returns the typed refusal (`errorCode: "chain_count_limit"`, `errorData: { count, limit }`). A `chainCount` that is not a positive safe integer is refused first with `errorCode: "invalid_chain_count"` and `errorData: { chainCount }`, since the RPC boundary only shape-checks a command and a malformed count would never compare above the limit.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `prompt`, `steer` and `follow_up` run `admitInputChain()` first, before `holdAutomaticInput` can keep the input as a notice, and answer its refusal.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: runs the same admission before `ClientAdmissions` records anything and passes an admitted count to the session.
+
+### Why
+
+senpi#5641 / #5899 (decision K8): the user-set thread chain count limit has to be read where chains are created. A thread call reaches another session as RPC input, so the limit is enforced there. Unset means unlimited; there is no default cap and no cost limit.
+
+### Why an extension could not handle it
+
+The refusal has to happen before the input is admitted and recorded, which only the RPC input path controls.
+
+### Expected merge conflict zones
+
+- LOW: the `prompt`/`steer`/`follow_up` command types and schemas, their cases in `connection-handler.ts`, the top of `handleClientInput` and its error mapping.
+
+## 2026-11-05 - move_session op copy (senpi#5889)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-request.ts` (new): the `move_session` request parser, moved out of
+  `session-move-commands.ts` unchanged, plus op `copy` (`sessionPath`, plain `sessionId`, absolute `sessionDir?`).
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts`: runs `copy` through `copySessionAs` (default folder:
+  this host's session folder for the source's `cwd`) and passes `invalid_move_request` from the core through.
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`, `method-classes-schema-host.ts`, `host-capabilities.ts`:
+  the `copy` op type and schema, and the advertised `move_session_copy` capability.
+- `packages/coding-agent/docs/rpc.md`: the `copy` row and paragraph.
+
+### Why
+
+- omo-desktop-app#4049 offers "Copy to a new thread" on a sealed copy; the copy must be a new session under the new
+  thread's id, with the open session left as it is.
+
+### Why an extension could not handle it
+
+- `move_session` and its capability list are the RPC host's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the `move_session` union in `method-classes-schema-host.ts` and `session-move-wire.ts`, the capability list in
+  `host-capabilities.ts`.
+
+## 2026-11-05 - A write into a sealed session is refused with session_moved_away (senpi#5889)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: a new admission of `prompt`, `steer` or `follow_up` checks
+  `sessionManager.getOwnership()` first and throws `SessionMovedAwayError` for a session that is moving or moved. The
+  refusal carries `errorCode: "session_moved_away"` and `errorData: { state }`. A replay of an already admitted id is
+  answered as before.
+- `packages/coding-agent/docs/rpc.md`: the "Sealed session" refusal.
+
+### Why
+
+- Clients branch on a refusal's code, never its text. The refusal had no code, and a `prompt` was accepted before its
+  turn failed to write, so a client could not show a read-only session with a copy action (omo-desktop-app#4049).
+
+### Why an extension could not handle it
+
+- Admission and its refusal records are the RPC host's; no extension hook runs before a prompt is accepted.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `admissions.admit` callback and the refusal spread at the end of `handleClientInput`.
+
+## 2026-11-05 - Host key and host token cache for the sealed secret route (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-account.ts`: `PresenterAccountAuthority` gains the optional `mintSecretHostToken` (with `SecretHostTokenRequest` and `SecretHostProof`) and `verifySecretAnswer` (with `SecretAnswerVerification`, `SecretAnswerStepUp` and the `SecretAnswerRefusal` codes). Nothing calls `verifySecretAnswer` yet.
+- `packages/coding-agent/src/modes/rpc/secret-host-token.ts` is new: `SecretHostTokens`.
+  - A per-instance in-memory Ed25519 host key, created only for an authority with both methods.
+  - A proof callback that signs only the engine-built host-proof transcript, only while its mint is pending.
+  - One issuer token per `(hostInstance, durableSessionId)`: minted on the first account-principal `secret_input_v1` acquire, re-minted at two thirds of its lifetime (local clock), and dropped with the last such grant. A mint has 30 s to settle; a failed one is retried within 60 s while a holder remains.
+  - Claims checked against the request before caching; a synchronous `current()` read.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-grants.ts`: the registration records `secretInput` from the signed acquire's features. `secretInputHeld(state, binding)` is new; it counts only account-principal grants.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-authority.ts`: `secretInputHeld(binding)`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: creates and disposes the cache, asks it for a token after a `secret_input_v1` acquire, and exposes `secretHostToken(durableSessionId)`.
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-1: a presenter verifies the host before any secret field renders. The host proves itself with an issuer token bound to its in-memory key, its account and device, its host instance and the session. The token is cached so that secret routing stays synchronous.
+
+### Why an extension could not handle it
+
+- The presenter control endpoint, its grants and the injected account authority are host internals of the RPC mode; no extension sees them.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-04 - A session opened over a delegated connection outlives that connection (senpi#5808)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` reads `writer.delegations.isDelegated` at line receipt, right after the delegation verdict, and dispatches every `open_session` on a delegated connection with `retain_on_disconnect: true`, whatever the record carried. A connection that never declares is unchanged: an explicit value is honored, and only a machine-owned host defaults an omitted one to `true`.
+
+### Why
+
+- Since senpi#5651 a forwarder opens one delegated connection per viewer, and that connection ends when the viewer leaves. The ordinary drop rule (`releaseConnection` -> `releaseDisconnectAttachment`) then closed the session the viewer opened, so the next viewer could not attach (`session_closing`; senpi#5808). The forwarder keeps serving the session, so ending its per-viewer connection now detaches. An explicit `false` is overridden because honoring it would reproduce senpi#5808 for any forwarder that sends it. The read happens at receipt so an open still running when its connection ends is retained too. `attach_session` is untouched and never turns retention on, so a principal granted only `thread` gains nothing that needs `device_admin`.
+
+### Why an extension could not handle it
+
+- Connection lifetime and `open_session` dispatch belong to the RPC host's per-line handler, which no extension reaches.
+
+### Expected merge conflict zones
+
+- LOW: a few lines in `createHostCore`'s `handle`, next to the `machineOwned` default.
+
+## 2026-11-04 - Private presenter records on delegated connections, and presenter control discovery (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/delegated-connection.ts`: on a delegated connection, any `mcp_form_*` / `mcp_presenter_*` record is decided by `delegated-presenter-records.ts` instead of the method-class table; `mcp_presenter_control_info` on a non-delegated connection is answered when the connection proved the launch key and refused `presenter_not_authorized` otherwise. Reply shapes moved to `delegation-wire.ts` and declaration parsing to `delegation-declaration.ts` (250-line ceiling), unchanged.
+- `packages/coding-agent/src/modes/rpc/delegated-presenter-records.ts` (new): the four presenter client records pass to the presenter authority under the `answer` grant; every other outcome is a private refusal (`delegation_not_granted`, `delegation_unclassified`, `presenter_not_authorized`).
+- `packages/coding-agent/src/modes/rpc/delegated-answer.ts` (new): writes a non-pass verdict; private outcomes go through `writeMcpFormReply`, never the control queue.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts`: `writeMcpFormReply` (the private `writeRaw` write) and the `mcpPresenterControlEndpoint` getter. A later main refactor moved `handleMcpForm` into this presenter base class, so that handler is the one that writes its form reply through `writeMcpFormReply`; `session-event-writer.ts` keeps only the queue scheduler.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore.handle` hands every non-pass delegation verdict to `answerDelegation`.
+
+### Why
+
+- A relay host forwarding a remote presenter's private records on its delegated connection had every one refused as `delegation_unclassified` in the generic response shape, so the delegated lane could not work and a forwarder routing by `id` could settle a pending command with it. The host's relay also had no way to learn the presenter control endpoint without attaching to a session (senpi#4249 R-1b PR (d), d1 and d2).
+
+### Why an extension could not handle it
+
+- Both decisions run in the host core's per-line dispatch, on the delegation state and launch-key proof only the RPC transport holds.
+
+### Expected merge conflict zones
+
+- LOW: the top of `createHostCore.handle`, `ConnectionDelegations.inspect`, `handleMcpForm`.
+
+## 2026-11-04 - A presenter control over a shared authority revokes only its own grants (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-host-surface.ts`: `PresenterHostSurface.sharedAuthority`, plus `presenterContextReply`, which both the RPC writer and the terminal surface use.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: `dispose()` revokes every control stream's registrations synchronously, and disposes the authority only when the surface owns it. An account principal's grants carry its verified `{ principalKind: "account", dev, dname }` identity into the `mcp_form_settled` audit. The management transcript is built by `challengeTranscript`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-account.ts`: `accountIdentity`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control-start.ts`: `startMcpPresenterControl` takes any `PresenterHostSurface`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts`: the context reply goes through `presenterContextReply`.
+
+### Why
+
+- D11 S3-6b (senpi#4249): the terminal's authority belongs to the TUI's own form binding, so stopping the terminal's control endpoint must not end the terminal's own presenter. The audit names a same-account winner by its attestation (design 2.5).
+
+### Why an extension could not handle it
+
+- The presenter control endpoint is a host internal of the RPC mode.
+
+### Expected merge conflict zones
+
+- None: these paths are fork-only.
+
+## 2026-11-04 - Background secret and grant-select routes stay local; value-free raiser notices (senpi#4249, D11 S3-5)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`: a background secret (no raising connection) takes only a local eligible presenter; a connection that declared a delegation or a `remoteOrigin` is never chosen, and with none the call ends `no_presenter`. A background request whose presenter later declares a `remoteOrigin` is no longer live. The prompt and its settle record send a `secret_input_notice` / `secret_input_notice_settled` to the other attached connections that opted in.
+- `packages/coding-agent/src/modes/rpc/security-presentations.ts`: the worker grant fallback and the in-process grant-presentation registration take only local `grant_select` connections (`accepted:false` when there is none); a remote declaration cancels that connection's background grants; `routeWorkerGrant` takes the dialog title and sends `grant_select_notice`, and `settleGrant` its `grant_select_notice_settled`.
+- `packages/coding-agent/src/modes/rpc/raiser-notices.ts` (new): the opt-in notice fan-out (`raiser_notice_v1`), value-free, outside replay and observer lanes; `ConnectionLocality`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-state.ts`, `session-event-writer-connections.ts`: the writer's locality (delegated per senpi#5632, or a declared origin read through the host's `originOf` hook) feeds both routers; `noticeGrantDialog` for the in-process path.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: installs `writer.originOf` from the host's connection roles.
+- `packages/coding-agent/src/modes/rpc/compact-socket-commands.ts`: `set_client_info` records `remoteOrigin` before committing capabilities, so the capability recheck already sees it.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `session-binding.ts`: `grantDialogRaised` reports an emitted in-process grant select to the writer.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: passes a worker grant select's title to `routeWorkerGrant`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `RAISER_NOTICE_CAPABILITY` (`raiser_notice_v1`).
+
+### Why
+
+- The background fallback took the first capable attached connection, so a relayed remote device or a delegated connection could become the presenter of a secret it never raised, and the value would cross the relay (D11 design 2.10, A8). Raiser-only dialogs may be seen elsewhere but answered only by the raiser (D11 4.2).
+
+### Why an extension could not handle it
+
+- The routing decision and the connection's delegation and origin state live inside the RPC host's writer and router; no extension sees the presenter choice.
+
+### Expected merge conflict zones
+
+- LOW: `select` in `SecretInputPresentations.route`, `routeWorkerGrant` and `#register` in `RpcSecurityPresentations`, the end of `declareSocketClient`, `createDialogPromise` in `connection-handler.ts`.
+
+## 2026-11-04 - Quiet takeover on a headless engine (S37, senpi#5732)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/attach-ledger.ts` (new): the durable takeover record. `attach.takeover` is appended and the session's holder document replaced in one commit, under the store's admission line, with the holder generation one higher. A takeover by the current holder writes nothing.
+- `packages/coding-agent/src/modes/rpc/attach-takeover.ts` (new): `attach_session { takeover: true, holder }` on a machine-owned host with a ledger records the takeover, attaches the caller, sends every other connection holding the session one `session_released { reason: "taken_over" }` record and releases its holds with disconnect semantics. It refuses with `takeover_holder_required` without `holder`, and with `takeover_unsupported` on any other host.
+- `packages/coding-agent/src/modes/rpc/attach-takeover.ts`: only the ledger commit is awaited before shared state is read. After it the takeover re-checks the host (draining: `session_busy_lifecycle`), the caller (gone: `session_not_attached`, nobody let go) and the session (closed: `unknown_session`), attaches the caller and removes every other connection's holds with no await in between, then sends the notices and runs the deferred releases; a failed ledger write answers `takeover_failed`.
+- `packages/coding-agent/src/modes/rpc/rpc-session-event-types.ts`, `rpc-types.ts`, `rpc-client-events.ts`: `RpcSessionReleasedEvent` (`session_released { sessionId, reason: "taken_over" }`), in the public `RpcClientEvent` union.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `collectEvents` skips `session_released` like the other connection-level records.
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: `attachSession` hands a `takeover: true` command to `takeOver`; without it, the path is unchanged.
+- `packages/coding-agent/src/modes/rpc/attachment-types.ts`: the optional `takeover` and `holder` command fields, and the `holder`, `generation` and `released` answer fields.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`: the `attach_session` schema accepts `takeover` and `holder`.
+- `packages/coding-agent/src/modes/rpc/session-router-types.ts`: `RpcHostSessionDefaults.sessionOwner?` and `sessionTakeover?`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `MultiSessionHostOptions.sessionTakeover?`; no CLI flag sets it yet.
+- `packages/coding-agent/src/modes/rpc/testing/kill-attach.ts` (new): KILL-ATTACH-01..05.
+
+### Why
+
+- R21: opening a session elsewhere takes it over, and the previous client lets go quietly, with no "move" concept (senpi#5732).
+
+### Why an extension could not handle it
+
+- Attachments and their release are RPC host internals that no extension reaches.
+
+### Expected merge conflict zones
+
+- LOW: new files; one line in `attachSession`; one optional field each in the host options, the session defaults, the command and answer types and the `attach_session` schema.
+
+## 2026-10-28 - The supervisor adopts a replacement owner whose watch event was dropped (senpi#4645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: `SupervisorOwner.shouldExit` ADOPTS an owner record that differs from the one it holds, re-reading it through `reload()` (which resets death detection for the new owner) and deciding for the real owner on the next tick, instead of only refusing the exit. The record re-read already happened there; it could never act on what it read.
+
+### Why
+
+- A replacement owner reaches the supervisor only through an `fs.watch` event on `owner.json`, and node does not guarantee that event. When it was dropped, the supervisor stayed bound to the dead predecessor: `shouldExit` re-read the record, saw a mismatch and refused forever, so the replacement's own death could not end the generation and the host outlived its owner until the idle window (15 minutes by default) instead of exiting on owner death (senpi#3044).
+
+### Why an extension could not handle it
+
+- The owner probe and the exit decision both run inside the lifecycle supervisor process, which starts before and outside any session; no extension surface sees the owner record, the owner pipe, or the shutdown decision.
+
+### Expected merge conflict zones
+
+- The tail of `SupervisorOwner.shouldExit` is upstream-adjacent: an upstream change to the owner-record comparison or to the quiescence check will meet this branch.
+
+## 2026-11-05 - A coordinated host's idle window waits for its launcher's first probe (senpi#6001)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-policy.ts`: `IdleExitDecider` takes an optional `firstClientWithinMs`. Until the first client attaches, or that time has passed, it answers `active` and the idle window does not begin. Only a connection ends the wait; the unknown-observer turn at startup does not.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: the supervisor's decider gets the launcher's decision budget from the coordinated startup hand-off. An uncoordinated launch has no hand-off and keeps the old window.
+
+### Why
+
+- The window began as soon as the internal observer connected, before the public endpoint was published and before the launching ensure could probe it. A host whose startup outlasted its idle window (a short test window on a loaded machine) exited before its own ensure verified it, and the ensure failed with an "incompatible host" diagnostic built from the stopping supervisor's reply.
+
+### Why an extension could not handle it
+
+- The idle-exit decision runs in the lifecycle supervisor, which loads no extensions.
+
+### Expected merge conflict zones
+
+- LOW: the `IdleExitDecider` constructor and the top of `update`, and the decider construction in `SupervisorActivity`.
+
+## 2026-11-05 - A supervised win32 host child receives its public socket (senpi#5985)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: the host child's environment is built by `hostChildEnvironment` and carries `SENPI_RPC_HOST_PUBLIC_SOCKET` on every platform. It was previously omitted on win32.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `hostSessionContext` takes the supervisor binding as a parameter (default: the process binding) and is exported for tests. The unlink-on-close path keeps its own win32 exclusion.
+
+### Why
+
+- Without the variable a supervised win32 host stamped no `host_socket`, so every host session's `registerControlEndpoint` answered `unsupported_mode` and no gateway drain ran: a `thread_send` to a Windows desktop thread answered `queued` and never started a turn (code-yeongyu/oh-my-openagent#12486). The idle handover and the parked-session reopen also lacked the public endpoint there.
+
+### Why an extension could not handle it
+
+- The supervisor's child environment and the host's session identity are set before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `env` construction in `spawnHostChild` / `hostChildEnvironment`, and the `hostSessionContext` signature.
+
+## 2026-11-05 - Host core exposes a session's entry by id (senpi#5807)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` also returns `peekSession(sessionId)`, the registry's own `peek`.
+
+### Why
+
+In-process tests found a session's entry by spying on the registry prototype and taking its last return, an order-based lookup that intermittently found no session (senpi#5802). Reading the entry by id removes that dependency.
+
+### Why an extension could not handle it
+
+The host core and its registry are the RPC host's own internals.
+
+### Expected merge conflict zones
+
+The `createHostCore` return object.
+
+## 2026-11-04 - A steer can name the turn it is meant for (senpi#5776)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts` and `rpc-session-state-types.ts`: `get_state` carries `currentTurnId` (the session's `currentTurnId`) while a turn runs.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts` and `method-classes-schema-session.ts`: `prompt`, `steer` and `follow_up` accept `expectedTurnId`.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `expectedTurnId` must be a non-empty string of at most 256 characters and on `prompt` is refused without `streamingBehavior`.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: passes `expectedTurnId` to `session.prompt`, `session.steer` and `session.followUp` and maps the session's `TurnConflictError` to `turn_conflict` with `errorData.currentTurnId`.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts` and `rpc-types.ts`: `RPC_ERROR_TURN_CONFLICT`.
+- `packages/coding-agent/src/modes/rpc/automatic-input-gate.ts`: a steer that names its turn is never kept as a paused session's notice; the session refuses it instead.
+
+### Why
+
+A client on another device could not steer the turn it saw: it had no turn id and no way to send the one it expected, so a steer meant for one turn could land in the next. The local gateway already refuses that case with `turn_conflict`.
+
+### Why an extension could not handle it
+
+The turn id and the steer admission live in the RPC host's `get_state` and `prompt` handlers.
+
+### Expected merge conflict zones
+
+`client-input-handler.ts` around the `prompt` case and its refusal mapping; `rpc-session-state.ts` field list; `rpc-input-validation.ts` `rpcCommandPayloadError`.
+
+## 2026-11-04 - Every `extension_ui_progress` gets one correlated reply; RpcClient consumes replies to its unawaited sends (senpi#5761)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: an `extension_ui_progress` frame is answered with exactly one reply keyed by its `id`, written after the `question_updated` the draft causes: `success: true` when a pending question took the draft, `error: "question_already_resolved"` after that question resolved, `error: "unknown_extension_ui_request"` otherwise. The `invalid_secret_response` refusal for a private input is unchanged.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `progress()` returns whether a pending question took the draft, or why none did.
+- `packages/coding-agent/src/modes/rpc/extension-ui-response.ts`: `ExtensionUiProgressReply` and `extensionUiProgressReply`, the reply's one shape.
+- `packages/coding-agent/src/modes/rpc/rpc-client-replies.ts`: `UnawaitedReplies`, bounded per-id counts of records sent without waiting; `handleRpcReply` consumes a reply to one of them quietly.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: notes every unawaited send (`extension_ui_response`, `extension_ui_progress`) and passes the counts to `handleRpcReply`.
+
+### Why
+
+- `extension_ui_progress` was the only answer-class record with no reply. A client forwarding records for someone else (a relay host) waits for a reply to every record it passes on, so it waited out its deadline, or would have needed a hand list of records with none. With a reply, the forwarder settles every record from the engine's own answer.
+
+### Why an extension could not handle it
+
+- The progress frame is handled by the RPC connection itself, before any command or extension hook runs, and the reply is the connection's own output; the client's reply correlation is likewise inside `RpcClient`.
+
+### Expected merge conflict zones
+
+- LOW: `connection-handler.ts` (the `extension_ui_progress` branch of `handleInputLine` and the `extension-ui-response.ts` import), `connection-question-bridge.ts` (`progress()`), `extension-ui-response.ts` (before `refusedExtensionUiResponse`), `rpc-client-replies.ts` (`handleRpcReply`), `rpc-client.ts` (the fields above `pendingRequests`, `handleLine`, the unawaited branch of `send`).
+
+## 2026-11-04 - Account-principal assign/acquire checks and revocation on expiry and account change (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-account.ts`: `McpPresenterAccounts.lapsed` revokes an account principal whose host account no longer matches or whose `attestedUntil` has passed. The store subscribes to the authority's `onAccountChange` and revokes every account principal on a sign-out or account switch. It also arms an expiry timer at `attestedUntil`, re-armed by `account_reattest`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-account-lifetime.ts` is new: `accountLapse` (host account match and attestation currency) and `AttestationExpiry` (one unref'd timer per account principal).
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: every signed command from an account principal passes `accounts.lapsed` before it runs, so assign and acquire are gated on account match and attestation currency.
+
+### Why
+
+- D11 S3-4 (senpi#4249): an account principal's self-service assignment under D1 is valid only while the host is signed into the attested account and the attestation is current; a sign-out, an account switch or expiry must end its grants.
+
+### Why an extension could not handle it
+
+- The presenter control endpoint, its account principals and their grants are host internals of the RPC writer; no extension sees them.
+
+### Expected merge conflict zones
+
+- LOW: the signed-command path in `mcp-presenter-control.ts`; the files are fork-only.
+
+## 2026-11-04 - Same-account presenter enrollment and re-attestation on the control endpoint (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-account.ts`: `McpPresenterAccounts` runs `account_enroll` (verified attestation, host account match, single-use `jti`, then a signed host transcript) and `account_reattest`, and keeps the in-memory account principals, each confined to the control connection it enrolled on. Re-enrolling the same account, device and key supersedes the earlier principal.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-attestation.ts` is new: `presenterKeyThumbprint` (RFC 7638/8037 OKP thumbprint of an Ed25519 SPKI), `PresenterJtiCache` (kept until `exp` + 60 s, refuses at 4096 instead of evicting) and the `dev`/`dname`/`jti` bounds.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-enrollment.ts`: `parseAccountEnrollment` and `accountEnrollmentTranscript`; the installation-key check is shared with `parsePresenterEnrollment` unchanged.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: dispatches account frames to `McpPresenterAccounts`; only an inherited principal becomes the launch owner.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-successor.ts`: exports its `LaunchOwner` type for the control.
+
+### Why
+
+- D11 (senpi#4249): a same-account presenter must become a principal on a host it did not launch, without an owner prompt, and must never inherit the launch owner's authority over successor enrollment.
+
+### Why an extension could not handle it
+
+- The presenter control endpoint, its principals and the launch-owner successor path are host internals of the RPC writer; no extension sees them.
+
+### Expected merge conflict zones
+
+- LOW: `mcp-presenter-control.ts` frame dispatch and `launchOwner` assignment; the files are fork-only.
+
+## 2026-11-04 - Two-sided extensions can live on the hand (S33, senpi#5741)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts`: `extensionToolHandlers(runner, twoSidedHome)`; with `"hand"`, no extension's tool handlers are forwarded to the loop.
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts` and `remote-executor-scope.ts` pass the `twoSidedHome` option through (default `"loop"`, S29's behavior).
+- `packages/coding-agent/src/modes/rpc/remote-executor-scope.ts`: `createLooplessHand` returns the scopes, `runLoopHooks(scope, event, payload)` and `loopHooks(event, payload)`, which run the user's loop hooks on that scope's own runtime (the same extension instances its tool calls run on), and `close()`. A scope ID stays bound to its first root (`scope_binding_mismatch` otherwise); a loop-hook call never reopens a disposed scope; each runtime is disposed once; `close()` waits for every disposal and ignores a runtime that never opened, and after it every call is refused. `createLooplessHandScopes` is its scopes.
+- `packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts`: `extensionLoopHooks` serves two events, in a session's order, each carrying every field of the loop's own event plus the loop's idle state (`input`: `inputId`, `text`, `images`, `source`, `attribution`, `streamingBehavior`; `before_agent_start`: `prompt`, `systemPrompt`, `trigger`, `images`, `preview`, `systemPromptOptions` as the loop built them, so apart from `cwd`, which is set to this machine's workspace, they describe the loop's machine): `input` returns the input result (`continue`, `handled`, or `transform` with the new text), which the loop returns from its own `input` handler, and `before_agent_start` returns the combined result. Both run only the user's extensions and the hooks builtin, inside a `createLoopHookCall` binding (the loop session's id, read-only, for that call only; reading it from a kept context after the call throws `LoopHookCallEndedError`, naming the member, which is the one deliberate refusal after a call), and each reply carries the messages its handlers sent (`sent`) and their notices (`notices`), including ones from a call's work after an earlier call of the same loop session ended (held up to `LATE_PER_SESSION`, past which the oldest held notice is dropped, or the oldest message when none is held, counted as `droppedLate` and never thrown) and its own handlers' failures (`errors`; a concurrent tool call's are not attributed to it).
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: the loopless runtime exposes `runLoopHooks` and binds its loop-hook call facts.
+
+### Why
+
+Brain/hand split S33 (K5): with a hosted loop, a two-sided extension runs whole on the user's machine, so its tool hooks stay there.
+
+### Why an extension could not handle it
+
+Whether a hand forwards an extension's tool events is the loopless runtime's decision.
+
+### Expected merge conflict zones
+
+`loopless-tool-handlers.ts` `extensionToolHandlers` head; the `local` option blocks of the runtime factory and the hand scopes.
+
+## 2026-11-04 - Loopless calls present through the port (S30, senpi#5740)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: the loopless runtime sets a `PresentationBroker` on its runner and runs each call through it, so a call that carries its nested plane presents its extension UI on the loop that owns it and ends after its presentations were presented. A presentation the loop cannot take is reported through the runner's `emitError` and never changes the call's result or error. A device file operation's `tool_call` check (`fileGuards.beforeToolCall`) runs through it too, with that operation's nested requester. Its UI reaches the attached client only when the brain names the presentation plane in `createRemoteToolHost({ filePlanes })`. By default, file operations host no plane, so that UI stays on the hand and the refused presentation is reported through the runner's error channel.
+
+### Why
+
+Brain/hand split S30: the hand's tool calls are where that UI is produced.
+
+### Why an extension could not handle it
+
+The loopless runtime's execute path is core.
+
+### Expected merge conflict zones
+
+`runtime-factory-loopless.ts` `execute` wiring next to S29's nested requester.
+
+## 2026-11-03 - Nested requester for loopless tool handlers (senpi#5664)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loopless-tool-call.ts`, `loopless-tool-handlers.ts`, `runtime-factory-loopless.ts`, `remote-executor-scope.ts`: the hand call's `nested` requester reaches the `tool_call`/`tool_result` handlers, which forward a two-sided extension's events through it.
+- `packages/coding-agent/src/modes/rpc/hand-file-ops.ts`, `runtime-factory-loopless.ts`: a device file operation's `tool_call` check gets the operation's `nested` requester too (`HandFileGuards.beforeToolCall` and `createHandFileOps`'s operation take it), so a two-sided extension's handler runs on the loop's copy for a file operation, as for a tool call.
+
+### Why
+
+Brain/hand split S29: forwarding rides the call's own nested plane (S31).
+
+### Why an extension could not handle it
+
+The loopless runtime's execute path is core.
+
+### Expected merge conflict zones
+
+`runtime-factory-loopless.ts` `execute` wiring; `loopless-tool-call.ts` handler event shapes.
+
+## 2026-11-03 - Session presence on a headless host's rows and opens (S34, senpi#5652)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `MultiSessionHostOptions.sessionPresence?: HeadlessPresence`, passed to the router as a session default. When absent (every host but a headless one with a presence binding) the host is unchanged.
+- `packages/coding-agent/src/modes/rpc/session-router-types.ts`: `RpcHostSessionDefaults.sessionPresence?`.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: the `open_session` answer carries `presence` when the host has one.
+- `packages/coding-agent/src/modes/rpc/session-router-host-reads.ts`: each `list_sessions` row carries `presence` when the host has one.
+- `packages/coding-agent/src/modes/rpc/rpc-host-response-types.ts`: `RpcSessionPresence` and the optional `presence` field on the `open_session` answer and the `list_sessions` row.
+
+### Why
+
+- A client that re-attaches to a headless session must see that its owning machine is offline and the session paused (C2, K7; senpi#5652).
+
+### Why an extension could not handle it
+
+- The `open_session` and `list_sessions` answers are RPC host internals that no extension reaches.
+
+### Expected merge conflict zones
+
+- LOW: one optional field each in the host options, the session defaults and the two response types; one spread line in the `open_session` answer and in `answerListSessions`.
+
+## 2026-11-03 - An observer can hold the host for a remote viewer (senpi#5626)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: a read marked `observe: true` on an observing command may carry `hold_host: true` (take the hold) or `hold_host: false` (release it); `observingHoldChange` reads it. Only the literal booleans count; `warm` and `authenticate` never hold.
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: an observer that takes the hold is HELD. It counts in `attachedCount` (occupancy) and taking the hold resets the idle window, until it releases, sends a non-observing line (then it is attached), or disconnects. The supervisor's idle exit, a socket host's empty-exit window and the owner-death quiescence check (`host-lifecycle-activity.ts`) all read this view, so a held observer counts in each, exactly like an attached client.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the `get_protocol_info` row of the command table documents `hold_host`.
+- `packages/coding-agent/docs/rpc.md` (idle-exit window, empty-host exit) and `packages/coding-agent/src/modes/rpc/AGENTS.md`: the hold is documented.
+
+### Why
+
+- A remote-control daemon reads a host only through observing requests, so the host idled out after `idleExitMs` while a remote viewer was attached (crash record `code 143, reason idle`). Plain observing reads still hold nothing, so looking at a host never keeps it alive.
+
+### Why an extension could not handle it
+
+- Idle exit is decided by the supervisor from its public-socket client classification, before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `host-client-occupancy.ts` classifier and `release`; `host-observe-request.ts` field constants.
+
+## 2026-11-01 - the host binds and reads its endpoint without ever following a symlink there (senpi#5319)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-socket-bind.ts`: `listen` binds the socket inside a fresh 0700 directory created beside the endpoint as `<endpoint>.bind-<hex>` (same filesystem), sets it 0600, and publishes it at the endpoint with `link(2)`. The bind directory (and any alias below) is removed only when the server closes (its `close` event) or the process exits: libuv unlinks the path it bound at close, so every directory on that path stays this process's own 0700 directory until then and its name cannot be re-created to aim that unlink elsewhere while it exists. That holds while the endpoint's parent is one no other user can rename entries in (the default `agentDir/rpc` 0700 directory and root-owned sticky `/tmp` both qualify); a parent another user can rename entries in already lets that user swap the endpoint itself, and refusing such parents is tracked separately. A failed bind closes the listener first, then removes each scratch path independently and rethrows the first failure. `link(2)` is atomic, never follows the new name, and fails `EEXIST` on any entry that took the endpoint after `prepareSocketPath` freed it (a planted symlink or a live socket); that refuses the start ("address already in use (an entry took the endpoint before the bind was published)"), closes the listener and leaves the entry untouched. It returns the identity of the published entry. Windows named pipes and Linux abstract sockets bind directly as before.
+- `packages/coding-agent/src/modes/rpc/host-socket-bind.ts`: when `<bind dir>/s` would exceed `MAX_SOCKET_PATH_BYTES` (an endpoint near the 103-byte limit), the bind goes through a short alias instead: a fresh 0700 temp directory (the OS temp directory, or `/tmp` when that is too deep; a root is used only when this user or root owns it and it is sticky or writable by its owner alone, since the owner of a sticky directory can still rename entries in it; else the bind refuses with `bind_alias_unavailable`) holding this process's own symlink to the bind directory. Only that intermediate component is a link, made by this process in a directory no other user can write; the socket is still created inside the private bind directory and published with `link(2)`. Every endpoint `prepareSocketPath` accepts still binds.
+- `packages/coding-agent/src/modes/rpc/host-bind-alias-reaper.ts`, `packages/coding-agent/src/modes/rpc/host-ensure.ts`: an alias outlives its host only when the host was killed (SIGKILL, OOM), since it is otherwise removed at close or exit. `ensureHost` now sweeps such leftovers from the same temp roots, next to the hop-directory reaper and outside every lock: each alias records its owner (`.owner`: pid and process start time, written before the link), and a `senpi-bind-XXXXXX` directory is removed only when it is this user's 0700 directory, older than 60 s, holding exactly its `d` link and `.owner`, and that owner is provably dead (an unreadable identity counts as alive). A missing bind directory is never taken as proof, so a live host's alias is kept even if its bind directory was moved. Removal unlinks the two entries and then the directory, so it never recurses and never touches the link's target; it examines at most 64 names per root per pass, each root once.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`, `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`, `packages/coding-agent/src/modes/rpc/socket-ownership.ts`: `<socket>.bind-*` is a socket sibling (`BIND_SCRATCH_INFIX`, `BIND_SCRATCH_SOCKET`), and `host gc` removes such a directory a crashed bind left (beside the endpoint or beside a successor's `.next-<gen>`) while it holds nothing but that bind's socket; any other content, or one it cannot read, keeps it, reported under `skipped`. A `.next-<gen>.bind-*` directory is never probed as a successor socket.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: the supervisor's `listen` delegates to that bind. `prepareSocketPath` refuses a non-socket entry (a symlink or a regular file) as "address already in use, occupied by a non-socket entry (a symlink or other file; nothing listens there)" instead of naming a live server that does not exist.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-startup.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: closing the server no longer removes a successor's `<socket>.next-<gen>`, because libuv's close-time unlink now lands on the bind scratch. So when adoption of the public endpoint is refused (a revoked grant, a foreign owner token, an entry that replaced the expected one), `publishSupervisorEndpoint` unlinks its `.next-<gen>` through `unlinkOwnedSocket`, only while that path is still the entry this generation bound. The supervisor's `listen` returns that identity.
+- `packages/coding-agent/src/modes/rpc/host-public-clients.ts`: `countPublicClients` also counts a descriptor whose kernel-reported address resolves to the public socket's inode. The kernel names a listener and its accepted clients by the path they were bound at, which is now the bind scratch (or its alias), so before this change a published host read as having no listener (`undefined`, so `stale_clients`) and `host gc` could never stop a stale old-engine host (#3268). The extra match only adds descriptors, so the worst case is one more counted client, which keeps a host and never stops one.
+- `packages/coding-agent/src/modes/rpc/socket-ownership.ts`, `packages/coding-agent/src/modes/rpc/socket-holders-by-identity.ts` (new): `lsof` matches a unix socket argument only by the name it was bound at, so `lsof -t -- <endpoint>` found no holder for a published endpoint whose listener was live, and on macOS (where a full backlog refuses a connect) `socketEntryListenerState` could read that live host as dead. When the path lookup finds nobody and the entry has more than one link, `lsofSocketHolders` now lists every process's unix sockets (`lsof -U -F pn`) and keeps the pids whose socket name resolves to the entry's dev:ino. An unreadable listing stays `undefined` (a holder may be there), and the match only adds pids.
+- `packages/coding-agent/src/modes/rpc/socket-ownership.ts`: `statSocketIdentity` reads with `lstat`. A symlink at a socket path answers with its own identity, which never matches a bound socket's, so ownership classification reads it as another entry (`replaced`), `unlinkOwnedSocket` leaves it, and `adoptPublicSocket` refuses to replace it. A real socket's identity is unchanged.
+
+### Why
+
+- On macOS `bind(2)` follows a dangling symlink at the endpoint and creates the socket at the link's target, so a link planted between `prepareSocketPath` and the bind moved the host's listener to a path the planter chose while clients connected to the link. Linux refuses that bind with `EADDRINUSE`, and both platforms refuse `link(2)` onto any existing entry. `rename(2)` was not used for the publish because it silently replaces a live socket that took the name, which would remove an endpoint this host never probed (#5283, #5314). A bind directory beside the endpoint lengthens the bind path, so endpoints near the sun_path limit need the short alias to bind at all, and a bind directory named after its socket is one gc can recognise when a crash leaves it. `statSocketIdentity` followed links with `stat`, so a link to a host's own socket read as that socket and teardown could unlink the link entry by path.
+
+### Why an extension could not handle it
+
+- The bind and the ownership reads run inside the lifecycle supervisor and the socket host before any session or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the reaper call in `ensureHost` (`host-ensure.ts`), `listen`/`bindAddress`/`guardedRoot` in `host-socket-bind.ts` and `listen` in `host-lifecycle-proxy.ts`, `removeEndpoint` in `host-gc.ts`, `publishSupervisorEndpoint` in `host-lifecycle-startup.ts`, `countPublicClients` in `host-public-clients.ts`, `socketSiblings` in `host-gc-evidence.ts`, the non-socket refusal in `prepareSocketPath`, and `statSocketIdentity` and `lsofSocketHolders` in `socket-ownership.ts`.
+
+## 2026-10-30 - ChatGPT registration metadata in account responses (part of senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`: declares the additive route, plan permission and signed-out metadata already returned by the shared account summary.
+- `packages/coding-agent/docs/rpc.md`: documents those fields and the shared login route prompt.
+
+### Why
+
+- Future clients must consume the same account implementation as the terminal.
+
+### Why an extension could not handle it
+
+- RPC owns the public response type.
+
+### Expected merge conflict zones
+
+- `RpcProviderAccount` metadata fields.
+
+## 2026-10-27 - Bind Windows presence guards to the headless native bridge (desktop#4199)
+
+### What changed
+
+- `crates/senpi-socket-secret`: expose the existing Windows presence registry through N-API with acquire, pre-action fencing, cancellable blocking wait, retained admissible probes, and release after a committed quiescence receipt.
+- `crates/senpi-socket-secret`: `presenceProbeRetained` applies the admissibility rules to the guard a blocking wait retained, through that handle (design Revision 8, r7 note 4); an inadmissible handle is released at once. `LockAttempt::Inadmissible` and `NotHeld` replace the `Unknown(13)` marker, so a real `ERROR_INVALID_DATA` keeps its code. The probe's `header` field is the object's whole immutable header (tag, schema, creation timestamp), compared byte for byte. `ReleaseReason` accepts the four release points of the recovery order: `released`, `recovery_abandoned`, `discharged`, `retired`.
+- `socket-secret-native.ts`: add typed presence results and an AbortSignal wrapper, `probeRetained`, `PresenceReleaseReason`, and the `header` probe field. POSIX returns `unavailable` without loading a Windows prebuild.
+
+- Review fold (senpi#4470 r2): `probe_retained` acts only on the guard a blocking wait retained (`Guard.wait_retained`); an `acquire`d authority guard answers `NotHeld` and stays registered, so no misdirected call drops it without a receipt. The crate's `AGENTS.md` and the registry docs name both release paths. The Windows tests remove their temp files.
+
+### Why
+
+- Public Windows secret reservations need native lifetime guards that survive JavaScript garbage collection and recovery evidence that follows Revision 6 lifetime binding and Revision 7 admissibility.
+
+### Why an extension could not handle it
+
+- Only the native bridge owns non-inheritable kernel handles and can retain them independently of JavaScript object lifetime.
+
+### Expected merge conflict zones
+
+- MEDIUM: native socket-secret exports and the headless loader.
+
+## 2026-11-04 - The presenter control endpoint takes a host surface, not the writer (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-host-surface.ts` is new: the `PresenterHostSurface` interface (`authority`, `getMcpFormBinding`, `findMcpPresenterConnection`, `getConnectionCapabilities`, `advertiseMcpPresenterControl`, `withdrawMcpPresenterControl`).
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: `McpPresenterControl` takes a `PresenterHostSurface` instead of a `SessionEventWriter`. No behaviour change.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts`: implements `PresenterHostSurface`; its `authority` getter returns `enableMcpPresenters()`.
+
+### Why
+
+- D11 S3-6a (senpi#4249): a terminal session has no `SessionEventWriter`, so the control endpoint needs an interface a terminal adapter can provide (S3-6b).
+
+### Why an extension could not handle it
+
+- The presenter control endpoint and the writer's presenter state are host internals of the RPC mode; no extension sees them.
+
+### Expected merge conflict zones
+
+- None: all three paths are fork-only.
+
+## 2026-11-04 - Several same-account presenters hold one MCP form binding; first answer wins (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-grants.ts`: a binding holds a set of grants, at most one per (principal, connection), each checked by `current()` on its own; `holders()`; `features` parses a signed acquire's feature list and `ELSEWHERE_FEATURE` (`elsewhere_v1`) is recorded on the registration; `enroll(principal, identity)` records the verified presenter identity for `answeredBy`; a presence (id + lifetime) opens with the first holder and closes with the last.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-bindings.ts`: `grants`, `queue` and `presence` replace the single `grant`; `version()` is the presence id and `capture()` a binding-level presentation; detach, withdraw and dispose revoke every grant the connection holds.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-forms.ts`: `receive` finds the caller's grant by (connection, grantId) before any private parsing; one FIFO per binding (`binding.queue`); when a form reaches the head, each current holder gets its own dialog in one group.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-form-group.ts` (new): `McpFormGroup`, the one terminal latch per form: first valid human action wins, any holder's presentation counts, one holder's loss ends only its dialog, the last holder's loss ends the form; settles `mcp_form_resolved` (with `elsewhere: true` for negotiated non-winners) and the value-free `mcp_form_settled`.
+- `packages/coding-agent/src/modes/rpc/mcp-form-dialog.ts`: one holder's view of a group (deliver, sync, presented, respond, close, resolved, settled).
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: `mcp_presenter_acquire` accepts `features`; a malformed list is refused.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-authority.ts`, `packages/coding-agent/src/core/mcp-form-types.ts`, `packages/coding-agent/src/modes/interactive/mcp-local-presenter.ts`: the identity parameter, the `elsewhere`/`McpFormSettled`/`McpPresenterIdentity` types, and the widened private frame union.
+
+### Why
+
+- D11 (senpi#4249), design section 2.5: every attached same-account device shows the form and the first answer wins, with one FIFO per binding and holders snapshotted at dialog creation. The new wire keys are negotiated per grant because the shipping desktop decodes private records strictly.
+
+### Why an extension could not handle it
+
+- The presenter authority, its grants and private form frames are host internals of the RPC writer; no extension sees them.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-04 - The presenter control endpoint opens for an injected account authority (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-account.ts` is new: the `PresenterAccountAuthority` interface (`hostAccount`, `verify` with typed refusals, `onAccountChange`) that a distribution injects at host start. Nothing calls `verify` yet.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control-start.ts` is new: `startMcpPresenterControl` starts the management endpoint on an enforced host that has the fd-4 bootstrap, an account authority, or both; `presenterPipePath` moved here.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `presenterAccountAuthority` host option; the control start is delegated to `startMcpPresenterControl`; `presenterPipePath` is re-exported.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: the constructor takes the optional authority; only once `listen()` succeeds is the path advertised to the writer, and only when an authority is present. `dispose()` withdraws it.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts` and `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `mcp_presenter_context` adds `context.controlEndpoint` only for `discover: true` on a host whose control has an account authority.
+
+### Why
+
+- D11 (senpi#4249): a same-account presenter must be able to reach the management endpoint of a host it did not launch. Discovery is opt-in because the shipping desktop decodes the context reply strictly and would reject an unrequested key.
+
+### Why an extension could not handle it
+
+- The presenter control endpoint, its start, and the private `mcp_presenter_context` record are host internals of the RPC writer; no extension sees them.
+
+### Expected merge conflict zones
+
+- LOW: `multi-session-host.ts` around the presenter control start in `runSocketHost`; the other paths are fork-only.
+
+## 2026-11-03 - Delegated connections: the engine enforces its own method classes (senpi#5632)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/delegated-connection.ts` (new): `declare_delegation {principal, granted}` and `classify_record {record}`, answered by the host core outside the class table. A connection that proved the launch key may declare before any record other than `get_protocol_info`/`authenticate`; later declarations only narrow (`delegation_unauthenticated`, `delegation_late`, `delegation_fixed`). On a delegated connection every record is classified and checked against the grant before dispatch (`delegation_malformed` only for what the local path also refuses before dispatch: not an object, no string `type`; `delegation_unclassified`; `delegation_not_granted` with `errorData.class`), so it accepts exactly what a local connection accepts. `connection_local` records act on the connection itself except `subscribe_sessions` (`observe`), `record_user_activity` (`drive`), `release_session`, `warm`, `reclaim_session`, `move_session` (`device_admin`), refused `delegation_local_only` without that grant (exhaustive `CONNECTION_LOCAL_REQUIREMENT`); `set_client_info` is unfiltered. The codes are omo-relay-spec decision 0018's `delegationRefusal` set.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore.handle` runs that decision synchronously after `JSON.parse`, before any await; `runSocketHost` registers each connection with the proof source its transport reports.
+- `packages/coding-agent/src/modes/rpc/host-internal-transport.ts`, `rpc-public-auth.ts`, `host-admission-proxy.ts`, `host-lifecycle-proxy.ts`, `rpc-auth-proof.ts`, `host-observe-request.ts`: how the launch-key proof reaches the host core. The public-key filter forwards one `launch_proven` record, in order, after a successful `authenticate`, and refuses that record from a client (`reserved_record`); the supervisor's proxy refuses it from a client too and writes it first for a client that proved the Windows public secret. The host trusts it only on a connection whose transport delivers proof in band (the supervisor's hop, the bare host's filter); the Windows bare secret is proof at admission. The record is an observing line for occupancy.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: per-connection delegation state, created at `registerConnection` (`launchProof` option) and dropped at `unregisterConnection`.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts`, `rpc-protocol-info-types.ts`, `host-capabilities.ts`, `custom-capability.ts`: `get_protocol_info.method_classes` carries the whole table description (`classes`, `dynamic_versions`) next to `version`/`digest`; multi-session hosts advertise `delegated_connection_v1`. `RPC_METHOD_CLASS` and its digest are unchanged.
+
+### Why
+
+- A forwarder had to keep its own copy of the class table, and every engine table change broke remote use until it shipped a new copy (senpi#5632, S1a of the DS2b split).
+
+### Why an extension could not handle it
+
+- The decision has to run inside the host core before dispatch, on the connection state and launch-key proof only the RPC transport holds.
+
+### Expected merge conflict zones
+
+- LOW: the top of `createHostCore.handle`, `accept` in `runSocketHost`, `PublicRpcConnection.line`, `proxyWithAdmission.requests`.
+
+## 2026-11-03 - RPC replies are written at any depth; an unwritable reply answers its id with `response_unwritable` (senpi#5702)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/jsonl.ts`: `legacyJsonText` keeps native `JSON.stringify` as the fast path and, only on the engine's own stack overflow, falls back to an explicit-stack writer (`jsonNormalValue` + a non-recursive text writer) with `JSON.stringify`'s exact semantics (`toJSON(key)`, boxed primitives, undefined/function/symbol omitted in objects and `null` in arrays, BigInt and cycle `TypeError`, `Object.keys` order, `-0` to `0`, non-finite to `null`), so it no longer throws `LegacyRecordDepthError`. `isStackOverflow` is exported. No module is added to the lifecycle supervisor's import graph.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts`: the recursive normalizer's stack-overflow fallback is the explicit-stack `jsonNormalValue` instead of `JSON.parse(legacyJsonText(...))`.
+- `packages/coding-agent/src/modes/rpc/legacy-record-depth.ts`: `enqueueLegacyRecord` answers a reply (`type: "response"`) whose enqueue throws for any reason with `unwritableReply` (same `id` and `command`, `success: false`, a one-line `error`, `errorCode: "response_unwritable"`), reported once on stderr and counted in `legacyRefusals`; a non-reply record whose path overflows the stack is still the typed, counted `LegacyRecordDepthError` refusal. The same function runs inside a worker session's isolate, so worker replies get the same answer.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `RPC_ERROR_RESPONSE_UNWRITABLE = "response_unwritable"`, added to `RpcErrorCode`.
+
+### Why
+
+- Native `JSON.stringify` recurses per nesting level, and `get_tree` nests one level per chained entry: on Node 24 a session of about 3,000+ entries overflowed, the reply was refused on stderr only, and the caller (a relay forwarding `get_tree`) waited its whole 30-minute deadline. The LEAD ruling for senpi#5702 keeps the `get_tree` wire shape, makes serialization depth-independent, and requires every reply that still cannot be written to answer its caller with a typed error for every RPC method; it supersedes RULING-68's "refused, never delivered" for replies.
+
+### Why an extension could not handle it
+
+- The record writer and its failure handling sit on the RPC host's output path below every command handler; no extension hook sees or replaces a serialized reply.
+
+### Expected merge conflict zones
+
+- LOW: `jsonl.ts` (`legacyJsonText` and the helpers above it), `json-normal-value.ts` (the final fallback), `legacy-record-depth.ts` (`LegacyRecordRefusals`, `enqueueLegacyRecord`), `rpc-error-types.ts` (after `RPC_ERROR_RESPONSE_TOO_LARGE`, the end of `RpcErrorCode`).
+
+## 2026-11-03 - Advertise account_reset in get_protocol_info (senpi#5698)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `ACCOUNT_RESET_CAPABILITY = "account_reset"`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the multi-session host advertises `account_reset`, after `provider_account_test`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: classic `get_protocol_info` advertises `account_reset`, after `provider_account_test`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the `resetProviderAccount` doc comment names the capability.
+
+### Why
+
+- `account_reset { provider, name }` (senpi#4879) was accepted by both host kinds but no capability said so, so capability-gated clients (the desktop Unblock action) kept the action hidden on engines that support it.
+
+### Why an extension could not handle it
+
+- `get_protocol_info` capability lists are built by the protocol-owned connection handler and multi-session host.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: capability imports and the `get_protocol_info` capability lists.
+
+## 2026-11-02 - A marked admission retry is never re-run as a fresh admission (senpi#5285, RULING-125, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/src/modes/rpc/attachment-types.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`: `open_session`, `attach_session` and `subscribe_sessions` accept an optional `retry: true`.
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: a marked retry whose ID has no row on the socket epoch (evicted into the retired ring, forgotten after the ring overflowed, or never seen) is refused with `admission_unknown` before any producer runs. A marked retry of a done row still answers the stored result and of a live pending ID still joins the in-flight admission; unmarked requests are unchanged (`admission_retired` for a retired ID, a fresh admission for a forgotten one).
+- `packages/coding-agent/src/modes/rpc/compact-admission-error.ts`, `packages/coding-agent/src/modes/rpc/compact-admission-types.ts`: the `admission_unknown` reason (wire code `admission_admission_unknown`) and the identity's `retry` flag.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`, `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: the marker is passed to the admission index and left out of the request fingerprint, so a marked retry matches its original row instead of answering `admission_conflict`.
+- `packages/coding-agent/src/modes/rpc/rpc-client-admissions.ts`: `RpcClient.openSession` sends `retry: true` whenever it re-sends an `admissionId` this client instance already sent, including after a refused or unanswered first send and across a disconnect and reconnect. The sent IDs live in a 4,096-entry LRU (least recently sent dropped first) that a disconnect does not clear.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: a C4.4 retry is the same `admissionId` sent again, and the wire could not tell it from a fresh open. #5274 bounded a socket epoch's IDs (a 128-row LRU plus a 4,096-digest ring), so a retry older than the ring ran again as a fresh admission and could duplicate its effect (the RULING-114 residual). That residual blocks turning `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` on by default.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`, `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: every request field fed the fingerprint, so a marked retry of an existing row would otherwise have been refused as a conflicting request.
+- `packages/coding-agent/src/modes/rpc/rpc-client-admissions.ts`: the residual stays open for any client that does not mark its retries. The typical C4.4 retry follows a reconnect, on a socket epoch that has never seen the ID, so a client that forgot its sent IDs on disconnect would re-send unmarked and open again; the LRU bound keeps that memory from growing with the client's lifetime.
+
+### Why an extension could not handle it
+
+- Compact admission is host RPC transport state; extensions cannot reach the per-socket admission index or the inbound command schemas.
+
+### Expected merge conflict zones
+
+- LOW: `compact-admissions.ts` `run()` registration branch; the `open_session`, `subscribe_sessions` and `attach_session` command types and schemas.
+
+## 2026-11-03 - A host signal between a permit worker's checks and its wait no longer leaves it parked (senpi#5591)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-permits.ts`: the permit block gains a fourth word, `wake`, a count only the host adds to on every signal (grant, deny, close), and the one word `WorkerPermitGate.acquire` waits on. Each pass of the wait loop reads `wake` before its other checks and waits on that value, so a signal published after the checks changes the waited word and the wait returns at once. `PERMIT_BLOCK_BYTES` is the block size, derived from `PERMIT_WORD`; `WorkerPermitGate` refuses a block of any other size, so host and worker never run with different layouts (RULING-63 Q3a).
+
+### Why
+
+- The worker waited on `credit`, which a close does not change. A close published after the worker's last check and before its `Atomics.wait` started notified nobody, and the wait then compared an unchanged `credit` and slept until its own deadline (300 s in the acceptance test, the control timeout in production), so a closing worker was held for the whole deadline (senpi#5591). A test now holds the isolate at its wait call, sends the close (and a grant) into that window, and only then lets the wait start.
+
+### Why an extension could not handle it
+
+- The permit block and its wait loop are engine internals of the session worker transfer path; no extension sees or owns them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-worker-permits.ts` (`PERMIT_WORD`, `HostPermits.signal`, `WorkerPermitGate`) only; fork-only file.
+
+## 2026-11-02 - A hand's scopes on loopless runtimes, with tool handlers on every call (senpi#5483)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loopless-execute-grant.ts`: a second closed-allowlist caller, `remote-tool-executor` (`grantLooplessExecuteToRemoteExecutor()`); `looplessGrantRunsToolHandlers()` tells whether calls made with a grant run the tool handlers. The check in `execute()` is unchanged.
+- `packages/coding-agent/src/modes/rpc/loopless-tool-call.ts`: with handlers, a call runs the `tool_call` handlers after argument validation (a block, an abort or a throw stops it before the tool runs), the tool, then the `tool_result` handlers, applying their override as a session does.
+- `packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts` is new: the runtime's own extension runner's `tool_call`/`tool_result` emission.
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: runs those handlers for the remote executor's grant, and binds `getAllTools` and the loader's hook sources on its runner.
+- `packages/coding-agent/src/modes/rpc/remote-executor-scope.ts` is new: `createLooplessHandScopes(configuration)` opens one loopless runtime per scope with the remote executor's grant, cwd = the scope's absolute root.
+
+### Why
+
+- Closes the remote executor's side of the obligation recorded on senpi#5413: no untrusted call reaches a loopless runtime's tools past its permission checks.
+
+### Why an extension could not handle it
+
+- The loopless runtime and its execute guard are the RPC host's.
+
+### Expected merge conflict zones
+
+- LOW: new files; the `execute` closure in `runtime-factory-loopless.ts`.
+
+## 2026-11-02 - Loopless workers share the per-process worker cap (senpi#5438)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/worker-capacity.ts` is new: `WorkerCapacity`, the process's shared worker budget; each pool registers the count of workers it holds.
+- `packages/coding-agent/src/modes/rpc/loopless-worker-pool.ts`, `loopless-worker-client.ts`, `loopless-worker-protocol.ts` and `loopless-worker.ts` are new: the pool admits loopless workers against the shared cap (`too_many_sessions` before a worker starts), the client and isolate start a `LooplessRuntime` and close it.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: optional `capacity`; with it the registry registers its open count there and admits against the shared total. Without it nothing changes.
+- `packages/coding-agent/package.json` (`build:binary`), `scripts/build-binaries.sh` and `packages/coding-agent/scripts/qa-rpc-socket/lib/compiled-generations.mjs` add `./src/modes/rpc/loopless-worker.ts` to the compiled entry list.
+
+### Why
+
+- One hand process may serve many sessions; its worker cap (`SESSION_WORKER_LIMITS.workers`) must hold across all of them, whatever kind of worker each session uses (brain/hand split, senpi#5413).
+
+### Why an extension could not handle it
+
+- Worker admission and isolate start-up belong to the RPC host, which runs before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `WorkerSessionRegistryOptions` property list, the registry constructor and the `size` field passed to `openWorkerSession`; the compiled entry lists.
+
+## 2026-11-02 - A machine-owned multi-session host for the headless engine (S23, senpi#5418)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `MultiSessionHostOptions.sessionOwner?: "client" | "machine"`. When absent or `"client"`, the host is unchanged. In `createHostCore`, a `"machine"`-owned host forces an infinite empty-exit window, so it never exits for being empty. It also dispatches an `open_session` that carries no `retain_on_disconnect` as `retain_on_disconnect: true`, so every session it opens outlives its client; an explicit `false` is honored.
+
+### Why
+
+- A headless engine owns its sessions and their loops: a client that leaves must not end a session or a running turn, and the engine must stay up with no sessions (senpi#5418).
+
+### Why an extension could not handle it
+
+- Session retention and the empty-exit window are RPC host internals that no extension reaches.
+
+### Expected merge conflict zones
+
+- LOW: the policy line and the dispatch line in `createHostCore`.
+
+## 2026-11-02 - The calls table adopts the producer's call keys (RULING-127, senpi#5374)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-session-calls.ts`: a block call is created with `blockCallKey(messageId, contentIndex)`, an execution start adopts the key its producer carried, and the host mints `<sessionEpoch>:<sequence>.<k>` only for a call with neither. A block, whether its `toolcall_start` streams or it appears only in the terminal (`announce`), joins the oldest bridge-started call of its id in the turn and keeps that call's first key. An execution start joins only a block of its own turn, so a block an earlier turn left unstarted never takes a later turn's start.
+- `packages/coding-agent/src/modes/rpc/compact-call-model.ts`: `FRESH_CALL`, the header a new call starts from, moved here from `compact-session-calls.ts` unchanged (that file stays under its size ceiling); the `CallIdentity` contract names the producer's key as the source.
+- `packages/coding-agent/src/modes/rpc/compact-call-table.ts`: `bridgeStarted(turnId, id)`, the oldest unowned top-level call of an id in a turn. The creation ordinal is the one a key was first put at (`reput`), no longer parsed from the key; `creationOf` is removed.
+- `packages/coding-agent/src/modes/rpc/compact-call-fold.ts`, `compact-session-state.ts`, `compact-lane-current.ts`, `session-acceptance-admission.ts`, `session-acceptance-lane.ts`: `accept` takes the record's carried execution key and passes it to `executionStart`.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`, `session-worker.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`: the key travels out of band, in process from the record's carrier and across a worker as the output frame's `callKey`, never as a record field.
+
+### Why
+
+- RULING-127 (a)/(b): core mints per toolCall block and the host adopts, so the persisted key equals the live and snapshot key; the first key a call carries is its key forever.
+
+### Why an extension could not handle it
+
+- The calls component and the worker frame are RPC host internals.
+
+### Expected merge conflict zones
+
+- LOW: `create`/`toolStart`/`announce`/`executionStart` in `compact-session-calls.ts`, `put` in `compact-call-table.ts`, the `accept`/`admitRecord`/`foldCall`/`acceptCall`/`foldCallRecord` signatures, the worker output frame.
+
+## 2026-11-02 - Compact snapshot rows of a toolCallId reused within one message are marked callUnknown (RULING-123 C3.4, senpi#5348)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-call-table.ts`: `put` stores a call's header with `callUnknown: true` exactly while `sharesIdInMessage` holds for it, and the first call to share an id with another of its message republishes those others marked; `index` records the shared mark from that header, so the snapshot rows and the live-record stamp read one mark.
+- `packages/coding-agent/src/modes/rpc/compact-call-model.ts`: `OutstandingCall.callUnknown` and `CallProjection.callUnknown`, documented as the fields a reader must not trust as that call's own (phase, start, hook, progress, result, outcome, carrier, nested calls).
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: a toolResult terminal row whose retired call is marked carries `callUnknown: true` beside its `runtimeItemKey`.
+- `packages/coding-agent/src/modes/rpc/compact-settled-rows.ts` (new): the settled row model (`TerminalRow`, `OwnerRow`, `StoredOwner`, `SettledMember`, `SettledReader`, `isProjection`) moved out of `compact-settled-messages.ts` unchanged except for the new field; `compact-catalog-families.ts`, `compact-catalog-settled.ts` and `compact-catalog-source.ts` import it from there.
+
+### Why
+
+- RULING-123 C3.4: the reducer settles two calls sharing one `toolCallId` inside one message oldest-open-first. Since #5346 their live execution and hook records say `callUnknown`, but the recovery snapshot still paged the order-picked execution state, outcome and carrier as each call's fact, so a consumer joining against it could show the two calls' states swapped. Same fail-safe as RULING-122/123: a row the engine cannot vouch for says so.
+
+### Why an extension could not handle it
+
+- The calls component, the settled store and the recovery catalog are RPC host internals.
+
+### Expected merge conflict zones
+
+- LOW: `put`/`index` in `compact-call-table.ts`, the `TerminalRow` construction in `CompactSettledMessages.end`, the imports of the three catalog modules.
+
+## 2026-11-01 - RPC sessions ignore `setProgramStatus` (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/core/runtime/ui-broker.ts` implement `setProgramStatus` as a no-op. No `extension_ui_request` method is added to the wire.
+
+### Why
+
+- OSC 7501 is a terminal report and an RPC session owns no terminal. A new wire method would reach clients whose request schema is closed (the desktop app decodes an unknown method as an unknown event and shows a warning row), with nothing for them to do with it.
+
+### Why an extension could not handle it
+
+- The RPC UI context is core.
+
+### Expected merge conflict zones
+
+- LOW: the `setTitle` neighbourhood in `connection-handler.ts` and `ui-broker.ts`.
+
+## 2026-10-29 - Structured RPC reset for one account (desktop#4203)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`: add `account_reset { provider, name }` and its correlated success response.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: await the existing full engine reset, map unknown names to `account_not_found`, validate selector types, return credential-free failures, and reuse the existing post-write account-change event.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: add `resetProviderAccount`, rejecting failed acknowledgements with `RpcCommandError`.
+
+### Why
+
+- Part of sisyphuslabs/omo-desktop-app#4203 (U1): clients need to reset one named account through an acknowledged engine operation without deleting credentials or changing other accounts.
+
+### Why an extension could not handle it
+
+- The structured RPC command union, response union, dispatcher and typed client are protocol-owned surfaces.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: credential-account imports and account mutation cases.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: provider-account command, response and client methods.
+
+## 2026-10-26 - Context-window fallback diagnostics carry displayable notice text (senpi#4065)
+
+### What changed
+
+- Assistant diagnostics forwarded by the existing message events now carry `details.message` for `claude_sdk_oauth_long_context_fallback`, beside `details.contextWindow`. `docs/rpc.md` documents the muted recovery-notice contract and saved-message behavior.
+
+### Why
+
+- A diagnostic type alone required every client to invent its own notice copy. The producer supplies renderable text shared with the TUI.
+
+### Why an extension could not handle it
+
+- The builtin provider owns this diagnostic and the documented RPC contract.
+
+### Expected merge conflict zones
+
+- LOW: `docs/rpc.md` message event reference. No RPC event transport changes.
+
+## 2026-11-02 - A loopless session-worker runtime (senpi#5436)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts` is new: `createLooplessRuntimeFactory(configuration, local)(profile)` builds the CLI's cwd-bound services (settings, project trust decided without a UI, model registry, extensions and their flags), then the tool registry through `bootstrapRuntime()` / `buildToolRegistry()` on a runner without a session. `LooplessRuntime` exposes `definitions`, `diagnostics`, `execute(name, toolCallId, params, signal)` and `dispose()`.
+- `packages/coding-agent/src/modes/rpc/loopless-tool-call.ts` is new: `execute` prepares and schema-validates each call's arguments as the agent loop does before the tool runs; invalid arguments and a failing tool are an `isError` result. It does not run the extensions' `tool_call`/`tool_result` handlers: the remote tool executor that will call this runtime places them.
+- `packages/coding-agent/src/modes/rpc/loopless-execute-grant.ts` is new: until that executor exists, `execute` refuses every call (`LooplessExecuteRefusedError`) unless the runtime was built with a grant from a closed allowlist whose only caller is the in-process test harness; a missing, forged or out-of-harness grant fails closed.
+- `packages/coding-agent/src/modes/rpc/loopless-runtime-settings.ts` is new: the UI-less project-trust decision (its `project_trust` handler errors reported as diagnostics) and the CLI tool filters (`--tools`, `--no-tools`, `--no-builtin-tools`, `--exclude-tools`, settings `defaultTools`), resolved as `createAgentSession` resolves them.
+- The runtime places tools through `createToolChildRuntime()` with its own scope, so `--tool-runtime child` runs child-placed work on its own tool child, and `dispose()` marks the extension contexts stale before closing the dispatcher and the child.
+
+### Why
+
+- A tool-execution-only process (brain/hand split, senpi#5413) needs OmO's tools and extensions with only the agent loop removed, writing no transcript.
+
+### Why an extension could not handle it
+
+- The session worker's runtime is built before any extension loads, and an extension cannot remove the loop it runs under.
+
+### Expected merge conflict zones
+
+- LOW: new file; the project-trust decision mirrors `createCliRuntimeFactory` in `src/main.ts`, so a change there should be mirrored here.
+
+## 2026-10-27 - get_auth_providers reports a sign-in store that could not be loaded (senpi#4413)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_auth_providers` adds `storeError` from `authStorage.getLoadError()`, read after the rows are built.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`: new `RpcAuthStoreError` (`kind: "malformed_json" | "invalid_format" | "unreadable" | "write_back_failed"`, `reason`), exported from `rpc-types.ts`. `packages/coding-agent/src/modes/rpc/rpc-read-response-types.ts`: `get_auth_providers` `data` gains optional `storeError`.
+
+### Why
+
+- Clients showed "Not connected" for every stored sign-in when the store could not be read, because nothing in the response said why.
+
+### Why an extension could not handle it
+
+- The `get_auth_providers` response shape is built in the RPC connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `get_auth_providers` case in `connection-handler.ts` and the RPC type unions (additive).
+
+## 2026-11-02 - The recovery manifest states its required catalog families (senpi#5397, RULING-128)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-catalog-registry.ts`: the family registry gains `requiredKinds`: the families whose producer is `complete`, in code-unit order, each once. `familyRegistry` derives it from the same producers that mark a family `partial` (RULING-60/61), and `readFamilyRegistry` refuses a registry whose list disagrees with its rows. `familyProducers` takes the frozen root (`transcript`, `refusedCorrelations`) so the catalog and the manifest call it the same way.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-families.ts`: `checkpointComponents` passes the root to `familyProducers`; the `families/families` component now carries `requiredKinds`, so its digest, and with it `checkpointDigest`, covers the list. The generator returns the registry it emitted.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-manifest-shape.ts`, `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts`: the compact-v1 manifest gains `requiredKinds` after `catalogRootLength`, copied from the registry `checkpointComponents` returned, the same object it wrote into the digested component, so the two cannot differ by construction.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-manifest-kinds.ts`: `readRequiredKinds(manifest, registry)`, the reference reader of a decoded manifest's list. It refuses a missing list (`manifest_missing_required_kinds`), an unknown kind (`manifest_unknown_required_kind`) and any list that differs from the complete families of the digest-verified `families/families` component (`manifest_required_kinds_mismatch`).
+- `packages/coding-agent/docs/rpc.md`: the manifest's fields, `requiredKinds`, and the client rules (`manifest_missing_required_kinds`, `manifest_unknown_required_kind`, `manifest_required_kinds_mismatch`, never a built-in family list). New golden `docs/engine-socket/fixtures/recovery-manifest/` (one partial family excluded); admission goldens c and i re-recorded for the manifest's new bytes.
+
+### Why
+
+- A compact client opening a root had to copy `CATALOG_FAMILIES` and subtract the partial families itself, a second source that drifts when the engine adds a family. RULING-128 (option B): partial-versus-complete is the engine's per-cut decision, so the engine states the list, inside the digested content, flag-on compact only.
+- `checkpointDigest` covers the registry component, not the manifest field, so a manifest whose list was altered while the component and digest stayed intact would open unless the reader compares the two; the contract owner made that comparison a binding open rule.
+
+### Why an extension could not handle it
+
+- The manifest and the catalog are the RPC host's compact recovery state; extensions never see a cut, its registry or its manifest.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/compact-catalog-registry.ts` `familyProducers`, `familyRegistry` and `readFamilyRegistry`; the `assemble` signature in `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts`.
+
+## 2026-10-30 - Track claim removal beyond close completion (senpi#4484)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: mark reservation release as pending claim work until the cross-generation claim is removed and the in-process reservation is cleared. Reopens use the existing bounded pending-claim wait even when close has already deleted its entry. A removal that throws still clears both the in-process reservation and the pending claim.
+
+### Why
+
+- The close grace deadline can complete a close while asynchronous claim removal is still running. A subsequent open found the in-process reservation without an entry and refused with `session_path_in_use` / `path_still_held`. A promise-gated regression forces that ordering without sleeps or a larger deadline.
+- A removal that threw left the in-process reservation behind with no entry left to clear it, so every later open of that path in this process was refused with `path_still_held` despite its `retry_after_ms`.
+
+### Why an extension could not handle it
+
+- The registry owns claim removal and the reservation decision before runtime construction.
+
+### Expected merge conflict zones
+
+- LOW: `session-registry.ts` imports and the constructor's `releaseReservation` callback.
+
+## 2026-11-02 - Typed socket_closing before engine-initiated compact closes (RULING-124, senpi#5322, senpi#5395)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-closing.ts` (new): `SOCKET_CLOSING_CODES` (`checkpoint_unavailable`, `event_queue_failed`, `event_lease_refused`, `compact_endpoint_unsupported`, `host_shutdown`, `host_handoff`, each with a fixed `retryable`), the `RpcSocketClosingEvent` record type, and `closeSocket`, the one engine close of a peer: a legacy or flag-off peer closes synchronously with no new bytes; a peer that selected compact events has its record queue stopped, receives `socket_closing {code, retryable, detail?}` as its last record, and is closed once that record drains or after 1 s, or at once when the transport is already broken.
+- `packages/coding-agent/src/modes/rpc/session-event-connection.ts` (new): `SessionEventWriterConnection` and the registration type moved out of `session-event-fanout.ts`; a registration holds the transport's writes only (`transportOf`) and a `close(code, detail?)`.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: the event-queue failure closes through `closeSocket` with `event_queue_failed` and `overflow`/`stall`/`transport_error`; the registration's `close` is built here.
+- `packages/coding-agent/src/modes/rpc/compact-required-streams.ts`, `session-event-writer-recovery.ts`: a checkpoint that cannot be frozen closes with `checkpoint_unavailable` and the refusal reason.
+- `packages/coding-agent/src/modes/rpc/compact-materializer-line.ts`, `session-event-writer-destinations.ts`: an event lease refusal and a `compact_refused` record close the peer only after that record is written (`event_lease_refused`, `compact_endpoint_unsupported`), so the refusal precedes `socket_closing`.
+- `packages/coding-agent/src/modes/rpc/rpc-client-events.ts` (new), `rpc-client.ts`: the `RpcClientEvent` union moved to its own module and gained `RpcSocketClosingEvent`; `rpc-client.ts` re-exports it, and `collectEvents()` skips the connection-level record.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `session-event-writer-connections.ts`, `packages/coding-agent/src/modes/interactive/session-control-server.ts`: import `SessionEventWriterConnection` from its new module.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: `closeConnection(id, code, close)`, the host's own close of a connection through `closeSocket`, with the host's socket teardown as the close.
+- `packages/coding-agent/src/modes/rpc/host-shutdown-connections.ts` (new): the host's connection type and the shutdown's connection phase. Each connection drains its own queue (`flushConnection`) and is then announced (`host_shutdown`) and closed independently, so a peer that stopped reading delays only itself; every wait ends at one deadline, `HOST_SHUTDOWN_BUDGET_MS` after the shutdown starts (2 s: the supervisor's 5 s `CHILD_STOP_TIMEOUT_MS` minus a 3 s exit reserve), and a socket still open at it is destroyed with one stderr line naming the elapsed time, so the half-close grace is min(`SOCKET_CUT_GRACE_MS`, remaining budget). The deadline includes `router.dispose()`, which stays unbounded on POSIX (senpi#5398).
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a connection's `close` takes a code; a shutdown closes every connection with `host_shutdown` after `router.dispose()` and the writer flush, and a handoff closes a fully parked connection with `host_handoff` after its park records. An announced close half-closes through the connection's sink (`end()`, bounded by `SOCKET_CUT_GRACE_MS`), so the record is flushed before FIN instead of being discarded by `destroy()`; every other peer is still destroyed at once.
+
+### Why
+
+- With `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` on, an engine-initiated close left the client a bare EOF, with no way to tell whether to reconnect, back off or give up (senpi#5322, blocks the flag defaulting on). RULING-124: the record is written and flushed before the close with a bounded wait, a broken transport closes anyway, clients must not depend on it, codes and `retryable` are documented in docs/rpc.md, and flag-off and legacy bytes are unchanged.
+- A SIGTERM'd socket host with a peer that stopped reading never exited on its own: the shutdown waited on that peer's queue drain until the supervisor's SIGKILL (measured: still running at 30 s, with the flag on or off). The connection phase is now bounded so the host exits inside the stop window (senpi#5395).
+- A host shutdown and a generation handoff are engine-initiated socket closes too: `session_closed` and `session_parked` describe sessions, so a client holding several sessions, or none, could not tell either from a failure.
+- A close site that skips the record no longer compiles: the registered transport has no `close`, and the registration's `close` takes a classified code.
+
+### Why an extension could not handle it
+
+- The close sites, the per-socket record queue and the RPC client union are host transport internals; no extension hook observes or owns a socket's teardown.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-client.ts` type re-exports and the `collectEvents()` filter; the moved `RpcClientEvent` union now lives in `rpc-client-events.ts`.
+- LOW: the `registerConnection` body and failure callback in `session-event-fanout.ts`.
+- LOW: `multi-session-host.ts`: the connection record, the handoff-parked hook and the shutdown's connection phase (now `closeHostConnections`).
+
+## 2026-10-26 - Reservation reads report typed store contention (senpi#4372)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/endpoint-reservation-store.ts`: reservation and role reads share the transaction busy-error mapper, preserving existing typed refusals.
+
+### Why
+
+- An exclusive writer blocks rollback-journal readers too. Raw `database is locked` errors escaped the reservation protocol under load (sisyphuslabs/omo-desktop-app#4199).
+
+### Why an extension could not handle it
+
+- Reservation reads run during host startup before extension loading.
+
+### Expected merge conflict zones
+
+- LOW: the reservation store's read and transaction helpers.
+
+## 2026-11-01 - A compact peer's live call records name their call by its snapshot key (RULING-123, senpi#5346)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-call-model.ts`: `CallIdentity`, `CALL_UNKNOWN` and `callIdentity(call)`, the one source of a live call record's identity: the `runtimeItemKey` this model minted when the call was created, or `callUnknown: true` when the record changed no call.
+- `packages/coding-agent/src/modes/rpc/compact-session-calls.ts`: `executionStart`, `executionUpdate`, `hook` and `executionEnd` return the call they changed (undefined when they ignore the record); `update` returns the updated call.
+- `packages/coding-agent/src/modes/rpc/compact-call-fold.ts`: `CallFold.identity` carries that call's identity for `tool_execution_*` and `tool_hook_status`, or `callUnknown: true` when the call shares its `toolCallId` with another call of its own message (C3.4: those records name only the `toolCallId`, so no order may pick one).
+- `packages/coding-agent/src/modes/rpc/compact-call-table.ts`: `sharesIdInMessage(call)`, set while more than one live call of one assistant message holds the same `toolCallId` and cleared when the last of them leaves the table.
+- `packages/coding-agent/src/modes/rpc/compact-call-identity.ts` (new): which live records name a call (`CALL_NAMED_RECORDS`, `toolcall_*` updates), the streamed block's index, and `unvouchedCall`, which answers `callUnknown` for such a record the lane vouched for no call.
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts`, `compact-lane-current.ts`: `callOwning(messageId, contentIndex)`, the calls table's own owner index.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-compact.ts`: `AcceptedRecord.call` is the whole call fold; `foldCompactRecord` returns a call record's identity (the call its fold changed, or for a `toolcall_*` update the call owning the block once it folded).
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: passes the call fold through.
+- `packages/coding-agent/src/modes/rpc/compact-message-identity.ts`: `LiveIdentity` includes `CallIdentity`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: with the flag on, a `compact_events` connection's copy of a live call record gains `runtimeItemKey`, or `callUnknown: true` when the lane holds no identity for it; a keyed `toolcall_delta`'s delta-only demotion is built from the stamped record, inline or `eventLease` envelope, so it keeps the stamp. The stamped copy is built once per delivery and shared by every compact peer, so an oversized one is staged once per record for all of them (S13 X07), its leased `record` component being the stamped text. Every other destination keeps the legacy line.
+
+### Why
+
+- RULING-123: a compact peer has to join a live call record to that call's snapshot entry across a reconnect, and `toolCallId` cannot do it because providers reuse it. The key must come from the snapshot call model itself, and a record the host cannot attribute must say so instead of omitting the key (RULING-122's rule). A key picked among calls that reuse one `toolCallId` inside one message would be an order join (C3.4), and a stamped key that can be wrong is worse than none.
+
+### Why an extension could not handle it
+
+- The calls component, the acceptance lane and the per-connection rendering are RPC host internals.
+
+### Expected merge conflict zones
+
+- LOW: `eventLine` in `session-event-writer-destinations.ts`, `foldCompactRecord` in `session-acceptance-compact.ts`, the per-id record methods of `compact-session-calls.ts`, `index`/`remove` in `compact-call-table.ts`.
+
+## 2026-11-01 - A compact peer's live records carry their settled message ids (RULING-120, senpi#5331)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: `end` returns the accepted end (`joined` plus the message's `messageId` and the end's accepted sequence as `terminalSequence`, undefined when refused; a pending or failed terminal pages as `message-<terminalSequence>`, a joined message only as its `join-<n>` member's `messageId`), `fail` returns the failed row's `messageId`, and `append` returns the message its join recorded.
+- `packages/coding-agent/src/modes/rpc/compact-message-identity.ts` (new): the `LiveIdentity`/`SettledEnd` shapes and `MessageIdentities`, which captures each joined entry's owning message when its append is applied, keeps it by entry id until that entry's `entry_appended` takes it (at most `MAX_PENDING_JOINS` waiting, oldest dropped first; RULING-121, senpi#5337), remembers, in a ring of `MAX_EVICTED_JOINS`, the entry id of a join dropped at that bound and of an owned append the settled store never joined (transcript unavailable or join refused) and marks the epoch overflowed when that ring drops one, so such an entry's identity is `ownerUnknown: true` instead of a false not-owned (RULING-122, senpi#5337; counted as `ownerJoinsEvicted`/`ownerJoinsOverflowed`, one stderr line at an epoch's first overflow, ring and flag cleared with the joins), and holds the ids of the record accepted last, answered only for that record at its sequence.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-compact.ts`: `foldCompactRecord` returns that identity; `foldCompactTransition` returns the message an append joined.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: the lane feeds its `identities` from each applied append and each accepted record (an unfolded `entry_appended` still takes its entry's join or unvouched mark), and resets them when an epoch is bootstrapped or the lane retires; `storageStatus` adds the owner-join counters.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: with the flag on, the copy a `compact_events` connection receives of a live `message_end` gains `messageId` and `terminalSequence`, `entry_appended` gains `owningMessageId` (or `ownerUnknown: true` when the lane cannot vouch for the entry's owner), and `transcript_write_failed` gains `messageId`, inline or inside a leased record. Every other destination keeps the legacy line.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-settled.ts`: `settledMember` and `joinMember` name the `message-<terminalSequence>` and `join-<n>` members the overlay pages.
+
+### Why
+
+- RULING-120: a compact peer has to join a live record to the settled overlay it pages after a reconnect or a recovery cut, and the ids must come from the rows the overlay pages, not from a second derivation.
+- RULING-121 (senpi#5337): keeping only the last transcript batch's joins dropped an entry's `owningMessageId` when another batch was applied before its `entry_appended`, which the documented absence rule would read as an unowned entry.
+- RULING-122 (senpi#5337): the `MAX_PENDING_JOINS` bound dropped a join silently, which made the same false not-owned possible at the cap; the absence rule holds only if every entry the lane cannot vouch for says so.
+
+### Why an extension could not handle it
+
+- The settled store, the acceptance lane and the per-connection rendering are RPC host internals.
+
+### Expected merge conflict zones
+
+- LOW: `eventLine` in `session-event-writer-destinations.ts`, `bootstrap`/`applyTranscript`/`accept`/`retire` in `session-acceptance-lane.ts`.
+
+## 2026-11-01 - host start never follows a symlink at the endpoint and re-checks reachability before removing (senpi#5314)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: `prepareSocketPath` stamps the endpoint with `lstat` instead of `stat`, so a symlink (dangling or pointing at a socket) is an entry that is not a socket and the start refuses it ("address already in use by a live server (the entry is not a socket)") without touching the link or its target. After the stale decision it re-stamps the entry, probes reachability again (an entry that now accepts is refused and kept), and re-stamps once more as the last step before `unlink`, which removes only the same dead socket entry.
+
+### Why
+
+- `host ensure` decides with `lstat` (#5283), but the start-time cleanup followed links: a dangling link read as a missing entry and the bind then failed with `host_error`, and a link to a dead socket was probed through and its link entry unlinked. A socket bound earlier can also start listening without changing identity, so the identity check alone could remove a live listener's entry.
+
+### Why an extension could not handle it
+
+- The cleanup runs inside the lifecycle supervisor before the public socket is bound, before any session or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: `prepareSocketPath` and `stampOf` in `host-lifecycle-proxy.ts`.
+
+## 2026-11-01 - A compact cut resets every open tool call's arguments (senpi#5298, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-legacy-view.ts`: `legacyResyncMessage` returns the cut's message together with its resume frames. For every tool call open at the cut it emits `message_tool_arguments_reset` (`rawArgumentPrefix: ""`, `parsedThrough: 0`), then one `toolcall_delta` carrying the whole raw argument prefix. A tool call that had already ended at the cut gets neither.
+- `packages/coding-agent/src/modes/rpc/legacy-resync-view.ts`: `ResyncMessageSource` answers `ResyncResume` (`message` plus optional `frames`). `resyncFrames` writes those frames, tagged with the session, right after that session's `resync_required` on the same cursor, so they reach the peer ahead of every captured record.
+- `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts`: a session without an acceptance lane answers `{ message }` with its latest retained record, unchanged.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClientEvent` gains the `message_tool_arguments_reset` record (with its optional `sessionId`), which listeners already received untyped. `collectEvents` skips it like the other connection-level records, because it is not part of the agent's event stream.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-legacy-view.ts`, `packages/coding-agent/src/modes/rpc/legacy-resync-view.ts`, `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts`: a cut taken while a tool call streamed carried only the parsed arguments, so a consumer rebuilt its raw argument stream as empty. It then rejected the next delta at a non-zero offset, and the preview stalled until `toolcall_end`. RULING-115 (b) requires a reset after the cut, before any later delta of that block, followed by a delta from offset 0 holding the whole raw prefix.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: RULING-116 accepts the reset without in-repo handlers, provided the typed client union names the record. A guard test fails if an in-repo client advertises `event_resync` without handling it (tracked in senpi#5300).
+
+### Why an extension could not handle it
+
+- The resync cut is host RPC transport state written by the socket fan-out; extensions never see the cut or the peer's queue.
+- `RpcClientEvent` is the RPC client's own public wire type; an extension cannot widen it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/compact-legacy-view.ts` `legacyResyncMessage`, `packages/coding-agent/src/modes/rpc/legacy-resync-view.ts` `resyncFrames`, and the `messageOf` source in `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts`.
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the `RpcClientEvent` union tail and the connection-level filter in `collectEvents`.
+
+## 2026-11-01 - Redundant compact-updates flag reads removed (part of #4994, #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: the pre-declaration branch of `set_client_info` no longer re-reads `compactUpdatesEnabled()` in its inner `id`/`capabilities` check; the enclosing condition already requires the flag.
+- `packages/coding-agent/src/modes/rpc/compact-negotiation.ts`: `advertisedCompactCapabilities` no longer re-reads `compactUpdatesEnabled()` after its flag-off early return.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`, `packages/coding-agent/src/modes/rpc/compact-negotiation.ts`: both reads were dead guards (a stack review LOW): the flag is already established on that path, so behavior is identical with and without the flag.
+
+### Why an extension could not handle it
+
+- Compact negotiation and the router's `set_client_info` pre-declaration are host RPC transport internals that extensions cannot reach.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: the `set_client_info` branch of `admitted()`.
+- `packages/coding-agent/src/modes/rpc/compact-negotiation.ts`: the return line of `advertisedCompactCapabilities`.
+
+## 2026-11-01 - host ensure refuses a non-socket endpoint entry on every platform (senpi#5280)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts`: `unregisteredEndpointHeld` reads the entry with `lstat` (never following a symlink) and counts one that is not a socket, including a dangling or live symlink, as held before any connect probe, so `host ensure` refuses it with `endpoint_occupied` (exit 3).
+
+### Why
+
+- Linux answers a connect to a regular file with ECONNREFUSED, which the listener probe reads as a dead listener, so ensure started a supervisor there; the supervisor's `prepareSocketPath` never removes a non-socket entry and exited, and ensure reported a generic `host_error` (exit 1). macOS answers ENOTSOCK and already refused.
+
+### Why an extension could not handle it
+
+- The gate runs inside `ensureHostLocked` before any host or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: `unregisteredEndpointHeld` in `host-ensure-liveness.ts`.
+
+## 2026-11-01 - Compact admission IDs are capped while live, not for the socket's lifetime (senpi#5274, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: the per-epoch `admission_limit` now counts live attempts only. A fresh attempt evicts the least recently used terminal row instead of being refused; a retry that hits a terminal row refreshes it; an evicted ID answers `admission_retired` (a `failed` row whose reason was `storage_unavailable` loses that reason once evicted and also answers `admission_retired`), and `cancel_attempt` on it answers `already_complete`. A finished row whose admission still routes a stream is never evicted, because `reset_stream` reads it; it still counts toward the 127-row bound (`min(128, floor(16 MiB / 131,584-byte rows))`), so a fresh attempt is refused with `admission_limit` only when every row is live (a running attempt or a routed stream). With RULING-117 the routed rows are bounded by the distinct live sessions the socket routes, so the 128th distinct session on one socket is the first refusal and re-opens of a held session never run out. The constructor takes that routing predicate. `status()` adds `retiredOverflow`, and the first ring overflow of each `CompactAdmissions` instance (one per router context) logs one stderr line.
+- `packages/coding-agent/src/modes/rpc/compact-admission-retention.ts` (new): the terminal-row LRU and the eviction that removes the row file, frees its reservation and moves its digest into a bounded ring; it skips rows whose admission still routes a stream.
+- `packages/coding-agent/src/modes/rpc/compact-admission-settlement.ts` (new): `settleProducedAdmission` persists a produced answer as its durable terminal row (re-checking the overflow refusal) and then activates it, moved unchanged out of `CompactAdmissions.run()`.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: a completed `open_session`/`attach_session` hands its session and its `release` to `supersedeOpen`; when that replaces an earlier open of the same session on the same socket, the earlier open's `release` runs (route retired, id unregistered, attachment released) before the new baseline is installed. A cancelled, refused or failed open supersedes nothing, and a C4.4 retry never reaches this path (RULING-117).
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: `routesAdmission(socketEpoch, admissionId)` answers whether any stream of that peer incarnation still routes the admission, the same lookup `reset_stream` makes, now one indexed lookup instead of a walk over every session. `supersedeOpen` records each socket's completed open per session and returns the earlier one's end only while that earlier open still routes the session's stream; `detachConnectionFromSession` retires the open's route and held id (RULING-118): at once for a detach no request of that admission made, and after the reply is routed when the detaching request names the admission (`close_session`), so that reply and the records sealed before it keep the tag; the detached session's open is forgotten, so a later re-open supersedes nothing, and an open whose own release already retired its route is not retired twice.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: the actor keeps `opened` (session to its completed open's id and end) and the retirements deferred to a request's reply (`deferRetire`, run when that request's response is routed), both cleared with the actor.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts`: a per-socket-epoch index of routed admissions (a count per admission, since one mirror admission routes several sessions), kept in step with every route add, retirement, replacement and forget; `routes(socketEpoch, admissionId)` reads it.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: `routesAdmission` exposes that index; the token-staleness rules moved out unchanged.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-staleness.ts` (new): `retiredTokenFailure` and `tokenStaleness`, moved unchanged from `RecoveryCheckpoints.describe`/`staleness`.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: the router context's `CompactAdmissions` asks the writer's `routesAdmission` before evicting a row.
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`: `ADMISSION_LIMITS.retired` (4,096) and the limits comment.
+- `packages/coding-agent/src/modes/rpc/compact-admission-types.ts`: `Epoch` replaces the lifetime `entries` count with the `done` LRU (row key to admission ID) and the `retired` ring.
+- `packages/coding-agent/src/modes/rpc/route-retire-reasons.ts` (new): `ROUTE_RETIRE_REASONS` classifies every reason a route retires for as `client_action` (`reopen_superseded`, `client_detach`, `mirror_unsubscribed`) or `announced` (`open_ended`); `RouteAnnouncement.emit` enqueues the typed end record and only then returns the proof an announced retire needs (RULING-119).
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: `retireRoute` takes a required retirement, a client-action reason or a `RouteAnnouncement`, so a new retire site cannot compile without one.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: an accepted open that ends without completing (cancelled, refused, failed) retires its route and held id only after its final reply is enqueued; a refusal of an accepted open carries its `admissionId` and `generation`. A re-open's supersession retires as `reopen_superseded`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`, `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts`: the detach and mirror retires name `client_detach` and `mirror_unsubscribed`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: every ID ever admitted on a socket epoch kept its row, so a long-lived compact socket refused every open after 127 completions (RULING-113).
+- `packages/coding-agent/src/modes/rpc/compact-admission-retention.ts`: eviction has to free the reserved bytes and the persisted file together so disk accounting stays honest, and must not drop a row `reset_stream` still needs: after 127 later completions on one socket, an attached session's `reset_stream` answered `recovery_unknown_token` while its route was live.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`, `packages/coding-agent/src/modes/rpc/session-router-context.ts`: only the writer knows which admissions route a stream, so it supplies the predicate the admission index consults.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`, `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: every completed open kept its route until its session or its socket ended, so one socket re-opening one session without detaching was refused after 127 opens (#5274 review); two live routes for one session on one socket would also deliver every record twice (RULING-117). A detached route kept routing until its session ended, so a socket visiting 128 distinct live sessions (attach, detach, next) was refused `admission_limit` for good and kept receiving records for sessions it had detached from (RULING-118).
+- `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts`, `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: the eviction predicate runs once per skipped row, and walking every session for each one made a full reservation quadratic.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-staleness.ts`: `compact-recovery-state.ts` was at the 250-line ceiling; the staleness rules are their own responsibility.
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`: retries are not distinguishable from fresh opens on the wire, so the ring is sized to need at least 4,096 completions before an ID is forgotten.
+- `packages/coding-agent/src/modes/rpc/compact-admission-types.ts`: the epoch tracks rows on disk and retired digests instead of a count that never decreases.
+- `packages/coding-agent/src/modes/rpc/route-retire-reasons.ts`, `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`, `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts`: RULING-119 requires every retire of a delivering route to follow a client action or a typed record; classifying the reason at the call is what keeps a future retire site from ending a route silently.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: an open whose durable answer row failed after its physical open had delivered `session_opened` under its id retired that route before its refusal was sent, and the refusal did not name the admission, so the client saw records under an id that ended with no record of its own.
+
+### Why an extension could not handle it
+
+- Compact admission is host RPC transport state; extensions cannot reach the per-socket admission index.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: the registration block in `run()`, its `finally`, `cancel()` and `status()`.
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`: the `ADMISSION_LIMITS` declaration.
+- `packages/coding-agent/src/modes/rpc/compact-admission-types.ts`: the `Epoch` fields.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: the methods after `recoveryLane`.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: the release closure and the `if (delivery)` completion block.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts`: every method that adds or drops a route.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: `claim()`, `staleness()` and the accessors after `stream()`.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: the `admissions` field initializer.
+- `packages/coding-agent/src/modes/rpc/route-retire-reasons.ts`: new file, no upstream counterpart.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: the `catch` block's refusal path.
+- `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts`: `retire()`.
+
+## 2026-10-31 - The host bounds a worker's secret frames and open secret inputs (senpi#5197)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: `SESSION_WORKER_LIMITS` gains `secretFrameBytes` (64 KiB per `secret_frame` record), `secretInputs` (64 unsettled secret inputs per worker) and `secretIds` (1024 + 64 tracked secret ids per worker: the settled receipts `SecretInputRequests` keeps for answer replay plus the open ones).
+- `packages/coding-agent/src/modes/rpc/session-worker-secrets.ts` (new): `WorkerSecretIds` tracks each live secret id and the frames it already sent. `admitFrame` admits a frame only for a live id, only an `extension_ui_request` or `secret_input_settled` record, each at most once per id, and only within `secretFrameBytes` serialized; a refused frame spends nothing. `admitsNew` refuses a new id once `secretInputs` ids are unsettled or `secretIds` ids are tracked.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: `secret_frame` is forwarded to the presenter only when `admitFrame` admits it, and `secret_select` for a new id only when `admitsNew` allows it; otherwise the host acknowledges with a refusal, so the worker fails with `session_worker_output_denied` and the session closes with that error. The client's secret id set is now a `WorkerSecretIds`.
+
+### Why
+
+- senpi#5197: `secret_frame` records travel on the control exchange, which skips the 16 MiB output-frame check, and the host forwarded them with no type, size or per-id check; concurrent secret ids were uncapped on the host. That left an unmetered side channel next to the metered payload path.
+
+### Why an extension could not handle it
+
+- The worker-to-host control exchange and its admission are internal to the RPC worker runtime; extensions run inside the worker this bound protects against.
+
+### Expected merge conflict zones
+
+- LOW: the `secret_select`, `secret_frame` and `secret_forget` cases and the exit cleanup in `session-worker-client.ts`, and the end of `SESSION_WORKER_LIMITS` in `session-worker-protocol.ts`.
+
+## 2026-10-31 - login_api_key takes a Kimi Code region (#5122)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/api-key-login-credential.ts` (fork-only): with a `region`, runs the provider's own interactive API-key login with the region and key as its answers and returns that credential. It refuses a region the provider does not offer, one other than the region the host's environment already sets (the login then never asks), a second select prompt, or a region for a provider whose key has none.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `login_api_key` stores that credential through `authStorage.set`, as before.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`: `login_api_key` gains the optional `region`.
+
+### Why
+
+- A Kimi Code key saved through RPC carried no region, so a kimi.ai key was sent to kimi.com (code-yeongyu/omo-desktop-app#4385). The CLI's `/login` already asks the region and stores it with the key.
+
+### Why an extension could not handle it
+
+- `login_api_key` is a core RPC command; the credential it stores is written by the core handler.
+
+### Expected merge conflict zones
+
+- The `login_api_key` case in `connection-handler.ts`; the `login_api_key` member of the session command union.
+
+## 2026-10-30 - Durable per-session compact generations (RULING-99, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-session-generations.ts`: one session counter reserves 1,024 values under a lifetime kernel ownership lock. File fsync, atomic rename and directory fsync finish before values become issuable; refill starts with 512 remaining. Exhaustion, corrupt metadata, competing ownership and storage failure fail closed. Restart starts at the persisted ceiling plus one, burning unused reservations.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts` and `packages/coding-agent/src/modes/rpc/session-worker-replacement.ts`: await generation-owner rebinding before publishing a replacement bootstrap. New sessions, switches and forks reserve above both the lane's previous ceiling and the target's persisted floor. The counter drains old refills before releasing the old lock; synchronous cuts refuse while the new identity's range is being persisted.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: owns the counter across socket disconnects and accepted-state replacements and releases its lock on retirement.
+- `packages/coding-agent/src/modes/rpc/session-registry-open.ts` and `packages/coding-agent/src/modes/rpc/worker-session-open.ts`: bind the manager's durable session identity before admission, only behind the existing compact flag.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts` and `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts`: synchronous freezes draw from the session counter; per-peer stream records no longer restart numbering.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: retain typed admission storage refusals after physical-open rollback.
+
+### Why
+
+- RULING-99 A requires reconnect/restart generations to exceed previously observed values without changing the RULING-95 adapter.
+- Gap 1b: binding only at open left replacement generations persisted under the old durable identity, so reopening the replacement restarted below the generation it had already published.
+- Option 2 preserves synchronous freeze and cut/suffix ordering. `CompactRequiredStreams.prepare()` freezes before accepted mutations, while `materializerLine()` and `AdmissionRoutingActor.route()` immediately serialize the generation. Cancellation replies also carry it. An open-token-only asynchronous publication barrier would not cover those paths; durable ranges make every path safe before it sees a number.
+- The storage-health revision and fresh session epoch are independent clocks, and accepted roots are ephemeral scratch. None can serve as this session's durable generation source.
+
+### Why an extension could not handle it
+
+- These RPC files own engine cut issuance, admission rollback and publication below extension delivery; an extension cannot supply or fence their durable generations.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts` freeze, `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts` issuance, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts` retirement, both registry open paths and the physical-open error boundary in `packages/coding-agent/src/modes/rpc/session-router-open.ts`. Rollout remains off by default.
+
+## 2026-11-01 - Compact negotiation on one socket, flag-off parity with main (S17, RULING-111/112, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: Consume ID-less `set_client_info` responses before session delivery, including identical capability declarations on the session route.
+- `packages/coding-agent/src/modes/rpc/compact-negotiation.ts`, `session-router-routing.ts`: the G1 silence for an ID-less `set_client_info` applies only behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES`; with the flag off the reply is the one main sends.
+- `compact-socket-commands.ts`, `session-router-routing.ts`, `worker-client-capabilities.ts`: with the flag off a declaration without capabilities resets them, a session-scoped `set_client_info` reaches its session (its refusal keeps the session tag), and workers declare without the compact selection check, all as on main.
+- `compact-negotiation.ts`, `host-capabilities.ts`: with the flag off `get_protocol_info` echoes the launch capabilities unchanged.
+- `session-worker-client.ts`: the `bound mode=` stderr line is written only with the flag on.
+- `core/session-transcript-journal.ts`: a transcript line read from disk without a string id makes the transcript unavailable (`transcript_entry_unidentified`) instead of throwing.
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts`: `structuredLaneEnabled()` is the rollout flag alone (`compactUpdatesEnabled()`); it no longer turns on for a session that merely has a structured lane. `session-registry-open.ts` and `session-binding.ts` follow it, so a flag-off in-process session opens no acceptance lane and binds no structured writer.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: with the flag off `commit()` sends a plain `{ type: "commit" }` and creates no `SessionAcceptanceLane` and no `WorkerIntake`; with the flag on it offers acceptance and permits as before, and a worker without a structured lane still refuses with `StructuredLaneUnavailableError` (RULING-106).
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: the isolate accepts the offer only for a session with a structured lane; the offer itself now arrives only with the flag on.
+- `packages/coding-agent/src/core/engine-socket-flag.ts`, `session-registry-types.ts`: comments say again that the flag-off path runs no capture or acceptance lane.
+
+### Why
+
+- Session replies fell through the declaration filter and emitted an unsolicited acknowledgment, contrary to the shared socket contract.
+- G1 silence belongs to the compact negotiation, which exists only with the flag on; with the flag off it changed the wire and broke the #3811 role tests.
+- RULING-111 requires the flag-off wire to equal main; the S17 audit found these differences. An id-less journal line threw `Buffer.byteLength(undefined)` on reopen.
+- RULING-110 held only if nothing user-visible changed with the flag off. The large-session audit found an empty late-attach baseline where main replays, new stderr lines, spill and recovery-health directories, and workers switched to the permit transport, so RULING-110 is void and RULING-109's flag-only rule applies to both paths. `4272-flag-off-large-session.test.ts` pins main's behavior for a flag-off session past the 4 MiB spill threshold.
+
+### Why an extension could not handle it
+
+- Session record delivery and socket acknowledgment filtering are internal RPC boundaries.
+- Socket declaration replies are internal RPC routing.
+- Socket declarations, protocol info and transcript snapshots are internal RPC boundaries.
+- The acceptance lane, worker commit negotiation and replay-store routing are internal RPC host boundaries.
+
+### Expected merge conflict zones
+
+- `SessionEventWriter.enqueue` and the shared client-info ACK golden index.
+- `declarationReply` and the connection-level `set_client_info` branch of `dispatch`.
+- `declareSocketClient`, `admitted()` in `session-router-routing.ts`, `snapshotTranscript`.
+- `SessionWorkerClient.commit`, the `commit` case of the isolate's `handle`, the acceptance gate in `openRegistrySession`.
+
+## 2026-10-30 - Required compact streams and atomic producer envelopes (S16a, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: Filter retired ordinary routes while retaining surviving mirror identities for terminal markers.
+- `packages/coding-agent/src/modes/rpc/compact-materializer-line.ts`: Build atomic envelopes bounded to 16 KiB over one shared event lease, carrying an optional repair seed; abandon the lease before a typed RangeError if the defensive size guard fails.
+- `packages/coding-agent/src/modes/rpc/compact-required-streams.ts`: Track required mirror routes and freeze pre-record repair cuts after filtered transitions.
+- `packages/coding-agent/src/modes/rpc/compact-reset-stream.ts`: Validate mirror reset through existing admission ownership and freeze a mirror-generation checkpoint.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: Invoke the pre-accept observer before records and controls mutate accepted state.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-reads.ts`: Expose the pre-accept observer without implying a consumer acknowledgement.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: Allow reset_stream for a validated compact subscription behind SENPI_ENGINE_SOCKET_COMPACT_UPDATES.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: Deliver to required mirror sessions without attachment holds and notify required-stream cleanup.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: Wire the acceptance observer only when compact event storage is enabled.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: Select materializer envelopes and prevent keyed demotion of atomic delivery units.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-lifecycle.ts`: Prepare required routes before publishing session_opened.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: Own required-stream preparation and initialize existing sessions when mirrors register.
+- `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts`: Include mirror-only streams in capture recovery and retain them while required.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: Enumerate required admissions and sessions across pending and active mirrors.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: Extract matchingStatusConnections from SessionStatusStream without changing matching behavior.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: Terminal delivery must preserve valid mirror identity without reviving retired attachments.
+- `packages/coding-agent/src/modes/rpc/compact-materializer-line.ts`: Per-admission framing must stay bounded independently of payload size and route count.
+- `packages/coding-agent/src/modes/rpc/compact-required-streams.ts`: A selected record needs the state omitted by earlier filtered records repaired before its own effects. R3.C4.3 shares installed state across admissions, so a record delivered through a sibling mirror does not need a second seed for the same physical stream.
+- `packages/coding-agent/src/modes/rpc/compact-reset-stream.ts`: Mirror-only consumers need reset without acquiring an ordinary session attachment.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: Repair checkpoints must describe state before the dependent mutation.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-reads.ts`: The writer needs a pre-mutation observation point on the accepted-root owner.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: Existing subscription authority must authorize mirror reset while other attachment checks remain intact.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: Required mirrors must receive delivery without changing attachment activity.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: The disabled-by-default SENPI_ENGINE_SOCKET_COMPACT_UPDATES rollout must preserve legacy acceptance.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: A delivery unit's payload and repair control must not be split by actor demotion.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-lifecycle.ts`: Later sessions must join required mirror streams at publication.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: Initial, pending and active mirrors need the same checkpoint ownership.
+- `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts`: Backpressure recovery must not omit sessions lacking ordinary attachment ordinals.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: Required destinations must include pending subscriptions as well as active subscriptions.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: Keep status-connection matching alongside subscription matching helpers.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: Route retirement and terminal identities belong to the host routing actor.
+- `packages/coding-agent/src/modes/rpc/compact-materializer-line.ts`: Event-lease minting and atomic socket framing are host-owned.
+- `packages/coding-agent/src/modes/rpc/compact-required-streams.ts`: Extensions cannot freeze host accepted roots before record acceptance.
+- `packages/coding-agent/src/modes/rpc/compact-reset-stream.ts`: Admission validation and stream generations are internal recovery authority.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: Accepted-sequence mutation is below the extension API.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-reads.ts`: The observer must live on the internal accepted-root owner.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: Host command authorization cannot be replaced by an extension hook.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: Socket destinations and attachment holds belong to the host fanout.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: Acceptance-lane registration is internal writer wiring.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: Actor queue demotion and physical delivery selection are host-owned.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-lifecycle.ts`: Session publication ordering precedes extension-visible delivery.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: Checkpoint preparation and mirror retirement are internal storage ownership.
+- `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts`: Recovery root lifetime and backpressure capture are host-owned.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: Pending subscription state is private to the status stream.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: Subscription matching runs inside the host delivery path.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: Route filtering and terminal-marker selection.
+- `packages/coding-agent/src/modes/rpc/compact-materializer-line.ts`: Envelope construction and event-lease ownership.
+- `packages/coding-agent/src/modes/rpc/compact-required-streams.ts`: Required-route preparation and repair-seed state.
+- `packages/coding-agent/src/modes/rpc/compact-reset-stream.ts`: Reset authorization and checkpoint route kinds.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: Record and control acceptance ordering.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-reads.ts`: Accepted-root observer contract.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: Compact subscription command authorization.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: Required delivery, recovery peers and session cleanup.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: Acceptance registration and writer inheritance.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: Compact line selection and actor enqueue keys.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-lifecycle.ts`: Session-open preparation ordering.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: Mirror registration and recovery accessors.
+- `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts`: Pin admission identity and capture closure.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: Required admission enumeration and status matching.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: Behavior-neutral status-connection matching extraction.
+
+## 2026-10-30 - Preserve compact admission storage failures across failed retirement writes (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`, `compact-admission-storage.ts`, and `compact-admission-types.ts`: Retain the failed/storage_unavailable classification in the bounded epoch owner before attempting its failure-row write. Log a failed write and return a typed refusal; retries, cancellation and result reads use that retirement state rather than a torn or stale disk row.
+
+### Why
+
+- A second storage failure could replace the original classification with admission_retired or leave a pending or successful row readable after the producer had released its resource.
+
+### Why an extension could not handle it
+
+- Durable admission outcomes and synchronous activation belong to the RPC attempt owner below extension dispatch.
+
+### Expected merge conflict zones
+
+- `compact-admissions.ts` terminal persistence and activation; `compact-admission-storage.ts` row reads; `compact-admission-types.ts` bounded epoch state. Preserve the existing compact flag and legacy behavior.
+
+## 2026-10-29 - Compact mirror admission and durable pending activation (S15b, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: Commit the durable terminal outcome and synchronous activation under one attempt owner, preserving cancellation and exactly-once release. A throwing activation replaces success with a failed/storage_unavailable row before that owner exits, logs its cause, and replays the refusal on retries.
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`: Own durable, flushed attempt rows without duplicating the existing disk-backed attempt index.
+- `packages/coding-agent/src/modes/rpc/compact-admission-types.ts`: Share attempt owner types to keep the serialized owner within its file budget.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: Map pre-dispatch admission store failures to typed refusals so cancellation requests still receive exactly one reply. Preserve RULING-94 for non-recovery commands while RULING-96 delegates recovery admission authority to the token or lease owner.
+- `packages/coding-agent/src/modes/rpc/compact-mirror-pending.ts`: Bound pending mirror delivery to 128 entries and 1 MiB, retaining a typed refusal and clearing all retained records on retirement.
+- `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: Activate only after ledger commit and retire the actual server subscription after late cancellation, peer end or supersession.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: Route uncorrelated mirror frames per admission with the existing stream generation while retaining correlated-response routing.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: Bind peer-owned mirror recovery routes to the existing checkpoint owner and retire only the ended subscription.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: Use bounded pending mirror buffers while preserving legacy subscriptions and status ordering. Defer the live entry view until a mirror candidate needs selector matching.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: Share subscription delivery types and the existing selector and mirror match rules. Filter mirror opt-ins before evaluating the entry view, preserving the status-only per-delta fast path.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: Mirror admission must use the existing attempt identity, durable commit and peer-owned recovery contract.
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`: Mirror admission must use the existing attempt identity, durable commit and peer-owned recovery contract.
+- `packages/coding-agent/src/modes/rpc/compact-admission-types.ts`: The owner must remain within 250 pure lines after combining admission and mirror behavior.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: Busy or unavailable storage must not turn a request into a logged exception with no answer.
+- `packages/coding-agent/src/modes/rpc/compact-mirror-pending.ts`: Mirror admission must use the existing attempt identity, durable commit and peer-owned recovery contract.
+- `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: Mirror admission must use the existing attempt identity, durable commit and peer-owned recovery contract.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: Mirror admission must use the existing attempt identity, durable commit and peer-owned recovery contract.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: Mirror admission must use the existing attempt identity, durable commit and peer-owned recovery contract.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: Mirror admission must use the existing attempt identity, durable commit and peer-owned recovery contract.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: Mirror admission must use the existing attempt identity, durable commit and peer-owned recovery contract.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: RPC attempt commitment, socket ordering and subscription lifetime are owned below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`: RPC attempt commitment, socket ordering and subscription lifetime are owned below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-admission-types.ts`: These are internal host ownership types below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: Ownership validation precedes command dispatch and extension hooks.
+- `packages/coding-agent/src/modes/rpc/compact-mirror-pending.ts`: RPC attempt commitment, socket ordering and subscription lifetime are owned below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: RPC attempt commitment, socket ordering and subscription lifetime are owned below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: RPC attempt commitment, socket ordering and subscription lifetime are owned below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: RPC attempt commitment, socket ordering and subscription lifetime are owned below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: RPC attempt commitment, socket ordering and subscription lifetime are owned below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: RPC attempt commitment, socket ordering and subscription lifetime are owned below extension dispatch.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: Preserve the inherited flag-off behavior, response correlation and attachment-gate ownership rule when merging this transport seam.
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`: Preserve the inherited flag-off behavior, response correlation and attachment-gate ownership rule when merging this transport seam.
+- `packages/coding-agent/src/modes/rpc/compact-admission-types.ts`: Fork-only types; preserve the owner contract.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: Preserve the RULING-94 unknown/retired identity refusal and the legacy flag-off path.
+- `packages/coding-agent/src/modes/rpc/compact-mirror-pending.ts`: Preserve the inherited flag-off behavior, response correlation and attachment-gate ownership rule when merging this transport seam.
+- `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: Preserve the inherited flag-off behavior, response correlation and attachment-gate ownership rule when merging this transport seam.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: Preserve the inherited flag-off behavior, response correlation and attachment-gate ownership rule when merging this transport seam.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: Preserve flag-off attachment enforcement and server-side peer ownership. With compact recovery enabled, RULING-96 exempts page and release commands from the ordinary ledger and attachment gate; their token or lease owner refuses mismatched admissions without revealing ownership.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: Preserve the inherited flag-off behavior, response correlation and attachment-gate ownership rule when merging this transport seam.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: Preserve the inherited flag-off behavior, response correlation and attachment-gate ownership rule when merging this transport seam.
+
+## 2026-10-29 - Host status snapshot, compact subscribe and RpcClient repair (S15a-2, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client-replies.ts`: Dispatch correlated answers once; log and drop unmatched responses before event or admission handling (RULING-92 client fold).
+- `packages/coding-agent/src/modes/rpc/session-effect-status.ts`: Keep compact live-effect headers on the subscription after its consumed snapshot route is retired.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: Keep an internal compact admission identity with the live subscription, independently of snapshot-page ownership.
+- `packages/coding-agent/src/modes/rpc/compact-admission-baseline.ts`: Support the seq-zero host snapshot identity under the existing answer barrier.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: Route selected subscription deltas by actual server ID and clear route maps on peer close; leave legacy subscriptions unchanged.
+- `packages/coding-agent/src/modes/rpc/compact-event-leases.ts`: Reuse the ordinary-event substrate for streamed snapshot records. Drop retired subscription admission references when its route ends, since RULING-94 refuses subsequent receipts.
+- `packages/coding-agent/src/modes/rpc/compact-record-staging.ts`: Stream a known snapshot chunk source through bounded staging without a snapshot array.
+- `packages/coding-agent/src/modes/rpc/compact-status-snapshot.ts`: Own the host-wide seq-zero immutable snapshot, lease and consumption lifetime.
+- `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: Register the actual returned subscription, activate behind the barrier and delete its page route on cancellation/failure release.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`: Echo seq-zero subscription routing on snapshot pages and retire the snapshot route on successful consumption release.
+- `packages/coding-agent/src/modes/rpc/rpc-client-admissions.ts`: Skip parsing with no routes, preserve RpcCommandError on unstructured refusals and return the current repaired identity after an initial manifest restart or an identical retry; page content remains a separate page() result. Local unknown admissions now carry the same typed code/admission-ID error data as server refusals (RULING-94); the real socket test proves a retired route rejects once without reset, raw error or event delivery.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: Delegate admission/repair and correlated-response dispatch to small helpers; preserve valid legacy requests and shrink the oversized client.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`: Declare the validated compact subscribe identity.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: Keep ATTACH_GATE_EXEMPT identical to the base. With the compact-updates owners present, recovery paging and release are authorized by their token/lease (RULING-96, carried from S15a-1), which subsumes the earlier subscription-route bypass; flag off keeps the attach gate.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: Check and retire peer-scoped subscription routes; a missing admissionId never matches a missing map entry. Existing compact subscriptions satisfy RULING-94 authority; ending their route also releases snapshot leases.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: Apply RULING-94 after malformed-ID validation and before the attachment gate or dispatch. Keep live-route dispatch synchronous so cancellation can win before subscription completion; retire subscription routes on successful unsubscribe.
+- `packages/coding-agent/src/modes/rpc/session-status-commands.ts`: Pass the streaming snapshot sink and internal compact identity through subscription acceptance.
+- `packages/coding-agent/src/modes/rpc/session-status-record.ts`: Keep compact live-status headers after snapshot consumption, without changing seq-zero row content or legacy projection.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: Stream snapshot rows synchronously with one cut timestamp while preserving legacy inline output.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client-replies.ts`: RULING-92 forbids treating a duplicated or unsolicited response as an event.
+- `packages/coding-agent/src/modes/rpc/session-effect-status.ts`: Retiring a consumed snapshot route must not strip live effect routing headers.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: Snapshot-page ownership ends separately from the live subscription's status/effect stream.
+- `packages/coding-agent/src/modes/rpc/compact-admission-baseline.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/compact-event-leases.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/compact-record-staging.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/compact-status-snapshot.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/rpc-client-admissions.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: The security contract forbids unconditional new exemptions and request-supplied peer identity. RULING-94 supersedes the earlier malformed-ID ordering: grammar validation comes first. RULING-96 then answers foreign/unknown/retired recovery admissions with the token/lease path's own byte-identical typed refusal (unknown_token, null source and health), and a receipt after unsubscribe gets the lease's own answer (#4844 LOW).
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/session-status-commands.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/session-status-record.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: RULING-66 S15-Q3 requires a small answer and a paged host snapshot; RULING-85 Q5 binds cleanup to the returned subscription ID; RULING-84 requires the in-repo client to honor repair advice.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client-replies.ts`: Client request correlation precedes event delivery.
+- `packages/coding-agent/src/modes/rpc/session-effect-status.ts`: Transport subscription projection runs below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: The host owns subscription and snapshot-route lifetimes.
+- `packages/coding-agent/src/modes/rpc/compact-admission-baseline.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-event-leases.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-record-staging.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-status-snapshot.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/rpc-client-admissions.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-status-commands.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-status-record.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: This path participates in RPC transport, snapshot ownership or subscription delivery below extension dispatch.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client-replies.ts`: Preserve synchronous response hooks and unmatched-response dropping before admission/event dispatch.
+- `packages/coding-agent/src/modes/rpc/session-effect-status.ts`: Preserve compact-only headers after consumption while keeping legacy records unchanged.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`: Preserve the internal admission identity only on the streamed compact path.
+- `packages/coding-agent/src/modes/rpc/compact-admission-baseline.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/compact-event-leases.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/compact-record-staging.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/compact-status-snapshot.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/rpc-client-admissions.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/session-status-commands.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/session-status-record.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: Preserve the S15a-1 ordinary-routing integration and fold this path's compact subscribe/snapshot/client seam without changing flag-off or absent-ID behavior.
+
+Real producer golden f completes a-g on the first increment's a-e/g; index.json is valid at each head, and h is unchanged. Cancellation and storage failure release the actual subscription and snapshot lease; the refusal resolves the installed barrier. RpcClient repair never resubmits prompts or reads mutable entries/state, and identical/conflicting retries preserve the repaired route.
+
+## 2026-10-29 - Complete ordinary admission routing and bounded cancellation (S15a-1, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-admission-producer.ts`: the late-result release is a required argument, and a failed late release is counted (`releaseFailed`, beside `abandoned`) and logged instead of swallowed (RULING-90 final).
+- `packages/coding-agent/src/modes/rpc/compact-admission-reply.ts`: Scope correlated replies to the requesting connection and admission, without retaining a request index (RULING-92). Drop foreign-peer and unmatched-context replies rather than guessing a route. RULING-94 now refuses a caller's unheld admission before dispatch, so its request receives a typed error instead of a dropped answer.
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`: Extract bounded row schema, limits and disk reads/writes without behavior changes before growing the admission owner.
+- `packages/coding-agent/src/modes/rpc/rpc-response-types.ts`, `packages/coding-agent/src/modes/rpc/compact-admission-error.ts`: Declare the typed `unknown_admission` response with its admission ID.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`: Accept an optional admission routing identity on correlated session commands.
+- `packages/coding-agent/src/modes/rpc/compact-admission-baseline.ts`: Emit each surviving ordinary route manifest behind the answer barrier.
+- `packages/coding-agent/src/modes/rpc/compact-admission-error.ts`: Keep the shared typed refusal outside the bounded index owner.
+- `packages/coding-agent/src/modes/rpc/compact-admission-producer.ts`: Abort ended-epoch producers at the existing open deadline, unref the timer and release late successful results without answering.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: Route events per admission, but correlated responses once with their requesting admission; exclude retired admissions from cached terminal headers. Honor explicit reply drops and report them unwritten to the delivery owner.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: Validate every present top-level admission ID through RULING-57, then refuse unknown, retired and foreign IDs identically before dispatch (RULING-94). RULING-96 keeps recovery paging and release under their token/lease authority and earlier typed answers instead of the attempt ledger. Open/subscribe introduce IDs; only the caller's pending producer may be cancelled before a route exists.
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: Read indexed cancellation results, count/log abandoned producers, release late results through their existing release path and always clear the deadline on close.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: Register before startup, join the installed cut, refuse cancelled late opens and release accepted cuts/routes once if physical open later fails, without releasing a rolled-back attachment twice.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-checkpoint-types.ts`: Keep frozen/retained cut interfaces outside the bounded checkpoint owner.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-requests.ts`: Authorize shared checkpoint pages through surviving S08 routes.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: Join an ordinary hold without a new generation; retain the cut until its last route ends.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts`: Add a route to the installed stream without advancing its counter.
+- `packages/coding-agent/src/modes/rpc/compact-reset-stream.ts`: Reset an existing ordinary stream without acquiring another hold.
+- `packages/coding-agent/src/modes/rpc/compact-storage-health.ts`: S14 review carry: preserve original mkdir/lstat errors; only the ownership predicate creates an ownership refusal.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`: Echo the ordinary admission and current generation on leased-event page responses. Unknown/foreign tokens and mismatched admissions receive byte-identical repair advice per token with null source/health (RULING-96).
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`: Spread unknown-token and mismatched-admission retries across 100..2000 ms using HMAC-SHA-256 of the presented token under one process-local CSPRNG key (RULING-97); the same token keeps identical advice bytes, storage failures retain random backoff, and neither key nor token bytes are logged.
+- `packages/coding-agent/src/modes/rpc/rpc-recovery-command-types.ts`: Declare the existing-admission reset command.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: Select routing actors only with the flag on, bind their server-side peer identity and capture terminal headers before S08 retirement.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: Mint one shared event lease with exactly the routed admissions as consumer references.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: Expose bounded ordinary-route registration/retirement and baseline seams.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: Install admission before startup and release late physical results after epoch abort. With the flag on, an attached-open rollback preserves surviving writer state; flag off keeps the legacy forgetSession rollback.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: Dispatch hold-neutral reset and preserve the correlated request's admission scope across asynchronous replies. Validate admission ownership synchronously, so dispatch starts in the caller's turn; only a pending-cancel lookup awaits the index.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: With compact recovery enabled, let the token/lease owner validate recovery authority even under enforced attachment; keep the flag-off gate unchanged (RULING-96).
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`: The admission owner was exactly 250 pure LOC; cohesive storage extraction keeps it bounded.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: An ordinary attachment cannot authorize a host snapshot lease or distinguish unknown/foreign token answers; RULING-96 assigns those checks to the existing recovery owner.
+- `packages/coding-agent/src/modes/rpc/rpc-response-types.ts`: RULING-94 requires a typed refusal instead of a reply lost after command side effects.
+- `packages/coding-agent/src/modes/rpc/compact-admission-reply.ts`: RULING-92 requires one correlated answer, carrying the requesting route rather than every route that shares the session; an unprovable request owner cannot authorize delivery.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`: Overlapping compact callers must be able to name their admission without changing legacy requests.
+- `packages/coding-agent/src/modes/rpc/compact-admission-baseline.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/compact-admission-error.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/compact-admission-producer.ts`: RULING-90 requires late success to release its resource exactly once, late rejection to be swallowed and the deadline not to keep the host alive.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: RULING-96 preserves token-holder paging, typed lease refusals and repair advice from earlier slices; those authorities may predate or live outside the ordinary attempt index. Other commands retain RULING-94's pre-dispatch refusal.
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: RULING-90 distinguishes suppressing a late answer/index change from retaining the resource; every epoch teardown must clear its timer.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-checkpoint-types.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-requests.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/compact-reset-stream.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/compact-storage-health.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`: RULING-96 requires admission mismatch to be indistinguishable from an unknown/foreign token, including retry-advice bytes, without revealing source identity or storage state.
+- `packages/coding-agent/src/modes/rpc/rpc-recovery-command-types.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: RULING-85 requires every ordinary frame instance to route through the same client identity and S08 counter; RULING-89 requires indexed refusal and bounded teardown.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`, `packages/coding-agent/src/modes/rpc/rpc-response-types.ts`: Admission persistence and the wire response union belong to host internals.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: Token authority and connection attachment precedence are internal router checks.
+- `packages/coding-agent/src/modes/rpc/compact-admission-reply.ts`: Transport correlation is below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`: The wire routing envelope belongs to the host protocol.
+- `packages/coding-agent/src/modes/rpc/compact-admission-baseline.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-admission-error.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-admission-producer.ts`: Epoch abort and late resource cleanup run below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: The host index owns producer release and teardown; extensions cannot reclaim a late result.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-checkpoint-types.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-requests.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-reset-stream.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/compact-storage-health.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/rpc-recovery-command-types.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: This path is a transport, recovery or ownership seam below extension dispatch.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/compact-admission-storage.ts`: Keep schema, limits and row I/O together when merging storage changes.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: Preserve flag-off attachment enforcement and flag-on token/lease authority instead of reintroducing an ordinary-admission gate.
+- `packages/coding-agent/src/modes/rpc/rpc-response-types.ts`: Preserve the additive typed unknown-admission refusal.
+- `packages/coding-agent/src/modes/rpc/compact-admission-reply.ts`: Preserve request-local connection/admission correlation; no retained request index.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`: Preserve the additive optional admissionId envelope when merging command unions.
+- `packages/coding-agent/src/modes/rpc/compact-admission-baseline.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/compact-admission-error.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/compact-admission-producer.ts`: Preserve the late-result release callback and unref in the shared producer helper when merging abort/deadline changes.
+- `packages/coding-agent/src/modes/rpc/compact-admission-routing.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: Preserve the existing release callback for late results and clear the timer before fallible storage cleanup in epoch teardown.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-checkpoint-types.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-requests.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/compact-reset-stream.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/compact-storage-health.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/rpc-recovery-command-types.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: The ordinary-admission integration described above is the conflict zone; preserve the upstream behavior for flag-off/absent-admission requests.
+
+S14 review carries: storage setup keeps non-ownership failures unchanged; `packages/client/test/recovery-repair.test.ts` proves eviction through observe() after 65 distinct restarts, with no private-field access. Real a-e/g producer fixtures ship in this increment; h is untouched. Compact subscribe and RpcClient wiring remain exactly on the S15a-0 path until S15a-2.
+
+## 2026-10-29 - Bounded compact admission foundation and cancellation (S15a-0, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: imports `RpcCommandError` from the extracted `rpc-command-error.ts` and re-exports it unchanged (no behaviour change; the file shrinks 1117 -> 1109 pure LOC so S15a can wire the client without growing it).
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: applies the shared recovery ID validator to present admission identities on compact open, subscribe, page and cancel requests before routing.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: refuses malformed admission identities before attachment checks or ownership allocation.
+- `compact-admissions.ts`: host-owned per-socket-epoch disk index, bounded entries, reserved bytes and live producers; identical retries join or replay one result, conflicting and retired identities refuse without allocating another hold.
+- `compact-open-admission.ts`, `compact-admission-baseline.ts`, and the router/writer seams: ordinary-open identity answer and pageable manifest under the existing actor barrier; cancelled late opens release only their own physical attachment.
+- `recovery-page-command.ts`, `compact-recovery-manifest.ts`, and `compact-manifest-page.ts`: serve the manifest on the existing page route and echo the checkpoint's admission/generation beside its routing session ID.
+- `rpc-command-error.ts`: behavior-identical extraction, preserving the RpcClient export while leaving room for the later client integration without growing RpcClient.
+- `docs/engine-socket/fixtures/admission-routes/`: real-producer golden h covers absent-admission legacy open/subscribe frames and actual RpcClient requests. Goldens a-g, complete suffix routing, the host-wide status snapshot owner and repair wiring remain in S15a.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the client is far over the 250-line ceiling; moving the self-contained error class out leaves room for S15a's client integration without adding lines to it.
+- RULING-85 Q2 requires a typed refusal instead of interpreting a malformed admission identity as a legacy request. The compact-updates flag remains off by default.
+- RULING-66 requires retry identity to survive cancellation for the socket epoch without unbounded RAM, silent eviction, duplicate ownership or double release. S15a-0 is the bounded prerequisite split required by RULING-46.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the RPC client's error type is part of the client wire surface below extension dispatch.
+- Admission validation, attempt identity, response barriers and attachment cleanup precede or run below extension dispatch.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the import/re-export lines of `RpcCommandError` near the top of the file.
+- Host request/response types, ordinary-open admission, connection teardown and recovery page responses. S15a extends these foundations with the remaining routing/snapshot/client contracts; this slice does not advertise complete compact support.
+
+## 2026-10-30 - Keep unobservable root owners conservative (RULING-101b, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-root-owner.ts`: classify probe startup exceptions by their spawn syscall, independent of error code, as UNKNOWN for both current-owner markers and foreign-root death checks. Other exceptions still propagate.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-root-owner.ts`: an unavailable `ps` must not stop a new exclusively created spool from spilling or authorize reclaiming a foreign directory. Existing parse/result semantics and token-based retirement remain unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/compact-root-owner.ts`: spool markers and startup death proofs are below extension delivery; the module has no logging facility.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/compact-root-owner.ts`: current-owner and foreign-owner process probes share the narrow startup-error adapter. Compact rollout remains OFF by default.
+
+## 2026-10-30 - Count every halting spool failure in recovery health (RULING-101a, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`: derive recovery unavailability from the same `HALTING` set that stops spilling, retaining the existing non-halting `page_write` health signal.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`: a `node_write` halt must require recovery and advance the durable health clock after repair, just like `spool_create`; future halting reasons must not drift out of health accounting.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`: internal spool failure accounting runs below extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`: the failure classifier; preserve one source of truth for halting operations. Compact rollout remains OFF by default.
+
+## 2026-10-28 - Startup recovery root classification and typed repair policy (S14, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-root-owner.ts`, `packages/coding-agent/src/modes/rpc/compact-recovery-cleanup.ts`, `packages/coding-agent/src/modes/rpc/compact-spool-dir.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: atomic private lifetime markers and conservative startup classification across transcript, settled, current and event spools. Windows startup sweep is a reported no-op. Live roots with provably dead owners are preserved and reported with `live_owner_dead`, age and no-follow size (RULING-86).
+- `packages/coding-agent/src/modes/rpc/compact-storage-health.ts`, `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`, `packages/coding-agent/src/modes/rpc/compact-content-store.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: durable recovery-only health revisions, retained-write repair and counted failed-removal debt. Orderly retirement does not invent an I/O failure.
+- `packages/coding-agent/src/modes/rpc/compact-root-owner.ts`: an owner whose identity probe reports absence is dead only when `kill(pid, 0)` answers ESRCH; EPERM or a live answer keeps the root UNKNOWN (RULING-87). The shared process-identity probe is unchanged.
+- `packages/coding-agent/src/modes/rpc/compact-storage-health.ts`: initialize health storage once under the agent directory and repair corrupt or symlinked revision metadata with locked, fsynced, atomic replacement. `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`: only write failures mark storage unavailable, never failed reads or reclamation.
+- `packages/coding-agent/src/modes/rpc/compact-storage-health.ts`, `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: memoize asynchronous private-directory setup, retry rejected setup on the next operation, and surface ownership refusal asynchronously, never from construction. Standalone stores capture their fallback agent directory once at module startup.
+- `packages/coding-agent/src/modes/rpc/session-registry-open.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: pass the host's captured agent directory to each lane's health store. `packages/coding-agent/src/modes/rpc/session-worker-start.ts`: owns the unchanged worker launch so the oversized client does not grow.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`, `packages/coding-agent/src/modes/rpc/compact-recovery-requests.ts`, `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts`, `packages/coding-agent/src/modes/rpc/compact-event-leases.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`: wire repair advice, bounded jittered backoff, accepted-source identity and success clearing state without closing the connection.
+
+### Why
+
+- RULING-65, RULING-79 and RULING-84 require safe crash reclaim, real persisted recovery evidence, coherent shared content and no unchanged-failure retry loop. The compact delta flag stays OFF by default until S15a lands; S14 also blocks default-on.
+- `packages/coding-agent/src/modes/rpc/compact-storage-health.ts`, `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: directory initialization and agent-directory discovery must not introduce synchronous I/O into session or recovery reads.
+- `packages/coding-agent/src/modes/rpc/session-registry-open.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-worker-start.ts`: retain startup host identity in both runtimes without growing the existing oversized worker client.
+
+### Why an extension could not handle it
+
+- Spool ownership, operation leases, token reads and host startup occur below extension delivery.
+- `packages/coding-agent/src/modes/rpc/compact-storage-health.ts`, `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: private recovery storage is below the extension boundary.
+- `packages/coding-agent/src/modes/rpc/session-registry-open.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-worker-start.ts`: registry configuration and worker startup are host-owned.
+
+### Expected merge conflict zones
+
+- Compact storage, page-read and acceptance-lane initialization in the production paths named above. No public cut/admission route is introduced; S15a owns RpcClient wiring.
+- `packages/coding-agent/src/modes/rpc/compact-storage-health.ts`, `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: setup promise and health construction defaults; retain ownership refusal, retry and revision repair.
+- `packages/coding-agent/src/modes/rpc/session-registry-open.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-worker-start.ts`: lane construction and worker launch; preserve the captured directory and build-time worker entry.
+
+## 2026-10-28 - Event leases and idempotent release receipts for compact recovery (S13, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-event-leases.ts` (new): `EventLeases`, the host's ordinary-event lease owner (R4.B6, RULING-65 S13-Q1/Q2 = A). A session record past F (`COMPACT_RECORD_MAX_BYTES` = 262,144, two D fragments) for a connection that selected compact events is staged once, as its exact JSON line without the newline, into the owner's own spillable `TransferStaging` store (the S12a substrate, unchanged; the content is named by an unchanged staged `FrozenRef`) and leased to each such connection at the record's accepted sequence. A lease is scoped like a checkpoint token (another peer, session or admission is `unknown_token`, with no state), never mints a generation and holds no lane root. At most 32 live leases per peer incarnation; past that the mint is refused `lease_limit`. Pages are served under a `CompactReadLease`, the content's digest verified once before the first page. `release` is the consumer's receipt: per (peer, lease) the referencing admissions are counted, the lease is released at zero and never below, a repeated receipt is the typed `duplicate` (the last 256 released ids per peer are remembered), and a peer's end releases every lease it holds; content goes with the last lease sharing it.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-types.ts`: `EventLease` (`kind: "event"`) and `RecoveryLease = CheckpointToken | EventLease`; `CheckpointToken` and `RecoveryToken` are unchanged.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-requests.ts`: `get_recovery_page` also accepts `lease: {kind: "event", id}` in place of `token` (`EventPageRequest`) and answers `EventPageAnswer` (`lease` in place of `token`/`generation`); both kinds share one source abstraction, so ordinals, the active-request rule, the socket's eight outstanding requests, retries and cursors are the same. The checkpoint request and answer shapes are unchanged.
+- `packages/coding-agent/src/modes/rpc/rpc-recovery-command-types.ts` (new): the recovery commands moved out of `rpc-session-command-types.ts` (`get_recovery_page` unchanged) plus the event-lease page variant and `release_recovery`. `rpc-read-response-types.ts` gains their answers.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts`, `session-router-routing.ts`, `session-command-activity.ts`: the host route `release_recovery` answers the receipt (`{lease, outcome: released|held|duplicate, remaining}`), only with the flag on; a read-only observation.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts`, `session-event-writer.ts`, `session-event-fanout.ts`, `session-recovery-pins.ts`, `session-acceptance-lane.ts`, `custom-capability.ts`: the writer's per-destination line goes through `eventLine`: a record past F, for a connection that sent the internal `compact_events` capability and holds the lane-owned session, becomes `{type, sessionId, eventLease}`; every other destination's bytes are unchanged. A refused lease sends `event_lease_refused` and closes that connection. The fanout owns the lease owner (flag on only) and frees a peer's leases at its end; the lane exposes `acceptedSequence`.
+- RULING-81/82 (S13a): `session-event-writer-destinations.ts` builds a record's legacy line only when a legacy destination needs it (`RecordLine`); for a compact-only audience an oversized record is sized and staged from `json-pieces.ts` (the record's exact `JSON.stringify` text in D-byte chunks, never one string), so it costs no legacy encoding, and a mixed audience costs exactly one. `compact_events` is not recorded with the flag off. `get_recovery_page` routes `lease.kind` `checkpoint` and `event`; an unknown kind is `recovery_malformed_request`. `release_recovery` refuses a checkpoint lease with `recovery_lease_kind_unsupported`.
+- S13a review: a lease exists only for an envelope that reached its peer. A socket queue entry's `onWritten` now reports whether its line was written (`socket-event-queue.ts`, `socket-event-fanout.ts`), and every drop path reports `false`: supersession by a newer keyed record, a recovery shed, an overflow cut and the records it releases, a held record whose session went, and a refused reply. That report runs `EventLeases.abandon`, which ends the lease and its staged copy once (`compact-event-leases.ts`, counted as `abandoned`). A peer's close still releases everything at its end.
+- Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (default OFF). `compact_events` is not advertised; S17 owns the public selection.
+
+### Why
+
+- R4.B6 and the S13 design: a large ordinary start/end/error record must stay fully fetchable at its accepted sequence without a new recovery generation, and every selected physical record must fit F. RULING-65 rules the lease identity (tagged `kind`, same page route) and the release receipt (after the consumer's commit, identity-bound and idempotent per the desktop contract on #4272).
+
+### Why an extension could not handle it
+
+- The writer's per-destination encoding, the recovery page route and the host's lease ownership are host-internal RPC state; no extension surface reaches them.
+
+### Expected merge conflict zones
+
+- LOW: `compact-recovery-requests.ts` `request`/`serve`, `session-event-fanout.ts` field initializers and the two peer-end paths, `rpc-session-command-types.ts` around the recovery commands.
+- LOW: `session-event-writer.ts` `enqueue`'s per-target `actor.enqueue` call (one argument).
+
+## 2026-10-28 - The per-destination write loop leaves session-event-writer.ts (S13w0, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts` (new): `SessionEventWriterDestinations.deliver`, the per-destination loop of `SessionEventWriter.enqueue` (placeholder redaction, snapshot retention, each target's FIFO or the stdio lane), moved verbatim.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `enqueue` calls `deliver`; the writer now extends the destinations layer. Every `type: "..."` literal stays in this file. No behaviour change: every destination receives the same bytes (recorded-stream test `4272-writer-destinations-golden`).
+
+### Why
+
+- RULING-82 (1): the writer was over the 250-line ceiling (RULING-76); S13a's legacy-line-on-demand change goes into the moved loop, not the writer.
+
+### Why an extension could not handle it
+
+- The writer's per-destination delivery is host-internal RPC state; no extension surface reaches it.
+
+### Expected merge conflict zones
+
+- LOW: `session-event-writer.ts` `enqueue` after the overflow check.
+
+## 2026-10-28 - Engine-socket session workers send payload only under host-granted permits (S12b, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-permits.ts` (new): the permit protocol of RULING-63 Q3 on one `SharedArrayBuffer` block per worker incarnation. `credit` holds bytes that only the host adds and only the worker takes (`Atomics.compareExchange`); the host's tagged word is `granted` / `denied` / `closed`, the worker's is `idle` / `waiting`; every read is an `Atomics.load`. One permit is `WORKER_PERMIT_BYTES` = `FRAGMENT_ENVELOPE_MAX_BYTES` (one S11 page envelope, RULING-69 (1)), which is also the fixed initial credit the block holds when the worker first sees it. `WorkerPermitLedger` is the host's capacity: B_worker (`TRANSFER_STAGING_MAX_BYTES`) in whole permits, one kept for control progress, so a data request past the ceiling is refused and queued before anything is allocated, and a release hands its permit to the oldest queued request. `hostWorkerPermits` is the one ledger of a host process. `HostPermits` (host half) holds at most one permit per worker and re-grants only once the worker spent the previous one; `close()` wakes every waiter with `closed` and returns the held permit or the queued request exactly once. `WorkerPermitGate` (worker half) waits with `Atomics.wait` in a loop until a permit is taken, the host closes, or `controlMs` passes; a deny stays recoverable (a later grant ends the wait) and only names the outcome at the deadline.
+- `packages/coding-agent/src/modes/rpc/session-worker-transfer.ts` (new): `WorkerTransfer`, the worker half of the payload transport. Every bootstrap (`ready`), output, snapshot, `canonical` and `canonical_unavailable` message is built only after a permit is held. A message whose JSON fits one fragment (D stored bytes) is posted unchanged; a larger one travels as `fragment` frames of at most D stored bytes of its JSON, one permit each. In the ordered stream every fragment takes the next physical ordinal and the final fragment is the commit frame carrying the message's own ordinal, first-ordinal binding and signals (RULING-64). A closed host ends the isolate cleanly; a permit timeout or a deny that never cleared is the typed worker failure `session_worker_permit_timeout` / `session_worker_permit_denied`.
+- `packages/coding-agent/src/modes/rpc/session-worker-intake.ts` (new): `WorkerIntake`, the host half. It returns a permit once the frame it paid for is held, checks the one physical ordinal sequence (moved from `SessionWorkerClient`, with `nextOrdinal` as a typed diagnostic seam), and stages fragments into the lane's S12a `TransferStaging`. A gap or duplicate offset or ordinal, or a staging refusal, fails the incarnation typed (`session_worker_frame_gap` / `_duplicate`, `session_worker_transfer_<reason>`) and aborts the staged transfer; the whole message exists only after its commit frame arrived and every staged leaf read back verified, and the staged copy is released exactly once. Fragment frames never reach acceptance, so they never move the per-epoch high-water or a RULING-40 first-start binding.
+- `packages/coding-agent/src/modes/rpc/compact-producer-stamp.ts`: `defer(prefix)` moves the unit stamped last past the fragment frames sent before it, so a fragmented record's carrier, and a first-ordinal binding it started, take the final commit-frame ordinal.
+- `packages/coding-agent/src/modes/rpc/session-worker-credit.ts`: `transfer` (an exchange for a payload message) and `post` (the `ready` answer) go through the installed transport; without one (flag OFF) they are `exchange` and `send` exactly.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: output, snapshot and canonical builders now run inside the permit-gated call, so no record line, snapshot or transcript is built before the permit; the `commit` handler installs the transport from the host's block and answers `ready` through it. The whole-state snapshot builder moved to `session-worker-snapshot.ts` (new) so the file shrinks.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: owns the `WorkerIntake` (flag ON), sends its permit block with `commit`, routes `fragment` frames, and closes the permits at quarantine and exit.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: the `commit` message's `permits` block and the `fragment` frame.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: `staging` is readable by the lane's worker client, which stages fragments there; retiring the lane aborts what is still staged.
+- `packages/coding-agent/src/modes/rpc/accepted-transcript-tail.ts` (carried from the S12a reviews, RULING-79): a `replace` within an epoch supersedes the tail rather than releasing it, and a superseded tail lives until the last cut that names it is released, so a root frozen before the replace keeps reading its own entries (carry 67). One `TailBudget` per transcript now holds every byte its tails keep in the store: unpersisted entries plus every segment kept for a held cut, in the current tail and in any superseded tail a live cut still holds. `DEFAULT_TRANSCRIPT_TAIL_BYTES` (256 MiB) bounds exactly that, so held cuts can no longer grow the spool past it; an entry over it is refused typed (`transcript_tail_over_byte_limit`) before any leaf exists, and a cut's release returns its room (carry 65a). A tail superseded while cuts remain spills its unpersisted entries at once, still readable, so they no longer take the resident room (`TRANSCRIPT_TAIL_RESIDENT_BYTES`) the next version appends into (carry 66).
+- `packages/coding-agent/src/modes/rpc/accepted-transcript.ts`: creates every tail of an epoch on that one shared budget. An entry the tail bound refuses no longer leaves its version unavailable for good (RULING-80 (4)): later entries still record their identity, no refused text is kept outside the budget, and once the file covers every entry the version holds no text for, it is available again and reads whole. Spilling bytes still count against the resident bound.
+- RULING-80 (3a), `session-worker-intake.ts` / `session-worker-transfer.ts` / `session-worker-protocol.ts`: a `fragment` names the message type it carries (`of`). A staging refusal of a transfer still ends the whole incarnation (fail-closed), but its typed failure names the cause and the event (`session_worker_transfer_<cause>: <type> ordinal <n> (<length> stored bytes)`), the host keeps it as `WorkerIntake.refusal`, and the session's clients receive it as `session_error`. Keeping the incarnation and refusing only that event is senpi#4663.
+- RULING-80 (1), `session-worker-permits.ts`: the protected control slot is the named `WORKER_CONTROL_SLOTS`; the data ceiling is `floor(B_worker / WORKER_PERMIT_BYTES) - WORKER_CONTROL_SLOTS`.
+- Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (default OFF): with the flag OFF no permit block is created or sent and every worker message, its shape and its bytes are unchanged.
+
+### Why
+
+- S12 design section 5 assigns S12b the host permit ledger, control progress and worker signal handling, and the migration of every worker bootstrap, output and snapshot path, closing pre-send worker compliance (R4.B6): a worker may send one bounded frame only after the host reserved its receive capacity. RULING-63 Q3 fixes the mechanism (shared-memory credit, typed recoverable deny, notify on close and termination, initial credit one page in bytes) and RULING-64 the ordinal mapping of fragmented records.
+- The S12a reviews carried three tail items to this PR (RULING-79): kept segments sat outside every bound, so the spool could reach about twice the stated 256 MiB; a root held across a replace could leave the new version refused at the resident bound and unavailable after the root's release; and the tracker did not say how long a superseded tail lives.
+
+### Why an extension could not handle it
+
+- The worker isolate transport, the acceptance lane and its staging store are host-internal RPC machinery; no extension surface reaches them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-worker.ts` `WorkerEventWriter.enqueue`, `publishSnapshot` and the `commit` handler.
+- LOW: `session-worker-client.ts` `receive` (`fragment` case, intake calls), `commit` and `quarantine`; `session-worker-credit.ts` `createWorkerCredit`; `compact-producer-stamp.ts` `stamp`.
+- LOW: `accepted-transcript-tail.ts` `stageTailEntry`, `TranscriptTail` constructor, `supersede`, `persisted`, `releaseAll`; `accepted-transcript.ts` tail construction.
+
+## 2026-10-28 - Accepted transcript tails spill to a bounded staging store (S12a, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-transfer-staging.ts` (new): `TransferStaging`, the shared bounded staging substrate for engine-socket transfers. A transfer declares its stored length up front (`begin`), which is reserved against `TRANSFER_STAGING_MAX_BYTES` (64 MiB, B_worker) before any leaf exists; fragments of at most D (131,072) stored bytes become immutable leaves of one `CompactContentStore`, which spills them like any payload leaf; `commit` names the content by a `FrozenRef` whose `entry` is an S11a catalog entry (`kind`, `id`, `length`, `leaf`-domain digest), encoded only by `compact-catalog-codec.ts`. Every refusal (`staging_over_byte_limit`, `fragment_over_limit`, `length_mismatch`, `staging_closed`, a retired store) aborts the transfer and releases what it staged; `close` aborts open transfers and releases content never adopted. `open`/`chunks` read content back through `openFrozenBytes`, digest-verified.
+- `packages/coding-agent/src/modes/rpc/accepted-transcript-tail.ts` (new): the accepted tail of one epoch is staged content in the lane's store, released by persistence (held cuts included, RULING-21 (4)) and pinned by a reader's `hold` for the whole read. `DEFAULT_TRANSCRIPT_TAIL_BYTES` (moved here, now 256 MiB resident and spilled) and `TRANSCRIPT_TAIL_RESIDENT_BYTES` (32 MiB) bound it; over either, the transcript component is typed `transcript_tail_over_byte_limit` before any leaf of the refused entry exists. `stageBootstrap` is the internal bootstrap reader: it stages every entry of a bootstrap first and refuses the bootstrap whole on a bound.
+- `packages/coding-agent/src/modes/rpc/accepted-transcript.ts`: `AcceptedTranscript` takes the lane's `TransferStaging`, applies bootstraps through the bootstrap reader and adopts staged entries; `readTranscriptRoot` (test-only) is now asynchronous and reads the tail under a hold.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: each lane owns one staging store, releases an epoch's tail at replacement, closes the store when its storage retires, and reports it as `storageStatus().transcript`.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-transcript.ts`: the transcript family walk holds the tail for its whole walk and streams an opaque tail entry into its component in verified pieces.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-source.ts`: the source family walk holds the tail the same way and splices a tail entry's retained line in as raw steps, one verified piece at a time.
+- RULING-78 (`accepted-transcript-tail.ts`, `compact-transfer-staging.ts`, `session-acceptance-lane.ts`, `accepted-transcript.ts`): every live cut holds a reference on the tail segments it names (`retainCut`/`releaseCut`), so persistence moves a still-named entry to the spool (`kept`) instead of discarding it, and a held cut reads its own segments whatever later happens to the session file; the last cut's release lets the store reclaim them. Every staged read verifies each leaf against its codec `leaf` digest before yielding it; a gone or changed segment is the typed `StagedReadError` (`segment_missing` / `segment_mismatch`), which `readTranscriptRoot` reports as `transcript_segment_missing` / `transcript_segment_mismatch`.
+- Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (default OFF): only acceptance lanes use any of it. Worker frames, permits and the worker bootstrap/output wire are unchanged (S12b).
+
+### Why
+
+- RULING-25 Q6 and S12 design section 3 assign the accepted-tail spill and the reusable staging/ref substrate to S12a (RULING-46 item 2, RULING-63 Q2): an accepted tail over 16 MiB made the transcript unavailable, and S12b/S13 need one bounded staging representation named by the S11a frozen-reference codec.
+
+### Why an extension could not handle it
+
+- The acceptance lane, its transcript root and the recovery catalog are host-internal RPC state; no extension surface reaches them.
+
+### Expected merge conflict zones
+
+- LOW: `accepted-transcript.ts` `apply`/`readTranscriptRoot` and `session-acceptance-lane.ts` constructor, `bootstrap` and `retireStorage`.
+- LOW: `compact-catalog-transcript.ts` `transcriptComponents` and `compact-catalog-source.ts` `sourceComponents`.
+
+## 2026-10-28 - Session event writer and host read routes split into their own modules (SR1, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `SessionEventWriter` now extends a chain of layer classes, one module per responsibility. `packages/coding-agent/src/modes/rpc/session-event-writer-state.ts` (new) holds every field, in the original declaration order, and the constructor. `packages/coding-agent/src/modes/rpc/session-event-writer-lanes.ts` (new) holds the shared stdio lane and its drain. `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts` (new) holds connection registration, capabilities and security presentations. `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts` (new) holds the MCP presenter accessors. `packages/coding-agent/src/modes/rpc/session-event-writer-lifecycle.ts` (new) holds open, close, seal and forget. `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts` (new) holds the recovery accessors, and `packages/coding-agent/src/modes/rpc/session-event-writer-compaction.ts` (new) the record-compaction helpers. Every method body moved unchanged; members another layer reads went from `private` to `protected`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` still holds every one of the 13 `type: "..."` literals, so the set of record types a scan of this file finds is unchanged. Three methods that also build such records moved: `closeSession`, `sealRolledBackOpen` and `reserveCloseResponse` (`session_closed`, `overflow`) now live in `session-event-writer-lifecycle.ts`; the scan still finds those two types only because `releaseSession` and `enqueueControl` in this file hold the same literals (senpi#4634 replaces the scan with a typed export).
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: the bodies of the host-level read routes `get_protocol_info`, `get_subscription_limits` and `list_sessions` moved unchanged into `packages/coding-agent/src/modes/rpc/session-router-host-reads.ts` (new); `dispatch` checks the same commands in the same order.
+- Internal refactor: no behaviour, wire, export or public-member change.
+
+### Why
+
+- RULING-70 (4) for senpi#4272: the writer (904 code lines) and the routing file (256) were over the 250-line ceiling, and S12 adds recovery accessors and host read routes to both. Each now has a module of its own to grow in.
+
+### Why an extension could not handle it
+
+- This is the layout of host-internal RPC modules; no extension surface reaches the writer or the router.
+
+### Expected merge conflict zones
+
+- MEDIUM: any branch that edits `session-event-writer.ts` members will find most of them moved into the `session-event-writer-*.ts` layer modules.
+- LOW: `session-router-routing.ts` `dispatch`, for the first three routes.
+
+## 2026-10-28 - The loaded transcript base streams through recovery pages (S11c, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-recovery-base.ts` (new): the loaded transcript base as a `FrozenBytes` source for the page route (RULING-70 (1) B, RULING-61 "partial -> exact"): one stamped row per base entry, `{index, id, source: "file", parentId, kind, family}` plus a newline, in the one UTF-16LE codec every component uses, so a page of it is digest-checked like any other page (`fragment` domain over its raw bytes; no second encoder, RULING-46 item 2). `openBaseBytes` scans the session file once, asynchronously (`node:fs/promises`, never on the session path, RULING-50 (3)), with one 64 KiB read buffer and one line resident, refuses typed unless the file's dev/ino identity, the captured `count` and the captured `idFingerprint` all hold, and keeps per row only its stream offset, its line's file offset and a 32-bit FNV-1a hash of the row (20 bytes per entry, never bytes, freed with the root's lease). The scan is charged to the request's budget and stops typed `aborted` at the next read when its signal aborts (RULING-69 (2)). Every page re-opens the file by path, re-checks dev/ino and size, and re-derives its rows from their lines, each checked against the offset and hash the open recorded: any change to the base since the load (the file replaced, truncated or missing, or any edit to its lines, ids or content, before or after the first page; RULING-72) is the typed `base_file_replaced`, `base_file_truncated`, `base_file_missing` or `base_fingerprint_mismatch`, never a stale row, even after earlier pages were served. `baseStream` resolves the cut's reserved ref: another cut's base ref, an unavailable transcript or a root without a base is `range`.
+- RULING-71 and review LOWs: `compact-recovery-base-index.ts` (new) bounds the row table against a stated budget, RULING-61's 8 MiB transcript ancestry budget (`BASE_ROW_TABLE_BYTES`), charged `20 x anchors + 8` bytes: every k-th row is an anchor with `k = max(1, ceil(count / floor((budget - 8) / 20)))`, so up to the budget the table is dense (one FNV-1a-32 per row) and above it sparse (one per group of k rows), a range re-derives and checks whole every group it touches, and a large transcript is never refused; `compact-recovery-ids.ts` reserves the `base` step (a component ref carrying it is refused `reserved`, so the minter can never produce `<catalogRoot>:base`, which still passes the one bounded-id validator); the base scan parses lines with the loader's own `parseSessionEntryLine` and `fingerprintLine` (`session-transcript-journal.ts`), so every base the loader accepts streams and a parsed non-entry line is an opaque row, never a refusal; the module docs state that FNV-1a-32 is change detection for the user's local file only and that `idFingerprint` covers ids and kinds, not content; `FrozenBytes.digest` documents its base meaning.
+- RULING-72 = A: the open scan also verifies the base's `contentFingerprint` (the load's SHA-256 over the counted lines under the `senpi-recovery-base/1/sha256` domain, `core/session-file-identity.ts`), so an in-place edit of any field before the first page is `base_fingerprint_mismatch` like an edit after it; `accepted-transcript.ts` gives the count-0 base read its empty content fingerprint.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-ids.ts`: the reserved ref grammar `<catalogRoot>:base` (`BaseRef`, cut-scoped like every ref, RULING-58 (3)), `parsePageRef` (either grammar through the one validator before any use, RULING-57 Q2 (1)), `baseRef(root)`.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts`, `compact-verified-components.ts`, `compact-recovery-catalog.ts`: `page` routes a page ref to its opener (the catalog component's verified leaves, or the base stream) under the one per-root verified-source cache, so the base is scanned once per frozen root and the entry dies with its lease (RULING-69 (2)); `componentBytes` names the component-only contract of a catalog read under a page ref.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-bytes.ts`: `assertRange` and `startAtOrBefore`, the range checks and the start search `FrozenLeafBytes` already made, shared with the base source.
+- `packages/coding-agent/src/modes/rpc/compact-read-lease.ts`, `compact-recovery-types.ts`: a `PersistedBaseError` is a `CompactReadError` reason and a `StorageUnavailableReason` (closed union, RULING-58 (2)); the owner counts each detail apart and the wire carries it as `recovery_storage_unavailable` with that reason.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-registry.ts`, `compact-catalog-transcript.ts`, `compact-catalog-source.ts`: with the base streamable, a loaded base no longer makes transcript, opaque and source `partial` (only an unavailable transcript does): each of the three names the stream with a `<family>/base` member carrying the same `{source: "file", first: 0, count, idFingerprint}` row, so a reader counts every member exactly from the catalog's rows of this epoch plus the stream's rows of that family, and neither opaque nor source claims an explicit empty while a base exists. The assembly is therefore `complete` at a root with a loaded base (RULING-61 acceptance closed, RULING-70 (1)).
+- `packages/coding-agent/docs/rpc.md`: `get_recovery_page`: the reserved ref, the row format, the client's anchor (the SHA-256 over `kind NUL id LF` of the rows is the catalog's `idFingerprint`), and the four typed refusals of a changed file.
+
+### Why
+
+- RULING-61 left the loaded base a `source: "file"` range with its families `partial` until S11 could turn it exact; RULING-70 (1) ruled that S11c streams one stamped row per base entry in the one codec under a reserved ref, anchored by the fingerprint and file identity, refusing typed when the file changed, and that the "partial -> exact" acceptance closes here. The recovery owner may not read the session file synchronously (RULING-50 (3)), so the base's kinds and families can only come from an asynchronous, bounded reader on the page route.
+
+### Why an extension could not handle it
+
+- The frozen root, its captured base identity, the catalog, the token owner and the page route are host-internal storage of the acceptance lane under its leases; no extension event sees a cut, a token or a page, and the base's identity (dev/ino at load) is captured by the session manager's own descriptor.
+
+### Expected merge conflict zones
+
+- LOW: `compact-recovery-manifest.ts` (`page`), `compact-recovery-ids.ts` (after `parseContentRef`), `compact-recovery-bytes.ts` (`FrozenLeafBytes.range`), `compact-catalog-transcript.ts` (the base row and the opaque explicit-empty line), `compact-catalog-source.ts` (the explicit-empty line), `compact-catalog-registry.ts` (`familyProducers`), `compact-recovery-types.ts` (`StorageUnavailableReason`), `docs/rpc.md` (`get_recovery_page`).
+
+## 2026-10-28 - Validated page cursors and bounded page requests on the engine socket (S11b, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-recovery-cursor.ts` (new): opaque bounded page cursors (RULING-62 Q2 A): `p1:<ordinal>:<offset>:<mac>`, an allow-listed ASCII id of at most 128 bytes whose authenticator is HMAC-SHA-256 under a per-process key drawn once from the platform CSPRNG and held only in a closure (never a property, never serialized, never in an error), truncated to 16 bytes. The authenticator covers the asking peer incarnation, the routing session, the token, its generation, the component, the ordinal and the next raw byte offset (Q2 (1)): a cursor presented under any other binding, altered, or minted by a previous host process is simply unknown. `open` checks length and grammar (the RULING-57 validator; each decimal field canonical, `0|[1-9][0-9]{0,15}`, so `String(n)` is its only encoding and a leading-zero variant is refused) before any MAC work and compares authenticators in constant time (Q2 (2)).
+- `packages/coding-agent/src/modes/rpc/compact-recovery-requests.ts` (new): `RecoveryPageRequests`, the page request owner over the checkpoint owner (RULING-62 Q1 A): one monotonically advancing ordinal per token across every component paged; one active request per token (a second concurrent one, a request on a component still being verified included, is the typed `busy` with a `retry` hint, taking no socket slot and no memory, Q1 (3) and RULING-69 slow-open rule); at most `SOCKET_PAGE_REQUESTS_MAX` = 8 requests outstanding per socket across its tokens, the ninth `request_limit`; one cached page per token so an exact retry (same request id, token, component and cursor) answers identical bytes without a read, freed when the next request advances the token or the token ends (Q1 (1)); a different request under the same id is `request_mismatch`; an authentic cursor whose ordinal is not the token's current one is `cursor_out_of_range` (Q2 (3)); ordinals are 53-bit-safe and the bound is the typed `ordinal_exhausted`, never a wrap (Q1 (2)); every field is parsed as a bounded id before any use (`malformed_request`); every refusal happens before any byte is read.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: `onTokenEnd(listener)`, run once per token when its lease ends however it ended (a release, a reclaim, its peer's end), so the request owner frees that token's cached page and request state.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-bytes.ts`: `FRAGMENT_ENVELOPE_MAX_BYTES` = 174,764, the base64 envelope of a full fragment, derived from `FRAGMENT_MAX_BYTES` (four characters per three raw bytes; RULING-69 (1)); the one page the worker transport's initial credit is sized from (RULING-63).
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-read-response-types.ts`: the additive `get_recovery_page {token, admissionId, componentRef, requestId, cursor?}` command (B3) and its answer `{requestId, token, generation, componentRef, ordinal, offset, length, digest, bytes, cursor, complete}`: `bytes` is the base64 of exactly `length` raw stored bytes, `digest` the `fragment`-domain digest over those raw bytes (verified by the client after base64 decoding), `cursor` the next page's cursor or null once complete.
+- `packages/coding-agent/src/modes/rpc/recovery-page-command.ts` (new), `session-router-routing.ts`: the host-level route, before any session or worker forwarding, that scopes every answer to the asking connection's peer incarnation and the command's routing session (RULING-56 (1)): a token minted for another connection, session or admission is `unknown_token` with nothing else; a stdio host has no peer to bind to (`unsupported_transport`). Each refusal is the stable code `recovery_<reason>` with `errorData` carrying the typed refusal (kind, reason, hint).
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `session-event-writer.ts`: the request owner exists only with `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` on (`writer.recoveryPages`); off, the route is absent and `get_recovery_page` answers exactly as any unknown session command did (golden-tested), and every legacy command's bytes are unchanged. `writer.socketEpochOf(connection)` names the peer incarnation a connection is.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-requests.ts`, `compact-recovery-state.ts` (RULING-70): a page request claims its token through `RecoveryCheckpoints.check` before any request state is touched, so a token superseded while an operation still holds it answers `superseded_token` with `newerGeneration` (never `busy` or its cached page) and `unknown_token` only after the reclaim; a request under an old id with a cursor behind the token's ordinal is `cursor_out_of_range`, only a cursor-less one is a fresh first page; a first open's verification runs under the asking connection's lifetime: `RecoveryPageRequests.forgetPeer`, called by `session-event-fanout.ts` wherever a connection ends (its unregister on socket close or error, and its event-queue cut) before the checkpoint owner forgets the peer, aborts every open still verifying for that peer incarnation, so it stops typed `aborted` at the next stored leaf, frees its socket slot and its token, advances no ordinal and caches nothing; an optional caller `signal` is combined with that lifetime (RULING-69 (2)). The route passes no signal of its own: the caller's peer incarnation is the lifetime.
+- `packages/coding-agent/src/modes/rpc/session-command-activity.ts`: `get_recovery_page` is an observing read; it never refreshes a session's idle window.
+- `packages/coding-agent/docs/rpc.md`: `get_recovery_page`: the page budget for the raw bytes and the base64 envelope, that the client verifies the digest over the raw bytes after decoding, the cursor, ordinal, retry and limit rules, and every refusal code.
+
+### Why
+
+- R4.B3 (senpi#4272, X04/T5, RULING-62 Q1/Q2, RULING-69): the page producer S11a built needs a wire route whose cursors cannot be forged, replayed across peers, sessions, tokens or generations, or survive a restart; whose requests are bounded per token and per socket so no peer holds more than one page per token and eight per socket in flight; and whose exact retries are idempotent without a second read.
+
+### Why an extension could not handle it
+
+- The token owner, the catalog and its stored leaves are host-internal storage of the acceptance lane under its leases, and the peer incarnation a cursor is bound to is the fanout's registration; no extension event sees a cut, a token, a page or a socket's peer identity.
+
+### Expected merge conflict zones
+
+- LOW: `session-router-routing.ts` (one route before the `sessionId` requirement), `session-event-fanout.ts` and `session-event-writer.ts` (beside `checkpoints`/`recoveryCheckpoints`), `compact-recovery-state.ts` (the lease release callback), `rpc-session-command-types.ts` and `rpc-read-response-types.ts` (after `get_tree`), `session-command-activity.ts`, `docs/rpc.md` (after the compact recovery state limits).
+
+## 2026-10-28 - Bounded byte source and page producer for compact recovery pages (S11a, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-recovery-bytes.ts` (new): the one byte representation of a frozen catalog component (RULING-46 item 2, reused by S11b/S12a/S13): `FrozenBytes` is the component's exact stored UTF-16LE bytes in leaf order (RULING-58 (1)), addressed by raw byte offset (never a code unit or a base64 character), opened by `openFrozenBytes` only after the stored leaves are verified one at a time against the catalog entry's length and `leaf` digest (a mismatch is the typed `integrity`, no byte source exists); `range(offset, length, valid)` serves any sub-range with one stored leaf resident beside the result and reruns `valid` after every leaf read; `producePage(bytes, offset)` is the page producer: at most `FRAGMENT_MAX_BYTES` = D = 131,072 raw bytes, the page's own `fragment`-domain digest, the next raw offset and completion; a malformed or out-of-range offset is the typed `range`, an over-D range `size_limit`, refused before any leaf is read.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-codec.ts`: the `fragment` digest domain (`senpi-recovery-catalog/1/utf16le/fragment`), so a page's digest never collides with a leaf, node, root or pointer digest of the same bytes (RULING-57 Q1 (1)).
+- `packages/coding-agent/src/modes/rpc/compact-recovery-catalog.ts`: a component read is `{kind: "component", ref, entry, bytes: FrozenBytes}`; the joined `text` is gone (carry 43: `readCatalog` no longer holds a whole component in memory), `read` takes the cut's `valid` and runs it between the component's leaf reads.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts`: `page(tokenId, lane, root, ref, offset, signal?)`: a component is verified once per frozen root (RULING-62 Q1 (1), RULING-69 (2)); every later page or re-open on that root reuses the verified source from `packages/coding-agent/src/modes/rpc/compact-verified-components.ts` (new), and the entries are dropped with the token's lease (release or reclaim); a source holds leaf positions, never bytes.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: `readCatalogPage(token, caller, ref, offset)`, the page producer's real internal caller: the same claim, lease and typed refusals as every token read (`unknown_token` for a foreign caller, `storage_unavailable` `range` for a node ref, an unknown ref or an offset past the end).
+- `packages/coding-agent/src/modes/rpc/compact-values.ts`: `fields(ref, names, valid?)` pages a stored key like `rows` pages a row (carry 45, RULING-59 B): the object page is released before its keys are read, each key is matched against `names` one value page at a time and is never assembled past the longest name, so `merge` over a 1 MiB key reads one of its 256 pages with one page resident.
+- Verification belongs to its request (RULING-69 (2) and (4)): `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts` `readCatalogPage(..., signal?)`, `packages/coding-agent/src/modes/rpc/compact-recovery-catalog.ts` `read(..., signal?)` and `packages/coding-agent/src/modes/rpc/compact-recovery-bytes.ts` `openFrozenBytes(..., signal?)` stop a first open's verification before the next leaf once the request's signal aborts. The open is the typed `aborted` reason (`packages/coding-agent/src/modes/rpc/compact-read-lease.ts`, `packages/coding-agent/src/modes/rpc/compact-recovery-types.ts`) and leaves no cache entry. An offset past the verified length stays the typed `range`, and an entry length that disagrees with the verified bytes stays `integrity`, never a clamp (pinned by tests).
+- The verified-component cache is pinned to its frozen root (RULING-69 (2)): `packages/coding-agent/src/modes/rpc/compact-verified-components.ts` keys entries by the `FrozenAcceptedRoot` and records the one token that pins it; `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts` `freeze` pins the root it just froze through `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts` `pin` before any stream moves. Every freeze builds a root of its own, so two peers, a re-attach or a resync never share one; a second live token on a pinned root is the typed internal `FrozenRootPinnedError`, never a shared or overwritten entry.
+- Legacy JSONL writer past the engine JSON limit (RULING-68): `packages/coding-agent/src/modes/rpc/jsonl.ts` adds the typed `LegacyRecordDepthError` and `legacyJsonText` beside `serializeJsonLine` (the module the lifecycle supervisor already loads, so its import graph stays at 55), and `packages/coding-agent/src/modes/rpc/legacy-record-depth.ts` (new) holds the refusal bookkeeping; `serializeJsonLine`, `packages/coding-agent/src/modes/rpc/json-normal-value.ts` (the native fallback) and `packages/coding-agent/src/modes/rpc/session-worker.ts` (the isolate's stringify) now throw instead of an untyped `RangeError`. `enqueueLegacyRecord`, used by `packages/coding-agent/src/modes/rpc/session-binding.ts` and `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, refuses such a record, counts it in `packages/coding-agent/src/modes/rpc/session-event-writer.ts` `legacyRefusals` and reports it on stderr; the session and its worker keep running. A worker record deeper than `COMPACT_PROTOCOL_MAX_DEPTH` travels as JSON text (`packages/coding-agent/src/modes/rpc/session-worker-protocol.ts` `recordText`), because the host's structured-clone reader dropped deep frames (about 4,024 levels on Node 24), which ended the worker. No protocol depth limit is applied to the legacy stream; a record between 1,025 levels and the engine limit is delivered unchanged.
+- A `media_placeholders` client gets the same legacy depth behaviour (RULING-68, review LOW 3): `packages/coding-agent/src/modes/rpc/media-placeholders.ts` walks a record with an explicit stack instead of recursing (same output, reference identity and persister order for every record it handled before), so a record under the JSON engine limit reaches the client unchanged instead of overflowing the stack from about 3,000 levels on Node and ending the worker; past the limit it is the typed, counted `LegacyRecordDepthError` refusal. `packages/coding-agent/docs/rpc.md` now says which writer counts a refusal: the host's, or the isolate's when the isolate refuses first (only its stderr line reaches the host).
+- `packages/coding-agent/test/suite/rpc-structured-sink-json.test.ts` holds the normalizer to the JSON round trip under the engine limit and to the typed `LegacyRecordDepthError` at the engine limit + 1 (RULING-68): its 20,000-level case, past Node's limit and under Bun's, no longer expects the old `RangeError`.
+- Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default): no transport, no selection, no page route on the wire. Cursors (HMAC, validation), page ordinals, the current-page retry cache, the per-socket request limits and the command/response wiring are S11b; the loaded transcript base (RULING-61) is streamed by S11b's route.
+
+### Why
+
+- R4.B3 (senpi#4272, X03/X04/T5, RULING-62): a consumer must be able to fetch a component of any size in bounded pages whose bytes it can verify against the catalog, and the host must never stringify, join or hold a whole component to serve one; carries 43 and 45 named the two readers that still did.
+
+### Why an extension could not handle it
+
+- The catalog, its stored leaves and the token owner are host-internal storage of the acceptance lane under its leases; no extension event sees a cut, a component or its pages.
+
+### Expected merge conflict zones
+
+- LOW: `compact-recovery-catalog.ts` (`CatalogRead`, `read`), `compact-recovery-manifest.ts` (`read`/`release` neighbourhood), `compact-recovery-state.ts` (after `readCatalog`), `compact-values.ts` (`fields`, `merge`).
+
+## 2026-10-28 - Message, call, identity and source adapters with the catalog completeness gate (S10b, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-catalog-steps.ts` (new): the composition of a member's canonical JSON from steps: `literalSteps` (an in-memory value, iterative with one frame per open container), `objectSteps`/`arraySteps` (fields and items from their own steps), `textSteps` (stored text ranges as one string, chunk by chunk), `fieldSteps` (seeded fields walked with one page resident), `storedSteps` (stored JSON text spliced in as a value, the new `raw` step), plus the `CatalogReader` every adapter reads with.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-messages.ts` (new): the `active` family: one `message-<order>` member per live message of the cut (`{messageId, fields, correlation, blocks:[{contentIndex, kind, text, seeded:{type, phase, parsedThrough, fields, signature}|null}]}`), text streamed from the stored ranges, or the explicit empty.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-calls.ts` (new): the `calls` family: one `call-<creation ordinal>` member per outstanding call, the stored header with its raw prefix (`{kind:"owned", text}` inline, or the active block it reads through) and its hook, progress and result slots resolved to their values, or the explicit empty.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-settled.ts` (new): the `settled` family (one `message-<n>` member per pending or failed terminal: status, error, entry join, the terminal payload and the paged call projection) and the `identity` family (`identity/identity` = the lane's epoch, sequence, active message, turn and standing client correlation with the sequence it took; one `join-<n>` member per message joined to its durable entry).
+- `packages/coding-agent/src/modes/rpc/compact-catalog-source.ts` (new, the RULING-61 Q2 producer): the `source` family: one `entry-<index>` member per this-epoch entry whose engine kind maps to `source` (`{index, id, parentId, kind, messageId, entry}`: the exact retained line while the tail holds it, `null` once persistence covers it), explicitly empty only when its producer is complete.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-registry.ts`: every family's producer is `complete` (the `root` and `pending` states are gone); a loaded base or unavailable transcript makes `transcript`, `opaque` and `source` `partial`; `assertCoverage` is the completeness gate (X03): a complete producer that emitted no component, an explicit empty included, refuses the whole catalog with a typed `unavailable`; member ids gain the `message`, `call` and `join` prefixes.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-families.ts`: `checkpointComponents(cut, valid)` takes one `CatalogCut` (store, value reader, root, settled reader), emits every family through its adapter in schema order, records which families emitted, and runs the gate last; the S09 root-leaf components of `active`, `calls` and `settled` are replaced by enumerated members. `compact-catalog-writer.ts`: `stepsComponent`, `emptyComponent`, and the `raw` step in `encodeValueSteps`.
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: a terminal row stores its retired call projection as paged value pages (`call: ValueRef | null`, at most 128 child descriptors and 64 KiB per page, recursively) instead of inside the payload text, so no nested-call count is ever truncated (RULING-60 Q3); `reader(root)` gives the catalog bounded reads of one cut (rows a descriptor page at a time, payload leaves, paged values, entry joins); the whole-view `read` resolves the projection through the iterative value reader.
+- `packages/coding-agent/src/modes/rpc/compact-call-retirement.ts`, `compact-call-model.ts`: `NESTED_PROJECTION_LIMIT` is removed; a projection carries every completed child and `omitted` is 0 on every projecting path (RULING-49 stays exact: a consumer that truncates for its own bound reports its own count).
+- `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts`, `session-acceptance-lane.ts`: the manifest builds the catalog from the cut plus `lane.settledOf(root)`, the bounded settled reader of a live root.
+- Review fold (#4568 LOWs 1-5, RULING-67): `compact-call-retirement.ts` retires a settled call's completed descendants iteratively with an explicit stack bounded by the call table, so a 100,000-deep chain settles and the compact state stays available; `compact-catalog-calls.ts` streams each outstanding call header through `rows` + `walk` (one value page resident, `seed`/`input` never assembled) and replaces only its `raw`/`hook`/`progress`/`result` slots; `compact-catalog-settled.ts` names settled members `message-<terminal sequence>` and joins `join-<ordinal>` (the epoch-local join order stored on the row by `compact-settled-messages.ts`), so a member keeps its id across cuts; `compact-settled-messages.ts` `end` owns the call projection before it creates payload leaves or the end marker; `session-acceptance-lane.ts` counts client correlations refused at the protocol depth limit (`refusedCorrelations` on the frozen root and in `identity/identity`), and `compact-catalog-registry.ts` `familyProducers` then marks `identity` partial; the lane's read accessors move to `session-acceptance-reads.ts` (new, `AcceptedRootReads`); `compact-call-model.ts` documents `omitted` as 0 whenever paging is complete.
+- Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default): no transport, no selection (S17), no S11 page route. At a fresh root the registry now reads `assembly: "complete"`; a root with a loaded base stays `incomplete` until S11 streams the base.
+
+### Why
+
+- R4.B2 (senpi#4272, X02/X03/T1, RULING-60, RULING-61): every checkpoint family is enumerated by a producer, the producer assembly is complete only when every family is, and a missing family refuses the catalog rather than publishing a registry that claims more than its components hold. Nested calls are bounded by the value page (RULING-60 Q3 = A), never by a total count, and the catalog walks them iteratively with one page resident whatever the depth.
+
+### Why an extension could not handle it
+
+- The frozen roots, the cut's stores and the catalog build run under host-internal leases; no extension event sees a cut, its component roots, the settled index or the catalog.
+
+### Expected merge conflict zones
+
+- LOW: `compact-settled-messages.ts` (the terminal row's `call` field, `end`/`read`), `compact-call-retirement.ts` (`retire`), `compact-catalog-families.ts` (rewritten), `compact-recovery-manifest.ts` (the components iterable in `build`), `session-acceptance-lane.ts` (`readSettled` neighbourhood).
+
+## 2026-10-28 - Catalog family registry and transcript, run, lifecycle and dialog adapters (S10a, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-catalog-registry.ts` (new): the versioned checkpoint schema's families (`transcript`, `run`, `lifecycle`, `dialogs`, `opaque`, `active`, `calls`, `settled`, `identity`, `source`) with each family's producer (`complete` enumerates every member, `root` is the R4.B1 root leaf until S10b, `pending` has no located producer and is never emitted, so never declared empty), and `ENTRY_FAMILIES`, a `Record` over every engine source kind (`FileEntry["type"]`) naming the family that owns its data; the compiler refuses a missing kind (TS2741). A kind outside the union at run time maps to `opaque`. `familyRegistry()` is the catalog's first component (`families`/`families`): the schema rows and `assembly: "incomplete"` until every producer is `complete` (S10b's completeness gate).
+- `packages/coding-agent/src/modes/rpc/compact-catalog-writer.ts` (new): `CatalogComponentWriter` writes one component as bounded store leaves (at most one open leaf resident); `encodeValueSteps` turns a `CompactValues.walk` into the canonical JSON text of the value, byte-identical to `JSON.stringify` of the whole value (a surrogate pair split at a page edge is carried, never escaped); `writtenComponent` yields one component and releases its owner once the catalog has placed it.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-transcript.ts` (new): the `transcript` family from the frozen S04 root: the root descriptor (history version, leaf, count, base count and fingerprint, typed read outcome), then one ancestry row per accepted entry in accepted order (`entry-<index>`: id, parent id, engine kind, owning family); an entry of unknown kind is also kept whole under `opaque`. An unreadable root is an explicit descriptor with its reason and no rows.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-families.ts`: now an async generator over the cut's store and a `CompactValues` reader: the registry, the transcript and opaque families, `run` (`runState` + `dialogCounts`, so cuts differing only in run state or dialog counts have different checkpoint digests: carry 44), `lifecycle` (the lifecycle record walked into canonical JSON, or explicit empty), `dialogs` (one `dialog-<order>` member per open dialog through `rows` + `walk`, or explicit empty), then the S09 root leaves of `active`, `calls` and `settled`. A value of any size streams with one value page resident.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-catalog.ts`: the build references a level-0 component's owner from `place` until its node seals (in `held`), so a producer may drop its own reference once the build has consumed the component; a failed build still releases everything it took.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts`: feeds the cut's store, a value reader and the combined lease check into the family adapter.
+- RULING-61 fold: every `append` transcript transition carries the entry's `type` and `parentId` (`core/session-transcript-journal.ts`, both producers), and the acceptance lane retains them per accepted entry of the epoch beside `entryIds` (`accepted-transcript.ts`: `kinds`, `parents`, charged at their real heap cost (next bullet) against an 8 MiB `DEFAULT_TRANSCRIPT_ANCESTRY_BYTES`, over which the epoch's transcript becomes unavailable as `transcript_ancestry_over_byte_limit`; freed at the next bootstrap and at `retire`), so every transcript row of the epoch carries `parentId`, `kind` and `family` whether its text is still the tail's or already the file's, and the `opaque` family counts this epoch's unknown-kind entries exactly (a persisted one's member is its ancestry row). The loaded base is one `transcript/base` file-range row; while it exists, or the transcript is unavailable, `familyProducers(root)` reports `transcript` and `opaque` as `partial` and no explicit-empty `opaque` is emitted. `source` is `partial` (not `pending`) until S10b. The registry is a discriminated union on `assembly` (`FamilyRegistry`, with `incomplete: [...]` on the incomplete variant), decoded only by `readFamilyRegistry` and narrowed only by `completeAssembly`.
+- RULING-61 review LOWs: a frozen `TranscriptRoot` no longer hands out the lane's live columns; it holds `accepted`, an `AcceptedEntries` view of exactly its `count` entries (iterable `{index, id, kind, parentId}`, `idsBefore(end)`), O(1) to freeze with no copy because the lane only appends (a `replace` starts new columns), and the transcript adapter iterates that view. `CompleteFamilyRegistry` carries a module-private `unique symbol` brand set only by `familyRegistry` (through which `readFamilyRegistry` decodes and to which `completeAssembly` narrows), so neither an un-narrowed `FamilyRegistry` nor a hand-written `assembly: "complete"` literal type-checks where a complete assembly is required (the symbol key is not serialized; the component text is unchanged). Each retained ancestry record is charged no less than its measured heap: 40 B of array slots (three 8-byte slots plus growth headroom), its id string, a parent string unless it shares the previous id, and each distinct kind once per epoch (the lane now keeps one string per kind, 64 B + the string); a string is charged 16 B + its code units (two bytes each unless ASCII), 8-aligned. The 8 MiB budget so bounds the heap and at most 209,715 records (measured: engine-shaped 51.9 heap B vs 64 charged, empty strings 27.5 vs 40, two-byte ids with unshared parents 96.9 vs 112; empty-string records stop at 209,713 records holding 5.96 MiB).
+- R21 retention test (`test/suite/regressions/4272-inprocess-acceptance.test.ts`, R21.1 R21.2) follows RULING-61 Q1 = C: it measured `JSON.stringify(root.transcript).length` against an ids-only size (2,458 > 2,048 once the view carried kinds and parents, which JSON spells out per entry although the heap shares them). It now asserts that each of 64 appends of 256 KiB retains exactly `{id, kind, parentId}`: `kind` interned, `parentId` the previous entry's id. The charged ancestry must be exactly 40 B of slots plus the id string per append and one kind row per epoch (4,184 B measured), with no content term, inside the 8 MiB budget. The test still checks zero `JSON.stringify` calls on the host loop and zero tail bytes.
+- Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default): no transport, no selection (S17), no S11 page route. The producer assembly is explicitly incomplete (`assembly: "incomplete"`): message, call, identity and source-metadata adapters and the completeness gate are S10b.
+
+### Why
+
+- R4.B2 (senpi#4272, X02/X03, RULING-60): every checkpoint family is named by a typed registry the compiler keeps exhaustive over the engine's source kinds; an engine-owned family with a located producer is explicit even when empty, an unknown entry kind is retained whole rather than dropped, and run state plus dialog counts enter the checkpoint digest (carry 44). Large values go through `rows` + `walk` with bounded residency (RULING-59), never a whole-value read.
+
+### Why an extension could not handle it
+
+- The frozen roots, the cut's store leaves and the catalog build run under host-internal leases; no extension event sees a cut, its component roots or the catalog.
+
+### Expected merge conflict zones
+
+- LOW: `compact-recovery-catalog.ts` (`place`/`seal` owner transfer, four lines), `compact-recovery-manifest.ts` (the components iterable in `build`), `compact-catalog-families.ts` (rewritten).
+
+## 2026-10-28 - Recovery identifiers, catalog codec and immutable catalog nodes (S09a, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-recovery-ids.ts` (new): the one identifier grammar of the recovery protocol (S09-Q2 A, RULING-57 Q2). A bounded id is 1..128 bytes of `[A-Za-z0-9][A-Za-z0-9:_-]*`, checked as empty / overlong / forbidden character before any use as a key, a path element or a log field; a SHA-256 digest is exactly 64 lowercase hex characters; a content ref is a 16-digit catalog counter root (`c-0000000000000001`) with at most `CATALOG_REF_MAX_STEPS` (8) three-digit child steps (`:000`..`:127`), a deeper one refused as `too_deep`, never a storage number or a path. A ref is cut-scoped (RULING-58 (3)): minted for one token, resolvable only under it, never a stable identifier outside the process; a ref from one cut is refused against another as `range`. Branded `BoundedId`, `ContentDigest`, `ContentRef`; S15's admission identifiers reuse this module (conformance test recorded on #4272).
+- `packages/coding-agent/src/modes/rpc/compact-catalog-codec.ts` (new): the one frozen-reference codec (RULING-46 item 2) for S09-Q1 A. Digest = SHA-256 over `u8 tagLength || tag || u64be byteLength || bytes` with tag `senpi-recovery-catalog/1/utf16le/<leaf|node|root>` (the stored encoding is part of the domain, RULING-58 (1): a store writing another encoding gets its own tag and never collides) and bytes the exact stored bytes (the UTF-16LE code units of the store leaf text, a lone surrogate at a leaf boundary included), never a reconstructed or transcoded value; a format bump changes `CATALOG_VERSION` and therefore every tag, and a retired prefix is never reused. A catalog node is one JSON text with a fixed field order (`format`, `version`, `entries[{kind,id,length,digest}]`), canonical decimal integers and entries in child order, so its encoding is deterministic by construction; `CatalogNodeWriter` refuses, without retaining, the entry that would pass 128 entries or the 32,768-code-unit leaf bound (64 KiB stored, under D and F); `decodeCatalogNode` is a strict schema parse of bytes the caller has already verified.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-catalog.ts` (new): the immutable catalog tree (R4.B1). Components stream in and nodes are packed bottom-up, so at most one open node per level is resident (`peakBuffered` <= 128 x depth) and no collection of every component exists; each node is one store leaf plus a private pointer leaf (storage ids, never hashed or sent) and one owner that shares the pinned content it describes, so releasing the root owner releases the tree and no second checkpoint copy is made. A failed build (released child, storage failure, retired cut) releases every construction owner and reports no root or digest. Reads walk the ref's path and verify the stored bytes of every node against its parent's digest (the root against the digest its caller holds) before decoding; a changed byte, or a private pointer leaf that is not a pointer list, is `CompactReadError("integrity")` (the pointer leaf needs no digest of its own: every child it points at is verified against its parent's digest before use), an unknown, malformed or foreign-root ref `range`.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-pointers.ts` (new), `compact-recovery-catalog.ts`, `compact-catalog-codec.ts`: a node's private pointers are now a tree of side leaves (each <= 32,768 code units, 64 KiB stored, any number of children or component leaves; every side leaf verified against a `pointer`-domain digest recorded by its parent before decode); a build keeps every node leaf, pointer leaf and sealed owner it takes in one held set, so a failure at any leaf creation or at the root read releases all of them; a leaf missing under a stored pointer is `integrity` (a released root stays `ownership`); a node read returns only `kind`, `ref`, `entries`, `digest` and `length`.
+- `packages/coding-agent/src/modes/rpc/compact-read-lease.ts`: the `integrity` read reason (stored bytes no longer match their recorded digest; refused before any decode).
+- No caller outside the tests yet: the family adapter, the manifest and the recovery owner's `catalog`/`readCatalog` seam are S09b (the next PR). Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default): no transport, no selection (S17), no S10 family coverage and no S11 page route.
+
+### Why
+
+- R4.B1 (senpi#4272, X03/X04): each catalog node obeys F/D and 128 entries; digests are deterministic across runs and hosts (no host path, timestamp, storage id or map order in hashed bytes) and verified before any decode. RULING-57 fixed the digest domain separation, the verify-before-decode rule and the allow-list identifier grammar; RULING-58 the encoding-tagged domain, the typed integrity refusal and the bounded, cut-scoped refs. Split from S09 (#4551) at the format seam so each PR stays reviewable.
+
+### Why an extension could not handle it
+
+- The store leaves and their ownership graph are host-internal; no extension event sees a cut's storage.
+
+### Expected merge conflict zones
+
+- LOW: `compact-read-lease.ts` (reason union). The three new modules conflict with nothing.
+
+## 2026-10-28 - Bounded recovery manifest over the catalog (S09b, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-catalog-families.ts` (new): the S09 family adapter over a frozen root: the persistent root leaf of `lifecycle`, `dialogs`, `active`, `calls` and `settled`, an absent collection as an explicit empty component. S10 extends this adapter to every member and index (R4.B2).
+- `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts` (new): the compact-v1 manifest, bounded scalar identity only: socket epoch, admission id, route kind, session, session epoch, generation, cut sequence, history version, token, leaf, active message, turn, checkpoint digest (the root node under the `root` domain of the S09a codec), catalog root ref and length. A string that is a bounded protocol id is inline; any other (a user-chosen session id, a transcript id) becomes the first catalog components (`manifest`/`<field>`) and the manifest carries its ref, exact length and digest, so the original value reads back exactly and never enters the store as an identifier. One manifest and catalog per token, built once and released with the token; a build that fails after its catalog tree exists (a refused read, a broken layout) releases the tree before it reports, and the oversized fields are asserted to be the leftmost leaf's first entries in field order (a typed `ownership` refusal otherwise).
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: `catalog(token, caller)` (the manifest, built under the token's and the cut's leases) and `readCatalog(token, caller, ref)` (one verified node or component; the raw ref is validated first, a ref minted for another cut is `range`); a reclaimed token releases its catalog before its root. `compact-recovery-types.ts`: `storage_unavailable` carries a closed `StorageUnavailableReason` (RULING-58 (2): `integrity` the corruption signal, `range`, the store's and the transcript component's reasons), never a free string, and `RecoveryCounters.unavailable` counts those refusals by detail (`integrity` apart from `range`) beside `refused`; a refusal carries its kind and detail only, no stored bytes and no partial decode. `compact-session-state.ts`, `compact-lane-current.ts`, `session-acceptance-lane.ts`: `cutStorage(root, use)`, the cut's store under its lease.
+- Builds on S09a (the identifier grammar, the codec and the immutable catalog tree). Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default): no transport, no selection (S17), no S10 family coverage and no S11 page route; the manifest is reachable only through the internal recovery owner.
+
+### Why
+
+- R4.B1 (senpi#4272, X03/X04): the manifest names a frozen checkpoint and its catalog root and never lists every component; huge ids and user strings become refs; a failed build publishes nothing and keeps no owner. RULING-57 fixed the verify-before-decode rule and the allow-list identifier grammar; RULING-58 the typed `integrity`/`range` detail counted apart and the cut-scoped refs.
+
+### Why an extension could not handle it
+
+- The frozen roots, their store leaves and the token leases are host-internal; no extension event sees a cut, its storage or a token lookup.
+
+### Expected merge conflict zones
+
+- LOW: `compact-recovery-state.ts` (`freeze` dispose, the `read` helper's third argument, two new methods, one counter), `compact-recovery-types.ts` (the failure union and counters), `session-acceptance-lane.ts` / `compact-lane-current.ts` / `compact-session-state.ts` (one added method each).
+
+## 2026-10-26 - Socket-secret repair runs under a per-secret lock (senpi#4371)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-transport.ts`: `ensureSocketSecret` returns a valid secret without locking; otherwise it takes the per-secret mutation lock `<realpath of parent>/<name>.publish.lock` (the `ownership-safe-lock.ts` SQLite `BEGIN EXCLUSIVE` lock, precreated owner-only through an `O_NOFOLLOW` open, required to be a regular file, never removed) and reads the secret again under it. A valid secret is returned; an absent one is published no-replace; an invalid one is replaced by a staged, fsynced candidate in one `rename`, then the directory is fsynced. Windows keeps the in-place writer, serialized under the same lock. `createSocketSecret` is unchanged and takes no lock.
+
+### Why
+
+- Two processes that both read an invalid secret each wrote their own key, so the later repair replaced a valid key the first had already handed out (sisyphuslabs/omo-desktop-app#4199, design 4.2 and 4.4, test 4).
+
+### Why an extension could not handle it
+
+- The RPC host and supervisor provision the secret before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `ensureSocketSecret` and the new lock and replace helpers in `socket-transport.ts`.
+
+## 2026-10-30 - Atomic socket compact negotiation (S17, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/attachment-types.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/compact-admission-reply.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/host-warm.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/rpc-response-types.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-router-host-reads.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/compact-negotiation.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/compact-runtime-factory.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/compact-socket-commands.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/worker-admission-command.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+- `packages/coding-agent/src/modes/rpc/worker-client-capabilities.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/attachment-types.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/compact-admission-reply.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/host-warm.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/rpc-response-types.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-router-host-reads.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/compact-negotiation.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/compact-runtime-factory.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/compact-socket-commands.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/worker-admission-command.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+- `packages/coding-agent/src/modes/rpc/worker-client-capabilities.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/attachment-types.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/compact-admission-reply.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/host-warm.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/rpc-response-types.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-router-host-reads.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/compact-negotiation.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/compact-runtime-factory.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/compact-socket-commands.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/worker-admission-command.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+- `packages/coding-agent/src/modes/rpc/worker-client-capabilities.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/attachment-types.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/compact-admission-reply.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/compact-admission-validation.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/host-warm.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/rpc-response-types.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-router-host-reads.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/compact-negotiation.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/compact-runtime-factory.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/compact-socket-commands.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/worker-admission-command.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+- `packages/coding-agent/src/modes/rpc/worker-client-capabilities.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+
+## 2026-10-31 - Flag-off opens stay legacy-only without a structured lane (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts`: `structuredLaneEnabled(session)` is true while the rollout flag is on or the session has a structured lane.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: Pairing and the structured sink follow that predicate, so a lane-less flag-off session binds legacy-only.
+- `packages/coding-agent/src/modes/rpc/session-registry-open.ts`: The in-process acceptance lane follows the same predicate as a worker incarnation's.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: A lane-less flag-off isolate declines the acceptance offer: `ready` without a bootstrap and no permit transport.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: The acceptance lane and permit intake are built by `commit()` when it offers acceptance, never in the constructor, so frames before commit stay unordered; flag off, a bootstrap-less `ready` withdraws them instead of failing the open, and flag on it rejects with `StructuredLaneUnavailableError` (RULING-106); each bind logs `bound mode=acceptance|legacy`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: Unconditional internal capture failed every flag-off open of an Agent built outside the session layer (option B).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: Session binding, acceptance and worker commit are core RPC boundaries.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: `commit()` and the acceptance/intake fields; the commit handler in `session-worker.ts`.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/login-prompts.ts`, `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-question-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/session-router-routing.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`, `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`.
+- Gate private input per explicit connection handshake and interactive role; negotiate worker acceptance before emission; bypass replay and observer publication; validate owner-bound answers before admission; retain only bounded owner-filtered receipt IDs.
+- Keep the worker-grant regression fakes aligned with the private request state that the real worker client initializes, preserving all existing forwarding and settlement assertions.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-30 - Every successful RPC login announces the provider's account change (senpi#3347)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `login_start` emits `accounts_changed` with the `login` remedy (forwarded as `auth_accounts_changed`) after any successful login, not only an Anthropic Subscription one.
+
+### Why
+
+- A session that fell back off a usage limit drops the provider's hold on that event; a login through RPC (the desktop) for any provider must reach it.
+
+### Why an extension could not handle it
+
+- The RPC login handler is core.
+
+### Expected merge conflict zones
+
+- LOW: the success branch of `login_start`.
+
+## 2026-10-26 - The first published socket secret wins on POSIX (senpi#4369)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-transport.ts`: on POSIX, `createSocketSecret` returns a valid regular file already at the path; otherwise it publishes a fresh candidate through the private `publishSocketSecretIfAbsent` and, on a collision, returns the winner. An invalid winner throws `RPC socket secret is invalid and was not replaced` and is left as it is. A newly created parent directory is `0700`. `ensureSocketSecret` still repairs a wrong-sized file in place (the private `writeSocketSecretInPlace`, the former body of `createSocketSecret`) until serialized repair lands. Windows keeps that in-place writer until the native no-replace bridge (senpi#4310, loaded by senpi#4312) is wired.
+- `packages/coding-agent/src/modes/rpc/socket-transport.ts`: the private `publishSocketSecretIfAbsent(path, candidate)` writes the candidate to a same-directory staging file opened `O_CREAT | O_EXCL | O_NOFOLLOW`, forces mode `0600` on the descriptor, writes it in full and fsyncs it, then publishes with `link()`. `EEXIST` is `collision`; every other error propagates. The directory is fsynced after a publication, and `finally` removes only this attempt's staging file.
+
+### Why
+
+- `createSocketSecret` truncated and rewrote the final path, so two creators each returned their own key while the file kept the last one, and a reader could see a partial file (sisyphuslabs/omo-desktop-app#4199, design 4.3 and 4.5, tests 1 and 2).
+
+### Why an extension could not handle it
+
+- The RPC host, its supervisor and the terminal control endpoint provision the secret before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `createSocketSecret` and `ensureSocketSecret` in `socket-transport.ts`.
+
+## 2026-10-28 - Legal large values are owned and read incrementally by the compact store (S03b-4, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-value-owner.ts` (new): `ownValue`, the incremental ownership path. A JSON-normal value becomes chained bounded pages (at most 128 descriptors or 4,096 UTF-16 code units per page, one 64 KiB leaf each) through an explicit stack, so memory per step is one page plus the open containers' current slices. There is no aggregate cap: the 16 MiB total, the 8 Mi-unit string, the depth-128 and the 100,000-node refusals are gone. A cycle or a non-JSON value is still refused typed (`cycle`, `unsupported_value`) with every page already made released.
+- `packages/coding-agent/src/modes/rpc/compact-values.ts`: `own` delegates to `ownValue`. `walk(ref, valid?)` is the incremental read: an async generator of bounded steps (`scalar`, page-sized `string` chunks with `more`, `open`, `close`) that holds one value page at a time and one frame per open container, calling `valid` after every page read. `read` is now assembled from `walk` without recursion, so a whole-value caller pays the value's size and nothing else.
+- `packages/coding-agent/src/modes/rpc/compact-component-roots.ts`: the component-root reader moves to the incremental path (RULING-46 section 4). `rows(ref, valid)` yields each row's key and value ref in key order and assembles nothing; `entries` is the whole-view convenience on top of it (`read`, no JSON clone). Every existing consumer (active messages, calls, dialogs, settled installs) keeps its `entries` call and now reads through `walk`.
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: `CompactWriteError` drops the `depth_limit` and `count_limit` reasons nothing throws any more.
+- S10-Q2 answer: ownership has owned per-step limits only; no convenience limit is a protocol content limit. S08's freeze/pin interface and the recovery token tests are unchanged.
+- RULING-59: a value nested 100,000 deep is owned, walked, read, pinned, merged and released with one value page resident, and no walk recurses on the value's depth. `packages/coding-agent/src/modes/rpc/compact-call-table.ts` measures a call slot and a call header with `JSON.stringify` before anything is owned or published, so a value too deep for the engine throws with nothing left owned and the table unchanged. `compact-call-view.ts` (call slots), `compact-current-components.ts` (lifecycle) and `compact-seeded-block-view.ts` (seeded fields) pass the cut lease's `valid` check into `read`, so it runs after every page read.
+- RULING-59 C: `packages/coding-agent/src/modes/rpc/compact-protocol-depth.ts` (new) defines the one protocol depth limit, `COMPACT_PROTOCOL_MAX_DEPTH` = 1,024 (Node 24 native JSON stops near 6,185 levels, Bun 1.4 at 40,000), and checks it with an explicit-stack walk before the ingest clones in `compact-lane-current.ts` (`foldComponent`, `foldCall`) and `compact-canonical-pairing.ts` (`structured`). A deeper record is refused with `CompactWriteError` `unsupported_value` carrying `limit` (`compact-content-store.ts`) instead of an untyped `RangeError`; `CompactLaneCurrent.fail` counts and reports that refusal and keeps the compact state available (`session-acceptance-lane.ts` `storageStatus().refusedRecords`), and a worker's `canonical_unavailable` frame carries the limit so the host does the same (`session-worker-protocol.ts`, `session-worker.ts`, `session-worker-client.ts`). Documented in `docs/rpc.md`.
+- senpi#4557 review fold: the settled terminal (`packages/coding-agent/src/modes/rpc/compact-settled-messages.ts` `end`) is serialized from the incoming `message_end`, so it now runs `assertProtocolDepth` first, and `packages/coding-agent/src/modes/rpc/compact-lane-current.ts` `admits` checks every legacy record a compact fold would clone or serialize once, in `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts` `accept`, before the call fold, the component fold, the canonical fold and the settled terminal; a refused record takes its place and changes no compact state, so depth 2,000 never reaches `readSettled` and depth 50,000 is refused typed instead of throwing `RangeError` out of the lane. The refusal is counted once per session event: `packages/coding-agent/src/modes/rpc/compact-canonical-pairing.ts` marks an event whose canonical record it refused, and `packages/coding-agent/src/modes/rpc/session-binding.ts` (in process) or the worker output frame's `canonicalRefused` (`packages/coding-agent/src/modes/rpc/session-worker.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`) tells the lane, which then neither folds nor counts that event's legacy record again. `SEQUENCED` moves to `packages/coding-agent/src/modes/rpc/session-acceptance-admission.ts`, and `packages/coding-agent/src/modes/rpc/compact-cold-operations.ts` reads a settled row's kept fields without a whole-row JSON clone.
+- senpi#4557 review round 2: one refusal counting rule. `packages/coding-agent/src/modes/rpc/compact-lane-current.ts` counts every record refused at the protocol depth limit, once per session event, whether or not the epoch's compact state is still live: `fail` now counts a canonical-path refusal after a real loss as `admits` already did for the legacy path, and the isolate's frame writer (`packages/coding-agent/src/modes/rpc/session-worker.ts` `canonicalUnavailable`) keeps sending depth refusals after the epoch's first real loss so the host can count them; `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts` and `docs/rpc.md` state the same rule.
+- S03b-4 regression realignment: `packages/coding-agent/test/suite/regressions/4272-index-publication.test.ts` triggered the strict codec refusal on a `CompactContentIndex.set` with a 16 MiB + 1 key, which relied on the removed 8 Mi-unit string cap; a key of any length is legal since S03b-4 (S10-Q2, RULING-59 A/B), so the set now writes a page for `a` before the codec refuses the non-JSON `b`, and the test still proves that every partial page is released (no production change).
+- Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default): without the flag no session owns a compact state, so no value is owned.
+
+### Why
+
+- S10 recovers legal oversized values through the compact store (senpi#4272 R4.B2); with the old aggregate caps a legal tool result, lifecycle record or dialog request over 16 MiB, deeper than 128 or wider than 100,000 nodes was refused at acceptance, and the component-root reader materialized and JSON-cloned every row.
+
+### Why an extension could not handle it
+
+- The compact store, its page codec and the frozen component roots are host-internal storage of the acceptance lane; no extension event sees a cut or its pages.
+
+### Expected merge conflict zones
+
+- LOW: `compact-values.ts` (`own`, `read`, the new `walk`), `compact-component-roots.ts` (`entries`), `compact-content-store.ts` (the reason union).
+
+## 2026-10-28 - Stream generations, token lifetime and close/replacement integration for recovery cuts (S08b, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-recovery-pins.ts` (new, a pure move first): the fanout's `pin`/`unpin` and the shed's recovery closure moved out of `session-event-fanout.ts` (249 pure lines) by responsibility. A pin now carries its freeze outcome and the lane's epoch at the pin: the attach baseline's liveness compares every pinned lane against that epoch even when the freeze was refused, and the shed's resync message reports `storage_unavailable` with the one `current view unavailable` stderr line (a lane retired by a worker failure reports nothing). A detach retires the admission's route from its stream.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts` (new): one stream record per peer incarnation and routing session (RULING-42 Q2 A), naming the session incarnation it materializes, S08a's generation counter (the same number every token of it carries), the admissions routed through it (the route set of RULING-46 item 1, retired on detach), its current token and whether it closed. A freeze under a new session incarnation replaces the record, so a peer never accumulates one record per replacement; the records of a peer incarnation go with it.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts`: issuing a generation invalidates the stream's previous current token at once and reclaims its root as soon as the operations in flight on it unwind, whether or not its holder ever releases it (the bound on a superseded root: the supersession itself, deferred only by its in-flight operations; a holder's later release is a no-op). A replacement's first freeze reclaims the previous incarnation's token the same way. A token the owner no longer holds is described by its stream before any I/O: `superseded_token` naming the newer generation, `stale_epoch` after a replacement, `session_closed` after a close, `unknown_token` once the peer incarnation ended or the holder released it. `stream(caller)` returns the bounded description; `status()` counts open tokens, live streams, freezes, roots reclaimed without a release (only when the reclaim, not the holder, released it) and refusals by reason. A token is looked at only when this owner minted it for the asking peer + session (RULING-56 (1)): a token of another peer or session, or a copy with a rewritten admission, answers `unknown_token` with no generation and no state; tokens are frozen at mint. A retired route (a detach) reclaims the token its admission minted like a superseded one, so an operation in flight on it ends in the typed `released` refusal and a second retirement changes nothing (RULING-56 (4)). The stream records of one peer stay within the sessions it attached, one per session, and all go at its end (RULING-56 (2)).
+- `packages/coding-agent/src/modes/rpc/compact-recovery-types.ts`: `session_closed` joins the repair reasons and `foreign_peer`/`foreign_session` leave them (a foreign token is `unknown_token`); `RefusalReason` and `refusalReason` (an exhaustive switch over the failure kind) name every refusal; `RecoveryStreamState` and `RecoveryCounters` (refusals keyed by `RefusalReason`).
+- `packages/coding-agent/src/modes/rpc/compact-read-lease.ts`: `hold(read)` runs a read as an operation in flight without the validity check (a reader of the frozen snapshot), and `release()` reports whether this call released the lease.
+- `packages/coding-agent/src/modes/rpc/compact-legacy-view.ts`: every read of a checkpoint-pinned root (the attach baseline's three reads, the shed resync's active message) runs under the checkpoint's `hold`, so a reclaim waits for it instead of releasing the root under it; a detach and re-attach during a pending resync read delivers the cut's message with no `current view unavailable` line. Which refused cuts the resync reports is an exhaustive `satisfies Record<RefusalReason, boolean>` table.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: a seal or forget ends the session's routing handle for good and frees its stream records (a still-mapped token is refused as `session_closed` from its retired lane; an unmapped one is `unknown_token`) while a queued attach view keeps its root to delivery (RULING-51 Q2 A). `compact-legacy-view.ts`: `legacyResyncMessage` takes the freeze outcome.
+- RULING-56 (2) follow-up and the review MEDIUM at 5b90366433: a stream record is also freed when its routing session ends for good. Every seal or forget (`session-event-fanout.ts` `forgetSession` -> `RecoveryCheckpoints.forgetSession`) drops the session's records on every peer, because a routing handle is never reissued or re-attached. A detach keeps the record, and its generation keeps rising on re-attach. A token still mapped reads `session_closed` from its retired lane, an unmapped one `unknown_token`, and the record's `closed` field is gone. A retired route reclaims its admission's tokens with or without the record, and `SessionAcceptanceLane.retirement` names why the lane retired. The shed's resync cut retains its roots from the freeze until its gap is delivered (`CompactReadLease.retain`, `FrozenCheckpoint.retain`; `session-recovery-pins.ts` `resync`). A detach, re-attach or supersession in that window retires the token but never the root, `legacyResyncMessage` takes only a retained root, and a `released` refusal is no longer mapped to a silent `null`.
+- Review MEDIUM at 231ab52c2e: `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts` `SocketEventSinkActor` ends a dequeued attach or recovery entry's barrier in a `finally` around its delivery. Once dequeued, an entry is neither queued nor the attempt, so `dropQueue` cannot reach it. The resync cut's retained root is now released when the peer misses its liveness ping or its transport fails while the recovery waits to drain, and `forgetPeer` then disposes the cut's lease. Before this fix the root stayed held until the session was sealed.
+- Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default): without the flag no session owns a lane, so nothing is frozen and every destination keeps its bytes.
+
+### Why
+
+- R3.C1.2-C1.5 (senpi#4272, RULING-50 (1) and (2)): one generation sequence per peer + session incarnation consumed by one record, a superseded root reclaimed within a bounded time even if the holder never releases, closed streams that stop ordinary hydration with a bounded terminal description, and the carries 32, 33, 35, 37, 38 and 41 of the S08a review.
+
+### Why an extension could not handle it
+
+- The stream records, the token leases and the fanout's seal are host-internal; no extension event sees a connection's attach, its shed or a token lookup.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-event-fanout.ts` (the pins seam, `attachConnectionToSession`, `detachConnectionFromSession`, `forgetSession`), `compact-recovery-state.ts` (`freeze`, `claim`, `staleness`).
+- LOW: `compact-recovery-types.ts` (reason union), `compact-read-lease.ts` (`hold`, `release` return), `compact-legacy-view.ts` (`legacyResyncMessage` signature, reads under `hold`).
+
+## 2026-10-27 - The login-prompt comment names the race that still exists (senpi#4436, S7)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/login-prompts.ts`: the comment's example race is the chatgpt-subscription login (the Anthropic flow it named is removed).
+
+### Why
+
+- senpi#4436 (R7, ledger X13).
+
+### Why an extension could not handle it
+
+- Comment-only change in the RPC bridge.
+
+### Expected merge conflict zones
+
+- LOW: the header comment.
+
+## 2026-10-27 - test_provider_account re-tests one Claude CLI account (senpi#4436, S5b)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: new command `test_provider_account` `{provider, name}` runs the sign-in connection test on one Claude subscription account through `testClaudeCliAccount`, writing `check` through the session's own auth storage, and answers `{check}`; a refusal answers its code (`unsupported_provider`, `unknown_account`, `unsupported_account`). Classic `get_protocol_info` advertises `provider_account_test`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `PROVIDER_ACCOUNT_TEST_CAPABILITY = "provider_account_test"`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the multi-session host advertises `provider_account_test`.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`: the command and its response arm.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `testProviderAccount(provider, name)`.
+
+### Why
+
+- senpi#4436: a failed sign-in connection test keeps the account with its reason; clients need a Retry that re-runs the same test on that account and shows the new result.
+
+### Why an extension could not handle it
+
+- RPC commands, capabilities and the attachment/activity/held lists are owned by the RPC connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the account command cases in `connection-handler.ts` and the capability lists in `connection-handler.ts` and `host-capabilities.ts`. The command is deliberately absent from the attach-gate exemptions and the held read-only list: it writes `auth.json` and spends a model turn, like `account_pin`.
+
+## 2026-10-27 - auth_login_end names the Claude account and its connection test (senpi#4436, S5)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a successful `auth_login_end` for a Claude CLI sign-in also carries `account` `{name}` and `check` `{model, outcome, reason?, at}`, taken once by the login's own signal. `docs/rpc.md` documents both.
+
+### Why
+
+- senpi#4436: a client shows which account was signed in and whether its connection test passed, without re-reading the account list.
+
+### Why an extension could not handle it
+
+- `auth_login_end` is emitted by the RPC login handler itself.
+
+### Expected merge conflict zones
+
+- LOW: the success branch of `startLogin` in `connection-handler.ts`.
+
+## 2026-10-27 - account_remove returns the removal notice (senpi#4436, S4)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `rpc-mutation-response-types.ts`: RPC `logout` goes through `ModelRuntime.logoutProvider` (it called `AuthStorage.logout`, which deleted Claude CLI accounts with no CLI sign-out) and answers `data: { notices }` when one could not be signed out cleanly; the runtime key is still dropped.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `rpc-mutation-response-types.ts`, `rpc-client.ts`: `account_remove` answers with optional `data: { notice }` when the account was removed but something could not be cleaned up; `RpcClient.removeProviderAccount` returns `{ notice? }`. Documented in `docs/rpc.md`.
+
+### Why
+
+- RPC and desktop clients otherwise saw plain success for a removal whose Claude CLI sign-out did not run, or a malformed or linked account dir (#4451 review).
+
+### Why an extension could not handle it
+
+- The RPC wire type is owned by the RPC mode.
+
+### Expected merge conflict zones
+
+- LOW: the `logout` and `account_remove` cases in `connection-handler.ts` and their response union members.
+
+## 2026-10-27 - get_provider_accounts carries Claude CLI-store account fields (senpi#4436, S3)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`: `RpcProviderAccount` gains optional `store: "claude-cli"`, `signedInAt`, `email`, `orgName`, `subscriptionType`, `check` and `signIn: "signed_in" | "needs_sign_in"`. `source` stays `"login"`.
+
+### Why
+
+- The desktop account row shows the email and plan and a sign-in-again state (senpi#4436). The fields are optional, so older clients keep decoding the payload.
+
+### Why an extension could not handle it
+
+- The RPC wire type is owned by the RPC mode.
+
+### Expected merge conflict zones
+
+- LOW: the end of the `RpcProviderAccount` interface.
+
+## 2026-10-27 - End-of-work consumers wait for agent_idle (senpi#4420, oh-my-openagent#11419)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-run-activity.ts` and `host-lifecycle-activity.ts`: a settled session holds idle exit until `agent_idle`, `session_closed`, or a seal's owed `agent_settled` with `reason: "session_closed"`, but for at most one idle window (`settleHoldMs`), so an `agent_settled` handler that never resolves cannot keep the host alive; the supervisor logs when it stops waiting for one.
+- `packages/coding-agent/src/modes/rpc/session-open-turns.ts` and `session-event-writer.ts`: a session that settled but has not reached `agent_idle` owes one settle at seal; the seal's own synthetic settle is not counted as a new debt.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `waitForIdle()` and `collectEvents()` (so `promptAndWait()`) resolve on `agent_idle`.
+- `packages/coding-agent/src/modes/rpc/session-router-attachments.ts`, `session-router-open.ts`, `session-worker.ts`: a deferred release, the drain sweep trigger and the worker's settled signal fire on `agent_idle` only.
+- `packages/coding-agent/src/modes/rpc/session-relocation.ts`: a scheduled move is announced at `agent_idle`; a dropped move is still reported at `agent_settled`.
+
+### Why
+
+- `agent_settled` now reaches clients before its extension handlers finish, so teardown keyed to it could exit the host, release, park or move a session while a settle-time handler (for example a memory write) still runs.
+
+### Why an extension could not handle it
+
+- Host idle exit, seal accounting, session release and relocation are host-owned.
+
+### Expected merge conflict zones
+
+- LOW: the event-type checks in each listed file.
+
+## 2026-10-29 - Detect dead owners behind silent Bun lifetime pipes (senpi#4852, part of #4845)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: re-enable the existing owner PID/start-identity probe when the supervisor's parent no longer matches the recorded owner, even if the inherited owner pipe remains open.
+- Extend the real owner-lifetime regression with a Bun SIGKILL case, retaining the native exit waiter and assertions for both the supervisor and host.
+- Launch owner fixtures from their isolated scratch working directory rather than inheriting the repository context.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` previously disabled identity probes whenever an owner pipe existed. Bun can leave that pipe silent after its writer dies, so an otherwise quiet owned supervisor never reached its owner-death shutdown path.
+- Parent mismatch only triggers verification. Healthy observation, zero retained clients and active turns, the quiet grace, and the final owner-record check still govern shutdown.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` owns supervisor lifetime outside the session. A session extension cannot run after its process is SIGKILLed or correct the supervisor's owner-death detector.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`, specifically the owner-identity probe condition in `SupervisorOwner.shouldExit`.
+- LOW: the owner-lifetime regression fixture and process-exit helper.
+
+## 2026-10-28 - One accepted cut is frozen per admission and owned by a checkpoint token (S08a, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-recovery-types.ts` (new): the engine-internal recovery identities later slices construct unchanged (RULING-46). `RecoveryAdmission` is the one admission descriptor (`socketEpoch`, opaque bounded `admissionId`, `routeKind` ordinary|mirror, `peer`, routing `sessionId`, public `sessionEpoch`, stream `generation`); `RecoveryCutIdentity` names what a cut pinned (session epoch, accepted sequence, transcript version and leaf, active message or explicit null, turn), never a recovery counter; `CheckpointToken` is tagged `kind: "checkpoint"` (S13-Q1 shape); every token operation answers a `RecoveryOutcome` whose failure is the `repair_needed | storage_unavailable` union (S14-Q2 shape); a token of an older generation is the typed `SupersededToken` (`repair_needed`, reason `superseded_token`, `newerGeneration`: the stream's current generation, RULING-50 (2)).
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts` (new): `RecoveryCheckpoints`, the host's token owner. `freeze` pins one complete lane root in one synchronous step and mints the token as the next materialization generation of the peer + session-incarnation stream (RULING-42 Q2); a retired lane (`repair_needed: lane_retired`) or an unavailable compact state (`storage_unavailable: compact_state_unavailable`) publishes no token, releases the partial root at once and advances no generation. `transcript`, `readSettled`, `readCurrent`, `readComponents`, `readActive` and `readCalls` validate owner (peer incarnation), routing session, token, lane retirement, session epoch and generation before any I/O and after every await under the token's operation lease (`unknown_token`, `foreign_peer`, `foreign_session`, `released`, `lane_retired`, `stale_epoch`, `peer_gone`, or `superseded_token` naming the newer generation); a store that could not serve the cut is `storage_unavailable` with the read reason, an unavailable transcript component the same with its reason. `release` is idempotent and per token: the root goes once that token's last operation unwinds, never another token's. `forgetPeer` ends the peer incarnation's streams and releases every checkpoint it froze, whether or not its holder ever releases it: a superseded root is reclaimed at the latest when its peer is forgotten (or when its session's lane is retired or replaced, which releases every root it published), and an operation still in flight is refused as `peer_gone`. A live token's root is never reclaimed by another token's release, another peer's forget or later history. The transcript bytes behind the pinned root are read by S11's page route, not here: the owner and the fanout reach no synchronous call (`no-sync-in-session-path` now roots them).
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: the real producer. Each registered connection owns a `socketEpoch`; a first attach is one admission (`attach-<ordinal>`, `ordinary`) whose cut is frozen as its checkpoint synchronously, and a shed freezes each held session's cut as the next generation of the same admission before the actor awaits its drain. The legacy view reader keeps reading the pinned root under the lane (S07b, unchanged bytes); every barrier end releases the token. A dropped or unregistered connection ends its streams and its checkpoints are reclaimed, so an operation still in flight on them is refused as `peer_gone`.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: `sessionEpoch`, the public epoch of the incarnation (S08-Q1: distinct from the producer nonce, which is never serialized). `session-event-writer.ts`: `recoveryCheckpoints`, the owner's accessor.
+- Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default): without the flag no session owns a lane, so no checkpoint is ever frozen and every destination keeps its bytes. No public selection; S08b adds the stream route set, immediate invalidation of the previous generation's token, explicit reset and close/replacement integration.
+
+### Why
+
+- R3.C1.2-C1.5 (senpi#4272): one immutable cut and one token per required stream, frozen before any await, with every lookup fenced on identity so a retired or foreign token never substitutes the latest history; the identities come from the accepted owners (S04/S05/S06), the admission descriptor from a real host path before S15 (RULING-46).
+
+### Why an extension could not handle it
+
+- The frozen lane root, the peer actor's barrier and the recovery cut are host-internal; no extension event sees a connection's attach, its queue or its shed.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-event-fanout.ts` (`RegisteredConnection`, `PinnedRoot`, `registerConnection`/`unregisterConnection`, `pin`/`unpin`, the recovery closure).
+- LOW: `session-acceptance-lane.ts` (one getter), `session-event-writer.ts` (one getter and its import).
+
+## 2026-10-28 - A late peer's legacy view is rebuilt from the frozen compact current state (S07b, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-legacy-view.ts` (new), `session-event-fanout.ts`: the second half of R3.C6.4. For a session that owns an acceptance lane, a late peer's attach baseline is read from the lane root frozen at the attach, never from retained records: the latest `session_lifecycle`, then the active message as a `message_start` carrying the frozen metadata and the initial content layout (streamed text/thinking bodies empty, every other block at its current value), then per streamed block its start, one delta carrying the whole current prefix, and its end only when the block had already ended at the cut (`text_*`, `thinking_*`, `toolcall_*` with the exact raw-argument rope; `toolcall_start` and `toolcall_end` carry the outer `resolvedToolName` the calls component kept for that block at the cut, as the live frame does), then each still-open broadcast question once with its original id and `remainingMs` at the freeze clock. Every frame is encoded by the predecessor serializer, in the plain or `media_placeholders` variant the peer negotiated. No historical execution, notification, transcript or question-resolution record is replayed, and a targeted dialog never reaches a late peer (RULING-25 Q1, Q4). All roots are read before the first frame is written; a read that fails (compact state unavailable, root released) delivers nothing, keeps the peer open and writes one stderr line, except when the view was cancelled meanwhile (cursor released, lane replaced or retired), which ends it silently.
+- `packages/coding-agent/src/modes/rpc/legacy-resync-view.ts` (new), `session-event-fanout.ts`, `legacy-replay-store.ts`: a shed's `resync_required` frames are one cursor over the cut's sessions; a lane-owned session's `message` slot carries C's current message (`role`, the current content, the accepted metadata) read from the root pinned at the shed, a session without a lane keeps today's latest retained record. With the flag on, a session counts as `closed` once the attachment the cut was taken for is gone (a detach and re-attach between the shed and the read reports `closed: true`, `message: null`, and the new attachment gets its own baseline behind the recovery); with the flag off today's rule (not held now) is unchanged.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `legacy-replay-store.ts`: a lane-owned session is never written to the retained replay store, and its pending-question count for status comes synchronously from the lane (`openBroadcastDialogs`); when that lane's compact state is unavailable the count is unknown (`undefined`), never the empty store's 0. `session-status.ts`, `session-status-stream.ts`: the fanout count is `number | undefined`, and an unknown count leaves `waiting_input` to the runtime's own pending-question count. The store keeps only today's retention for a session without a lane (RULING-25 Q5: an externally constructed session keeps its retention until its legacy adapter is ruled), with its resync projection removed; it also counts the open legacy views of either source (`openLegacyViews`).
+- `packages/coding-agent/src/modes/rpc/compact-state-view.ts`, `compact-session-state.ts`, `compact-lane-current.ts`, `session-acceptance-lane.ts`, `compact-current-components.ts`: `readActiveMessages` / `readCurrentActive` read the live messages of a cut with each block's current value and phase (never the settled history); `openBroadcastDialogs` is the hot count of open broadcast questions.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: an open registers the entry's acceptance lane (the in-process `entry.acceptance` or the worker client's) with the writer before the opener's admission, so the first attach of a lane-owned session freezes its lane root instead of reading the replay store (RULING-52: before it, `4272-lane-sessions-never-read-replay.test.ts` saw one `freezeAttach` for the session on both hosts; that test is the only one that fails with this fix reverted). Separately, `4272-zero-retention-construction-paths.test.ts` runs the zero-retention assertion on every supported construction path (an open from a connection, an open with no connection, a re-open of the live path, `attach_session`, `reclaim_session` then a reopen, the parked-handover reopen, `new_session`) on the in-process and the worker host, with a flag-off control that sees today's retention; it does not catch the open-order bug (it still passes with the fix reverted).
+- `packages/coding-agent/src/modes/rpc/legacy-view-cursor.ts`: `GeneratedFramesCursor`, a cursor over an async generator whose emptiness the owner decides synchronously from the frozen roots.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`, `session-event-fanout.ts`, `compact-legacy-view.ts`: a seal no longer drops a lane-owned session's queued attach baseline (RULING-51 Q2=A). Sealing retired the lane, which released every root it had published, the queued view's root included, so the view's first read failed as cancelled and the peer saw the live suffix and `session_closed` with no baseline. `retire(reason, keep)` now refuses records at once but keeps the roots the fanout's attach views still read, and retires the lane's storage with the last of those releases; reads check that the root is still held (`holds`), not the retirement. `rpc-legacy-view-late-peer.test.ts` feeds the lane the way the binding does and pins baseline, then `session_closed`, then nothing of the session, with flag 0 and flag 1; when the queued view is cancelled past the seal instead (the peer drops, or it detaches the session), no baseline frame is written, the cancellation releases the kept root, and that last release retires the lane's storage.
+- Not in this slice: X07 encode-byte counters beyond the open-view count; a terminal-endpoint lane (none exists on this base, so the terminal control endpoint stays on today's retention).
+
+### Why
+
+- R3.C6.4 (senpi#4272, RULING-25 Q1-Q5): the legacy promise is today's display/dialog recovery floor, rebuilt from the one accepted current state so the host retains no replay of a session's records; reconstruction frames equal an independently built legacy-shaped reference encoded by the predecessor serializer, live frames keep their bytes, and the removed N-frame replay is not a reference (Q2).
+- The compact-updates flag off keeps every legacy destination's bytes (no lane exists, so `issue-3728-live-peer-resync.test.ts` passes unchanged); a lane-owned session's late peer sees fewer, equivalent frames.
+
+### Why an extension could not handle it
+
+- The frozen root, the peer actor's barrier and the recovery cut are host-internal; no extension event sees a connection's attach or its queue.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-event-fanout.ts` (`attachConnectionToSession`, the recovery closure in `setConnectionCapabilities`, `pendingQuestionCount`, `rememberSnapshot`); `legacy-replay-store.ts` (the resync half removed).
+- LOW: `compact-state-view.ts` (`readRowBlocks` hoisted), `compact-session-state.ts` (`readActive`, `roots`), `session-acceptance-lane.ts`, `compact-lane-current.ts`, `compact-current-components.ts` (one getter each); `session-status.ts` (`SessionStatusFanoutView`, `liveStatus`), `session-status-stream.ts` (`SessionStatusDelivery.pendingQuestions`).
+
+## 2026-10-27 - A late peer's legacy baseline is one cancellable barrier in its own FIFO (S07a, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/legacy-view-cursor.ts` (new), `socket-baseline-barrier.ts` (new), `socket-event-fanout.ts`: the first half of R3.C6.4. A legacy view is read through a `LegacyViewCursor` (one frame per `next()`, `release()` once on every end) and delivered by a `BaselineBarrier` that sits in the peer actor's FIFO: `installBaseline` takes the queue position of the attach, so every record enqueued after it follows it; the barrier rechecks that it is still live after every await and before every frame (the attach ordinal, the peer's actor, the lane epoch) and a stale attempt writes nothing further. Neither the frozen view nor a held peer holds session credit (`waitForAcceptance` is unchanged).
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`, `socket-peer-shed.ts` (new), `socket-event-queue.ts` (new), `socket-peer-recovery.ts`: the shed path has two modes, chosen by the compact-updates flag (`ShedMode`). With the flag off (`drop`) it is byte-identical to the predecessor: records are dropped while a recovery is pending, a reply keeps its place ahead of the gap, an attach view is dropped too, and the cut is read when the gap is delivered (the sessions held at the shed and those held then, each with its latest retained record at that moment, `closed` when no longer held, `message: null` when nothing is retained). With the flag on (`capture`) the shed freezes its cut C at the shed: the pre-cut replies keep their place, the recovery barrier (the gap line, then C's `resync_required` frames) follows them, and every post-C record is captured behind it under the same byte budget; a captured record is rechecked when drained and dropped when the peer no longer holds its session, and a session detached during the gap is reported `closed` with `message: null`. A captured suffix that overflows releases C and reads one fresh cut when the gap is delivered (carrying C's sessions), dropping records cheaply until then instead of freezing a cut per overflowing record. `SocketPeerRecovery` no longer owns the cut (`takeGap` replaces `takeSnapshot`); the cut is the barrier's cursor, which knows its `sessions`. The actor's FIFO (`SocketEventQueue`: byte charge, lossless supersession, keep-replies cuts) and the pending-cut state (`SocketPeerShed`) moved out of the actor.
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`, `socket-baseline-barrier.ts`: an attach baseline's frames are charged against the peer's byte budget like the replay lines they replace (the frame in flight counts until the sink accepted it): a frame that does not fit sheds a resync peer and overflows a plain one (notice, then fail closed). Recovery frames are not charged, as before: a shed is the overflow's answer and charging it could only cut again. The barrier writes a recovery's gap line only after its cursor fixed the view, so the gap and the frames describe one moment.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `session-event-writer.ts`: a record routed to a connection because it holds the session carries that attachment (`attachmentOf`) into the actor; lifecycle broadcasts, targeted records and mirror deliveries carry none.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: that attachment is the attach ordinal at capture time, the rule an attach baseline's liveness already uses (`attachmentOf`, `deliverToSession`); with the flag on, a record captured behind a cut for a session detached and re-attached during the gap is dropped at drain, and the new attachment gets only its own baseline.
+- `packages/coding-agent/src/modes/rpc/legacy-replay-store.ts` (new), `session-event-fanout.ts`: the retained per-session replay source (lifecycle line, the active message's non-targeted lines, open broadcast questions) moved out of the fanout unchanged; it freezes an attach view (array ref plus length, question frames at the attach clock) or a resync view (per attached session the latest retained record that carries a message) as a cursor, and counts the views still open. Each freeze also pins the session's lane root (when a lane is registered) and releases it once when the barrier ends. Attach frames are byte-identical to the predecessor (same lines, same order, same media variant, same `remainingMs` clock); targeted dialogs are still never replayed.
+- `packages/coding-agent/src/modes/rpc/socket-drain-stall.ts` (new), `socket-event-queue-errors.ts` (new): the stall-deadline wait and the two queue error classes moved out of the actor verbatim (the actor re-exports the errors).
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `openLegacyViews` reports the frozen views not yet released.
+- `packages/coding-agent/test/suite/rpc-legacy-view-late-peer.test.ts` (new): pins RULING-51 Q2=A and Q3=A. A session sealed while its attach baseline is still queued delivers that baseline, then `session_closed`, and no later record of the session (flag off and on, with and without a lane); with the flag on, a session attached after a shed gets its own baseline behind the recovery barrier and no resync entry, byte-identical to a fresh peer's attach of the same state. Tests only; no production change.
+- Not in this slice (S07b): the compact-state source for the cursor, effect suppression and the removal of the retained replay store; externally constructed Agents keep today's retention (RULING-25 Q5).
+
+### Why
+
+- R3.C6.4 (senpi#4272, RULING-25): the baseline a late peer receives must be frozen at one cut and delivered before its live suffix without a synchronous whole-replay enqueue, so S07b can read it from the compact current-state view asynchronously; and a shed must not discard the records produced while its recovery is pending once the cut is fixed at the shed.
+- The compact-updates flag off keeps every legacy destination's bytes (the flag's contract), so the coherent cut runs only behind it and `issue-3728-live-peer-resync.test.ts` passes unchanged; a legacy event_resync client must never see a session reported closed and then a delta for it.
+
+### Why an extension could not handle it
+
+- The peer actor's FIFO, the shed, the recovery cut and the lane roots are host-internal; no extension event sees a connection's queue or its attach.
+
+### Expected merge conflict zones
+
+- MEDIUM: `socket-event-fanout.ts` (the queue and the pending cut moved out, `enqueue` overflow branch, `drain`); `session-event-fanout.ts` (`attachConnectionToSession`, `setConnectionCapabilities`, `deliverToSession`, the removed snapshot methods).
+- LOW: `socket-peer-recovery.ts` (`takeSnapshot` -> `takeGap`, `ResyncCut.sessions`), `session-event-writer.ts` (one getter, the attachment argument on two `enqueue` calls).
+
+## 2026-10-27 - Outstanding calls carry progress and hook state and retire into their settled rows (S06b, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-call-retirement.ts` (new), `compact-session-calls.ts`, `compact-call-model.ts`, `compact-call-table.ts`, `compact-call-fold.ts`, `compact-call-view.ts`: the lifecycle half of R3.C3.2-C3.3. `tool_execution_update` keeps only the latest progress value and the first prepared input; `tool_hook_status` keeps only the latest hook record; a nested start carries its parent's key (`parentKey`, resolved from `parentToolCallId` to the parent's `runtimeItemKey`, null for a top-level or unknown parent) on the live entry and its projection, and a by-id index finds a call after its turn closed. When a reused id overlaps a call still executing (senpi#4278), every per-id record resolves the same way, to the oldest call under that id that can still take it, its own turn first: a `tool_execution_start` joins the oldest announced call not yet started, a `tool_execution_update` the oldest still executing, a `tool_hook_status` the oldest not yet ended, a `tool_execution_end` the oldest still open (so neither end is dropped as late; with no open call an end may still replace an `abandoned` outcome, and a true duplicate stays ignored), and a toolResult `message_end` the oldest still awaiting a carrier, so each carrier retires the call it belongs to and takes the call and its completed descendants (up to 256 per level) into one projection whose `complete` holds only when every descendant rode on it. A never-started call ends at `turn_end` as an explicit `not-executed` terminal; a started call with no carrier, nested or not, is `abandoned` at `agent_settled` and stays, carrierless, until its epoch retires, where a late real end still replaces the outcome; a child whose parent left the table or became carrierless ends carrierless as an orphan. All are reported as `carrierless` in the cut's counters.
+- `packages/coding-agent/src/modes/rpc/compact-call-retirement.ts`, `compact-call-model.ts`: the 256 bound never truncates silently (RULING-49): every level's `nestedCalls` carries `omitted`, the count of completed children left out at the bound (0 otherwise), and `complete` is false whenever it is not 0, so a truncated projection reads differently from one whose child is still executing (`omitted` 0, `complete` false).
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: hook, `turn_end`, `agent_settled` and toolResult `message_end` records fold into the calls component inside the same acceptance step; an ignored update, hook or settle (unknown or ended call) takes no sequence and publishes no root; a client-correlation change carried by such a record is decided before the fold but committed only after it, so an ignored record also commits no correlation.
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: a toolResult terminal row stores the retired call's projection (identity, requested and resolved names, announced/started/prepared inputs, start identity, outcome, nested children) and its `runtimeItemKey` in the same step that settles the row.
+
+### Why
+
+- R3.C3.3 (senpi#4272, RULING-13 Q2-Q5, Q7, Q9): a bare pointer to a result message is not enough to retire a call, and a retirement must be an explicit transition every reader can see, never a silent removal.
+
+### Why an extension could not handle it
+
+- The lane, its sequence numbering, the settled rows and the compact cut are host-internal; no extension event carries the accepted sequence or the frozen roots.
+
+### Expected merge conflict zones
+
+- LOW: `session-acceptance-lane.ts` `accept` (the `message_end` settle line gains one argument); `compact-settled-messages.ts` `end` (one optional parameter and one payload field).
+
+## 2026-10-27 - Compact state tracks outstanding tool calls from announcement to execution end (S06a, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-call-model.ts`, `compact-call-table.ts`, `compact-session-calls.ts`, `compact-call-fold.ts`, `compact-call-view.ts` (new): the outstanding-call phase machine of R3.C3.1-C3.2. Each call is keyed by a host-minted `runtimeItemKey` (`<sessionEpoch>:<creationSequence>.<k>`), indexed by (turn, call id) and by its owning message, and moves only forward through `streaming`, `awaiting-execution`, `executing` and `completed-awaiting-entry`. Records fold in any order: a `tool_execution_start` that precedes its announcement creates an unowned call the later `toolcall_start` joins by id; a provider id that changes after the start re-indexes the call and keeps its key; a reused id (senpi#4278) mints a fresh key and counts the reuse; a second `tool_execution_end` for a terminal call is late and changes nothing. A completed call stays resident until its retirement lands (S06b).
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts`, `compact-state-view.ts`, `compact-state-storage.ts`, `compact-lane-current.ts`, `compact-lane-transitions.ts`, `compact-transition.ts`: the calls root is a fourth frozen component of every cut, published at the same lane sequence as the block, message and component changes of the record that moved it. A streaming call reads its raw argument prefix through the active message, whether the announcement created it or joined a bridge-started call; from `toolcall_end` (or the terminal) on, the call owns the final rope root. Block transitions now carry the record's client correlation and `resolvedToolName` for the calls component.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts` and `session-acceptance-compact.ts`: `tool_execution_start` and `tool_execution_end` fold into the calls component inside the same acceptance step, with the lane-minted turn id and the lane's `sessionEpoch` as the key prefix. The call fold runs first, at the sequence the record would take, before the lane commits anything; an execution end the component ignores (unknown call, late or duplicate end) takes no sequence, mints no turn and publishes no root, and the other compact folds (`foldCompactRecord`) see the committed sequence. `readCurrentCalls(root)` reads the calls at a cut.
+
+### Why
+
+- R3.C3 (senpi#4272, RULING-13): readers need every outstanding call's identity, names, inputs and execution state independently of the active message, at the cut that moved it.
+
+### Why an extension could not handle it
+
+- The lane, its sequence numbering and the compact cut are host-internal; no extension event carries the accepted sequence or the frozen roots.
+
+### Expected merge conflict zones
+
+- LOW: `session-acceptance-lane.ts` `accept` (the turn id is minted and the sequence committed after the call fold). `session-acceptance-compact.ts` `foldCompactRecord` (the canonical fold takes the turn id).
+
+## 2026-10-27 - Frozen lifecycle and dialog roots, producer-driven cold flows and persistence status for compact state (S03b-3b, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: a structural flush commits only the first 64 KiB-bounded run of its 128-leaf selection, leaving later runs for the next serial job. Removing the small ended-marker rows made a count-only batch exceed one segment; byte-bounded selection restores the 1,000-join round's file-create budget without changing roots, flows or atomic in-memory publication.
+- `packages/coding-agent/src/modes/rpc/compact-current-components.ts`, `packages/coding-agent/src/modes/rpc/compact-session-state.ts`, `packages/coding-agent/src/modes/rpc/compact-state-view.ts`, `packages/coding-agent/src/modes/rpc/compact-transition.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: run state, the latest `session_lifecycle` and the open dialogs are persistent roots of the compact cut, each change at its own lane sequence. A broadcast question keeps its request; a targeted dialog keeps only its id, method and deadline, so a cut never holds a body only its authorized path may present (RULING-25 Q4, RULING-26 Q4).
+- `packages/coding-agent/src/modes/rpc/compact-transcript-flows.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-current.ts`, `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: each journaled flow maps through this epoch's settled joins (entry id to message id, one cut) to `applyColdFlow`; persistence status (`appended` from an owned append or a pre-committed terminal, `failed` from `transcript_write_failed`) and the flows run on one ordered cold chain after acceptance. A failed cold write makes the epoch's compact state unavailable.
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: carried item 9. A message both ended and joined keeps resident exactly the two id-sized facts the duplicate-end and conflicting-owner checks need (`settled:<message>` holding its entry id, `entry:<entry>`); its end marker folds into that join and its terminal row goes. The `ended` marker rows are gone. `end()` reports whether it joined the message to its durable entry. Residency is therefore O(settled messages) per epoch, measured at 66 bytes of id text and about 641-660 bytes of V8 heap per settled message (about 6.6 MB at 10k and 64 MB at 100k), with payloads zero; a paged synchronous membership filter that bounds it independently of message count is carried to S08/S11 (RULING-48 item 9). An end that names another durable entry than the one the message already owns is a `conflicting_owner` and settles nothing (#4460 delta LOW-2).
+- `packages/coding-agent/src/modes/rpc/compact-cold-flows.ts`, `packages/coding-agent/src/modes/rpc/compact-transcript-flows.ts`: the cold flow for a context edit with no replacement is `context_edit_removal` (it was `user_delete`); it maps to `message_remove`, the path a future single-message delete command must also take (RULING-48).
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts` and `packages/coding-agent/src/modes/rpc/session-acceptance-compact.ts`: a `message_end` settles compact persistence as `appended` only when the lane accepted its durable join (a conflicting owner or a replayed end settles nothing). The compact-side wiring of one accepted transition or record (owned join and cold flow; canonical and component folds, terminal, persistence) lives in the sibling module, a pure move.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: `withinFrameLimit` charges a transition its entry bytes plus the flow payload it carries (every owned message copy of a branch or edit), so an oversize leaf move degrades to `transition_over_worker_frame_limit` instead of exceeding the worker frame.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: one `canonical_unavailable` frame per epoch, reset at a replacement (#4439 delta LOW-2). `packages/coding-agent/src/modes/rpc/structured-session-records.ts`: the capture failure boundary is passed to the lane (LOW-1).
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-current-components.ts`, `packages/coding-agent/src/modes/rpc/compact-transcript-flows.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-current.ts`, `packages/coding-agent/src/modes/rpc/compact-session-state.ts`, `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`, `packages/coding-agent/src/modes/rpc/compact-state-view.ts`, `packages/coding-agent/src/modes/rpc/compact-transition.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-compact.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/structured-session-records.ts`: senpi#4460 review (settled evidence survives pruning, persistence only on an accepted join, flow payloads charged against the frame), RULING-26 Q4 (frozen lifecycle/dialog roots before any retention removal), RULING-25 Q4 (targeted dialogs only on authorized paths), RULING-33 condition 2 (cold flows ordered after acceptance), carried item 9 (settled membership grew for the whole epoch), #4439 delta LOWs 1-3.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/compact-current-components.ts`, `packages/coding-agent/src/modes/rpc/compact-transcript-flows.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-current.ts`, `packages/coding-agent/src/modes/rpc/compact-session-state.ts`, `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`, `packages/coding-agent/src/modes/rpc/compact-state-view.ts`, `packages/coding-agent/src/modes/rpc/compact-transition.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-compact.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/structured-session-records.ts` are the host's internal acceptance lane and compact consumer; no extension API reaches them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: `SEQUENCED`, `applyTranscript`, `accept`. `packages/coding-agent/src/modes/rpc/compact-session-state.ts`: `accept`, `freeze`. `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: `end`, `append`, `join`, `settle`. `packages/coding-agent/src/modes/rpc/session-worker.ts`: `canonicalUnavailable`. `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: `withinFrameLimit`.
+
+## 2026-10-27 - Fold the compact consumer into the acceptance lane with one numbering (S03b-3a, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-current.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-transitions.ts`: each lane epoch owns a compact current state bound to its registry nonce; a canonical record folds in the same step and at the same sequence as its legacy record, block controls are units of their own, and a frozen root carries the compact cut. A rejected fold makes that epoch's compact state unavailable (legacy delivery continues).
+- `packages/coding-agent/src/modes/rpc/compact-canonical-pairing.ts`, `packages/coding-agent/src/modes/rpc/compact-producer-stamp.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts`: the binding pairs each canonical record with its legacy record by recovery carrier, normalizes it to JSON wire semantics, and stamps the producer ordinal and each message's first ordinal.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: a worker output frame carries its canonical record and first ordinal beside the unchanged legacy record; a block control is a `canonical` frame on the same ordinal sequence.
+- `packages/coding-agent/src/modes/rpc/compact-start-identity.ts`, `packages/coding-agent/src/modes/rpc/compact-state-storage.ts`, `packages/coding-agent/src/modes/rpc/compact-active-messages.ts`, `packages/coding-agent/src/modes/rpc/compact-session-state.ts`: current-epoch-only start validation (the 64-entry retired set is gone); `accept` takes the lane's sequence; correlation binds on the first message-level record.
+- `packages/coding-agent/src/modes/rpc/compact-cold-operations.ts`: a cold flow reads every step first and publishes them together; `runAll` answers `active_message` before `capacity`, and a flow that queues nothing takes no slot.
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts`: projections keep their event's recovery carrier; nested terminals carry their capture `rewrittenFrom`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: session subscriptions install structured-first, so a refused structured lane leaves none installed.
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: exact settled membership is a resident key set over the paged index (stack-merge repair).
+- `packages/coding-agent/src/modes/rpc/compact-lane-current.ts`, `packages/coding-agent/src/modes/rpc/structured-session-records.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: legacy delivery no longer depends on compact folding (#4439 review). Building a fold's transition happens inside the fold's failure boundary. A throw anywhere on the structured path (projection, a structured receiver, pairing) is caught before the legacy listeners run and reported through `RpcConnectionSink.structuredFailed`, which ends the epoch's compact state: in process directly, from a worker through a new ordered `canonical_unavailable` frame. A `canonical` frame is credited only by a bound, running client, like an `output` frame.
+- `packages/coding-agent/src/modes/rpc/compact-read-lease.ts`: an unavailable compact cut reads as `CompactReadError("unavailable")`, distinct from `ownership`.
+- `packages/coding-agent/src/modes/rpc/compact-producer-stamp.ts`: a message's first-ordinal binding is released by its legacy `message_end` too, so error and abort terminals with no paired canonical record no longer leave it behind.
+- Not in this slice (S03b-3b): frozen lifecycle/dialog component roots, the four cold flows and persistence status from their real producers, settled-row pruning.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-current.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-transitions.ts`, `packages/coding-agent/src/modes/rpc/compact-canonical-pairing.ts`, `packages/coding-agent/src/modes/rpc/compact-producer-stamp.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts` and `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: RULING-26 Q2 (one acceptance unit, decided before enqueue/credit) and RULING-36/40 (one numbering: the worker frame ordinal is the compact ordinal, the S05 nonce its epoch, firstOrdinal producer-supplied).
+- `packages/coding-agent/src/modes/rpc/compact-start-identity.ts`, `packages/coding-agent/src/modes/rpc/compact-state-storage.ts`, `packages/coding-agent/src/modes/rpc/compact-active-messages.ts` and `packages/coding-agent/src/modes/rpc/compact-session-state.ts`: RULING-39 removes the retired-epoch window and its takeover hole; RULING-26 requires the lane and the compact state to publish at one sequence; #4425 LOW 3.
+- `packages/coding-agent/src/modes/rpc/compact-cold-operations.ts`: #4425 LOWs 1 and 2.
+- `packages/coding-agent/src/modes/rpc/compact-read-lease.ts` and the legacy-delivery isolation above: #4439 review LOWs 2-6. The structured lane now runs before the legacy listeners, so a structured failure that escaped would have stopped legacy and extension delivery of that event, and a failed fold would have lost its unit's legacy record.
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts`: the pairing key and the terminal cutoff the reducer needs.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: carried #4349 LOW (item 10), half-installed subscriptions.
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: the S05 component was written against the S03a index API, which the paged S03b index replaced.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-current.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-transitions.ts`, `packages/coding-agent/src/modes/rpc/compact-canonical-pairing.ts`, `packages/coding-agent/src/modes/rpc/compact-producer-stamp.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/compact-start-identity.ts`, `packages/coding-agent/src/modes/rpc/compact-state-storage.ts`, `packages/coding-agent/src/modes/rpc/compact-active-messages.ts`, `packages/coding-agent/src/modes/rpc/compact-session-state.ts`, `packages/coding-agent/src/modes/rpc/compact-cold-operations.ts`, `packages/coding-agent/src/modes/rpc/structured-session-records.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts` are the host's private acceptance, worker credit and recovery-state boundary below every extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: `enqueueRecord` and the structured writer.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts` and `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: output-frame ordering and the new `canonical` frame.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `installSessionSubscriptions`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `enqueueCanonical`.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`, `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`, `packages/coding-agent/src/modes/rpc/compact-cold-operations.ts`, `packages/coding-agent/src/modes/rpc/compact-start-identity.ts`, `packages/coding-agent/src/modes/rpc/compact-state-storage.ts`, `packages/coding-agent/src/modes/rpc/compact-active-messages.ts`, `packages/coding-agent/src/modes/rpc/compact-session-state.ts`, `packages/coding-agent/src/modes/rpc/structured-session-records.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-current.ts`, `packages/coding-agent/src/modes/rpc/compact-lane-transitions.ts`, `packages/coding-agent/src/modes/rpc/compact-canonical-pairing.ts` and `packages/coding-agent/src/modes/rpc/compact-producer-stamp.ts`: fork-only compact consumer modules.
+
+## 2026-10-29 - Refuse unconfirmed key deadline Worker readiness (part of #4839)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`: atomically read the readiness slot after the bounded wait and fail closed before closing stdin unless it equals 1. Preserve the independent deadline Worker, release-after-restore ordering, and fatal descriptor restoration check.
+
+### Why
+
+- A completed or timed-out wait does not prove that the Worker reached its readiness signal. Closing stdin without that signal allowed Worker startup to overlap the close/open interval. This guard addresses that predicate only; unrelated descriptor allocation still requires the separate atomic replacement increment.
+
+### Why an extension could not handle it
+
+- The key bootstrap runs before application and extension startup. An extension cannot safely gate its descriptor replacement or change the authentication failure boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`: the deadline readiness wait and stdin restoration sequence.
+
+## 2026-10-29 - Deterministic startup loaded_surfaces_changed (senpi#4850, fixes #4828)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a `startupSettled` MCP inventory notification emits exactly one `loaded_surfaces_changed`, even when the digest is unchanged, deferred to the end of a running bind/rebind refresh; shared hosts receive it with the prior digest `mcp-startup-pending`. `get_loaded_surfaces` answers without recording or announcing the inventory.
+
+### Why
+
+- The startup event count depended on MCP connect interleaving and on client reads (#4828). A read could also notify every connection attached to the session.
+
+### Why an extension could not handle it
+
+- Event emission and the per-connection surface digest are RPC host behavior.
+
+### Expected merge conflict zones
+
+- LOW: `recordLoadedSurfaces` / `emitLoadedSurfacesChanged`, the MCP inventory subscription, `refreshLoadedSurfacesAfter`, and the `get_loaded_surfaces` case in `connection-handler.ts`.
+
+## 2026-10-29 - Provision direct supervisor generation state before child startup (senpi#3584)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: await generation-directory provisioning before allocating the internal hop or spawning the host child. An ensured generation retains its existing settings.
+- Keep newly created generations under a startup cleanup handle until signal registration transfers cleanup to shutdown. Every earlier startup failure removes the owned generation without deleting an ensured directory.
+
+### Why
+
+- A direct supervisor launch has no ensuring caller to create its generation directory. Its first atomic `host-child.pid` write could fail with ENOENT even with no concurrent remover. A promise-gated regression reproduces the missing-directory failure before any child exists.
+- A generation created by a failed direct startup has no supervisor record and cannot be pruned. Failure injection at public-secret and internal-hop preparation verifies removal of newly created generations and preservation of pre-existing settings.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` owns supervisor startup before extensions or host sessions exist.
+
+### Expected merge conflict zones
+
+- LOW: generation selection and pre-child provisioning in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`.
+
+## 2026-10-29 - Transport-minted extension owners, atomic retirement and fenced egress (senpi#4728, #4775)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/extension-owner.ts`, `extension-owner-lifetime.ts`, `session-connection-context.ts` (new): each registered transport mints an owner; each binding generation gets an effect gate backed by a shared retirement word. `admit` checks that word atomically before it dispatches; the abort signal only wakes waiters.
+- `session-event-fanout.ts`, `session-event-writer.ts`, `connection-handler.ts`, `session-binding.ts`: registration and unregistration retire the transport's gates; in-process requests capture their owner before the first await; a session rebind retires the binding generation; a targeted reply whose captured destination retired or was replaced is consumed, never routed to a replacement, stdout or broadcast.
+- `socket-event-fanout.ts`: a queued targeted reply carries its destination check, repeated immediately before the socket write, after backpressure waits.
+- `session-worker-data.ts` (new, public as `@code-yeongyu/senpi/session-worker-data`): `provideSessionWorkerData(name, create)` registers, on the main thread and before the first session Worker, a provider whose `create()` runs once per session Worker; its value lands under `workerData.extensionData[name]` with its transfers, and its `dispose()` runs on that Worker's exit or when constructing it throws. `sessionWorkerData(name)` reads it inside a session Worker. A duplicate name or a late provider throws; eval and tool Workers get nothing.
+- `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker.ts`, `session-worker-owners.ts` (new): worker commands carry the captured gate (owner id, binding generation, shared retirement word); worker output carries the owner identity back and is routed only to that exact incarnation after reconciliation. A stale frame is consumed normally: its ordinal, transcript bookkeeping and credit complete and the worker keeps serving. Detach retires the gate on the host first, then tells the isolate the exact identities (`owners_retired`).
+
+### Why
+
+- senpi#4728: an extension effect or a code-bearing reply could outlive the connection that requested it, including across a session replacement or a reused routing string.
+- An extension host needs a private, per-session-Worker channel (for example a MessagePort it keeps one end of). A shared or named broadcast channel is visible to every thread in the process.
+
+### Why an extension could not handle it
+
+- Owner minting, detach ordering, worker routing and socket queues are host transport internals with no extension surface.
+
+### Expected merge conflict zones
+
+- MEDIUM: the worker `output` and `command` handling in `session-worker-client.ts` / `session-worker.ts`, and `SocketEventSinkActor.enqueue` / `drain`.
+
+## 2026-10-29 - Ensure, supervisor and successor spawns forward named private descriptors (senpi#4771)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the supervisor, engine and successor spawns go through `spawnWithPrivateFds`, so descriptors named by `SENPI_PRIVATE_FDS` reach the new engine generation and nothing else; the engine spawn is the final hop. A reused host receives nothing; a restarted engine needs a fresh launcher descriptor.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-bootstrap.ts`: the inherited fd 4 adoption moved to `utils/inherited-duplex.ts` unchanged; `presenterBootstrapStream` calls it.
+
+### Why
+
+- Same as the entry above (#4749): the engine-lifetime channel must survive `host ensure` exiting.
+
+### Why an extension could not handle it
+
+- These spawns run in the ensure and supervisor processes, where no extension runs.
+
+### Expected merge conflict zones
+
+- The `spawn` imports and call sites in the three host files.
+
+## 2026-10-29 - A handoff drain holds automatic turns of unattended sessions (senpi#3114)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-drain-hold.ts` (new): each drain pass holds the automatic turns of every open session with no attachment, once per session.
+- `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts`: `sweepDrain` calls it after a pass has read its verdicts, so a failed pass is still retried by the drain timer.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: `drainHeldSessions` records which sessions this generation already held.
+
+### Why
+
+- A superseded generation parks a session only once it is idle, and nothing can reach a session there once its client is gone. A session that chained automatic turns (goal continuation, monitor and codemode wakes) never went idle and kept running, eval cells included, after its parent cancelled it.
+
+### Why an extension could not handle it
+
+- The drain is internal host lifecycle; no extension sees it.
+
+### Expected merge conflict zones
+
+- LOW: the head of `sweepDrain` in `session-router-occupancy.ts`; the field list of `session-router-context.ts`.
+
+## 2026-10-28 - The win32 supervisor reads its host child's start time once, not every 500 ms (senpi#4684)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`: `watchWin32ChildIdentity` reads the host child's start time once, at registration. Each 500 ms tick is now a free `kill(pid, 0)`: two dead ticks in a row are death. The start time is read again only when the pid may have been reused (it looked dead and answers again, or liveness is inconclusive, e.g. `EPERM`), and a different start time is death. Those re-reads, and the retries of a failed registration read, back off from 10 ticks to one a minute. A late registration read is adopted only while every tick since spawn saw the child alive. The child parameter is narrowed to `Pick<ChildProcess, "pid" | "exitCode" | "signalCode">`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`: every tick called `readProcessStartTime`, which on win32 spawns `powershell.exe ... Get-CimInstance Win32_Process`, so a healthy idle host caused one to two PowerShell/WMI cold starts a second (plus a `conhost.exe` each) for its whole life (senpi#4684, reported by a community user). A live pid's start time never changes, and a pid can only be reused after its process dies, which `kill(pid, 0)` already sees.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`: the lifecycle supervisor runs before and outside any session, so no extension is loaded in it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts` `watchWin32ChildIdentity` and its new tick constants; fork-only file with no upstream counterpart.
+
+## 2026-10-28 - A daemon never inherits its ensurer's host hand-off lane (senpi#4528)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: `TRANSIENT_ENV_NAMES` also drops `SENPI_RPC_INTERNAL_KEY_STDIN`, `SENPI_RPC_HOST_WATCH_PSTART`, `SENPI_RPC_HOST_WATCH_PSTART_TICKS`, `SENPI_RPC_HOST_LIFETIME_FIFO` and `SENPI_RPC_SOCKET_SECRET_FILE`. The set already dropped the rest of the lane; these five were missing, so a daemon ensured BY a host child inherited its parent's key sentinel, found no key on its stdin and exited `internal_key_unavailable` before it listened.
+- `packages/coding-agent/src/modes/rpc/host-identity-env.ts`: also exports `INTERNAL_KEY_ENV_PREFIX` and `INTERNAL_KEY_STDIN_ENV`, next to the other names a supervisor hands its host child. No new module enters the supervisor's import graph, whose module count is a budget (`test/supervisor-import-graph.test.ts`).
+- `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`: imports that name instead of declaring it. No behavior change.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `spawnHostChild` writes the sentinel through the same constant rather than a repeated string literal.
+
+### Why
+
+- `internal-bootstrap.ts` CONSUMES the sentinel at module load: importing it performs the stdin read and arms a deadline that SIGKILLs the importer, so the name needed a side-effect-free home. `host-identity-env.ts` is that home and is already a leaf of the supervisor's graph: it is the dependency-free module for "the environment names an ensure uses to hand a spawned host its identity", which is exactly what the key sentinel is. With the name shared, the daemon allowlist and the launch that writes the lane can be checked against one list, which is what exposed the five missing names.
+
+### Why an extension could not handle it
+
+- The hand-off is internal to the engine's supervisor-to-host launch and to the daemon environment filter; no extension surface reaches either.
+
+### Expected merge conflict zones
+
+- LOW: the `TRANSIENT_ENV_NAMES` list and the import block of `internal-bootstrap.ts`.
+
+## 2026-10-28 - The in-flight gc pass registry is its own leaf module (senpi#4382)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc-pass-registry.ts` (new): the map of opportunistic gc passes this process has in flight, keyed by agent directory: `trackOpportunisticHostGc`, `opportunisticHostGcRunning`, `settledOpportunisticHostGc`, plus `opportunisticHostGcWithin(path)` / `settledOpportunisticHostGcWithin(path)` for every in-flight pass whose `<agentDir>/rpc-host-daemon` lies inside `path`. It imports only `node:path`.
+- `packages/coding-agent/src/modes/rpc/host-gc-pass.ts`: `scheduleOpportunisticHostGc` records its pass through the registry and still starts at most one per agent directory; `settledOpportunisticHostGc` is re-exported from the registry. The pass itself, its budget and its marker are unchanged.
+
+### Why
+
+- senpi#4382: `ensureHost` returns before the pass it schedules has run, and the pass writes `gc-last-run.json` into `<agentDir>/rpc-host-daemon`. A test that removed its scratch while the pass was in flight failed with ENOTEMPTY on that directory. The coding-agent test setup now joins every overlapping pass at the removal itself, which needs the registry without loading the gc module graph into every test file.
+
+### Why an extension could not handle it
+
+- The pass is scheduled by `ensureHost` inside the RPC host transport, below the extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `scheduleOpportunisticHostGc` / `settledOpportunisticHostGc` block and the imports at the top of `host-gc-pass.ts`.
+
+## 2026-10-28 - Compaction round cache holds a whole round's paths (#4559)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-paged-tree.ts`: the round-local decoded-node LRU is now bounded by `ROUND_CACHE_BYTES` = 1 MiB instead of 32 KiB. It is still created when a round starts and dropped when the round ends, so nothing is retained between rounds. This supersedes the "32 KiB round-local LRU" bound recorded in the entry that batched overlay selection and row-page lookups through shared descents.
+- Correction to the #4591 entry ("Compaction selects only ready overlay keys"): the overlay rescanning it removed was a contributor to the C2.2 terminal-lifetime timeouts on loaded machines (#4559), not their whole cause. Most of the remaining idle time was the node re-reads this entry removes.
+
+### Why
+
+- Message and entry ids are random, so a round's 128 rows land on up to 128 separate tree paths (about 1,000 decoded nodes at 8,000 settled rows). The selection lookup and the batched apply walk the same paths, but 32 KiB held only about 80 nodes, so the apply re-hydrated nearly every path from the spool. Measured over the idle drain of 2,000 joined messages (8,000 rows), spool node reads were 67,509 at 32 KiB, 58,175 at 512 KiB, and 31,543 at 1 MiB, and idle time went from 4,356 ms to 2,810 ms. 512 KiB was the first proposal, but it falls short because each node accounts for about 0.9 KiB.
+
+### Why an extension could not handle it
+
+- Extensions cannot reach the RPC engine's internal compact index or its paged tree.
+
+### Expected merge conflict zones
+
+- The LRU bound in `compact-paged-tree.ts`.
+
+## 2026-10-28 - Compaction selects only ready overlay keys (#4575)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-content-index.ts`: keeps a resident, insertion-ordered `ready` set of overlay keys with no pending reference. A key enters it when it is put with every reference committed or when its last pending reference commits, and leaves it when its override is dropped.
+- `packages/coding-agent/src/modes/rpc/compact-index-compactor.ts`: a compaction pass selects from the `ready` set (reading each key's value from the pass's frozen cut) instead of walking every overlay key from the start, and still writes its folded rows in key order. The selection bounds (128 rows, one touched base page, one optional small page) are unchanged.
+
+### Why
+
+- Each pass restarted the overlay walk from the first key and sent every visited key, pending ones included, through a paged-tree lookup before rejecting it. Draining N settled rows therefore looked up O(N) keys per pass over O(N) passes: 2,920 / 10,448 / 38,816 / 166,336 lookups for 250 / 500 / 1,000 / 2,000 joined messages, now 926 / 2,052 / 4,520 / 10,144. This is the background work that made the C2.2 terminal-lifetime test time out on loaded machines (#4559).
+
+### Why an extension could not handle it
+
+- Extensions cannot reach the RPC engine's internal compact index or its compaction job.
+
+### Expected merge conflict zones
+
+- The selection loop of `compact-index-compactor.ts` and the `pending` wiring in `compact-content-index.ts`.
+
+## 2026-10-28 - Compaction round files bounded at 64 KiB behind one commit (fixes #4539, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-segment-storage.ts`: `COMPACT_SEGMENT_BYTES` (65,536) bounds every segment file. `segmentRuns` splits sized entries, in order, into runs of at most that many bytes, and `writeSegments` writes a flush batch as one such run of files, returning each text's placement only once every file is durable; a write that fails or throws discards the files the run already wrote and returns undefined.
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: `flushLeaves(ids, operation?)` writes its batch through `writeSegments` and publishes every leaf in one synchronous step after the last file's write resolved. That step is the batch's commit record: no leaf is committed and no segment is registered before it, and a failed write leaves every leaf of the batch resident and spillable as before.
+- `packages/coding-agent/src/modes/rpc/compact-paged-tree.ts`: `flush()` commits a compaction round with `node_write`, so a round's node files carry the `node-` prefix instead of sharing `value-` with structural value batches.
+- `packages/coding-agent/src/modes/rpc/compact-storage-io.ts` and `compact-spool-storage.ts`: the new `node_write` operation names its file prefix (`node`) and halts spilling on failure like `value_write`; the prefix and halting rules are tables instead of chained conditionals.
+- Tests (RULING-55): `4272-compact-round-crash.test.ts` adds the real crash case (a process that dies mid-round leaves partial `node-` files in an orphaned epoch directory; a store reopened on it refuses it as `pre_existing`, reads, writes and removes nothing in it, and rebuilds the rows from the transcript) and names the existing per-file case an injected write failure; new `4272-compact-round-readers.test.ts` holds each of the 9 node files of a 1,024-row round (node files only; the round's page file is not held) and proves a concurrent reader sees the whole previous state until publication and the whole new round after it; `4272-compaction-round-io.test.ts` asserts the round's one non-node create is its page. The spread rig (`4272-spread-round-support.ts` `spreadSpoolRoot`) pads its epoch directory to a fixed JSON length, because each paged row node embeds its page's absolute path and the node file count otherwise followed the host's TMPDIR length; the round tests now assert the exact node file counts (9 / 14 / 20 at 1,024 / 8,192 / 65,536 rows). `compact-content-store.ts` documents the publication point: a future slice that adopts a spool for crash recovery must first add a durable commit record written last.
+
+### Why
+
+- One compaction round wrote every node it built into a single segment file, which grew with the settled row count (measured 400,418 / 678,472 / 970,364 bytes for one round of 128 spread keys over 1,024 / 8,192 / 65,536 rows) and so exceeded the 64 KiB page bound (senpi#4539, RULING-54, RULING-47 as amended). Every file now stays within the bound, a reader holds at most one bounded page per file read, and a round cut after any of its files leaves the previous state fully readable with its stray files reclaimed.
+
+### Why an extension could not handle it
+
+- The spool segments sit below the RPC session state; no extension surface reaches them.
+
+### Expected merge conflict zones
+
+- LOW: `compact-segment-storage.ts` with senpi#4521 (SP3), which adds the same `COMPACT_SEGMENT_BYTES` and `segmentRuns` for value batches; keep one copy. `flushLeaves` in `compact-content-store.ts`. Rollout remains off.
+
+## 2026-10-27 - Host daemons get the engine trust generation only through their forced hand-off (senpi#4525)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: `SENPI_ENGINE_TRUST` and `SENPI_ENGINE_TRUST_HOP` are transient names, so the `SENPI_` allowlist never passes a spawner's marker or launcher hop to a daemon.
+- `packages/coding-agent/src/modes/rpc/host-spawn-environment.ts`: initial and successor daemon spawns add `engineTrustHandOffEnvironment` (generation file, marker with an empty `restore`, owned default-input closure, no hop) to `forced` once this process has recorded an adopted generation.
+
+### Why
+
+- omo#10762: an engine that adopted a trust generation deletes the marker from JS `process.env`, so a daemon must receive the generation from the in-memory record; a marker or hop left in a spawner's environment must never reach a daemon, and a daemon's `restore` stays empty so restored values cannot bypass its allowlist (design r13 5.5).
+
+### Why an extension could not handle it
+
+- The daemon environment is built by the RPC host lifecycle before any extension loads in the daemon.
+
+### Expected merge conflict zones
+
+- LOW: `TRANSIENT_ENV_NAMES` in `host-daemon-env.ts` and the `forced` objects in `host-spawn-environment.ts`.
+
+## 2026-10-27 - Commit each round's structural value leaves as one segment (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: `flushValues()` collects up to 128 resident structural leaves and commits them with one `flushLeaves(batch)`, so they land in one segment file. Before, it wrote one file per leaf. The `value_write` job now calls `flushValues()` instead of flushing a single leaf, so both entry points follow the same batching rule. A failed batch write still keeps every leaf of the batch resident and halts spilling.
+- `packages/coding-agent/src/modes/rpc/compact-segment-storage.ts` / `compact-content-store.ts`: `flushValues()` splits its batch into runs of at most `COMPACT_SEGMENT_BYTES` (64 KiB) and writes one segment per run, so a structural value batch file never exceeds the page bound (one batch holding a 100,000-character string used to land in one 284,372-byte file); a run whose write fails halts spilling and the later runs stay resident. A compaction round's node segment stays one file, as RULING-47 requires.
+- `packages/coding-agent/src/modes/rpc/compact-index-compactor.ts`: the selection loop walks only ready keys, sorted in key order before batching `bases.getMany`, preserving shared tree paths and page locality after merging the ready-only selection fix. It rechecks readiness before looking up each snapshot key, so a key that becomes pending between batches is skipped. The touched-page rule and the 128-key cap are unchanged.
+- `packages/coding-agent/src/modes/rpc/compact-content-index.ts`: document that ready membership excludes pending references while compaction chooses key order, not readiness order.
+
+### Why
+
+- RULING-47 gates the settled-terminal path ("one thousand joined messages", 30 s). On that flow each of the 32 compaction rounds created about 130 `value-*` files (3,127 in total), and it read 39,486 structural nodes. Batching cuts this to 102-107 creates (at most 3 per round, excluding segment rewrites), and skipping pending keys before lookup cuts the reads to about 9,000-9,250.
+
+### Why an extension could not handle it
+
+- Spool segment layout and index compaction sit below the RPC session state; no extension surface reaches them.
+
+### Expected merge conflict zones
+
+- `compact-content-store.ts` `scheduleSpill`/`flushValues`, and the compactor's selection loop. Rollout remains off.
+
+## 2026-10-27 - Per-spawn caller env channel for daemon-started children (fixes senpi#4381)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-caller-env.ts` (new): the caller-passable name set (`callerEnvPassableNames`: exactly `OMOCAT_LANE` by default, plus the host's `SENPI_RPC_CALLER_ENV_NAMES`, never a session-owned or host-owned name), the boundary validators `sessionEnvShapeError` / `sessionEnvError` (16 entries, `[A-Z_][A-Z0-9_]*` names, string values of at most 4096 characters, no NUL; the refusal names the offender, cut to its first 64 characters plus `...`, and the passable set, never a value), and `inheritedSessionEnv` (a task child takes its parent's entries, its own win).
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`: `open_session.env?: Record<string, string>`.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RPC_ERROR_INVALID_SESSION_ENV` (`invalid_session_env`).
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the `session_env` host capability, advertised by the multi-session host.
+- `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`: validates `env` at the wire boundary after every other profile field, resolves a `spawnedBy` parent THIS host holds open and bound, the same rule attach uses (by durable or routing id), and stores the merged result as the profile's `sessionEnv`; an opening, closing, quarantined or closed parent, or one elsewhere, contributes nothing. The opening connection is not tied to the parent: inheritance follows the attach trust boundary (any client that could attach to the parent and run its tools can open a child that inherits its env), which grants nothing attach does not.
+- `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: `frozenProfile` freezes `sessionEnv`.
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: exports `isTransientDaemonEnvName` so the passable-name configuration can refuse the names the host or a session sets itself.
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`, `packages/coding-agent/src/modes/rpc/host-handover-parked-open.ts`: a parked session records its own `sessionEnv` (shape-checked on read) and the successor's reopen replays it as `env`, so the value follows the session and never the generation's process environment.
+- `packages/coding-agent/src/modes/rpc/tool-child/context.ts`: `ChildToolContext.sessionEnv`, narrowed by value, so a tool child's bash applies the same per-session entries.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `openSession({ env })`.
+- `packages/coding-agent/docs/rpc.md`: "Caller env per session (`session_env`)" (including the exact inheritance boundary), the `open_session` row and the `invalid_session_env` error.
+
+### Why
+
+- A shared daemon's child environment is built from a name allowlist (`host-daemon-env.ts`), so a caller-scoped identity such as a lane id was dropped before the child ran, and the only workaround (the daemon's own environment, or an allowlisted `OMO_*` name) would apply the first caller's value to every later client (#1195, #2208). The value needs a per-spawn channel: on the request, applied to that one session after the allowlist, never merged into the daemon or carried to a successor generation. Task children get their parent's lane without every opener repeating it, which is what makes the tools they run label their posts correctly.
+
+### Why an extension could not handle it
+
+- The wire boundary, the launch profile, the registry's parent lookup, the handover park and the tool child's context are host internals below extension delivery; an extension sees only its own session's context, and could neither validate the names at the boundary nor reach another session's profile.
+
+### Expected merge conflict zones
+
+- LOW: the `open_session` member of `RpcCommand`, the error-constant lists, the capability list in `host-capabilities.ts`, the tail of `validatedOpenProfile` and the `HandoverParkedEntry` shape; every addition is an appended optional field.
+
+## 2026-10-27 - RPC input carries its connection's interactive_user role into input attribution (senpi#4482)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: `handleClientInput` takes the sending connection's role (`{ interactiveUser }`, default `false`) and passes `interactiveUser` with `source: "rpc"` on the prompt path and on `steer` / `follow_up`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `prompt` and `steer` / `follow_up` cases pass `hasRole(INTERACTIVE_USER_CAPABILITY)`.
+
+### Why
+
+- An RPC client that never declared `interactive_user` (a parent agent's `task_send` into a child) must not read as the user in the `input` event (senpi#4471).
+
+### Why an extension could not handle it
+
+- Connection roles live in the RPC connection handler; the `input` event is the only thing extensions see.
+
+### Expected merge conflict zones
+
+- LOW: the `handleClientInput` signature and its two `source: "rpc"` option literals; the `handleClientInput` calls in the `prompt` and `steer` / `follow_up` cases of `connection-handler.ts`.
+
+## 2026-10-27 - RPC logins forward progress as auth_login_progress (senpi#4436)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `startLogin` passes an `onProgress` that emits `auth_login_progress` `{provider, text}` instead of dropping the line, so a `provider_login_start` handler's progress (for example a Claude Code download) reaches RPC clients before `auth_login_end`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the Claude subscription login moves to the bundled `claude` CLI (senpi#4436), and a host may download that binary first. Over RPC the progress was discarded (`onProgress: () => {}`), so desktop and remote clients saw a silent login that looked hung.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the RPC login callbacks and the event writer are owned by the connection handler; an extension cannot add an RPC event to a login it does not drive.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the callbacks object passed to `authStorage.login` in `startLogin`.
+
+## 2026-10-27 - Typed `prompt` refusal when a turn cannot start (senpi#4411)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: a `prompt` refused with `ModelNotReadyError` carries `errorCode` (the error's code, mapped to its `RPC_ERROR_*` constant) and, when a provider is known, `errorData: { provider }`. The `error` text is unchanged. This handler serves classic stdio, shared-host and worker sessions alike.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RPC_ERROR_PROVIDER_CREDENTIALS_MISSING`, `RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED`, `RPC_ERROR_NO_MODEL_SELECTED` join `RpcErrorCode` and the public exports.
+- `senpi host session prompt` now maps this refusal through its existing typed-code rule: exit 3 (`action: "refuse"`, `reason` = the code, `data: { provider }`) instead of exit 1 `host_error`.
+
+### Why
+
+- RPC clients need a machine-readable reason to fall back to another provider instead of matching the guidance text.
+
+### Why an extension could not handle it
+
+- The RPC admission path builds the refusal response; extensions do not see refused prompts.
+
+### Expected merge conflict zones
+
+- LOW: the error-code spread in `handleClientInput`'s catch, and the code list in `rpc-error-types.ts`.
+
+## 2026-10-27 - Authoritative message terminals, metadata and ordered cold edits (S03b-2b, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-seeded-messages.ts`, `packages/coding-agent/src/modes/rpc/compact-active-messages.ts` and `packages/coding-agent/src/modes/rpc/compact-session-state.ts`: a typed `seeded_message` transition installs message-level public metadata and correlation; nested `done`/`error` and the outer `message_end` rebuild the whole message from the terminal, drop every index the terminal no longer names, and keep raw tool spelling only from an ended block below `rewrittenFrom` that is not invalidated; direct `error` and `toolResult` terminals need no start. Active-message publication moved to its own module.
+- `packages/coding-agent/src/modes/rpc/compact-seeded-block.ts`, `packages/coding-agent/src/modes/rpc/compact-seeded-draft.ts`, `packages/coding-agent/src/modes/rpc/compact-active-block.ts`, `packages/coding-agent/src/modes/rpc/compact-seeded-block-view.ts`, `packages/coding-agent/src/modes/rpc/compact-state-view.ts` and `packages/coding-agent/src/modes/rpc/compact-text-view.ts`: start content becomes `initial` slots a block start takes over; indexed updates fold usage and changed metadata (null removes a field); frozen reads assemble message fields and correlation.
+- `packages/coding-agent/src/modes/rpc/compact-cold-operations.ts`, `packages/coding-agent/src/modes/rpc/compact-cold-flows.ts`, `packages/coding-agent/src/modes/rpc/compact-state-storage.ts` and `packages/coding-agent/src/modes/rpc/compact-transition.ts`: ordered after acceptance, old-message edit maps to `message_replace`, user delete to `message_remove`, compaction to ordered removals and branching to removals plus `message_install`; a flow is one FIFO unit with one capacity slot and one typed outcome per operation.
+
+### Why
+
+- The reducer had no owner for message metadata or authoritative terminals, so a rewritten or invalidated block could survive its terminal, and the four RULING-33 condition-2 flows had no typed path to settled messages.
+- S03b-3 owns the real producer/lane integration of these transitions and flows and current-registry-epoch validation. S07b owns the late-legacy real-consumer gate.
+
+### Why an extension could not handle it
+
+- Extensions cannot own the engine's internal acceptance sequence, persistent component roots, or ordered cold operations.
+
+### Expected merge conflict zones
+
+- The compact owner, transition union, cold-operation queue and frozen views listed above. No public selection, subscription wiring, or legacy delivery bytes change in this slice.
+
+## 2026-10-27 - Seeded block reducer and current-state ownership (S03b-2a, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts` and `packages/coding-agent/src/modes/rpc/compact-state-storage.ts`: the existing owner accepts indexed captured block events and controls through its single sequence and shared storage graph; graph construction has its own module. Every key's entry into the active set, whichever start made it live, voids cold work queued while it was settled.
+- `packages/coding-agent/src/modes/rpc/compact-seeded-block.ts` and `packages/coding-agent/src/modes/rpc/compact-seeded-draft.ts`: candidate-owned block fields, raw tool spelling, signature ropes, explicit replay/continuation frontiers, authoritative block ends, and typed atomic rejection (including a malformed seed frontier and a native insert over an existing block).
+- `packages/coding-agent/src/modes/rpc/compact-seeded-block-view.ts`, `packages/coding-agent/src/modes/rpc/compact-state-view.ts`, and `packages/coding-agent/src/modes/rpc/compact-text-view.ts`: frozen compatibility reads assemble owned public block content and derive tool previews only at observation.
+- `packages/coding-agent/src/modes/rpc/compact-active-block.ts`, `packages/coding-agent/src/modes/rpc/compact-start-identity.ts`, and `packages/coding-agent/src/modes/rpc/compact-transition.ts`: seeded descriptors retain their producer epoch and use the existing first-ordinal guard and typed transition boundary.
+
+### Why
+
+- The preceding owner accepted an unrecognized seeded transition without retaining its content. Captured seeds must reach the actual owner, remain immutable through later producer mutation and settlement, and reject gaps, conflicting replay, wrong kinds, and invalid frontiers before publication.
+- Message metadata, authoritative whole-message terminals, invalidated-block reconstruction, and ordered cold edit/removal mappings remain S03b-2b. S03b-3 owns actual producer/lane integration and current-registry-epoch validation; the existing 64-retirement guard remains staged until then. S07b owns the late-legacy real-consumer gate.
+
+### Why an extension could not handle it
+
+- Extensions cannot own the engine's internal acceptance sequence, persistent component roots, or spool reference lifetimes.
+
+### Expected merge conflict zones
+
+- The compact owner, transition union, and frozen block views listed above. No public selection, subscription wiring, or legacy delivery bytes change in this slice.
+
+## 2026-10-26 - ensureSocketSecret refuses a secret that is not a regular file (senpi#4294)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-transport.ts`: `ensureSocketSecret` reads the existing secret through a private `readSecretEntry` that opens it with `O_NOFOLLOW`, requires a regular file on the opened handle and reads at most 33 bytes. A terminal symlink or another entry type throws `RPC socket secret is not a regular file`; ENOENT is still absent and other errors propagate.
+
+### Why
+
+- `readFile`/`writeFile` followed a terminal symlink, so a link at the secret path was reused as the credential, or had a new key written over its target when that target had the wrong length (sisyphuslabs/omo-desktop-app#4199, design 4.3 step 1).
+
+### Why an extension could not handle it
+
+- The RPC host and supervisor provision the secret before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `ensureSocketSecret` and the new `readSecretEntry` in `socket-transport.ts`.
+
+## 2026-10-26 - Published retention and refused grant answers (senpi#4269)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-host-response-types.ts`: every `list_sessions` row reports `retain_on_disconnect`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/extension-ui-response.ts`: a grant answer from a connection that was not asked, or lacks `grant_select`, gets a `grant_answer_refused` reply instead of no reply.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: the grant-answer rules (the asked connection, with `grant_select`) apply to the request the response answers, its `uiRequestId` or, in the short form, its `id`, on in-process and worker sessions alike.
+
+### Why
+
+- A client attaching to an existing session must know whether its own release could end it, and a refused answer must not look accepted to the person who gave it.
+
+### Why an extension could not handle it
+
+- Listing rows and extension UI response replies are host wire behavior.
+
+### Expected merge conflict zones
+
+- LOW: the row builders in both registries; the grant-answer guards in the connection handler and the session worker client.
+
+## 2026-10-27 - Settled terminals on the paged compact index (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: keep S05's exact settled membership in a resident key set instead of the removed `has()` lookup on the compact index; `session-acceptance-lane.ts` reads the settled root through the paged index shape.
+
+### Why
+
+- #4374 and #4398 merged without a textual conflict, but together main failed to typecheck.
+
+### Why an extension could not handle it
+
+- Internal compact recovery state below extension delivery.
+
+### Expected merge conflict zones
+
+- `compact-settled-messages.ts` membership checks. Rollout remains off.
+
+## 2026-10-27 - Build each changed index node once per compaction round (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-paged-batch.ts` (new): a compaction round's sorted changes (an undefined value deletes) are merged into the paged AVL in one descent. Changed nodes are plain RAM drafts, rebalanced with AVL join (one rotation per level), and the result is made bottom-up once, so every node of the new tree is built, owned (`text.own`) and registered for commit exactly once, and a node replaced inside the round is never built.
+- `packages/coding-agent/src/modes/rpc/compact-paged-tree.ts`: `apply(root, changes)` replaces the per-key path-copying `set` and its `balance`.
+- `packages/coding-agent/src/modes/rpc/compact-index-compactor.ts`: a round collects its page assignments and removals into one change map and applies it once; the new pages' owners stay held until the apply settles.
+- `packages/coding-agent/src/modes/rpc/compact-segment-storage.ts` (SP1 review LOWs): a segment rewrite reads only its live byte ranges, one range read per adjacent run, and counts the bytes it holds in `pendingIoCopyBytes` until it ends; `retire()` during the rewrite's read ends the rewrite without recording a `reclaim` failure.
+
+### Why
+
+- RULING-47 budgets paged-node allocations at 1.5x the nodes that survive their round for the 8,192-row bulk fold. Copying one root path per key made 114,675 allocations for 8,954 survivors; the fold now allocates 8,891, all of them survivors, which removes the allocation-driven in-memory gap.
+- The rewrite read the whole segment although less than half of it was live, and an orderly shutdown during that read left a spurious failure in `status().failures`.
+
+### Why an extension could not handle it
+
+- The paged index tree and spool segments sit below the RPC session state; no extension surface reaches them.
+
+### Expected merge conflict zones
+
+- `compact-paged-tree.ts` (the removed `set`/`balance`) and the compactor's publication loop. Rollout remains off.
+
+## 2026-10-27 - One segment file per compaction round (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-paged-tree.ts`: a round's `flush` (which since #4398 writes only the nodes that survive the round) now writes them all into one segment file.
+- `packages/coding-agent/src/modes/rpc/compact-segment-storage.ts` (new): segment bookkeeping. A flush batch becomes one spool file and each leaf is read back by its offset. A segment is deleted when its last live leaf is released and no read of it is in flight. When its live bytes fall below half its size, it is rewritten once into a new segment: the new file is written first, then the live leaves' slots move to it, so they stay committed throughout. Dead bytes on disk therefore stay at most the live bytes of the segments that hold them.
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: `flushLeaves` writes a batch of resident leaves as one segment; `flushLeaf` is a batch of one. A failed segment write keeps every leaf of the batch resident and spillable and halts spilling, as a failed single-leaf write did.
+- `packages/coding-agent/src/modes/rpc/compact-storage-io.ts` and `compact-spool-storage.ts`: `CompactStorageIo.readFile` takes an optional byte range, and leaf reads pass one; page reads still read whole files.
+
+### Why
+
+- RULING-47 budgets the 8,192-row bulk fold at 3 file creates per round (one segment, one page, one owner marker) and deletes at most creates. One file per surviving node made 9,082 creates and 762 deletes for that fold; it now makes 192 creates and 0 deletes.
+
+### Why an extension could not handle it
+
+- Spool file layout and leaf ownership sit below the RPC session state; no extension surface reaches them.
+
+### Expected merge conflict zones
+
+- `compact-content-store.ts` flush and read paths, and `CompactStorageIo` implementations (test doubles must forward the range). Rollout remains off.
+
+## 2026-10-27 - Reject repeated seeds and backwards replay (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts` tracks the declared emission frontier, advances it on contiguous deltas and raw resets, and invalidates malformed/repeated seeds or offset discontinuities for terminal repair.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts` must not publish seed bytes again after a continuation. The existing rollout flag and legacy output remain unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts` owns subscriber admission before structured delivery.
+
+### Expected merge conflict zones
+
+- `SeededBlockGate` in `packages/coding-agent/src/modes/rpc/structured-session-records.ts`.
+
+## 2026-10-27 - Ordered cold operations and paged settled keys (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-cold-operations.ts`, `compact-session-state.ts`, and `compact-transition.ts`: settled status/removal use `applyCold`, an ordered asynchronous non-acceptance path with typed outcomes and at most 128 pending operations. Active acceptance stays synchronous; cold operations do not advance its sequence.
+- `packages/coding-agent/src/modes/rpc/compact-content-index.ts`, `compact-index-compactor.ts`, and `compact-index-traversal.ts`: add leased point descriptor reads and discard resident page key arrays. Compaction reads paged keys on demand and keeps their ownership through stale-row publication.
+- `packages/coding-agent/src/modes/rpc/compact-state-view.ts`: separate compatibility view assembly from acceptance.
+- `packages/coding-agent/src/modes/rpc/compact-start-identity.ts`, `compact-session-state.ts`, and `compact-transition.ts`: require the producer's stable `firstOrdinal` binding, keep only live bindings, and reject non-live stale bindings against the epoch high-water mark. Every non-active status/removal routes to `applyCold`, which reports unknown keys asynchronously.
+- A message still live across an epoch rollover remains readable and can finish its existing blocks, but cannot accept another `block_start`: its old epoch is retired and the new epoch does not match its binding. Any change belongs to S03b-3's current-epoch integration.
+- `packages/coding-agent/src/modes/rpc/compact-paged-tree.ts`, `compact-content-index.ts`, `compact-index-compactor.ts`, `compact-index-traversal.ts`, and `compact-content-store.ts`: page out the settled AVL key/navigation nodes, retain only pending overlays in memory, and share committed page-file ownership with frozen cuts. Cold reads and changed-path compaction remain asynchronous.
+- `packages/coding-agent/src/modes/rpc/compact-paged-tree.ts` and `compact-index-compactor.ts`: retain decoded paths in a 32 KiB round-local LRU instead of clearing the cache on overflow; batch both overlay selection and row-page lookups through shared descents and replace retained rows without deleting them first. A compaction round no longer flushes intermediate path nodes when its draft buffer fills: it keeps the nodes it builds in memory until the round commits (bounded by 384 keys x 3 nodes per level x (height + 1)) and then writes only the nodes that survive the round, so a node replaced within the same round is never written (an 8,192-row fold went from 49,999 to 9,082 file creates).
+- `packages/coding-agent/src/modes/rpc/compact-cold-operations.ts` and `compact-session-state.ts`: reject active targets with `active_message` at admission and recheck before and after cold lookup. A successful start invalidates already queued operations for that key even if it settles again before lookup completes; newly admitted cold work retains FIFO order. Remove unreachable synchronous `unknown_message` branches behind the cold-operation guard.
+
+### Why
+
+- Cold status/removal must remain ordered while unrelated active blocks continue accepting updates. Page headers must not retain a second raw-key catalog.
+- RULING-40 option A replaces the settled key catalog without weakening exact rejection of the producer's original message binding. A fresh frame ordinal is not a fresh message identity.
+
+### Why an extension could not handle it
+
+- These internal owners control acceptance, frozen cuts, storage leases, and index publication below extension delivery.
+
+### Expected merge conflict zones
+
+- `compact-session-state.ts` acceptance dispatch, cut reading, and storage lifecycle; identity validation, index page descriptors, paged-tree paths and compaction publication.
+- Producer/lane integration, old-message editing, user deletion, compaction removal, and transcript branching remain S03b-2/3 work. Rollout remains off.
+
+## 2026-10-26 - Persistent active component roots and producer identity (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts` transfers persistent block roots during freeze and settlement, retaining exact settled membership and owning append-only tail roots.
+- `packages/coding-agent/src/modes/rpc/compact-component-roots.ts` projects changed AVL paths into bounded spillable nodes without re-owning unchanged ordinal keys and reclaims detached hot headers outside acceptance.
+- `packages/coding-agent/src/modes/rpc/compact-active-block.ts` preserves replay validation and persists only each new tail suffix; a full tail still seals into one payload leaf independent of delta granularity.
+- `packages/coding-agent/src/modes/rpc/compact-text-roots.ts` supports structural append leaves and bounded individual-leaf iteration.
+- `packages/coding-agent/src/modes/rpc/compact-text-view.ts` assembles sealed text and append-only tail roots without rewriting historical tail content.
+- `packages/coding-agent/src/modes/rpc/compact-start-identity.ts` validates mandatory producer identity, a per-epoch high-water mark, and a 64-retirement epoch window.
+- `packages/coding-agent/src/modes/rpc/compact-transition.ts` requires epoch and ordinal on starts and exposes typed missing/invalid and duplicate/stale rejections.
+
+### Why
+
+- S03b-1b-II-a removes active collection freeze and settle walks while preventing stale starts before the later cold-membership migration. Selection remains off.
+- Single-unit deltas previously re-owned the entire growing tail on every acceptance; append-only structural tails make allocation volume linear while older cuts retain their original text.
+
+### Why an extension could not handle it
+
+- Storage ownership and synchronous acceptance are internal RPC consumer responsibilities below extension delivery.
+
+### Expected merge conflict zones
+
+- Compact consumer transitions and storage accounting. The codec and settled-index internals are unchanged; II-b owns cold-key paging and ordered cold operations.
+
+## 2026-10-26 - Wire persistent bounded index pages (S03b-1b-I-b, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-content-index.ts` uses counted persistent roots, bounded descriptor pages, and operation leases instead of copying the complete base and overlay at freeze.
+- `packages/coding-agent/src/modes/rpc/compact-index-tree.ts`, `compact-index-compactor.ts`, and `compact-index-pages.ts` implement changed-path publication, bounded compaction, stale-row ownership checks, and strict row/byte packing limits.
+- `packages/coding-agent/src/modes/rpc/compact-read-lease.ts` rechecks owner validity when an operation completes, including retirement during an in-memory read.
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts` uses the new frozen index through the real settled-message reader. The codec staging guard is removed with this production wiring.
+- Index traversal reuses a decoded page across its rows; compatibility assembly lives in `compact-index-traversal.ts`. Compaction builds a private persistent root before publication and reclaims only unpublished pages on failure. Index writes release partial codec owners when typed limits refuse a key or patch.
+
+### Why
+
+- Freeze and publication must not enumerate the entire collection. Oversized rows and keys need references rather than oversized page files, and older compactions must not erase newer state.
+
+### Why an extension could not handle it
+
+- The host's synchronous current-state owner and asynchronous storage lifetime sit below extension delivery.
+
+### Expected merge conflict zones
+
+- Compact settled-index ownership and frozen-root types. Exact resident membership remains until S03b-1b-II; active component migration and RULING-33 are not part of this increment.
+
+## 2026-10-26 - Stage the bounded structured-value codec (S03b-1b-I-a, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-values.ts` owns structured values in bounded field, array, and string pages, with shared immutable dependencies and cleanup of failed descriptor merges. It has no production caller in this increment; S03b-1b-I-b wires the settled index and removes the staging guard.
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`, `compact-spool-storage.ts`, and `compact-storage-io.ts` account for structural payloads separately, coalesce their spill scheduling, and expose typed write-side limit failures.
+- `packages/coding-agent/src/modes/rpc/compact-text-roots.ts` owns shared dependency roots and grows the append tree only when the subtree is full.
+- Codec writes reject unsupported JSON values, cycles, nesting beyond 128 levels, more than 100,000 visited values, and a 16 MiB encoding budget with typed errors, releasing partial owners on failure. Scalars and strings whose JSON encoding fits 64 code units are inline; page traversal reads each structural leaf once.
+
+### Why
+
+- Bounded index descriptors need spillable values and keys before the index can depend on them. Failed storage must retain accepted content, and write failures must not be classified as reads.
+
+### Why an extension could not handle it
+
+- These modules own storage references, spool completion, and recovery reads below extension delivery.
+
+### Expected merge conflict zones
+
+- The compact store's leaf accounting, text-root construction, and spool operation types. All paths are fork-owned.
+
+## 2026-10-26 - Epoch-bound pending and failed terminal recovery (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts` retains pending/failed terminal payloads and both directions of the durable-message join in the S03 spillable collection.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts` captures terminal identity and payload synchronously, performs append joins in the history-acceptance step, and retires recovery storage on session replacement or close.
+- `packages/coding-agent/src/modes/rpc/accepted-transcript.ts` exposes availability without allocating a frozen transcript root on every accepted append.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts` and `packages/coding-agent/src/modes/rpc/session-registry-open.ts` hand the host nonce to the in-process producer.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, and `packages/coding-agent/src/modes/rpc/session-worker.ts` carry the nonce in the private initialization/replacement handshake, before the producer resumes.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts` and `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts` must retain a terminal even when neither the transcript nor its optional recovery spool can write it.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts` and `packages/coding-agent/src/modes/rpc/session-registry-open.ts` establish the same epoch authority for the in-process producer as the worker path.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, and `packages/coding-agent/src/modes/rpc/session-worker.ts` implement the approved RULING-24 epoch-bound carrier clarification without changing public JSONL.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts`, and `packages/coding-agent/src/modes/rpc/session-registry-open.ts` own host acceptance and recovery roots below extensions.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, and `packages/coding-agent/src/modes/rpc/session-worker.ts` own the private worker bootstrap and output-credit boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: new fork-only reducer.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts`, and `packages/coding-agent/src/modes/rpc/session-registry-open.ts`: epoch bootstrap and transcript acceptance.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, and `packages/coding-agent/src/modes/rpc/session-worker.ts`: private commit and replacement frames.
+
+## 2026-10-26 - get_provider_accounts reports blockedReason and blockedUntil (senpi#4365, closes #4327)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`: `RpcProviderAccount` adds optional
+  `blockedReason` and `blockedUntil`, sent only while `blocked` is true. `docs/rpc.md` describes them and tells clients
+  to skip `auth_error` accounts when choosing one for a new request.
+
+### Why
+
+- Clients need the reason to skip a key the provider already rejected (#4327).
+
+### Why an extension could not handle it
+
+- The RPC response type is the wire contract the host owns.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcProviderAccount` interface.
+
+## 2026-10-26 - Redact bash output inside the tool child (senpi#4358)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tool-child/terminal-jobs.ts`: parse and pass the opt-in flag to the same terminal runtime used in-process.
+- `packages/coding-agent/src/modes/rpc/tool-child/user-bash-job.ts`: retain stream identity and redact each shell stream before serializing job updates, including the final pending token.
+
+### Why
+
+- The execution placement must not bypass the user's output policy or leave raw output in transport payload storage.
+
+### Why an extension could not handle it
+
+- The tool child produces these transport updates before the server-side extension pipeline.
+
+### Expected merge conflict zones
+
+- Shell job arguments and stdout/stderr forwarding; terminal job context construction.
+
+## 2026-10-26 - Correlation guard wording (senpi#4347, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: documents that within a turn any identity-less
+  correlated record other than `turn_start` (user input, an extension steer, a mid-turn `session_abort`, custom-role
+  `message_*` records) keeps the standing correlation and gains no client identity of its own; only a new turn boundary
+  ends it.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: measures raw serialized journal bytes plus a
+  fixed 1 KiB metadata allowance, without a second JSON serialization.
+
+### Why
+
+- #4333 delta review LOW: the earlier wording said only "identity-less input", narrower than the guard.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: frame sizing must use the same UTF-8 content
+  measure as the accepted tail instead of charging escaped JSON twice.
+
+### Why an extension could not handle it
+
+- Documentation of core RPC lane behavior.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts` owns the worker-frame admission boundary.
+
+### Expected merge conflict zones
+
+- LOW: the comment above `acceptCorrelation`'s guard.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: `withinFrameLimit`.
+
+## 2026-10-26 - get_auth_providers rows carry the provider's origin (senpi#4334, fixes #4328)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`: `RpcAuthProvider` gains optional `origin`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_auth_providers` sets `origin` from
+  `modelRegistry.getProviderOrigin(id)` when known.
+- `packages/coding-agent/docs/rpc.md` documents `origin` and the new `agent_end.failure` fields.
+  `origin.extensionPath`, when present, is a filesystem path, never a synthetic registration identifier.
+
+### Why
+
+- A client cannot delete a provider defined in models.json or by an extension; it needs the file or extension to
+  point the user at.
+
+### Why an extension could not handle it
+
+- The RPC wire shape of `get_auth_providers` is built in the connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `get_auth_providers` case in `connection-handler.ts`; `RpcAuthProvider` in `rpc-session-state-types.ts`.
+
+## 2026-10-26 - Ordered host acceptance lane, worker frame ordinals and bootstrap (senpi#4333, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts` (new): `SessionAcceptanceLane`, one per routing
+  session incarnation. `bootstrap` mints a fresh `sessionEpoch` and restarts `sequence`/`historyVersion`; `accept`
+  sequences recovery kinds (agent/turn/message/tool-execution records, `entry_appended`, `session_abort`), sequences a
+  change of outer client correlation (`clientMessageId`/`clientTurnId`/`clientMessages`) as its own transition just
+  before its record, and sequences the END of a standing correlation when an identity-less new turn starts, so a cut
+  attributes a trigger turn to no client message. Identity-less input within the same turn keeps the standing
+  correlation without gaining a client identity of its own. Correlation comparison checks identity fields and the
+  ordered `clientMessages` identities directly, without serialization. It mints
+  `turnId` at an accepted `turn_start` (or at the first turn-scoped record of a turn with no start), captures the
+  producer's `messageId`, and keeps each accepted transcript append as its entry id only: no content copy and no
+  serialization on the host loop. Responses and every other record take no sequence. `freeze`/`release`/`retire`
+  publish and release immutable roots.
+- `packages/coding-agent/src/modes/rpc/session-registry-open.ts`, `session-registry-types.ts`,
+  `session-worker-registry.ts`: with the flag on, an in-process open bootstraps the entry's lane before
+  `entry.state = "open"`; a worker isolate's own registry (`workerIsolate`) opens none.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`, `session-event-writer.ts`, `session-event-fanout.ts`: the
+  in-process binding registers the lane and accepts every record before `SessionEventWriter.enqueue`; a
+  `session_replaced` record bootstraps the next incarnation. The fanout keeps the lanes and retires one when its session
+  is sealed or forgotten.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `session-worker.ts`, `session-worker-client.ts`:
+  `commit { acceptance }` asks the isolate for a bootstrap on `ready` and ordered output frames (`ordinal`, `recovery`,
+  and `bootstrap` on `session_replaced`). The host accepts the bootstrap before `commit` resolves, checks each frame's
+  ordinal before any mutation (a gap, duplicate or reorder denies credit and fails the incarnation with
+  `session_worker_frame_gap` / `session_worker_frame_duplicate`), applies the frame after the existing reconcile and
+  before `writer.enqueue`, and grants credit only after that.
+- `packages/coding-agent/src/modes/rpc/socket-peer-recovery.ts`, `socket-event-fanout.ts`, `session-event-fanout.ts`:
+  an event-resync shed freezes the attached sessions' roots before the drain await; the cut releases them when the gap
+  is delivered (`takeSnapshot`), when the actor closes (peer drop) and when the drain fails. Resync bytes and reasons
+  are unchanged.
+- `packages/coding-agent/src/modes/rpc/client-message-events.ts`, `connection-handler.ts`: the correlation copy and the
+  routing tag keep the record's recovery carrier. `correlatedRecord` names the record kinds that carry client
+  correlation; `ClientMessageEvents` and the lane share it.
+
+### Why
+
+- R3.C1.1 (ruling 10, S04a): one ordered owner per session, minted before legacy serialization, so a cut never
+  includes worker output that is on disk but not yet accepted, and bootstrap precedes admission.
+- A worker session kept no transcript in the host before this change; keeping a serialized copy of every append there
+  would hold large tool results and images in the host and add a stringify per append on the shared loop. The
+  persisted base and content reads come with S04b; S04a needs only the accepted ids.
+
+### Why an extension could not handle it
+
+- The lane sits between the session's binding and the shared writer and inside the worker credit protocol, both host
+  internals below extension delivery.
+
+### Expected merge conflict zones
+
+- LOW: the `output` case of `SessionWorkerClient.receive`, `WorkerEventWriter.enqueue`, the worker `commit` handler,
+  `enqueueRecord` in `createRpcSessionBinding`, `setConnectionCapabilities` in `session-event-fanout.ts`, and the
+  `SocketPeerRecovery` snapshot field.
+
+## 2026-10-26 - Join supervisor startup publication before shutdown cleanup (senpi#4273)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: tracks public endpoint startup writes and does not begin publication after shutdown has started.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: stops the child immediately, then joins its exit record and pending startup publication before stopping all installed watchers and removing ownership state.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: calls `childProcess.spawn` through the module object so OS instrumentation remains effective on Bun, which captures named builtin exports.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: public listen precedes asynchronous key, socket ownership and drain-watch writes. Shutdown could remove their directories concurrently, fail cleanup and retain the generation instead of completing with the signal exit code.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: the child-exit fixture's spawn hook was bypassed under Bun, so the fixture could not observe a host that had already started.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: the supervisor starts and stops before session extensions exist.
+
+### Expected merge conflict zones
+
+- LOW: startup publication in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, shutdown ordering in `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`, and the spawn call in `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`.
+
+## 2026-10-25 - Bind presenter enrollment to one authorized launch (senpi#4254)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts` delegates enrollment and deferred launch permits to `mcp-presenter-enrollment.ts` and `mcp-presenter-successor.ts`; shared private framing lives in `mcp-presenter-wire.ts`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-bootstrap.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`, and `packages/coding-agent/src/modes/rpc/host-successor.ts` preserve the private exchange and bind the initial/replacement launch route.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts` awaits a fresh owner permit before launching a deferred successor.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-authority.ts` uses the host's protocol `instanceId` as the presenter instance, so the predecessor a launcher signs is the id the CLI reads; `mcp-presenter-bootstrap.ts` drops an immediate replacement enrollment that names any other predecessor.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts` names the Windows presenter pipe from its own random value (`presenterPipePath`), not the public instance id.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: v1 omitted the launcher nonce and launch context from its signature. V2 signs the fixed tuple, consumes the challenge once, and acknowledges the nonce and host incarnation.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-bootstrap.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`, and `packages/coding-agent/src/modes/rpc/host-successor.ts`: an unsupported enrollment remains ordinary-RPC-only without downgrading to v1 forms.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: draining cannot retain or recycle a live enrollment permit.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`, `packages/coding-agent/src/modes/rpc/mcp-presenter-bootstrap.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`, and `packages/coding-agent/src/modes/rpc/multi-session-host.ts` own the protected process launch and enrollment channels before session extensions run.
+
+### Expected merge conflict zones
+
+- LOW: bootstrap delegation in `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`, private relay in `packages/coding-agent/src/modes/rpc/mcp-presenter-bootstrap.ts`, launch calls in `packages/coding-agent/src/modes/rpc/host-ensure-start.ts` and `packages/coding-agent/src/modes/rpc/host-successor.ts`, and the deferred handover callback in `packages/coding-agent/src/modes/rpc/multi-session-host.ts`.
+
+## 2026-10-25 - Stamp lifecycle deliveries without changing engine state (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/lifecycle-delivery.ts` adds wire-copy delivery timestamps and a wire lifecycle type.
+- `packages/coding-agent/src/modes/rpc/session-record-stream.ts` stamps connection and classic stdio lifecycle pushes.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts` stamps shared state projections for get_state, open, worker snapshots and TUI-control.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts` types additive wire metadata separately from the engine snapshot.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` re-stamps lifecycle events and state replies at enqueue, including cached worker replies.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts` re-stamps a copy of the frozen lifecycle line for each attach replay, retaining the cached line.
+- Activity delivery regressions verify that stamping preserves the engine owner's `activityRevision`, lifecycle sequence, epoch, activity, state-entry time and completion identity, including versioned absence, legacy records and cached replay.
+- State-projection comparisons exclude per-delivery `observedAt` while retaining every engine state field, with a deterministic advancing clock.
+- `packages/coding-agent/docs/rpc.md` defines sequence ordering, receipt-clock age, disconnect handling and final runner loss without changing transitions.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/lifecycle-delivery.ts`, `packages/coding-agent/src/modes/rpc/session-record-stream.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts` and `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: clients need the time of each particular delivery, including replay and cached worker state, without treating it as engine freshness or liveness.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/lifecycle-delivery.ts`, `packages/coding-agent/src/modes/rpc/session-record-stream.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts` and `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: the transport owns serialization, state replies, wire types, enqueue boundaries and attach replay.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-record-stream.ts`: lifecycle event projection.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts` and `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`: lifecycle state field.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: tagged record construction.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: cached lifecycle replay.
+- `packages/coding-agent/src/modes/rpc/lifecycle-delivery.ts`: none; new fork-only module.
+
+## 2026-10-26 - Shared bounded text ownership for compact current state (S03b-1a, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: shared commit subscribers, validated reference counts and leased leaf reads.
+- `packages/coding-agent/src/modes/rpc/compact-commit-dependencies.ts`: one-to-many commit dependencies for indexes and text roots.
+- `packages/coding-agent/src/modes/rpc/compact-content-index.ts`: multi-key dependencies and idempotent frozen-index release.
+- `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`: retirement joins in-flight reads before deleting owned storage.
+- `packages/coding-agent/src/modes/rpc/compact-read-lease.ts`: typed read refusals and operation-scoped ownership.
+- `packages/coding-agent/src/modes/rpc/compact-text-roots.ts`: counted persistent text trees and bounded UTF-16 range reads.
+- `packages/coding-agent/src/modes/rpc/compact-text-view.ts`: sequential bounded text reads for the existing compatibility view.
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts`: replaces leaf vectors with persistent text roots and invalidates released cuts.
+
+### Why
+
+- The compact store must retain content shared by multiple keys, subscribers and frozen readers without losing commit notifications, copying leaf vectors, or reclaiming in-flight reads. Range reads reject excess size/count rather than silently truncating. Structured values, collection roots and bounded index pages remain S03b-1b work.
+
+### Why an extension could not handle it
+
+- These internal storage and current-state ownership paths run below RPC delivery. Extensions cannot own their reference lifetimes or join spool retirement.
+
+### Expected merge conflict zones
+
+- Fork-only compact storage and consumer modules listed above. S03b-1b will replace collection/page materialization; S03b-2/3 will add reducer and lane integration. No capability or rollout default changes.
+
+## 2026-10-26 - Structured lane into the shared binding behind the compact-updates flag (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts` (new): `structuredLaneEnabled()` reads
+  `<brand>_ENGINE_SOCKET_COMPACT_UPDATES` (explicit `1`/`true` only). `subscribeStructuredSessionRecords` correlates the
+  lane like legacy records and gates blocks: a block's records are admitted only after its own seed or insert reached
+  this subscriber (a late attach gets nothing for that message); a block whose seed was seen but whose next record or
+  end has no capture is invalid, and the assistant `message_end` lists it in `invalidatedBlocks`. A terminal capture's
+  `rewrittenFrom` (#4307 fold) invalidates every admitted block at or above that index, and a `message_end` with no
+  interpretable terminal capture (cancel, idle timeout, a stream that ended without a terminal event, or a capture
+  with no terminal message) invalidates every block of
+  the message. Blocks are addressed by `capture.contentIndex ?? event.contentIndex`, never a drifted public index.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: optional `RpcConnectionSink.writeStructured`; when present
+  the handler subscribes the structured lane next to the legacy subscription and tears it down with it.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: supplies `writeStructured` only while the flag is on, into
+  `SessionEventWriter.structuredLanes` within the provider scope; closed scopes drop it.
+- `packages/coding-agent/src/modes/rpc/session-structured-lanes.ts` (new), `session-event-writer.ts`: per-session
+  receivers for the structured lane; legacy sockets, stdout and the replay snapshot never read it.
+- `packages/coding-agent/src/modes/rpc/session-record-stream.ts`: `subscribeSessionRecords` takes an optional event source
+  so both lanes share one correlation implementation.
+
+### Why
+
+- R3.C6.2 / ruling 05 D4: the three internal controls travel on the same ordered lane as ordinary records and never
+  reach a legacy destination; flag off is byte-identical.
+
+### Why an extension could not handle it
+
+- The binding and writer are host internals below extension delivery.
+
+### Expected merge conflict zones
+
+- LOW: `installSessionSubscriptions` and `dispose` in `connection-handler.ts`; the `taggedSink` literal in
+  `session-binding.ts`; the `subscribeSessionRecords` signature.
+
+## 2026-10-26 - Spillable settled-row index for compact current state (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-content-index.ts`: a keyed collection with an immutable paged disk base plus one resident override slot per key. Updates coalesce into that slot (N status updates to one row hold one slot), and a removal of a committed row is a tombstone mask until compaction folds it in. The index tracks which row overrides still reference uncommitted leaves, so acceptance only checks a count and compaction runs only when enough overrides are eligible. Background compaction folds eligible overrides (and any small base pages) into copy-on-write pages sized in UTF-8 bytes, and publishes them in one synchronous swap that never removes an override newer than the one it read. A row removed or wholly replaced while compaction ran is skipped at publication, so every published leaf is still owned; a failed page write or read leaves the previous index in place and the next compaction free to run; nothing is published after retirement started. A cut keeps the pages and overrides it froze. Pages are internal storage only, never a wire record.
+- `packages/coding-agent/src/modes/rpc/compact-index-pages.ts`: page packing (at most 128 rows and 64 KiB of UTF-8 per page) and the small-page test that lets the next compaction merge pages shrunk by deletions.
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts`: settled message rows move from the resident map to that index (`compactAboveRows`, one page by default); `storageStatus` reports override slots, deletion masks and base pages/rows.
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`, `packages/coding-agent/src/modes/rpc/compact-storage-io.ts`: page write/read operations, a committed-leaf query, and a per-leaf commit hook for index compaction. A failed page write is reported without halting leaf spilling.
+- `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`: the spool file path moved out of `compact-content-store.ts` unchanged (the serial job chain, the epoch directory, spool file write/read/reclaim, the failure ledger) as the `CompactSpoolStorage` base class the store extends, keeping the store within the 250-line file rule.
+- `packages/coding-agent/src/modes/rpc/compact-spool-dir.ts`: when the ownership marker cannot be written into a directory the store just created, the store unlinks the marker its own exclusive create made and removes that now-empty directory (`rmdir`, never recursive), then reports a typed `marker_write_failed` spool failure, so a restart creates the directory fresh instead of refusing it as pre-existing. Retiring a store whose epoch directory is already gone is a no-op instead of a raw `ENOENT` rejection.
+- `packages/coding-agent/src/modes/rpc/compact-storage-io.ts`, `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`, `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: describing a failure cause never throws, so a failed spill write whose host-supplied cause cannot be described is still recorded against its own file with the bytes it keeps resident; discarding the partial file and returning the leaf to the resident, spillable set now run in `finally` blocks, so a throwing failure report can no longer strand the leaf pending with its partial file on disk.
+- `packages/coding-agent/src/modes/rpc/compact-transition.ts`: the transition contract (`CompactTransition`, its block kinds, persistence states and block address) and the typed `CompactTransitionError` moved out of `compact-session-state.ts` unchanged, keeping the owner within the 250-line file rule.
+
+### Why
+
+- senpi#4272 (contract R3.C6.4, S03 design section 4): settled row headers must be able to leave RAM; with a paged base, a status update or removal must not need the spilled row, and a stale compaction must never erase a newer update or resurrect a removed row.
+
+### Why an extension could not handle it
+
+- The index is internal storage of the RPC host's current-state owner, below extension delivery.
+
+### Expected merge conflict zones
+
+- None upstream: every file named here is fork-only.
+
+## 2026-10-26 - A Windows host start keeps the endpoint's valid socket secret (senpi#4292)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`: `startHost` provisions the public Windows socket secret through `ensureSocketSecret` instead of `createSocketSecret`, so an existing valid 32-byte secret is reused byte for byte.
+
+### Why
+
+- Every start rotated the secret. The pipe name and the raw handshake derive from it, so a client or desktop that read it before the start dialed a name the new host never listened on (sisyphuslabs/omo-desktop-app#4199, design test 3).
+
+### Why an extension could not handle it
+
+- The host start path provisions the credential before any extension is loaded.
+
+### Expected merge conflict zones
+
+- LOW: the secret-provisioning line and the `socket-transport.ts` import in `host-ensure-start.ts`.
+
+## 2026-10-26 - Spillable compact content storage for current session state (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: owned bounded leaves (32,768 UTF-16 code units) created synchronously in RAM. A serial asynchronous job chain spills the oldest resident leaf per job to a private epoch spool (0700/0600). A leaf's RAM copy is released only after its file write completed; a failed write keeps the bytes resident, unlinks its partial file, halts further spilling and is reported with its own retained-bytes counter. A deleted or short committed file is a typed read error, never empty content, and does not halt spilling. Unreferenced files count as reclamation debt until their unlink completes; a failed unlink keeps the debt and is retried with bounded backoff, and `spillHalted` also reports debt above the work allowance holding spilling back. Retirement joins owned I/O, then removes the epoch directory only when the store created it, and drops unlinks queued after it.
+- `packages/coding-agent/src/modes/rpc/compact-spool-dir.ts`: the store creates its epoch directory itself (0700, refusing an existing one as `spool_create`) with a private ownership marker. Removal checks the directory and the marker without following symlinks (owner, no group/other mode bits, marker token) and otherwise rejects with `CompactSpoolRefusedError`.
+- `packages/coding-agent/src/modes/rpc/compact-storage-io.ts`: the asynchronous file seam (`CompactStorageIo`, node promise filesystem default), the storage failure record and `CompactStorageReadError`.
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts`: the in-memory current-state owner over that store. `accept` validates a typed transition completely, then publishes the next sequence, or throws `CompactTransitionError` with state unchanged (backwards overlap outside producer-declared coverage, and seed coverage that is neither none nor the whole seed, included). `freeze`/`read`/`release` pin and materialize immutable cuts; a cut shares the small active tail instead of minting a leaf per freeze, and the tail bytes cuts hold are reported. Settled message rows are a resident map: a status change replaces the whole row, a removal deletes it, and a transition that addresses a removed or unknown message is refused. Persistence status changes only through `message_status`, never through storage success or failure.
+
+### Why
+
+- senpi#4272 (contract R3.C6.4 first half, ruling 08 mechanism A): current content must be retained as current state, not as the cumulative prefixes of every update, and storage failure must keep accepted content and report it rather than drop it (R3.C2.4).
+
+### Why an extension could not handle it
+
+- The store and its consumer sit below extension delivery in the RPC host's session state; extensions see neither the host's retained content nor its spool directory.
+
+### Expected merge conflict zones
+
+- None upstream: all four files are fork-only and new.
+
+## 2026-10-26 - Deliver shared-binding records through a structured sink (senpi#4276, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: adds an optional synchronous structured sink before JSONL event buffering; classic stdout keeps its existing buffer.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: submits records directly to the writer within their provider scope, preserving the once-only closed-scope diagnostic and tool attribution.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: remembers frozen wire lines without handing the fanout a live source object.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: retains message-presence metadata at acceptance, derives lazy placeholder lines from frozen JSONL, and retains JSON-normal question frames.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: accepts structured binding records before sizing and transfers the JSON-normal record from that sizing serialization. Full-record worker serialization remains a staged gap for S12.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts`: implements JSON value normalization by walking, including keyed toJSON calls, boxed primitives, omissions, sparse arrays, nonfinite numbers, getter snapshots, and cycle/BigInt errors.
+- `packages/coding-agent/src/modes/rpc/media-placeholders.ts`: uses the same normalizing walk before media projection, preserving unchanged sibling identities for ordinary JSON data and legacy placeholder bytes for JSON-capable objects.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/session-binding.ts`: the shared path serialized and parsed each cumulative partial before the writer could accept it.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` and `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: retaining the original provider object after removing the parse detour would allow later mutation to change lazy replay and recovery selection.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: bypassing the old JSONL detour must not send functions or change toJSON/prototype semantics across postMessage.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts` and `packages/coding-agent/src/modes/rpc/media-placeholders.ts`: inspecting raw media before normalization could use different bytes from an image's toJSON representation or invoke getters more than once. Writer acceptance and media projection share a parse-free normalization implementation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, and `packages/coding-agent/src/modes/rpc/session-worker.ts`: these files own connection dispatch, session scope, writer acceptance, retained replay, and isolate transfer below extension delivery.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts` and `packages/coding-agent/src/modes/rpc/media-placeholders.ts`: all capability destinations must inspect one JSON-normal representation below extension delivery, without a live JSON parse.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the sink interface and output closures.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: provider-scoped sink construction.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: the rememberSnapshot call.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: retained snapshot metadata, lazy placeholder derivation, and question retention.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: WorkerEventWriter.enqueue sizing and transfer.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts`: the shared JSON normalization walk.
+- `packages/coding-agent/src/modes/rpc/media-placeholders.ts`: normalization before media projection and copy-on-write sibling preservation.
+
+## 2026-10-25 - Atomic snapshot cursor, UI-answer receipts, dialog observation (#4266)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` captures state and bounded newest entries synchronously with a source-issued marker and uses session-owned answer receipts and dialog change hooks.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` exports the additive snapshot and dialog event contracts. The split wire types add `get_snapshot`, `answerId`, `answeredUiRequests`, and `dialogs`.
+- The event writer sends markers only to their requesting mirrored subscriber and dialog lifecycle records only to matching opt-in subscribers, on the existing connection FIFO. Targeted UI frames and replies retain their routing.
+- New snapshot and receipt modules own capture and bounded, memory-only FIFO retention; existing read classification remains activity-neutral.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: response arrival cannot identify a snapshot cut when live records arrive across an awaited response write, and reconnecting clients need explicit answer outcomes.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: public clients need typed snapshot and observation contracts rather than guessing record order.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: only the session handler can capture state and enqueue a cursor without yielding.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: extensions do not own the public RPC protocol or connection routing.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: imports, state dispatch, and UI response settlement; all other command semantics stay in place.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive type exports.
+
+## 2026-10-25 - Preserve presenter enforcement through host replacement (senpi#4247)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`, `host-ensure-types.ts`, `host-ensure-start.ts`, `host-ensure.ts`, `host-handoff.ts` and `host-successor.ts`: carry the explicit deployment option into new and immediate successor launches. An enforcing predecessor cannot silently downgrade.
+- `packages/coding-agent/src/modes/rpc/host-handover-request.ts`, `host-idle-handover.ts` and `host-handover-wire.ts`: carry the non-secret deployment boolean through conditional idle handover and include it in operation identity. Enrollment still uses the existing owner's private successor challenge.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-bootstrap.ts`: use a cancellable socket read on Node so CLI exit does not wait for the caller to close fd 4 after enrollment; retain Bun's descriptor adapter.
+
+### Why
+
+- Passing a bootstrap channel without enforcement closed the channel before enrollment. Runtime identity alone does not prove enforcement, so reuse keeps the serving host's reported capabilities and never enrolls the caller.
+
+### Why an extension could not handle it
+
+- Host startup, replacement and private descriptor ownership belong to the engine control plane.
+
+### Expected merge conflict zones
+
+- Ensure/handoff option forwarding, successor argv and conditional handover parsing.
+
+## 2026-10-25 - Observing state and history reads, history tail paging (senpi#4267)
+
+### What changed
+
+- `host-observe-request.ts`: `get_state` and `get_entries` join the observing set.
+- `get-entries-page.ts`, `get-entries-command.ts`: `get_entries { before?, tail? }` and `next_before`; one answer for host connections and terminal endpoints. `connection-handler.ts` uses it.
+- `custom-capability.ts`, `host-capabilities.ts`, `rpc-session-command-types.ts`, `rpc-read-response-types.ts`: `observe_reads`, `entries_tail`, `tui_observer` and the wire fields.
+
+### Why
+
+- A watcher reads state and the newest history without holding a host open or walking a long history from its start.
+
+### Why an extension could not handle it
+
+- Host occupancy and the `get_entries` wire contract live in the RPC host itself.
+
+### Expected merge conflict zones
+
+- LOW: the observing set in `host-observe-request.ts`; the `get_entries` case in `connection-handler.ts`.
+
+## 2026-10-25 - Host-issued presenter grants and private form settlement (#4197)
+
+### What changed
+
+- `mcp-presenter-authority.ts` and `mcp-form-dialog.ts`: bind one holder to host, session, attachment, connection, principal, and presentation epochs; serialize concurrent RPC/worker forms through the abort-aware FIFO within each original deadline and settle through one synchronous terminal latch.
+- `mcp-presenter-control.ts` and `mcp-presenter-bootstrap.ts`: authenticate the launch owner with Ed25519 challenges, require explicit signed principal-to-binding assignment and presenter capabilities before acquisition, and carry enrollment on a separate private channel. Invalid descriptors return no presenter.
+- Host CLI, supervisor, and successor launch paths preserve the reserved channel without repurposing owner-watch or internal-key channels. Deferred handover relays a fresh challenge to the existing authenticated launch owner rather than copying live grants.
+- `session-event-writer.ts`, `session-binding.ts`, and `connection-handler.ts`: intercept dedicated private records only with enforcement enabled, preserving default unknown-command responses. Accepted private writes are not dropped while a prior socket drain is pending.
+- `mcp-form-worker.ts`, `session-worker-protocol.ts`, `session-worker.ts`, and `session-worker-client.ts`: carry private typed outcomes and atomic cancellation fences without using public worker output.
+- `mcp-form-worker.ts`: bound binding acknowledgement to five seconds with `private_form_unavailable`, retire waiters and late bindings, and propagate host readiness changes to connection observers.
+- `host-capabilities.ts`, `session-router-routing.ts`, and `multi-session-host.ts`: advertise presenter protocol support only with enforcement enabled, and keep ordinary host operation available if bootstrap setup fails.
+- `host-lifecycle-launch.ts`: contain bootstrap import and relay failures without ending the shared supervisor or its lifetime channel; preserve the supervisor's fixed startup import budget.
+- `AGENTS.md`: document the measured presenter bootstrap exception to the inline dynamic-import rule; retain the unchanged supervisor module ceiling.
+- `docs/rpc.md`: document the separate bootstrap and management channels, private form envelopes, and settlement rules.
+
+### Why
+
+- Any attachment could previously answer a general extension form. Declared roles and capabilities are not authentication.
+
+### Key decisions
+
+- Unknown and stolen-dialog submissions from a non-holder receive the same authorization error before private entry lookup.
+- Revoke authority before cleanup, but retain host entry references so internal timeout, detach, and replacement paths can always settle.
+- Private writes bypass queue-error previews. No pending form, schema, token, draft, response, or presentation marker is part of public session state.
+- Shell-based custom launch wrappers do not receive presenter authority; their ordinary RPC operation remains available.
+
+### Why an extension could not handle it
+
+- Only the host owns connection epochs, inherited descriptors, private output destinations, and worker termination.
+
+### Expected merge conflict zones
+
+- MEDIUM: host launch, handover, and session-worker protocol changes.
+- LOW: private routing before ordinary command admission and UI rebinding.
+
+## 2026-10-24 - Hosted ancestry uses the shared validator (oh-my-openagent#10782)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`: delegates ancestry validation to the shared helper without changing the hosted contract.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`: CLI and hosted sessions must not maintain duplicate validation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`: the host validates launch inputs before extension loading.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`, `invalidSpawnedBy`.
+
+## 2026-10-24 - Public POSIX endpoints prove per-launch keys before admitting commands (senpi#3815)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-auth-proof.ts`, `packages/coding-agent/src/modes/rpc/rpc-public-key.ts`, `packages/coding-agent/src/modes/rpc/rpc-public-auth.ts`, `packages/coding-agent/src/modes/rpc/rpc-auth-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-client-socket.ts` (new, fork-only): wire contract v1.1 for public endpoints. One HMAC-SHA256 proof function and one constant-time comparison; exclusive (`O_CREAT|O_EXCL|O_NOFOLLOW`), fsynced, 0600 per-launch JSON records in a 0700 `rpc/keys`, published before any answer leaves the host; the key root and `rpc/` are checked at their realpath (owned by the user, no group/other write, 0755 accepted; a refusal names the fix, `chmod go-w <dir>`) and an owned keys directory is tightened to 0700; under `SENPI_RPC_REQUIRE_TOKEN=1` an 8 KiB / 2 s pre-authentication budget, `auth_required` for any first frame that is not a nonce-bearing `get_protocol_info`, and `auth_failed` for a wrong proof; otherwise (grace) a keyless client is served with one logged line per connection whatever its first frame, and a challenge in flight is never admitted by the deadline; every host-initiated pre-auth drop writes one reason line (no frame content or key material); GC removes only records whose process is dead or whose start time changed. The client verifies the host proof before sending `authenticate`, refuses unsafe records (`unsafe_key_record`) and wrong proofs (`host_identity_unproven`), continues unauthenticated with one log line when no record exists, and reconnects once after `auth_failed`.
+- `packages/coding-agent/src/modes/rpc/internal-channel.ts`: the internal hop uses the same proof and comparison functions (launch id `internal`); its wire bytes are unchanged.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/host-internal-transport.ts`, `packages/coding-agent/src/modes/rpc/host-socket-bind.ts` (new, fork-only), `packages/coding-agent/src/modes/rpc/host-watchdog.ts`: a POSIX host that does not hold the supervisor's internal key (from the stdin bootstrap) is a public endpoint whatever its environment: it publishes its record after binding, runs every connection through the challenge filter (one Duplex, so router, writer and occupancy are unchanged) and removes its record on shutdown. The supervisor-watch variables are read once and removed from the host's environment, so no tool, shell or nested host inherits them. The listen-address and bind helpers moved into `host-socket-bind.ts` unchanged.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`, `packages/coding-agent/src/modes/rpc/host-supervisor-log.ts`, `packages/coding-agent/src/modes/rpc/host-cli-entry.ts`: the supervisor owns the public record (publish after listen, dispose on shutdown), filters client input before the proxy and adds the proof to its `get_protocol_info` reply; the ready line and entry check moved into the log and entry modules.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/host-socket-request.ts`, `packages/coding-agent/src/modes/rpc/host-probe.ts`, `packages/coding-agent/src/modes/rpc/host-ensure.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-client.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-types.ts`: socket clients and host probes authenticate, keep the caller's first protocol fields and the ensure hold, and carry the key root through nested operations; the ensure decision moved into `host-ensure-client.ts` unchanged.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`, `packages/coding-agent/src/modes/rpc/host-request-key-root.ts` (new, fork-only), `packages/coding-agent/src/modes/rpc/host-status.ts`: a host request proves keys from the caller's `--rpc-key-root`, else a gc's explicit `--agent-dir`, else an enclosing root, `SENPI_RPC_KEY_ROOT`, and the target's agent dir; a status read defaults the same way.
+- `packages/coding-agent/src/modes/rpc/socket-ownership.ts`: `adoptPublicSocket` moved here unchanged from `host-lifecycle-proxy.ts`, which re-exports it.
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: `authenticate` never turns an observer into an attachment.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`, `packages/coding-agent/src/modes/rpc/host-gc-pass.ts`: the existing GC passes also collect dead launch records.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-protocol-info-types.ts`: the optional `auth` request nonce and response challenge.
+
+### Why
+
+- Public POSIX listeners admitted commands from any process that could reach the socket path, without either side proving a credential (senpi#3795). The client must verify host identity without sending a bearer secret, keep working against older hosts, and keep key-root selection separate from profile selection.
+
+### Why an extension could not handle it
+
+- Socket admission, host probes and the client transport run before any session extension exists, and the protocol envelope is not an extension-owned type.
+
+### Expected merge conflict zones
+
+- LOW: the transport call, listen/shutdown block and moved bind helpers in `packages/coding-agent/src/modes/rpc/multi-session-host.ts`; `readHostWatchdogConfigFromBrandEnv` in `packages/coding-agent/src/modes/rpc/host-watchdog.ts`; the public proxy accept in `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`; reply filtering in `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`; `startSocket` in `packages/coding-agent/src/modes/rpc/rpc-client.ts`; `connectAndAsk` in `packages/coding-agent/src/modes/rpc/host-socket-request.ts`.
+- NONE: the fork-only new modules listed above.
+
+## 2026-10-23 - Carry named MCP reference failures in loaded surfaces (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcLoadedMcpServer` gains optional `lastError`, a sanitized diagnostic.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: carries the MCP service's `lastError` into `get_loaded_surfaces` and its change fingerprint, alongside the server's error state.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a missing file or unset variable previously left a zero-tool server reported as enabled, with no explanation in the RPC inventory.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the RPC protocol and loaded-surface projection are core-owned.
+
+### Expected merge conflict zones
+
+- LOW: `RpcLoadedMcpServer` in `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `loadedMcpServers` in `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+
+## 2026-10-21 - Overflowed routing handles refuse reattachment and queue accounting stays linear (senpi#3913)
+
+### What changed
+
+- `session-event-writer.ts`, `session-record-accounting.ts`: linked-queue mutations keep running record and UTF-8 byte totals, including replacement, delta demotion/merge, unlink and in-flight draining. Capacity checks no longer walk or serialize the retained queue.
+- `session-router-open.ts`, `session-router-routing.ts`: an open that would reattach to a sealed handle releases only its new attachment and returns `session_output_overflow` with `errorCode` and `errorData { sessionId, sessionPath, action: "unload_and_reopen" }`. Commands on a still-open sealed handle return the same typed refusal through host control output. The existing `unload_session` path remains available, with its ordinary active-work/attachment protections, followed by a fresh `open_session` by path.
+- A close response admitted after a seal is still delivered, without repeating the terminal lifecycle record.
+
+### Why
+
+An unattached synchronous burst repeatedly serialized every retained record, blocking the shared loop quadratically. Overflow sealed only the writer, leaving the retained runtime routable but unable to deliver responses. Lost output cannot be reconstructed safely by clearing that seal; explicit unload/reopen preserves the transcript without silently claiming a complete event stream.
+
+### Why an extension could not handle it
+
+Queue capacity and routing admission belong to the RPC host, outside extension delivery.
+
+### Expected merge conflict zones
+
+- `session-event-writer.ts`: queue mutation calls and accounting getters.
+- `session-router-open.ts`, `session-router-routing.ts`: open admission and session command dispatch.
+
+## 2026-10-20 - Seal the POSIX internal hop and bind lifetime to an event (senpi#3795)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: generate a fresh memory-only internal key, send it once through piped stdin, retain the writer, export the recorded supervisor start time, and stop forwarding a POSIX secret-file environment. Windows retains its existing secret file and raw handshake. The path, credentials and the supervisor's own start time (read once, with the hop directory's owner record) come from `prepareInternalHop` in the fork-only `packages/coding-agent/src/modes/rpc/host-lifecycle-internal-key.ts`; the engine side lives in the fork-only `packages/coding-agent/src/modes/rpc/host-internal-transport.ts`.
+- `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`: read exactly 32 key bytes synchronously within two seconds (an EAGAIN budget, plus a deadline worker thread that writes `internal_key_unavailable` and SIGKILLs the host when a launcher keeps blocking stdin open without the key); reopen stdin close-on-exec and restore fd 0 to `/dev/null`. Any reopen error logs the identity-poll fallback; missing/short keys refuse startup.
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts` and `packages/coding-agent/src/modes/rpc/host-lifetime-reader.ts`: Node watches reopened-stdin EOF through an unref'd Socket; Bun uses its file stream. Supervised POSIX children never arm slot three. Recorded-pid polling fires only on ESRCH or observed start-time mismatch; missing, unreadable, timed-out and permission-denied identity observations stay unknown. Explicit fd callers and Windows retain the fd path. The recorded-pid poll runs only while the stdin reader is absent or failed (always on Linux). Supervisor death is an event on both platforms: on Linux the supervisor's `lifetime.fifo` (0600, in its 0700 hop directory; only the supervisor holds a writer, close-on-exec) reaches EOF, on macOS the reopened stdin does (libuv reports no FIFO EOF there, measured on Node and Bun). While an event binding is armed the identity check is one 30 s backstop. Without one, each tick is a free `kill(pid, 0)`: every 1 s when the recorded identity is the host's only binding (Linux supervised hosts; supervisor death is noticed within about a second, for a quarter of the idle wakeups of 250 ms), every 5 s while an explicit fd pipe backs it (senpi#3738), and 250 ms only for a bare legacy ppid binding. The recorded start is compared on one clock per platform (fork-only `packages/coding-agent/src/utils/process-start-identity.ts`, after sisyphuslabs/omo-desktop-app#3968): on Linux the supervisor exports its `/proc` start ticks (`SENPI_RPC_HOST_WATCH_PSTART_TICKS`) and the host compares them every 5 s, spawning nothing and immune to wall-clock steps; elsewhere `ps lstart` is compared every 60 s. The schedule counts ticks, not wall time.
+- `packages/coding-agent/src/modes/rpc/internal-channel.ts`: internal connections use the canonical newline/hex challenge-response, `data.auth`, `socket_auth`, and launch id `internal`, with an 8 KiB / two-second pre-auth budget and no legacy downgrade. A first frame without a valid client nonce, or any command before `authenticate`, is answered `auth_required` naming that command and closed (wire contract frame 5); a wrong proof is answered `auth_failed`. The 8 KiB / 2 s pre-auth budget applies only on the host (server) side; the supervisor-side client bounds a line by the normal RPC ceiling, and its deadline is the caller's: the readiness probe (10 s, then startup fails) and the activity observer (5 s) pass one on a monotonic timer, while the proxy forwarding a public connection passes none. `SENPI_RPC_HOST_WATCH_PSTART_TICKS` carries the supervisor's Linux `/proc` start ticks to the host (internal, not a secret).
+- `packages/coding-agent/src/modes/rpc/internal-record-cipher.ts` and `packages/coding-agent/src/modes/rpc/internal-record-stream.ts`: directional HKDF-SHA256 keys, AES-256-GCM records, direction/counter AAD, bounded framing, verify-before-release, truncation rejection and the 2^32-record limit. JSONL spans records without a new line-size ceiling; every output record awaits downstream writes. A peer that ends or closes while records wait behind backpressure still has them delivered; only an incomplete trailing record is truncation, and the readable side then ends normally.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` and `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: authenticate/seal proxy, readiness and observer hops; unwrap the child stream before JSONL and occupancy classification.
+- `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts` and `packages/coding-agent/src/modes/rpc/socket-sink.ts`: accept a Duplex byte stream so sealed and raw transports share the same admission, occupancy and output behavior.
+- The hop directory placement and `host-internal-dir-reaper.ts` are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`, `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`: key custody belongs only to supervisor and host memory, while descendants must keep null stdin.
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts`, `packages/coding-agent/src/modes/rpc/host-lifetime-reader.ts`: wrappers legitimately change the direct parent; Bun's net.Socket fd reader did not deliver EOF. Slot-three identity cannot be established across re-exec (approved v7.1 delta).
+- `packages/coding-agent/src/modes/rpc/internal-channel.ts`, `packages/coding-agent/src/modes/rpc/internal-record-cipher.ts`, `packages/coding-agent/src/modes/rpc/internal-record-stream.ts`: socket substitution must disclose neither the key nor session traffic, and must not permit injection after authentication.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`, `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`, `packages/coding-agent/src/modes/rpc/socket-sink.ts`: every internal caller must use the same protected transport without changing public JSONL semantics.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`, `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`, `packages/coding-agent/src/modes/rpc/host-watchdog.ts`, `packages/coding-agent/src/modes/rpc/host-lifetime-reader.ts`: process bootstrap and lifetime binding run before extensions.
+- `packages/coding-agent/src/modes/rpc/internal-channel.ts`, `packages/coding-agent/src/modes/rpc/internal-record-cipher.ts`, `packages/coding-agent/src/modes/rpc/internal-record-stream.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`, `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`, `packages/coding-agent/src/modes/rpc/socket-sink.ts`: authentication, transport framing and admission have no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: imports and child launch in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`; watchdog config/arming in `packages/coding-agent/src/modes/rpc/host-watchdog.ts`; connection setup in `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` and `packages/coding-agent/src/modes/rpc/multi-session-host.ts`.
+- LOW: transport type annotations in `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts` and `packages/coding-agent/src/modes/rpc/socket-sink.ts`.
+- NONE: fork-only new modules `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`, `packages/coding-agent/src/modes/rpc/host-lifetime-reader.ts`, `packages/coding-agent/src/modes/rpc/internal-channel.ts`, `packages/coding-agent/src/modes/rpc/internal-record-cipher.ts`, `packages/coding-agent/src/modes/rpc/internal-record-stream.ts`.
+
+## 2026-10-20 - Fenced live attachments and session mutation admission (senpi#3795, design v7 section 3)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: keeps the public router API and delegates state, routing, opening, occupancy, attachment ownership, and close/finalization to responsibility-specific `session-router-*.ts` modules. `session-attachment-gate.ts` checks socket ownership before every session mutation, including pre-binding lifecycle commands and worker dispatch. Grace serves and logs each violation once; `SENPI_RPC_REQUIRE_ATTACH=1` refuses with `session_not_attached`.
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`, `session-live-attachment.ts`, `session-registry.ts`, `session-registry-open.ts`, `worker-session-registry.ts`, and `worker-session-open.ts`: live-only identity-fenced attach; one-hold disconnect-safe release; synchronous reclaim admission, attachment, and claim of all caller holds before teardown. Both registry open implementations are extracted without changing open/resume behavior.
+- `packages/coding-agent/src/modes/rpc/session-release.ts` and `session-router-routing.ts`: release counts every caller hold out of the other-attachment refusal while force still authorizes releasing other connections.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: advertises `attach_session`, `release_attachment`, `release_caller_aware`, and `reclaim_session`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: remains the public export surface; command, response, state, error, question, result, protocol-info, effect-answer, and event definitions move to responsibility-specific `rpc-*-types.ts` modules. `attachment-types.ts` adds the three command/response shapes without altering existing wire fields.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `session-release.ts`, `session-registry.ts`, `worker-session-registry.ts`, and `host-capabilities.ts`: knowledge of a listed routing id must not authorize mutation; transient attach must not reopen a vanished target or change its launch profile; temporary release must not abort another client's turn; recovery must claim all caller holds atomically and refuse other clients before aborting.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: exposes the new contracts while keeping the public import path stable. The router, registries, protocol definitions, and socket tests are split by responsibility; the pre-existing oversized event writer is retained.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `session-release.ts`, `session-registry.ts`, `worker-session-registry.ts`, `host-capabilities.ts`, and `rpc-types.ts`: connection identity, attachment refcounts, lifecycle claims, capability advertisement, and protocol types belong to the host below extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: extracted router responsibilities and public wrapper; preserve the gate ahead of lifecycle and binding routing.
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: `SessionReleasePort.otherAttachments` and the final releasable check.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`, `worker-session-registry.ts`: live-only attach and extracted open implementations.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the four attachment capability strings.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: public re-exports; preserve existing names and field shapes in the extracted definitions.
+
+## 2026-10-22 - Split router keeps per-connection roles; record_user_activity requires an attachment (senpi#3811, senpi#3859, senpi#3814)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`, `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-router-attachments.ts`: senpi#3811's per-connection `interactive_user` role binding, re-applied to the split router at its three sites: `set_client_info` declares a connection's roles and refuses a change with `connection_role_fixed`, `open_session` hands the host's `ConnectionRoles` to the session binding, and `releaseConnection` releases the connection's roles.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: `record_user_activity` (senpi#3859) requires an attachment like every other session command; the gate's exempt list is exported as `ATTACH_GATE_EXEMPT` and pinned by an exact-set test.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`: senpi#3859's `record_user_activity` command, response and `USER_ACTIVITY_CAPABILITY`, moved into the split type files.
+
+### Why
+
+- senpi#3814 split `session-command-router.ts` while senpi#3811 changed it on main; keeping the split file alone would have dropped the role binding silently.
+- record_user_activity is gated by lead ruling 2026-10-22 (senpi#3814), superseding the earlier ungated ruling. Its only known caller, the desktop prewarm path (omo-desktop-app OmoAdapter.ts:7121 at d86e4f76e8), sends it on the session's own opener connection (OmoSessionHandle.ts:397-403), so gating it costs that caller nothing.
+- The grace line escapes a client-chosen sessionId, so it is always exactly one line, and release_attachment uses the same stopping-host test as attach_session and reclaim_session.
+
+### Why an extension could not handle it
+
+- Connection roles and the attach gate are host routing state.
+
+### Expected merge conflict zones
+
+- The `set_client_info` branch of `dispatch`, the binding options in `open`, `releaseConnection`, and the gate allow-list.
+
+## 2026-10-22 - Attachment refusals follow wire contract v1.1; unattended opens count as attachments; unload excludes every caller hold (senpi#3795, senpi#3814)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: refusals follow wire contract v1.1 (lead ruling 2026-10-22, senpi#3795). `attach_session` and `reclaim_session` refuse a draining or shutting-down host before admission with the v1 code `session_busy_lifecycle` and `errorData { reason: "host_draining" }`, leaving the entry unchanged. The one code v1.1 adds, `session_not_attached`, carries `errorData { reason }`: `"no_connection"` from `attach_session` and `reclaim_session` without a caller connection, `"not_attached"` from `release_attachment` when the caller holds no attachment on the session.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-router-attachments.ts`: per design v7.1, an `open_session { attended: false }` hold is an attachment like any other open, so the gate admits its connection. `resume_session` stays outside the read allow-list and requires an attachment.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: `unload_session` excludes every hold the caller owns when it counts other attached clients, exactly as `release_session` does; it used to subtract the caller as one hold.
+
+### Why
+
+- The wire contract is shared with downstream clients. A drain is a transient lifecycle refusal, so it reuses the v1 lifecycle code with a typed reason instead of a code clients do not know, and an attach during a drain would only add holds the drain must clear. A typed reason lets a client tell a missing connection from a missing hold without parsing text.
+- Design v7.1 counts every open as an attachment; a stricter unattended rule needs its own design change.
+- A connection may hold one session more than once (an attach beside an open). Counting it as one let `senpi host session unload` on a parked session refuse itself as "1 other client(s) attached".
+
+### Why an extension could not handle it
+
+- Wire refusals, drain admission, connection holds, the attach gate and the unload admission are host routing state.
+
+### Expected merge conflict zones
+
+- The drain fence and reason payloads in `attachSession` / `releaseAttachment` / `reclaimSession`, the gate predicate, and the shared `otherAttachments` helper used by `release_session` and `unload_session`.
+
+## 2026-10-21 - Attachment replies follow wire contract v1 and reclaim emits no close reply (senpi#3795)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/attachment-types.ts` and `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: `attach_session` returns `{ sessionId, attached: true }`; `release_attachment` returns the computed `{ deferred }`, false during drain. Reclaim refuses draining or shutting-down hosts before admission (see the 2026-10-22 entry for the code), checks lifecycle before identity, seals without an unsolicited `close_session` response, and removes the caller's fanout attachment after sealing.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: exposes the existing lifecycle-only seal with attachment-scoped delivery for reclaim. Other clients keep their sessions and receive no reclaim close/end frame.
+- `packages/coding-agent/src/modes/rpc/session-router-attachments.ts`: `close_session` stops the caller's event fanout only on its last hold, so a connection with repeated holds retains its stream until the final release.
+
+### Why
+
+- The binding wire contract is shared with downstream clients. The previous success payloads diverged, and reclaim answered a close the caller never requested.
+
+### Why an extension could not handle it
+
+- Wire responses, lifecycle sealing and per-connection attachment counts are host-owned protocol operations.
+
+### Expected merge conflict zones
+
+- Attachment success types, `releaseAttachment` / `reclaimSession`, lifecycle-only sealing, and last-hold fanout accounting.
+
+## 2026-10-18 - A handoff never crosses agent directories (senpi#3560)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handoff-agent-dir.ts` (new): `foreignAgentDirRefusal` settles which agent dir the running host belongs to, from its advertised `agentDir`. For an older host that does not advertise one, it uses the default-socket layout (`<dir>/rpc/rpc.sock` plus a layout-2 registration under `<dir>` that proves a live owner). It refuses `foreign_agent_dir` when that dir differs from the caller's; both sides are compared after `realpath`.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHostLocked` asks it right after the capability check, before reading any registration. `HandoffRefusal` gains `foreign_agent_dir`.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `get_protocol_info` reports `agentDir` (the resolved agent dir) in `RpcProtocolIdentity`.
+- `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`: `HostProtocolInfo.agentDir` is optional, parsed only as a non-empty string.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHostLocked` resolves the agent dir once (`options.agentDir ?? getAgentDir()`) and gives that one value to the guard, the daemon paths and the successor's environment.
+- `packages/coding-agent/src/modes/rpc/host-handover-request.ts`: the idle handover's CLI refuses `foreign_agent_dir` before it asks (the same `foreignAgentDirRefusal`), and `begin_handover` carries its `agent_dir`.
+- `packages/coding-agent/src/modes/rpc/host-handover-wire.ts` and `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: `begin_handover` parses an optional non-empty `agent_dir` into `IdleHandoverRequest.agentDir`.
+- `packages/coding-agent/src/modes/rpc/host-core-gate.ts` and `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the host's agent dir and public socket reach the gate (`HostCoreHooks.endpoint`), which refuses a `begin_handover` naming another agent dir before `begin` claims the operation (`agentDirMismatch`, shared with the generation handoff). A request without `agent_dir` (an older CLI) is not checked.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts` (review follow-up): a socket host reports the agent dir it captured at startup (`RpcHostSessionDefaults.agentDir`), not a per-call `resolve(getAgentDir())` that a cwd change can move.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts` (review follow-up): an empty-string `agentDir` keeps its old meaning (this process's default), and every successor's environment now pins `ENV_AGENT_DIR` to the one resolved dir.
+
+### Why
+
+A client reads registrations under its own agent dir. A sandboxed dev server with its own agent dir, given the user's real `rpc.sock`, found no record there and took the #2701 path that replaces an idle host nobody can prove. For about an hour every client of the real agent dir landed on a sandbox host that read and wrote another directory.
+
+### Why an extension could not handle it
+
+The handoff decision and the protocol identity are RPC host internals; no extension hook runs inside `handoffHost` or `get_protocol_info`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHostLocked` and the `HandoffRefusal` union.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts`: `protocolIdentity()`.
+- `packages/coding-agent/src/modes/rpc/host-core-gate.ts`: `answerBegin`; `packages/coding-agent/src/modes/rpc/host-handover-request.ts`: `idleHandoverOutcome` and `beginHandoverCommand`.
+
+## 2026-10-23 - A pruned dead pointer leaves the live generation owned (senpi#1911)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `pruneDeadGenerations` removes the pointer only while it is still the file it read. The pointer is renamed aside, compared with what was read, and linked back when a registration replaced it in between (unless an even newer one landed). `PruneOptions._test.beforePointerRemoval` is the deterministic seam for that interleaving.
+- `packages/coding-agent/src/modes/rpc/host-pointer-election.ts` (new): `electPointer` gives an absent pointer back to the ONE generation whose record proves it (public socket path, own instance id, live pid with the recorded start time, no stop intent or drain request). The pointer is created with `link()`, so it never replaces a pointer another writer created. Zero or several candidates leave no pointer.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `host status` elects after its prune (`status --all` only reports) and reports `pointer: { state: "current" | "elected" | "missing", instanceId, candidates }`.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`, `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `host stop` and `host handoff` elect under the ensure lock before they read the registration.
+
+### Why
+
+A prune dropped the pointer that named a dead generation but never re-pointed it at the live generation still serving the socket, and it removed the pointer it had read earlier without looking again, so a concurrent registration lost its pointer too. Every reader then saw no owner: `host status` reported `current: false`, and `host stop` / `host handoff` refused `unknown_owner` while a healthy host held sessions.
+
+### Why an extension could not handle it
+
+The daemon directory, its pointer and the generation records are RPC host internals that no extension API reaches.
+
+### Expected merge conflict zones
+
+- LOW: the end of `pruneDeadGenerations` in `host-generations.ts`; one call before `readHostRegistration` in `stopHostLocked` and `handoffHostLocked`; the prune line and report literal in `probeHostStatus`.
+
+## 2026-10-20 - `get_state` reports where the thinking level came from and the session's per-model levels; `get_model_thinking_level` reads one model's level (senpi#3819)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcSessionState` gains optional `thinkingLevelSource` and `sessionModelThinkingLevels`; new command `get_model_thinking_level { provider, modelId }` answering `{ level, source, availableLevels }`.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: `buildRpcSessionState` fills both from the session.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: handles `get_model_thinking_level` through `AgentSession.getThinkingLevelForModel`; an unknown model answers `model_not_found`, a missing field `invalid_argument`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `getModelThinkingLevel(provider, modelId)`.
+- `packages/coding-agent/src/modes/rpc/session-command-activity.ts`, `session-held.ts`: the command is a read (no activity refresh, admitted while a session is held).
+
+### Why
+
+- Clients (the desktop's effort control, sisyphuslabs/omo-desktop-app#3598) must read the per-model restore from the engine instead of keeping their own copy, including the level a model would get before the client switches to it. Test: `test/suite/regressions/3819-rpc-model-thinking-level.test.ts`.
+
+### Why an extension could not handle it
+
+- `get_state` is the RPC wire projection of the session.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcSessionState` thinking fields and the matching lines in `buildRpcSessionState`; the command and response unions in `rpc-types.ts`; the thinking cases in `connection-handler.ts`.
+
+## 2026-10-23 - A worker that dies before commit is reported as open_failed (senpi#4037)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: when an open step fails because its worker died (the worker reported a failure), `openSession` rethrows `open_failed` with the worker's error.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: `closedByWorkerDeath` names those failures: the plain `session_closing` / `session_worker_exited` the worker's request channel rejects a pending `prepare` with, and the typed `session_closing` the claims and grants report.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: a worker that cannot load its modules fires `failure()` and is quarantined, which rejects the still-pending `prepare` with a plain `Error("session_closing")`, so the client was told the session is closing instead of why the worker died; #1953 had fixed this only for the post-commit check.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: the request-channel errors are plain `Error`s, so the registry needs one place that recognises them next to `typedWorkerRefusal`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: the worker lifecycle and the open's error mapping live in the rpc host, which extensions do not reach.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: the worker request channel is host-internal.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: the `catch` at the end of `openSession` and the `session-worker-protocol.ts` import.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: the end of the file, after `typedWorkerRefusal`.
+
+## 2026-10-20 - The internal-hop reaper stays inside this user's directories (senpi#3487 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`: `reapOrphanedInternalHostDirs` only removes leftover hop directories owned by the current user, so a shared `/tmp` root never touches another user's hop.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: `internalHostDirRoots()` deduplicates roots by realpath (a `TMPDIR` that is `/tmp`, or a symlink to it, is one root, kept under the shorter of the two names so a long `TMPDIR` spelling never removes the `/tmp` fallback), and `internal_socket_path_too_long` names every candidate path it tried.
+- Tests: `packages/coding-agent/test/suite/regressions/3487-rpc-internal-socket-long-tmpdir.test.ts` adds cases where another user's hop is skipped, a hop is still reaped on a platform without a user id, a `TMPDIR` of `/tmp` is scanned once, and a long `TMPDIR` symlink to `/tmp` still places the socket under `/tmp`; the long-TMPDIR cases use unique `mkdtemp` roots.
+
+### Why
+
+- Review notes on #3502: with `/tmp` as a fallback root, the reaper could see other users' hop directories, the same root could be scanned twice, and the too-long error named only one path.
+
+### Why an extension could not handle it
+
+- The internal hop is created and reaped by the host supervisor before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`, the ownership check in `reapOrphanedInternalHostDirs`.
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`, the realpath dedupe in `internalHostDirRoots()`.
+
+## 2026-10-23 - RpcClient.setSessionContext refuses a missing session with session_not_attached (senpi#3967)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.setSessionContext` with no attached session and no `sessionId` now rejects with `RpcCommandError` and `errorCode: "session_not_attached"` (`errorData { reason, action }`), the code the host uses for the same condition, instead of a plain `Error`. Nothing is sent.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the method's JSDoc and `docs/rpc.md` promise `RpcCommandError`, so a caller branching on `instanceof RpcCommandError` or `errorCode === "session_not_attached"` missed the one refusal the client makes locally.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the RPC client is a public SDK class of the RPC mode, not part of the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the guard at the top of `setSessionContext`, and the `rpc-types.ts` import line.
+
+## 2026-10-20 - Bind security notices and MCP grant dialogs to actual connections (senpi#3796)
+
+### What changed
+
+- `connection-handler.ts` replays retained warnings for a classic RPC presentation and creates marked, abortable grant selects only for `grant_select`. Grant answers are checked against the selected connection.
+- `rpc-types.ts` adds the optional `grantSelect` marker on select requests.
+- `session-binding.ts`, `session-event-writer.ts` and `session-event-fanout.ts` bind notices and grant authority to attached sockets, not the single handler shared by several sockets. Fork-only `security-presentations.ts` retains per-connection replay cursors and cancels grants when capability or attachment ends.
+- `session-worker.ts`, `session-worker-client.ts` and `session-worker-protocol.ts` bridge retained snapshots and grant requests through the host's actual connection capabilities. Internal snapshot, cancellation and settled-dialog records do not reach clients.
+
+### Why
+
+A late client needs the current reason, and a question-only or headless client must not hold server startup waiting for a select it cannot render. A grant belongs to the capable presentation that received it, including with worker runtimes.
+
+### Why an extension could not handle it
+
+Shared-handler routing, socket capabilities, worker transport and disconnect teardown are RPC host internals.
+
+### Expected merge conflict zones
+
+Handler bind and dialog response dispatch; session writer attachment and capability updates; worker output forwarding and control dispatch.
+
+## 2026-10-22 - Host requests: a session asks its client to continue it on another computer (senpi#3959)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds `RpcHostRequest` (outbound `host_request`, methods `list_relocation_targets` and `relocate_session`), `RpcHostResponse` (inbound `host_response`, added to `RpcInboundRecord`) and `RpcRelocationDueEvent` (`relocation_due`). The behavior lives in `session-relocation.ts` (new), wired from `connection-handler.ts`; capability `session_relocation` (`custom-capability.ts`, `host-capabilities.ts`); `host_response` is a control frame in `session-held.ts` and allowed while closing in `session-registry.ts`; docs/rpc.md "Continuing a session on another computer".
+- `packages/coding-agent/src/modes/rpc/session-release.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the `attached` refusal of `release_session` counts only clients OTHER than the requesting connection (`SessionReleasePort.otherAttachments`, the rule `unload_session` already used), so the host that runs a relocation from its attached connection releases with no `force`.
+- `packages/coding-agent/src/modes/rpc/session-relocation-channel.ts` (new), `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`: relocation is offered per connection. The router names the earliest-attached connection that advertised `session_relocation` in its own `set_client_info`; `host_request` and `relocation_due` are targeted records delivered to it alone, and a `host_response` from any other connection is refused `not_offering_connection`. A user abort drops a scheduled move. The offering connection is the earliest attached to THIS session (`session-attach-order.ts`, new); when a connection leaves a session (`close_session`, `releaseConnection`) the router tells the session binding (`RpcSessionBinding.connectionDetached`, `session-binding.ts`), which drops a move that connection accepted and fails its pending `host_request` with `app_disconnected`. A dropped socket's `pendingCapabilities` entry is deleted.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the engine has no view of other machines, so the agent's relocation request is answered by the client that runs the host (the desktop), and a scheduled move is announced when the turn ends instead of interrupting it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the wire types are the RPC protocol's own; an extension cannot add inbound record kinds.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: LOW: three type declarations above `RpcInboundRecord`, and the `RpcInboundRecord` union itself.
+
+## 2026-10-22 - A cancelled degraded question opens no input after the abort (sisyphuslabs/omo-desktop-app#4042)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `degradeQuestion` checks the abort signal as soon as `select` returns, so a pick that lands after the abort (a label or "Other") is not recorded and `ui.input` never opens. `ConnectionQuestionBridge` settles a client's `{ cancelled: true }` with `cancelOrigin: "user"`; `cancelAll` (a closed connection) and an abort carry no origin, so they stay silent lifecycle cancels. After each answered question it also calls `opts.onProgress({ answers })` with the answers so far, the draft shape the structured bridge reports.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the abort check ran only at the top of the loop, so a select resolved with "Other" as the question was cancelled still opened one typed-answer dialog for a question that was already settled (senpi#3999 review, LOW 1). The ask-user extension settles an abort or its idle timeout from its own draft before the fallback returns, and the fallback never reported progress, so a timed-out fallback question reached the model without the answers the user had given.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the fallback is the RPC connection's own `ExtensionUIContext.question` implementation; the ask-user extension only calls `ctx.ui.question`.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, the "Other" branch and the end of the `degradeQuestion` loop.
+
+## 2026-10-23 - Classic --mode rpc applies set_client_info capabilities (senpi#4006)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: on a connection without the shared-host `clientInfo` registry (classic `--mode rpc`), a `set_client_info` that carries `capabilities` replaces the handler's capability set after the senpi#3811 role check, cancels pending structured questions once when `question` is withdrawn, and re-subscribes extension events when `extension_events` comes or goes (the subscription moved into `subscribeExtensionEvents`, unchanged). A `set_client_info` without `capabilities` keeps the set; the launch-time `SENPI_RPC_CLIENT_CAPABILITIES` stays the initial value. The shared-host branch is unchanged.
+
+### Why
+
+- The handler only assigned the declared set inside the shared-host branch, so a classic client's declaration was accepted and ignored: a client that declared `question` still got single select dialogs, against `docs/rpc.md` "Client information". Regression: `test/suite/regressions/issue-4006-classic-set-client-info-capabilities.test.ts`.
+
+### Why an extension could not handle it
+
+- Client capabilities are read by the RPC connection handler before any extension sees a dialog request.
+
+### Expected merge conflict zones
+
+- HIGH (guaranteed, planned): senpi#4000 rewrites the same `set_client_info` case and the same extension-event subscription helper in `connection-handler.ts` for per-connection capabilities on shared hosts. This change lands first and #4000 rebases onto it, keeping this classic branch as it is.
+
+## 2026-10-21 - Stop intent, held input and run pause commands (senpi#3811)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `pauseForRun`, `resumeForRun` and `holdInput` send the run controls as typed calls (a refusal throws its engine error), so a task runner driving a host-session child needs no raw-command path.
+- `connection-roles.ts` adds `task_parent` to the per-connection roles, so a connection's `interactive_user` and `task_parent` are both fixed at its first explicit `set_client_info` and read per connection by `connection-handler.ts` (never from launch capabilities). `abort`/`interrupt` accept `intent: "stop"` from interactive connections only (`stop_requires_interactive_client` otherwise). New commands `hold_input` (interactive connections, or the task parent relaying run guidance into the child it paused, checked by `parentSessionId`), `withdraw_held_input` (`held-input-commands.ts`), `pause_for_run` and `resume_for_run` (`run-hold-commands.ts`, task-parent connections only); field checks live in `pause-command-validation.ts`. `get_state` reports `paused`, `pausedNoticeCount`, `pausedHeldInputCount` and `runPaused`.
+
+### Why
+
+- The desktop and omo's runner need to say who stopped a session and to pause and resume task children for their parent's run.
+
+### Why an extension could not handle it
+
+- Connection roles and command dispatch are core RPC.
+
+### Expected merge conflict zones
+
+- The `set_client_info` and command switch in `connection-handler.ts`; the command and response unions in `rpc-types.ts`.
+
+## 2026-10-22 - The degraded question asks no trailing comment (sisyphuslabs/omo-desktop-app#4042)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `degradeQuestion` no longer ends with `ui.input("Anything else? (optional)")`. It asks one `select` per question (and the per-question `input` behind "Other"), then settles through `settledQuestionStatus(answers, undefined)` like the structured path: `answered` when at least one question was answered (the rest are listed in `unanswered`), `cancelled` only when none was; the response carries no `comment` key. An aborted signal stops the fallback before its next dialog and settles `cancelled` (or `timed_out` for a `"timed_out"` abort reason, as the structured bridge does), never `answered`, keeping the partial answers.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: a client without the `question` capability renders each dialog as its own blocking card. The desktop showed the trailing optional input as a new, empty question after every ask; its Remove cannot dismiss a native-callback card, and its Send answered with the card's one option label, which reached the model as the user's comment.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the fallback is the RPC connection's own `ExtensionUIContext.question` implementation; the ask-user extension only calls `ctx.ui.question`.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, the tail of `degradeQuestion`.
+
+## 2026-10-22 - The record_user_activity refusal no longer repeats the client's value (senpi#3933)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `record_user_activity` with a kind other than `draft` answers `invalid_argument` with the fixed message `record_user_activity: kind must be "draft"` instead of `Unsupported activity kind: <value>`.
+
+### Why
+
+- The old message repeated an unchecked client value into the response, so its size and content were the client's choice. The fixed message bounds it. Regression: `test/suite/regressions/issue-3933-rpc-draft-activity-routing.test.ts`, which also covers that a multi-session host records the draft on the addressed session only.
+
+### Why an extension could not handle it
+
+- The refusal is produced by the RPC command switch before any session or extension code runs.
+
+### Expected merge conflict zones
+
+- LOW: the `record_user_activity` case of `handleCommand` in `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+
+## 2026-10-21 - RpcClient can publish session context (senpi#3905)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.setSessionContext(patch, sessionId?)` sends `set_session_context` for the attached session (or the one named) and rejects with `RpcCommandError` carrying the host's code (`session_not_attached`, `invalid_session_context`).
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the command existed on the host, but an SDK client had no way to send it (`send` is private). A task runner must publish `task_status` through its attachment before it detaches, so a successor host can recognize a finished session (senpi#3853, oh-my-openagent#10778).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the RPC client is a public SDK class of the RPC mode, not part of the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the method before `closeSession`.
+
+## 2026-10-21 - RPC clients can report draft activity, so the prompt-cache prewarm can run while a desktop user types (senpi#3859)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `{ type: "record_user_activity", kind: "draft" }`, its success response, and the capability constant `USER_ACTIVITY_CAPABILITY` (`"user_activity"`).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `record_user_activity` calls `session.recordUserActivity("draft")`; any other kind is refused with `invalid_argument`. The classic `get_protocol_info` lists `user_activity`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the multi-session host lists `user_activity`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `recordDraftActivity()`.
+
+### Why
+
+The first-activity prewarm (senpi#3140) fires on the first `draft` activity, but only the interactive editor could emit one. An RPC session's first activity was always the prompt itself, which consumes the opportunity without a warm call, so the desktop never warmed the prefix while its user typed.
+
+### Why an extension could not handle it
+
+The activity source is deliberately host-only: `recordUserActivity` is not reachable from the extension API or its event bus (senpi#3140 provenance rule), so only the RPC command surface can expose it to a client.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts` command and response unions next to `set_session_name`; `packages/coding-agent/src/modes/rpc/connection-handler.ts` `handleCommand` switch and the classic capability list; `packages/coding-agent/src/modes/rpc/rpc-client.ts` next to `setSessionName`.
+
+## 2026-10-20 - A foreign_writer refusal names the generation in the way (omo-desktop-app#3561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-holder.ts` (new, an import-free leaf): `HostHolder` (`pid`, `instanceId`, `generation`, `engineVersion`, `launchProfileId`, `writerPid`) and `describeHostHolder`.
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `HostEnsureRefusedError` takes an optional `holder` (kept on the error and appended to its message as `(held by pid N, engine X, launch profile P, started by pid W)`); the `foreign_writer` wording says the host accepts but did not answer and names `host stop --force`.
+- `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts`: `refuseIfForeignHeld` (the `foreign_writer` gate moved out of `host-ensure.ts`, unchanged in when it refuses) builds the holder from the registration with `readHostHolder`, which also reads the build and launch profile the generation record stores.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the `start` branch calls `refuseIfForeignHeld` where it threw the bare refusal.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: the `host ensure` refusal payload carries `holder`.
+
+### Why
+
+- A host another client registered on the socket (a terminal `omo` session's CLI host, a second app copy, a dev build) that accepts but does not answer makes every ensure refuse `foreign_writer`. The refusal carried only its reason, so no client could say who was in the way; the desktop told the user to restart, which cannot help (omo-desktop-app#3561). Regression: `test/suite/rpc-host-ensure-foreign-holder.test.ts`.
+
+### Why an extension could not handle it
+
+- The refusal is produced inside `ensureHost` under the endpoint lock and returned by the `senpi host` CLI; no extension runs there.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files; the `foreign_writer` line of `ensureHostLocked`'s `start` branch.
+
+## 2026-10-21 - Preserve the classic lifecycle envelope (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/modes/rpc/session-record-stream.ts` removes the engine's durable session ID from lifecycle records before connection routing. Multi-session connections still add their routing handle; classic stdio emits no top-level session ID.
+
+### Why
+
+`packages/coding-agent/src/modes/rpc/session-record-stream.ts`: forwarding the engine event unchanged violated the existing classic JSONL contract.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/session-record-stream.ts`: the shared RPC projection owns connection envelopes.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/modes/rpc/session-record-stream.ts`: the session subscription before invocation correlation.
+
+## 2026-10-21 - An RPC question answer is reported once (senpi#3864)
+
+### What changed
+
+`connection-question-bridge.ts` reports a validated answer as human input only for a tool-result question (`waitForAnswer` and `deliver` not `user-message`). An async or resumed answer is left to the question-input release that delivers it.
+
+### Why
+
+ask-user's `deliverAnswer` reports async and resumed answers; the adapter reporting them as well counted one answer twice.
+
+### Why an extension could not handle it
+
+The RPC question bridge is core RPC.
+
+### Expected merge conflict zones
+
+The `respond` closure in `connection-question-bridge.ts`.
+
+## 2026-10-21 - Share lifecycle state, events and self-settle over RPC (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/modes/rpc/rpc-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-session-state.ts` add `get_state.lifecycle`; `packages/coding-agent/src/modes/rpc/connection-handler.ts` handles `request_self_settle`. Classic and multi-session protocol capabilities in `packages/coding-agent/src/modes/rpc/host-capabilities.ts` advertise `session_lifecycle`. `packages/coding-agent/src/modes/rpc/session-event-fanout.ts` broadcasts lifecycle to observers and retains one latest-only snapshot per session. Question/dialog registries trigger projection refresh on open and close. `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts` carry validated `spawnedBy` into the session header.
+
+`packages/coding-agent/src/modes/rpc/extension-ui-response.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, `packages/coding-agent/src/modes/rpc/session-extension-ui-requests.ts`, and `packages/coding-agent/src/modes/rpc/connection-handler.ts` report validated synchronous question/dialog answers from `interactive_user` connections through the shared admission hook before resolving them. Automatic clients, incomplete replies and duplicate replies do not increment the revision; asynchronous question input keeps its existing admission path.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: every connection must see the same durable revision, root-work state and completion identity.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: reconnecting clients need the latest snapshot rather than turn-end guesses.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: explicit spawn identity must survive session creation instead of being inferred from fork ancestry.
+
+`packages/coding-agent/src/modes/rpc/extension-ui-response.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, `packages/coding-agent/src/modes/rpc/session-extension-ui-requests.ts`, and `packages/coding-agent/src/modes/rpc/connection-handler.ts`: an answer that resumes a current turn must invalidate an earlier self-settle request just as a new human prompt does.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the protocol, shared state projection and capability advertisement are engine-owned.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: an extension does not own connection snapshot replay.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: spawn metadata crosses the engine's session-creation boundary.
+
+`packages/coding-agent/src/modes/rpc/extension-ui-response.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, `packages/coding-agent/src/modes/rpc/session-extension-ui-requests.ts`, and `packages/coding-agent/src/modes/rpc/connection-handler.ts`: only these adapters know both the validated pending request and the connection's captured human role.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: command/response unions, state projection and capabilities. Preserve #3873's first-declaration connection-role capture.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: latest-snapshot replay and session cleanup.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: open-session profile construction and transport options.
+
+`packages/coding-agent/src/modes/rpc/extension-ui-response.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, `packages/coding-agent/src/modes/rpc/session-extension-ui-requests.ts`, and `packages/coding-agent/src/modes/rpc/connection-handler.ts`: validated response dispatch and request resolution; preserve reply correlation and question status handling.
+
+## 2026-10-21 - interactive_user connection role (senpi#3811)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-roles.ts` (new): `ConnectionRoles` records each connection's `interactive_user` role at its first explicit `set_client_info` and refuses a different later declaration with `connection_role_fixed`; launch capabilities never declare a role. `roleConnection` keys a line with no connection id (a stdio host, and the worker isolate serving it) to the sole connection, so a stdio client's role is still declared once and fixed; `clear` forgets every role when a worker isolate's session ends.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `set_client_info` case declares through the shared registry for the current connection (a single-connection process keeps its own); the handler no longer seeds the role from `options.capabilities`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: owns the host's one `ConnectionRoles`, passes it to every session binding, declares on the connection-level `set_client_info` path, and releases the role when the connection goes.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: exports `INTERACTIVE_USER_CAPABILITY`, documented as authority only.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `session-worker-protocol.ts`, `session-worker.ts`, `session-binding.ts`: the worker runtime sends each connection's declared roles with `bind` and `command`; the isolate adopts them into its own registry, and a declaration made inside the isolate is reported back to the host's registry (a refused report is logged as drift). Every declare, read and adopt goes through `roleConnection`, and the isolate clears its registry when it closes.
+
+### Why
+
+- Stop and pause authority must belong to a person's client, not to bots, scripts or task runners that connect without the role.
+- A shared host serves every connection attached to a session through one binding, so a per-session role let the first connection, or the host's launch defaults, decide for every later connection (review of senpi#3873).
+- The role is authority only; input origin stays classified at the entry point.
+
+### Why an extension could not handle it
+
+- Connection capabilities, the host router and input admission are core RPC.
+
+### Expected merge conflict zones
+
+- The `set_client_info` case in `connection-handler.ts`.
+- The connection-level `set_client_info` branch, `releaseConnection` and the binding options in `session-command-router.ts`.
+
+## 2026-10-21 - Admit Resume promptly and preserve park context patches (senpi#3853)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`: explicit `resume_session` command and pause-state/event contract; its response acknowledges release admission, while execution reports through events.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: advertise `resume_session` and host `attended` support and answer Resume without waiting for provider turns.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, `packages/coding-agent/src/modes/rpc/host-handover-parked-open.ts`, `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`: retain the context overlay written by `set_session_context`, drop terminal parks before opening, and restore nonterminal overlays.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: pause and resume records go only to attached session connections, including workers.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a release longer than the normal request deadline timed out despite successful admission.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: open-time context does not include the task owner's later terminal patch, so terminal tasks were reopened.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: command responses, advertised protocol support, handover records and connection subscriptions belong to the host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `resumeSession`. `packages/coding-agent/src/modes/rpc/rpc-types.ts`: command, response and event unions. `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: terminal-task check before opening a park.
+
+## 2026-10-21 - Unattended reopen and shared session pause protocol (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/host-session-runner.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/session-registry-opening.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: Validates and propagates attended:false, uses it for host and CLI parked reopens, exposes resume_session plus paused/pausedNoticeCount/holds and session_paused/session_resumed events, and drops terminal task_status parks.
+
+### Why
+
+`packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/host-session-runner.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/session-registry-opening.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: Inspection and host restarts previously resumed background work, and completed task parks were resurrected.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/host-session-runner.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/session-registry-opening.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: Open routing, worker launch profiles, protocol state, and handover custody are RPC host responsibilities.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/host-session-runner.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/session-registry-opening.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: Open command validation and launch construction, command/state unions, shared state projection, event fanout, CLI reopen, and terminal park filtering.
+
+## 2026-10-19 - An idle host stops waking five-plus times a second (senpi#3738)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts`: while the inherited pipe watch is armed, the ppid check runs every `HOST_WATCH_PPID_BACKUP_INTERVAL_MS` (5 s) instead of 250 ms. It goes back to 250 ms when the pipe cannot be armed, or when the pipe socket errors later.
+- `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts`: the probe is a self-rescheduling timer. After `LOOP_LAG_IDLE_AFTER_MS` (2 s) without session activity (no new mark, no open span) it ticks every `LOOP_LAG_IDLE_TICK_MS` (1 s, capped at the heartbeat interval); the first activity restores the 200 ms tick. `start()` resets to 200 ms.
+- `packages/coding-agent/src/modes/rpc/session-attribution.ts`: `onSessionActivityStart(listener)` is called synchronously whenever attributed work starts (`runWithSessionAttribution`, `openSessionAttributionSpan`). The loop-lag watchdog subscribes and returns to its 200 ms tick at once, before the work can block the loop: drift is lateness against the scheduled tick, so on the 1 s idle tick a stall that began right after a tick read up to 1 s short (a 1.2 s stall read 200 ms and was never reported). The heartbeat is due 100 ms before a full interval (`HEARTBEAT_EARLY_TOLERANCE_MS`): on the 1 s idle tick a tick reading a millisecond short of the interval skipped its beat and left the heartbeat two intervals old, closer to the 5 s age at which an ensure calls the host stalled.
+
+### Why
+
+The desktop keeps one host and supervisor per opened thread (omo-desktop-app#3359). An idle host woke ~11 times a second: 5 loop-lag ticks and 4 ppid checks, beside the pipe EOF watch that already reports supervisor death. Suppressing the loop-lag tick cut a measured idle host from 0.42-0.44% to 0.22-0.31% of a core, and the ppid poll from 0.42-0.44% to 0.30-0.33%.
+
+### Why an extension could not handle it
+
+Both timers are RPC host internals armed before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-watchdog.ts` `armHostWatchdog`, `watchFdForEof`, `watchPpid`; `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts` `start`, `stop`, `tick` and the constants block.
+
+## 2026-10-19 - RPC tool barrier: `prompt.toolBarrier`, `release_tool_barrier`, capability `tool_barrier` (senpi#3717)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `prompt.toolBarrier?: ToolBarrierSpec`, the `release_tool_barrier { barrierId }` command and its `{ released }` response.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: refuses a malformed `prompt.toolBarrier` and a missing or over-long `barrierId`.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: forwards `toolBarrier` to `AgentSession.prompt` and adds `data.toolBarrier: "armed" | "ignored"` to the prompt response when the prompt carried one (`armed` exactly when the disposition is `started`).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: handles `release_tool_barrier` and advertises `tool_barrier` in classic mode. `host-capabilities.ts`: advertises it on the multi-session host. `custom-capability.ts`: `TOOL_BARRIER_CAPABILITY`.
+
+### Why
+
+A client that captures a pre-turn workspace checkpoint had to finish the capture before sending the prompt, because a write tool could run before it was ready; that capture sat on the send-to-first-request path. A session tool barrier lets the prompt go out at once while workspace-changing tools wait for the client's release.
+
+### Why an extension could not handle it
+
+RPC command, response and capability shapes are owned by the RPC mode; an extension cannot add a protocol command or a prompt field.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `prompt` member of `RpcSessionCommand` and the `RpcResponse` union before `dequeue_message`.
+
+
+## 2026-10-19 - Removing a dead generation also ends its unproven session claims, behind the write fence (senpi#3658)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `pruneDeadGenerations` removes a claim whose owner is `gone` as before, and now also one whose owner identity is `unproven` when the claim belongs to a generation this same prune removed. It advances that session file's write fence (`advanceSessionFence`) first; a fence that cannot be written keeps the claim. A `proven` owner, or an unproven one of a generation that was not pruned, still stands. The claim loop is the exported `endClaimsOfEndedGenerations`. The fence module is loaded on first use there, so the lifecycle supervisor (which imports `host-generations.ts`) keeps it out of its startup graph (`test/supervisor-import-graph.test.ts`).
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `clearHostRegistration`, which an ensure runs before it starts a replacement host, ends the cleared generation's claims through `endClaimsOfEndedGenerations` before removing its directory. `pruneDeadGenerations` now also ends the claims before it removes the directories, so a prune cut short in between leaves no claim without its generation.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: `claimOwnerIdentity` is exported for that check.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: on Windows the dead host child's pid was reused (PING.EXE) and its start time was never recorded. Pruning released the generation because its heartbeat had stopped, and removed its directory, heartbeat included, but kept its claim; with no heartbeat left the claim then stood for as long as the stranger ran, and the new host refused the session as `session_path_in_use` (sisyphuslabs/omo-desktop-app#3157, probe run 39201740304). The claim ends on the same evidence that ended its generation; the fence keeps a merely frozen owner from writing again. The ensure that started the replacement host cleared the dead generation through `clearHostRegistration`, which had the same gap (probe run 39204446814). Test: `test/suite/regressions/3658-prune-ends-unproven-claims.test.ts`.
+
+### Why an extension could not handle it
+
+- Generation pruning and session claims are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-generations.ts` the claim loop of `pruneDeadGenerations`; `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts` `clearHostRegistration`.
+
+## 2026-10-18 - A session-holder lease whose owner identity cannot be proven no longer blocks once its host generation ended (senpi#3658)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: new `holderGenerationEnded({ host_instance, host_daemon_dir })`. It is true when that generation's heartbeat stopped (`generationHeartbeatStopped`), or when the named daemon directory holds `endpoint.json` and the generation's directory is gone (a daemon removes it only after its child was judged not alive by the same rule). A lease without `host_daemon_dir` is read against this host's own daemon by heartbeat only. A fresh heartbeat, no heartbeat file, this host's own generation, an unsafe instance id or a relative directory never end.
+- `packages/coding-agent/src/modes/rpc/session-held.ts`: the admission check passes `holderEnded: holderGenerationEnded` to `foreignSessionHolders`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `open_session` adds `host_daemon_dir` (the supervised host's `SENPI_RPC_HOST_DAEMON_DIR`) to the holder endpoint. It is written into the holder record only; `session_held` errorData still names `pid`, `cwd`, `host_socket`, `host_instance`.
+- Core (fork-only): `core/extensions/builtin/terminal/lease-file.ts` `reclaimLockState` marks a live pid whose start time is unreadable `held` + `unproven`; `core/session-holders.ts` `liveHolders` reclaims such a record (only while it is unchanged) when `probes.holderEnded` says its generation ended; `core/session-hold-errors.ts` adds the optional `host_daemon_dir` to `SessionHolderEndpoint`; `core/foreign-session-holders.ts` takes the widened probes.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`, `session-held.ts`, `session-command-router.ts`: with the two layers below, `host ensure` started a new host 122.5 s after a Windows tree kill, but every `open_session` on it was refused `session_held` naming the dead child's pid, which `PING.EXE` now wore (sisyphuslabs/omo-desktop-app#3157, run https://github.com/sisyphuslabs/omo-desktop-app/actions/runs/39166325038). The holder record's own start time is always numeric (computed in-process), so a refusal 134-180 s after the kill means the observed start time was unreadable, and `reclaimLockState` kept an unreadable holder `held` forever. The supervised host on win32 publishes no `host_socket`, so the lease needs its daemon directory to prove which daemon released it. Tests: `test/suite/regressions/3658-holder-lease-unprovable-owner.test.ts`, `3658-holder-generation-ended.test.ts`.
+
+### Why an extension could not handle it
+
+- Session-holder leases and RPC admission are core/RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `reclaimLockState` in `lease-file.ts`; `liveHolders` in `session-holders.ts`; the `holderEndpoint` literal in `session-command-router.ts`; the `foreignSessionHolders` probes in `session-held.ts`.
+
+## 2026-10-18 - The host child's start time is recorded on Windows, and an unreadable one is released once its heartbeat stopped (senpi#3658)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: `recordChildPid(file, pid, running)` writes `{ pid, processStartTime: null }` at once, then reads the child's start time the way `host-ensure-start.ts` reads the supervisor's - `waitForStartTime` (10 s of 1 s probes), then one unhurried 15 s read - and rewrites the record with it. An identity read after `running()` turned false is dropped.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: passes `running` from the spawned `ChildProcess` (`exitCode`/`signalCode` still null).
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: new `generationHeartbeatStopped(generation)` (heartbeat older than `stallRefusalWindowMs`); `hostChildAlive` returns `false` for a live pid whose start time is unreadable (recorded or observed) once that holds. A fresh heartbeat or no heartbeat file still preserves.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: the #3652 `heartbeatStopped` delegates to `generationHeartbeatStopped`, so claims and generations share one rule.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`, `host-lifecycle.ts`: one 1 s `Get-CimInstance` probe right after spawn recorded `processStartTime: null` for every host child on a Windows runner, while the supervisor's record (bounded wait + unhurried read, #1355) had one.
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: with no comparable start time, `hostChildAlive` preserved the generation unconditionally; once Windows reused the killed child's pid, `ensureHost` refused `host_stalled` for as long as the unrelated process lived (sisyphuslabs/omo-desktop-app#3157). The heartbeat is positive evidence: a live host whose probe is merely slow keeps writing it (#1609). Tests: `test/suite/regressions/3658-host-child-start-time.test.ts`, `3054-supervisor-child-exit.test.ts`.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: one heartbeat rule, not two.
+
+### Why an extension could not handle it
+
+- Host child identity and generation liveness are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `recordChildPid` in `host-lifecycle-scratch.ts` and its call in `host-lifecycle.ts`; the tail of `hostChildAlive` in `host-stalled-evidence.ts`; `heartbeatStopped` in `host-reservations.ts`.
+
+## 2026-10-18 - A superseded claim whose owner identity cannot be proven needs a live heartbeat (senpi#3652)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: `standingOwner` classifies the claim owner as `proven`, `gone` or `unproven` (`claimOwnerIdentity`; `claimOwnerIsLive` is that verdict `!== "gone"`, unchanged for gc, status and pruning). A claim from a generation the pointer no longer names whose identity is `unproven` (no start time recorded, or none readable now) is reclaimed once that generation's `host-alive.json` heartbeat is older than the stall-refusal window (`stallRefusalWindowMs`, 120 s by default). A fresh heartbeat, no heartbeat file at all, and the current generation all still stand. Before such a takeover, `claim` advances the session file's write fence (`advanceSessionFence`), so the presumed-done owner cannot write the file again if it was only frozen or asleep; a fence that cannot be written leaves the claim standing. The fence module is loaded on first use there, so the lifecycle supervisor (which imports this module) keeps it, and its synchronous fence read, out of its startup graph (`test/supervisor-import-graph.test.ts`).
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: on win32 the socket host's shutdown waits at most `WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS` (10 s) for `router.dispose()`, then detaches its connections and exits as before.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: on Windows a terminated generation leaves its claim behind, the OS reuses its pid, and the 1 s CIM start-time probe often cannot read a start time. The claim then stood as `current: false, attached: true` for as long as the unrelated process lived, so the session file could never be opened again (sisyphuslabs/omo-desktop-app#3157). The heartbeat is the positive evidence the loop-lag watchdog already writes; a heartbeat older than the window is the same "died without cleaning up" verdict `hostLoopStalled` reaches. That verdict can be wrong for a host whose loop froze or whose machine slept, so the fence makes a second writer impossible rather than unlikely. Tests: `test/suite/regressions/3652-unproven-claim-owner-heartbeat.test.ts`, `test/suite/regressions/3652-takeover-write-fence.test.ts`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a TerminateProcess'd supervisor runs no stop, its watchdog removes the pointer at once, and until the connections detach the host's claims read `attached: true`, so one wedged close held every session it served.
+
+### Why an extension could not handle it
+
+- Cross-generation claims and host shutdown are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-reservations.ts` `standingOwner` and `claimOwnerIsLive`; `packages/coding-agent/src/modes/rpc/multi-session-host.ts` the `router.dispose()` call in the socket host's `shutdown`.
+
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `setWidget` `extension_ui_request` gains optional `widgetActions: { label, command }[]`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `setWidget` forwards `options.actions` as `widgetActions` when the widget has lines and at least one choice.
+
+### Why
+
+The desktop renders the handoff hint's choices as buttons from the same `setWidget` record the TUI renders, and sends the chosen `command` as an ordinary prompt.
+
+### Why an extension could not handle it
+
+The wire record is built by the RPC UI context.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-types.ts` setWidget member; `connection-handler.ts` `setWidget`.
+
+## 2026-10-17 - The internal host socket fits sun_path under a long TMPDIR (senpi#3487)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: `createInternalSocketPath` picks the hop's root with `internalHostDirRoots()` (the OS temp directory, then `/tmp`), using the first root where `<root>/senpi-rpc-host-internal-<8>/host.sock` fits `MAX_SOCKET_PATH_BYTES` (103); if neither fits it throws `internal_socket_path_too_long` with the path and the next step (a shorter TMPDIR). The directory stays non-recursive and 0700. `INTERNAL_HOST_DIR_PREFIX` and `internalHostDirRoots` are exported for the reaper.
+- `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`: `reapOrphanedInternalHostDirs` scans every root from `internalHostDirRoots()`, so a dead owner's hop in the `/tmp` fallback is collected under the same rules (older than 60 s, only `.owner`, owner provably dead).
+- Tests: `packages/coding-agent/test/suite/regressions/3487-rpc-internal-socket-long-tmpdir.test.ts` (new): a 116-char TMPDIR yields a socket of at most 103 bytes in a 0700 directory that a real server binds (RED: 159 bytes); a short TMPDIR is still used; a dead owner's leftover hop under `/tmp` is reaped while TMPDIR is long (RED without the reaper change).
+
+### Why
+
+- The hop was always `join(tmpdir(), ...)`, although its comment promised it stays short regardless; a long TMPDIR made the host child die with `listen EINVAL` before answering `get_protocol_info`. `resolveTuiSocket` already falls back the same way for the TUI socket.
+
+### Why an extension could not handle it
+
+- The internal hop is created by the host supervisor before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`, the non-win32 branch of `createInternalSocketPath`.
+- LOW: `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`, the top of `reapOrphanedInternalHostDirs`.
+
+## 2026-10-19 - A bundled supervisor loads only the supervisor graph (senpi#3743)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-supervisor-entry.ts` (new): the supervisor program for bundled installs. It runs the part of the CLI preamble a supervisor relied on (cwd guard, process title, agent markers, silenced warnings, brand read and then scrubbed, in that order) and calls `runHostSupervisor` with the argv after `--internal-rpc-host-supervisor`. Started from a runtime snapshot (its marker beside `dist/bundle/`), it first claims that snapshot with its own pid under the runtime lock, as `cli.js`'s `prepareRuntimeSnapshot` did for the supervisor: the supervisor respawns its host child through the snapshot's `cli.js`, so a prune by a later upgrade must not remove the snapshot while the host child is down.
+- `scripts/build-coding-agent-bundle.mjs`: emits that module self-contained as `dist/bundle/host-supervisor.js` beside `cli.js`, and counts it in the runtime manifest.
+- `packages/coding-agent/src/modes/rpc/host-launch.ts`: `defaultHostLaunch` starts `host-supervisor.js` when the bundle beside the declared CLI entry has one, keeping the sentinel and `--socket` in argv; a bundle without it keeps the CLI route.
+
+### Why
+
+A bundled supervisor reached its route only after `main()` evaluated its whole static graph, which stayed resident: 69-71 MB per supervisor against 8.5 MB for the supervisor graph alone, and the desktop runs one supervisor per thread host (omo-desktop-app#3359).
+
+### Why an extension could not handle it
+
+The supervisor launch is RPC host internals that run before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `defaultHostLaunch` in `packages/coding-agent/src/modes/rpc/host-launch.ts`; the bundle build's entry list and manifest call in `scripts/build-coding-agent-bundle.mjs`.
+
+## 2026-10-19 - An idle host stops ticking every second; its supervisor reads drain requests when they land (senpi#3747)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/child-reaper.ts`: `startHostChildReaper` schedules through `scheduleChildReaper`, which ticks every `CHILD_REAPER_IDLE_TICK_MS` (5 s) while the last pass saw no direct children (`ChildReaper.childCount`) and every second while it saw some.
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: the trimmer keeps a timer only while a trim is owed (a collection to report, a drop waiting for its spacing, a zero not yet answered); `observe` arms it, so a host whose session count holds still runs no timer. `check` keeps its decisions unchanged.
+- `packages/coding-agent/src/modes/rpc/host-stop-intent.ts`: `watchDrainRequest` watches the request file's directory and reads the file when it changes, with a `DRAIN_REQUEST_WATCHED_POLL_MS` (5 s) backup poll; when the directory cannot be watched, or the watch errors, it polls every `DRAIN_REQUEST_POLL_MS` (1 s) as before. `pollMs` still overrides the poll interval.
+
+### Why
+
+One host and one supervisor run per desktop thread (omo-desktop-app#3359). After senpi#3738 an idle host still woke 4 times a second and its supervisor 3 times a second for checks that had nothing to do: no children, an unchanged session count, no drain request. The supervisor's idle/owner ticker stays at 1 s: it also carries the owner-gone exit (#3045: exit two seconds after the owner dies), which a slower tick would delay.
+
+### Why an extension could not handle it
+
+These timers are RPC host and supervisor internals armed before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `startHostChildReaper` in `packages/coding-agent/src/modes/rpc/child-reaper.ts`; `start`/`stop`/`observe`/`check` in `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`; `watchDrainRequest` in `packages/coding-agent/src/modes/rpc/host-stop-intent.ts`.
+
+## 2026-10-19 - Keep pending dialogs visible after session replacement (#3728 review)
+
+### What changed
+
+- `connection-handler.ts` registers the live native-dialog registry on every replacement session before extension binding, alongside the question bridge.
+- `rpc-types.ts` documents `RpcSessionState.pendingDialogs`; `docs/rpc.md` lists the field in the state and dialog references.
+
+### Why
+
+The registry previously remained keyed only by the initial session. After replacement, `get_state` incorrectly returned an empty dialog snapshot, causing a recovering client to discard requests that were still open.
+
+### Why an extension could not handle it
+
+The connection handler owns the registry and rebind ordering used by the RPC state projection.
+
+### Expected merge conflict zones
+
+`connection-handler.ts`: `rebindSession` registry registration. `rpc-types.ts`: `RpcSessionState` pending fields.
+
+## 2026-10-19 - Recover connection-wide gaps and remove shed-path parsing (#3728 review)
+
+### What changed
+
+- `socket-peer-recovery.ts` emits a global gap for every shed, separately identifying lost replies. `socket-event-fanout.ts` retains reply metadata, releases discarded callbacks and permits recovery revocation without forgetting an outstanding gap.
+- `session-event-writer.ts` tags correlated replies before serialization; `session-event-fanout.ts` applies replacement capability lists. No shed or pending-enqueue path parses JSON.
+- `session-extension-ui-requests.ts` retains live dialog frames; `connection-handler.ts` registers them, and `rpc-session-state.ts` / `rpc-types.ts` expose them as `get_state.pendingDialogs`.
+
+### Why
+
+- A connection can observe lifecycle/status traffic without attaching to any session; its missing records still require resubscription and a fresh lifecycle snapshot.
+- Parsing every queued partial on an already-starved host loop is avoidable work. Discarded close notices must release their callback-owned suppression state.
+- Select, confirm, input and editor dialogs are not questions. State recovery needs their pending frames, including removal after resolution, cancellation or timeout.
+
+### Why an extension could not handle it
+
+These files own the bounded socket actor, connection capability policy and native RPC dialog registry below extension event delivery.
+
+### Expected merge conflict zones
+
+`socket-event-fanout.ts` admission and shed; `socket-peer-recovery.ts` gap records; `session-event-writer.ts` enqueue sites; `session-event-fanout.ts` capability replacement; `connection-handler.ts` UI registry binding; `session-extension-ui-requests.ts`, `rpc-session-state.ts` and `rpc-types.ts` pending dialog snapshots.
+
+## 2026-10-19 - Resynchronize slow live socket peers without reconnecting (#3728)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts` sheds the bounded queue on overflow or stall for opted-in peers, resumes with snapshots before new deltas, and cancels its deadline on unregister. Normal supersession remains lossless.
+- `packages/coding-agent/src/modes/rpc/socket-peer-recovery.ts` owns the `event_resync` capability, typed per-session gap record, one buffered ping and heartbeat verdict.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts` negotiates recovery through existing connection-scoped `set_client_info` and captures each attached session's latest serialized message for replay, respecting media placeholders.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts` previously treated a slow reader as dead. A missed liveness heartbeat, not queued bytes or elapsed drain time, now decides that for capable clients.
+- `packages/coding-agent/src/modes/rpc/socket-peer-recovery.ts` keeps liveness separate from the blocked event direction and bounds control notices during an arbitrarily long gap.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts` already owns attachment scope and snapshots; recovery must use those rather than detaching and reopening sessions.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/socket-peer-recovery.ts`, and `packages/coding-agent/src/modes/rpc/session-event-fanout.ts` own the transport below extension delivery. An extension cannot negotiate the connection, shed its queue or decide whether to close its socket.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`: enqueue and drain deadlines.
+`packages/coding-agent/src/modes/rpc/socket-peer-recovery.ts`: new recovery policy module.
+`packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: capability negotiation and snapshot replay.
+
+## 2026-10-19 - A single-connection RPC process marks its quit as a process exit (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `dispose({ processExit })` forwards the flag to `runtimeHost.dispose`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: shutdown calls `handler.dispose({ processExit: true })` before `process.exit`. The multi-session host's session close (`session-teardown.ts`, `session-binding.ts` with `disposeRuntime: false`) is unchanged and keeps only the per-handler limits.
+
+### Why
+
+- The total quit budget (senpi#3711) must only cut handlers when the process really exits right after; an RPC host closing one session keeps running, so there a detached handler would keep running while its extension's handles and provider scope are closed.
+
+### Why an extension could not handle it
+
+- RPC shutdown and session teardown are host code.
+
+### Expected merge conflict zones
+
+- LOW: `connection-handler.ts` the `ConnectionHandler.dispose` declaration and the `dispose` closure; `rpc-mode.ts` the `createRpcShutdown` callback.
+
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-19 - The lifecycle supervisor is back inside its module budget (senpi#3653 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-socket-request.ts` (new): the raw one-request socket client (`connectAndAsk`, `requestOnSocket`, `readAnswer`), moved unchanged out of `host-probe.ts`, which now builds its typed questions on it and re-exports `requestOnSocket`.
+- `packages/coding-agent/src/modes/rpc/host-supersession.ts`: the win32 identity probe reads the answering `instanceId` from the raw `get_protocol_info` answer, through `host-socket-request` loaded on first use, instead of `host-probe`'s parsed protocol info.
+- `packages/coding-agent/src/modes/rpc/host-stop-intent.ts`: now also holds the drain request (`writeDrainRequest`, `watchDrainRequest`, `readDrainRequest`, the drain watch marker, `hostChildDrainRequestFile`); `host-drain-request.ts` is gone. `readDrainRequest` validates the sender with the stop intent's `parseSender` instead of casting its kind.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-supersession.ts`: #3657 made the supervisor import `host-probe`, which reached `host-decision`, `host-protocol-info`, `runtime-build-id` and `core/source-info`: 65 modules against `test/supervisor-import-graph.test.ts`'s ceiling of 55, and `source-info` outside its core allowlist. The probe is needed only by an endpoint with no file identity whose pointer already names another instance, so it is no longer part of the startup graph.
+- `packages/coding-agent/src/modes/rpc/host-stop-intent.ts`: the stop intent and the drain request are the two records another process writes into a generation's directory, and both are on the supervisor's path; one module keeps the graph at 55 with the ceiling unchanged.
+
+### Why an extension could not handle it
+
+- The supervisor's own module graph is RPC host internals.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-supersession.ts` `probeAnsweringInstance`; `packages/coding-agent/src/modes/rpc/host-probe.ts` its imports; importers of the drain request (`host-lifecycle-drain.ts`, `host-stop-drain.ts`, `multi-session-host.ts`).
+
+## 2026-10-19 - A signal-free drain request, a named drain, and win32 self-drain (senpi#3653)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-drain-request.ts` (new): the per-generation drain REQUEST file (`drain-request.json`, written by the asker), the supervisor-to-child relay (`host-drain-request.json`), and the `drain-watch.json` marker `{ pid }` a supervisor publishes once it reads requests. `watchDrainRequest` polls (1 s, unref'd) and delivers each distinct `nonce` once, including a request already waiting; an unreadable file is never a request.
+- `packages/coding-agent/src/modes/rpc/host-stop-drain.ts` (new): `stopHost({ drain: true, instanceId?, waitMs? })`. It proves the named (or pointer) generation by pid + start time, writes the request when the marker names that pid, and otherwise falls back to SIGUSR1 only on POSIX, only for a host advertising `generation_handoff` that answers as the named instance; else `drain_unsupported`. A named generation that cannot be proven is `unknown_owner` (before, the instance was ignored and the current generation was drained). `waitMs` adds `exited`, judged on positive evidence only. A request write that fails with ENOENT means the generation ended and released its directory after it was proven, so it reports `drained` (review M1; test `test/suite/rpc-host-named-drain-superseded.test.ts`, which also drains a superseded generation by `--instance` and refuses a path-escaping id).
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`: the drain branch delegates to `drainHost`; `StopHostOptions` gains `instanceId` and `waitMs`.
+- `packages/coding-agent/src/modes/rpc/host-supersession.ts`: an endpoint with no file identity (win32 named pipe) is watched on the pointer naming another instance AND an `observe` probe of the public endpoint answering as that instance, on `REPLACED_CONFIRMATIONS` (3) consecutive polls; any other observation resets the count, and such an endpoint is never judged absent. The `process.platform === "win32"` early return is gone.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`, `host-lifecycle.ts`: the supervisor arms the request watch, publishes the marker, passes the pointer to the supersession watch, and relays a drain to its child through the relay file (SIGUSR1 stays a POSIX wake).
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a supervised host child polls its relay file and runs `drainForHandoff`.
+- `packages/coding-agent/src/modes/rpc/host-generation-paths.ts`: `drainRequestFile`, `childDrainRequestFile`, `drainWatchFile`. `host-daemon-registration.ts`: `readGenerationRegistration` (one named generation's record) and `isGenerationId`.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`, `packages/coding-agent/src/cli/host-command.ts`: `host stop --drain [--instance <id>] [--wait-ms <n>]`; the answer carries `instanceId` and, when waiting, `exited`.
+
+### Why
+
+- A win32 generation had no drain receiver at all (no SIGUSR1, supersession self-drain disabled, `host stop --drain` refused), so a superseded one held its sessions' path claims until idle exit or death (desktop #3157). And no caller could name WHICH generation to drain. Tests: `test/suite/rpc-host-drain-request.test.ts`, `test/suite/regressions/issue-3653-pointer-supersession.test.ts`, `test/suite/rpc-host-named-drain.test.ts` (real supervisors; the fixture child ignores SIGUSR1 and leaves only on the file relay).
+
+### Why an extension could not handle it
+
+- Generation lifecycle, the daemon state directory and `senpi host` are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` after the supersession watch is pushed; `host-lifecycle-drain.ts` `SupervisorDrain`; `multi-session-host.ts` next to the SIGUSR1 handler; `host-supersession.ts` `watchForSupersession`; `host-stop.ts` drain branch; `packages/coding-agent/src/cli/host-command.ts` flag loop.
+
+## 2026-10-18 - list_sessions rows report the session's tool child (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: each `list_sessions` row in the response type gains an optional `tool_child: { state: "none" | "live" | "exited"; generation?: number; pid?: number }`. The host fills it from the session's `AgentSession.toolChildRow()`; it is `none` under `--tool-runtime in-process` and for sessions on the worker runtime.
+
+### Why
+
+A client has to see whether a session's tool child exists and which generation and process it is (plan todo 4's minimal status; todo 14 adds the full rows).
+
+### Why an extension could not handle it
+
+`list_sessions` is built by the host's session router from the registry, outside every extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `list_sessions` response row type, next to `idleMs`.
+
+## 2026-10-19 - `host status` reports the host's own footprint (senpi#3110)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-process-metrics.ts`: `readHostProcessMetrics` adds `host_footprint_mb`, the supervisor's and host's memory footprint read per pid through `readProcessFootprint` (`phys_footprint` on macOS, `RssAnon` on Linux), `null` when any of those processes has no readable counter.
+- `packages/coding-agent/src/modes/rpc/host-process-metrics.ts`: `core/process-footprint.ts` is loaded on the first metrics read (a cached `import()`), not imported, because this module is in the lifecycle supervisor's static graph and `core/` is outside that graph's allowlist (`test/supervisor-import-graph.test.ts`).
+- `packages/coding-agent/src/modes/rpc/host-status.ts`, `packages/coding-agent/src/modes/rpc/host-status-all.ts`: the report carries it beside `host_rss_mb` (`null` for an unaddressable endpoint).
+
+### Why
+
+#3110 sampled a task host at 1.3 GB RSS and 14 GB `phys_footprint`: RSS drops pages that were compressed or swapped out, so `host status` showed a small host while the machine ran out of memory. The issue asks for the host's own footprint in status, so a growing host is visible without OS tools.
+
+### Why an extension could not handle it
+
+`host status` is the daemon-control surface read from outside the host process; no session or extension exists on that path.
+
+### Expected merge conflict zones
+
+- `host-process-metrics.ts` `readHostProcessMetrics` return shape and `UNOBSERVED`.
+- `host-status.ts` `HostStatusReport` and `UNOBSERVED_METRICS`.
+
+## 2026-10-19 - A queued input's durable admission record keeps its input source (omo#10378)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/client-admission-record.ts`: `preparedInputSchema` accepts an optional `source` (`interactive` / `rpc` / `extension`), so the `prepared` copy of a queued input keeps the source `AgentSession` gave it and a host restart restores the input with that source. A record written before the field parses as before and restores with no source.
+
+### Why
+
+The session entry of a user message records its input source for extensions that replay a resumed session with live trust (omo's plan gate). Without the field the schema stripped the source, so a typed follow-up restored after a host restart lost it.
+
+### Why an extension could not handle it
+
+The admission record is the host's own durable queue; no extension writes or reads it.
+
+### Expected merge conflict zones
+
+- LOW: `client-admission-record.ts` `preparedInputSchema`.
+
+## 2026-10-18 - Tool-child protocol, one host-call capacity, codec and acknowledged payload refs (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tool-child/` (fork-only, new): the wire vocabulary between the server and a session's tool child (`protocol.ts`, boundary check in `protocol-guard.ts`), a length-prefixed binary codec with a 16 MiB frame cap refused before the body is allocated (`codec.ts`), job and host-call admission with the single `hostCallCapacity()` = 264 (8 active + 256 waiting) both sides enforce (`admission.ts`), lossless wake flow control and the per-second `trace` budget (`flow-control.ts`), acknowledged payload references in both directions (`payload-ref.ts`, `payload-ref-paths.ts`, `payload-wire.ts`) and the plain-data `ChildToolContext` (`context.ts`). Nothing is wired into the host yet.
+
+### Why
+
+The per-session tool child (senpi#3566) needs a channel that never drops a job result, proof or tick, refuses frames above its cap instead of buffering them, and moves large payloads by file. A ref's ownership moves to the receiver on `ref_ack`; the writer deletes only on `ref_nack` or generation teardown, never when its own operation settles, so a receiver that opens the file later still finds it.
+
+### Why an extension could not handle it
+
+The channel between the RPC host and its own helper process is host internals; extensions run on top of it.
+
+### Expected merge conflict zones
+
+None: every file is new and fork-only.
+
+## 2026-10-19 - move_session: RPC commands that drive a session move (senpi#3676)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `RpcMoveSessionCommand` / `RpcMoveSessionResponse` types (defined in the new fork-only `session-move-wire.ts`) join the command and response unions.
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts` (new): `move_session { op }` with `prepare`, `cancel`, `status` (receiver) and `export`, `finish` (sender) and `import` (receiver), each one call into `core/session-move/`. Folders live under `<agentDir>/session-moves` (`ledger/`, `outgoing/<moveId>`); an import lands in this host's session folder for its `cwd`. `export` refuses a session this host has open (`session_open_here`) and a file not sealed for that move by `release_session` reason `move` (`move_not_released`). Refusals carry `errorData.detail`; core codes pass through, anything else is `move_failed`, a request that does not parse is `invalid_move_request`.
+- `export` and `finish` run one at a time per session file (`core/session-move/session-lock.ts`, so two finishes settle a move and re-queue its input once), both refuse a session open here after resolving the path (`.`, `..`, symlinks), a held session is refused `session_held`, and `import` requires absolute `bundleDir` and `cwd`.
+- `session-command-router.ts` routes it, `session-registry.ts` exposes `agentDir`, `host-capabilities.ts` advertises `move_session`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: phase 2 of moving a session between devices needs the transport and the clients (desktop, TUI) to drive the engine's move through one implementation; the commands are the wire contract for that.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the commands act on session files the host owns and must check them against the sessions the host has open, which only the host's router and registry know.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, one line in each of the command and response unions plus one type import.
+
+## 2026-10-19 - release_session move: plain ids and the moved-away refusal keeps dropped input (senpi#3662)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: a `move` release refuses a `moveId` that is not a plain id (`isMoveId`, the `PLAIN_ID` rule export and the receiver's ledger apply) with `invalid_release_reason`, and a session whose own id is not a plain id with `release_unsupported` (`errorData.detail: "session_id_not_plain"`), both before anything is interrupted or sealed. A `session_moved_away` refusal after an interrupt carries `interrupted` and `dropped` like every other refusal after one.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: a release under an id no later step accepts sealed the session as moving with no way forward but a local reclaim, and the moved-away refusal lost the user messages the interrupt had taken out of the queues (findings of the #3631 final review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: the checks guard the host's own release command before it seals the file.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/session-release.ts`, the start of `releaseSession` and its `SessionMovedAwayError` catch.
+
+## 2026-10-18 - release_session reason move (senpi#3630)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `release_session` accepts `reason: "move"` with `moveId` (required) and `target`.
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: a `move` release records `move_id` and `target` in its `session_released` entry; a `move` without `moveId` is refused with `invalid_release_reason`. After it, the session manager refuses writes to the file (`core/session-move/`).
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: moving a session to another device (sisyphuslabs/omo-desktop-app#3137) starts from the same quiet release a takeover uses; the entry names the move so the file stays read-only here until the receiver answers.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the release command and its bookkeeping entry belong to the RPC host's session lifecycle.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, the `release_session` command type.
+
+## 2026-10-18 - get_pending_inputs and pending_input_update (senpi#3549, P2b)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `get_pending_inputs { knownClientMessageIds? }` command and its response (`PendingInputSnapshot`: the inputs still in durable custody and an explicit outcome per known id, consistent through `throughCursor`), plus the `RpcPendingInputUpdateEvent` type of the `pending_input_update` session event.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.getPendingInputs(knownClientMessageIds?)` and the `RpcPendingInputsAnswer` type.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: a client that reconnects must read what the engine holds for each input it sent, rather than infer an outcome from the queue's absence (desktop #2838). The `pending_input_lifecycle_v1` capability is not advertised until the TUI shares the module (P2c).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the RPC command surface and its client are owned by the RPC mode, not the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, next to `get_effect_status` in the command and response unions and before `RpcSkillInvocationEvent`; `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the answer types and the method after `getEffectStatus`.
+
+## 2026-10-17 - A refused connect is proof of absence only where a full backlog cannot refuse (senpi#3541 second review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-ownership.ts`: `classifyConnectError` maps a failed connect to `gone` (ENOENT), `dead` (ECONNREFUSED on Linux, where a full backlog answers EAGAIN), `confirm-holder` (ECONNREFUSED elsewhere: macOS refuses a live listener whose backlog is full) or `live` (every other error, a timeout, no code). `socketEntryListenerState` connects once (2 s bound), and for `confirm-holder` asks `lsofSocketHolders` (`lsof -t -- <path>`): a holder pid is live, no holder is dead, an lsof that cannot answer is live. Each verdict carries its evidence.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: `prepareSocketPath` stamps the entry (bigint dev, ino and ctime: a rebind at a reused inode still moves ctime), never removes an entry that is not a socket, refuses with the evidence ("address already in use by a live server (connect EACCES)", "... (held open by pid N)", "... (the entry changed after it was probed)"), re-stamps after the probe and unlinks only the same entry, and treats an unlink that finds nothing as done. The listener probe is injectable (`PrepareSocketPathHooks.listenerState`). Bare `--listen` hosts now get the 103-byte socket path limit through it.
+- `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts`: `unregisteredEndpointHeld` (new) uses the same verdict for the `endpoint_occupied` gate in `host-ensure.ts`, so an unregistered listener that refuses only because its backlog is full, or answers EACCES/EAGAIN, is refused rather than started into. `publicEndpointAccepts` (the registered paths) is unchanged: its "not accepting" still leads to the stall check, so a frozen registered host with a full backlog stays `host_stalled` (`rpc-host-stall-refusal.test.ts`).
+
+### Why
+
+- Second review of #3542: no test pinned the errno classification (reverting to "any error is dead" stayed green); on macOS a live listener with a full backlog answered ECONNREFUSED and its entry was deleted (reproduced with a backlog-1 listener whose loop is blocked); dev+ino misses a same-inode replacement on file systems that reuse inodes; a regular file at the path was removed on Linux, which refuses that connect too. Tests: `test/rpc-prepare-socket-path.test.ts` (verdict table, holder answers, each prepare verdict, a stuck full-backlog listener, EACCES, a regular file, a live and a dead replacement after the probe).
+
+### Why an extension could not handle it
+
+- Socket preparation and the ensure gate are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts` `prepareSocketPath`; `packages/coding-agent/src/modes/rpc/socket-ownership.ts` above `statSocketIdentity`; `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts` `publicEndpointAccepts`.
+
+## 2026-10-17 - A stale socket entry is unlinked only while it is still the dead one (senpi#3541 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: `prepareSocketPath` records the entry's identity before probing it, probes with `entryHasListener` (only ECONNREFUSED or ENOENT read as nobody; EAGAIN, a full backlog or any other error is a live owner), and right before `unlink` re-reads the identity and probes again: a different entry, or one that now accepts, throws "address already in use by a live server" instead of being removed. It skips abstract sockets, and takes test-only `PrepareSocketPathHooks.afterStaleProbe`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: its private `prepareSocketPath`/`probeSocket` (which read a 1 s connect timeout as dead and unlinked) are gone; it uses the shared one.
+- `packages/coding-agent/src/modes/rpc/socket-ownership.ts`: `sameSocketIdentity` is exported.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` and `host-ensure-types.ts`: `_test.existingHostProbeTimeoutMs` bounds the existing-host probe in tests; the `endpoint_occupied` refusal carries a `detail`.
+
+### Why
+
+- Review of #3542: a listener that binds the path between the stale probe and the unlink lost its entry (I1), and the `--listen` path removed a live but slow-to-accept listener after 1 s. Tests: `test/rpc-prepare-socket-path.test.ts` (stale entry removed, live entry kept, a listener appearing after the probe kept) and two `rpc-host-ensure.test.ts` cases driven by a gated fixture listener (answers inside the probe bound: reused; only after it: refused `endpoint_occupied`, kept).
+
+### Why an extension could not handle it
+
+- Socket preparation and the ensure probe are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts` `prepareSocketPath`; `packages/coding-agent/src/modes/rpc/multi-session-host.ts` around its former `prepareSocketPath`.
+
+## 2026-10-17 - An unregistered listener on the public socket is refused, not crashed into
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: in `ensureHostLocked`, after the stranded and legacy checks and before `startHost`, a POSIX endpoint whose public path still accepts connections (`publicEndpointAccepts`) refuses with `endpoint_occupied`. Reaching that point means the protocol probe got no answer and no registration names a live owner, so nothing here may remove the holder (I1). An entry nobody listens behind still reads as free and is replaced by the start, as before.
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `HostRefusalReason` gains `endpoint_occupied` with its refusal detail.
+- `packages/coding-agent/docs/rpc.md`: the I1 section documents the refusal.
+
+### Why
+
+- A process that listens on the public path, never answers `get_protocol_info`, and is not registered (seen on a desktop user's machine with an older omo CLI) made every `host ensure` start a host whose supervisor then failed its bind ("address already in use by a live server ... ownership unknown; leaving it"). The CLI reported the generic `host_error` with exit 1, so the desktop showed a reasonless spawn failure and retried forever. A typed refusal (exit 3) names the cause, and callers can tell the user what to clear.
+
+### Why an extension could not handle it
+
+- The ensure decision and its endpoint lock are RPC host internals; no extension hook runs inside `ensureHost`.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-ensure.ts`, the tail of `ensureHostLocked` before `startHost`; `packages/coding-agent/src/modes/rpc/host-decision.ts`, `HostRefusalReason` and `refusalDetail`.
+
+## 2026-10-18 - Account order over RPC (senpi#3591)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `{ type: "account_order"; provider; names: string[] | null }` and its response; `get_provider_accounts` response data gains `ordered: boolean`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `account_order` refuses a `names` that is not an array of strings (or null), then calls `orderCredentialAccounts`; `get_provider_accounts` answers from `listCredentialAccounts`, which lists in effective order and reports `ordered`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `orderProviderAccounts(provider, names | null)`.
+
+### Why
+
+senpi#3591: accounts could be pinned or removed but not ordered, so a client (the OmO desktop, sisyphuslabs/omo-desktop-app#2973) could not say which account to try first.
+
+### Why an extension could not handle it
+
+The RPC command union, its dispatch and the typed client are core protocol surfaces; extensions cannot add a typed command to them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the account command arms in `RpcCommand` and the `get_provider_accounts`/`account_*` response arms.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the credential-accounts imports and the `get_provider_accounts`/`account_*` cases.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the provider-account methods.
+
+## 2026-10-17 - A host daemon inherits every credential the engine reads (senpi#3531)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: `daemonEnvIsAllowed` also allows `PROVIDER_CREDENTIAL_ENV_NAMES`, the exact names from `providerCredentialEnvNames()` (pi-ai) and `envSlotVarNames()`. It is exact names only, with no new prefix pattern; on win32 the comparison is upper-cased like the rest of the list.
+- `packages/coding-agent/test/suite/host-daemon-credential-env.test.ts`: runs the engine's lookup (`getEnvApiKey`, `discoverEnvSlots`) against an environment that records every name it reads, and asserts each one is daemon-allowed on linux, darwin and win32. It also checks that a subscription token and its `_2` slot reach `daemonEnvironment`, and that `DATABASE_URL`, `GITHUB_TOKEN` and slots past `_16` are still dropped.
+
+### Why
+
+senpi#3531: `ALLOWED_ENV_NAMES` passed `*_API_KEY` and some vendor prefixes only, so 439 names the lookup reads never reached a host. They include `CLAUDE_CODE_OAUTH_TOKEN`(`_N`), `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and every `*_API_KEY_<N>` slot. A Claude subscription supplied through the environment worked in a direct process and was "not configured" through a host, which is what the OmO desktop showed.
+
+### Why an extension could not handle it
+
+The daemon environment is built by the host lifecycle before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: the imports, the set above `WINDOWS_SYSTEM_ENV_NAMES`, and `daemonEnvIsAllowed`.
+
+## 2026-10-18 - get_auth_providers rows come from the shared row rule (senpi#3537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_auth_providers` calls `authMethodStatus(modelRegistry, info)` without the "provider has an api_key row" flag. A key (runtime `--api-key`, env key, models.json) no longer shows as configured on a provider's only listed sign-in row (for example `github-copilot` or `chatgpt-subscription` with a runtime key).
+
+### Why
+
+senpi#3537 review: the RPC rows and the TUI picker fed the shared rule different row-capability inputs, so the same credential could land on different rows. A desktop client also showed a runtime key as a connected subscription.
+
+### Why an extension could not handle it
+
+`get_auth_providers` is answered by the RPC router from the registry.
+
+### Expected merge conflict zones
+
+- LOW: the `get_auth_providers` case in `connection-handler.ts`.
+
+## 2026-10-18 - A single-session RPC process advertises its tool runtime (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: `runRpcMode(runtimeHost, toolRuntime?)` passes the resolved `--tool-runtime` to `createRpcConnectionHandler`, whose classic `get_protocol_info` then lists `tool_runtime:<value>` (fork-only `connection-handler.ts`: `RpcConnectionOptions.toolRuntime`; absent keeps the classic answer byte-identical). The multi-session router advertises the same capability through `host-capabilities.ts`.
+
+### Why
+
+A client must see the tool runtime of every RPC process it talks to, single-session or shared, and both `get_protocol_info` call sites answer the same capability question.
+
+### Why an extension could not handle it
+
+The protocol answer is built by the RPC transport before any extension can contribute to it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the `runRpcMode` signature and the `createRpcConnectionHandler` options.
+
+## 2026-10-16 - expectedRevision on dequeue_message / edit_queued_message (senpi#3459)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: both commands accept `expectedRevision`; a mismatch answers `status: "conflict"` with `currentRevision`, `reason`, `action` and changes nothing (a `conflict` effect outcome, replayed on a same-id retry; `expectedRevision` joins the effect fingerprint, and a request without it fingerprints as before). `edited` answers carry `text` and `revision`; the receipt stores those answer fields so a same-id retry answers exactly as the live call did, and the typed client's `ordered` entries carry `revision`. Validation refuses an `expectedRevision` that is not a whole number of at least 1. Hosts advertise `queued_message_revision`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the desktop edits a queued message while other clients and the agent can change or deliver it; without a revision check the last write silently won (desktop #2718 / #2263).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the RPC command surface, its validation, the effect ledger and the capability list are host internals that extensions do not reach.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the queued-input command shapes, `runQueuedInputChange`, the outcome enum and the capability lists.
+
+## 2026-10-15 - A drop to zero inside the trim spacing is answered when it ends (senpi#3360)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: a drop to zero sessions that lands inside the 60 s spacing is kept (`zeroPending`) and trimmed on the first tick after the spacing while the host is still empty; sessions coming back drop it.
+
+### Why
+
+The edge was reset without trimming, so a host emptied shortly after a trim kept its freed pages until sessions came and went again (measured with `unload_session`, #3359).
+
+### Why an extension could not handle it
+
+Host self-trimming is host internals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: `check()`.
+
+## 2026-10-17 - get_entries reads a long history in pages and never closes the connection (senpi#3534)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` takes `limit` and `maxBytes`. A paged read answers one page (`get-entries-page.ts`, fork-only) with `hasMore` and `nextSince`; an unpaged read whose history does not fit in 48 MiB answers `errorCode: "response_too_large"`; invalid bounds answer `invalid_argument`. Only the returned page is projected and measured.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a read whose first entry alone is larger than the 48 MiB budget is refused with `response_too_large` instead of being sent. While a paged walk has more pages the full-history view is held for the next page (`holdEntryWalk`); the hold expires 30 s after the last page request (`ENTRY_WALK_HOLD_MS`), so a walk a client abandons on an already-idle session does not pin the whole history, and any answer that is not a continuing page releases it at once.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `getEntries(since?, page?)` takes `limit` / `maxBytes` and returns `hasMore` / `nextSince`, so the bundled client can page a long history.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `get_entries` command gains `limit?` and `maxBytes?`, its answer `hasMore?` and `nextSince?`, and `RPC_ERROR_RESPONSE_TOO_LARGE` is new.
+
+### Why
+
+- An unpaged `get_entries` on a long session (279 MB transcript) built one ~290 MB line; the connection's 64 MiB event queue refused it and closed the connection, cutting every session on it, so Desktop could not hydrate such a thread at all (#3534).
+- Holding the full-history view across pages keeps a walk from re-reading the file for every page (194 s to 66-72 s for 38 pages of a 279 MB transcript), but a hold without an expiry would pin that history on an idle session whose client stopped mid-walk, which is the retention #3519 removed.
+
+### Why an extension could not handle it
+
+- The answer is built and framed inside the RPC command handler; no extension hook runs there.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts`, the `get_entries` case and the `rpc-types.ts` import list.
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, the `get_entries` command and answer shapes and the error-code constants.
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the `getEntries` signature.
+
+## 2026-10-17 - Binding, get_entries and get_tree do not keep an idle session's history resident (senpi#3519)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: binding a connection to a session releases the settled session memory once the bind's own readers (effect ledger seal, admissions, deferred refresh) are done, so a session opened over RPC idles without the full-history view its open read.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` and `get_tree` call `session.releaseFullHistoryView()` after building their answer: when no run or session work is active and the read left a full-history view of a trimmed mirror, the session manager's materialized views are dropped (they rebuild on demand). Nothing is tokenized in place, so the answer, which may share message objects, is written intact.
+
+### Why
+
+- Desktop hydrates every thread with `get_entries`. On a session whose mirror is trimmed that read materializes the whole file, and the view stayed held until the session's next turn settled, so idle threads pinned their full transcripts again (#3519).
+
+### Why an extension could not handle it
+
+- The views belong to the `SessionManager` the RPC command reads; no extension hook runs inside the command handler.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts`, the end of the session bind and the `get_entries` and `get_tree` cases.
+
+## 2026-10-17 - A session reopened right after its park is never refused (senpi#3485)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: a handover-parked entry carries `parkedBy`, the host instance that wrote it; `isEntry` accepts it as an optional string, and an entry without it (written by an older generation) reads as before.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `evictIdleSession` stamps `parkedBy` with this host's instance when it records a retained session's park.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: the startup watch reopens only parks a PREVIOUS generation wrote (`inheritedParks`); a park this host wrote is left for its successor and does not count toward the watch's quiet streak.
+- `packages/coding-agent/src/modes/rpc/session-registry-claims.ts` and `packages/coding-agent/src/modes/rpc/session-registry.ts`: an open records its path as mid-claim (`beginPendingClaim`) from its in-process reservation until its entry is recorded or the reservation is given back; a concurrent open of that path waits for it (`settlePendingClaim`, bounded by `closeGraceMs`) and then attaches through the existing in-flight-open wait. The wait is re-checked in a loop immediately before the reservation decision, with no await in between, so when the claim it waited on is REFUSED, the next waiter takes the claim itself and the ones behind it wait on that one. A claim that does not settle in that window refuses with `session_path_in_use { reason: "claim_in_progress", retry_after_ms }`. A `claim()` that throws now gives the reservation back instead of holding the path for the host's life.
+- `packages/coding-agent/src/modes/rpc/session-registry-opening.ts` (new): `buildOpeningEntry` builds the "opening" entry in one synchronous step, moved out of `openSession`; if it throws, `openSession` gives the reservation and claim back and then wakes waiters in a `finally`, so a claim release that also fails is reported on stderr but never strands the waiters or replaces the build error.
+- `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`: a path still reserved by a session that is neither open nor opening (a teardown past its grace window) refuses with `session_path_in_use { reason: "path_still_held", retry_after_ms }` instead of a bare code.
+
+### Why
+
+- The idle sweep records a retained session's park for the next generation, but the SAME host's startup watch (120 s after every start, polling every 250 ms, gated only on draining) read that record back and reopened the session itself. That open sits between its reservation and its entry while it awaits the cross-generation claim, and a client reopening the session by path or by durable id in that window found a reserved path with no entry and was refused with a bare `session_path_in_use` (the 2026.10.16-4 publish failure in `test/suite/host-session-park.test.ts`, 1 run in 5 alone).
+- Waiting on the in-flight claim closes the same window for any two opens of one path (two surfaces resuming the same session), not only the watch's.
+
+### Why an extension could not handle it
+
+- The park record, the reopen watch and the registry's path reservations are RPC host internals; no extension hook runs inside `openSession` or the handover watch.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/rpc/session-registry.ts`, `openSession` from the closing-reservation wait to `this.entries.set(handle, entry)`; the entry construction moved to `session-registry-opening.ts`.
+- LOW: `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`, the last refusal of `attachToOpenSession`.
+- LOW: `packages/coding-agent/src/modes/rpc/session-command-router.ts`, the `recordHandoverParkedSession` call in `evictIdleSession`.
+- LOW: `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, the two record reads in `reopenHandoverParkedSessions`; `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`, the entry type and `isEntry`; `packages/coding-agent/src/modes/rpc/session-registry-claims.ts`, the new helpers at the top.
+
+## 2026-10-16 - RpcClient sends a typed abort and reads effect receipts (senpi#3453)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `abort(options)` overload sends `effectId`/`awaitIdle`/`clearQueue`/`graceMs` and returns the host's answer (`RpcAbortAnswer`); `abort()` without options is unchanged. New `getEffectStatus(effectId, { sessionPath? })` returns `RpcEffectStatusAnswer` (unrouted when reading a transcript by path). An awaited abort's request deadline is its `graceMs` (default 10 s) plus the plain 30 s (`requestDeadlineMs` in `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`), so the host's answer is never dropped; a `graceMs` the host would refuse gets the plain deadline, so its `invalid_argument` still arrives. Exported types `RpcAbortOptions`, `RpcAbortAnswer`, `RpcEffectStatusAnswer`.
+- `packages/coding-agent/src/modes/rpc/abort-grace.ts` (new): `ABORT_DEFAULT_GRACE_MS`, `ABORT_MAX_GRACE_MS` and `isAbortGraceInRange`, with no host imports, so the client and the host share one definition.
+- `packages/coding-agent/src/modes/rpc/effect-commands.ts`: the host's `graceMs` check uses `isAbortGraceInRange` from `abort-grace.ts`; the accepted range is unchanged (an integer from 0 to 60 000).
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the host already supported the typed abort and receipts, but embedders of `RpcClient` (omo's task runner) could only send a bare abort and guess when the turn stopped, and an awaited abort with `graceMs` above 30 s timed out in the client before the host answered.
+- `packages/coding-agent/src/modes/rpc/abort-grace.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`: the client sizes its deadline from the same grace rule the host enforces; two copies of the default could drift and silently shorten the client's wait.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient` is the transport class embedders import directly; an extension runs inside the host and cannot add client methods or change the client's request deadlines.
+- `packages/coding-agent/src/modes/rpc/abort-grace.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`: the `abort` command's validation is RPC host code that extensions do not reach.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the `abort` / `abortStrict` region and the initial deadline choice in its `send()`; `rpc-request-deadline.ts` gains `requestDeadlineMs`.
+- LOW: `packages/coding-agent/src/modes/rpc/effect-commands.ts`, the grace constants and `invalidGrace`; `packages/coding-agent/src/modes/rpc/abort-grace.ts` is new.
+
+## 2026-10-16 - Every queue clear closes drained input as `cleared` (senpi#3412)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: `clearQueuedByAbort` is now `clearQueued`, giving each still-queued input a `cleared` receipt; `ClientAdmissions.clearQueuedFor(session)` does it only on a ledger that already exists.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `clear_queue` marks queued input cleared before draining.
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: `unload_session { clearQueue: true }` does the same before draining.
+- `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `effect-outcome-copy.ts`, `effect-record.ts`, `effect-status.ts`: `abort { clearQueue }` uses the same outcome, renamed from `cleared_by_abort` (released in 2026.10.16-2) to `cleared`; the schema still accepts `cleared_by_abort` and `projectAdmission` reads it as `failed`, so receipts that release wrote stay readable and their input is never restored on reopen.
+
+### Why
+
+- Input dropped by `clear_queue` or by an unload with `clearQueue` closed with a plain `completed` receipt, which reads as delivered (senpi#3412). One outcome now covers every clear path; a session release is not one of them, because its queued deliveries are redelivered by the sender.
+
+### Why an extension could not handle it
+
+- The admission ledger and the RPC command handlers are host internals; no extension hook sees a queue clear before the drain.
+
+### Expected merge conflict zones
+
+- LOW: the `clear_queue` case in `connection-handler.ts`; the `clearQueue` branch in `session-unload.ts`.
+
+## 2026-10-14 - RPC `agent_end` carries the turn deadline (senpi#3227)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the subscribe-path `agent_end` augmentation adds `deadline` alongside the existing `abortSource`, so an RPC client sees why a deadline-stopped turn ended.
+
+### Why
+
+A client driving a session over RPC must see the same deadline reason the TUI shows, not a bare abort.
+
+### Why an extension could not handle it
+
+The augmentation lives in the connection handler's own `agent_end` branch, the single point where the stripped subscribe-path event is rebuilt with provenance.
+
+### Expected merge conflict zones
+
+- LOW: `connection-handler.ts` the `agent_end` branch in `installSessionSubscriptions`.
+
+## 2026-10-14 - Session status stream review round 2: real previous digest, dead-connection subscribe, rollback seal (senpi#3198)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `publishLoadedSurfacesChanged` receives the session's real previous digest as well as the new one, from both the inventory and the reload paths.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: passes that previous digest through to the writer.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `publishLoadedSurfacesChanged(sessionId, previous, digest)` dedupes on the exact (previous, next) transition. New `sealRolledBackOpen` seals a rolled-back open through `sealWithLifecycle`, like a park.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: a subscribe whose connection closed before activation drops its pending entry, and a failed answer enqueue drops it too and is logged. A rolled-back open is sealed through `sealRolledBackOpen` instead of `closeSession`.
+
+### Why
+
+Round 2 of the #3198 review found three problems:
+- The surface dedupe judged a session's move from the connection's own memory. A connection that attached after the session last moved had none, so two different moves onto one digest were merged and one session's change was lost.
+- A subscribe racing its connection's close left a pending subscription that collected every matching delta for the life of the host.
+- The rollback seal sent the opener a `close_session` failure it never asked for.
+
+### Why an extension could not handle it
+
+The digest bookkeeping, the per-connection fanout and the open/subscribe dispatch all live in the multi-session host's connection handler, writer and router; no extension sees connections or attachments.
+
+### Expected merge conflict zones
+
+`recordLoadedSurfaces` and `refreshLoadedSurfacesAfter` in `connection-handler.ts`, the `publishLoadedSurfacesChanged` binding hook, the `subscribe_sessions` branch and the `open_session` catch in `session-command-router.ts`.
+
+## 2026-10-13 - effect_status stream and session_status.lastEffect (senpi#3157)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-effect-status.ts` (new): the `effect_status` wire record and the pending-transition bus; the ledgers note every persisted transition, and delivery happens only after the causing record is published (the writer's post-publish drain, or a coalesced microtask flush for transitions a ledger records from inside a session event, which always run after that event's record was enqueued). Each multi-session host installs its own sink and claims only the sessions it holds; a transition of a session no host holds (classic stdio, a worker isolate, a replaced session) is dropped, never buffered.
+- `packages/coding-agent/src/modes/rpc/session-status-subscriptions.ts`, `session-status-commands.ts`: `subscribe_sessions` gains `effects?: boolean`, default true for `childrenOf` and false otherwise.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: `publishEffect` shares the subscription's gap-free `seq` and reaches only matched `effects: true` subscriptions; the installed provider fills `session_status.lastEffect`.
+- `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `client-admissions.ts`: every persisted `rpc_effect` and input-admission transition is noted to the bus; `latestSessionEffect` reads the newest receipt from the transcript tail WITHOUT opening a ledger, so a subscriber never seals receipts or restores queued input as a side effect.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: an `afterRecord` hook invoked after every published session record drains that session's pending effect transitions.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the host wiring - installs the flusher that resolves a session's routing id, the post-record drain, and the `lastEffect` provider.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `effects` field on `subscribe_sessions` and the `RpcEffectStatusEvent` re-export.
+
+### Why
+
+A supervisor watching a session could see its state change but never what happened to the effects it sent: the receipts the effect ledger writes (senpi#3199) had no push channel, so a client still guessed between a command's ack and the next poll.
+
+### Why an extension could not handle it
+
+The emission must interleave with the host's per-connection FIFO after specific records and share the subscription's `seq` counter, both owned by the RPC transport.
+
+### Expected merge conflict zones
+
+`session-status-stream.ts` (the publish loop), `session-event-writer.ts` (the post-publish point), `rpc-types.ts` (the subscribe command union), `session-command-router.ts` (the constructor wiring).
+
+## 2026-10-13 - Session status stream review fixes: dedupe, subscribe ordering, lineage, worker dedupe (senpi#3198)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `publishLoadedSurfacesChanged` dedupes per (connection, session) through the extracted `session-surface-dedupe.ts` instead of a single last-heard digest per connection; a session converging onto a digest the connection heard from a different start announces its own change. The writer also exposes a targeted `enqueueControl` override and `hasConnection`, and seals a rolled-back open with a terminal record.
+- `packages/coding-agent/src/modes/rpc/session-surface-dedupe.ts` (new): the transition-aware F13 dedupe unit, carved out of the oversized writer.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: a subscription registers as pending, its answer enqueues onto the connection's writer actor before activation, and deltas published in between are held against the minted id and flushed behind the seq 0 snapshot (M1). `publish` skips the runtime-view build when there are no subscriptions (L3), tracks per-connection counts, and `mirrorTargets` reads pending subscriptions too.
+- `packages/coding-agent/src/modes/rpc/session-status-commands.ts`: `answerSubscribeSessions` returns the answer plus the minted subscription id separately so the router enqueues it ahead of activation; the stdio host's subscribe/unsubscribe refusals use `unsupported_transport`, and a connection past 64 subscriptions is refused `subscription_limit` (L2, L4).
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the subscribe dispatch enqueues the response and activates the subscription after it; the `open_session` catch seals the handle with a terminal record before the registry removal (L1).
+- `packages/coding-agent/src/modes/rpc/session-context-patch.ts`, `session-status.ts`, `session-status-source.ts`, `session-status-subscriptions.ts`: `parent_session_id` and `root_session_id` join the reserved context keys, and `childrenOf` matching reads the frozen open-time `openContext` the entry exposes, so no patch moves membership (M2).
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `subscription_limit` and `unsupported_transport` error codes and their union members.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`, `session-worker-client.ts`, `session-worker-protocol.ts`, `connection-handler.ts`: a worker isolate reports its surface digest over a credited `loaded_surfaces` message instead of emitting inline, so the host's per-(connection, session) dedupe covers the worker runtime too and `docs/rpc.md`'s "one per connection" holds on both runtimes (L5).
+
+### Why
+
+The Opus review of senpi#3198 (rpc session status stream) reasoned one HIGH (F13 dedupe dropping a real per-session change), two MEDIUM (a delta overtaking the subscribe response; `set_session_context` spoofing `childrenOf` lineage) and five LOW findings; each is fixed at its root with a failing regression test first.
+
+### Why an extension could not handle it
+
+The dedupe, the subscribe/activate ordering, the status stream's view construction and the worker IPC protocol all live in the host's RPC transport, which extensions cannot reach.
+
+### Expected merge conflict zones
+
+`session-event-writer.ts` (`publishLoadedSurfacesChanged`, `enqueueControl`), `session-status-stream.ts` (the subscription lifecycle), `session-command-router.ts` (the subscribe dispatch and open rollback), the worker IPC unions in `session-worker-protocol.ts`, and `rpc-types.ts` (the error-code union).
+
+## 2026-10-15 - abort awaits quiesce, clears the queue, and names who aborted (senpi#3156)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/effect-commands.ts`: `runAbort` takes `awaitIdle`, `clearQueue` and `graceMs` (0..60000, default 10000; out of range is `invalid_argument` with `reason` + `action`). `awaitIdle` races the dispatched abort against the grace and answers `stopped`/`idle`; `clearQueue` seals queued receipts then drains both queues before the abort and answers `cleared`. Plain `abort` is unchanged.
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: `noteAbort` records `{ connectionId, effectId? }` as `abortedBy` until the turn's `agent_idle`, and `forgetAbort` / the next `agent_start` drop one that reached no turn, so a later system abort never inherits it; `clearQueuedByAbort` gives every queued input a `cleared_by_abort` receipt.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the abort dispatch returns its promise; `agent_end` (when aborted) and `session_abort` carry `abortedBy`.
+- `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `effect-record.ts`, `effect-status.ts`: the `cleared_by_abort` outcome and its `failed` projection.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the abort fields, `RpcAbortQuiesce`, `RPC_ERROR_INVALID_ARGUMENT`.
+
+### Why
+
+An abort was acknowledged on dispatch, so a client could not know when the turn had stopped; queued input survived the abort and ran next; and other clients could not tell who aborted.
+
+### Why an extension could not handle it
+
+The `abort` command, the admission receipts and the RPC `agent_end` projection live in the RPC connection handler, which extensions do not reach.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `abort` case and the `agent_end` branch of the session subscription.
+- `packages/coding-agent/src/modes/rpc/effect-commands.ts`: `runAbort`.
+
+## 2026-10-16 - RpcClient.resolvePath (senpi#3419 review L4)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `resolvePath(path)` sends `resolve_path`.
+
+### Why
+
+Every RPC command has its client method; `resolve_path` lacked one.
+
+### Why an extension could not handle it
+
+The client is the RPC module's own surface.
+
+### Expected merge conflict zones
+
+- `rpc-client.ts` next to `getSessionStats`.
+
+## 2026-10-16 - resolve_path RPC (senpi#3415)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-input-validation.ts`, `connection-handler.ts`: `resolve_path { path }` answers `resolveMessagePath` for the session (cwd, then project root); `path` must be a non-empty string of at most 4096 characters.
+- `packages/coding-agent/src/modes/rpc/session-command-activity.ts`, `session-held.ts`: `resolve_path` is a read that neither refreshes activity nor needs the writing holder.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: `resolve_path` capability on multi-session hosts.
+
+### Why
+
+RPC clients (the desktop app) open message links with the same rule the TUI uses (sisyphuslabs/omo-desktop-app#2753).
+
+### Why an extension could not handle it
+
+The command surface and its validation live in the RPC host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the Session cases next to `get_session_stats`.
+
+## 2026-10-15 - unload_session and session_parked.reason (senpi#3225)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-unload.ts` (new): `unloadSession` classifies blockers (`turn_active`, `work_pending`, `children_live`, `attached`), interrupts only when every blocker is interruptible, re-checks and claims the close in one synchronous step, and records the `unload` ledger effect (`done` before the teardown releases the file, or `failed` with a `refused` outcome).
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: routes `unload_session` with its port (caller attachment excluded, child worker sessions counted from `list()` contexts) and `tearDownUnloaded` (the idle park's teardown, sealed `reason: "unloaded"`); the idle sweep's park now passes `reason: "idle"`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `parkSession(id, path, reason)`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-input-validation.ts`, `host-capabilities.ts`, `effect-record.ts`, `effect-commands.ts`, `rpc-client.ts`, `host-session-runner.ts`: the command, `RpcUnloadAnswer`, `session_parked.reason`, validation, the `unload_session` capability, the `refused` outcome kind, exported effect helpers, `RpcClient.unloadSession`, the CLI action.
+
+### Why
+
+Nothing let a client free a session and keep it reopenable; `release_session` is a takeover handoff, and parks did not say why.
+
+### Why an extension could not handle it
+
+Session teardown, attachments and the effect ledger are host internals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `dispatch` next to `release_session`, `evictIdleSession`.
+
+## 2026-10-15 - Queued input without a clientMessageId survives a host restart (senpi#1971)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: an id-less `steer` / `follow_up` is admitted under a host-minted `host:<durableSessionId>:<uuid>` and recorded like a client id (`hostMinted: true`); the identity reaches the input through `AdmissionHooks.identity`; the response does not echo it, and `hasIdentities` is not flipped by it (including after a reopen: only records a client sent count).
+- `packages/coding-agent/src/modes/rpc/client-admission-record.ts`, `client-message-events.ts`, `rpc-session-state.ts`, `connection-handler.ts`: `HOST_MINTED_ID_PREFIX` / `clientFacingIdentity` take a minted id out of every client-facing projection: `ordered` in `get_state` and `queue_update`, the steering/follow-up listings, and event correlation.
+- `packages/coding-agent/src/modes/rpc/client-admission-record.ts`: the optional `hostMinted` marker.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: `steer` / `follow_up` stamp `hooks.identity`.
+
+### Why
+
+Queued input sent without an id was only in memory, so a host restart lost it silently.
+
+### Why an extension could not handle it
+
+Admission records and their restore on reopen live in the RPC admission ledger.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: the top of `admit`.
+
+## 2026-10-14 - A host's own sessions never hold it open (senpi#3272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: the `origin_host_instance` request field, `originHostInstance()` (the generation a process runs in, from `SENPI_RPC_HOST_INSTANCE_ID`) and `requestOriginHostInstance()` (the generation a request line names). They live in this module, which the supervisor already loads, so its import graph stays inside its 55-module budget.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: a socket `RpcClient` running inside a host sends that host's generation as `origin_host_instance` on every request.
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: `ClientOccupancy` takes the host's own generation. A connection whose first non-observing request names it is DEPENDENT: not attached, not unclassified, and released without an unknown-admission report.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor classifies its public clients against its generation, so dependents hold neither the idle-exit window nor the owner-death grace.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a socket host classifies its own connections the same way for its empty-host exit.
+
+### Why
+
+omo keys a task tree's `p` shard by the root session, so a child running in that shard opens its own children on the same shard, through its public socket. Those connections were attached clients, so after the owner and every outside client were gone the shard still held itself open: the idle window never started and the owner-death grace never saw quiescence. A desktop machine kept such shards for days, one with 12 retained sessions and about 18 self-connections (each supervisor fd paired with a host fd in `lsof`), whose heap had peaked at 71 GB.
+
+### Why an extension could not handle it
+
+Occupancy is decided by the supervisor and the socket host from the raw request lines, and the client stamp lives in `RpcClient.send`; extensions see neither.
+
+### Expected merge conflict zones
+
+The classification loop in `ClientOccupancy.admit`, the `fullCommand` literal in `RpcClient.send`, the `SupervisorActivity` options, and the `ClientOccupancy` construction in `runSocketHost`.
+
+## 2026-10-15 - steer and follow_up can start a turn on an idle session (senpi#3224)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `steer` / `follow_up` take `whenIdle?: "queue" | "start"`; capability `steer_when_idle`.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: any other `whenIdle` is refused with the valid values.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: `prompt` and `whenIdle: "start"` share one `promptPath`; the start-or-queue decision is the session's `prompt` with `streamingBehavior`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `connection-handler.ts`: advertise `steer_when_idle`.
+
+### Why
+
+A client could not hand the agent a message that should start work if the agent is idle and join the run otherwise; a steer on an idle session sat in the queue until something else started a turn.
+
+### Why an extension could not handle it
+
+The RPC command surface and its admission receipts live in the RPC handler.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: the `prompt` / `steer` / `follow_up` cases.
+
+## 2026-10-15 - The successor reopens a parked session through the host's one open (senpi#3368)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked-open.ts` (new): `parkedEntryFromProfile` records a retained session's `open_session` choices from its launch profile (model, thinking level, preset, prompt surface, browser engine, kind, the CLIENT part of its context, auto-titling, retry fallback), stripping the context keys this host merged in. `parkedOpenCommand` replays them as the `open_session` a client would send.
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: the entry carries `sessionKind`, `sessionContext`, `autoTitle` and `retryFallback` too, each validated on read with the same wire validator `open_session` uses.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the park records `parkedEntryFromProfile`. A new `reopenParked(entry)` runs the same private `open` as `open_session`, with no requesting connection and no reply.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: the watch takes a `ParkedSessionOpener` instead of the registry; `reopenOne` no longer builds a launch profile of its own.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` gives the watch an opener over `router.reopenParked`, mapping a `session_path_in_use` reply back to the registry error the watch retries on.
+
+### Why
+
+The successor's reopen went straight to `registry.openSession`, so a reopened session skipped everything the router's open does: the host-context merge, `writer.setSessionKind` (a retained worker session became visible in a default `list_sessions`, breaking I4), media persistence, its binding and the drain's settle wake-up. One open implementation for every open, the successor's reopen included, removes the second path instead of copying fields into it. `test/rpc-host-handoff-parked-kind.test.ts` proves the I4 break and its fix; the #3364 preset tests stay green on the same path.
+
+Two consequences of going through the one open, kept deliberately:
+
+- The replay is faithful: `reopenParked` opens with `defaults: false`, so a field the park did not record (`permissionPreset`, model, thinking level) stays empty instead of taking THIS host's default, which the predecessor's session never had (senpi#3376 review, `test/rpc-reopen-parked-defaults.test.ts`). `cwd` is always recorded.
+- A record written by a predecessor older than this change carries no `sessionKind`, so that one upgrade handover still reopens a worker session as interactive. Every handover after it records the kind.
+
+### Why an extension could not handle it
+
+The park record and the successor's reopen are host lifecycle; no extension hook runs there.
+
+### Expected merge conflict zones
+
+`open` and the park record in `session-command-router.ts`; the watch wiring in `createHostCore` (`multi-session-host.ts`).
+
+## 2026-10-15 - A parked session reopened by the successor keeps its permission preset (senpi#3364)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: a parked entry also records the session's `permissionPreset`, `promptSurface` and `browserEngine`. A read validates them (the two enums through `rpc-input-validation.ts`) and leaves an entry it does not understand in place instead of reopening it wrong.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `evictIdleSession` writes those three fields from the session's launch profile when it parks a retained session.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: `reopenOne` passes them into the successor's `openSession`.
+
+### Why
+
+A client-less retained `ask` session reopened by the successor got the host's default preset, because the record had no preset to pass. A client that then attached without naming one kept that default (an attach applies a preset only when it names one), so gated tools ran without asking. Proven by `test/rpc-host-handoff-parked-preset.test.ts` over a real socket host.
+
+A read also requires a known preset name (`parsePermissionPresetName`): an entry naming a preset this version does not know, or an unknown prompt surface or browser engine, stays on disk and is not reopened, rather than reopening under a preset the permission system would refuse at session start. Such an entry is never cleared by this version; a newer generation that understands it reopens it. A rollback to a host older than this change reads a new entry without the three fields and reopens the session under the host default for that one generation, which cannot be avoided from the newer side.
+
+### Why an extension could not handle it
+
+The park record and the successor's reopen are host lifecycle; no extension hook runs there.
+
+### Expected merge conflict zones
+
+The `recordHandoverParkedSession` call in `evictIdleSession` (`session-command-router.ts`).
+
+## 2026-10-15 - get_subscription_limits and the subscription_limits record (senpi#3370)
+
+### What changed
+
+`RpcCommand` gains `get_subscription_limits` and its response (`data.accounts`), and the host record union gains `RpcSubscriptionLimitsEvent`; the router and the single-session handler answer the command and broadcast the record when an account's windows change. Capability `subscription_limits`.
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`
+
+### Why
+
+Clients such as the desktop need the windows in a stable RPC shape.
+
+### Why an extension could not handle it
+
+RPC commands and host records are defined by the RPC mode itself.
+
+### Expected merge conflict zones
+
+The command and response unions in `rpc-types.ts`, the host-record switch in `session-event-writer.ts`, and the router dispatch.
+
+## 2026-10-15 - dequeue_message and edit_queued_message as ledger effects (senpi#1971)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/effect-commands.ts`: `runQueuedInputChange` runs `dequeue_message` / `edit_queued_message`, optionally as `dequeue` / `edit_queued` effects (`done` on removed/edited, `failed` with `already_delivered` / `not_found` outcomes).
+- `packages/coding-agent/src/modes/rpc/effect-record.ts`, `effect-outcome-copy.ts`: the `edit_queued` kind and the two outcomes with reason and action.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-input-validation.ts`, `connection-handler.ts`: the two commands, their `queuedId` validation and dispatch.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: `get_state.ordered` comes from `getQueuedInputs()` (now carrying `queuedId`) instead of a private field.
+
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: `editQueuedText` writes an edited queued input's text into its admission record (images and fingerprint kept), so a reopen restores the edit.
+- `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `effect-outcome-copy.ts`: the reopen seal fails an unfinished `edit_queued` (and `dequeue`) with `interrupted_by_reopen`; an unhandled kind throws.
+
+### Why
+
+A client could see queued messages but not remove or correct one (desktop #2263).
+
+### Why an extension could not handle it
+
+The RPC command surface and the effect ledger live in the RPC handler.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the command switch near `clear_queue`.
+
+## 2026-10-14 - gc stops stale older-engine hosts (senpi#3268)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-stale-engine.ts` (new): `judgeStaleEngine` decides, with observing reads only, whether a running host is a stale older-engine leftover: proven owner, answering, strictly older `engineOrdinal`, not `persistent`, no session, no claim, up longer than its own `idleExitMs` plus 10 minutes, and no accepted public client.
+- `packages/coding-agent/src/modes/rpc/host-public-clients.ts` (new): counts a supervisor's accepted public connections from the operating system (`lsof` on macOS, `/proc` on Linux); unreadable means "a client may be there".
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: with `staleEngine`, an endpoint kept as `live_generation` or `reachable` is judged under its ensure lock, and a stale host is stopped through `stopHost` and reported under `stopped` (absent when empty). A host that is no candidate (owner unproven, not answering, or not strictly older, which includes every host of this engine) keeps its evidence reason, so `senpi host gc` output is unchanged for them; a kept candidate carries its `stale_*` reason.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`: `requireAnswer` refuses a hard stop unless the host answers both its protocol and its session read; the stale path uses it with 2 s budgets.
+- `packages/coding-agent/src/modes/rpc/host-gc-pass.ts` and `packages/coding-agent/src/modes/rpc/host-runner.ts`: the budgeted pass and `senpi host gc` judge with this build's identity.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: each row carries `stale_old_engine`.
+
+### Why
+
+A host of an older engine runs that engine's idle decision. One left by a 2026.10.10 build stayed up for hours with no session and no client under a 15-minute transient policy, and nothing in a newer build could reach it: gc collected only provably dead endpoints.
+
+### Why an extension could not handle it
+
+Endpoint collection and host stops live in the RPC host's gc and stop paths, under the endpoint ensure lock; no extension sees other hosts.
+
+### Expected merge conflict zones
+
+`gcEndpoint` and the result shape in `host-gc.ts`, the hard-stop guard in `stopHost`, the per-endpoint call in `gcHostEndpointsOpportunistically`, the `gc` branch of `host-runner.ts`, and `endpointStatus` in `host-status-all.ts`.
+
+## 2026-10-13 - The successor host reopens its predecessor's handoff-parked retained sessions (senpi#3282)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts` (new): the handoff-parked residency record (`<daemonDir>/handover-parked/<sha256(sessionPath)[:16]>.json`, one file per parked session) - the set of `retain_on_disconnect` sessions a host held resident and parked, persisted atomically so the successor can reopen them by path with the same durable session id. Removal happens only after a successful reopen (crash-safe, at most once, never lost); an entry whose session file is gone is logged and dropped. Per-entry files (not one shared JSON document) make a successor's reopen-clear and a predecessor's late park independent writes, so a cross-process lost-update cannot drop a park.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: every `retain_on_disconnect` park - from the handoff drain OR the idle sweep - is recorded into the handover record in `evictIdleSession`, the single choke point. The record write happens only after the close claim wins (`tryClaimClose`), so an explicitly-closed session is never recorded and resurrected on the next host start; an explicit close and an open-by-path both clear the entry. A removal without recording it was the bug.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a successor host reopens exactly its predecessor's parked set on startup, watching the record until it has been drained and stayed empty for a quiet streak. The watch does not end on the first empty reads: before any park has been seen, only the budget ends it, because under load the predecessor parks late (it parks after the successor binds, and a starved drain delays the write). A failing reopen is retried a bounded number of times, then the entry is dropped. Both generations derive the record's daemon directory from the supervisor's PUBLIC socket, never the private hop - the mismatch that made the record unreadable across generations.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts` (new, moved out of `multi-session-host.ts`): the reopen watch. Every socket host runs it, the predecessor included, so it is gated on the host not draining: a draining host stops consuming the record, and a reopen that lands after the drain started leaves its entry in place. Without the gate the predecessor reopened the session it had just parked, cleared the record, and its own drain then closed the session, so the successor came up with nothing to reopen.
+
+### Why
+
+A client-less retained session (opened over the host socket with `retain_on_disconnect`, then disconnected) was dropped on every idle handover (~15 min): the design says the predecessor "parks its idle sessions for the successor to reopen by path," but no successor code read a parked list, so nobody reopened them. Q's MacBook RPC lanes vanished on every host generation swap.
+
+### Why an extension could not handle it
+
+The park/reopen decision lives in the host's drain and startup lifecycle; no extension hook runs there.
+
+### Expected merge conflict zones
+
+The park branch in `evictIdleSession` (`session-command-router.ts`) and the `createHostCore` idle options (`multi-session-host.ts`).
+
+## 2026-10-13 - No detach after a request timeout or a lost transport (senpi#3238 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`: a request that passes its deadline fails with the typed `RpcRequestTimeoutError` (same message as before).
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the prompt acknowledgement cap fails with `RpcRequestTimeoutError` too.
+- `packages/coding-agent/src/modes/rpc/host-session-runner.ts`: `senpi host session` skips `detachBeforeClose` when the command timed out or the transport was lost, and closes the socket directly.
+
+### Why
+
+The review of #3254 found that a command which had already timed out still sent `get_protocol_info` and `detach_connection` to a host that was not answering, adding up to the 5 s detach bound and a misleading "did not confirm" line. The socket close releases the attachments either way.
+
+### Why an extension could not handle it
+
+The request deadline and the host session client live in the RPC client and the `senpi host session` runner; no extension sees them.
+
+### Expected merge conflict zones
+
+`armRequestDeadline` in `rpc-request-deadline.ts`, the prompt cap in `RpcClient.send`, and the `finally` block of `runHostSessionRequestOnce`.
+
+## 2026-10-13 - A mid-turn release waits only when it would end the session (senpi#3238 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `releaseConnection` defers an attachment until the running turn settles only when that release would end the session: not retained, and this is its last attachment. While another attachment remains, it releases at once, even mid-turn. It resolves to the session ids still counting the connection: the deferred ones, or every owned one while the host drains.
+- `packages/coding-agent/src/modes/rpc/connection-detach.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `detach_connection` answer carries `data.deferred`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `detachConnection()` returns `{ deferred }` from a host that supports it.
+
+### Why
+
+The review of #3254 found that a `senpi host session` ref command could still be counted after its acknowledged detach. The command attaches to a live session another client opened without `retain_on_disconnect`, and if that session's turn was running, the release was deferred until it settled. The deferral protects a turn from being aborted when its session closes, and only the last attachment's release closes a session.
+
+### Why an extension could not handle it
+
+Attachment counts and the deferred mid-turn release live in the multi-session host's command router; no extension sees connections.
+
+### Expected merge conflict zones
+
+The attachment loop in `releaseConnection`, the `detach_connection` response in `rpc-types.ts`, and `detachConnection()` in `rpc-client.ts`.
+
+## 2026-10-13 - Acknowledged detach for short-lived host session clients (senpi#3238)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: a connection-level `detach_connection` command and its response.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: dispatches `detach_connection` to `connection-detach.ts`, which awaits `releaseConnection` for the asking connection before answering.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the multi-session host advertises `detach_connection`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `detachConnection()` checks the capability and returns `"unsupported"` on an older host.
+- `packages/coding-agent/src/modes/rpc/host-session-runner.ts`: every `senpi host session` command detaches through `host-session-detach.ts` before it closes its socket, bounded at 5 s; a missing or refused answer is one plain stderr line and the close proceeds.
+
+### Why
+
+A short-lived client's attachment was released only when the host processed its socket close, asynchronously and through the supervisor proxy, so another connection listing right after `open` returned could still see the client attached (the `host-session-runner` test failed on Linux CI with `attachments: 1`). There was no event or answer a caller could wait on.
+
+### Why an extension could not handle it
+
+Attachments are counted per connection inside the multi-session host's command router; no extension sees connections or can release them.
+
+### Expected merge conflict zones
+
+The `dispatch` branch list in `session-command-router.ts`, the command and response unions in `rpc-types.ts`, the capability list in `host-capabilities.ts`, and the `finally` of `runHostSessionRequestOnce` in `host-session-runner.ts`.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Retarget process identity imports to the byte-identical neutral utility and remove the retired daemon example from the RPC client comment. Native host ownership, supervision, admission and teardown algorithms do not change.
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`
+- `packages/coding-agent/src/modes/rpc/host-daemon-state.ts`
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`
+- `packages/coding-agent/src/modes/rpc/host-ensure-stop.ts`
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`
+- `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts`
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`
+- `packages/coding-agent/src/modes/rpc/session-held.ts`
+- `packages/coding-agent/src/modes/rpc/supervisor-route.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-12 - Busy-host trim (senpi#3218)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: besides the zero-session trim, a host at or above a 2 GB footprint collects when its session count drops while other sessions still run (a drop the registry reports between ticks counts too). Each collection is timed, and the next busy-host trim waits at least 60 s and at least 100 times the last pause.
+- `packages/coding-agent/src/modes/rpc/rpc-host-lifecycle-types.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `host_trimmed` gains `sessions` (0 for the zero-session trim) and `pauseMs`.
+
+### Why
+
+A shard host serving a ~38-child research DAG held 40-60 GB of `phys_footprint` while ~30 children came and went, almost all of it freed JS-heap pages: a host whose other sessions keep allocating never idles long enough to return them, and the trim only ran at zero sessions.
+
+### Why an extension could not handle it
+
+The trimmer is part of the multi-session host's self-observation loop and reads the host's session registry; no extension hook runs at the host process level.
+
+### Expected merge conflict zones
+
+`host-zero-session-trim.ts` (fork-only module), the `host_trimmed` case in `session-event-writer.ts`, and `RpcHostTrimmedEvent` in `rpc-host-lifecycle-types.ts`.
+
+## 2026-10-12 - Session status stream: subscribe_sessions, session_status, session_opened, set_session_context (senpi#3157, senpi#3155)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds the `subscribe_sessions`, `unsubscribe_sessions` and `set_session_context` command/response contracts, the `session_status` and `session_opened` record types, and the typed `invalid_subscription`, `unknown_subscription` and `invalid_session_context` error codes.
+- Review follow-ups: mirror matching skips view construction without opted-in content recipients and reads only the entry projection otherwise; subscription parsing uses the command field types without an assertion. `set_session_context` now distinguishes a missing attachment with `session_not_attached` and reason/action recovery copy. The public reference makes interactive `session_opened` broadcast and context opt-in explicit.
+- `packages/coding-agent/src/modes/rpc/session-status.ts`, `session-status-stream.ts`, `session-status-subscriptions.ts`, `session-status-source.ts`, `session-status-opened.ts`, `session-status-commands.ts`: the pure `deriveSessionStatus`, per-subscription `seq`, the `sessions`/`include_workers`/`include_context`/`mirror` matching, and an optional `lastEffect` provider hook for a later effect ledger.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: publishes `session_status` right after enqueueing the record that caused it, seals it on park/close, emits a real `session_opened`, delivers opted-in mirrored content, and sends one `loaded_surfaces_changed` per connection per inventory digest (F13).
+- `packages/coding-agent/src/modes/rpc/session-context-patch.ts`, `session-registry.ts`, `session-registry-types.ts`, `worker-session-registry.ts`, `session-command-router.ts`: `set_session_context` validation (key shape, value and total size, reserved host keys) and attach/detach/open/context status causes.
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: `subscribe_sessions` and `unsubscribe_sessions` are observing commands, so a subscriber never counts as an attachment or refreshes the idle window.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `host-capabilities.ts`, `connection-handler.ts`, `session-binding.ts`, `session-event-fanout.ts`: the `session_status` capability, and the per-connection surface-change publish path.
+
+### Why
+
+Supervisors (omo's monitor and thread tools, the desktop app) had no push for a session's appearance, attachment changes, run state or end without attaching to every session, and a connection attached to N sessions heard one surface change N times.
+
+### Why an extension could not handle it
+
+Subscriptions, fanout ordering, attachment accounting and the idle window belong to the host's RPC transport, which extensions cannot reach.
+
+### Expected merge conflict zones
+
+- Command/response and record unions in `rpc-types.ts`; the record-enqueue paths in `session-event-writer.ts`.
+
+## 2026-10-12 - Declare budget refusal code and inline effect kind (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: declare `RPC_ERROR_CONTEXT_BUDGET` in `RpcErrorCode`.
+- `effect-commands.ts`: use the shared budget constant.
+- `effect-ledger.ts`, `effect-record.ts`: store the command kind directly without a pass-through helper.
+
+### Why
+
+Budget refusals belong to the typed RPC error inventory; the command kind already is the record kind.
+
+### Why an extension could not handle it
+
+RPC owns its error types and receipt construction.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: error constants and union; effect command refusal and record construction.
+
+## 2026-10-12 - Settle model effects on replacement and unexpected errors (senpi#3199)
+
+### What changed
+
+- `effect-ledger.ts`, `effect-outcome-copy.ts`: fail nonterminal model effects with replacement reason and action before the outgoing session is disposed; unexpected held-switch application errors carry an error outcome.
+- `effect-commands.ts`: record an unexpected model-selection failure before rethrowing the original exception.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, `session-registry-switch.ts`: register the model-effect replacement hook alongside the input-admission hook for classic, shared and cwd-changing runtimes.
+
+### Why
+
+Replacement and selection errors must produce terminal receipts with their actual cause.
+
+### Why an extension could not handle it
+
+RPC owns the receipt ledger and runtime hook registration outside extension lifetimes.
+
+### Expected merge conflict zones
+
+- Effect event subscription and command catch; runtime creation in `packages/coding-agent/src/modes/rpc/rpc-mode.ts` and `packages/coding-agent/src/modes/rpc/session-registry.ts`.
+
+## 2026-10-12 - Resolve effect-ledger review findings (senpi#3199)
+
+### What changed
+
+- `effect-ledger.ts`, `effect-outcome-copy.ts`, `effect-record.ts`: held model effects settle as superseded or context-budget failures; thinking effects have their own kind and derive their reopen seal from stamped thinking entries.
+- `effect-commands.ts`: typed success builders replace response assertions; auth and context-budget refusals are classified separately, and unknown exceptions propagate.
+- `connection-handler.ts`: `interrupt` records its actor only in the callback that actually aborts the matching turn.
+- The actor schema documents only the populated `connectionId`, not an unused client name.
+- Focused tests cover each held-switch exit, thinking application and no-op identity, interrupt attribution, exact foreign abort ownership, and lookup after reopening a transcript larger than the disk scan chunk. The outcome-copy suite is the single rendering test.
+
+### Why
+
+Receipts must end with the actual cause and recoverable action, including when deferred work never applies or a process dies after applying a thinking level.
+
+### Why an extension could not handle it
+
+RPC owns the durable receipts, typed responses and connection identity.
+
+### Expected merge conflict zones
+
+- Effect schemas, reopen seal and command handlers.
+
+## 2026-10-12 - Effect ledger: durable receipts and get_effect_status (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/effect-record.ts`, `effect-status.ts`, `effect-outcome-copy.ts`, `effect-ledger.ts`, `effect-transcript-lookup.ts`, `effect-commands.ts`, `effect-crash-point.ts`: new modules. `rpc_effect` custom entries (schema, semantic fingerprint, `EffectIdConflict`), the per-session ledger (`accepted` written before the effect, append-only transitions, reopen seal), the authoritative backwards transcript lookup, the `abort`/`set_model`/`set_thinking_level`/`get_effect_status` handlers, the reason/action copy, and a test-only SIGKILL crash point gated on `SENPI_TEST_RPC_EFFECT_CRASH`.
+- `packages/coding-agent/src/modes/rpc/client-admission-record.ts`: `completed` admissions take an optional `outcome`; the on-disk entry type and fields are otherwise unchanged.
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: seals persisted `running` records as `completed { interrupted_by_reopen }` before restoring queued input, records the turn's outcome (`completed`/`aborted` with `abortSource` and `abortedBy`/`error`) when `agent_idle` seals it, and writes `dropped_by_replace` for queued input before a session replacement discards it. `ClientAdmissions.sealQueuedOnReplace(runtime)` attaches that write to the runtime's replacement-only hook and only touches a ledger that already exists, so a graceful stop or unload (`dispose()`) leaves queued input restorable.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: routes `abort`, `set_model`, `set_thinking_level` and `get_effect_status` through the effect handlers, publishes the ledger at bind (so the seal runs before any command), and advertises `effect_ledger`. It does not touch the runtime's single-slot `setBeforeSessionInvalidate`, which interactive mode owns.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`, `session-registry.ts`, `session-registry-switch.ts`: call `ClientAdmissions.sealQueuedOnReplace` where an RPC session runtime is created (classic stdio, every registry open in-process or in a worker, and the replacement runtime a cwd-changing `switch_session` builds), so the hook follows the live runtime.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: advertises `effect_ledger` on shared hosts.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: answers `get_effect_status { sessionPath }` without a `sessionId` from disk, never loading the session.
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`, `session-command-activity.ts`, `session-held.ts`: `get_effect_status` is an observing read: it never resets the idle window and passes the holder guard.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: bounds `effectId` to 1-256 characters.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive `effectId` fields, `get_effect_status` command and response, `RpcEffectAnswer`, and the `effect_id_conflict`, `transcript_unreadable` and `provider_unavailable` codes.
+
+### Why
+
+A client whose `abort` or model switch timed out could not tell whether it landed, and an input receipt from a crashed turn stayed `running` forever. Receipts with an identity, replay and a query let clients resolve that instead of guessing.
+
+### Why an extension could not handle it
+
+The receipts must be written inside the RPC command handlers before the effect is applied and sealed when the transport binds a reopened session; both are host transport internals.
+
+### Expected merge conflict zones
+
+- The `connection-handler.ts` command switch (`abort`, `set_model`, `set_thinking_level`), the command and response unions in `rpc-types.ts`, and the capability lists.
+
+## 2026-10-11 - Model-invisible eval cell RPC commands (senpi#3072)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds session-routed `eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` command/response contracts, exported cell/snapshot types, and typed not-found/invalid-request codes.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: dispatches these commands to the current session's extension RPC handlers without executing a model tool or appending history, preserving typed control errors.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: adds typed list, peek, and stop methods through the existing correlated request/error path. Existing `wake_source_state` extension-event forwarding is documented in `packages/coding-agent/docs/rpc.md`.
+- `packages/coding-agent/src/modes/rpc/session-held.ts`: keeps the three named eval reads/cancellation controls available while foreign-held; `packages/coding-agent/src/modes/rpc/session-command-activity.ts` treats list/peek as observations and stop as activity.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: advertise protocol support as `eval_cells` on classic and both shared runtimes. Missing session handlers return `eval_cells_unavailable`; `extension_request` aliases preserve eval error codes without bypassing generic extension-write admission.
+
+### Why
+
+Desktop detached-cell controls need the same session-owned manager and completion notification contract as the eval tool, without requiring model participation.
+
+### Why an extension could not handle it
+
+The manager operations are extension-owned; session command aliases, response types, and client methods belong to the host's RPC transport.
+
+### Expected merge conflict zones
+
+- Command/response unions in `rpc-types.ts`, the `connection-handler.ts` command switch, and additive `rpc-client.ts` methods.
+
+## 2026-10-11 - Supervisor-owned stopping admission (senpi#3059)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`: forward child EOF after queued refusals, including a drained connection's final parked-session record.
+- `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`: forward complete response batches as raw buffers once no lifecycle reply is pending; decode only candidate open/protocol replies, preserving late-open filtering, UTF-8 bytes, record boundaries and downstream backpressure.
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: client teardown is terminal; late accepts are destroyed before attaching a child hop, so they cannot pin listener close.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-ticker.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: extract the existing idle/owner ticker without changing its checks or shutdown order, keeping orchestration below the pure-code line ceiling.
+- `packages/coding-agent/src/modes/rpc/host-admission.ts` and `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`: the supervisor owns a monotonic admission gate. Bounded LF/UTF-8 request framing and backpressured socket writes preserve request order; probes report lifecycle, opens are checked on every connection, and pending opens receive a correlated typed refusal when stop wins.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: close admission before child signalling and keep the public listener available through child reaping instead of destroying clients at shutdown entry.
+- `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`, `packages/coding-agent/src/modes/rpc/host-decision.ts`, `packages/coding-agent/src/modes/rpc/host-ensure.ts` and `packages/coding-agent/src/modes/rpc/host-ensure-types.ts`: preserve the lifecycle field, refuse stopping adoption, and wait under the endpoint lock for both identities of the exact registered generation to exit before ordinary discovery can start a successor. The wait never signals the generation and cannot exceed the existing stop budget; callers may shorten it.
+- `packages/coding-agent/src/modes/rpc/host-session-runner.ts`: only explicit opens with a launch spec retry typed stopping refusals, with the original spec and shared stop deadline.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`, `packages/coding-agent/src/modes/rpc/host-status-all.ts` and `packages/coding-agent/src/modes/rpc/host-outcome.ts`: expose lifecycle honestly, including null for unknown/unreachable state.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive `RpcProtocolInfo.lifecycle` and `RPC_ERROR_HOST_STOPPING` in the public error-code union.
+- `packages/coding-agent/docs/rpc.md`: document stopping, typed refusal, bounded replacement authority, and unobserved session counts during teardown.
+
+### Why
+
+A ready probe could race shutdown, adopt the dying generation and lose its first open to a silently destroyed socket. Waiting for a slow child made that race window larger. Admission and stop now linearize on one supervisor event loop; a prior ready response cannot bypass the gate.
+
+### Why an extension could not handle it
+
+The supervisor owns the public socket and outlives session extensions. A child-only metadata check would require a cross-process barrier across every awaited open and still could not answer discovery while its event loop is stalled.
+
+### Expected merge conflict zones
+
+- Supervisor proxy and shutdown sequencing, host decision/ensure control flow, session-open retry mapping, protocol/status field lists and `rpc-types.ts` error constants.
+
+## 2026-10-11 - Entry and tree history project account advice (senpi#3131 delta)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` and `get_tree` reuse the structured usage-limit entry projection. Tree projection traverses defensive nodes iteratively and preserves ids, links, labels, and persisted raw diagnostics.
+
+### Why
+
+These history surfaces still exposed raw account-limit JSON even though message history and live messages carried advice.
+
+### Why an extension could not handle it
+
+RPC history responses are owned by the connection handler.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` and `get_tree`.
+
+## 2026-10-11 - RPC history uses the usage-limit presentation projection (senpi#3131 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_messages` projects assistant usage-limit advice and structured cause exactly as live session events do, without mutating diagnostic-bearing engine messages.
+
+### Why
+
+Reloading history restored raw 429 JSON after the live stream had displayed limit advice.
+
+### Why an extension could not handle it
+
+`get_messages` is a host transport response, not an extension event.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_messages`.
+
+## 2026-10-11 - Typed error codes for `set_model`, `get_entries` and a busy `prompt` (senpi#3073 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds `RPC_ERROR_MODEL_NOT_FOUND = "model_not_found"` to the RPC error-code constants and the `RpcErrorCode` union.
+- Fork-only consumers: `connection-handler.ts` sets `errorCode: "model_not_found"` on a `set_model` refusal and `errorCode: "not_found"` (the existing `RPC_ERROR_ENTRY_NOT_FOUND`) on a `get_entries` refusal for an unknown `since` cursor; `client-input-handler.ts` sets `errorCode: "streaming"` when `prompt` is refused because a turn is running (`AgentBusyError`, `src/core/changes.md`, same date). The `error` text of all three is unchanged.
+
+### Why
+
+- `senpi host session` classified these three refusals by matching their English messages. The review of senpi#3081 rejected parsing message text, so the host now types them and the CLI classifies by `errorCode` alone.
+
+### Why an extension could not handle it
+
+- These are the RPC host's own responses to wire commands; the code set lives in the shared RPC types.
+
+### Expected merge conflict zones
+
+- LOW: one new constant beside `RPC_ERROR_ENTRY_NOT_FOUND` and one union member in `packages/coding-agent/src/modes/rpc/rpc-types.ts`.
+
+## 2026-10-10 - `rpc-client.ts` additions for the `senpi host session` CLI (senpi#3073)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: two additive, default-preserving changes feeding the new `senpi host session` CLI surface (`packages/coding-agent/src/cli/changes.md`, same date). `abortStrict(): Promise<void>` sends `{ type: "abort" }` through `getData()` so a failed or lost-transport abort is reported instead of swallowed, unlike the existing `abort()`. `listSessions(options?: { observe?: boolean; include_workers?: boolean })` forwards both already-defined wire fields onto the `list_sessions` command instead of always sending the bare command, so a caller can mark a read `observe: true` and never count as host occupancy. Neither change alters the behavior of an existing call site that passes no arguments.
+
+### Why
+
+Every session operation the new `senpi host session` CLI needs already exists on the RPC wire (`.omo/plans/host-session-cli-gap.md`); the client's existing `abort()`/`listSessions()` methods could not report a refused abort or request an observe-only listing, so the CLI's `abort` and `list` subcommands needed these two additive methods rather than a wire change.
+
+### Why an extension could not handle it
+
+`RpcClient` is the host's typed client library; an extension runs inside a session and has no path to add methods to the client another process uses to drive that session from outside.
+
+### Expected merge conflict zones
+
+- LOW: `abortStrict()` is a new method beside the existing `abort()`; `listSessions()` gains an optional parameter forwarded onto the existing `list_sessions` request object. An upstream change to either method's body is the only expected conflict.
+
+## 2026-10-10 - Retained child identity and shutdown recovery (senpi#3054 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: record the host child's OS start time in UTC with a C-locale probe, beside its PID. An unreadable identity is recorded as unknown and diagnosed.
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: compare parsed start-time milliseconds using the shared process-start tolerance. A gone PID or proved start-time mismatch releases the guard; unreadable live identities keep the generation guarded and emit a diagnostic.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: errors before child signalling still attempt SIGTERM, then SIGKILL and observed exit. Watcher/client cleanup errors take the same recovery path; a fired post-SIGKILL breaker is not restarted. Failures keep ownership metadata and exit non-zero.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: the session-path holder lookup compares a recorded child start time with the live probe as parsed milliseconds instead of raw text, so a UTC-tagged `host-child.pid` still identifies the live child as a holder.
+
+### Why
+
+A reused child PID could keep a dead supervisor's generation wedged indefinitely. Fallible stop metadata or pre-stop cleanup could also make the supervisor exit without ever signalling its child.
+
+### Why an extension could not handle it
+
+The supervisor and generation readers operate outside session extension lifetimes and own process identity, shutdown and registration release.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: child identity recording.
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: retained-child identity guard.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: shutdown failure recovery and escalation ordering.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: `holderPids` start-time comparison.
+
+## 2026-10-10 - Reap host children before supervisor exit (senpi#3054)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: stop the child before fallible socket cleanup, wait on its actual exit event after SIGKILL with a 30-second circuit breaker, and await the exit record before releasing the generation. Breaker failure logs the child PID, preserves ownership metadata and exits non-zero. The Windows handle-close fallback starts only after child reaping.
+- `packages/coding-agent/src/modes/rpc/host-stop-intent.ts` (the shared child TERM/KILL bounds live beside the stop intent, keeping the supervisor import graph within its budget) and `packages/coding-agent/src/modes/rpc/host-ensure-stop.ts`: share the child TERM/KILL bounds and let stop/replace callers and their lock budgets outlast the stalled-child grace plus exit breaker. Cancel caller wait timers on observed exit so a successful stop cannot leave a referenced 95-second timer keeping its caller resident.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`: signal delivery no longer releases the registration pointer or boot settings; the supervisor releases them only after its child exited.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-generations.ts`, `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts` and `packages/coding-agent/src/modes/rpc/host-ensure.ts`: preserve a generation whose supervisor died but whose recorded host child is still live; report it as live, refuse replacement/clearing and prevent pruning/GC.
+- `packages/coding-agent/test/suite/regressions/3044-rpc-owner-lifetime.test.ts`: observe non-child supervisor exit with kqueue NOTE_EXIT on macOS and pidfd poll on Linux through a small native waiter process. Own children use their exit events; remembered PID assertions still reject live hosts.
+- `packages/coding-agent/test/suite/regressions/3054-supervisor-child-exit.test.ts` and its fixture drive the real supervisor with a SIGTERM-resistant socket child. Fixture-only clock and observation/signal gates cover SIGKILL reaping, delayed observation and a still-live child at the breaker without a production test seam. Cleanup wait budgets follow the production budget; the existing stop test now expects the supervisor to retain ownership.
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts` and `packages/coding-agent/src/modes/rpc/host-ensure.ts`: legacy retirement retains its independent 10-second refusal bound instead of inheriting the supervised-child shutdown budget.
+
+### Why
+
+The final two-second child wait returned a boolean the supervisor ignored. It could release ownership and exit before observing/reaping its host, while the owner-lifetime test separately mistook stdout EOF for completed supervisor exit.
+The caller's uncancelled deadline also kept the event loop alive after a successful stop; the larger breaker budget must not turn normal teardown into a delayed quit.
+`packages/coding-agent/src/modes/rpc/host-ensure.ts` and `packages/coding-agent/src/modes/rpc/host-legacy.ts` keep legacy flat-pid retirement at its separate 10-second default: that direct drain has no supervised-child circuit breaker to wait out.
+
+### Why an extension could not handle it
+
+The detached supervisor owns process reaping and registration release outside session extension lifetimes.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: shutdown ordering and stop escalation.
+- `packages/coding-agent/src/modes/rpc/host-ensure-stop.ts`: stop and lock budgets.
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts`: the legacy drain's independent default timeout.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`: registration release after signal.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-generations.ts`, `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts` and `packages/coding-agent/src/modes/rpc/host-ensure.ts`: retained live-child ownership guards.
+
+## 2026-10-09 - Observe-only reads preserve owner grace (senpi#3044 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: release reports an unclassified peer only once, before discarding its classification. Observers and attached clients never report an unknown admission.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: defer the owner-grace admission reset until an unclassified peer disconnects. Classified attachments still reset through activity refresh; observing status reads and `warm` never reset the grace.
+- `packages/coding-agent/docs/rpc.md`: document the idle-policy classification and conservative treatment of dropped unclassified peers.
+- `packages/coding-agent/test/suite/regressions/3045-owner-review.test.ts`: real-supervisor controlled-clock cases independently cover an unclassified dropped connect, activity on a pre-existing observer, and repeated status reads inside the two-second grace.
+
+### Why
+
+Resetting on every accepted socket let frequent status polling keep a dead owner's host resident. The original between-tick test also could not distinguish admission resets from activity refresh resets.
+
+### Why an extension could not handle it
+
+The detached supervisor classifies public sockets and owns the quiescence window before any session extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: release classification.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: admission and detach callbacks.
+
+## 2026-10-09 - Owner lifetime review corrections (senpi#3045)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: only a bound owner opens a filesystem watcher; synchronous watch failure and later watcher errors degrade to record polling. Polling discovers an owner claimed on an initially unowned host. Pipe-less OS probes back off from 1 s to a 5 s cap, resetting on owner replacement.
+- `packages/coding-agent/src/modes/rpc/host-daemon-state.ts`: capture and probe request UTC/C-locale identities and compare parsed milliseconds with the shared process-start tolerance rather than timestamp text. Pipe-binding equality remains exact, so that tolerance cannot merge replacement owners.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: admission, attached-peer activity, observed runs and observer loss reset owner grace immediately, including activity entirely between lifecycle ticks. The ticker's in-flight flag is initialized before registration.
+- `packages/coding-agent/src/modes/rpc/AGENTS.md` and `packages/coding-agent/docs/rpc.md`: correct I3's owner-record cross-writer exception and document watch degradation, continuous grace and bounded polling cadence.
+- Real-supervisor controlled-clock tests reject zero grace and handoff-drain mutants, assert `owner_gone` plus complete generation/registration cleanup, reproduce ENOSPC startup and between-tick activity, and bound OS probe counts. Cross-timezone tests use the real process reader.
+
+### Why
+
+The initial owner implementation could abort an unowned host on watch exhaustion, classify a live owner as dead after a timezone change, miss brief activity, and spawn a process query every second indefinitely.
+
+### Why an extension could not handle it
+
+The detached supervisor owns the lifetime pipe, registration observation, peer accounting and shutdown decision.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: owner watcher, activity callbacks and probe scheduler.
+- `packages/coding-agent/src/modes/rpc/host-daemon-state.ts`: owner identity capture and comparison.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: activity callback wiring and ticker setup.
+
+## 2026-10-08 - Live foreign holders refuse host admission (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: checks a requested path before open or attach and again after the runtime publishes its hold, rolling back a raced open before attachment or success. Delegates all session-binding delivery to the shared guard and propagates typed refusal data.
+- `packages/coding-agent/src/modes/rpc/session-held.ts`: guards every command except an explicit read/control allowlist, before acknowledgment or binding delivery, using the current runtime or authoritative worker snapshot. Checks fresh leases at both current and target paths, resolving daemon identities only when a foreign-looking lease exists and at most once per command, including the open publication recheck. Allows extension-UI answers and progress to finish an admitted turn.
+- Holder identity validation reads procfs without spawning on Linux. Other platforms take one lazy table snapshot (1 s on macOS, 5 s on Windows) and use the existing per-pid probe only on snapshot failure or missing identities. Distinct PID observations are cached across current, target and publication checks, then discarded; fresh leases and PID liveness are checked at every boundary.
+- Unknown observed or claimed start times never establish daemon-family membership. The parser and 3 s identity tolerance are shared with terminal leases through the existing daemon process-reader leaf, preserving the supervisor module budget.
+- Stored Korean lstart timestamps and the Japanese weekday/month-day lstart format are parsed in the same local timezone as C-locale lstart. A parsed mismatch proves PID reuse, so a stale legacy record no longer blocks replacement and never authorizes a signal to the unrelated process.
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts`: a truly unparseable live legacy identity remains unknown and refuses retirement. Both ensure and stop emit `legacy_host_identity_unknown` to stderr with the fixed record kind and PID, without copying the stored value or adding full paths.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts` and `packages/coding-agent/src/modes/rpc/host-reservations.ts`: unprovable live generation pidfiles and unknown claims preserved for liveness emit the same event with record kinds `host.pid` and `session-path-claim`. The existing `host-supervisor-log.ts` writer deduplicates all three kinds once per (record, PID) per process, without writing a persistent marker or changing refusal authority.
+- Cached identity comparisons keep the supervisor import graph unchanged. Worker terminal failure records wait for bounded claim release and registry removal, just as successful close records do.
+- A refused racing attach detaches only the attachment it added; it does not close an existing retained session or abort its admitted work. A refused newly created session is still closed.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts` and `packages/coding-agent/src/modes/rpc/session-registry.ts`: derive live same-daemon PID identities from endpoint claims and generation child records. Reuse command-scoped OS start observations from lease validation, deduplicate candidates and never probe this host's PID. The publication recheck rereads leases and checks liveness, reusing only PID start observations within that command; no identity cache survives into the next command. The holder guard excludes matching identities so legacy `session_path_in_use` retries and superseded-claim reclamation remain authoritative.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`, `packages/coding-agent/src/modes/rpc/worker-session-claims.ts` and `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: share endpoint reservations across runtime selections; claims precede worker write grants, follow file switches and become detached only once retained work settles. Native exit releases all claims within the close grace before freeing the entry.
+- `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: adds `session_held` to `RpcSessionRegistryError`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: declares `RPC_ERROR_SESSION_HELD` and includes it in `RpcErrorCode`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: documents the typed holder refusal and its safe data shape.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: declare and advertise the host capability `session_held` from the shared router's inventory in both runtimes.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: prevents classic client flags from advertising `session_held`, because that binding does not run the shared holder guard.
+
+### Why
+
+Host reservations omit CLI holders. Fresh lease checks clear naturally after exit and exclude this host's own worker-thread PID and its live daemon family. Already-admitted turns finish and persist their results if a holder arrives mid-turn; new writing RPCs are refused. SessionManager's append API is synchronous, whereas fresh PID/start-time checks are asynchronous; turning every append into asynchronous admission would change that SDK contract and risk losing results of already-executed tools.
+
+The conservative trade-off applies only to genuinely unknown formats: if such a legacy record's PID has been reused by an unrelated live process, retirement stays refused until that PID exits or the identity is established. This prevents a second writer and an unproven signal. The refusal is logged, creates no persistent marker, and rereads the record and process on every caller restart; after PID exit it is absent rather than stuck. Known ko/ja formats no longer take this degraded path.
+
+### Why an extension could not handle it
+
+Open admission and host routing run outside the session's extension lifecycle.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: open and session dispatch. `packages/coding-agent/src/modes/rpc/session-registry-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts`: typed error lists. `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: error-code comment. `packages/coding-agent/src/modes/rpc/connection-handler.ts`: classic protocol capabilities. The reservation, worker, capability and admission helpers are fork-only.
+
+## 2026-10-08 - open_session runs on the model it names, or fails (senpi#2906)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/open-session-model.ts` (new) and `session-registry.ts`: `openSession` fails with `open_failed: model_unavailable: <reason>` (`errorData { reason, requestedModel }`) when the open named a model and the runtime reports the `model_unresolved` diagnostic. The failure happens before the entry is marked open, so the existing rollback disposes the runtime and releases the reservation.
+- `session-command-router.ts`: `open_session` with `provider` but no `modelId` (or the reverse) is `invalid_launch_profile`, because a half-named model used to be dropped silently. A worker-relayed refusal that already reads `open_failed: ...` keeps one prefix.
+- `worker-session-registry.ts`: the failure-callback relay keeps one `open_failed` prefix too (defensive; the real worker reports this refusal as the commit result).
+
+### Why
+
+An open that named a model the host could not resolve ran on the default model and reported success, so a caller that pinned a model got work from another one (code-yeongyu/oh-my-openagent#9722).
+
+### Why an extension could not handle it
+
+The RPC session registry and command router are core host code; extensions load inside the session the open creates.
+
+### Expected merge conflict zones
+
+- `SessionRegistry.openSession` between runtime creation and `entry.state = "open"`; the launch-profile validation block in `SessionCommandRouter`'s `open_session` case; `code()`.
+
+## 2026-10-08 - Moved-path open: one shared step and the same typed refusal from a worker (senpi#2898 re-review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry-moved-path.ts`: `resolveMovedProfile` no longer re-validates (a resolved path is always absolute); `session-worker.ts` uses it too.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`: `typedWorkerRefusal` rebuilds a worker's `open_failed: <reason>` text as `RpcSessionRegistryError("open_failed", <reason>)`.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: `prepare` failures pass through `typedWorkerRefusal`, so the wire answer matches the in-process registry instead of `open_failed: open_failed: ...`.
+
+### Why
+
+A worker host answered a missing moved session file with a doubled code; the re-validation was unreachable code.
+
+### Why an extension could not handle it
+
+Session open is host-registry behavior that runs before any extension of the session exists.
+
+### Expected merge conflict zones
+
+- LOW: the `worker.prepare` call in `WorkerSessionRegistry.openSession`; the `prepare` case of `session-worker.ts`.
+
+## 2026-10-08 - open_session re-validates moved paths and refuses a moved file that is gone (senpi#2898 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry-moved-path.ts` (new): `resolveMovedProfile` resolves `cwd` and `sessionPath`, validates the result like the request (absolute paths), and fails `open_failed` naming the new path when the moved session file does not exist, instead of creating a fresh session there.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: `openSession` calls `resolveMovedProfile` after validating the request and before the durable-id scan and the reservation.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: `prepare` resolves the requested `cwd` as well, refuses a non-absolute resolved session path, and refuses a moved session file that is gone the same way.
+
+### Why
+
+A breadcrumb-derived path must never reach the session unvalidated, and a missing moved file is an error the client must see, not a silent new session.
+
+### Why an extension could not handle it
+
+Session open is host-registry behavior that runs before any extension of the session exists.
+
+### Expected merge conflict zones
+
+- LOW: one call at the head of `RpcSessionRegistry.openSession`; the `prepare` case of `session-worker.ts`.
+
+## 2026-10-08 - open_session resolves paths the OmO desktop moved; host capability moved_path_guard (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: `openSession` maps `cwd` and `sessionPath` through `resolveMovedPath` (builtin `moved-path-guard`) after validation and before the durable-id scan, the path reservation and the cross-generation claim, so an old spelling of a moved session file is the same reservation as its new one and the session runs in the moved working directory.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: the worker's `prepare` resolves `sessionPath` the same way before canonicalizing it, so the key the host reserves is the moved file's. The host loop still never inspects caller paths; the in-worker registry resolves `cwd`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: new host capability `MOVED_PATH_GUARD_CAPABILITY = "moved_path_guard"`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts` (new): `multiSessionHostCapabilities` owns the multi-session host's `get_protocol_info` capability list, in the same wire order, now including `moved_path_guard`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `get_protocol_info` takes its capabilities from `multiSessionHostCapabilities` (the list moved out of the 790-line router unchanged).
+
+### Why
+
+The OmO desktop moves its data home (omo-desktop-app#1829) and leaves `omo-desktop-moved.json` at the old root. A thread or CLI resume that still names the old session file or worktree must open the new ones without the session file being rewritten, and an old-path open must never start a second writer on a file already open under its new path. The desktop resumes a moved thread only on a host that advertises the capability.
+
+### Why an extension could not handle it
+
+Session reservation, the holder claim and the worker's reservation key are host-registry behavior that runs before any extension of the session exists.
+
+### Expected merge conflict zones
+
+- LOW: the head of `RpcSessionRegistry.openSession`; the `prepare` case of `session-worker.ts`; the capability set in `SessionCommandRouter.dispatch`.
+
+## 2026-10-07 - A resent attach repairs a session whose live preset drifted (senpi#2842)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry-attach.ts` and `worker-session-registry.ts`: an attach that names a `permissionPreset` applies it to the live session (in-process) or sends it to the worker even when the entry's recorded profile already names it.
+
+### Why
+
+The recorded profile is not the live session. When the two diverged (an attach lost to a rebuild before senpi#2842), every resend of the same attach was skipped as already applied, so nothing could repair the session. Applying the preset is idempotent, and only the session (in the worker's case, only the worker) sees its live flag.
+
+### Why an extension could not handle it
+
+Attach handling belongs to the host registries.
+
+### Expected merge conflict zones
+
+- LOW: the `permissionPreset` block of `attachToOpenSession` and of `WorkerSessionRegistry.attach`.
+
+## 2026-10-07 - A slow first prompt no longer loses its session, and a late reply into a closed session is dropped (senpi#2871)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: a session-routed `prompt` is acknowledged with the existing `queued` record (`for_request` = the prompt's request id) the moment the host receives it, before its preflight runs on the session's loop.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `rpc-request-deadline.ts`: a prompt's acknowledgement extends its wait to `PROMPT_AFTER_QUEUED_DEADLINE_MS` (5 min), failing with "prompt was received by the host but not accepted within 5 minutes". A prompt the host never acknowledged still fails at `REQUEST_DEADLINE_MS`; compaction still extends it as before.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: a record written for a session whose provider scope has closed is dropped, with one stderr line naming the session, instead of throwing `Provider scope is closed`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `queued` record's doc names its second use.
+
+### Why
+
+On a long-lived shared host whose loop was starved (stalls of 1-42 s), a new child's first prompt waited longer than the client's 30 s request deadline. The client gave up and the child's session was discarded. The host then answered into the closed scope, and the throw ("Provider scope is closed", from an unawaited prompt) repeated on every such spawn until the host was restarted.
+
+### Why an extension could not handle it
+
+The request deadline is enforced by the RPC client, and the session sink is bound inside the multi-session host.
+
+### Expected merge conflict zones
+
+- The deadline map in `rpc-client.ts` `send()`.
+- The session dispatch tail of `SessionCommandRouter.dispatch`.
+- The sink in `createRpcSessionBinding`.
+
+## 2026-10-06 - `interrupt` on a host session; model data shared with the terminal endpoint (oh-my-openagent#9660)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`:
+  - a new `interrupt { turnId? }` command stops the running turn and answers `{ interrupted, turnId? }` once the turn settled;
+  - `get_available_models` and the session-scope thinking-level refusal use `session-control-actions-data.ts` (new), which the terminal control endpoint uses too.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `interrupt` command and its response.
+
+### Why
+
+- `thread_interrupt` sent `interrupt`, which no endpoint implemented, so it could never report `interrupted` with a turn id. A host and a terminal now answer the same shapes.
+
+### Why an extension could not handle it
+
+- The RPC command switch and its wire types belong to the connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `get_available_models` case, the turn-scope `set_thinking_level` refusal, and the new `interrupt` case in `connection-handler.ts`; the command and response unions in `rpc-types.ts`.
+
+## 2026-10-06 - Settle cross-generation reservation removal before close (#2729)
+
+### What changed
+
+- `host-reservations.ts`: attachment publications are ordered per path; release waits for those writes and the real claim-file removal.
+- `session-registry.ts`: teardown and failed-open cleanup await that release before dropping the local reservation.
+- `session-teardown.ts`: close completion waits for reservation release before removing the entry.
+- `session-teardown.ts` `releaseWithinGrace`: that wait is bounded by `closeGraceMs`. A claim removal that rejects is reported; one that never settles (a wedged mount) is reported after the grace window and the close still completes. Failed-open rollback releases through the same bounded path (independent review MEDIUM).
+
+### Why
+
+A successor reopening after close completion could still encounter the predecessor's attached claim, because its deletion was fire-and-forget. An already-started attachment rename could also overwrite the successor's new claim after removal.
+
+### Why an extension could not handle it
+
+Reservation ownership and close completion are RPC host lifecycle responsibilities.
+
+### Expected merge conflict zones
+
+Reservation release, registry rollback and session teardown.
+
+## 2026-10-05 - Refresh model availability after another session changes credentials (senpi#2769)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_available_models` awaits `ModelRuntime.getAvailable()` instead of reading the synchronous compatibility snapshot.
+- `test/suite/rpc-model-availability.test.ts`: file-backed credential additions and removals are reflected by the existing RPC session.
+- `docs/rpc.md`: documents per-request credential availability refresh.
+
+### Why
+
+A session that had already cached availability kept returning its old model list after another session saved or removed credentials. This left the desktop picker empty despite a connected provider.
+
+### Why an extension could not handle it
+
+The RPC handler owns this model-list response; extensions cannot replace the command's availability read.
+
+### Expected merge conflict zones
+
+- The `get_available_models` case in `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+
+## 2026-10-05 - `set_retry_fallback` for a single-session rpc process (omo#9582)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `set_retry_fallback { retryFallback: SessionRetryFallbackProfile }` and its response.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `RpcConnectionOptions.retryFallbackCommand`. When set, the handler advertises `retry_fallback_command` in `get_protocol_info` and accepts `set_retry_fallback`: it validates with `sessionRetryFallbackError` (the `open_session.retryFallback` rules), refuses once the connection has asked for a turn (`turnRequested`, set by `prompt`, `steer`, `follow_up`, `continue_from_leaf` and a `send_custom_message` with `triggerTurn`) while any turn streams, or once the session holds turn history (any message other than an extension's `custom` context message), so a launch-time setting never changes under a turn or retry in flight while a fresh child whose components added context on `session_start` still accepts it, and calls `runtimeHost.setRetryFallback`. Without the option, as on a host's session connections, the command is refused and the capability is not advertised.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the single-session stdio handler passes `retryFallbackCommand: true`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.setRetryFallback(profile)`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `RETRY_FALLBACK_COMMAND_CAPABILITY`.
+
+### Why
+
+- omo's task children that run as their own process (`task.process_runner: "child-process"`, and every child on win32) could not carry their category's fallback chain, so a usage limit after a tool call ended them. An RPC command reaches only that process: an environment variable would leak into everything its tools spawn (Bun does not unsetenv), and argv has a command-line length limit on Windows and shows in a process listing.
+
+### Why an extension could not handle it
+
+- Extensions cannot register RPC protocol commands or capabilities, and the connection handler's per-connection options are set by the mode that owns the transport.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts`: `RpcConnectionOptions`, the `get_protocol_info` capability list, and the retry command block after `abort_retry`.
+- `rpc-types.ts`: the retry command and response unions.
+- `rpc-mode.ts`: the `createRpcConnectionHandler` call.
+
+## 2026-10-04 - A handoff replaces an idle host no layout-2 record proves (senpi#2701)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: when no layout-2 registration proves the owner, `handoffHostLocked` hands the decision to `handoffUnregisteredHost` instead of refusing `unknown_owner`. `HandoffRefusal` gains `legacy_host`.
+- `packages/coding-agent/src/modes/rpc/host-handoff-unregistered.ts` (new): counts the running host's sessions (`list_sessions` with workers) over a connection it keeps open. Any session, or no answer, is a refusal: `legacy_host` with the existing pid/socket/`host stop --drain` detail when a flat pre-layout-2 record proves the process, `unknown_owner` with the session count otherwise. With 0 sessions the successor takes the socket; a proven legacy process is then sent the DRAIN only when a recount over the held connection still finds 0 (a session opened between the count and the swap keeps it unsignalled). Without a provable owner nothing is signalled - the predecessor drains itself on losing the public entry (`host-supersession.ts`) - and one stderr warning names the socket, its instance and engine.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `startSuccessor`'s `owner` is just the pid to drain and may be `undefined` (no signal); an optional `drainGate` decides whether the drain is sent once the successor owns the socket.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `HANDOFF_LOCK_HOLD_MS` adds the two session counts (`SESSION_COUNT_TIMEOUT_MS` each), so `ENSURE_LOCK_WAIT_MS`, `HANDOFF_LOCK_WAIT_MS` and `BEGIN_HANDOVER_TIMEOUT_MS` keep covering the longest holder.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: `holdSessionCount` (a count plus `recount` over the same connection); `probeSessionCount` shares its parsing.
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts`: `busyLegacyHostDetail` and `describeSessions` export the refusal wording `judgeLegacyHost` already used.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: a refused handoff's JSON `detail` is the refusal's own detail when it has one (it was always the reason).
+- `docs/rpc.md` (the handoff guards and the daemon directory section), the I1 carve-out in `src/modes/rpc/AGENTS.md`, and `test/suite/regressions/2701-same-socket-unregistered-host-handoff.test.ts` (real supervisors on the client's own socket: idle legacy replaced, idle unprovable replaced unsignalled with the warning, busy legacy and busy unprovable refused untouched, a session opened in the count-to-swap window parked by the self-drain and reopened on the successor).
+
+### Why
+
+senpi#2701: after an upgrade the old host keeps the very socket the updated client uses. An ensure there answers `reuse` (compatible protocol), so #2423's retire path never runs, and the handoff the desktop asks for on an engine mismatch refused `unknown_owner`; the first turn could not start until somebody ran `host stop --drain` by hand.
+
+### Why an extension could not handle it
+
+The handoff's owner proof, the successor start and the drain signal are host lifecycle internals behind the `senpi host` CLI; no extension surface reaches the ensure lock or the generation records.
+
+### Expected merge conflict zones
+
+- Fork-only files. `startSuccessor`'s context type and its drain line in `host-successor.ts` (senpi#2698 edits the registration objects in the same function); the `HandoffRefusal` union; `handoffOutcome` in `host-runner.ts`.
+
+## 2026-10-03 - A session's own fallback chain on open_session (omo#9512)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-client.ts`: `open_session.retryFallback?: { modelFallback, fallbackChains }`.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `sessionRetryFallbackError` refuses a malformed profile (missing `modelFallback`, non-string or empty selectors, selectors over 512 characters, more than 32 chains or 32 entries) with `invalid_launch_profile`; `test/suite/rpc-open-session-retry-fallback.test.ts` pins both sides of each limit and that an attach keeps the policy the session was created with.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: validates the field, passes it into the launch profile, and advertises `retry_fallback_profile` (`custom-capability.ts`).
+- `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: `frozenProfile` deep-freezes the profile's chains.
+
+### Why
+
+- A task child opened on a shared host had no way to receive its own fallback chain: the extension-side setters (`ctx.sessionSettings.setFallbackChain`) write the host's global settings file, which would leak one child's chain to every session and into the user's settings. The chain now travels with the session's launch profile.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-client.ts`, `rpc-input-validation.ts`, `session-command-router.ts`, `custom-capability.ts`, `session-registry-types.ts`: the field must be accepted, validated and advertised by the host before the session or any of its extensions exists, and the only extension-reachable settings setters persist to the host's global file.
+
+### Expected merge conflict zones
+
+- LOW: the `open_session` field list in `rpc-types.ts` and the capability list in `session-command-router.ts`.
+
+## 2026-10-04 - A generation record names its own build (#2698)
+
+### What changed
+
+- `host-daemon-registration.ts`: `HostRegistration` carries the `build` (engine version text and ordinal) of the process the record names, and `writeGenerationRecord` stamps that instead of `engineBuildIdentity()` of the writing process. With no `build` the record claims no engine version.
+- `host-successor.ts` `startSuccessor`: the record written at spawn (kept so `host gc` sees a successor that has not registered itself yet) carries no build; the record written once the successor owns the socket carries the `engineVersion` / `engineOrdinal` the successor reported on that socket.
+- `host-ensure-start.ts` and `interactive/session-control-registry.ts`: their own registrations pass `engineBuildIdentity()`, unchanged in effect.
+
+### Why
+
+- A handoff to a different build (an older desktop runtime taking over a newer idle host, or the reverse) recorded the new generation with the build of the process that ran the handoff, so `host status` `generations[]` showed the wrong engine version for exactly the case that list exists for.
+
+### Why an extension could not handle it
+
+- The record is written by the host lifecycle itself; no extension sees it.
+
+### Expected merge conflict zones
+
+- `host-successor.ts` (`startSuccessor`) and `host-daemon-registration.ts` (`HostRegistration`, `writeGenerationRecord`).
+
+## 2026-10-03 - `continue_from_leaf` command and model prefill capability (senpi#1930)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `{ type: "continue_from_leaf" }` and its response. `get_available_models` rows gain `supportsAssistantPrefill: boolean`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: handles `continue_from_leaf` through `session.continueFromLeaf()`, refusing with `errorCode` `streaming`, `nothing_to_continue`, or `leaf_not_assistant`. Each `get_available_models` row reports `modelSupportsAssistantPrefill(model, { thinkingEnabled })` for the session's current thinking level. Classic `get_protocol_info` advertises `continue_from_leaf`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the multi-session `get_protocol_info` advertises `continue_from_leaf`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `CONTINUE_FROM_LEAF_CAPABILITY`.
+- `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: `continue_from_leaf` is new model work for the idle-handover gate.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `continueFromLeaf()`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: #1930. The desktop's "edit an answer, then Retry" needs a promptless turn it can detect by capability. The prefill flag lets a client switch to true prefill per model once a live probe proves a model supports it; today it is false everywhere.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`: commands and `get_protocol_info` capabilities are owned by the RPC dispatch, not the extension API.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the command union beside `send_custom_message` and the `get_available_models` response.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `send_custom_message` case neighbourhood and the `get_protocol_info` capability list.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the capability set.
+
+## 2026-10-03 - A refused close_session rejects instead of reporting a confirmed close (senpi#2572)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `closeSession` passes the `close_session` response through `getData`, like `openSession`. A response with `success: false` rejects with `RpcCommandError` carrying the host's error text and code, and the client keeps its session handle. A gone transport is still treated as closed, and a successful close behaves as before.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the response was never checked, so a host that refused the close (for example `unknown_session` for a handle this connection never attached to) was indistinguishable from a confirmed close. Callers that only finish a cancellation or delete a record once the close is confirmed could leave a running session with nothing pointing at it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the client's request/response handling runs in the embedder's process, outside any agent extension runtime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the `send` call in `closeSession`.
+
+## 2026-10-03 - Per-session memory split on the host pressure record (senpi#1960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` gains optional `main` (`{ heapBytes }`, the main-thread heap) and `kernels` (`RpcHostKernelMemory[]`: every live kernel's `sessionId`, `language`, `liveBytes` and `measure`), the shape the host reports on the pressure event and the session listing.
+
+### Why
+
+- A shared host's memory pressure says which session's kernel holds the memory, not just the process total.
+
+### Why an extension could not handle it
+
+- The RPC host's event and listing types are core protocol.
+
+### Expected merge conflict zones
+
+- LOW: `RpcHostMemoryPressureEvent` in `rpc-types.ts`.
+
+## 2026-10-03 - Advertise the auto permission preset
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `get_protocol_info` advertises `permission_preset_auto` from the permission-system extension, next to `permission_preset_accept_edits`.
+
+### Why
+
+- A client must only send `permissionPreset: "auto"` to a host that knows it.
+
+## 2026-10-03 - Expose held model switches through RPC session state
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: every `RpcSessionState` projection now includes
+  `pendingModelSwitch`, either the held model's `{ provider, id }` or `null`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: declares the always-present, nullable wire field.
+- `packages/coding-agent/docs/rpc.md` and
+  `packages/coding-agent/test/suite/regressions/1873-deferred-model-switch.test.ts`: document and cover the
+  null-versus-held contract through the real compaction admission path.
+
+### Why
+
+RPC clients could see the old active model after `set_model` but could not tell whether the requested model was held
+for compaction or replaced by a later selection. `null` distinguishes no hold on a host that supports this field from
+an older host that omits it.
+
+### Why an extension could not handle it
+
+`RpcSessionState` is the fixed transport projection shared by RPC, worker snapshots, and the TUI control endpoint;
+extensions cannot add fields to that wire contract.
+
+### Expected merge conflict zones
+
+- LOW: `RpcSessionState` in `rpc-types.ts` and the state literal in `rpc-session-state.ts`.
+
+## 2026-09-30 - Do not replay eval callers when spawning RPC hosts
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-exec-argv.ts`: shared `rpcHostExecArgv` removes eval/print expressions, input-type, and interactive mode while preserving runtime options and order. Under Bun it also removes every other `-e…`/`-p…` token (Bun reads `-eCODE`, `-e=CODE`, `-pCODE` and even `-expose-gc` as glued code) and always drops the token after `-e`/`--eval`/`-p`/`--print`/`-pe`; under Node, single-dash V8 options such as `-expose-gc` are kept.
+- `packages/coding-agent/src/modes/rpc/host-launch.ts`: both non-compiled supervisor routes use the filtered arguments.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the default non-compiled host child uses the same filter; explicit child commands and compiled launches are unchanged.
+- `test/suite/rpc-host-exec-argv.test.ts` covers argument forms and bounded real Node children; `docs/rpc.md` documents embedding from eval callers.
+
+### Why
+
+An embedding caller launched with `node -e` or `bun -e` (including Bun's glued `bun -eCODE` / `bun -pCODE`) passes its own code in `process.execArgv`. Copying it before the host script executes the caller again, potentially spawning hosts recursively. `--input-type` also prevents a script entry from running.
+
+### Why an extension could not handle it
+
+The launch commands in `packages/coding-agent/src/modes/rpc/host-launch.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` are constructed before extensions load. `packages/coding-agent/src/modes/rpc/host-exec-argv.ts` centralizes that process-launch policy.
+
+### Expected merge conflict zones
+
+- `defaultHostLaunch` in `packages/coding-agent/src/modes/rpc/host-launch.ts` and `resolveHostChildLaunch` in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`.
+- `packages/coding-agent/src/modes/rpc/host-exec-argv.ts` is a new fork-only module.
+## 2026-10-02 - A taken-over generation leaves the successor's registration alone (senpi#2536)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` takes `superseded`; a superseded generation removes only its own generation directory and never reads or removes the pointer or `settings.json`.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor records a `replaced` supersession loss and releases as superseded on shutdown. An `absent` loss, an idle exit and a drain-stop release exactly as before.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: test-only `_test.beforeRegistration` hook between the successor's answer and the pointer move.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: a predecessor that noticed the successor's rename before the handoff moved the pointer read "the pointer is mine" and removed it and `settings.json` (already the successor's). Landing just after the handoff's pointer move, that removal left the successor serving with no registration, and an ensure reused it reporting `pid: 0`. The check-then-remove crosses processes and cannot be made atomic, so the replaced generation must not touch state that belongs to its replacer (I3).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the supervisor's shutdown and the handoff's registration run in the host process lifecycle, before and outside any extension runtime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` signature and its early return.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the drain state declarations, the supersession watch callback and `performShutdown`'s release call.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the `_test` options and the line before `writeHostRegistration`.
+
+## 2026-10-02 - Host stops are attributable, and a stalled host is waited for instead of replaced or killed
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-stop-intent.ts` (new): every engine-sent host signal writes `generations/<instanceId>/stop-intent.json` `{ sender, chain?, targetPid, reason, signal, at }` into the TARGET generation's directory first (write-rename, 0600, 120 s staleness). The supervisor layers its own step over an outer intent (`chain`, `"<outer> -> <own>"`), never overwriting it. A drain writes nothing.
+- `packages/coding-agent/src/modes/rpc/host-child-exit.ts`, `host-crash-record.ts`: the child's end is a TERMINAL record (`kind: "rpc-host"`, `generation`, `detection: supervisor | external | engine_stop`, `sender`, `chain`, `reason`, `stopIntent`, `stall`), at most one per generation under `crashes.lock`; the supervisor records it ALSO while shutting down. A caller that SIGKILLs a supervisor (`host-ensure-stop.ts`, `host-ensure-start.ts`, `host-successor.ts`) writes the record itself, BEFORE it releases the registration. `host-watchdog.ts` writes a `kind: "rpc-host-watchdog"` line when the supervisor vanishes. `isHostCrash` keeps `host status` counting deaths only.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`, `host-daemon-registration.ts`: `host stop` drops the pointer and boot settings and leaves the generation directory to the supervisor it signalled (`releaseRegistrationPointer`); a host already gone is released as before.
+- `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts`, `host-stalled-evidence.ts` (new): a supervised host writes `host-stalled.json` for a stall past the error threshold and refreshes `host-alive.json` on healthy ticks at most once per fifth of that threshold, in its own generation directory only. `host-ensure-liveness.ts` (new): an ensure that cannot reach a registered generation refuses `host_stalled` (`host-decision.ts`) when that evidence is recent (`SENPI_RPC_STALL_REFUSAL_MS`, 120 s) and the host child is alive - on the own-writer stop path and the foreign-writer strand path.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-stall-wait.ts` (new), `host-lifecycle-shutdown.ts`: after SIGTERM and the 5 s window, a stalled child is waited for in 5 s slices up to `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS` (60 s), reported in `stop-progress.json`; the SIGKILL reason then carries `escalated_after_stall_wait=<ms>`. `host-ensure-stop.ts` extends its own SIGTERM deadline while that report is fresh. The supervisor writes `host-child.pid`.
+- Splits by responsibility, every existing import still resolving through `host-lifecycle.ts`: `host-lifecycle-{launch,proxy,activity,drain,shutdown,scratch,stall-wait}.ts`, `host-supervisor-log.ts`, `host-cli-entry.ts`, `host-state-json.ts`; `host-daemon-paths.ts` moves its endpoint naming and generation paths to `host-endpoint-names.ts` and `host-generation-paths.ts`. `host-ensure-liveness.ts` is new; main had already split the ensure into `host-ensure-{client,start,stop,types}.ts`, which this change edits. `loop-lag-threshold.ts` holds the stall threshold, so the supervisor reads it without importing the in-host watchdog.
+
+### Why
+
+The supervisor's exit handler returned early while shutting down, so every engine-initiated stop left no record, and the record a death did leave could not name a sender: a host killed from outside, one an ensure replaced, and one that crashed all looked alike. A host whose loop was stalled - still serving its sessions - could be SIGKILLed after 5 s by its own supervisor, or stopped and replaced by an ensure that could not reach it ([#2566](https://github.com/code-yeongyu/senpi/issues/2566)).
+
+### Why an extension could not handle it
+
+The supervisor's exit path, the ensure's stop and replace decision and the daemon state layout are engine internals; no extension runs in the supervisor process or sees its signals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `host-ensure.ts`: now orchestration only; upstream edits to the moved functions land in the split modules named above.
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `HostRefusalReason`.
+
+## 2026-10-02 - Idle task hosts give their cost back (senpi#2567)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: once `ensureHost` has returned a host, it schedules the budgeted gc pass (`packages/coding-agent/src/modes/rpc/host-gc-pass.ts`, marker `packages/coding-agent/src/modes/rpc/host-gc-pass-marker.ts`) from an unref'd immediate, outside every lock, never awaited. `packages/coding-agent/src/modes/rpc/host-gc.ts` exports `gcEndpoint` so both entry points share one evidence and removal path. The ensure's start, stop, client identity and option types move to `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-stop.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-client.ts` and `packages/coding-agent/src/modes/rpc/host-ensure-types.ts`, and the tmpdir reaper to `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`; `host-ensure.ts` re-exports every name it exported before.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: the in-process registry reports its size after every open and close (`onSizeChange`); its types, the entry `switchSession` factory, the path-claim reconciliation and attach-on-open move to `packages/coding-agent/src/modes/rpc/session-registry-types.ts`, `packages/coding-agent/src/modes/rpc/session-registry-switch.ts`, `packages/coding-agent/src/modes/rpc/session-registry-claims.ts` and `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`, re-exported from `session-registry.ts`.
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`, `packages/coding-agent/src/modes/rpc/host-observers.ts`, `packages/coding-agent/src/modes/rpc/host-core-gate.ts`, `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a host that drops to zero sessions collects once (at most once a minute) and broadcasts `host_trimmed` one tick later; `startHostObservers` moves to `host-observers.ts`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-host-lifecycle-types.ts`: the host lifecycle record types move to their own module (re-exported) and gain `RpcHostTrimmedEvent`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/session-open-turns.ts`: before a session is sealed (close, park, release), the writer publishes the `agent_settled { reason: "session_closed" }` of every turn the session's records opened and did not settle; the writer also renders `host_trimmed`.
+
+### Why
+
+An idle task shard stayed resident: a session closed mid-turn left the supervisor's busy count above zero for good (its real settle is written after the seal and dropped), a host that dropped to zero sessions held its peak footprint for its whole idle window, and dead endpoint records under an agent directory were only ever reaped by an operator running `senpi host gc`.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/session-event-writer.ts` owns sealing and lifecycle delivery, `packages/coding-agent/src/modes/rpc/session-registry.ts` owns the session count, `packages/coding-agent/src/modes/rpc/host-ensure.ts` owns the ensure path, and the trim runs on the host loop (`packages/coding-agent/src/modes/rpc/multi-session-host.ts`); none of these is reachable from an extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `enqueue`, `closeSession`, `sealWithLifecycle`, `forgetSession`, `broadcastHostRecord`.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: imports, the class header, `openSession` (attach branch and `entries.set`/`delete`).
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: imports and `ensureHost`; anything that touched `startHost` or the stop helpers now lives in `host-ensure-start.ts`/`host-ensure-stop.ts`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` registry options, `runStdioHost`/`runSocketHost` observer wiring.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the host lifecycle event block, now a re-export.
+
+## 2026-10-02 - memory_report request (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/memory-report-command.ts` (new) and `connection-handler.ts`: `memory_report` writes the session's memory report and answers `{ path, heapSnapshot? }`; it fails with `memory_report_disabled` unless the host runs with `SENPI_MEMORY_REPORT=1`, and with `memory_report_failed: <reason>` when the file cannot be written.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the command and its response.
+- `packages/coding-agent/docs/rpc.md`: documents the request and the report fields.
+
+### Why
+
+- An embedder (desktop, a daemon client) needs the same on-demand report `SIGUSR2` gives a terminal user, without signalling a shared host.
+
+### Why an extension could not handle it
+
+- RPC commands are dispatched by the connection handler.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts` after `get_session_stats`; `rpc-types.ts` session command and response unions.
+
+## 2026-10-02 - Prompt acknowledgements wait through observed compaction
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: tracks session-scoped compaction events and adjusts only prompt acknowledgement deadlines. Each pending request retains its original wire session; a new lease's events cannot change older prompts' deadlines. Pending prompts and prompts submitted during observed compaction wait for their real response; matching terminal events restore the ordinary deadline. Duplicate starts and stale terminal events do not reset an operation's budget. Compactions are tracked per operation id; an unpaired start stops counting after the compaction budget, and every prompt also has a hard cap (`PROMPT_ACK_MAX_WAIT_MS`) measured from when it was sent. Transport failure retains immediate rejection and timer cleanup.
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`: derives the bounded compaction wait from the remote compaction total budget, the maximum local-summary override, and the normal response allowance.
+- `packages/coding-agent/docs/rpc.md`: documents admission waiting without synthetic success or automatic replay.
+- `packages/coding-agent/test/suite/rpc-client-compaction-deadline.test.ts`: real socket regressions for delayed admission, legacy events, stale operation IDs, ordinary deadlines, bounded waiting, disconnect cleanup, and outstanding requests across lease changes.
+
+### Why
+
+Prompt preflight can compact a large conversation before admitting the input. The fixed 30-second deadline in `packages/coding-agent/src/modes/rpc/rpc-client.ts`, budgeted by `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`, expired while that valid work was still running, even though the host could admit and execute the same request later. A caller retrying the apparent failure could duplicate the input.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/rpc-client.ts` owns client-side request correlation and timers; `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts` owns their budgets. Agent extensions cannot adjust another process's pending acknowledgement deadlines.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: pending-request callbacks, constructor event subscription, transport/session resets, and `send`.
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`: deadline constants and imports.
+
+## 2026-10-02 - Question answer provenance (senpi#2533)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `question_resolved` gains optional `resolvedBy`.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the winning connection response passes its surface into response construction and broadcasts it; timeout and cancellation do not.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: a mirrored question needs the answering surface, not just its outcome.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the connection bridge owns response admission and wire frames.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: RpcQuestionResolvedEvent.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: response construction and the sequential dialog fallback.
+
+## 2026-10-02 - Durable client message admissions (desktop#1325, senpi#1971)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: extracted prompt/steer/follow-up dispatch into the durable admission path, restores accepted queues on bind, and correlates events.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive client IDs, admission responses, and typed ordered queue metadata.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: forwards prompt and queue identity and preserves typed refusal codes.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: refuses malformed client IDs and a non-numeric `enqueueOrder` before dispatch.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: advertises `durable_client_message_id` on multi-session hosts.
+- New `client-admission-record.ts`, `client-admissions.ts`, `client-input-handler.ts`, and `client-message-events.ts` own the transcript ledger, duplicate/conflict handling, prepared queue recovery, and event correlation. The ledger skips transcript entries that do not parse as admissions, admits new deliveries only after restoring the queue, and a custom-message trigger turn does not inherit the previous client identity.
+- Protocol reference: `docs/rpc.md` ("Durable client identity"); tests `test/suite/rpc-client-message-identity.test.ts`, `test/suite/rpc-client-message-recovery.test.ts`, `test/suite/rpc-client-message-running-queue.test.ts`, `test/suite/rpc-client-message-ledger.test.ts`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` previously admitted each transport retry independently, so a lost acknowledgment could cause a second answer.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts` need identities independent of routing handles and transport request IDs.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts` bounds the persisted identity and keeps a malformed recovery order from being written into a record that would later fail to reopen.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` lets clients negotiate safe replay before using it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, and `packages/coding-agent/src/modes/rpc/session-command-router.ts` own wire admission, responses, and host capabilities outside extension control.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: prompt dispatch, session subscriptions, queue reads, protocol capabilities.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: input, response and queue types.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: prompt options and queue sends.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: input payload validation.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: capability list only; host lifecycle is unchanged.
+
+## 2026-10-02 - Runtime identity in host status and a conditional idle handover (desktop #1364, #1055)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/runtime-build-id.ts` (new): `computeRuntimeBuildId` digests the loaded runtime (flavour, platform/arch, engine build text, sorted runtime-file digests, one digest per launch-profile extension, `multi_session`/`session_runtime`) into `sha256:<64 hex>`; no absolute path, dot-entry, nested `node_modules`, `.d.ts`/`.map` or build/snapshot manifest enters it. `RUNTIME_IDENTITY_HANDOVER_CAPABILITY`.
+- `host-idle-handover.ts` (new): `HostIdleHandover`, the host-owned operation: generation check, admission gate on new work, deadline-free wait for the next safe idle point, successor start, `handover_blocked` reopening admission; a repeated `operationId` answers with the existing operation.
+- `host-handover-wire.ts` (new): `begin_handover` parse/answer, the `handover_pending` refusal, `get_protocol_info` identity fields, `isHostIdle` (drain verdicts over the registry plus in-flight requests), `performIdleHandover` (generation handoff launched from the caller's runtime with its exact daemon environment).
+- `host-core-gate.ts` (new): `HostCoreGate` between a parsed command and the router: intercepts `begin_handover`, gates new work, counts in-flight requests, adds `runtimeBuildId`/`handover` to `get_protocol_info`.
+- `host-handover-request.ts` (new): the CLI half (`idleHandoverOutcome`): target must be the CLI's own `clientRuntimeBuildId`, the socket must be served by the named generation, lost replies are reconciled against the socket.
+- `host-outcome.ts` (new): exit codes, `identityPayload` (now with `runtimeBuildId`), `refusal`, `decisionClient` moved out of `host-runner.ts`; `clientRuntimeBuildId(spec)`.
+- `host-runner.ts`: the `handoff` request takes optional idle-handover terms; `ensure`/`handoff` payloads carry `clientRuntimeBuildId`.
+- `host-handoff.ts`, `host-successor.ts`: `HandoffHostOptions.launch` (a successor launched from another runtime than this process).
+- `host-protocol-info.ts`, `host-status.ts`: `runtimeBuildId` and `handover` parsed and reported.
+- `multi-session-host.ts`: the host computes its id before serving, advertises `runtime_identity_handover` on POSIX socket hosts that have one, and routes every command through `HostCoreGate`.
+- `docs/rpc.md` ("Runtime identity and the conditional idle handover"); tests `test/rpc-runtime-build-id.test.ts`, `test/rpc-host-idle-handover.test.ts`, `test/rpc-host-idle-handover-refusals.test.ts`.
+
+### Why
+
+The desktop could not tell whether the host serving its socket ran the runtime it shipped: a host left behind by the previous app version speaks the same protocol from a replaced bundle (desktop #1364), and an operator shell can start a development engine of the same version (desktop #1055). Replacing such a host had to wait for its idle exit or end running work; it now hands over at its next idle point, exactly once per operation, and never aborts a turn for it.
+
+### Why an extension could not handle it
+
+Host identity, admission and generation handoff are core RPC host lifecycle; an extension cannot gate the host router or start a successor generation.
+
+### Expected merge conflict zones
+
+- Fork-only files. `createHostCore` and the socket host's capability list and `createHostCore` call in `multi-session-host.ts`; `identityPayload`/`refusal` moving to `host-outcome.ts` from `host-runner.ts`; the `launch` line in `startSuccessor`.
+## 2026-09-30 - An updated client retires a live pre-layout-2 host with no session (senpi#2423)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts` (new): the flat `<agentDir>/rpc-host-daemon/host.pid` of a host from before layout 2, read-only as before. `readLegacyHost` returns the record and the endpoint it describes (its stamped `socket`, else `<agentDir>/rpc/rpc.sock`). `provenLegacyOwner(paths, socket)` proves the pid + start time against the live process for that endpoint. `retireIdleLegacyHost` drains (SIGUSR1) a proven legacy host whose endpoint answers with `generation_handoff` and lists no session (`list_sessions` with workers), waits for it to exit, and otherwise returns the refusal detail: pid, endpoint, session count and `<app> host stop --drain --socket <endpoint>`.
+- `host-daemon-registration.ts`: `readLegacyHostRecord` and `legacyHostIsLive` moved into `host-legacy.ts`.
+- `host-ensure.ts`: the `legacy_host` refusal now comes from `retireIdleLegacyHost`; an idle legacy host is drained and waited out (`_test.stopTimeoutMs`, default 10 s) before the start, on any endpoint of the agent directory.
+- `host-stop.ts`: `stopHost({ drain: true })` falls back to `provenLegacyOwner` when no layout-2 owner is proven. A hard stop still needs a layout-2 owner.
+- `host-decision.ts`: `HostEnsureRefusedError` takes an optional `detail` (kept on the error and appended to its message); the `legacy_host` text no longer says the host is never signalled.
+- `host-runner.ts`: an ensure refusal's JSON carries `detail` when the error has one.
+- `docs/rpc.md` (daemon directory section) and `test/suite/regressions/2423-legacy-host-retire.test.ts` (real supervisors: drain, idle ensure, held refusal, PID-reuse and other-endpoint controls).
+
+### Why
+
+senpi#2423: a legacy host on the default socket, idle and advertising `generation_handoff`, made every ensure in the agent directory refuse `legacy_host` - including the desktop's per-thread endpoints - while `host stop --drain` answered `unknown_owner`, so no updated client could ever retire it.
+
+### Why an extension could not handle it
+
+Host ensure, stop and the daemon-directory ownership proof are core RPC host lifecycle.
+
+### Expected merge conflict zones
+
+- Fork-only files. The legacy branch of `ensureHostLocked` in `host-ensure.ts`, the drain branch of `stopHost`, the `HostEnsureRefusedError` constructor and `ensureOutcome`'s refusal in `host-runner.ts`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): shared type roots (contract wave)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: What changed: steer and follow_up responses gain optional per-input disposition (QueuedInputDisposition), matching the fork optional prompt disposition. Why: upstream per-input disposition, under the fork contract that older hosts may omit data. Why an extension could not handle it: RPC wire types are core. Expected merge conflict zones: agent-session import line, prompting response union.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the four shared type roots (plan D-24 contract wave, D-2, D-3, D-16).
+
+### Why an extension could not handle it
+
+They are the public type contracts every provider, the agent loop, extensions and RPC compile against; an extension consumes these types and cannot change them.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): rpc
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: What changed (upstream adopted): `prompt()` returns the `PromptDisposition` after acceptance; `steer()`/`followUp()` return the `QueuedInputDisposition` and throw on a failed response through `getData` (e473b5cd8b); event dispatch iterates a snapshot of the listener list so a listener unsubscribing during dispatch no longer makes later listeners miss the event (92e8d4f02a, #9990) - applied to both fork dispatch loops (`handleLine` and the fork-only `flushPendingSessionEvents` replay of events retained during `open_session`). Fork behavior preserved: `prompt()` overloads (images array or `PromptOptions` with streamingBehavior/thinkingLevel/sessionTitlePrompt/expandPromptTemplates/unknownCommandAsText), synchronous `promptDisposition`/`preflightResult` hooks in wire order, typed `UnknownCommandError` rebuild, `steer`/`followUp` recovery `{ enqueueOrder }` parameter, `appendUserMessage`/`appendSessionEntry`/`sendCustomMessage`, `queued` frames (`onQueued`), per-session event filtering and bounded pending-session buffering, socket transport and identity/windows handling (untouched). Fork deviation: a success response without a disposition (older host) resolves `"handled"` for prompt, steer and follow_up (fork degrade-to-canonical rule), where upstream types the field as required. Why an extension could not handle it: RpcClient is the public programmatic client. Expected merge conflict zones: agent-session type import, `prompt` doc + signature/body, `steer`/`followUp` signatures, `handleLine` event dispatch.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: What changed: nothing; the file is the fork's 230-line single-connection stdio entry byte-identical to OURS. Upstream's disposition hunks (e473b5cd8b: `preflightResult(disposition)` -> `success(id, "prompt", { disposition })`, steer/follow_up `success(id, cmd, { disposition })`) target the command loop the fork moved into `connection-handler.ts`, where they are ported (below). Why: the fork split the RPC command loop out of `runRpcMode` so the same handler serves the shared multi-session host and caller-owned transports; `rpc-mode.ts` owns only stdout takeover, stdin wiring, signals and exit. Why an extension could not handle it: the RPC wire loop is core mode code. Expected merge conflict zones: the whole body below the protocol doc comment (upstream still carries the monolithic command switch).
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; rpc ports upstream per-input disposition and RpcClient fixes into the fork split rpc modules with fork response semantics (plan D-15).
+
+### Why an extension could not handle it
+
+The RPC transport and host are process-boundary core, not an extension surface.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - One question-settle rule for hosts and terminal control endpoints (senpi#2407)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/extension-ui-response.ts`: new `settledQuestionStatus(answers, comment)` (non-blank comment -> `comment-submitted`, else any answer -> `answered`, else `undefined` = `question_incomplete`) and `unansweredQuestionIds(questions, answers)`.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `respond` and the unanswered list use them; behavior unchanged. The terminal control endpoint (`../interactive/session-control-commands.ts`) now uses the same two functions.
+
+### Why
+
+senpi#2407: the terminal endpoint had its own copy of the rule that never produced `comment-submitted`, so a comment-only answer reached the model empty there while the host delivered it.
+
+### Why an extension could not handle it
+
+The host's question bridge and the endpoint's command surface are core.
+
+### Expected merge conflict zones
+
+- `respond` in `connection-question-bridge.ts`.
+
+## 2026-09-30 - `open_session.promptSurface` accepts `chat` (senpi#2398)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `sessionPromptSurfaceError` accepts `chat`; any other value is refused with `invalid_launch_profile: promptSurface must be "terminal", "app" or "chat".`
+- `custom-capability.ts`: new HOST capability `PROMPT_SURFACE_CHAT_CAPABILITY = "prompt_surface_chat"`, advertised by `session-command-router.ts` in `get_protocol_info`. An older host refuses `chat` with `invalid_launch_profile`, so a gateway sends it only after seeing the capability.
+- Worker-backed sessions carry `chat` through the existing `prompt_surface` worker request (typed by `PromptSurface`).
+- `rpc-types.ts`, `rpc-client.ts`, `rpc-mode.ts` header and `docs/rpc.md` "### Prompt surface" document the value and the capability.
+- Tests: `test/suite/rpc-open-session-prompt-surface.test.ts` opens a `chat` session (no routing line, no handoff slot, feedback guidance kept), still refuses `web`, and sees `prompt_surface_chat`; `test/rpc-multi-session.test.ts` pins the capability list.
+
+### Why
+
+- A chat bridge talking to a shared host picks the chat prompt per session, and must be able to tell a host that knows `chat` from one that does not.
+
+### Why an extension could not handle it
+
+- Launch-profile validation and capability advertising happen in the RPC router before any extension binds.
+
+### Expected merge conflict zones
+
+- Fork-only files. `sessionPromptSurfaceError` in `rpc-input-validation.ts`, the capability list in `session-command-router.ts`, and the `promptSurface` docs in `rpc-types.ts`, `rpc-client.ts` and the `rpc-mode.ts` header.
+
+## 2026-09-29 - `get_auth_providers`: each login method row carries its own status
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-providers.ts`: new `authMethodStatus(modelRegistry, info, providerHasApiKeyRow)`. A stored credential counts only for the row of its own type (`oauth` or `api_key`); every non-stored source (runtime `--api-key`, environment, models.json, fallback) is a key and counts for the provider's `api_key` row, or for its only row when it has no `api_key` row.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_auth_providers` builds each row's `status` with `authMethodStatus` instead of the provider-level `getProviderAuthStatus(id)`.
+- `login_api_key` and `logout` await `modelRegistry.refresh()` before answering, so a client that re-reads `get_auth_providers` on the response sees the new state (it used to get the pre-change snapshot).
+- Tests: `test/suite/rpc-auth-and-connection-handler.test.ts` "gives each auth method row of a provider its own status" (stored OAuth lights only the OAuth row; right after the `login_api_key` / `logout` response, with no extra refresh, the API-key row reads connected / disconnected). Real-CLI QA: on `main`, a stored OAuth credential reported both rows connected, and the status read right after `login_api_key` was stale.
+
+### Why
+
+A provider listed with both an OAuth and an API-key login row got the same provider-level status on both, so a stored Claude subscription login also read as a connected API key in RPC clients (#2384; omo-desktop-app#1315, DESKTOP-30). Clients must not read `auth.json` to tell the two apart.
+
+### Why an extension could not handle it
+
+`get_auth_providers` is answered by the RPC router from the registry; no extension hook shapes its rows.
+
+### Expected merge conflict zones
+
+- the `get_auth_providers` case in `connection-handler.ts`; the tail of `core/auth-providers.ts`.
+
+## 2026-09-30 - A bundled host re-enters its own bundled CLI (#2409)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: in a bundled build, `resolveCliMainPath()` returns the package's declared bin (the bundle's `cli.js` beside the chunk) before trying `../../cli-main.js`; it takes the module path and layout as parameters for tests.
+
+### Why
+
+- Bundled, `host-lifecycle` is a chunk under `dist/bundle/chunks/`, so `../../cli-main.js` reached `dist/cli-main.js`, the unbundled tree the package also ships. From a runtime snapshot that was a link into the install, so the supervisor and every host child ran install code an update replaces, and never claimed the snapshot (#2409). Through the bundle's `cli.js` they run the snapshot's copy and claim it the way a session does.
+
+### Why an extension could not handle it
+
+- The supervisor and host child spawn commands are built by the RPC host lifecycle, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `resolveCliMainPath()` in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`.
+
+## 2026-09-29 - `open_session.promptSurface`: per-session prompt surface (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `open_session` gains `promptSurface?: PromptSurface` (`"terminal" | "app"`).
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `sessionPromptSurfaceError`; `session-command-router.ts` refuses any other value with `invalid_launch_profile: promptSurface must be "terminal" or "app".` (same code as a bad `auto_title`), puts a valid value on the launch profile, and advertises the host capability `prompt_surface` in `get_protocol_info`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `PROMPT_SURFACE_CAPABILITY = "prompt_surface"`.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: an attach whose profile names a different `promptSurface` refreezes the entry profile with it and calls `runtime.setPromptSurface`; an attach without the field keeps the session's surface.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: same rule for worker-backed sessions (`attach` is now async and awaits `SessionWorkerClient.setPromptSurface`); `session-worker-client.ts` / `session-worker-protocol.ts` / `session-worker.ts`: new `prompt_surface` host-to-worker request answered with `result`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `openSession` accepts `promptSurface`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: header table and notes document the field, its capability and its error detail; `docs/rpc.md` gains a `### Prompt surface` section.
+- Tests: `test/suite/rpc-open-session-prompt-surface.test.ts` (new) on one real in-process shared host (`contextHost`): two sessions opened with different surfaces get different prompts; an omitted field follows `SENPI_PROMPT_SURFACE`; a later attach with another surface rebuilds the live prompt and an attach without it keeps it; `promptSurface: "web"` is refused; `prompt_surface` is advertised. `test/suite/rpc-session-context-support.ts` exposes the session's system prompt and the new open field; the two worker-message fakes answer `prompt_surface` like `bind`/`command`.
+
+### Why
+
+- The OmO Desktop opens and creates every session through `open_session` on a shared host that may also serve terminal clients; the process env alone could not give them different prompts. Hosts advertise the capability so the Desktop sends the field only where it is honored, the way it gates `durableSessionId`.
+
+### Why an extension could not handle it
+
+- The launch profile is parsed and frozen by the router and registry before any session exists.
+
+### Expected merge conflict zones
+
+- The `open_session` validation block and the capability set in `session-command-router.ts`; the attach branches of both registries; the `HostToSessionWorker` union.
+
+## 2026-09-29 - `release_session` awaits the header write of a never-written session
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: `releaseSession` awaits `sessionManager.persistHeaderNow()` before the final check (after an interrupt's settle), inside the `try` that answers `release_failed`, when the session has no file yet (`isTranscriptFlushed()` is false); a written session awaits nothing, so its claim stays in the same turn as the release request and a prompt routed after it is still refused (for a never-written session, a prompt routed right after it either lands whole before `session_released` or makes the release answer `turn_active`; documented in `docs/rpc.md`); `claimAndRelease` no longer starts the header write unawaited. A never-written session whose file cannot be created is answered `release_failed { detail }` and stays hosted with admission reopened; its `session_released` entry reaches disk on success. The final check, `externalAdmission.close()` and the close claim stay one synchronous step.
+- Tests: `test/rpc-release-header-write-failure.test.ts` (new): a real `--mode rpc --listen` host process, a session opened on a path nothing wrote, its directory made read-only: `release_failed` with `EACCES`, no file, the host alive and answering `list_sessions`, and no unhandled-rejection line on its stderr.
+
+### Why
+
+The unawaited header write made a release of a never-written session answer `released: true` with no file on disk, and its rejection reached no caller: in a real `--mode rpc` host that unhandled rejection ended the process (todo-25 merge review, senpi#2328).
+
+### Why an extension could not handle it
+
+The release decision and its answer are the router's.
+
+### Expected merge conflict zones
+
+- `releaseSession` / `claimAndRelease` in `session-release.ts`.
+
+## 2026-09-29 - `extension_ui_response`: every settled answer is replied to under the frame's own `id`; `uiRequestId` names the request
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/extension-ui-response.ts` (new): `answeredUiRequestId` (the request a response answers: `uiRequestId`, else `id`) and `settleExtensionUiResponse`, which settles one response against the connection's question bridge and dialog map and returns its reply keyed by the frame `id`: `success: true` when it resolved a request, `success: false` with `question_incomplete` / `question_already_resolved` / `unknown_extension_ui_request` otherwise. An unrouted (stdio) connection still ignores a response that matches none of its requests.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `extension_ui_response` branch of `handleInputLine` delegates to `settleExtensionUiResponse` and writes its reply. Before, a resolved answer got no reply at all and a routed unmatched one was refused with no `id`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: every `RpcExtensionUIResponse` member gains optional `uiRequestId`.
+- Tests: `test/suite/rpc-extension-ui-response-reply.test.ts` (new, real in-process host): a `uiRequestId` answer to a `question` is replied to under the frame id and resolves once, a replay is `question_already_resolved` and an unknown request `unknown_extension_ui_request`, both under their frame ids; the short form (`id` = request id) on an `input` dialog resolves once and is replied to under that id.
+
+### Why
+
+senpi#2372: a client that answers on its own connection and waits for the reply (the RPC contract everywhere else) could not tell a delivered answer from a lost one on a host, and a terminal control endpoint replied to the same frame. A client that correlates by its own frame id also had no field to name the request in.
+
+### Why an extension could not handle it
+
+The reply to an inbound RPC record is the connection handler's.
+
+### Expected merge conflict zones
+
+- The `extension_ui_response` branch of `handleInputLine` in `connection-handler.ts`; `RpcExtensionUIResponse` in `rpc-types.ts`.
+
+## 2026-09-29 - `release_session`: a failed hand-over answers `release_failed` and leaves the session hosted
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: one `try/catch/finally` in `releaseSession` covers both paths from the first admission `close()` (the interrupt's, or the claim's) to the answer: a throw is answered `release_failed` with `errorData { detail, interrupted?, dropped? }` instead of rejecting, and every answer other than a release reopens admission. `claimAndRelease` reopens what it closed when the header or entry write throws, and writes the entry with `SessionManager.appendCustomEntry`, which keeps nothing in memory when the write fails (senpi#2369 made every append write first and commit after), so a failed write leaves no phantom entry. The interrupt's queue-taking is synchronous and happens before any await, so `dropped` survives any later throw.
+- `packages/coding-agent/src/modes/rpc/session-release-interrupt.ts` (new): `takeQueuedInput`, `abortAndSettle`, `RELEASE_SETTLE_MS`, `ReleaseDropped` - moved out of `session-release.ts` (formerly `interruptAndSettle`).
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RPC_ERROR_RELEASE_FAILED` (`release_failed`).
+- Tests: `test/suite/rpc-release-session-failure.test.ts` (new, real host, the `session_released` write made to throw EACCES): plain release answers `release_failed`, no entry in memory, a later delivery is admitted and written chained to entries on disk, a retried release succeeds; after an interrupt the refusal carries `interrupted` and the dropped user text. `test/suite/rpc-release-gateway-fixture.ts` (new): the gateway extension fixture shared by the release suites.
+
+### Why
+
+Gate re-review r4 of todo 8: a write failure inside the claim step left admission closed for good on the non-interrupt path and left the release unanswered on both paths, losing the text an interrupt had taken.
+
+### Why an extension could not handle it
+
+The release decision and its answer are the router's.
+
+### Expected merge conflict zones
+
+- `releaseSession` / `claimAndRelease` in `session-release.ts`; the error-code block in `rpc-types.ts`.
+
+## 2026-09-29 - `release_session`: admission closes at the claim; `interrupt` empties the queues and reports `dropped`
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: the final busy check, `externalAdmission.close(RELEASED_ADMISSION_CLOSED)` and the close claim are one synchronous step, so a drain pass still running admits nothing into a session being torn down. `interruptAndSettle` now runs `session.clearQueue({ abortWillFollow: true })` before aborting (queued deliveries leave the ledger unwritten - the sender redelivers them - and user queued text is kept) and closes admission while it settles; every answer after the interrupt's `close()` other than a release reopens admission (`try/finally`; the still-busy, `attached`, `unknown_session` and `session_closing` refusals alike) and carries `interrupted: true` and `dropped` in `errorData`, since the queues were already emptied. The success reply always carries `dropped: { deliveries, user_messages }` (empty without `interrupt`). A refusal whose `busy` names `queued` carries `retry_with: { interrupt: true }` and `hint` (`RELEASE_QUEUED_HINT`).
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `dropped` on the `release_session` response.
+- `test/suite/rpc-release-host-support.ts` (new): a real in-process host (production router, registry, writer, binding) over real `AgentSession`s on the faux provider. `test/suite/rpc-release-session-delivery.test.ts` (new): a drain that admits in the teardown window is refused and nothing follows `session_released`; interrupt with a queued delivery releases and reports it; interrupt with queued user steer/follow-up reports both texts; an interrupted release refused `attached` (a client attached during the settle) reopens admission and reports the dropped user text; a plain `queued` refusal names `retry_with`. The rig's fake session gains `clearQueue` and `externalAdmission.close/reopen`.
+
+### Why
+
+Gate re-review r2 of todo 8: a drain pass in flight at the claim wrote a delivery, its reply and a stop-state after `session_released`; and `interrupt` never released a session holding a queued gateway delivery (`abort()` leaves the queue, so `busy: ["delivery"]` stayed forever). Queued user text dropped by an interrupt must not vanish silently, so it is handed back. Gate re-review r3: the refusal after the settle (`attached` et al.) left admission closed for the host's life and lost the cleared user text.
+
+### Why an extension could not handle it
+
+The release decision and teardown are the router's; the queues belong to `AgentSession`.
+
+### Expected merge conflict zones
+
+- `releaseSession` (the claim step) and `interruptAndSettle` in `session-release.ts`; the `release_session` response type in `rpc-types.ts`.
+
+## 2026-09-29 - `release_session` hands over only a quiet session (bash, prompt preflight, other requests)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: the busy check is no longer `isStreaming`. `busySignals` reports `turn` (run), `prompt` (a binding `prompt` call not settled - its command answers before its run starts), `delivery` (admitted, unwritten), `bash`, `compaction`, `session_work`, `activity` (the handoff predicate `isHandoffBusy`, for any source added later) and `request` (another router request for the session in flight). Busy is refused `turn_active` (turn/prompt/delivery) or `session_busy` (the rest) with `errorData { attachments, busy }`. With `interrupt`, `interruptAndSettle` aborts bash and the run (and any run a pending prompt starts meanwhile), waits up to `RELEASE_SETTLE_MS` for idle, other requests and prompts, then re-checks; only that final check and the close claim are synchronous.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the release port gains `otherRequests` (`activeRequests` minus the release), `otherRequestsSettled` (a per-session listener fired when a request settles) and `pendingPrompts` (from the binding).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` / `session-binding.ts`: the handler keeps its unsettled `prompt` calls (`pendingPrompts()`), exposed on the binding.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RPC_ERROR_SESSION_BUSY` (`session_busy`).
+- `test/suite/rpc-inprocess-host-support.ts`: the fake runtime runs a user bash (`startBash`/`finishBash`; `abortBash` records a cancelled `bashExecution` when it settles, like `executeBash`), reports admitted deliveries, and the rig can send any command and give its binding `pendingPrompts`. `test/suite/rpc-release-session-busy.test.ts` (new).
+
+### Why
+
+Gate review of todo 8: a user bash (not an agent run) passed the `isStreaming` check, and its cancelled `bashExecution` was appended after `released:true`, interleaving with the adopting writer; a `prompt` routed just before the release was still in preflight, so both callers were told success and the user message landed after `session_released`. A takeover must leave the host with nothing that can still write the file.
+
+### Why an extension could not handle it
+
+The release decision is the router's own command handling; an extension sees neither the router's in-flight requests nor the binding's prompt calls.
+
+### Expected merge conflict zones
+
+- `busySignals` / `interruptAndSettle` in `session-release.ts`; the release port literal and `otherRequestsSettled` in `session-command-router.ts`; the `prompt` case and the returned handler object in `connection-handler.ts`.
+
+## 2026-09-29 - `tui` rows in `host status --all`, lifecycle refusal of `tui` endpoints, `wake` and `release_session` on host sessions
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `probeHostStatus(options, read)` returns `{ report, answered, listing }` - the report `readHostStatus` returns (now a wrapper), the raw `get_protocol_info` answer (`undefined` when nothing answered), and every listed row.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `alive` is judged from `answered.instanceId`, never from the report's `instanceId`, which falls back to the RECORDED generation - a socket that answered without naming an instance was reported routable. Rows gain `owner` (`{ pid, cwd, session: { id, path, name } | null }` on `tui` rows, `null` on host rows); a `tui` row is still sent `get_protocol_info` and `list_sessions` only.
+- `packages/coding-agent/src/modes/rpc/host-status-rows.ts`: `HostSessionRow` gains `cwd` and `name` from the listing (additive in `session_rows`).
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts`: `endpointKindOfSocket(socket, agentDir)` - `tui` for a `t-<16hex>.sock` name or an `endpoint.json` that says so; reads disk only.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: `ensure`, `handoff` and `stop` refuse a `tui` socket with `{ action: "refuse", reason: "unsupported_endpoint_kind", socket, endpoint_kind: "tui" }` exit 3 before any probe or connection.
+- `packages/coding-agent/src/modes/rpc/host-session-control.ts` (new): `HostSessionControl`, the `ControlEndpointHost` a host session binds - a registration installs the drain on a `WakeScheduler` fed by `agent_idle`, emitted deliveries, the inbox watch and the `wake` command, and answers `registered` with the host's `host_socket` (`unsupported_mode` without one); `wake(ids)` answers the covering pass's admissions, `admitted: []` (after emitting `session_control_wake`) with no drain.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: installs a fresh `HostSessionControl` on every (re)bound session before `bindExtensions`, disposes it on rebind/dispose, and answers the session-scoped `wake { delivery_ids? }`.
+- `packages/coding-agent/src/modes/rpc/session-release.ts` (new): `releaseSession(port, command)` - `release_session { sessionId, reason: "takeover", interrupt?, force? }` refuses `invalid_release_reason`, `host_draining`, `release_unsupported` (worker runtime / no file), `attached` (`errorData.attachments`) and `turn_active`; with `interrupt` it aborts first. Then, with no await between the last check and the close claim, it writes the header if buffered, appends a `custom` `session_released` entry and runs the router's park teardown; answers `{ released: true, session_path, attachments }`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: routes `release_session` to `releaseSession` with a port over its registry, drain flag and `tearDownReleased` (the `evictIdleSession` claim-drain-finalize sequence, sealed with `writer.releaseSession`).
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `releaseSession(sessionId, sessionPath)` seals the session with `session_closed { reason: "released", sessionPath }` and no close response; `parkSession` shares the same private sealing path.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `wake` and `release_session` commands and responses, `RpcSessionClosedReason` `released`, and the error codes `turn_active`, `attached`, `invalid_release_reason`, `release_unsupported`, `host_draining`.
+- `test/suite/rpc-host-status-tui.test.ts`, `rpc-wake.test.ts`, `rpc-host-lifecycle-tui-refusal.test.ts`, `rpc-release-session.test.ts` (new); `rpc-endpoint-registry-fixtures.ts` gains `scriptedSocket`.
+
+### Why
+
+Session gateway (todo 8): the omo engine must wake a host-resident session exactly as it wakes a terminal, and `omo daemon adopt` must take a host-resident session into a local terminal now that the shared-host `attach` is gone - which needs the host to let go of the file (no second writer) and say so. Terminal endpoints share the registry with hosts, so the host operator commands must refuse them before touching them, and `status --all` must say which terminal owns which session. The routability fix closes the todo-6 review finding: the verdict must come from what the socket said.
+
+### Why an extension could not handle it
+
+The router, the per-session connection handler, the host status reader and the `senpi host` runner are the RPC host's own wire surface and CLI; an extension sees none of them, and a release has to tear down the runtime its extension instance lives in.
+
+### Expected merge conflict zones
+
+- The `close_session` / `release_session` branch at the top of `dispatch` and the new `tearDownReleased` beside `forgetSessionOwnership` in `session-command-router.ts`.
+- The control-host lines after `sessionQuestionBridges.set` in `rebindSession`, the `wake` case after `abort_branch_summary`, and the head of `dispose` in `connection-handler.ts`.
+- The head of `runHostRequest` in `host-runner.ts`; `endpointStatus` in `host-status-all.ts`; the tail of `readHostStatus` in `host-status.ts`.
+- `parkSession` in `session-event-writer.ts`; the command/response unions and error-code list in `rpc-types.ts`.
+
+## 2026-09-29 - Clients authenticate to `tui` control sockets; the session state projection is its own module
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tui-socket.ts` (new): `tuiSocketName(instanceId)` = `t-<sha256(instanceId)[:16]>.sock`, `isTuiControlSocket(path)`, and `socketNeedsHandshake(path, platform)` - win32, as before, or any `t-*.sock`.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: read the socket's `.secret` and send the handshake whenever `socketNeedsHandshake` says so, so `host status --all`, `classifyEndpointLiveness` and `RpcClient` reach a TUI endpoint on POSIX. A POSIX host socket still gets no handshake, byte for byte as before.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts` (new): `buildRpcSessionState` moved out of `connection-handler.ts` unchanged; `connection-handler.ts` imports it and re-exports it, so existing importers are unaffected. The TUI control endpoint answers `get_state` through it without loading the connection handler.
+
+### Why
+
+A TUI control endpoint authenticates every connection with its secret on every platform (the handshake from `socket-transport.ts`), so a client that did not send it would read every live TUI as `live_unresponsive`. Sharing one state projection keeps `get_state` identical across hosts, workers and terminals.
+
+### Why an extension could not handle it
+
+The probe and the RPC client are the host CLI's own transport code.
+
+### Expected merge conflict zones
+
+- The secret branch at the top of `connectAndAsk` in `host-probe.ts` and of `startSocket` in `rpc-client.ts`.
+- The import block and the former `buildRpcSessionState` location in `connection-handler.ts`.
+
+## 2026-09-29 - One endpoint registry: `endpoint_kind` in `endpoint.json`, kind-aware status probes, a liveness verdict, a `kinds` gc filter
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: the `endpoint.json` schema grows additively to `{ layout: 2, registry_version: 1, endpoint_kind: "rpc_host" | "tui", socket, created_at }` (`ENDPOINT_REGISTRY_VERSION`, `EndpointKind`). `ensureEndpointIdentity(paths, socket, { repair?, kind? })` writes the kind (default `rpc_host`) into the same record; the write itself (temporary file + `link()`, first writer wins, `repair` only under the ensure lock) is unchanged, so a later ensure never turns a `tui` record into a host's. `createDaemonDirectories(paths, { kind? })` is what a `tui` registrant calls.
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts`: `HostEndpointEntry` gains `endpoint_kind`, read from `endpoint.json`; a legacy `{ layout, socket, created_at }` record, the `settings.json` sources and an unaddressable directory read as `rpc_host`. Nothing is rewritten on read.
+- `packages/coding-agent/src/modes/rpc/host-endpoint-liveness.ts` (new): `classifyEndpointLiveness(entry, { timeoutMs? })` -> `"routable" | "live_unresponsive" | "dead"`. Routable only when `get_protocol_info` answers with an instance id recorded under `generations/`; dead only when nothing answered and no recorded generation is live by the existing pid + `processStartTime` test (`anyGenerationLive`, the same test `host gc` applies); everything else live_unresponsive. `judgeEndpointLiveness(paths, answered)` is the same verdict for a reader that already probed. `TUI_PROBE_TIMEOUT_MS` (1500) and `endpointProbeTimeoutMs(kind, requested?)`: a `tui` endpoint never gets more than 1.5 s, a host keeps the 10 s default.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: every `status --all` row (`HostEndpointStatus`) gains `endpoint_kind`, `alive` (routable) and `reason` (`live_unresponsive` | `dead` | `null`). A `tui` row is read under `endpointProbeTimeoutMs("tui", timeoutMs)`, so one silent terminal costs the listing 1.5 s and is reported `reachable: false, alive: false, reason: "live_unresponsive"`. Still `prune: false`: the listing removes nothing.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: `HostGcOptions.kinds` - `gcHostEndpoints(agentDir, { kinds: ["tui"] })` judges and reports only endpoints of those kinds (the legacy flat directory only when `rpc_host` is listed); each judged endpoint still goes through the three-part evidence inside its ensure lock.
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `anyGenerationLive` is exported (unchanged) for the liveness verdict.
+- `test/suite/rpc-endpoint-registry.test.ts`, `test/suite/rpc-host-endpoint-liveness.test.ts` and their `rpc-endpoint-registry-fixtures.ts` (new); the `endpoint.json` shape assertions in `rpc-host-endpoint-identity*.test.ts`, `rpc-host-daemon-dir.test.ts`, `rpc-host-status-all.test.ts` and `suite/host-cli.test.ts` are extended with the new fields.
+
+### Why
+
+Standalone TUI sessions are about to publish control endpoints (session gateway, IS-7): the same `<agentDir>/rpc-host-daemon/<16hex>/` registry must list them beside the `p-*`/`i-*` shards and the legacy socket, so every reader (`host status --all`, omo, the Desktop, thread tools) enumerates one list. A client must tell a TUI from a host (lifecycle commands refuse TUIs), a suspended terminal (`^Z`) must not stall a listing for 10 s nor be reaped, and a TUI must be able to reap dead TUI endpoints at startup without judging host directories it did not start.
+
+### Why an extension could not handle it
+
+The registry, its reader and `host gc` are the RPC host's own on-disk state and CLI; no extension hook sees them.
+
+### Expected merge conflict zones
+
+- `ensureEndpointIdentity`'s record literal and `createDaemonDirectories`' signature in `host-daemon-paths.ts`.
+- `identifyEndpoint` in `host-endpoints.ts`, `endpointStatus` in `host-status-all.ts`, the head of `gcHostEndpoints` in `host-gc.ts`.
+
+## 2026-09-29 - Auth status mirrors `ambient` (senpi#2327)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcAuthStatus` gains optional `ambient?: true`, mirroring `AuthStatus.ambient` (auth that came only from ambient AWS env or Google ADC).
+
+### Why
+
+- `getProviderAuthStatus` now reports it, and the RPC type is documented as that status's mirror; clients can tell a provider the user configured from one merely present in the environment (senpi#2327).
+
+### Why an extension could not handle it
+
+- It is the wire type of an existing RPC response.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcAuthStatus` interface.
+
+## 2026-09-29 - unknown_command refusal tells the client how to confirm (senpi#2348)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `unknown_command` failure message appends `UNKNOWN_COMMAND_CONFIRM_HINT` (resend with `unknownCommandAsText: true`) instead of the TUI's leading-space advice. `errorCode` and `errorData` are unchanged.
+
+### Why
+
+- The advice in the RPC message was the TUI's; a protocol client confirms with the `unknownCommandAsText` field.
+
+### Why an extension could not handle it
+
+- The RPC error envelope for `prompt` is built in the connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `UnknownCommandError` branch of the `prompt` catch in `connection-handler.ts`.
+
+## 2026-09-29 - Remove the `rendered_components` capability and host-side component rendering
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `RENDERED_COMPONENTS_CAPABILITY` is gone. A client that still sends the name in `set_client_info` is accepted; the name is an unknown capability and is ignored.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `setWidget` forwards `undefined`/string-array content only; a component factory emits nothing. `setHeader`/`setFooter` are no-ops. The live renderers, retained factories, footer data providers, `footerDataProviderFactory`, the handler's `rerenderComponents` and the `set_client_info` width handling are removed. `RpcConnectionOptions.sharedWidth` becomes `clientInfo { setCapabilities, connectionId }`, which only registers the sender's capabilities.
+- `packages/coding-agent/src/modes/rpc/widget-line-renderer.ts`: deleted.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: `RENDERED_COMPONENT_RECORD`, the per-record `rendered` provenance, `hasCapableConnection`, rendered-only replay on capability upgrade and the capability filter in `targets` are removed. Snapshot replay sends every remembered record.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: no longer strips a rendered marker or passes it to `targets`; `hasCapableConnection` is removed.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the per-session width map and every `rerenderComponents` fan-out (capability registration, connection release, owner detach) are removed.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: `RpcSessionBinding.rerenderComponents` is removed.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `setHeader` / `setFooter` member of `RpcExtensionUIRequest` is removed; no host produces it any more, and its only consumer was the removed TUI proxy.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the socket host no longer filters `rendered_components` out of the host-environment capabilities.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-signals.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker-credit.ts`: `WorkerDisplay`, `respondDisplay`, the `display` control message and the worker `width` message are removed. `bind` carries `capabilities`; `command` carries no display; a worker's `capabilities` registration is acknowledged with a plain grant.
+
+### Why
+
+The capability, the factory rendering and the shared width existed only for the interactive shared-host proxy client, which is being removed (session gateway plan, IS-1). No other client advertises it: the desktop declares nothing and omo advertises only `extension_events`.
+
+### Why an extension could not handle it
+
+The capability gate, record fanout and worker protocol are RPC host internals; no extension participates in them.
+
+### Expected merge conflict zones
+
+- The `setWidget`/`setHeader`/`setFooter` members of the RPC UI context and the `set_client_info` case in `connection-handler.ts`.
+- The binding options object in `SessionCommandRouter`'s open path and `releaseConnection`/`releaseOwnerAttachment`.
+- The `HostToSessionWorker`/`SessionWorkerToHost` unions.
+- The `RpcExtensionUIRequest` union in `rpc-types.ts`.
+
 ## 2026-09-28 - `warm`: load a host's prompt path without opening a session (senpi#2314)
 
 ### What changed
@@ -43,6 +9030,27 @@ The supervisor runs before and outside any session, so no extension is loaded in
 ### Expected merge conflict zones
 
 - The import blocks of `host-lifecycle.ts`, `host-spawn-environment.ts` and `protocol-identity.ts`.
+
+## 2026-09-28 - SIGKILL escalation owns the writer identity it staged (senpi#1830)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `writtenByThisProcess` accepts an optional process-start-time reader; its default keeps the existing cached production probe.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: an `_test.readProcessStartTime` override now also proves the pidfile writer belongs to this process.
+- `packages/coding-agent/test/rpc-host-ensure.test.ts`: the SIGTERM-to-SIGKILL case stages and verifies a fixed self writer identity, then uses a liveness-aware reader for the old host.
+
+### Why
+
+Windows can time out one of the two independent `Get-CimInstance` probes for the ensuring process. A staged self writer could then disagree with the module-cached ownership probe, falsely making the test take the named-pipe `foreign_writer` refusal instead of exercising SIGKILL escalation.
+
+### Why an extension could not handle it
+
+Pidfile writer ownership is decided by `ensureHost` before it can attach to a host or load an extension.
+
+### Expected merge conflict zones
+
+- `host-daemon-registration.ts`: `writtenByThisProcess` and `thisProcessStartTime`.
+- `host-ensure.ts`: the `startedByUs` decision in `ensureHostLocked`.
 
 ## 2026-09-28 - One session can no longer stop a handoff drain (senpi#2285)
 
@@ -152,6 +9160,27 @@ The canonicalization runs inside `ensureHost`/`stopHost`/`handoffHost`/`host gc`
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `canonicalEndpointPath`'s abstract-socket line.
+
+## 2026-09-28 - unknown_command prompt refusal (omo #9042)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `prompt` command accepts `unknownCommandAsText`; new `RPC_ERROR_UNKNOWN_COMMAND` (`"unknown_command"`) in `RpcErrorCode`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` (fork-only): forwards `unknownCommandAsText` and answers an `UnknownCommandError` with `errorCode: "unknown_command"` and `errorData: { command, suggestions, reason }`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `prompt()` sends `unknownCommandAsText` and rethrows an `unknown_command` failure as `UnknownCommandError` (other failures stay plain `Error`).
+- `packages/coding-agent/docs/rpc.md` documents the field and error.
+
+### Why
+
+- RPC clients and the shared-host TUI proxy need a typed refusal to restore the editor instead of showing a generic error.
+
+### Why an extension could not handle it
+
+- Wire command shapes and error codes are owned by the RPC mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `prompt` command member and the error-code block. `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `PromptOptions`, the `prompt()` payload and failure branch, and the imports.
 
 ## 2026-09-28 - A successor that fails before it was spawned also restores the boot settings
 
@@ -1985,6 +11014,25 @@ cannot be connected to at all takes the stop-and-start path.
 - LOW: `watchPpid` body and the removed `HOST_WATCH_PPID_PROBE_TIMEOUT_MS`. Fire reasons and the fd path are unchanged; supervisor death is still detected (at reparenting instead of during the zombie window).
 
 # changes
+
+## 2026-10-08 - RPC host launches share the runtime argument filter (senpi#2599)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-exec-argv.ts`: moved the existing filter to `src/utils/runtime-exec-argv.ts`.
+- `packages/coding-agent/src/modes/rpc/host-launch.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: import that shared filter with unchanged host launch behavior.
+
+### Why
+
+Other native script launchers need the same entry-mode boundary, and keeping a second filter would let Node and Bun behavior drift.
+
+### Why an extension could not handle it
+
+The host supervisor and child are spawned before either process loads extensions.
+
+### Expected merge conflict zones
+
+- LOW: host launch imports and runtime argv construction.
 
 ## 2026-09-14 - Publish RPC close only after registry removal (#1656)
 
@@ -4118,3 +13166,374 @@ wire shape, multi-session tagging, and payload validation responsibilities.
 - LOW: the `RpcSessionState` interface near `lastAbortSource`; the `buildRpcSessionState` return literal.
 
 - Covered production paths: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+## 2026-09-30 - Advertise edit-only project preset (senpi#2430)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: get_protocol_info advertises permission_preset_accept_edits from the permission-system extension.
+
+### Why
+
+Desktop selects accept-edits only after the host advertises support; older hosts receive ask instead.
+
+### Why an extension could not handle it
+
+The host capability probe runs before any session extension loads. This is only an advertisement; permission policy stays in the builtin.
+
+### Expected merge conflict zones
+
+The additive host capability list and its RPC test expectation.
+
+## 2026-10-02 - RpcClient forwards --provider only with --model (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `start()` passes `--provider` to the spawned host only when `--model` is also set. A client created with a provider and no model now spawns the host on its default model, which is what the host did before.
+
+### Why
+
+Upstream v1.0.0 (0c453048b) made the CLI reject a lone `--provider`, because the flag was silently ignored and another provider's default model ran. The fork adopts that CLI error, but existing SDK callers that construct `RpcClient({ provider })` without a model must keep working exactly as before the merge.
+
+### Why an extension could not handle it
+
+`RpcClient` builds the child process argv before any extension or session exists; the argument list is owned by the client class.
+
+### Expected merge conflict zones
+
+The provider/model argument block in `RpcClient.start()` if upstream changes how the client spawns the host.
+
+## 2026-10-03 - Host profile coverage compares plugin extensions by role
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `covers()` compares `core.extensions` by role instead of by absolute path. The engine plugin's entries are identified from the last `plugin` path segment on (`plugin`, `plugin/extensions/<name>.js`, either separator), and every other extension keeps its whole path. `profileWarning()` returns no warning when the client and host profiles cover each other, so two installs of the same plugin set under different roots no longer log `profile_mismatch_attached` on every ensure.
+
+### Why
+
+A runtime directory per build put the plugin under a different absolute path each time, so two builds of the same plugin set compared as different and a proper superset never counted as covering. Role coverage is profile compatibility only: the handoff still needs a STRICTLY newer engine ordinal (I2), an uncomparable build still attaches, and `covers()` still fails when the client lacks any extension role the host loads.
+
+### Why an extension could not handle it
+
+The host decision runs in the client before any session or extension exists; the comparison is owned by `decideHostAction`.
+
+### Expected merge conflict zones
+
+`covers()` and `profileWarning()` in `host-decision.ts`, and the profile rows in `test/suite/host-decision.test.ts`.
+
+## 2026-10-03 - Reclaim quiet detached workers without observation heartbeats
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts`: a retained, detached in-process worker with a flushed transcript and no active work or queued delivery parks on the next sweep rather than after the full idle window, once its disconnect has stood for at least five seconds (`DETACHED_RETIREMENT_GRACE_MS`). An attached client is exempt from early retirement; only the ordinary idle deadline applies to it.
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts`: a zero-attachment entry without a detach timestamp falls through to its ordinary idle deadline rather than retiring early or being retained indefinitely.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: occupancy sweeps protect in-flight requests and prompt preflight.
+- `packages/coding-agent/src/modes/rpc/session-command-activity.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: explicitly enumerated observational commands, including `get_state` and `memory_report`, no longer refresh the idle clock for DETACHED sessions in either runtime. An attached client's polling keeps its session alive as before; the registries stamp a `detachedAt` time when the last attachment leaves so the sweep can honor the disconnect-age grace.
+
+### Why
+
+- Completed retained workers otherwise hold runtimes and eval kernels for the whole idle window; status polling by a client that has already gone away can extend that window indefinitely. Durable transcripts permit reopening after the existing park/disposal path. The disconnect-age grace keeps a brief disconnect that overlaps a sweep from discarding a runtime its owner is about to reclaim.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts` own attachment-aware reclamation and request admission. The two registries own idle timestamps before extension dispatch.
+
+### Expected merge conflict zones
+
+- Occupancy selection in `packages/coding-agent/src/modes/rpc/session-sweep.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts`; `getForCommand` in `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`.
+
+## open_session.browserEngine and the browser_engine capability (2026-10-03)
+
+### What changed
+
+- `custom-capability.ts`: `BROWSER_ENGINE_CAPABILITY` (`browser_engine`), advertised by the multi-session router in `get_protocol_info`.
+- `rpc-types.ts`, `rpc-client.ts`, `rpc-input-validation.ts`, `session-command-router.ts`: `open_session.browserEngine?: "connected" | "builtin" | "none"`; any other value is refused with `invalid_launch_profile` and no session is opened.
+- `session-registry-attach.ts`, `worker-session-registry.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker.ts`: a later attach that names another engine moves the live session to it (worker sessions through a new `browser_engine` request); an attach without the field keeps it.
+- `host-daemon-env.ts`: `OMO_BROWSER_ENGINE` joins the per-session names a daemon never inherits; `BSK_HOME` and `BSK_BIN` (per install) are allowed through.
+- `core/browser-engine.ts` (new), `agent-session*.ts`, `sdk.ts`, `main.ts`: the engine is part of the session launch profile and reaches `AgentSession`, the extension context and the core bash tool.
+
+### Why
+
+The desktop app lets the user choose which browser an agent drives and sends the choice per session. The host had no carrier for it, and an environment variable on the host process would apply to every session it serves (desktop #1544).
+
+### Why an extension could not handle it
+
+The launch profile, the capability list and the session environment are assembled by the host before any extension loads.
+
+### Expected merge conflict zones
+
+The `open_session` branch of `session-command-router.ts` next to `promptSurface`, the capability list in the same file, and the attach blocks in `session-registry-attach.ts` and `worker-session-registry.ts`.
+
+
+## 2026-10-03 - Tool-result images are persisted and their path reported in the placeholder
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tool-media-store.ts` (new): `persistToolImage` writes a tool-result image to `<sessionDir>/media/<durableSessionId>/<sha256(toolCallId)>/<contentIndex>-<sha256(bytes)>.<ext>` (temp file, rename, read-only, private directories) and returns `{ path }`, or `{ unavailableReason: "image_too_large" | "session_limit" | "storage_error" }` for an image over 20 MiB, a session already holding 256 MiB (new storage refused, nothing evicted; usage is re-measured from disk after a host restart) and a failed write or a format other than PNG/JPEG/GIF/WebP. `removeToolMedia` deletes a session's directory (it first makes every real file and folder under it writable, so read-only images and the Windows read-only attribute cannot leave it behind; it decides by what an entry itself is and never follows a symlink, so a link inside (or in place of) the media folder is removed as a link and what it points at keeps its mode and contents; it throws when the directory cannot be removed). An image is stored only when its bytes carry the signature of the format the tool claimed (HTML claimed as `image/png` is `storage_error`), and a symlink planted where `media/`, `media/<id>` or the per-call folder under it goes is refused.
+- `media-placeholders.ts`: `omitInlineMedia(record, persist?)` threads an optional persister through the walk; `ImageRefBlock` gains optional `path` / `unavailableReason`. With no persister the placeholder is byte-identical to before.
+- `session-event-writer.ts`: `setSessionMedia(sessionId, persister)` registers a per-session persister, passed to the transform at `enqueue` and dropped when the session closes. `session-command-router.ts` registers it on open and resolves the scope from the LIVE session on every image (`liveToolMediaScope`: the in-process runtime's session manager, else the worker's published snapshot), so images taken after `new_session` / `switch_session` / `fork` are filed under the new session; with no live state yet nothing is stored.
+- `modes/interactive/components/session-selector.ts`: deleting a session also removes its media directory, only after the session file is gone.
+- `test/suite/no-sync-in-session-path.ledger.json`: one `writeFileSync` entry for `writeImage`.
+
+### Why
+
+A `media_placeholders` client received an `image_ref` it could never turn into a picture for any tool but `read` (desktop #941): the bytes stay off the socket by design. Writing them once, before the placeholder is published, lets the client render from the path after a disconnect, idle shutdown or handover.
+
+### Why an extension could not handle it
+
+The placeholder is produced by the host's single wire choke point (`SessionEventWriter.enqueue`); no extension hook sits between a tool result and that transform.
+
+### Expected merge conflict zones
+
+`omitContentImages` and its callers in `media-placeholders.ts`, the `enqueue` placeholder line in `session-event-writer.ts`, and the `setSessionKind` neighbourhood in `session-command-router.ts`.
+
+## 2026-10-04 — Permission prompts carry the tool call id on the wire (#2710)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `select` and `input` variants of `RpcExtensionUIRequest` gain optional `toolCallId` and `parentToolCallId`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `dialogCall(opts)` copies `ExtensionUIDialogOptions.toolCallId` / `parentToolCallId` into the `select` and `input` requests; absent options add no keys, so every other dialog is byte-identical.
+
+### Why
+
+The engine runs a message's `tool_call` hooks (where the permission system asks) for every call before any of them runs, so with several calls of one tool in flight a client could not tell which call a prompt approved (#2710). The desktop had to show "the code can't be shown" for every prompt after the first.
+
+### Why an extension could not handle it
+
+The RPC extension UI context is built by the RPC connection handler; an extension cannot add fields to the wire request it emits.
+
+### Expected merge conflict zones
+
+The `select` / `input` lines of `createExtensionUIContext` in `connection-handler.ts`, and the `RpcExtensionUIRequest` union in `rpc-types.ts`.
+
+## 2026-10-05 - Daemon directories in parallel, no prune for a fresh registration, host inbox arming off the registration path (senpi#2756)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `createDaemonDirectories` creates the endpoint directory, then its `generations/` and `reservations/` and the flat `layout.json` concurrently. Each endpoint directory is re-moded to 0700 only when it already existed (`mkdir` returned no created path); one `mkdir` just created already has the mode. The flat directory is still never re-moded.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `writeHostRegistration(paths, registration, { fresh? })` skips `pruneDeadGenerations` when `fresh` is true. Only a terminal's registration passes it; every host path still prunes first (#1893).
+- `packages/coding-agent/src/modes/rpc/host-session-control.ts`: follows the new `watchInbox` contract (`InboxWatch { armed, stop }`): a host session's registration returns once the watch exists, and one more `inbox` pass runs when arming settled.
+- Tests: `test/suite/rpc-daemon-directory-modes.test.ts`.
+
+### Why
+
+- Part of the terminal control endpoint's registration cost (see the matching entry in `../interactive/changes.md`): `createDaemonDirectories` was 4 sequential `mkdir`s, 3 `chmod`s and the marker write, 2.1 ms after `settled`. The chmods exist for directories that predate the call; a directory `mkdir` created is already private. A terminal's endpoint directory is named by a fresh instance id, so pruning it reads empty directories.
+- The host session registers through the same `watchInbox`; keeping the old "return only once armed" contract there would have needed a second function for the same watch.
+
+### Why an extension could not handle it
+
+- These are the engine's daemon-state primitives and its host-side control endpoint; no extension hook runs inside them.
+
+### Expected merge conflict zones
+
+- LOW: `createDaemonDirectories` in `host-daemon-paths.ts`, the head of `writeHostRegistration`, and the `watchInbox` call in `HostSessionControl.register`. All three files are fork-only.
+
+## 2026-10-09 - Explicit caller lifetime for RPC host shards (senpi#3044)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure-types.ts`: additive `owner: "caller"` option on the already-public `EnsureHostOptions`.
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: fresh detached supervisors inherit an owner-lifetime pipe; its write end is retained but unref'd in the caller, independently of its attach hold.
+- `packages/coding-agent/src/modes/rpc/host-daemon-state.ts` and `packages/coding-agent/src/modes/rpc/host-ensure.ts`: per-generation atomic owner records and endpoint-locked claims; another live or unknown owner is refused, while confirmed-dead owners can be replaced without replacing the host.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: EOF authorizes a two-second continuous-quiescence window, checked at the existing lifecycle cadence. Attached and unclassified peers, active runs, and an unhealthy activity observer prevent owner-death exit. Rebinding a live supervisor uses PID plus OS start identity because an already-running process cannot inherit a new fd; failed identity probes are unknown, never death.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: successors inherit ownership, with a fresh pipe when the launching process is the owner and OS-identity observation otherwise. Windows starts inherit a pipe; Windows generation handoff remains unsupported.
+- `packages/coding-agent/docs/rpc.md`: public integration, platform paths, grace and shutdown bounds, ownership conflict policy, and the narrowly authorized owner-record cross-writer.
+
+### Why
+
+A task shard was deliberately detached but had no caller-lifetime contract, so quitting its root TUI left a zero-peer host resident until the ordinary fifteen-minute idle timeout. Parent PID alone neither identifies the root session tree nor survives PID reuse.
+
+### Why an extension could not handle it
+
+An extension cannot observe its own SIGKILL. The detached supervisor must hold the kernel lifetime binding and combine it with its authoritative peer and turn observations.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-ensure-types.ts`: ensure option fields.
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`: boot settings and detached spawn.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: supervisor argv and inherited stdio.
+- `packages/coding-agent/src/modes/rpc/host-daemon-state.ts`: generation state read/write helpers.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: held reuse and upgrade decisions.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: activity observation and owner watch.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: lifecycle ticker and watcher teardown.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: successor boot settings and spawn.
+## 2026-10-13 - Fenced holder attachment (senpi#3255)
+
+### What changed
+
+- Hosts publish their public socket in path reservations and host-owned endpoint identity in runtime holder records. `session_held` preserves validated holder endpoint fields.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` defines `open_session.expectedHostInstance` and the typed `owner_changed` / `session_not_held` refusals.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts` exposes the attach-only fence to typed RPC clients.
+- The fence is advertised as `expected_host_instance`. Mismatch returns `owner_changed`; an unheld path returns `session_not_held`. Both include reason and rediscovery action.
+- An invalid `open_session.expectedHostInstance` (non-string or blank) is refused with the sibling `invalid_launch_profile: <detail>` string form, keeping the typed `errorData`.
+- Both registries enforce attach-only before constructing a runtime or worker. Unfenced opens retain create/resume behavior; attachment keeps the existing input admission path and socket authentication.
+
+### Why
+
+Desktop holder discovery must not turn a stale endpoint into a second writer.
+
+### Why an extension could not handle it
+
+Host identity and path ownership are checked before session extensions exist.
+
+### Expected merge conflict zones
+
+RPC open fields, router admission, registry open options, host reservation metadata.
+
+## 2026-10-15 - API key hint and verify-before-save (desktop #2510)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` adds the `verify_api_key {provider, key}` command, its `ApiKeyVerification` response, and an optional `keyHint` on `RpcAuthProvider`.
+- `connection-handler.ts` answers `verify_api_key` with one cheap authenticated read (the provider's model list, 15 s timeout) and never stores the key. `get_auth_providers` rows carry `keyHint`, which is the last four characters of a literal app-stored API key of at least 12 characters. OAuth, `!command` and `$ENV` references, and short keys get none.
+- Hosts advertise `auth_key_verify` (`custom-capability.ts`, `host-capabilities.ts`).
+
+### Why
+
+The desktop's Replace key checks a new key before saving it, and shows which saved key is in use without revealing it.
+
+### Why an extension could not handle it
+
+`get_auth_providers` and the RPC command union are core RPC surfaces, and the auth storage they read is not exposed to extensions.
+
+### Expected merge conflict zones
+
+RPC command and response unions, `RpcAuthProvider`, the auth cases in the connection handler.
+
+## 2026-10-15 - verify_api_key review fixes (desktop #2510, senpi#3372 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` is unchanged here. `connection-handler.ts` also advertises `auth_key_verify` on the classic `get_protocol_info`, because classic hosts answer `verify_api_key` too.
+- `docs/rpc.md` documents `verify_api_key` and `keyHint`.
+
+### Why
+
+A client that checks the capability first would wrongly skip classic hosts. The docs-parity test requires every command to be documented.
+
+### Why an extension could not handle it
+
+Capability advertisement is core RPC.
+
+### Expected merge conflict zones
+
+The classic capability list in `connection-handler.ts`.
+
+## 2026-10-20 - RPC forwards the subagent tree cost (senpi#2471)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `setSubagentCost` emits a fire-and-forget `extension_ui_request` with `method: "setSubagentCost"` and `costUsd` (negative or non-finite sent as undefined).
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcExtensionUIRequest` gains the `setSubagentCost` variant.
+
+### Why
+
+- A session that fans out to subagents showed only its own spend in the footer, so it looked far cheaper than it was. The extension that runs the subagents (omo's task engine) knows the tree's spend; the footer needs a typed way to receive it and show it as `$0.380 (+1.270)` (oh-my-pi parity).
+
+### Why an extension could not handle it
+
+- RPC clients render their own footer; the request must cross the wire like `setStatus` does, which only the RPC UI context can emit.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-types.ts` `RpcExtensionUIRequest` union next to `setStatus`.
+
+## 2026-10-16 - login_api_key says what it replaced (#3448)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `login_api_key` answers `data: { replaced, backupPath }` when the key replaced a login of the other kind, and clears the store's pending replacement so it is reported once.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `login_api_key` response gains the optional `data.replaced` and `data.backupPath`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: saving a key over an OAuth login must not silently move the user off it (omo-desktop-app#2793, #3486 review).
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the wire type documents the new fields.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts` own the RPC auth commands and their wire shapes.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `login_api_key` case.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `login_api_key` response member.
+
+## 2026-10-21 - auth_login_end says what an OAuth login replaced (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `startLogin` drops any replacement left by an earlier login before it starts, and a successful `auth_login_end` carries `replaced` and `backupPath` when this login replaced the provider's credential of the other kind, taken once through `takeReplacement`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: an OAuth login over a stored API key replaced the key and backed it up, but the RPC client was never told, and the record stayed in memory; the TUI and `login_api_key` already reported it (#3486 review, MEDIUM).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` owns the RPC login flow and its events.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the start and the success branch of `startLogin`.
+
+
+## 2026-10-20 - A stop targets only the confirmed registration (omo-desktop-app#3561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-stop-generation.ts`: the expected instance id, generation, pid and process start time, CLI decoding and registration comparison.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`: conditional stops take the endpoint ensure lock, compare before probes and again before writing an intent, and refuse `stale_generation` without signalling on mismatch.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: forwards the expected generation to the common stop implementation, and refuses a binding the endpoint no longer matches (`stale_generation` / `unknown_owner`) before the `sessions_live` census.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts` (review fold): a bound stop signals only the RECHECKED expected generation's pid and instance, never a registration read that was not compared; `stopHost` throws on `drain` + `expectedGeneration`, as the CLI already refused. `compareStopGeneration` (`host-stop-generation.ts`) returns `proven` | `bound_without_start_time` | `stale` | `unprovable`: a null start time is `unknown_owner`, except that where the platform records none (`host-stop-start-time.ts`, Windows) a confirmation and registration that are both null bind pid + instance id + generation. `--expected-generation` accepts `processStartTime: null`. The both-null binding proves the same process before signalling (review FIX_FIRST): the registration names this endpoint, the pid's live start time (`host-stop-start-time.ts` `startedBeforeRegistration`, 10 s CIM budget) is no later than the registration file's mtime, so a reused pid is `unknown_owner`, and an answering host reports the confirmed instance id. Regression: `test/suite/host-stop-generation-identity.test.ts`.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: reports the registered process start time for confirmation; `packages/coding-agent/src/modes/rpc/host-status-all.ts` reports null for an unaddressable endpoint.
+- `packages/coding-agent/src/modes/rpc/host-holder.ts` and `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts`: holder evidence includes the recorded process start time.
+
+### Why
+
+- Checking only a pid before invoking an unqualified stop could terminate a newer, unconfirmed generation.
+
+### Why an extension could not handle it
+
+- The lifecycle lock and signal authority belong to the engine.
+
+### Expected merge conflict zones
+
+- LOW: stop options, status identity, runner stop request.
+
+## 2026-10-22 - login_api_key takes its replacement record before it awaits (#3952, hardening)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `login_api_key` takes the store's replacement record right after `set()`, before awaiting the registry refresh, instead of after it.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a same-provider RPC OAuth login whose record was written during that await could have it taken by `login_api_key`, losing `replaced`/`backupPath` from its `auth_login_end`. #3486 narrowed that to a few microtasks; taking the record in the same step as `set()` closes it (#3952).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` owns the RPC auth commands.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `login_api_key` case.
+
+## 2026-10-23 - Tell the agent when scheduled relocation is cancelled (senpi#4078)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-relocation.ts`: all three cancellation paths consume the schedule through `dropScheduled` and deliver one non-triggering `session_relocation` custom session message, with `details: { status: "dropped", reason, moveId, target }`. The reason is `disconnected`, `aborted`, or `withdrawn`. Successful scheduling and session disposal retain their existing behavior.
+- `packages/coding-agent/src/modes/rpc/session-relocation.ts`: a user abort records `aborted` on the schedule at `agent_end` and delivers it at `agent_settled`, after streaming ends. The notice is appended and persisted without another prompt, rather than parked in the pending custom-message queue. The schedule is still consumed before sending, so repeated aborts or detach notifications cannot duplicate it.
+- `packages/coding-agent/src/modes/rpc/session-relocation.ts`: a detach between those two events leaves the recorded abort for settlement rather than consuming it as a disconnect and parking its notice again. The regression covers immediate close both with and without that race.
+
+### Why
+
+- The accepted tool result had already returned, so silently clearing the schedule left the agent expecting to continue on another computer. A session message corrects its context without starting a turn or resuming an aborted run.
+
+### Why an extension could not handle it
+
+- The RPC relocation controller owns connection detachment, user-abort cancellation, and the release-time capability re-check.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/session-relocation.ts`, cancellation branches and the `RpcSessionRelocationDeps.session` method set.

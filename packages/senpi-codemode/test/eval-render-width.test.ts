@@ -183,13 +183,18 @@ describe.each(WIDTHS)("eval renderer width %i", (width) => {
 		).render(width);
 		const text = lines.join("\n");
 
-		// Then
+		// Then: at every width the terminal row stays one line (senpi#2933 review HIGH-1); at 40
+		// cols the lowest-priority segments (rate, elapsed, timeout) drop first and calls survive.
 		expectLinesWithinWidth(lines, width, "throughput badge");
 		expect.soft(text).toContain("2 calls");
-		expect.soft(text).toContain("1.00");
-		expect.soft(text).toContain("calls/s");
-		expect.soft(text).toContain("2s");
-		expect(text).toContain("timeout 420s");
+		if (width > 60) {
+			expect.soft(text).toContain("1.00");
+			expect.soft(text).toContain("calls/s");
+			expect.soft(text).toContain("2s");
+			expect(text).toContain("timeout 420s");
+		} else {
+			expect.soft(text).not.toContain("calls/s");
+		}
 	});
 });
 
@@ -279,12 +284,12 @@ describe("eval renderer cell detail width", () => {
 			"",
 		);
 
-		// When
+		// When: the collapsed row is one line (senpi#2933), so the detail render goes through expand
 		const lines = renderEvalResult(
 			givenResult,
-			{ expanded: false, isPartial: false },
+			{ expanded: true, isPartial: false },
 			undefined,
-			resultContext(),
+			resultContext({ expanded: true }),
 		).render(width);
 		const text = lines.join("\n");
 

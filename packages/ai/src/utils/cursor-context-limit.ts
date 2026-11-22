@@ -18,6 +18,7 @@ import {
 	resetCursorContextLimitStoreForTest as resetObservedLimits,
 	resolveCursorContextWindow as resolveObservedWindow,
 } from "../cursor/context-limit-store.ts";
+import { processSingleton } from "./process-singleton.ts";
 
 /**
  * Same resolution as the conversation rotation store: an explicit override
@@ -32,47 +33,53 @@ export function resolveCursorContextLimitStorePath(env: NodeJS.ProcessEnv = proc
 	return `${agentDir.replace(/\/$/, "")}/cursor-context-limits.json`;
 }
 
-let savingEnabled = true;
+type FilePersistence = CursorContextLimitPersistence & { savingEnabled: boolean };
 
-const filePersistence: CursorContextLimitPersistence = {
-	load: () => {
-		const limits = new Map<string, number>();
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(readFileSync(resolveCursorContextLimitStorePath(), "utf8"));
-		} catch (error) {
-			// No file on first run, and a truncated or hand-edited one is the same
-			// situation for a cache: the catalog window is the documented fallback.
-			if (error instanceof Error) return limits;
-			throw error;
-		}
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return limits;
-		for (const [modelId, maxTokens] of Object.entries(parsed)) {
-			if (typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0) {
-				limits.set(modelId, maxTokens);
+// One port per process: every bundle copy of this module installs the same port, so the store
+// does not re-hydrate from disk whenever a different copy is called.
+const filePersistence = processSingleton<FilePersistence>("@earendil-works/pi-ai:cursor-context-limit-file", () => {
+	const port: FilePersistence = {
+		savingEnabled: true,
+		load: () => {
+			const limits = new Map<string, number>();
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(readFileSync(resolveCursorContextLimitStorePath(), "utf8"));
+			} catch (error) {
+				// No file on first run, and a truncated or hand-edited one is the same
+				// situation for a cache: the catalog window is the documented fallback.
+				if (error instanceof Error) return limits;
+				throw error;
 			}
-		}
-		return limits;
-	},
-	save: (limits) => {
-		if (!savingEnabled) return;
-		const path = resolveCursorContextLimitStorePath();
-		const record: Record<string, number> = {};
-		for (const [modelId, maxTokens] of limits) record[modelId] = maxTokens;
-		try {
-			mkdirSync(dirname(path), { recursive: true });
-			const temporaryPath = `${path}.${process.pid}.tmp`;
-			writeFileSync(temporaryPath, `${JSON.stringify(record, null, 2)}\n`);
-			renameSync(temporaryPath, path);
-		} catch (error) {
-			// This file is a cache for the next process. A read-only agent directory
-			// must not fail the live turn that observed the limit, and one failure
-			// disables saving so a broken path cannot cost a write per checkpoint.
-			if (!(error instanceof Error)) throw error;
-			savingEnabled = false;
-		}
-	},
-};
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return limits;
+			for (const [modelId, maxTokens] of Object.entries(parsed)) {
+				if (typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0) {
+					limits.set(modelId, maxTokens);
+				}
+			}
+			return limits;
+		},
+		save: (limits) => {
+			if (!port.savingEnabled) return;
+			const path = resolveCursorContextLimitStorePath();
+			const record: Record<string, number> = {};
+			for (const [modelId, maxTokens] of limits) record[modelId] = maxTokens;
+			try {
+				mkdirSync(dirname(path), { recursive: true });
+				const temporaryPath = `${path}.${process.pid}.tmp`;
+				writeFileSync(temporaryPath, `${JSON.stringify(record, null, 2)}\n`);
+				renameSync(temporaryPath, path);
+			} catch (error) {
+				// This file is a cache for the next process. A read-only agent directory
+				// must not fail the live turn that observed the limit, and one failure
+				// disables saving so a broken path cannot cost a write per checkpoint.
+				if (!(error instanceof Error)) throw error;
+				port.savingEnabled = false;
+			}
+		},
+	};
+	return port;
+});
 
 function ensurePersistenceInstalled(): void {
 	installCursorContextLimitPersistence(filePersistence);
@@ -96,6 +103,6 @@ export function resolveCursorContextWindow(modelId: string, catalogWindow: numbe
 }
 
 export function resetCursorContextLimitStoreForTest(): void {
-	savingEnabled = true;
+	filePersistence.savingEnabled = true;
 	resetObservedLimits();
 }

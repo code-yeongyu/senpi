@@ -1,11 +1,10 @@
 import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { QuestionRequest } from "../../src/core/extensions/types.ts";
+import type { ExtensionToolContext, QuestionRequest } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
 import { askUserAnswerKeyHint } from "../../src/modes/interactive/components/ask-user-answer-key.ts";
 import { ASK_USER_WIDGET_KEY } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "../../src/modes/interactive/components/ask-user-question.ts";
-import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../src/utils/ansi.ts";
 import type { Harness } from "./harness.ts";
@@ -170,7 +169,7 @@ describe("async ask-user question in the interactive TUI", () => {
 			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 			undefined,
 			undefined,
-			ctx,
+			ctx as ExtensionToolContext,
 		);
 		expect(result.details).toMatchObject({ accepted: true, status: "pending" });
 		expect(delivery.wakeEvents).toEqual([
@@ -196,7 +195,14 @@ describe("async ask-user question in the interactive TUI", () => {
 		// Exactly one framed message, delivered by the extension and not by the widget.
 		expect(delivery.deliveries).toEqual([
 			{
-				content: "[Answer to question tc-async]\nThe user responded: just use bun\nUnanswered: Library",
+				content: [
+					{
+						type: "text",
+						text: "[Answer to question tc-async]\nThe user responded: (see [The user's comment for question tc-async] below)\nUnanswered: Library",
+					},
+					{ type: "text", text: "[The user's comment for question tc-async]" },
+					{ type: "text", text: "just use bun" },
+				],
 				options: { deliverAs: "steer" },
 			},
 		]);
@@ -215,7 +221,7 @@ describe("async ask-user question in the interactive TUI", () => {
 			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
 			undefined,
 			undefined,
-			ctx,
+			ctx as ExtensionToolContext,
 		);
 		const settled = delivery.settled(ctx, "tc-timeout");
 		await vi.advanceTimersByTimeAsync(60_000);
@@ -228,25 +234,10 @@ describe("async ask-user question in the interactive TUI", () => {
 		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toBeUndefined();
 	});
 
-	it("drives the widget from a host question record and answers on the host channel", async () => {
-		vi.useFakeTimers();
+	it("carries a drafted answer across Esc into the typed comment reply", async () => {
 		const fake = createFakeInteractiveMode({ isStreaming: true });
-		const sendHostUiProgress = vi.fn();
-		fake.runtimeHost = { ...fake.runtimeHost, sendHostUiProgress };
-		const handler = Reflect.get(InteractiveMode.prototype, "handleHostUiRequest");
-		if (typeof handler !== "function") throw new Error("handleHostUiRequest missing");
-		const pending: Promise<unknown> = handler.call(fake, {
-			id: "ui-9",
-			method: "question",
-			requestId: "req-9",
-			toolCallId: "tc-9",
-			waitForAnswer: false,
-			questions: buildRequest().questions,
-			timeout: 30 * 60_000,
-			askedAtMs: 0,
-			deadlineAtMs: 30 * 60_000,
-			remainingMs: 30 * 60_000,
-		});
+		const onProgress = vi.fn();
+		const pending = tuiQuestion(fake)(buildRequest(), { timeout: 30 * 60_000, onProgress });
 
 		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("Question pending (1 unanswered)");
 		expect(overlay(fake)).toBeUndefined();
@@ -255,19 +246,14 @@ describe("async ask-user question in the interactive TUI", () => {
 		// Space retains an optional draft; digits now submit a single question immediately (#1645).
 		overlay(fake)?.handleInput(DOWN);
 		overlay(fake)?.handleInput(SPACE);
-		vi.advanceTimersByTime(1_000);
-		expect(sendHostUiProgress).toHaveBeenCalledWith({
-			type: "extension_ui_progress",
-			id: "ui-9",
-			answers: { auth: { selected: ["API key"] } },
-		});
+		expect(onProgress).toHaveBeenLastCalledWith(
+			expect.objectContaining({ answers: { auth: { selected: ["API key"] } } }),
+		);
 
 		overlay(fake)?.handleInput(ESC);
 		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("Question pending (0 unanswered)");
 		await fake.submitEditorText("go with the key");
-		expect(await pending).toEqual({
-			type: "extension_ui_response",
-			id: "ui-9",
+		expect(await pending).toMatchObject({
 			answers: { auth: { selected: ["API key"] } },
 			comment: "go with the key",
 		});

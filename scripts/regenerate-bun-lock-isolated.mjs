@@ -14,6 +14,10 @@
 // Manifest digests are compared before and after, in the repository and in the island,
 // so a mutating Bun run fails loudly instead of landing an unreviewed manifest edit.
 //
+// Bun does not converge in one seeded pass after a version bump (senpi#2352), so the seed's stale
+// workspace specifiers are repaired before Bun runs, Bun runs twice, and the result must be a
+// fixed point whose every workspace dependency specifier equals its manifest.
+//
 // Usage: node scripts/regenerate-bun-lock-isolated.mjs [--check]
 //   --check  resolve in the island and fail if the repository bun.lock would change
 
@@ -23,6 +27,12 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	findSpecifierMismatches,
+	formatMismatch,
+	parseBunLock,
+	repairWorkspaceSpecifiers,
+} from "./bun-lock-workspace-specifiers.mjs";
 
 export const ISLAND_PREFIX = "senpi-bun-lock-island-";
 export const FORBIDDEN_ISLAND_ENTRIES = ["package-lock.json", "npm-shrinkwrap.json", "node_modules"];
@@ -130,6 +140,29 @@ export function createIsland(repoRoot, manifestPaths, islandRoot, { seedLockfile
 	return islandRoot;
 }
 
+function readManifests(root, manifestPaths) {
+	return new Map(
+		manifestPaths.map((manifestPath) => [manifestPath, JSON.parse(readFileSync(join(root, manifestPath), "utf8"))]),
+	);
+}
+
+/** Rewrite the seeded island bun.lock so its local-workspace specifiers already match the manifests. */
+function repairSeedLockfile(islandRoot, manifests) {
+	const seed = join(islandRoot, "bun.lock");
+	if (!existsSync(seed)) return [];
+	const { text, repaired } = repairWorkspaceSpecifiers(readFileSync(seed, "utf8"), manifests);
+	if (repaired.length > 0) writeFileSync(seed, text);
+	return repaired;
+}
+
+function readIslandLockfile(islandRoot) {
+	const islandLockfile = join(islandRoot, "bun.lock");
+	if (!existsSync(islandLockfile) || !statSync(islandLockfile).isFile()) {
+		throw new Error("bun install --lockfile-only produced no bun.lock in the island");
+	}
+	return readFileSync(islandLockfile, "utf8");
+}
+
 function defaultRunBun(islandRoot) {
 	const version = spawnSync("bun", ["--version"], { encoding: "utf8" });
 	if (version.status !== 0) {
@@ -149,7 +182,8 @@ function defaultRunBun(islandRoot) {
 
 /**
  * Resolve bun.lock inside a disposable island and copy back only bun.lock.
- * Returns { lockfile, changed, bunVersion, islandRoot } where `lockfile` is the regenerated content.
+ * Returns { lockfile, changed, bunVersion, islandRoot, repaired } where `lockfile` is the regenerated
+ * content and `repaired` lists the stale workspace specifiers fixed in the seed before Bun ran.
  */
 export function regenerateBunLock({
 	repoRoot = repoRootDefault,
@@ -164,7 +198,12 @@ export function regenerateBunLock({
 	try {
 		createIsland(repoRoot, manifestPaths, islandRoot);
 		const islandHashesBefore = hashManifests(islandRoot, manifestPaths);
+		const manifests = readManifests(islandRoot, manifestPaths);
+		const repaired = repairSeedLockfile(islandRoot, manifests);
 		const bunVersion = runBun(islandRoot);
+		const firstPass = readIslandLockfile(islandRoot);
+		// A fresh clone's `bun install` is one more pass over the committed lock; it must change nothing.
+		runBun(islandRoot);
 		assertIslandIsClean(islandRoot);
 
 		const islandMutated = diffManifestHashes(islandHashesBefore, hashManifests(islandRoot, manifestPaths));
@@ -176,16 +215,21 @@ export function regenerateBunLock({
 			throw new Error(`bun mutated npm-owned manifests in the repository: ${repositoryMutated.join(", ")}`);
 		}
 
-		const islandLockfile = join(islandRoot, "bun.lock");
-		if (!existsSync(islandLockfile) || !statSync(islandLockfile).isFile()) {
-			throw new Error("bun install --lockfile-only produced no bun.lock in the island");
+		const lockfile = readIslandLockfile(islandRoot);
+		if (lockfile !== firstPass) {
+			throw new Error("bun.lock did not reach a fixed point: a second bun install --lockfile-only pass rewrote it");
 		}
-		const lockfile = readFileSync(islandLockfile, "utf8");
+		const mismatches = findSpecifierMismatches(parseBunLock(lockfile), manifests);
+		if (mismatches.length > 0) {
+			throw new Error(
+				`bun.lock workspace specifiers disagree with the manifests:\n${mismatches.map(formatMismatch).join("\n")}`,
+			);
+		}
 		const repositoryLockfile = join(repoRoot, "bun.lock");
 		const previous = existsSync(repositoryLockfile) ? readFileSync(repositoryLockfile, "utf8") : undefined;
 		const changed = previous !== lockfile;
 		if (!check && changed) writeFileSync(repositoryLockfile, lockfile);
-		return { lockfile, changed, bunVersion, islandRoot };
+		return { lockfile, changed, bunVersion, islandRoot, repaired };
 	} finally {
 		if (!keepIsland) rmSync(islandRoot, { recursive: true, force: true });
 	}
@@ -200,8 +244,9 @@ function main(argv) {
 		}
 	}
 	const check = args.has("--check");
-	const { changed, bunVersion } = regenerateBunLock({ check });
+	const { changed, bunVersion, repaired } = regenerateBunLock({ check });
 	if (check && changed) {
+		for (const mismatch of repaired) console.error(`stale ${formatMismatch(mismatch)}`);
 		console.error("bun.lock is out of date. Run: npm run refresh-lock");
 		return 1;
 	}

@@ -289,7 +289,7 @@ describe("eval renderer streaming reuse", () => {
 			.join("\n");
 
 		// Then
-		expect(text).toContain("eval py done ✓ · 2s");
+		expect(text).toContain("✓ work() · eval py done · 2s");
 		expect(text).not.toContain("calls/s");
 	});
 

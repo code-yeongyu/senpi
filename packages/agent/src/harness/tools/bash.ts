@@ -109,7 +109,12 @@ export function createBashTool<TContext extends ExecutionToolContext = Execution
 			acceptingUpdates = false;
 
 			let outputText = view?.text ?? "";
-			const capture = result.ok ? { text: outputText, ...result.value } : view;
+			const interruptedSpillPath = result.ok ? undefined : result.error.spillPath;
+			const capture = result.ok
+				? { text: outputText, ...result.value }
+				: view !== undefined && view.spillPath === undefined && interruptedSpillPath !== undefined
+					? { ...view, spillPath: interruptedSpillPath }
+					: view;
 			let details: BashToolDetails | undefined;
 			if (capture?.truncation.truncated) {
 				details = { truncation: capture.truncation, fullOutputPath: capture.spillPath };
@@ -123,6 +128,8 @@ export function createBashTool<TContext extends ExecutionToolContext = Execution
 				} else {
 					outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${capture.truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${capture.spillPath}]`;
 				}
+			} else if (interruptedSpillPath !== undefined) {
+				outputText += `${outputText ? "\n\n" : ""}[Full output: ${interruptedSpillPath}]`;
 			}
 
 			if (!result.ok) {

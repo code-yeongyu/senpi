@@ -1682,12 +1682,11 @@ Pi/application concerns, not Chord concepts.
   history, invalidate the old binding, hydrate the new one and restart its live counter. Reject
   deliveries from retired bindings. A periodic checkpoint does not by itself restart an existing
   replication stream or require a client-visible update when the state is unchanged.
-- **Actual Chord boundary.** `replicatedState(initial)` exposes tracked `.state`, published `.value`
-  and synchronous `.publish(context)`; its public subscription delivers complete values. Its
-  decoded-operation subscription and producer registration are private. Moreover, subscribing to
-  a producer or its service can flush pending mutations. Therefore mutating an exposed producer
-  and then awaiting storage is NOT a safe persistence adapter. Draft tracking must remain private
-  until commit; the exact supported Chord adapter seam is still to be designed (§25).
+- **Actual Chord boundary.** `replicatedState(initial)` exposes immutable `.value` plus synchronous
+  atomic `.change(context, callback)` and `.replace(context, value)` operations; its public
+  subscription delivers complete values. A change callback receives a transaction-scoped
+  copy-on-write draft that is revoked on return. A thrown callback publishes nothing and preserves
+  the exact prior value. Decoded-operation subscription and producer registration remain private.
 - **Delta ownership and encoding.** Chord Delta publicly supplies `track`, `apply`, `applyImmutable`,
   `encoder` and `decoder`. Decoded `Op[]` carry complete paths; compressed `WireOp[]` may depend on
   prior path definitions. A complete replacement resets those dictionaries. Arbitrary wire batches

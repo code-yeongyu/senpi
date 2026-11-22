@@ -10,8 +10,11 @@ import {
 	providerEntryLabel,
 	type SearchRoutingState,
 } from "./search.ts";
+import { resolveNativeSearchModel } from "./search-model.ts";
+import { resolveSessionLoginEntries } from "./session-login-entries.ts";
 import type {
 	ConfigLoadResult,
+	SearchDetails,
 	SearchErrorDetails,
 	SearchProgressDetails,
 	SearchRenderDetails,
@@ -22,14 +25,35 @@ const Params = Type.Object(
 	{
 		query: Type.String({ minLength: 2, description: "The search query to use" }),
 		allowed_domains: Type.Optional(
-			Type.Array(Type.String(), { description: "Only include search results from these domains" }),
+			Type.Array(Type.String(), {
+				description:
+					"Only include search results from these domains. Cannot be combined with a non-empty blocked_domains.",
+			}),
 		),
 		blocked_domains: Type.Optional(
-			Type.Array(Type.String(), { description: "Never include search results from these domains" }),
+			Type.Array(Type.String(), {
+				description:
+					"Never include search results from these domains. Cannot be combined with a non-empty allowed_domains.",
+			}),
+		),
+		max_results: Type.Optional(
+			Type.Integer({
+				description:
+					"Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped.",
+			}),
 		),
 	},
 	{ additionalProperties: false },
 );
+
+const DEFAULT_MAX_RESULTS = 10;
+const MIN_MAX_RESULTS = 1;
+const MAX_MAX_RESULTS = 50;
+
+/** The count a single call asked for, clamped to the supported range. */
+function perCallMaxResults(value: number): number {
+	return Math.min(MAX_MAX_RESULTS, Math.max(MIN_MAX_RESULTS, Math.trunc(value)));
+}
 
 export type ConfigProvider = () => ConfigLoadResult;
 type WebSearchTool = ReturnType<typeof defineTool<typeof Params, SearchRenderDetails>>;
@@ -40,7 +64,11 @@ async function configWithNativeRoute(
 	signal: AbortSignal | undefined,
 ): Promise<WebsearchConfig> {
 	if (!config.auto) return config;
-	const nativeEntries = await buildNativeEntries(ctx?.model, ctx?.modelRegistry, signal);
+	const choice = resolveNativeSearchModel(ctx?.model, ctx?.modelRegistry, config.nativeModel);
+	const searchModel = choice?.fallbackModel
+		? { model: choice.model, fallbackModel: choice.fallbackModel }
+		: choice && { model: choice.model };
+	const nativeEntries = await buildNativeEntries(ctx?.model, ctx?.modelRegistry, signal, searchModel);
 	return nativeEntries.length > 0 ? { ...config, providers: [...nativeEntries, ...config.providers] } : config;
 }
 
@@ -56,16 +84,26 @@ function searchErrorDetails(query: string, error: string, reason?: SearchErrorDe
 	return { phase: "error", query, error, ...(reason ? { reason } : {}) };
 }
 
-export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
+export interface WebSearchToolOptions {
+	onSearchComplete?: (details: SearchDetails) => void;
+}
+
+/** The one Tool Guidelines bullet; the server-search `## Web Search` section states it instead (senpi#5335). */
+export const WEB_SEARCH_CITE_GUIDELINE = "web_search used -> cite returned URLs in final answer.";
+
+export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearchToolOptions = {}): WebSearchTool {
 	let routingState: SearchRoutingState | undefined;
 	let routingKey = "";
 
 	return defineTool<typeof Params, SearchRenderDetails>({
 		name: "web_search",
+		runs: "brain",
+		workspaceEffect: "read",
 		label: "Web Search",
 		description: "Search the web for current information and return source URLs for citation.",
 		promptSnippet: "Search the web for current information, documentation, news, or external facts.",
-		promptGuidelines: ["After using web_search, cite relevant returned URLs in the final answer."],
+		promptGuidelines: [WEB_SEARCH_CITE_GUIDELINE],
+		fullPromptGuidelines: ["After using web_search, cite relevant returned URLs in the final answer."],
 		parameters: Params,
 		async execute(_toolCallId, params, signal, onUpdate, ctx: ExtensionContext) {
 			if (params.allowed_domains?.length && params.blocked_domains?.length) {
@@ -80,8 +118,16 @@ export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
 				return { content: [{ type: "text", text: loaded.message }], details };
 			}
 
-			const maxResults = loaded.config.providers[0]?.maxResults ?? 10;
-			const config = await configWithNativeRoute(loaded.config, ctx, signal);
+			const configuredMaxResults = loaded.config.providers[0]?.maxResults ?? DEFAULT_MAX_RESULTS;
+			const callMaxResults = params.max_results === undefined ? undefined : perCallMaxResults(params.max_results);
+			const maxResults = callMaxResults ?? configuredMaxResults;
+			const listed = await resolveSessionLoginEntries(loaded.config, ctx, signal);
+			const config = await configWithNativeRoute(listed, ctx, signal);
+			if (config.providers.length === 0 && loaded.config.providers.length > 0) {
+				const message =
+					"No web search provider is usable: the websearch.json entries that rely on a senpi login have no matching login.";
+				return { content: [{ type: "text", text: message }], details: searchErrorDetails(params.query, message) };
+			}
 			const progressDetails: SearchProgressDetails = {
 				phase: "searching",
 				query: params.query,
@@ -102,12 +148,13 @@ export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
 				routingKey !== nextRoutingKey ||
 				routingState.successCounts.length !== config.providers.length
 			) {
-				routingState = createSearchRoutingState(config.providers.length);
+				routingState = createSearchRoutingState(config.providers.length, routingState?.cooldowns);
 				routingKey = nextRoutingKey;
 			}
 			const request = {
 				query: params.query,
 				maxResults,
+				...(callMaxResults === undefined ? {} : { maxResultsFromCall: true }),
 				...(params.allowed_domains === undefined ? {} : { allowedDomains: params.allowed_domains }),
 				...(params.blocked_domains === undefined ? {} : { blockedDomains: params.blocked_domains }),
 			};
@@ -129,6 +176,7 @@ export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
 					});
 				},
 			);
+			options.onSearchComplete?.(details);
 			return { content: [{ type: "text", text: formatSearchText(details) }], details };
 		},
 		renderCall: (args, theme) => renderSearchCall(args, theme),

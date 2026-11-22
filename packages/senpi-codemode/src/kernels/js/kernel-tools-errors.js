@@ -8,6 +8,8 @@ export const KERNEL_TOOL_ERROR_CODES = Object.freeze([
 	"kernel_tool_failed",
 	"kernel_tool_recursion",
 	"kernel_tool_host_denied",
+	"kernel_tool_cancelled",
+	"kernel_tool_loop_mismatch",
 ]);
 
 export class KernelToolError extends Error {

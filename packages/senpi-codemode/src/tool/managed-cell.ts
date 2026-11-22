@@ -1,7 +1,6 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { type CellDeadlineExpiry, CellDeadlines } from "./cell-deadlines.ts";
 import type { EvalDetachedCellSnapshot, EvalDetachedCellState } from "./detached-cell-contract.ts";
-import { detachedNotificationSpillPath } from "./detached-cell-notification.ts";
 import type { EvalKernel, EvalToolDetails, EvalToolInput } from "./types.ts";
 
 export type LiveResultProvider = () => AgentToolResult<EvalToolDetails>;
@@ -9,7 +8,6 @@ export type LiveResultProvider = () => AgentToolResult<EvalToolDetails>;
 export type ManagedCell = {
 	readonly cellId: string;
 	readonly input: EvalToolInput;
-	readonly spillPath: string | undefined;
 	readonly startedAtMs: number;
 	readonly terminal: PromiseWithResolvers<EvalDetachedCellSnapshot>;
 	state: Exclude<EvalDetachedCellState, "detached">;
@@ -37,7 +35,6 @@ export type ManagedCell = {
 export interface ManagedCellInit {
 	readonly cellId: string;
 	readonly input: EvalToolInput;
-	readonly artifactsDir: string | undefined;
 	readonly now: () => number;
 	readonly defaultHardLimitSeconds: number;
 	readonly defaultRunBudgetSeconds: number;
@@ -60,7 +57,6 @@ export function createManagedCell(init: ManagedCellInit): ManagedCell {
 	return {
 		cellId: init.cellId,
 		input: init.input,
-		spillPath: detachedNotificationSpillPath(init.artifactsDir, init.cellId),
 		startedAtMs: init.now(),
 		state: "queued",
 		runStartedAtMs: undefined,

@@ -4,7 +4,12 @@ import { join } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import videoInExtension from "../../src/core/extensions/builtin/video-in/index.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionToolContext,
+	ToolDefinition,
+} from "../../src/core/extensions/types.ts";
 
 type AnyTool = ToolDefinition<any, any, any>;
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
@@ -119,7 +124,7 @@ describe("video-in extension", () => {
 				{ path: "clip.mp4" },
 				undefined,
 				undefined,
-				makeCtx(makeModel(["text", "image"]), "/tmp"),
+				makeCtx(makeModel(["text", "image"]), "/tmp") as ExtensionToolContext,
 			),
 		).rejects.toThrow("does not support video input");
 	});
@@ -134,7 +139,7 @@ describe("video-in extension", () => {
 				{ path: "notes.txt" },
 				undefined,
 				undefined,
-				makeCtx(makeModel(["text", "image", "video"]), dir),
+				makeCtx(makeModel(["text", "image", "video"]), dir) as ExtensionToolContext,
 			),
 		).rejects.toThrow("not a supported video file");
 	});
@@ -150,7 +155,7 @@ describe("video-in extension", () => {
 			{ path: "clip.mp4" },
 			undefined,
 			undefined,
-			makeCtx(makeModel(["text", "image", "video"]), dir),
+			makeCtx(makeModel(["text", "image", "video"]), dir) as ExtensionToolContext,
 		);
 		expect(result.content).toHaveLength(2);
 		expect(result.content[0]).toMatchObject({ type: "text" });
@@ -172,7 +177,7 @@ describe("video-in extension", () => {
 				{ path: "empty.mp4" },
 				undefined,
 				undefined,
-				makeCtx(makeModel(["text", "image", "video"]), dir),
+				makeCtx(makeModel(["text", "image", "video"]), dir) as ExtensionToolContext,
 			),
 		).rejects.toThrow("is empty");
 	});

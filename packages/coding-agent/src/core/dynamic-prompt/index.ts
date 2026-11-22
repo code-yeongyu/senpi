@@ -1,5 +1,5 @@
 export type { BuildDynamicSystemPromptOptions, DynamicPromptCoreContext } from "./build.ts";
-export { buildDynamicSystemPrompt } from "./build.ts";
+export { buildDynamicSystemPrompt, PROMPT_SURFACE_ENV_VAR, resolvePromptSurface } from "./build.ts";
 export { buildHandoffSection } from "./handoff.ts";
 export { buildIdentitySection } from "./identity.ts";
 export { buildIntentGate } from "./intent-gate.ts";
@@ -7,6 +7,6 @@ export { buildPoliciesSection } from "./policies.ts";
 export { buildStyleSection } from "./style.ts";
 export { categorizeTools } from "./tool-categorization.ts";
 export { buildToolSection } from "./tool-section.ts";
-export type { AvailableTool } from "./types.ts";
+export type { AvailableTool, PromptSurface } from "./types.ts";
 export { buildVerificationSection } from "./verification.ts";
 export { buildWorkingTaskSection } from "./working-task.ts";

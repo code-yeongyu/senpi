@@ -92,6 +92,6 @@ describe("eval display text parity", () => {
 		const text = textOf(toolResult);
 		expect(text).toContain("ch elided");
 		expect(text.length).toBeLessThan(10_000);
-		expect(toolResult.details.jsonOutputs).toEqual([value]);
+		expect(toolResult.details.jsonOutputs).toEqual([{ payload: `${"x".repeat(2_000)}[\u202618000ch elided\u2026]` }]);
 	});
 });

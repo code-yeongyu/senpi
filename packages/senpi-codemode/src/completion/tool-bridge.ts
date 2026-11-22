@@ -1,6 +1,8 @@
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { EvalKernel } from "../tool/types.ts";
+import { replyValue, startCompletionHandle, wantsCompletionHandle } from "./handle.ts";
 import type { CompletionRequest, CompletionResult } from "./handler.ts";
 
 export interface CompletionToolCallOptions {
@@ -9,20 +11,28 @@ export interface CompletionToolCallOptions {
 	readonly complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
 	readonly ctx: ExtensionContext;
 	readonly isActive: () => boolean;
+	/** Needed only for `completion(prompt, {handle: true})`; without it that option is refused. */
+	readonly handles?: HandleRegistry;
+	/** The creating cell's hard deadline (absolute ms) bounding a completion handle. */
+	readonly hardDeadlineMs?: number;
 }
 
 export type CompletionToolCallSummary = { readonly ok: true } | { readonly ok: false; readonly error: string };
 
 export async function handleCompletionToolCall(options: CompletionToolCallOptions): Promise<CompletionToolCallSummary> {
 	try {
-		const result = await options.complete(toCompletionRequest(options.message.args), options.ctx);
+		const request = toCompletionRequest(options.message.args);
+		const value = wantsCompletionHandle(request.opts)
+			? startCompletionHandle({
+					registry: requireRegistry(options.handles),
+					request,
+					complete: options.complete,
+					ctx: options.ctx,
+					deadlineMs: options.hardDeadlineMs ?? Number.POSITIVE_INFINITY,
+				})
+			: replyValue(await options.complete(request, options.ctx));
 		if (!options.isActive()) return { ok: false, error: "completion() result ignored after eval finalization" };
-		options.kernel.deliverToolReply({
-			type: "tool-reply",
-			callId: options.message.callId,
-			ok: true,
-			value: completionReplyValue(result),
-		});
+		options.kernel.deliverToolReply({ type: "tool-reply", callId: options.message.callId, ok: true, value });
 		return { ok: true };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -31,10 +41,23 @@ export async function handleCompletionToolCall(options: CompletionToolCallOption
 			type: "tool-reply",
 			callId: options.message.callId,
 			ok: false,
-			error: { message },
+			error: {
+				message,
+				...(error instanceof Error && "code" in error && typeof error.code === "string"
+					? { code: error.code }
+					: {}),
+			},
 		});
 		return { ok: false, error: message };
 	}
+}
+
+function requireRegistry(handles: HandleRegistry | undefined): HandleRegistry {
+	if (handles !== undefined) return handles;
+	throw Object.assign(
+		new Error("eval_wait_unavailable: completion handles are not available before the session starts"),
+		{ code: "eval_wait_unavailable" },
+	);
 }
 
 function toCompletionRequest(value: unknown): CompletionRequest {
@@ -48,8 +71,4 @@ function toCompletionRequest(value: unknown): CompletionRequest {
 		};
 	}
 	throw new Error("completion() received invalid arguments");
-}
-
-function completionReplyValue(result: CompletionResult): unknown {
-	return "value" in result ? result.value : result.text;
 }

@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { shardSocketPath } from "../../src/modes/rpc/host-daemon-paths.ts";
 import { type EnsuredHost, ensureHost } from "../../src/modes/rpc/host-ensure.ts";
+import { STOP_WAIT_BUDGET_MS } from "../../src/modes/rpc/host-ensure-stop.ts";
+import { settledOpportunisticHostGc } from "../../src/modes/rpc/host-gc-pass.ts";
 import { runHostRequest } from "../../src/modes/rpc/host-runner.ts";
 import type { HostEndpointStatus } from "../../src/modes/rpc/host-status-all.ts";
 import { signalGeneration, stopHost } from "../../src/modes/rpc/host-stop.ts";
@@ -64,7 +66,9 @@ export function endpointScratch(
 		shard: shardSocketPath(join(root, "rpc", "shards"), "p", SHARD_OWNER),
 	};
 	scratches.push(qa);
-	for (const dir of [qa.sessionDir, qa.cwd, dirname(qa.shard)]) mkdirSync(dir, { recursive: true });
+	// `rpc/` is part of the host's key root, which it refuses when writable by group or others (senpi#4541).
+	for (const dir of [qa.sessionDir, qa.cwd]) mkdirSync(dir, { recursive: true });
+	mkdirSync(dirname(qa.shard), { recursive: true, mode: 0o700 });
 	writeRpcModelsJson(qa.agentDir, modelOrigin);
 	return qa;
 }
@@ -76,7 +80,7 @@ export async function sweepEndpointScratches(): Promise<void> {
 	for (const model of models) model.release();
 	for (const target of ensured.splice(0)) {
 		const stopped = await stopHost({ ...target, force: true }).catch(() => undefined);
-		if (stopped?.action === "stopped") await waitForPidGone(stopped.pid, 30_000);
+		if (stopped?.action === "stopped") await waitForPidGone(stopped.pid, STOP_WAIT_BUDGET_MS);
 	}
 	for (const pid of supervisors.splice(0)) {
 		if (signalGeneration(pid, "SIGKILL")) await waitForPidGone(pid, 20_000);
@@ -101,9 +105,9 @@ function aliasedTempRoot(label: string): string {
 	return alias;
 }
 
-export function supervisorLaunch(args: readonly string[]): { command: string; args: string[] } {
+export function supervisorLaunch(args: readonly string[]): { command: string; args: string[]; reportsStartup: true } {
 	const entry = join(import.meta.dirname, "..", "..", "src", "modes", "rpc", "host-lifecycle.ts");
-	return { command: process.execPath, args: [entry, ...args] };
+	return { command: process.execPath, args: [entry, ...args], reportsStartup: true };
 }
 
 export function hostEnv(qa: EndpointScratch): Record<string, string> {
@@ -114,7 +118,17 @@ export function hostArgs(extension?: string): string[] {
 	return [...GENERATION_HOST_ARGS, ...(extension ? ["--extension", extension] : [])];
 }
 
-type RealHostOptions = { idleExitMs?: number; extension?: string; afterLockAcquired?: () => Promise<void> };
+type RealHostOptions = {
+	idleExitMs?: number;
+	/** Added to the host's environment, over `hostEnv(qa)`. */
+	env?: Readonly<Record<string, string>>;
+	extension?: string;
+	afterLockAcquired?: () => Promise<void>;
+	/** Runs after the host was spawned and before the ensure registers and probes it. */
+	beforePidFileWrite?: () => Promise<void>;
+	/** Return while the gc pass the ensure scheduled may still run; by default it has finished first. */
+	gcPassInFlight?: boolean;
+};
 
 /** A real supervised host, released at once: the suite's own connections are what attach to it. */
 export async function realHost(qa: EndpointScratch, socket: string, options: RealHostOptions = {}): Promise<number> {
@@ -134,16 +148,19 @@ export async function heldRealHost(
 		agentDir: qa.agentDir,
 		policy: { idleExitMs: options.idleExitMs ?? 600_000 },
 		hostArgs: hostArgs(options.extension),
-		env: hostEnv(qa),
+		env: { ...hostEnv(qa), ...options.env },
 		_test: {
 			readinessTimeoutMs: 60_000,
 			launch: supervisorLaunch,
 			...(options.afterLockAcquired && { afterLockAcquired: options.afterLockAcquired }),
+			...(options.beforePidFileWrite && { beforePidFileWrite: options.beforePidFileWrite }),
 		},
 	});
 	ensured.push({ socket, agentDir: qa.agentDir });
 	supervisors.push(host.pid);
 	held.push(host);
+	// The pass may reap or record under the agent dir; a scenario's own steps start once it is done.
+	if (options.gcPassInFlight !== true) await settledOpportunisticHostGc(qa.agentDir);
 	return host;
 }
 

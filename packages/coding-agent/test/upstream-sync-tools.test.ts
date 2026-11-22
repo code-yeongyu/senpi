@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getExperimentalToolSampling } from "../src/core/experimental.ts";
-import type { ExtensionContext, FilesystemPolicyChecker } from "../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext, FilesystemPolicyChecker } from "../src/core/extensions/types.ts";
 import { bashToolSystemPromptContribution, createBashToolDefinition } from "../src/core/tools/bash.ts";
 import { createEditToolDefinition } from "../src/core/tools/edit.ts";
 import { createAllToolDefinitions, type ToolName } from "../src/core/tools/index.ts";
@@ -122,7 +122,13 @@ describe("filesystem policy runs before any tool I/O", () => {
 		const write = createWriteToolDefinition(cwd, { filesystemPolicy: denyAll("write denied by policy") });
 
 		await expect(
-			write.execute("call-1", { path: target, content: "nope" }, undefined, undefined, NO_CTX),
+			write.execute(
+				"call-1",
+				{ path: target, content: "nope" },
+				undefined,
+				undefined,
+				NO_CTX as ExtensionToolContext,
+			),
 		).rejects.toThrow("write denied by policy");
 		expect(existsSync(target)).toBe(false);
 	});
@@ -139,7 +145,7 @@ describe("filesystem policy runs before any tool I/O", () => {
 				{ path: target, edits: [{ oldText: "original", newText: "replaced" }] },
 				undefined,
 				undefined,
-				NO_CTX,
+				NO_CTX as ExtensionToolContext,
 			),
 		).rejects.toThrow("edit denied by policy");
 		expect(readFileSync(target, "utf-8")).toBe("original\n");
@@ -151,9 +157,9 @@ describe("filesystem policy runs before any tool I/O", () => {
 		writeFileSync(target, "classified\n", "utf-8");
 		const read = createReadToolDefinition(cwd, { filesystemPolicy: denyAll("read denied by policy") });
 
-		await expect(read.execute("call-3", { path: target }, undefined, undefined, NO_CTX)).rejects.toThrow(
-			"read denied by policy",
-		);
+		await expect(
+			read.execute("call-3", { path: target }, undefined, undefined, NO_CTX as ExtensionToolContext),
+		).rejects.toThrow("read denied by policy");
 	});
 });
 
@@ -165,9 +171,9 @@ describe("invalid arguments fail before touching the filesystem", () => {
 		const before = readFileSync(target);
 
 		const edit = createEditToolDefinition(cwd);
-		await expect(edit.execute("call-4", { path: target, edits: [] }, undefined, undefined, NO_CTX)).rejects.toThrow(
-			"Edit tool input is invalid. edits must contain at least one replacement.",
-		);
+		await expect(
+			edit.execute("call-4", { path: target, edits: [] }, undefined, undefined, NO_CTX as ExtensionToolContext),
+		).rejects.toThrow("Edit tool input is invalid. edits must contain at least one replacement.");
 		expect(readFileSync(target).equals(before)).toBe(true);
 	});
 
@@ -183,7 +189,7 @@ describe("invalid arguments fail before touching the filesystem", () => {
 				undefined,
 				undefined,
 				// no session environment: runtime treats an absent ctx as plain cwd execution (guard provenance: bash.ts ctx?)
-				undefined as unknown as ExtensionContext,
+				undefined as unknown as ExtensionToolContext,
 			),
 		).rejects.toThrow("Invalid timeout");
 		expect(existsSync(marker)).toBe(false);
@@ -210,7 +216,7 @@ describe("bash output callback failures settle the tool promise", () => {
 				{ command: "printf 'streamed-output\\n'" },
 				undefined,
 				onUpdate,
-				undefined as unknown as ExtensionContext,
+				undefined as unknown as ExtensionToolContext,
 			)
 			.then(
 				() => undefined,
@@ -222,14 +228,20 @@ describe("bash output callback failures settle the tool promise", () => {
 	});
 });
 
-describe("write results carry the patch the app-server diff notification needs", () => {
+describe("write results carry reproducible file-change patches", () => {
 	it("reports an add whose patch reproduces the bytes on disk", async () => {
 		const cwd = createTempDir("senpi-l4-write-add-");
 		const target = join(cwd, "created.txt");
 		const content = "alpha\nbeta\ngamma\n";
 		const write = createWriteToolDefinition(cwd);
 
-		const result = await write.execute("call-7", { path: target, content }, undefined, undefined, NO_CTX);
+		const result = await write.execute(
+			"call-7",
+			{ path: target, content },
+			undefined,
+			undefined,
+			NO_CTX as ExtensionToolContext,
+		);
 
 		expect(textOf(result)).toContain(`Successfully wrote to ${target}`);
 		expect(result.details?.operation).toBe("add");
@@ -250,7 +262,13 @@ describe("write results carry the patch the app-server diff notification needs",
 		writeFileSync(target, before, "utf-8");
 		const write = createWriteToolDefinition(cwd);
 
-		const result = await write.execute("call-8", { path: target, content: after }, undefined, undefined, NO_CTX);
+		const result = await write.execute(
+			"call-8",
+			{ path: target, content: after },
+			undefined,
+			undefined,
+			NO_CTX as ExtensionToolContext,
+		);
 
 		expect(result.details?.operation).toBe("update");
 		expect(readFileSync(target, "utf-8")).toBe(after);
@@ -271,7 +289,7 @@ describe("write results carry the patch the app-server diff notification needs",
 			{ path: target, content: "identical\n" },
 			undefined,
 			undefined,
-			NO_CTX,
+			NO_CTX as ExtensionToolContext,
 		);
 
 		expect(result.details).toBeUndefined();
@@ -285,7 +303,13 @@ describe("read keeps the fork local:// guard", () => {
 		const read = createReadToolDefinition(cwd);
 
 		const error = await read
-			.execute("call-10", { path: "local://detached-eval-eval_5.log" }, undefined, undefined, NO_CTX)
+			.execute(
+				"call-10",
+				{ path: "local://detached-eval-eval_5.log" },
+				undefined,
+				undefined,
+				NO_CTX as ExtensionToolContext,
+			)
 			.then(
 				() => undefined,
 				(reason: unknown) => reason,

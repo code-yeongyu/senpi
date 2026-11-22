@@ -26,6 +26,7 @@ describe("builtin /rename slash command", () => {
 			name: "rename",
 			description: "Rename the current session",
 			argumentHint: "[name]",
+			requiresArguments: false,
 		});
 	});
 

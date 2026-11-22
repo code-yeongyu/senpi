@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "../../types.ts";
-import { formatGoalElapsedSeconds } from "./format.ts";
+import { formatGoalElapsedSeconds, goalStatusLabel } from "./format.ts";
 import type { Goal } from "./types.ts";
+import { goalDisplayStatus } from "./types.ts";
 
 export const STATUS_KEY = "goal";
 
@@ -18,7 +19,7 @@ export function updateGoalUi(ctx: ExtensionContext, goal: Goal | null, liveElaps
 }
 
 export function goalStatusText(goal: Goal, liveElapsedSeconds?: number): string {
-	switch (goal.status) {
+	switch (goalDisplayStatus(goal)) {
 		case "active": {
 			if (liveElapsedSeconds !== undefined) {
 				return `Pursuing goal (${formatGoalElapsedSeconds(liveElapsedSeconds)})`;
@@ -28,7 +29,9 @@ export function goalStatusText(goal: Goal, liveElapsedSeconds?: number): string 
 				: "Pursuing goal";
 		}
 		case "paused":
-			return "Goal paused (/goal resume)";
+			return goal.continuationStoppedAt === undefined
+				? "Goal paused (/goal resume)"
+				: `Goal ${goalStatusLabel("paused", goal.continuationStoppedAt)}`;
 		case "blocked":
 			return goal.blockedReason ? `Goal blocked: ${goal.blockedReason}` : "Goal blocked";
 		case "complete": {

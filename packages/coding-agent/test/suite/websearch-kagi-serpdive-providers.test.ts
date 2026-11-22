@@ -58,8 +58,8 @@ describe("vendored websearch kagi provider", () => {
 		expect(plain.body).toEqual({ query: "current docs", limit: 20 });
 	});
 
-	it("normalizes data.search results with publishedAt", () => {
-		const results = normalizeSearchResponse("kagi", {
+	it("normalizes data.search results with publishedAt", async () => {
+		const results = await normalizeSearchResponse("kagi", {
 			meta: { ms: 42 },
 			data: {
 				search: [
@@ -107,8 +107,8 @@ describe("vendored websearch serpdive provider", () => {
 		expect(request.body).toEqual({ query: "current docs site:docs.example.com", max_results: 10 });
 	});
 
-	it("normalizes results[].content into the snippet", () => {
-		const results = normalizeSearchResponse("serpdive", {
+	it("normalizes results[].content into the snippet", async () => {
+		const results = await normalizeSearchResponse("serpdive", {
 			results: [
 				{ title: "Docs", url: "https://docs.example.com", content: "Extracted page content", date: "2026-06-19" },
 			],

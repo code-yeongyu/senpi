@@ -222,6 +222,26 @@ describe("builtin hooks trust", () => {
 		}
 	});
 
+	it("reads a fresh project's trust state without creating its config folder", async () => {
+		// Given
+		const root = await mkdtemp(join(tmpdir(), "senpi-hooks-trust-"));
+		createdDirs.push(root);
+		const agentDir = join(root, "agent");
+		const cwd = join(root, "repo");
+		mkdirSync(cwd, { recursive: true });
+		const storage = new FileHookStateStorage({ agentDir, cwd });
+
+		// When
+		const project = storage.read("project");
+		const global = storage.read("global");
+
+		// Then
+		expect(project).toEqual({ version: 1, hooks: {} });
+		expect(global).toEqual({ version: 1, hooks: {} });
+		expect(readdirSync(cwd)).toEqual([]);
+		expect(readdirSync(root)).toEqual(["repo"]);
+	});
+
 	it.runIf(process.platform === "win32")(
 		"atomically replaces an existing snapshot on Windows",
 		async () => {

@@ -2,6 +2,8 @@
  * Real-surface terminal persistence QA: two fresh extension generations over one
  * on-disk session sidecar. No OS-level senpi process is spawned; PTYs and file
  * watchers are real.
+ *
+ * Run: SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/persistent-monitor-restart.test.ts
  */
 
 import { existsSync } from "node:fs";
@@ -13,7 +15,12 @@ import registerTerminalExtension from "../../src/core/extensions/builtin/termina
 import { MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
 import { RESTORE_DIGEST_CUSTOM_TYPE } from "../../src/core/extensions/builtin/terminal/restore-digest.ts";
 import { whenRestoreDecided } from "../../src/core/extensions/builtin/terminal/restore-session.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionToolContext,
+	ToolDefinition,
+} from "../../src/core/extensions/types.ts";
 
 const harness = vi.hoisted(() => ({
 	/** Every TerminalManifestWriter the extension constructs, so the test can await its own flush. */
@@ -144,7 +151,7 @@ async function flushManifestWriters(): Promise<void> {
 	await Promise.all(harness.writers.map((writer) => writer.flush()));
 }
 
-it("restores persistent monitors across two session generations and enforces the fire budget", async () => {
+it("restores persistent monitors across two session generations and paces a burst without muting", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-qa-persistent-restart-"));
 	const deploy = join(dir, "deploy.log");
 	const service = join(dir, "svc.log");
@@ -171,28 +178,28 @@ it("restores persistent monitors across two session generations and enforces the
 			{ command: "sleep 30", description: "background bash", run_in_background: true },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		const fileResult = await monitor.execute(
 			"file",
 			{ description: "deploy changes", path: deploy, event: "modify", persistent: true },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		const commandResult = await monitor.execute(
 			"command",
 			{ description: "service log", command: `tail -n 0 -F ${service}`, persistent: true },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		const ephemeralResult = await monitor.execute(
 			"ephemeral deadline",
 			{ description: "temporary wait", command: "sleep 30", timeout_ms: 60_000 },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		commandMonitorId = String(commandResult.details?.monitor_id ?? "");
 		originalRuntimeId = String(commandResult.details?.bash_id ?? "");
@@ -248,28 +255,44 @@ it("restores persistent monitors across two session generations and enforces the
 		await postRestartNotice;
 		expect(b.messages.filter((message) => message.includes("post-restart"))).toHaveLength(1);
 
-		const budgetNotice = nextMessage(b, (content) => content.includes("auto-muted: fire budget (200/24h) reached"));
-		await appendFile(service, Array.from({ length: 300 }, (_, index) => `budget-${index}\n`).join(""));
-		const budgetSummary = await budgetNotice;
-		expect(
-			b.messages.filter((message) => message.includes("auto-muted: fire budget (200/24h) reached")),
-		).toHaveLength(1);
-		expect(budgetSummary).toContain("service log");
+		// A 300-line burst on the restored durable watch: the old 200/24h budget muted it here. Now one
+		// wake carries the first batch and names the overflow file holding the rest; nothing is muted.
+		const burstNotice = nextMessage(b, (content) => /more lines in \S+overflow/.test(content));
+		await appendFile(service, Array.from({ length: 300 }, (_, index) => `burst-${index}\n`).join(""));
+		const burstWake = await burstNotice;
+		expect(burstWake).toContain("service log");
+		expect(b.messages.filter((message) => message.includes("auto-muted"))).toHaveLength(0);
+		const overflowPath = /more lines in (\S+\.log)\]/.exec(burstWake)?.[1];
+		if (overflowPath === undefined) throw new Error(`no overflow path in the wake: ${burstWake}`);
+		const inline = burstWake.match(/\bburst-\d+\b/g) ?? [];
+		const spilled = (await readFile(overflowPath, "utf8")).trim().split("\n");
+		expect([...inline, ...spilled]).toEqual(Array.from({ length: 300 }, (_, index) => `burst-${index}`));
 		expect(restoredRegistry.snapshot()).toContainEqual(
 			expect.objectContaining({
 				id: restoredRuntimeId,
 				monitorId: commandMonitorId,
-				paused: true,
-				fireWindow: expect.objectContaining({ count: 200 }),
+				paused: false,
 			}),
 		);
 	} finally {
 		if (b) {
 			const kill = b.tools.get("kill_bash");
 			if (kill && backgroundId)
-				await kill.execute("cleanup-background", { bash_id: backgroundId }, undefined, undefined, b.context);
+				await kill.execute(
+					"cleanup-background",
+					{ bash_id: backgroundId },
+					undefined,
+					undefined,
+					b.context as ExtensionToolContext,
+				);
 			if (kill && restoredRuntimeId)
-				await kill.execute("cleanup-monitor", { bash_id: restoredRuntimeId }, undefined, undefined, b.context);
+				await kill.execute(
+					"cleanup-monitor",
+					{ bash_id: restoredRuntimeId },
+					undefined,
+					undefined,
+					b.context as ExtensionToolContext,
+				);
 			await b.fire("session_shutdown", { type: "session_shutdown", reason: "quit" });
 		}
 		if (a && !b) await a.fire("session_shutdown", { type: "session_shutdown", reason: "quit" });

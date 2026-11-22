@@ -324,8 +324,9 @@ describe("facet host", () => {
 		expect(watched!.state).toBe(retainedState);
 		expect(retainedState.value).toEqual({ value: 2 });
 		expect(revisions).toEqual([1, 2]);
-		sources[0]!.state.value = 3;
-		sources[0]!.publish(BACKGROUND_CONTEXT);
+		sources[0]!.change(BACKGROUND_CONTEXT, (draft) => {
+			draft.value = 3;
+		});
 		expect(retainedState.value).toEqual({ value: 2 });
 		expect(revisions).toEqual([1, 2]);
 
@@ -419,13 +420,15 @@ describe("facet host", () => {
 		});
 		const host = await createFacetHost({ facets: [consumer, provider] });
 		expect(deliveries).toBe(1);
-		state!.state.value = 1;
-		state!.publish(BACKGROUND_CONTEXT);
+		state!.change(BACKGROUND_CONTEXT, (draft) => {
+			draft.value = 1;
+		});
 		expect(deliveries).toBe(2);
 
 		await host.dispose();
-		state!.state.value = 2;
-		state!.publish(BACKGROUND_CONTEXT);
+		state!.change(BACKGROUND_CONTEXT, (draft) => {
+			draft.value = 2;
+		});
 		expect(deliveries).toBe(2);
 	});
 

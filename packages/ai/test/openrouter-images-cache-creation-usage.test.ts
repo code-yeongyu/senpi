@@ -50,6 +50,7 @@ vi.mock("openai", () => {
 });
 
 const model: ImagesModel<"openrouter-images"> = {
+	type: "image",
 	id: "google/gemini-3.1-flash-image-preview",
 	name: "Gemini 3.1 Flash Image Preview",
 	api: "openrouter-images",

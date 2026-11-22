@@ -50,7 +50,7 @@ async function elapsed<T>(operation: Promise<T>): Promise<{ readonly value: T; r
 }
 
 describe("JavaScriptKernel cooperative interrupt", () => {
-	it("Given a cell parked on a promise nothing settles when interrupted then the worker restarts and the note is truthful", async () => {
+	it("Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state", async () => {
 		const { kernel, entry } = await createKernel();
 		const run = kernel.run({
 			cellId: "unresponsive",
@@ -66,11 +66,11 @@ describe("JavaScriptKernel cooperative interrupt", () => {
 			ok: false,
 			error: { message: expect.stringContaining("unresponsive-stop") },
 		});
-		await expect(handle.stateRetained).resolves.toBe(false);
+		await expect(handle.stateRetained).resolves.toBe(true);
 		await expect(
-			kernel.run({ cellId: "after-restart", code: "return typeof stuckMarker", timeoutMs: 2_000 }),
-		).resolves.toMatchObject({ ok: true, valueRepr: '"undefined"' });
-		expect(await spawnCount(entry)).toBe(2);
+			kernel.run({ cellId: "after-stop", code: "return stuckMarker", timeoutMs: 2_000 }),
+		).resolves.toMatchObject({ ok: true, valueRepr: "1" });
+		expect(await spawnCount(entry)).toBe(1);
 	});
 
 	it("Given a worker blocked in a synchronous child call when interrupted then a fresh worker replaces it within the stop deadline", async () => {

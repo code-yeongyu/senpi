@@ -13,6 +13,8 @@ import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core/harness/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import { JsonlSessionRepo } from "@earendil-works/pi-agent-core/harness/session";
+import { signalSpawnedChild } from "../../../utils/child-signal.ts";
+import { runtimeExecArgv } from "../../../utils/runtime-exec-argv.ts";
 import { type SessionSummary, Sessions, type SessionsServiceApi, Worker } from "../shared/protocol.ts";
 import { createPeer, type RpcPeer } from "../shared/rpc.ts";
 import { childConnection, type Transport } from "../shared/transport.ts";
@@ -70,8 +72,8 @@ export async function runServer(options: { transport: Transport; sessionsRoot: s
 	const spawning = new Map<string, Promise<Route>>();
 
 	const spawnWorker = async (sessionId: string | undefined, cwd: string): Promise<Route> => {
-		const args = [...process.execArgv, WORKER_ENTRY, options.sessionsRoot, cwd, ...(sessionId ? [sessionId] : [])];
-		const child = spawn(process.execPath, args, { stdio: ["pipe", "pipe", "inherit"] });
+		const args = [...runtimeExecArgv(), WORKER_ENTRY, options.sessionsRoot, cwd, ...(sessionId ? [sessionId] : [])];
+		const child = spawn(process.execPath, args, { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
 		const connection = childConnection(child);
 		const peer = createPeer(connection);
 		// Workers consume `Sessions` through this same peer.
@@ -82,7 +84,7 @@ export async function runServer(options: { transport: Transport; sessionsRoot: s
 			sessionId: described.sessionId,
 			worker: peer,
 			subscribers: new Map(),
-			stop: () => child.kill(),
+			stop: () => signalSpawnedChild(child),
 		};
 		// Routing is the server's job. An addressed event reaches one presentation; the rest are shared.
 		peer.onEvent((service, payload, to) => {

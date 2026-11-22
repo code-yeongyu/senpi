@@ -1,23 +1,25 @@
 import type {
 	AnthropicMessagesCompat,
 	Api,
+	BaseModel,
 	BedrockCompat,
 	CacheRetention,
-	ModelCost,
+	MistralConversationsCompat,
+	ModelPromptCache,
 	ModelThinkingLevel,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
-	ProviderId,
 	ThinkingLevelMap,
 } from "./types.ts";
 
-/** Model interface for the unified model system. */
-export interface Model<TApi extends Api> {
-	id: string;
-	name: string;
-	api: TApi;
-	provider: ProviderId;
-	baseUrl: string;
+/** Chat model: usable with `stream()` and friends. */
+export interface Model<TApi extends Api> extends BaseModel<TApi> {
+	/**
+	 * Optional: chat is the default model type, so models without `type` are chat
+	 * models. Narrow mixed model lists with `isModelType()` instead of comparing
+	 * `type` directly.
+	 */
+	type?: "chat";
 	reasoning: boolean;
 	/**
 	 * Maps pi thinking levels to provider/model-specific values.
@@ -30,13 +32,12 @@ export interface Model<TApi extends Api> {
 	 * OpenAI-compatible endpoint advertises. Clamped to the supported levels like any other request.
 	 */
 	defaultThinkingLevel?: ModelThinkingLevel;
-	input: ("text" | "image" | "video")[];
-	cost: ModelCost;
+	/** Prompt cache lifetimes per retention tier. Unset when the provider's cache behavior is unknown. */
+	promptCache?: ModelPromptCache;
 	contextWindow: number;
 	maxTokens: number;
 	/** Default sampling parameters; per-request values override these by key. */
 	samplingParams?: Record<string, unknown>;
-	headers?: Record<string, string>;
 	/** Default prompt-cache retention preference when the request omits one. */
 	cacheRetention?: CacheRetention;
 	/**
@@ -44,11 +45,21 @@ export interface Model<TApi extends Api> {
 	 * (for example `-fast` priority-tier variants aliasing their base model).
 	 */
 	upstreamModelId?: string;
+	/** True when the upstream catalog marks this model deprecated; it stays usable until it is removed upstream. */
+	deprecated?: boolean;
 	/** Service tier requested by default for this model (for example `-fast` variants). */
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	/** Whether to recover supported text-encoded tool calls from assistant text. */
 	recoverTextToolCalls?: boolean;
-	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
+	/**
+	 * Whether a request may end with an assistant message the model continues
+	 * writing (assistant prefill). Absent means no: Claude 4.6 and later reject a
+	 * trailing assistant message, OpenAI's Responses API has no prefill, and the
+	 * other default providers document none. Set it per model only after a live
+	 * probe; `modelSupportsAssistantPrefill` also applies the request settings.
+	 */
+	supportsAssistantPrefill?: boolean;
+	/** API compatibility overrides. Hosted search on unverified routes requires explicit opt-in. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat
 		: TApi extends "openai-responses" | "openai-codex-responses" | "azure-openai-responses"
@@ -57,11 +68,20 @@ export interface Model<TApi extends Api> {
 				? AnthropicMessagesCompat
 				: TApi extends "bedrock-converse-stream"
 					? BedrockCompat
-					: TApi extends "cursor-agent"
-						? CursorAgentCompat
-						: TApi extends "devin-agent"
-							? DevinAgentCompat
-							: never;
+					: TApi extends "mistral-conversations"
+						? MistralConversationsCompat
+						: TApi extends "cursor-agent"
+							? CursorAgentCompat
+							: TApi extends "devin-agent"
+								? DevinAgentCompat
+								: TApi extends "google-generative-ai" | "google-vertex"
+									? GoogleCompat
+									: never;
+}
+
+export interface GoogleCompat {
+	/** Opt in to Google Search grounding, including mixed function-tool requests. */
+	supportsWebSearch?: boolean;
 }
 
 /** Devin (Cascade) model metadata the transport branches on. */
@@ -100,4 +120,17 @@ export interface CursorAgentCompat {
 		 */
 		variantIds?: Readonly<Partial<Record<ModelThinkingLevel, string>>>;
 	};
+}
+
+/**
+ * Whether a request to `model` with these settings may end with an assistant
+ * message the model continues writing. Extended thinking rules prefill out on
+ * the Anthropic Messages API even for models that otherwise accept it.
+ */
+export function modelSupportsAssistantPrefill(
+	model: Pick<Model<Api>, "api" | "supportsAssistantPrefill">,
+	settings: { readonly thinkingEnabled: boolean },
+): boolean {
+	if (model.supportsAssistantPrefill !== true) return false;
+	return !(model.api === "anthropic-messages" && settings.thinkingEnabled);
 }

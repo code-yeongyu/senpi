@@ -1,6 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { pendingSwitchKeepRecentTokens } from "../../../src/core/extensions/builtin/compaction/switch-admission.ts";
+import { buildRpcSessionState } from "../../../src/modes/rpc/rpc-session-state.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 function seedLiveContext(harness: Harness, tokens: number): void {
@@ -88,12 +89,17 @@ describe("#1873 deferred model switch", () => {
 		seedLiveContext(harness, 321_000);
 		const target = harness.getModel("372k");
 		if (!target) throw new Error("missing deferred switch target fixture");
+		expect(buildRpcSessionState(harness.session).pendingModelSwitch).toBeNull();
 
 		// when
 		await harness.session.setModel(target);
 
 		// then the switch is recorded as pending rather than thrown away
 		expect(harness.session.pendingModelSwitch?.model.id).toBe("372k");
+		expect(buildRpcSessionState(harness.session).pendingModelSwitch).toEqual({
+			provider: target.provider,
+			id: target.id,
+		});
 		expect(harness.eventsOfType("model_change_pending")).toHaveLength(1);
 	});
 
@@ -132,7 +138,10 @@ describe("#1873 deferred model switch", () => {
 		expect(harness.eventsOfType("compaction_start").length).toBeGreaterThan(0);
 		expect(harness.session.model?.id).toBe("372k");
 		expect(harness.session.pendingModelSwitch).toBeUndefined();
-		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toHaveLength(1);
+		const changes = harness.sessionManager.getEntries().filter((entry) => entry.type === "model_change");
+		expect(changes).toHaveLength(1);
+		// senpi#2870: the applied switch names itself held and names who first asked for it.
+		expect(changes[0]).toMatchObject({ source: "held-switch", actor: "sdk" });
 	});
 
 	it("compacts on the original model, sized for the target's window", async () => {
@@ -211,12 +220,14 @@ describe("#1873 deferred model switch", () => {
 
 		// when a model that fits right now is chosen afterwards
 		await harness.session.setModel(roomy);
+		expect(buildRpcSessionState(harness.session).pendingModelSwitch).toBeNull();
 		harness.setResponses([fauxAssistantMessage("answered on the roomy model")]);
 		await harness.session.prompt("continue");
 
 		// then the newer choice stands; the stale hold must not reclaim the session
 		expect(harness.session.model?.id).toBe("900k");
 		expect(harness.session.pendingModelSwitch).toBeUndefined();
+		expect(buildRpcSessionState(harness.session).pendingModelSwitch).toBeNull();
 		expect(
 			harness.sessionManager
 				.getEntries()
@@ -254,6 +265,7 @@ describe("#1873 deferred model switch", () => {
 		// then the cycle supersedes the hold; the older choice must not reclaim the send
 		expect(harness.session.model?.id).toBe("900k");
 		expect(harness.session.pendingModelSwitch).toBeUndefined();
+		expect(buildRpcSessionState(harness.session).pendingModelSwitch).toBeNull();
 		expect(
 			harness.faux
 				.getCallLog()

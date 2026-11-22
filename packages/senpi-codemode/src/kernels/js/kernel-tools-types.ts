@@ -1,4 +1,5 @@
 import type { ExtensionKernelTools, KernelToolInvokeOptions, KernelToolInvokeScope } from "@code-yeongyu/senpi";
+import type { EvalLanguage } from "../../tool/types.ts";
 import type { KernelToolErrorCode, KernelToolHostDenial, KernelToolHostDenialReason } from "./kernel-tools-errors.ts";
 
 export type { KernelToolErrorCode, KernelToolHostDenial, KernelToolHostDenialReason };
@@ -7,7 +8,7 @@ export type KernelToolDescriptor = {
 	readonly name: string;
 	readonly description: string;
 	readonly input_schema: unknown;
-	readonly language: "js";
+	readonly language: EvalLanguage;
 	readonly kernel_generation: number;
 	readonly definition_revision: number;
 };

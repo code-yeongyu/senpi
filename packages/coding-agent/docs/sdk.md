@@ -167,7 +167,7 @@ Important behavior:
 - `runtime.session` changes after those operations
 - event subscriptions are attached to a specific `AgentSession`, so re-subscribe after replacement
 - if you use extensions, call `runtime.session.bindExtensions(...)` again for the new session
-- creation returns diagnostics on `runtime.diagnostics`
+- creation returns diagnostics on `runtime.diagnostics`; a diagnostic may carry a machine `code` (today only `"model_unresolved"`: the requested model could not be resolved and the session fell back to the default model)
 - if runtime creation or replacement fails, the method throws and the caller decides how to handle it
 
 ```typescript

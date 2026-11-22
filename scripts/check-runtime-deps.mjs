@@ -150,8 +150,7 @@ for (const { directory } of getRuntimeDepsCheckPackages()) {
 		// TypeScript's exclude only filters roots: imports can pull excluded files
 		// back into the build. That is a violation only for RUNTIME imports from a
 		// build root; a file referenced only through type-only imports, or only
-		// from inside the excluded set itself (e.g. the fork's generated app-server
-		// protocol tree, excluded on purpose), never reaches the emitted output.
+		// from inside the excluded set itself, never reaches the emitted output.
 		if (!roots.has(resolve(source.fileName)) && runtimeReachableFromRoots.has(resolve(source.fileName))) {
 			failures.push(`${source.fileName} is excluded from ${manifest.name}'s build but imported by it`);
 		}

@@ -1,9 +1,10 @@
 import {
 	type AssistantMessage,
-	type Context,
 	createAssistantMessageEventStream,
 	type Model,
+	normalizeContext,
 	type SimpleStreamOptions,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { demoteToolUseWithoutToolCalls, EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC } from "../src/assistant-terminal-state.ts";
@@ -63,11 +64,11 @@ describe("empty tool_use recovery on native tool-calling providers", () => {
 	it("retries the same request when tool_use arrives with no tool call", async () => {
 		//#given - a native tool-calling model whose first response is toolUse with no tool call
 		const model = nativeToolCallingModel();
-		const seen: Array<{ model: Model<never> | undefined; context: Context | undefined }> = [];
+		const seen: Array<{ model: Model<never> | undefined; context: TranscriptContext | undefined }> = [];
 		let call = 0;
 		const streamFunction = (
 			requestedModel: Model<never>,
-			context: Context,
+			context: TranscriptContext,
 			_options?: SimpleStreamOptions,
 		): ReturnType<typeof streamOf> => {
 			seen.push({ model: requestedModel, context });
@@ -76,7 +77,7 @@ describe("empty tool_use recovery on native tool-calling providers", () => {
 				? streamOf(thinkingOnlyToolUse())
 				: streamOf(assistantMessage("toolUse", [{ type: "toolCall", id: "call-1", name: "eval", arguments: {} }]));
 		};
-		const context: Context = { systemPrompt: "", messages: [], tools: [] };
+		const context = normalizeContext({ systemPrompt: "", messages: [], tools: [] });
 
 		//#when
 		const recovered = withEmptyAssistantRecovery(model, streamFunction as never);
@@ -105,7 +106,7 @@ describe("empty tool_use recovery on native tool-calling providers", () => {
 			calls += 1;
 			return streamOf(thinkingOnlyToolUse());
 		};
-		const context: Context = { systemPrompt: "", messages: [], tools: [] };
+		const context = normalizeContext({ systemPrompt: "", messages: [], tools: [] });
 
 		//#when
 		const recovered = withEmptyAssistantRecovery(model, streamFunction as never);
@@ -134,7 +135,7 @@ describe("empty tool_use recovery on native tool-calling providers", () => {
 			call += 1;
 			return streamOf(thinkingOnlyToolUse());
 		};
-		const context: Context = { systemPrompt: "", messages: [], tools: [] };
+		const context = normalizeContext({ systemPrompt: "", messages: [], tools: [] });
 
 		//#when
 		const recovered = withEmptyAssistantRecovery(model, streamFunction as never);

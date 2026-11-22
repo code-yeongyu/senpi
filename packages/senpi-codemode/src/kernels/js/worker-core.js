@@ -1,7 +1,13 @@
+import { installCellOwnership } from "./cell-ownership.js";
+import { releaseCell, releasedCellError, runInCell } from "./cell-run-context.js";
 import { kernelToolCallContext } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
 import { hostDeniedError, hostToolRefusal } from "./kernel-tools-scope.js";
+import { installSessionCwd } from "./worker-cwd.js";
+import { installPackageResolver } from "./worker-package-resolve.js";
+import { createHeapProbe } from "./worker-heap.js";
+import { createRejectionReports } from "./rejection-reports.js";
 import { createWorkerMemory } from "./worker-memory.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
 import { installKernelWebView } from "./worker-webview.js";
@@ -22,12 +28,23 @@ const SESSION_ENVIRONMENT_KEYS = [
 	"PI_PROVIDER",
 	"PI_MODEL",
 	"PI_REASONING_LEVEL",
+	"OMO_BROWSER_ENGINE",
 ];
 
 export function createWorkerCore(transport, options) {
+	const restoreOwnership = installCellOwnership();
 	let runtime = null;
 	let memory = null;
+	let heapProbe = null;
 	let activeCell = null;
+	// The kill guard's judge, imported by URL before the runtime installs its wrappers (senpi#5349).
+	let killGuard;
+	const rejections = createRejectionReports({
+		activeCell: () => activeCell,
+		emitText: (data) => emit({ type: "text", stream: "stderr", data }),
+	});
+	const reportRejection = (reason) => rejections.report(reason);
+	process.on("unhandledRejection", reportRejection);
 	const pendingTools = new Map();
 	const pendingWebViewPorts = new Map();
 	const nestedInvokes = new Map();
@@ -35,10 +52,16 @@ export function createWorkerCore(transport, options) {
 		getRuntime: () => runtime,
 		emit: (message) => transport.send(message),
 		nestedInvokes,
+		runAuthority: options.runAuthority,
 	});
 
 	function emit(message) {
 		transport.send(message);
+	}
+
+	function stopProblem(cell, what, error) {
+		const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+		emit({ type: "text", stream: "stderr", data: `Stopping cell ${cell.cellId}: ${what}: ${detail}\n` });
 	}
 
 	async function runCell(message) {
@@ -47,17 +70,32 @@ export function createWorkerCore(transport, options) {
 			return;
 		}
 		const startedAtMs = performance.now();
-		activeCell = { cellId: message.cellId, interruption: null };
+		if (killGuard?.notice !== undefined) {
+			emit({ type: "text", stream: "stderr", data: killGuard.notice });
+			killGuard = { ...killGuard, notice: undefined };
+		}
+		const release = Promise.withResolvers();
+		const cell = { cellId: message.cellId, interruption: null, released: false, release: release.reject };
+		activeCell = cell;
+		rejections.startCell(cell);
 		try {
-			const value = await runtime.run(message.code, message.cellId, {
-				emit,
-				callTool: async (toolName, args) => await callTool(toolName, args),
-			});
+			const execute = () => runInCell(cell, () =>
+				runtime.run(message.code, message.cellId, {
+					emit: (event) => {
+						if (releasedCellError() === undefined) emit(event);
+					},
+					callTool: async (toolName, args) => await callTool(toolName, args),
+				}),
+			);
+			const run = options.runAuthority ? options.runAuthority(message.authority, execute, message.code) : execute();
+			const value = await Promise.race([run, release.promise]);
+			rejections.finishCell(cell);
 			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} catch (error) {
+			rejections.finishCell(cell);
 			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} finally {
-			activeCell = null;
+			if (activeCell === cell) activeCell = null;
 		}
 	}
 
@@ -66,6 +104,8 @@ export function createWorkerCore(transport, options) {
 	}
 
 	async function callTool(toolName, args) {
+		const released = releasedCellError();
+		if (released !== undefined) throw released;
 		const nested = kernelToolCallContext.getStore();
 		if (!nested && activeCell?.interruption) throw activeCell.interruption;
 		if (nested?.signal.aborted) throw nested.signal.reason;
@@ -91,7 +131,7 @@ export function createWorkerCore(transport, options) {
 
 	function interruptCell(reason) {
 		if (!activeCell || !runtime) return;
-		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId } });
+		acknowledgeInterrupt();
 		const interruption = cellInterruptedError(reason);
 		activeCell.interruption = interruption;
 		for (const [callId, pending] of pendingTools) {
@@ -100,6 +140,22 @@ export function createWorkerCore(transport, options) {
 		}
 		kernelTools.abortAll(kernelToolError("kernel_tool_stale", interruption.message));
 		runtime.interrupt();
+		// A free event loop with no Bun.$ wait can let the cell go and keep the VM. A Bun.$ wait keeps the
+		// restart (#2453): the shell cannot be cancelled, so only retiring the worker ends it.
+		if (runtime.shellWaitActive) return;
+		const cell = activeCell;
+		for (const error of releaseCell(cell)) stopProblem(cell, "a resource it opened would not close", error);
+		// The result settles after the cell's children are gone, so the next cell never overlaps them. A failed release
+		// is reported as such, never left to surface as an unhandled rejection blamed on the stopped cell.
+		void runtime
+			.release()
+			.catch((error) => stopProblem(cell, "releasing its work failed", error))
+			.finally(() => cell.release(interruption));
+	}
+
+	function acknowledgeInterrupt() {
+		if (!activeCell || !runtime) return;
+		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId, shellWaitActive: runtime.shellWaitActive } });
 	}
 
 	function onMessage(message) {
@@ -117,23 +173,45 @@ export function createWorkerCore(transport, options) {
 			return;
 		}
 		if (message.type === "init") {
-			applySessionEnvironment(message.sessionEnv);
+			if (message.killGuard !== undefined && killGuard === undefined) {
+				void loadKillGuard(message.killGuard).then((loaded) => {
+					killGuard = loaded;
+					onMessage(message);
+				});
+				return;
+			}
+			applySessionEnvironment(message.sessionEnv, message.removedEnv, message.inheritedSet);
+			installSessionCwd(options.cwd, options.cwdInstallOptions);
 			installKernelWebView(requestWebViewPort);
+			installPackageResolver();
 			runtime = new JsWorkerRuntime({
 				cwd: options.cwd,
 				parallelPoolWidth: options.parallelPoolWidth,
 				localRoots: message.connection.localRoots,
 				artifactsDir: message.connection.artifactsDir,
+				permissionIO: options.permissionIO,
 				kernelGeneration: message.kernelGeneration ?? 1,
 				hostToolNames: message.hostToolNames ?? [],
 				foreignLanguageNames: message.foreignLanguageNames ?? [],
+				kernelToolsDisabled: message.kernelToolsDisabled === true,
+				...(killGuard?.guard === undefined ? {} : { killGuard: killGuard.guard }),
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
+				onShellWaitChange: () => {
+					if (activeCell?.interruption) acknowledgeInterrupt();
+				},
 			});
-			if (message.memory) {
+			// A process-mode kernel measures its memory host-side as a footprint; the in-heap
+			// worker reading would contradict it, so the child keeps memory collection off.
+			if (message.memory && !options.processModeMemory) {
 				memory = createWorkerMemory(message.memory, (report) => emit({ type: "status", event: { op: MEMORY_COLLECTED_OP, ...report } }));
 				memory.captureBaseline();
 			}
 			emit({ type: "ready" });
+			return;
+		}
+		if (message.type === "memory-query") {
+			heapProbe ??= createHeapProbe();
+			emit({ type: "memory-query-result", requestId: message.requestId, liveBytes: Math.round(heapProbe.estimate()), measure: "heap" });
 			return;
 		}
 		if (message.type === "run") {
@@ -163,23 +241,38 @@ export function createWorkerCore(transport, options) {
 	return {
 		dispose() {
 			unsubscribe();
+			restoreOwnership();
+			process.off("unhandledRejection", reportRejection);
 			globalThis.__senpi_restore_console__?.();
 		},
 	};
+}
+
+// Judge missing: the cell runs unguarded with one notice, as the design's L2 shim does when its judge is gone.
+async function loadKillGuard(spec) {
+	try {
+		const judge = await import(String(spec.moduleUrl));
+		return { guard: { judge, agentPid: spec.agentPid } };
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		return { notice: `[senpi:kill-guard] the kill guard's judge could not be loaded in this kernel (${detail}); signals from cells are not judged.\n` };
+	}
 }
 
 function durationMs(startedAtMs) {
 	return Math.max(0, Math.round(performance.now() - startedAtMs));
 }
 
-function applySessionEnvironment(sessionEnv) {
+// removedEnv/inheritedSet: the RPC host's supervisor hand-off this thread's env copy must not keep, and the origin
+// attribution it carries instead (senpi#5635). Deleted like an unprovided session key, so the pin below covers them.
+function applySessionEnvironment(sessionEnv, removedEnv = [], inheritedSet = {}) {
 	const provided = new Set(Object.keys(sessionEnv ?? {}));
 	const deleted = [];
-	for (const key of SESSION_ENVIRONMENT_KEYS) {
+	for (const key of [...SESSION_ENVIRONMENT_KEYS, ...removedEnv]) {
 		if (key in process.env && !provided.has(key)) deleted.push(key);
 		delete process.env[key];
 	}
-	const applied = Object.entries(sessionEnv ?? {});
+	const applied = [...Object.entries(inheritedSet), ...Object.entries(sessionEnv ?? {})];
 	for (const [key, value] of applied) process.env[key] = value;
 	// A worker's process.env is its own view: Bun.$ and node:child_process read it, but Bun.spawn
 	// without an explicit env inherits the OS environ, which also still holds deleted keys because
@@ -202,7 +295,7 @@ function cellInterruptedError(reason) {
 
 function bridgeError(error) {
 	if (error instanceof Error) {
-		return { name: error.name, message: error.message, stack: error.stack, ...(typeof error.code === "string" ? { code: error.code } : {}) };
+		return { name: error.name, message: error.message, stack: error.stack, ...(typeof error.code === "string" ? { code: error.code } : {}), ...(error.code === "cell_permission_denied" && error.rule ? { permissionRule: error.rule } : {}) };
 	}
 	return { message: String(error) };
 }

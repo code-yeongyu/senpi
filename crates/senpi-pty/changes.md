@@ -1,3 +1,22 @@
+## 2026-09-30 - Drop self-comparing unit tests from lib.rs (senpi#2447)
+
+### What changed
+
+- `crates/senpi-pty/src/lib.rs` loses its `#[cfg(test)] mod tests` block: `version_matches_crate_version`, `abi_sentinel_matches_abi_version` and `portable_pty_backend_is_linked`.
+
+### Why
+
+- Each one compared a function with the constant or macro it returns, or only called `native_pty_system()`, which every session test already calls.
+- The ABI sentinel is proven through the real prebuild by `packages/pty/test/native-lifecycle.test.ts`.
+
+### Why an extension could not handle it
+
+- Repository scripts, CI and native crate test code.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `lib.rs` above `mod session_tests;`.
+
 # changes
 
 ## 2026-09-27 - A draining session no longer injects a newline into a terminal another fork can still see (senpi#2161)

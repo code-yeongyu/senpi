@@ -3,6 +3,7 @@
 // Copyright (c) 2025-2026 Can Bölük
 // https://github.com/can1357/oh-my-pi
 
+import type { HandoffCueKind } from "../prompt-preset/contract.ts";
 import { stripAnsi } from "../../../../utils/ansi.ts";
 import { nextActionableTask } from "./todo-query.ts";
 import type { TodoAsk, TodoItem, TodoPhase } from "./todo-types.ts";
@@ -35,7 +36,9 @@ export type HandoffMoment = "list-created" | "phase-closed" | "all-closed";
  * Which handoff moment a successful mutation produced, if any: the list was just created, the
  * last open task of a phase closed, or the last open task of the whole list closed. The result
  * carries the cue right before the model writes its next text, where a system-prompt rule alone
- * proved unreliable on weaker models (senpi#2121 real-surface QA).
+ * proved unreliable on weaker models (senpi#2121 real-surface QA). A list of one task is no
+ * multi-step work: the first-turn opener makes a question such a list, and its reply is the answer
+ * itself, so it reaches no moment (senpi#3323).
  */
 export function handoffMomentOf(
 	before: readonly TodoPhase[],
@@ -44,7 +47,7 @@ export function handoffMomentOf(
 ): HandoffMoment | undefined {
 	const hasOpen = (tasks: readonly TodoItem[]) => tasks.some((task) => !isTerminalTodoStatus(task.status));
 	const afterTasks = after.flatMap((phase) => phase.tasks);
-	if (afterTasks.length === 0) return undefined;
+	if (afterTasks.length < 2) return undefined;
 	if (createsList) return "list-created";
 	if (!hasOpen(afterTasks)) return hasOpen(before.flatMap((phase) => phase.tasks)) ? "all-closed" : undefined;
 	const closedPhase = after.some(
@@ -62,12 +65,30 @@ export const HANDOFF_CUES: Readonly<Record<HandoffMoment, string>> = {
 	"phase-closed":
 		"Handoff due: a phase closed. Before your next tool call, write the Ask / For you / Now / Next block.",
 	"all-closed":
-		"Handoff due: every task is closed. Your final message is the Ask / For you / Now: none / Next: none block; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside For you.",
+		"Handoff due: every task is closed. Your final message is the Ask / For you / Now / Next block, with Now and Next saying no task remains; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside For you.",
 };
 
-/** The cue line appended to a todo result, or nothing when no handoff moment was reached. */
-export function formatHandoffCue(moment: HandoffMoment | undefined): string {
-	return moment ? `\n\n${HANDOFF_CUES[moment]}` : "";
+/**
+ * The labels of the handoff block every GPT block preset renders (gpt-5.5, gpt-5.6, gpt-6-astra;
+ * the gpt-6.2 core inherits it until its rewrite lands). The cue names these labels - the prompt
+ * itself carries the full template, so the cue does not repeat it - and a test pins the labels
+ * against the rendered presets.
+ */
+export const GPT_HANDOFF_LABELS = "Outcome so far / You need / Now / Next";
+
+export const GPT_HANDOFF_CUES: Readonly<Record<HandoffMoment, string>> = {
+	"list-created": `Handoff due: the plan exists. Before your next tool call, write the ${GPT_HANDOFF_LABELS} handoff block.`,
+	"phase-closed": `Handoff due: a phase closed. Before your next tool call, write the ${GPT_HANDOFF_LABELS} handoff block.`,
+	"all-closed": `Handoff due: every task is closed. Your final message is the ${GPT_HANDOFF_LABELS} handoff block, with Now and Next saying no task remains; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside You need.`,
+};
+
+/**
+ * The cue line appended to a todo result, or nothing when no handoff moment was reached or the
+ * active preset defines no handoff block to cue (senpi#6977).
+ */
+export function formatHandoffCue(moment: HandoffMoment | undefined, kind: HandoffCueKind = "default"): string {
+	if (moment === undefined || kind === "none") return "";
+	return `\n\n${(kind === "gpt-block" ? GPT_HANDOFF_CUES : HANDOFF_CUES)[moment]}`;
 }
 
 /** `Ask:` / `Now:` / `Next:` lines plus a blank separator line. */
@@ -127,7 +148,7 @@ function formatListSummary(phases: readonly TodoPhase[], errors: readonly string
 	lines.push(
 		`Active phase ${currentIdx + 1}/${phases.length} "${current.name}" (${done}/${current.tasks.length})${
 			workedAhead
-				? " — earliest phase with open tasks; the in-progress pointer auto-advances to the earliest open task on each completion, so it can sit behind out-of-order work (nothing was un-completed)."
+				? ": earliest phase with open tasks; the in-progress pointer auto-advances to the earliest open task on each completion, so it can sit behind out-of-order work (nothing was un-completed)."
 				: "."
 		}`,
 	);

@@ -3,7 +3,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
 import type { MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
-import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { sharedMarkdownTheme, theme } from "../theme/theme.ts";
 
 /**
  * Component that renders a custom message entry from extensions.
@@ -21,7 +21,7 @@ export class CustomMessageComponent extends Container {
 	constructor(
 		message: CustomMessage<unknown>,
 		customRenderer?: MessageRenderer,
-		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		markdownTheme: MarkdownTheme = sharedMarkdownTheme(),
 		outputPad = 1,
 	) {
 		super();
@@ -36,6 +36,14 @@ export class CustomMessageComponent extends Container {
 		this.box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
 
 		this.rebuild();
+	}
+
+	/**
+	 * The default rendering is built from revisioned primitives. A custom renderer's component counts
+	 * only if it reports its own revision; otherwise the message keeps rendering every frame.
+	 */
+	override getRenderRevision(): number | undefined {
+		return this.childRenderRevision();
 	}
 
 	setExpanded(expanded: boolean): void {

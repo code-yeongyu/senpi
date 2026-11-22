@@ -8,6 +8,826 @@
 
 ### Fixed
 
+## [2026.11.22-2] - 2026-11-22
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.22] - 2026-11-22
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.21-2] - 2026-11-21
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.21] - 2026-11-21
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.20] - 2026-11-20
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.19-5] - 2026-11-19
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.19-4] - 2026-11-19
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.19-3] - 2026-11-19
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.19-2] - 2026-11-19
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.19] - 2026-11-19
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.18-3] - 2026-11-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.18-2] - 2026-11-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.18] - 2026-11-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.17-2] - 2026-11-17
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.17] - 2026-11-17
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.15-4] - 2026-11-15
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.15-3] - 2026-11-15
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.15-2] - 2026-11-15
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.15] - 2026-11-15
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.13] - 2026-11-13
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.12] - 2026-11-12
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.11] - 2026-11-11
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.10-3] - 2026-11-10
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.10-2] - 2026-11-10
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.10-1] - 2026-11-10
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.10] - 2026-11-10
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.9-2] - 2026-11-09
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.9] - 2026-11-09
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.6-3] - 2026-11-08
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.5-1] - 2026-11-05
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.4-1] - 2026-11-04
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Changed
+
+- Run the client, protocol, server and telemetry Vitest suites on Bun, preserving their temp-owning runner and adding all four to CI's workspace selection ([#4801](https://github.com/code-yeongyu/senpi/pull/4801)).
+
+### Fixed
+
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.21-3] - 2026-10-22
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.19] - 2026-10-19
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.13] - 2026-10-13
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.12] - 2026-10-12
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.11] - 2026-10-11
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10-12] - 2026-10-10
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10-11] - 2026-10-09
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10-10] - 2026-10-09
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10-9] - 2026-10-08
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10-8] - 2026-10-08
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10-6] - 2026-10-07
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10-5] - 2026-10-07
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10-4] - 2026-10-06
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.10] - 2026-10-05
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.9] - 2026-10-04
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.7] - 2026-10-04
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.3] - 2026-10-03
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+- `SessionMetadata` is now exported by the server package and requires only `id`; the package no longer depends on the agent core package (inherited). The testing `TestServerHost` keeps an in-memory session map instead of a `MemorySessionRepo`, and `TestHarness` exposes `metadata` instead of `session`.
+
+### Changed
+
+### Fixed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.30] - 2026-09-30
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
 ## [2026.9.28-7] - 2026-09-28
 
 ### Breaking Changes

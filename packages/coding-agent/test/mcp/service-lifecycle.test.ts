@@ -157,8 +157,14 @@ describe("McpService session lifecycle", () => {
 			untrusted: stdioServer(["--spawn-counter-file", untrustedCounter]),
 		});
 		const service = getMcpService();
+		const firstSession = fakePi();
 
-		await attach(service, root, "startup", false);
+		await service.attachSession(
+			{ type: "session_start", reason: "startup" },
+			{ cwd: root.cwd, isProjectTrusted: () => false },
+			firstSession,
+			{ agentDir: root.agentDir },
+		);
 		await awaitMcpConnected(service, "live");
 		const livePid = requiredPid(service, "live");
 		expect(await readCounter(liveCounter)).toBe(1);
@@ -170,6 +176,9 @@ describe("McpService session lifecycle", () => {
 		setConfig(root, {
 			disabled: { ...stdioServer(["--spawn-counter-file", disabledCounter]), enabled: false },
 		});
+		// The replaced session's shutdown releases its binding first, as the MCP builtin does on `new`; a session
+		// still bound would keep the servers it declares (senpi#2597).
+		await service.releaseSession(firstSession);
 		await attach(service, root, "new", false);
 
 		await assertProcessDead(livePid);

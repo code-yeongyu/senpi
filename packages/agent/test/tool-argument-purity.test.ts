@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { prepareAgentToolCallArguments } from "../src/agent-loop.ts";
+import { prepareAgentToolCallArguments } from "../src/index.ts";
 import type { AgentTool, AgentToolCall } from "../src/types.ts";
 
 const PARAMETERS = Type.Object({
@@ -39,7 +39,7 @@ function keyDeletingTool(): AgentTool {
 	};
 }
 
-function toolCallWith(args: Record<string, unknown>): AgentToolCall {
+function toolCallWith(args: AgentToolCall["arguments"]): AgentToolCall {
 	return { type: "toolCall", id: "call-1", name: "in_place_normalizer", arguments: args };
 }
 

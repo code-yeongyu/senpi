@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-const builtinRoot = join(packageRoot, "src", "core", "extensions", "builtin");
 const repoRoot = join(packageRoot, "..", "..");
 const SCAN_ROOTS = [join(packageRoot, "src"), join(repoRoot, "packages", "ai", "src")];
 
@@ -95,11 +94,7 @@ function stringLiterals(source: string): string[] {
 }
 
 describe("anthropic subscription naming boundary", () => {
-	it("renames the internal provider path without renaming the upstream package", () => {
-		expect(existsSync(join(builtinRoot, "anthropic-subscription", "index.ts"))).toBe(true);
-		expect(existsSync(join(builtinRoot, "claude-sdk-oauth", "index.ts"))).toBe(false);
-		expect(existsSync(join(builtinRoot, "claude-agent-sdk", "index.ts"))).toBe(false);
-
+	it("keeps the upstream SDK dependency and never depends on the legacy package name", () => {
 		const packageJson = readFileSync(join(packageRoot, "package.json"), "utf8");
 		expect(packageJson).toContain('"@anthropic-ai/claude-agent-sdk":');
 		expect(packageJson).not.toContain('"@anthropic-ai/claude-sdk-oauth"');
@@ -121,12 +116,5 @@ describe("anthropic subscription naming boundary", () => {
 		}
 		// Named so a failure points straight at the file and the offending literal.
 		expect(leaks).toEqual([]);
-	});
-
-	it("keeps the legacy ids reachable where they are load-bearing", () => {
-		const legacyMap = readFileSync(join(repoRoot, "packages", "ai", "src", "legacy-provider-ids.ts"), "utf8");
-		// Both map KEYS must survive: every normalization and every typed rejection reads them.
-		expect(legacyMap).toContain('"openai-codex": "chatgpt-subscription"');
-		expect(legacyMap).toContain('"claude-sdk-oauth": "anthropic-subscription"');
 	});
 });

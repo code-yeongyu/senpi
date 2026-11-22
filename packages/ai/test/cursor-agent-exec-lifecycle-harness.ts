@@ -5,6 +5,7 @@ import type { CursorAgentOptions, CursorExecHandlers } from "../src/api/cursor-a
 import { frameConnectMessage, stream as streamCursorAgent } from "../src/api/cursor-agent.ts";
 import type { AssistantMessage, Message, Model, ToolResultMessage } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
 export type ExecMode = "success" | "rejection" | "pending" | "unknown" | "shellStream" | "dispatchFailure";
 export type TurnTerminationMode = "turnEndedOpen" | "silentMidTurn";
 export type StreamHealthMode = "heartbeatOnly" | "checkpointResume" | "retryExhaustion";
@@ -169,7 +170,7 @@ export async function runStreamHealthScenario(mode: StreamHealthMode): Promise<{
 	try {
 		const cursorStream = streamCursorAgent(
 			buildModel(`http://127.0.0.1:${address.port}`),
-			{ messages: [{ role: "user", content: "hello", timestamp: 0 }] satisfies Message[] },
+			normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 0 }] satisfies Message[] }),
 			{
 				apiKey: "test-token",
 				streamHealthFailThresholdMs: 50,
@@ -207,7 +208,7 @@ export async function runTurnTerminationScenario(mode: TurnTerminationMode): Pro
 	try {
 		const stream = streamCursorAgent(
 			buildModel(`http://127.0.0.1:${address.port}`),
-			{ messages: [{ role: "user", content: "hello", timestamp: 0 }] satisfies Message[] },
+			normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 0 }] satisfies Message[] }),
 			{
 				apiKey: "test-token",
 				streamHealthFailThresholdMs: 50,
@@ -284,7 +285,7 @@ export async function runExecLifecycleScenario(mode: ExecMode): Promise<{
 		const execHandlers = handlersFor(mode, pendingRead.promise);
 		const stream = streamCursorAgent(
 			buildModel(`http://127.0.0.1:${address.port}`),
-			{ messages: [{ role: "user", content: "hello", timestamp: 0 }] satisfies Message[] },
+			normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 0 }] satisfies Message[] }),
 			{ apiKey: "test-token", execHandlers } satisfies CursorAgentOptions,
 		);
 		for await (const _event of stream) {

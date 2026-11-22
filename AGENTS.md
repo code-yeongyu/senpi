@@ -40,6 +40,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | `packages/tui/` | Differential terminal renderer and editor primitives |
 | `packages/protocol/`, `packages/server/`, `packages/client/` | Framed-CBOR wire protocol plus its server and client for remote sessions |
 | `packages/telemetry/` | Vendor-neutral telemetry contracts and typed schema utilities |
+| `packages/realm-registry/` | Zero-dependency helper: one pinned, versioned registry per JavaScript realm for state several engine copies share |
 | `packages/session-backends/` | Session backend adapters; `sqlite-node/` Node sqlite session store |
 | `packages/evals/` | Model-backed eval suites over real `AgentSession`; spends tokens by design |
 | `packages/pty/` | TypeScript PTY loader, sessions, registry, vendored prebuilds, pipe fallback |
@@ -60,7 +61,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | Change Cursor transport or exec bridging | `packages/ai/src/api/cursor-agent/`, `packages/coding-agent/src/core/cursor-exec-bridge.ts` |
 | Change agent-loop semantics or the harness | `packages/agent/src/agent-loop.ts`, `packages/agent/src/harness/` |
 | Change interactive rendering | `packages/coding-agent/src/modes/interactive/` and `packages/tui/src/` |
-| Change app-server/RPC | `packages/coding-agent/src/modes/app-server/` or `.../modes/rpc/` |
+| Change RPC | `packages/coding-agent/src/modes/rpc/` |
 | Add or change coding-agent tests or examples | `packages/coding-agent/test/`, `packages/coding-agent/examples/` |
 | Change PTY behavior | `packages/pty/` and, for native behavior, `crates/senpi-pty/` |
 | Change model/provider runtime or docs | `packages/ai/src/{models.ts,auth,providers}`, `packages/coding-agent/docs/providers.md` |
@@ -71,7 +72,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 
 ## CODE MAP
 
-Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop.ts`, driven by `coding-agent/src/core` into interactive | print | RPC | app-server; `tui` renders, `pty` -> `crates/senpi-pty` runs terminals, `protocol` (framed CBOR) links `server` and `client`.
+Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop.ts`, driven by `coding-agent/src/core` into interactive | print | RPC; `tui` renders, `pty` -> `crates/senpi-pty` runs terminals, `protocol` (framed CBOR) links `server` and `client`.
 
 | Symbol / file | Role | Notes |
 |---|---|---|
@@ -84,10 +85,10 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 
 ## COMMANDS
 
-- Install dependencies: `bun install --ignore-scripts`. After an approved dependency change, `bun run refresh-lock` (lockfile + registry metadata + shrinkwrap + install-lock).
-- Full static validation after code changes: `bun run check` (biome, pinned-deps/ts-imports/shrinkwrap/install-lock checks, `check:claude-sdk-platform-lock`, `tsc --noEmit`, browser-smoke). It runs no tests; CI runs the same commands, so keep them in sync. Broad validation: `bun run test` runs `test:scripts`, then `scripts/run-workspaces.mjs` runs every workspace `test` script sequentially in path order with the package manager you invoked, so `bun run test`, `npm run test`, and `pnpm run test` run the same suites the same way.
+- Install dependencies: `bun install --ignore-scripts`. After an approved dependency change, `bun run refresh-lock` (lockfile + registry metadata + install-lock).
+- Full static validation after code changes: `bun run check` (oxlint, `bun fmt` with `.oxfmtrc.json`, the lint ratchet, pinned-deps/ts-imports/install-lock checks, `check:claude-sdk-platform-lock`, `tsc --noEmit`, browser-smoke). It runs no tests; CI runs the same commands, so keep them in sync. Broad validation: `bun run test` runs `test:scripts`, then `scripts/run-workspaces.mjs` runs every workspace `test` script with the package manager you invoked, so `bun run test`, `npm run test`, and `pnpm run test` run the same suites the same way. `packages/coding-agent` runs alongside the other workspaces (which keep path order, one at a time) when `os.availableParallelism()` is at least 8 (`RUN_WORKSPACES_PARALLELISM` overrides the count); below that the run is fully sequential. `bun run test:serial` is the same suite strictly sequential in path order, the reference a concurrent run must match test for test.
 - Narrow tests run from the package root using that package's test command (`bun run --cwd packages/<pkg> test -- <args>`), or from the repository root through the runner (`bun run test --workspace packages/<pkg> -- <args>`, which runs the scripts tests first). Runners differ: Vitest for `ai`, `coding-agent`, `senpi-codemode`, `server`, `session-backends`, `telemetry`; `node --test --import tsx` for `tui`; `node --test` for `scripts/` (`bun run test:scripts`) and `.agents/skills/senpi-qa/scripts/lib/`.
-- App-server transport QA is its own channel: `bun run qa:app-server` (`packages/coding-agent/scripts/qa-app-server/`), not part of `bun run test`. Model catalog data: `bun run hydrate:model-data`, verified by `check:model-data`, from the repository root.
+- Model catalog data: `bun run hydrate:model-data`, verified by `check:model-data`, from the repository root.
 - Never run `bun run dev` in this repository.
 
 ## CONVENTIONS
@@ -96,17 +97,18 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - TypeScript under `packages/*/src`, `packages/*/test`, and `packages/coding-agent/examples` must use erasable syntax. Avoid `any` and verify external types in `node_modules`.
 - Imports are top-level by default. Inline or dynamic imports are forbidden except existing documented lazy/browser-safe boundaries such as `packages/ai/src/api/*.lazy.ts` and credential probes.
 - Do not hardcode TUI keys; add defaults to `packages/tui/src/keybindings.ts` or `packages/coding-agent/src/core/keybindings.ts`.
-- Never hand-edit generated sources: `packages/ai/src/{models,image-models}.generated.ts` and `src/providers/data/*.json` (regenerate via `packages/ai/scripts/generate-models.ts`), `packages/ai/src/api/cursor-agent/gen/agent_pb.ts` (`buf generate` + `scripts/transform-cursor-agent-proto.mjs`), `crates/senpi-pty/index.{js,d.ts}` (napi-rs), `packages/coding-agent/install-lock/*`, and `packages/coding-agent/src/modes/app-server/protocol/generated/`. Builtin extension registration order is authoritative only in `builtin/index.ts` — never quote a registration number from prose.
+- Never hand-edit generated sources: `packages/ai/src/{models,image-models}.generated.ts` and `src/providers/data/*.json` (regenerate via `packages/ai/scripts/generate-models.ts`), `packages/ai/src/api/cursor-agent/gen/agent_pb.ts` (`buf generate` + `scripts/transform-cursor-agent-proto.mjs`), `crates/senpi-pty/index.{js,d.ts}` (napi-rs), and `packages/coding-agent/install-lock/*`. Builtin extension registration order is authoritative only in `builtin/index.ts` — never quote a registration number from prose.
 - Root `package.json` scripts reach workspaces only through `node scripts/run-workspaces.mjs`; never `npm run --workspaces`, `npm --workspace=<name> run`, `npm --prefix <dir> run`, or `cd <dir> && npm run` (`scripts/root-workspace-scripts.test.mjs` fails the manifest). Those shapes hardcode npm, and under bun the flag-after-name form re-entered the root script forever.
 - Ask before removing intentional functionality; backward compatibility is opt-in, not automatic.
-- Changing fork-specific source behavior means reading the nearest `changes.md` first and updating it in the same verified increment, not in a follow-up. Merges resolve tracker files to `ours`, so a stale entry misleads the next upstream sync.
+- Changing fork-specific source behavior means reading the nearest `changes.md` first and writing its entry in the same verified increment, not in a follow-up. Merges resolve tracker files to `ours`, so a stale entry misleads the next upstream sync.
+- **Change fragments (senpi#3610):** a PR never edits an existing `changes.md` or a package `CHANGELOG.md` `[Unreleased]` section (every PR editing the same top lines made all of them conflict). It adds ONE file, `changes/unreleased/<pr-number>.md`, with one `<!-- changes-log: <path> -->` block per log: a tracker block holds the dated `## ` entry with its four canonical sections, a changelog block holds `### <Section>` plus bullets. Only `scripts/release.mjs` compiles and deletes fragments at the release cut, before stamping. Format: `changes/unreleased/README.md`; convert an old-style branch with `node scripts/sync-changes-fragments.mjs from-diff --base origin/main --pr <n>`.
 - Changelog edits are release/audit work only: follow `.github/agent/commands/cl.md`, never edit released sections, and satisfy the changelog gate (`.github/workflows/changelog-gate.yml`) for both CHANGELOG.md and changes.md — see below.
 
 ## CHANGES.MD TRACKER POLICY
 
 - Upstream ownership is pinned by `.github/upstream.json` (`badlogic/pi-mono` tag + sha): a production path in that pinned tree is upstream-owned; a path absent from it (and not a rename destination) is fork-only and exempt.
 - Production scope is every changed path except: `changes.md` trackers and `.github/upstream.json`; lockfiles (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `Cargo.lock`, `*.lock`, `*.lock.json`); non-production metadata (`.gitignore`, `LICENSE`, `test.sh`); test/fixture/example/doc trees (`__tests__`, `tests`, `fixtures`, `examples`, `docs`) plus `*.test.*`/`*.spec.*`; `.md`/`.mdx`; and `*.generated.{ts,mts,cts,js}` sources.
-- Every upstream-owned production path must be covered in its exact nearest ancestor `changes.md` — never a farther tracker — by an entry naming that exact repo-relative path under all four canonical headings: `What changed`, `Why`, `Why an extension could not handle it`, `Expected merge conflict zones`.
+- Every upstream-owned production path must be covered in its exact nearest ancestor `changes.md` (a fragment block for that tracker counts) — never a farther tracker — by an entry naming that exact repo-relative path under all four canonical headings: `What changed`, `Why`, `Why an extension could not handle it`, `Expected merge conflict zones`.
 - Tracker coverage is independent of the release changelog: `no-changelog` waives only the CHANGELOG.md entry, never changes.md, and coverage never substitutes for a required CHANGELOG.md entry.
 - A pin-sync PR — one that edits `.github/upstream.json` — exempts upstream-owned paths that exactly match the new pinned tree, but paths still divergent from the new pin are integration repairs and must gain coverage from tracker entries in the same PR.
 - Enforcement: `scripts/check-pr-changelog.mjs` gates every PR through `.github/workflows/changelog-gate.yml` (counting only tracker entries the PR itself touches), and `scripts/audit-changes-md.mjs` audits the whole tree against the pin (`--format json|markdown`).
@@ -123,13 +125,24 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - Documentation-only changes use focused validators and `git diff --check`, not runtime QA — but `packages/coding-agent/docs/` ships in the tarball and is test-asserted, so doc edits there can fail CI.
 - For manual checks of the interactive TUI in a controlled tmux terminal, load and follow `.senpi/skills/interactive-testing.md`.
 
+## TEST AUTHORING GATE
+Before adding or changing a test, answer all four; a missing answer means do not add it yet:
+1. What observable behavior, invariant, or independent contract does it protect?
+2. What credible regression makes it fail?
+3. Why does existing coverage not already catch that failure? Each contract has one primary test owner at the strongest boundary; extend a table case or shared fixture instead of adding a near-duplicate.
+4. Does it need a production seam (export, flag, wrapper, injection hook) no production caller needs? If yes, test at the real boundary instead.
+Junk patterns (reject unless the retention bar below applies): assertion-free probes; self-comparisons and identity copiers; copied fixtures, inventories, manifests or export lists; exact source, import or string greps; private call-shape tests duplicated at a real boundary; duplicate invocations of one contract; replays of a shared helper through a wrapper; tests that exist to keep a test-only export or wrapper alive; production code whose only callers are tests; expected values produced by the code under test; mocks that implement the asserted behavior; fixture-supplied receipts or postconditions the code under test should produce; assertions against a store nothing writes; capability or flag restatements without a delivery proof; negative controls that pass for an unrelated reason; names that promise more than the input exercises.
+Retention bar: keep a pattern match only when it independently guards a public API, protocol, config, migration, storage, security, platform, default, prompt-byte, generated or cross-language, package, release, or architecture contract, and say which one in the test. Static or slow is never a deletion reason. A retained test that fails on the base is a product bug to fix at its owner, never a test to delete.
+A bug regression test must fail on the pre-fix code for the intended reason; an existing owner test that already fails may serve as that proof.
+Method source: openclaw test-audit skill.
+
 ## DEPENDENCIES AND INFRA
 
 - Treat dependency and lockfile diffs as code: pin direct external dependencies exactly, use `--ignore-scripts` for install/lock refreshes. The pre-commit hook allows workspace-metadata-only refreshes; other lockfile changes require explicit `PI_ALLOW_LOCKFILE_CHANGE=1` approval.
 - Keep shared environment surfaces synchronized: dependency, Node, provider/env, QA-channel, build-command, and forwarded-port changes must update `scripts/devenv-setup.mjs`, `.devcontainer/devcontainer.json`, and related references together, keeping root `package.json` workspaces and `pnpm-workspace.yaml` aligned with any workspace-package move or rename.
-- Regenerate `packages/coding-agent/publish-deps.lock.json` with `bun scripts/generate-coding-agent-shrinkwrap.mjs`; never replace it with `npm-shrinkwrap.json`. Regenerate `packages/coding-agent/install-lock/` with `bun run install-lock:coding-agent`.
-- External registry entries in root, publish, and installer locks must preserve both npm tarball `resolved` URLs and `integrity` hashes; incomplete merge results are invalid even when dependency topology still resolves.
-- `@earendil-works/pi-telemetry` is a runtime dependency and must stay in Senpi's owned CalVer alias, publish, and bundle sets. `@earendil-works/pi-storage-sqlite-node` remains private and independently versioned because it is not reachable from the shipped coding-agent runtime.
+- Never publish an `npm-shrinkwrap.json`. Regenerate `packages/coding-agent/install-lock/` with `bun run install-lock:coding-agent`.
+- External registry entries in root and installer locks must preserve both npm tarball `resolved` URLs and `integrity` hashes; incomplete merge results are invalid even when dependency topology still resolves.
+- `@earendil-works/pi-telemetry` and `@earendil-works/pi-realm-registry` are runtime dependencies and must stay in Senpi's owned CalVer alias and publish sets. `@earendil-works/pi-storage-sqlite-node` remains private and independently versioned because it is not reachable from the shipped coding-agent runtime.
 - Dependencies with lifecycle scripts require package/version review and an explicit justified generator allowlist entry; never add one silently to pass the gate.
 
 ## GIT AND DELIVERY

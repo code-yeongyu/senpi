@@ -19,7 +19,9 @@ const spillState = vi.hoisted(() => ({
 	rmFailNext: false,
 }));
 
-vi.mock("node:fs/promises", () => ({
+vi.mock("node:fs/promises", async (importOriginal) => ({
+	// Keep the real module: the accumulator also reads the spill back through open() (readFullOutput).
+	...(await importOriginal<typeof import("node:fs/promises")>()),
 	rm: async (path: string) => {
 		spillState.rmCalls++;
 		if (spillState.rmFailNext) {

@@ -2,33 +2,27 @@
 // version:* scripts refresh bun.lock next to package-lock.json (b0ce15391), but
 // releases go through this function, so bun.lock kept the previous release's
 // workspace versions and a plain `bun install` on main rewrote it (2026.9.5-3
-// through 2026.9.7 all shipped that way).
+// through 2026.9.7 all shipped that way). One in-place `bun install --lockfile-only`
+// pass bumped the workspace versions but kept the old workspace dependency ranges
+// (senpi#2352), so the release uses the same isolated, fixed-point regeneration as
+// `refresh-lock`.
 export function runPackageLockRefresh(dryRun, runCommand, log, dryRunLog) {
 	if (dryRun) {
 		dryRunLog("npm install --package-lock-only --ignore-scripts");
 		dryRunLog("npm install --ignore-scripts --no-audit --no-fund");
-		dryRunLog("bun install --lockfile-only");
+		dryRunLog("node scripts/regenerate-bun-lock-isolated.mjs");
 		return;
 	}
 	log("npm install --package-lock-only --ignore-scripts");
 	runCommand("npm", ["install", "--package-lock-only", "--ignore-scripts"]);
 	log("npm install --ignore-scripts --no-audit --no-fund");
 	runCommand("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"]);
-	log("bun install --lockfile-only");
-	runCommand("bun", ["install", "--lockfile-only"]);
+	log("node scripts/regenerate-bun-lock-isolated.mjs");
+	runCommand("node", ["scripts/regenerate-bun-lock-isolated.mjs"]);
 }
 
-export function runGenerateModels(dryRun, runCommand, log, dryRunLog) {
-	if (dryRun) {
-		dryRunLog("npm --prefix packages/ai run generate-models");
-		return;
-	}
-	log("npm --prefix packages/ai run generate-models");
-	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-models"]);
-}
-
-// omo#8700: the catalog just regenerated from the network may carry a Claude id the pinned Claude Code
-// predates. Report it in the release log; the blocking check is the promoted-model regression test.
+// omo#8700: the released catalog may carry a Claude id the pinned Claude Code predates. Report it in the
+// release log; the blocking check is the promoted-model regression test.
 export function runClaudeCodeModelSupportReport(dryRun, runCommand, log, dryRunLog) {
 	if (dryRun) {
 		dryRunLog("node scripts/check-claude-code-model-support.mjs");
@@ -36,24 +30,6 @@ export function runClaudeCodeModelSupportReport(dryRun, runCommand, log, dryRunL
 	}
 	log("node scripts/check-claude-code-model-support.mjs");
 	runCommand("node", ["scripts/check-claude-code-model-support.mjs"]);
-}
-
-export function runGenerateImageModels(dryRun, runCommand, log, dryRunLog) {
-	if (dryRun) {
-		dryRunLog("npm --prefix packages/ai run generate-image-models");
-		return;
-	}
-	log("npm --prefix packages/ai run generate-image-models");
-	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-image-models"]);
-}
-
-export function runShrinkwrap(dryRun, runCommand, log, dryRunLog) {
-	if (dryRun) {
-		dryRunLog("node scripts/generate-coding-agent-shrinkwrap.mjs");
-		return;
-	}
-	log("node scripts/generate-coding-agent-shrinkwrap.mjs");
-	runCommand("node", ["scripts/generate-coding-agent-shrinkwrap.mjs"]);
 }
 
 export function runInstallLock(dryRun, runCommand, log, dryRunLog) {

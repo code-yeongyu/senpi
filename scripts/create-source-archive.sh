@@ -118,7 +118,6 @@ required_paths=(
     "package-lock.json"
     "scripts/build-binaries.sh"
     "packages/ai/src/models.generated.ts"
-    "packages/ai/src/image-models.generated.ts"
     "packages/ai/src/providers/data/.manifest.json"
     "packages/tui/native/napi.h"
     "packages/tui/native/clipboard.h"
@@ -134,6 +133,8 @@ required_paths=(
     "packages/tui/native/win32/prebuilds/win32-x64/win32-platform.node"
     "packages/coding-agent/package.json"
     "packages/coding-agent/src/utils/image-resize-worker.ts"
+    "packages/coding-agent/src/core/extensions/builtin/permission-system/path-identity-worker.ts"
+    "packages/coding-agent/src/core/kill-guard/index.ts"
     "packages/coding-agent/src/core/export-html/template.css"
 )
 

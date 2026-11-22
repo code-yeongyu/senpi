@@ -5,6 +5,8 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { getModel } from "../src/compat.ts";
 import { wrapStreamWithModelRecovery } from "../src/tool-call-middleware/index.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 function responseFor(events: Array<{ event: string; data: unknown }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${JSON.stringify(data)}\n`).join("\n");
 	return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
@@ -63,7 +65,7 @@ describe("Anthropic mid-output fallback", () => {
 		const model = getModel("anthropic", "claude-opus-5");
 		const raw = streamAnthropic(
 			model,
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{
 				client: clientFor(
 					responseFor((truncated ? events.slice(0, -2) : events).map((data) => ({ event: data.type, data }))),
@@ -94,7 +96,7 @@ describe("Anthropic mid-output fallback", () => {
 	it("routes a fallback marker after partial output through server fallback handling", async () => {
 		const result = await streamAnthropic(
 			getModel("anthropic", "claude-opus-5"),
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{
 				client: clientFor(
 					responseFor([
@@ -155,7 +157,7 @@ describe("Anthropic mid-output fallback", () => {
 					],
 				},
 			},
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{
 				client: clientFor(
 					responseFor([

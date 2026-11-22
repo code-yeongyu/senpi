@@ -5,9 +5,16 @@ import { ListToolsRequestSchema, type ListToolsResult } from "@modelcontextproto
 
 /** `--list-tools-gate <path>`: record each tools/list request in `<path>.requests`,
  * then hold the reply until the test creates `<path>`. */
-export function registerListTools(server: Server, gate: string | undefined, tools: ListToolsResult["tools"]): void {
+export function registerListTools(
+	server: Server,
+	gate: string | undefined,
+	tools: ListToolsResult["tools"],
+	nullNextCursor = false,
+): void {
 	server.setRequestHandler(ListToolsRequestSchema, async (): Promise<ListToolsResult> => {
 		if (gate !== undefined) await passGate(gate);
+		// `--null-next-cursor`: a server that ends pagination with null instead of omitting the cursor.
+		if (nullNextCursor) return { tools, nextCursor: null } as unknown as ListToolsResult;
 		return { tools };
 	});
 }

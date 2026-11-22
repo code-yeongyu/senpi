@@ -3,12 +3,16 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import type { TSchema } from "typebox";
+import { redactResolvedReferenceData, redactResolvedReferenceValues } from "../../../../config-reference-redaction.ts";
 import type { ToolDefinition } from "../../../types.ts";
+import { forgetDispatchApproval } from "../../permission-system/dispatch.ts";
+import { registerDispatchIdentity } from "../../permission-system/dispatch-metadata.ts";
 import type { McpToolCatalogEntry } from "../catalog.ts";
+import type { McpToolResult } from "../tool-contracts.ts";
 import { ToolExecError } from "../errors.ts";
 import { applyMcpOutputGuard } from "../guard/output-guard.ts";
-import { ensureMcpToolCallConnection, withMcpRetriableFailedSendRetry, withMcpSessionExpiryRetry } from "../health.ts";
-import { runMcpConnectionLifecycleCall } from "../idle.ts";
+import type { McpInvocation, McpInvocationError } from "../invocation.ts";
+import { callMcpTool } from "./call.ts";
 import {
 	buildMcpToolNames,
 	convertJsonSchemaToTypeBox,
@@ -23,6 +27,7 @@ export interface McpToolDetails {
 	tool: string;
 	preview?: string;
 	progress?: Progress;
+	error?: McpInvocationError;
 }
 
 type McpAgentContent = TextContent | ImageContent;
@@ -55,17 +60,29 @@ export function buildMcpToolDefinitions(entries: readonly McpToolCatalogEntry[],
 }
 
 function createMcpToolDefinition(entry: McpToolCatalogEntry, name: string): McpToolDefinition {
-	const converted = convertJsonSchemaToTypeBox(entry.schema);
+	const converted = convertJsonSchemaToTypeBox(entry.schema, entry.modern);
 	const label = `${entry.server}/${entry.tool}`;
+	registerDispatchIdentity(converted.schema, () => entry.invocation?.identity(entry));
 	return {
 		name,
 		label,
 		description: entry.description ?? `MCP tool ${label}`,
 		parameters: converted.schema,
 		executionMode: "parallel",
-		async execute(_toolCallId, params, signal, onUpdate): Promise<AgentToolResult<McpToolDetails | undefined>> {
+		async execute(
+			toolCallId,
+			params,
+			signal,
+			onUpdate,
+			context,
+		): Promise<AgentToolResult<McpToolDetails | undefined>> {
 			const args: Record<string, unknown> = isRecord(params) ? params : {};
-			return await executeMcpCatalogEntry(entry, args, signal, onUpdate);
+			return await executeMcpCatalogEntry(entry, args, signal, onUpdate, {
+				toolCallId,
+				toolName: name,
+				input: args,
+				context,
+			});
 		},
 		renderCall(args, theme) {
 			return new Text(theme.fg("toolTitle", theme.bold(`${name} ${previewArgs(args)}`.trim())), 0, 0);
@@ -86,61 +103,57 @@ export async function executeMcpCatalogEntry(
 	args: Record<string, unknown>,
 	signal: AbortSignal | undefined,
 	onUpdate: Parameters<McpToolDefinition["execute"]>[3],
+	invocation?: McpInvocation,
 ): Promise<AgentToolResult<McpToolDetails | undefined>> {
-	const label = `${entry.server}/${entry.tool}`;
-	const result = await callMcpTool(entry, args, signal, onUpdate, label);
-	const mapped = mapMcpToolResult(normalizeCallToolResult(result));
-	if (!mapped.ok) {
-		throw new ToolExecError(mapped.error.message, { phase: "call", serverName: entry.server });
-	}
-	const guarded = await applyMcpOutputGuard(mapped.content, {
-		agentDir: entry.agentDir,
-		artifacts: entry.artifacts,
-		outputGuard: entry.outputGuard,
-		server: entry.server,
-	});
-	const content = toAgentContent(guarded);
-	return { content, details: { preview: previewContent(content), server: entry.server, tool: entry.tool } };
-}
-
-async function callMcpTool(
-	entry: McpToolCatalogEntry,
-	args: Record<string, unknown>,
-	signal: AbortSignal | undefined,
-	onUpdate: Parameters<McpToolDefinition["execute"]>[3],
-	label: string,
-): Promise<Awaited<ReturnType<McpToolCatalogEntry["connection"]["client"]["callTool"]>>> {
 	try {
-		return await runMcpConnectionLifecycleCall(entry.connection, () =>
-			withMcpSessionExpiryRetry(entry.connection, async () => {
-				await ensureMcpToolCallConnection(entry.connection, entry.ensureFresh);
-				await entry.ensureConnected?.();
-				return await withMcpRetriableFailedSendRetry(entry.connection, async () => {
-					return await entry.connection.client.callTool({ name: entry.tool, arguments: args }, undefined, {
-						onprogress: (progress) => {
-							onUpdate?.({
-								content: [{ type: "text", text: formatProgress(label, progress) }],
-								details: { progress, server: entry.server, tool: entry.tool },
-							});
-						},
-						signal,
-						timeout: entry.requestTimeoutMs,
-					});
-				});
-			}),
-		);
-	} catch (error) {
-		throw new ToolExecError(`ToolExecError: ${errorLabel(error)}`, {
-			cause: error,
-			phase: "call",
-			serverName: entry.server,
+		const label = `${entry.server}/${entry.tool}`;
+		const outcome = await callMcpTool(entry, args, signal, onUpdate, label, invocation);
+		if (outcome.kind === "refused") {
+			const guarded = await applyMcpOutputGuard([{ type: "text", text: JSON.stringify({ error: outcome.error }) }], {
+				agentDir: entry.agentDir,
+				artifacts: entry.artifacts,
+				outputGuard: entry.outputGuard,
+				server: entry.server,
+			});
+			return {
+				content: toAgentContent(guarded),
+				details: redactResolvedReferenceData({
+					error: outcome.error,
+					preview: outcome.error.kind,
+					server: entry.server,
+					tool: entry.tool,
+				}),
+			};
+		}
+		const current = outcome.entry;
+		const mapped = mapMcpToolResult(normalizeCallToolResult(outcome.result));
+		if (!mapped.ok) {
+			throw new ToolExecError(redactResolvedReferenceValues(mapped.error.message), {
+				phase: "call",
+				serverName: entry.server,
+			});
+		}
+		const guarded = await applyMcpOutputGuard(mapped.content, {
+			agentDir: current.agentDir,
+			artifacts: current.artifacts,
+			outputGuard: current.outputGuard,
+			server: current.server,
 		});
+		const content = toAgentContent(guarded);
+		return {
+			content,
+			details: redactResolvedReferenceData({
+				preview: previewContent(content),
+				server: entry.server,
+				tool: entry.tool,
+			}),
+		};
+	} finally {
+		if (invocation !== undefined) forgetDispatchApproval(invocation.input);
 	}
 }
 
-function normalizeCallToolResult(
-	result: Awaited<ReturnType<McpToolCatalogEntry["connection"]["client"]["callTool"]>>,
-): McpToolResultLike {
+function normalizeCallToolResult(result: McpToolResult): McpToolResultLike {
 	if ("content" in result || "structuredContent" in result || "isError" in result) {
 		const candidate = result as Record<string, unknown>;
 		const normalized: McpToolResultLike = {};
@@ -179,16 +192,6 @@ function previewArgs(args: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function errorLabel(error: unknown): string {
-	return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-}
-
-function formatProgress(label: string, progress: Progress): string {
-	const total = progress.total === undefined ? "" : `/${progress.total}`;
-	const message = progress.message === undefined ? "" : ` ${progress.message}`;
-	return `${label} progress ${progress.progress}${total}${message}`.trim();
 }
 
 function truncatePreview(value: string): string {

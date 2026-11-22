@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { runChild } from "./eval/child-probe.ts";
 import { BUN_DISPLAY_CASES, DENSE_JS_CELL } from "./eval-display-fixtures.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -34,16 +35,17 @@ let tempDir = "";
 let report: BunReport | undefined;
 
 describe.skipIf(!bunAvailable)("displayCode under Bun", () => {
-	beforeAll(() => {
+	beforeAll(async () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-display-bun-"));
 		const driverPath = join(tempDir, "driver.ts");
 		writeFileSync(driverPath, driverSource);
-		const run = spawnSync("bun", [driverPath], { cwd: packageRoot, encoding: "utf8", timeout: 60_000 });
+		const run = await runChild({ command: "bun", args: [driverPath], cwd: packageRoot });
+		expect(run.code, run.stderr).toBe(0);
 		expect(run.stderr).toBe("");
 		const parsed: unknown = JSON.parse(run.stdout);
 		if (!isBunReport(parsed)) throw new TypeError(`unexpected driver output: ${run.stdout}`);
 		report = parsed;
-	});
+	}, 240_000);
 
 	afterAll(() => {
 		if (tempDir !== "") rmSync(tempDir, { recursive: true, force: true });

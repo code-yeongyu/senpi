@@ -30,6 +30,24 @@ const syntheticModels = [
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	},
 	{
+		id: "test-alias-model",
+		api: "anthropic-messages" as const,
+		reasoning: false,
+		contextWindow: 200_000,
+		maxTokens: 4096,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "test-alias-model-fast",
+		api: "anthropic-messages" as const,
+		reasoning: false,
+		contextWindow: 200_000,
+		maxTokens: 4096,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		serviceTier: "priority" as const,
+		upstreamModelId: "test-alias-model",
+	},
+	{
 		id: "test-xhigh-excluded-model",
 		api: "anthropic-messages" as const,
 		reasoning: true,
@@ -113,5 +131,70 @@ describe("get_available_models supported thinking levels", () => {
 		const model = models.find((candidate) => candidate.id === "test-xhigh-excluded-model");
 
 		expect(model?.supportedThinkingLevels).not.toContain("xhigh");
+	});
+});
+
+// #3666: a models.json alias definition leaves the pairing off the raw Model object, so the reply must
+// carry the tier and upstream id the registry resolved, the same values senpi uses to start the alias.
+describe("get_available_models resolved service tier", () => {
+	let client: RpcClient;
+	let cleanup: (() => Promise<void>) | undefined;
+
+	beforeEach(async () => {
+		const fakeModelServer = await startFakeModelServer();
+		const agentDirectory = join(tmpdir(), `senpi-rpc-models-tier-${Date.now()}`);
+		mkdirSync(agentDirectory, { recursive: true });
+		writeFileSync(
+			join(agentDirectory, "models.json"),
+			`${JSON.stringify({
+				providers: {
+					[MOCK_PROVIDER]: {
+						baseUrl: fakeModelServer.origin,
+						apiKey: MOCK_API_KEY,
+						api: "anthropic-messages",
+						models: syntheticModels.map((model) => ({ ...model, baseUrl: fakeModelServer.origin })),
+					},
+				},
+			})}\n`,
+		);
+		client = new RpcClient({
+			cliPath: join(testDirectory, "..", "src", "cli.ts"),
+			cwd: join(testDirectory, ".."),
+			env: {
+				...hermeticProviderEnv(),
+				ANTHROPIC_API_KEY: MOCK_API_KEY,
+				PI_OFFLINE: "1",
+				SENPI_CODING_AGENT_DIR: agentDirectory,
+			},
+			provider: MOCK_PROVIDER,
+			model: "test-alias-model",
+		});
+		cleanup = async () => {
+			await client.stop();
+			await fakeModelServer.close();
+			rmSync(agentDirectory, { recursive: true, force: true });
+		};
+		await client.start();
+	});
+
+	afterEach(async () => {
+		await cleanup?.();
+		cleanup = undefined;
+	});
+
+	test("reports the alias's priority tier and upstream id from its models.json definition", async () => {
+		const models = await client.getAvailableModels();
+		const alias = models.find((candidate) => candidate.id === "test-alias-model-fast");
+
+		expect(alias).toMatchObject({ serviceTier: "priority", upstreamModelId: "test-alias-model" });
+	});
+
+	test("reports no tier fields for the base model", async () => {
+		const models = await client.getAvailableModels();
+		const base = models.find((candidate) => candidate.id === "test-alias-model");
+
+		expect(base).toBeDefined();
+		expect(base).not.toHaveProperty("serviceTier");
+		expect(base).not.toHaveProperty("upstreamModelId");
 	});
 });

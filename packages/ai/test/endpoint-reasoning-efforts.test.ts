@@ -4,6 +4,8 @@ import { parseEndpointReasoningEfforts } from "../src/endpoint-reasoning-efforts
 import { clampThinkingLevel, getSupportedThinkingLevels } from "../src/models.ts";
 import type { Context, Model, SimpleStreamOptions, ThinkingLevelMap } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 // senpi#2196: OpenAI-compatible /models listings advertise per-model reasoning_efforts.
 describe("parseEndpointReasoningEfforts", () => {
 	it("maps advertised values onto senpi levels, keeps the endpoint spelling, and vetoes the rest", () => {
@@ -96,7 +98,7 @@ async function sentReasoningEffort(
 ): Promise<unknown> {
 	const context: Context = { messages: [{ role: "user", content: "Hello", timestamp: Date.now() }] };
 	let sent: unknown = "payload was never built";
-	const result = streamSimple(model, context, {
+	const result = streamSimple(model, normalizeContext(context), {
 		apiKey: "fake-key",
 		...(reasoning === undefined ? {} : { reasoning }),
 		onPayload: (payload) => {

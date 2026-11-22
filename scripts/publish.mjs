@@ -4,16 +4,14 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	assertSenpiPackedWorkspaceFiles,
-	prepareSenpiBundledWorkspaces,
-	rewriteOwnedRegistryAliases,
-} from "./prepare-senpi-bundled-workspaces.mjs";
-import { buildPublishArgs } from "./publish-command.mjs";
+import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
+import { rewriteOwnedRegistryAliases } from "./prepare-senpi-publish-manifest.mjs";
+import { buildPublishArgs, publishPackage } from "./publish-command.mjs";
+import { assertLiveRunOnMain } from "./release-ref-guard.mjs";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
-import { materializeMissingPublishRuntime } from "./materialize-publish-runtime.mjs";
 import { parseNpmPackJson } from "./npm-pack-json.mjs";
-import { queryNpmRegistry } from "./npm-registry.mjs";
+import { assertPublishedWorkspacePackFiles, assertSenpiPackedWorkspaceFiles } from "./senpi-publish-pack-checks.mjs";
+import { assertRegistryPackagesKnown, queryNpmRegistry, queryWithRetry } from "./npm-registry.mjs";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 import { registryPackageNames } from "./registry-packages.mjs";
 
@@ -31,10 +29,39 @@ const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode"]);
 const temporaryPublishDirectories = [];
 
 const dryRun = process.argv.includes("--dry-run");
-const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--dry-run");
+const requiredNativePrebuildFlag = "--require-native-prebuilds=";
+const legacyRequiredNativePrebuildFlag = "--require-native-prebuild=";
+// The publish-only job of publish-npm.yml explicitly names every non-best-effort
+// target; the required set is validated against SUPPORTED_NATIVE_PREBUILD_TARGETS by
+// the pack check itself (senpi#1193).
+const requiredNativePrebuildTargets = process.argv
+	.slice(2)
+	.filter(
+		(arg) =>
+			arg.startsWith(requiredNativePrebuildFlag) || arg.startsWith(legacyRequiredNativePrebuildFlag),
+	)
+	.flatMap((arg) => arg.slice(arg.indexOf("=") + 1).split(","))
+	.map((target) => target.trim())
+	.filter((target) => target.length > 0);
+const requiredSocketSecretFlag = "--require-socket-secret-bridge=";
+const requiredSocketSecretTargets = process.argv
+	.slice(2)
+	.filter((arg) => arg.startsWith(requiredSocketSecretFlag))
+	.flatMap((arg) => arg.slice(requiredSocketSecretFlag.length).split(","))
+	.map((target) => target.trim())
+	.filter((target) => target.length > 0);
+const unknownArgs = process.argv
+	.slice(2)
+	.filter(
+		(arg) =>
+			arg !== "--dry-run" &&
+			!arg.startsWith(requiredNativePrebuildFlag) &&
+			!arg.startsWith(legacyRequiredNativePrebuildFlag) &&
+			!arg.startsWith(requiredSocketSecretFlag),
+	);
 
 if (unknownArgs.length > 0) {
-	console.error(`Usage: node scripts/publish.mjs [--dry-run]`);
+	console.error(`Usage: node scripts/publish.mjs [--dry-run] [--require-native-prebuilds=<platform>-<arch>[,...]] [--require-socket-secret-bridge=win32-<arch>[,...]]`);
 	process.exit(1);
 }
 
@@ -96,29 +123,13 @@ function assertBuildOutputExists(directory) {
 	}
 }
 
-function validatePack(directory, sourceDirectory) {
-	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: directory });
+function validatePack(pkg) {
+	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: pkg.publishDirectory });
 	const packed = parseNpmPackJson(result.stdout)[0];
-	const packageJson = readPackageJson(directory);
-	if (sourceDirectory === "packages/coding-agent") {
-		assertSenpiPackedWorkspaceFiles(packed, {
-			runtimeDependencies: [
-				...Object.keys(packageJson.dependencies ?? {}),
-				...Object.keys(packageJson.optionalDependencies ?? {}),
-			],
-			bundledDependencies: packageJson.bundleDependencies ?? packageJson.bundledDependencies,
-		});
-	}
-	if (sourceOnlyPackages.has(packageJson.name)) {
-		const filePaths = new Set((packed.files ?? []).map((file) => file.path));
-		// `npm pack --json` file paths vary by npm version: some emit a `package/` prefix,
-		// others emit bare repo-relative paths. Accept either so the source-only content
-		// check is npm-version-agnostic (mirrors assertSenpiPackedWorkspaceFiles).
-		for (const requiredFile of ["src/index.ts", "README.md", "CHANGELOG.md", "LICENSE"]) {
-			if (!filePaths.has(`package/${requiredFile}`) && !filePaths.has(requiredFile)) {
-				throw new Error(`${packageJson.name} package tarball is missing ${requiredFile}`);
-			}
-		}
+	if (pkg.directory === "packages/coding-agent") {
+		assertSenpiPackedWorkspaceFiles(packed, readPackageJson(pkg.publishDirectory), { requiredSocketSecretTargets });
+	} else {
+		assertPublishedWorkspacePackFiles(packed, readPackageJson(pkg.directory).name, { requiredNativePrebuildTargets });
 	}
 	console.log(`  ${packed.filename}: ${packed.files.length} files, ${packed.size} bytes packed, ${packed.unpackedSize} bytes unpacked`);
 }
@@ -141,11 +152,16 @@ if (versions.length !== 1) {
 	throw new Error(`Publish packages are not lockstep versioned: ${versions.join(", ")}`);
 }
 
+// senpi#6645: on a ref other than main the publish-only job still holds id-token: write; refuse a live publish there.
+assertLiveRunOnMain({ dryRun, env: process.env, what: "npm publish" });
 const publishArgs = dryRun ? undefined : buildPublishArgs({ githubActions: process.env.GITHUB_ACTIONS === "true" });
+
+// Before any package is staged or published: a name npm does not know would publish part of the set (senpi#6636). This
+// runs after the tag is pushed, so a registry hiccup is retried rather than failing the publish.
+assertRegistryPackagesKnown(publishOrder, (name) => queryWithRetry(() => queryNpmRegistry(name, "name")));
 
 console.log(`Publishing senpi packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
 
-await materializeMissingPublishRuntime();
 prepareSenpiBundledWorkspaces();
 
 const packageStates = packages.map((pkg) => ({
@@ -164,7 +180,7 @@ for (const pkg of packageStates) {
 	} else {
 		console.log(`${pkg.name}@${pkg.version} is not published; validating package contents before publish.`);
 	}
-	validatePack(pkg.publishDirectory, pkg.directory);
+	validatePack(pkg);
 	console.log();
 }
 
@@ -182,9 +198,24 @@ try {
 			continue;
 		}
 
-		run("npm", publishArgs, {
-			cwd: pkg.publishDirectory,
-		});
+		const outcome = publishPackage(
+			pkg,
+			() => {
+				const { stdout, stderr } = run("npm", publishArgs, { capture: true, cwd: pkg.publishDirectory });
+				if (stdout) process.stdout.write(stdout);
+				if (stderr) process.stderr.write(stderr);
+			},
+			(spec) =>
+				queryWithRetry(() => {
+					const result = queryNpmRegistry(spec, "version");
+					// After a duplicate-version conflict, a 404 may still be registry propagation lag.
+					if (result === null) throw new Error(`${spec} is not yet visible on npm`);
+					return JSON.parse(result);
+				}),
+		);
+		if (outcome === "already-published") {
+			console.log(`Skipping ${pkg.name}@${pkg.version}: a concurrent run already published this version.`);
+		}
 		console.log();
 	}
 } finally {

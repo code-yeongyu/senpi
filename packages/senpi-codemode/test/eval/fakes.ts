@@ -1,4 +1,4 @@
-import { DEFAULT_COMPACTION_SETTINGS, type ExtensionContext } from "@code-yeongyu/senpi";
+import { DEFAULT_COMPACTION_SETTINGS, type ExtensionToolContext } from "@code-yeongyu/senpi";
 import { createInMemoryExtensionSessionSettings } from "../../../coding-agent/test/helpers/extension-session-settings.ts";
 import type { KernelToHostMessage } from "../../src/bridge/protocol.ts";
 import type { EvalKernel, EvalKernelManager } from "../../src/tool/eval-tool.ts";
@@ -53,6 +53,14 @@ export class FakeKernel implements EvalKernel {
 		if (!deferred) throw new Error("fake kernel has no deferred run");
 		this.deferredRun = undefined;
 		deferred.result.resolve(next);
+	}
+
+	/** Rejects the deferred run, as a kernel whose run itself throws (not a cell error result). */
+	failDeferredRun(error: Error): void {
+		const deferred = this.deferredRun;
+		if (!deferred) throw new Error("fake kernel has no deferred run");
+		this.deferredRun = undefined;
+		deferred.result.reject(error);
 	}
 
 	emit(message: KernelToHostMessage): void {
@@ -261,8 +269,11 @@ export function errorResult(cellId: string, message: string): Extract<KernelToHo
 	return { type: "result", cellId, ok: false, error: { message }, durationMs: 5 };
 }
 
-export function fakeExtensionContext(): ExtensionContext {
+export function fakeExtensionContext(): ExtensionToolContext {
 	return {
+		tools: [],
+		executeTool: () => Promise.reject(new Error("fakeExtensionContext has no nested tool executor")),
+		issuedByModel: true,
 		ui: Object.create(null),
 		mode: "print",
 		hasUI: false,

@@ -11,7 +11,7 @@ import { checkPrChangelog } from "./check-pr-changelog.mjs";
 //   - forkOnly: production files added by the fork (no upstream counterpart)
 //   - trackerDiffs: parsed changes.md diffs per tracker path; each entry lists
 //     the files it covers and the canonical section headings it carries
-//   - renames / deletions: change-kind records for rename/delete handling
+//   - renames: change-kind records for rename handling (deleted paths stay in changedFiles)
 //   - upstreamSync: pin-change sync info; divergentFiles are production edits
 //     that differ from the new pin (integration repairs)
 // Production files not listed in forkOnly are upstream-owned by default.
@@ -32,7 +32,6 @@ function trackerPolicy(overrides = {}) {
 		forkOnly: [],
 		trackerDiffs: {},
 		renames: [],
-		deletions: [],
 		upstreamSync: undefined,
 		...overrides,
 	};
@@ -50,7 +49,7 @@ describe("check-pr-changelog changes.md tracker policy", () => {
 			false,
 			"upstream-owned production edits must fail without the nearest changes.md even with the no-changelog label",
 		);
-		assert.match(result.reason, /changes\.md/, "failure reason must name the missing changes.md tracker");
+		assert.deepEqual(result.uncovered, ["packages/ai/src/index.ts"]);
 	});
 
 	it("passes when the exact nearest changes.md adds all four canonical sections", () => {
@@ -65,7 +64,7 @@ describe("check-pr-changelog changes.md tracker policy", () => {
 			}),
 		});
 		assert.equal(result.pass, true, "nearest changes.md with all four canonical sections should pass");
-		assert.match(result.reason, /changes\.md/);
+		assert.deepEqual(result.uncovered, []);
 	});
 
 	it("keeps the release CHANGELOG requirement independent from changes.md coverage", () => {
@@ -91,6 +90,7 @@ describe("check-pr-changelog changes.md tracker policy", () => {
 		});
 		assert.equal(result.pass, false, "a changes.md other than the nearest tracker must not satisfy the gate");
 		assert.match(result.reason, /nearest changes\.md/, "failure reason must name the nearest changes.md tracker");
+		assert.deepEqual(result.uncovered, ["packages/ai/src/index.ts"]);
 	});
 
 	it("passes a genuinely fork-only added source file without a tracker touch", () => {
@@ -101,6 +101,7 @@ describe("check-pr-changelog changes.md tracker policy", () => {
 			trackerPolicy: trackerPolicy({ forkOnly: [forkFile] }),
 		});
 		assert.equal(result.pass, true, "fork-only source additions do not require an upstream changes.md entry");
+		assert.deepEqual(result.uncovered, []);
 	});
 
 	it("passes docs, tests, and generated-catalog-only changes under the tracker policy", () => {
@@ -114,6 +115,23 @@ describe("check-pr-changelog changes.md tracker policy", () => {
 			trackerPolicy: trackerPolicy(),
 		});
 		assert.equal(result.pass, true, "non-production changes stay outside the changes.md tracker policy");
+		assert.deepEqual(result.uncovered, []);
+	});
+
+	it("keeps docs, tests, generated catalogs, and fork-only paths out of uncovered beside a real production path", () => {
+		const forkFile = "packages/coding-agent/src/core/fork/senpi-branding.ts";
+		const result = checkPrChangelog({
+			changedFiles: [
+				"packages/ai/src/index.ts",
+				"packages/ai/README.md",
+				"packages/ai/src/models.generated.ts",
+				"packages/ai/src/api/__tests__/openai.test.ts",
+				forkFile,
+			],
+			labels: ["no-changelog"],
+			trackerPolicy: trackerPolicy({ forkOnly: [forkFile] }),
+		});
+		assert.deepEqual(result.uncovered, ["packages/ai/src/index.ts"]);
 	});
 
 	it("audits production paths across scripts workflows server and evals", () => {
@@ -158,7 +176,7 @@ describe("check-pr-changelog changes.md tracker policy", () => {
 			}),
 		});
 		assert.equal(result.pass, false, "changes.md entries missing a canonical section must fail the gate");
-		assert.match(result.reason, /changes\.md/, "failure reason must name the malformed changes.md entry");
+		assert.deepEqual(result.uncovered, [source]);
 	});
 
 	it("fails a stale changes.md entry that does not cover the edited file", () => {
@@ -172,7 +190,7 @@ describe("check-pr-changelog changes.md tracker policy", () => {
 			}),
 		});
 		assert.equal(result.pass, false, "a changes.md entry that does not cover the edited file is stale and must fail");
-		assert.match(result.reason, /changes\.md/, "failure reason must name the stale changes.md entry");
+		assert.deepEqual(result.uncovered, ["packages/ai/src/index.ts"]);
 	});
 
 	it("fails a rename of upstream-owned production source without the nearest changes.md", () => {
@@ -193,27 +211,6 @@ describe("check-pr-changelog changes.md tracker policy", () => {
 		assert.match(result.reason, /changes\.md/, "failure reason must name the missing changes.md tracker");
 	});
 
-	it("fails deleting upstream-owned production source without the nearest changes.md", () => {
-		const deleted = "packages/agent/src/deprecated-senpi-hook.ts";
-		const result = checkPrChangelog({
-			changedFiles: [deleted],
-			labels: ["no-changelog"],
-			trackerPolicy: trackerPolicy({ deletions: [deleted] }),
-		});
-		assert.equal(result.pass, false, "deleting upstream-owned production source must still update the nearest changes.md");
-		assert.match(result.reason, /changes\.md/, "failure reason must name the missing changes.md tracker");
-	});
-
-	it("passes deleting a fork-only file without a tracker touch", () => {
-		const forkFile = "packages/coding-agent/src/fork/experiment.ts";
-		const result = checkPrChangelog({
-			changedFiles: [forkFile],
-			labels: ["no-changelog"],
-			trackerPolicy: trackerPolicy({ forkOnly: [forkFile], deletions: [forkFile] }),
-		});
-		assert.equal(result.pass, true, "deleting fork-only source never requires an upstream changes.md entry");
-	});
-
 	it("passes a clean upstream sync whose pin and production edits agree", () => {
 		const result = checkPrChangelog({
 			changedFiles: [".github/upstream.json", "packages/agent/src/agent-loop.ts", "packages/tui/src/tui.ts"],
@@ -221,6 +218,7 @@ describe("check-pr-changelog changes.md tracker policy", () => {
 			trackerPolicy: trackerPolicy({ upstreamSync: { pinChanged: true, divergentFiles: [] } }),
 		});
 		assert.equal(result.pass, true, "a clean pin-change sync carries upstream's own edits and needs no changes.md entry");
+		assert.deepEqual(result.uncovered, []);
 	});
 
 	it("fails an integration repair that diverges from the new pin without a changes.md entry", () => {
@@ -236,6 +234,6 @@ describe("check-pr-changelog changes.md tracker policy", () => {
 			false,
 			"production edits differing from the new pin are fork repairs and require the nearest changes.md",
 		);
-		assert.match(result.reason, /changes\.md/, "failure reason must name the missing changes.md tracker");
+		assert.deepEqual(result.uncovered, ["packages/agent/src/agent-loop.ts"]);
 	});
 });

@@ -14,6 +14,7 @@ import {
 	writeRunnerLease,
 } from "../core/extensions/builtin/schedule/runner-lease.ts";
 import { resolveCliMainPath } from "../modes/rpc/host-lifecycle.ts";
+import { runtimeExecArgv } from "../utils/runtime-exec-argv.ts";
 import {
 	type DeferProbe,
 	type Delivery,
@@ -46,7 +47,7 @@ function resolveDelivery(options: RunOptions): DeliveryPlan {
 		return { deliver: execHookDelivery(options.exec, timeoutMs), shouldDefer: undefined };
 	return {
 		deliver: sessionResumeDelivery(
-			{ command: process.execPath, args: isBunBinary ? [] : [...process.execArgv, resolveCliMainPath()] },
+			{ command: process.execPath, args: isBunBinary ? [] : [...runtimeExecArgv(), resolveCliMainPath()] },
 			timeoutMs,
 		),
 		shouldDefer: deferWhileSessionOpen,

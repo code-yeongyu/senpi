@@ -1,5 +1,343 @@
 # changes.md — dynamic-prompt
 
+## 2026-11-20 - Handoff language rule can leave the reply language to the core (#7114, senpi#7113)
+
+### What changed
+
+- `handoff.ts`: `buildHandoffSection` takes `languageRuleStatedElsewhere`; with it the block renders only the label rule (diet and full wording). `REPLY_LANGUAGE_RULE` (terminal and app) is the reply-language sentence a core states in its Style section. Callers that do not pass the option render byte-identical text.
+
+### Why
+
+- Inside the Handoff section the whole language rule read as a rule for the handoff block only, so replies outside a handoff drifted into English (senpi#7113).
+
+### Why an extension could not handle it
+
+- The shared handoff block is assembled here for every core.
+
+### Expected merge conflict zones
+
+- LOW: `HandoffSectionOptions` and the `languageRule` lines of both builders in `handoff.ts`.
+
+## 2026-11-10 - The code is the model's own; the smallest-change rule is gone (senpi#6358)
+
+### What changed
+
+- `style.ts` (full and diet): the opening Style paragraph no longer says "Smallest correct change wins: no refactors beside a focused fix". It now states ownership ("This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it") and what the owner does: build on the code that already does the job instead of adding a parallel copy, fit new behavior into the structure that is there, leave no duplicate or dead code behind; a defect in the code being changed is fixed now, one elsewhere is a follow-up for the summary. The kept constraints follow unchanged: no helpers or abstractions for hypothetical needs, no defensive checks inside trusted code, trust framework guarantees, validate only at system boundaries, targeted edit over file rewrite.
+- `intent-gate.ts` (full and diet): the change-ask route reads "diagnose and fix at the cause, at exactly the asked scope - what fully satisfies an open-ended goal and nothing beyond it" (was "diagnose and fix minimally ... the smallest path that fully satisfies an open-ended goal").
+- `verification.ts` (both claim-audit variants): "Fix failures your change caused and any that sit in the code you changed; note other pre-existing failures separately" (was "Fix only issues your changes caused; note pre-existing failures separately").
+- Goldens: `test/suite/regressions/3483-prompt-goldens.json`, `test/suite/prompt-presets-native-baseline.json` (all 204 rows; `sourceCommit` kept as the suite asserts it) and the senpi-qa fused-equivalence goldens (darwin-arm64 and linux-x64) carry the new sentences; the goldens were derived by replacing exactly the changed sentences, and the 3483 byte-equality suite proves the derivation for the default prompt. E27's `prompt_cache_key` hashes the raw prompt and tool schemas (`packages/ai/src/api/openai-prompt-cache.ts`), so it is re-pinned from the harness's own actual value: linux-x64 from the EQ job on the PR, darwin-arm64 from a local `--compare --cases E27` run under the host pin. The six darwin-arm64 goldens E25-E30 also receive the senpi#6272 `tool.generate_image` insertion that senpi#6355 applied to the linux-x64 set only, so a macOS EQ run compares against the current prompt.
+
+### Why
+
+- Anthropic's Fable 5.2 prompting guide documents that a model with no ownership statement acts like a guest in someone else's repository: it bolts a new function on beside the existing one, leaves the duplicate, and only mentions a nearby defect. senpi#6314 kept the ownership sentence out and the smallest-change rule in; the repository owner ruled the reverse (senpi#6358): ownership in, smallest-change out, so neither cancels the other. "Fix minimally" and "fix only failures your change caused" were the same rule in other words and would have cancelled ownership on the most common ask (a bug fix) and on a pre-existing failure inside the changed code.
+
+### Why an extension could not handle it
+
+- The sentences are built inside the shared prompt builder.
+
+### Expected merge conflict zones
+
+- Fork-only files. The first Style paragraph in `style.ts`, the change-ask bullet in `intent-gate.ts`, the claim-audit sentence in `verification.ts`.
+
+---
+
+## 2026-11-09 - Prompt builder carries a provider-native search signal (senpi#6264)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `BuildDynamicSystemPromptOptions` and `DynamicPromptCoreContext` gain an optional `nativeSearchAvailable` flag, threaded into `corePrompt` so a preset can tell whether the session can search through a provider-native search tool even when the builtin `web_search` tool is not selected (senpi#2935).
+
+### Why
+
+- The Haiku 5.5 preset gates its search-grounding sentence on the active tool list, which never contains a provider-native search tool; the flag is the seam that lets the preset see it.
+
+### Why an extension could not handle it
+
+- The signal crosses the builder/preset boundary: the preset extension computes it from the model, the builder carries it, and the preset core reads it. No single extension event sees all three.
+
+### Expected merge conflict zones
+
+- LOW: the `corePrompt` call site in `buildDynamicSystemPromptParts` and the two option interfaces.
+
+## 2026-11-03 - Full shared sections for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/types.ts`: new `SharedSections` type (`"full" | "diet"`).
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `BuildDynamicSystemPromptOptions` gains `sharedSections` and `fullToolPrompt` (every tool snippet plus each tool's full guidelines); `DynamicPromptCoreContext` gains `sharedSections`, and every default section builder receives it.
+- `packages/coding-agent/src/core/dynamic-prompt/identity.ts`, `intent-gate.ts`, `working-task.ts`, `verification.ts`, `policies.ts`, `handoff.ts`, `style.ts`, `tool-section.ts`: each keeps its pre-#5342 wording beside the diet wording and renders it for `sharedSections: "full"`; `TEST_DISCIPLINE_RULES` carries a `fullDirective` per rule and `handoff.ts` exports `FULL_HANDOFF_LANGUAGE_RULE`. `diet` output is byte-identical to main 836fe1c75.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the section builders' option objects and any later wording edit to the same lines.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: the anti-leakage rule no longer lists its examples ("Step 0", "Thinking level", XML tool-call examples) on terminal or app, and the closing "Inspect the code ... do not keep browsing" sentence (a restatement of Working the Task's stop-searching rule) is gone.
+- `packages/coding-agent/src/core/dynamic-prompt/working-task.ts`: `DEFAULT_WORKING_TASK_OPENING` drops the "Wasted reads cost almost nothing; stale assumptions cost the turn" rationale.
+- `packages/coding-agent/src/core/dynamic-prompt/verification.ts`: the claim audit drops the '"Should pass" is not verification - run the validator' lead-in the audit already owns.
+- `packages/coding-agent/src/core/dynamic-prompt/policies.ts`: `## Policies` / `### Hard Blocks` collapse into one `## Hard Limits` heading; the unread-code bullet (the claim audit's rule) and the "say what is done..." tail (Style's blocked-part rule) are dropped.
+- `packages/coding-agent/src/core/dynamic-prompt/tool-section.ts`: `## Available Tools` renders only when a selected tool still carries a snippet, and the `(none)` placeholder is gone; with no listed tool and no guideline the section is empty.
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: the fallback core skips an empty tool section; `toolSnippets` and `DynamicPromptCoreContext.toolSection` document the new contract.
+- Terse pass (second commit): `packages/coding-agent/src/core/dynamic-prompt/identity.ts`, `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`, `packages/coding-agent/src/core/dynamic-prompt/working-task.ts`, `packages/coding-agent/src/core/dynamic-prompt/verification.ts`, `packages/coding-agent/src/core/dynamic-prompt/policies.ts`, `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`, `packages/coding-agent/src/core/dynamic-prompt/style.ts`, and the default dialect in `packages/coding-agent/src/core/dynamic-prompt/workstation.ts` render the plan's terse wording; the routing line, the Handoff template line and its parsed labels, and every tool name stay verbatim.
+
+### Why
+
+- The first-turn prompt restated what each tool's schema description already says and repeated several rules in two homes (senpi#5335, section-by-section diet of the captured default/GLM 5.3 prompts).
+
+### Why an extension could not handle it
+
+- The fallback core and the shared section builders are rendered by this module; every preset that reuses them has to see the same text.
+
+### Expected merge conflict zones
+
+- LOW: the touched sentences in `intent-gate.ts`, `working-task.ts`, `verification.ts`, `policies.ts`, and the heading logic in `tool-section.ts`.
+
+## 2026-10-28 - Test-only host pin for the workstation facts (senpi#4662, fixes #4660)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/workstation.ts`: the uncached `readWorkstationFacts(env = process.env)` (new export) reads the facts; `collectWorkstationFacts()` caches its result as before. With `SENPI_TEST_WORKSTATION={"cpuModel":string,"cores":int,"kernel":string}` (exactly those keys, non-empty strings, a positive integer) the CPU model, core count and kernel identity come from the pin, and the Apple-Silicon GPU line follows the pinned CPU model; any other non-empty value throws an error naming the variable. Unset or empty, every fact is computed exactly as before. `terminalName` reads the given `env` (the default is `process.env`).
+
+### Why
+
+- `packages/coding-agent/src/core/dynamic-prompt/workstation.ts`: the `<workstation>` block renders the host's CPU model, core count and kernel release into the system prompt, so a harness driving the real CLI (#4639) gets different prompt bytes and different Cursor root-prompt blob ids on every host; it can only pass inputs through the child's environment.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/dynamic-prompt/workstation.ts`: the facts are collected inside the system-prompt assembler; presets choose the dialect, not the facts.
+
+### Expected merge conflict zones
+
+- LOW: the block between `terminalName` and `collectWorkstationFacts` in `workstation.ts`.
+
+## 2026-10-27 - Instruction files outrank the default asking style (senpi#4453)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: user-scoped context files are emitted under a `## User Instructions` header part before the `## Project Context` header part and the project files. Both headers say that instruction files override the default working style above, including whether, when and how to ask the user questions. Part names stay `project_context`; header parts keep source `dynamic-prompt`.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the question tool description says not to call it when the user's instructions say not to ask, or not to ask with choices.
+
+### Why
+
+- Measured on main: a user's rule against asking sat at 94-97% of every preset's prompt, after 2-4 ask instructions and under a header that scoped it to files, so the model kept calling the question tool (#4453).
+
+### Why an extension could not handle it
+
+- The precedence sentence and the context-file grouping are built in `buildDynamicSystemPromptParts`, which every preset calls; the tool description is core-registered.
+
+### Expected merge conflict zones
+
+- LOW: the context-file block of `buildDynamicSystemPromptParts` in `packages/coding-agent/src/core/dynamic-prompt/build.ts` (fork-only file).
+
+## 2026-10-16 - Named byte-preserving prompt parts (senpi#3483)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `buildDynamicSystemPromptParts` returns ordered named parts, with each separator owned by its part. `buildDynamicSystemPrompt` joins those exact texts with no delimiter. Context files keep individual source paths. Loader custom and append branches use the same assembly path.
+- API note: `buildDynamicSystemPrompt` now honours `customPrompt` and `appendSystemPrompt`, which it previously ignored. Callers spreading session options must remove these fields when they intend to render only a preset; otherwise a custom prompt replaces the preset or append text can be applied twice. `onParts` observes the exact render without a second build.
+- Committed golden fixtures captured at main `89ecd50ca0` preserve realistic multi-root context and skills, compact skills, app and model-core variants, custom and append prompts, and a composed memory-style extension suffix.
+
+### Why
+
+Prompt-size inspection needs section provenance without changing any prompt text, ordering or whitespace, since those bytes determine cache hits.
+
+### Why an extension could not handle it
+
+An extension cannot recover part boundaries from an opaque composed prompt without duplicating assembly.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: options and assembly.
+
+## 2026-10-15 - Preset-overridable sentences in three section builders (senpi#3385)
+
+### What changed
+
+- `intent-gate.ts`: `buildIntentGate({ routingLineRule })` replaces the terminal lead's first clause (default `DEFAULT_ROUTING_LINE_RULE`, "The line keeps your reading transparent"); the app lead is unchanged.
+- `working-task.ts`: `buildWorkingTaskSection({ opening })` replaces the first paragraph (default `DEFAULT_WORKING_TASK_OPENING`).
+- `policies.ts`: `buildPoliciesSection({ errorRule })` replaces the swallow-errors bullet (default `DEFAULT_ERROR_RULE`).
+- `workstation.ts`: `WorkstationDialect` gains `gemini`: one plain sentence pair with the full fact list and no tags or caps.
+- With no option every builder renders the exact previous bytes (the native baseline hashes are unchanged).
+
+### Why
+
+- The Argon preset keeps the default core and changes four sentences at their source. Options on the builders let it do that without copying the sections or replacing strings in rendered output, so later wording changes in the core reach the preset and a moved anchor cannot fail silently.
+
+---
+
+## 2026-10-15 - The handoff block is for change and multi-step work, not for a researched answer (senpi#3323)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HANDOFF_MOMENTS` names "a multi-task todo list's creation" and "the end of a turn that changed something" (was "the todo list's creation" and "the final message of a turn that did work"), and says "an answer stays an answer, even after tool calls" (was "a reply that only answers a question is the answer itself"). The sentences are no longer than before: the compaction characterization suites run the default prompt in a 5,000-token window, and a longer wording (+218 characters) tipped `agent-session-compaction` and `pre-prompt-compaction-no-continue` into a second compaction.
+- `packages/coding-agent/src/core/dynamic-prompt/style.ts`: "The final message of a change opens with the Handoff block" (was "The final message of work ...").
+
+### Why
+
+- CLI users still got the block on plain answers after senpi#2723. "A turn that did work" covered a reply that only read files to answer, and the todo cue (`todotools/changes.md`, same date) demanded the block for the one-task list the first-turn opener makes of a question.
+
+### Why an extension could not handle it
+
+- These sections are built inside the shared prompt builder.
+
+### Expected merge conflict zones
+
+- Fork-only files. `HANDOFF_MOMENTS` in `handoff.ts`; the final-message sentence in `style.ts`.
+
+## 2026-10-04 - Format examples are no longer markdown quote lines (senpi#2714)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: the handoff template line reads `Ask: [the user's original request] - wanted: ...` instead of `> Ask: ...`.
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: the terminal routing line reads `I read this as [intent] - [plan]. ...` instead of `> I read this as ...`.
+- Labels, slots and every other sentence are unchanged; each prompt loses two characters per line.
+
+### Why
+
+- The model copies a format example as the shape of its reply, `>` included. A recorded app-surface session on claude-opus-5-5 stored its final messages as `> Ask: ...`, and the desktop drew each whole answer as a grey blockquote that read like a paused turn; the TUI quotes the routing line the same way. Live A/B on the real engine (RPC, app surface, Opus 5.5, same prompts, only the template line changed): before 2 of 3 handoff replies quoted, after 0 of 6. Prompt-engineering category B (misframing): the marker meant "this is the example" and was read as "this is the format", so it is removed at its source; nothing is added.
+
+### Why an extension could not handle it
+
+- These sections are built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. The template line in `buildHandoffSection` and `TERMINAL_ROUTING`.
+
+## 2026-10-04 - A reply that only answers a question is the answer itself, not a handoff block (senpi#2723)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HANDOFF_MOMENTS` names "the final message of a turn that did work" instead of "the final message", and adds "a reply that only answers a question is the answer itself".
+- `packages/coding-agent/src/core/dynamic-prompt/style.ts`: "The final message of work opens with the Handoff block" (was "The final message opens with ...").
+
+### Why
+
+- Every final message had to open with the handoff block, so a one-line answer went into the `For you:` slot of a status block that ended `Now: none. Next: none.` and read as a progress report. The model said so in its own reasoning: "Since the final message needs the handoff block format but the user just wants a single line, I should put that one-line answer in the For you section." The rule is narrowed at its source; the block stays for turns that did work.
+
+### Why an extension could not handle it
+
+- These sections are built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. `HANDOFF_MOMENTS` in `handoff.ts`; the final-message sentence in `style.ts`.
+
+## 2026-10-04 - Handoff: the Fable-only between-handoff sentence names the moment and the shape (senpi#2681)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: the `briefUpdatesBetweenHandoffs` branch of `buildHandoffSection` now reads "Between handoffs, after each tool wave that changes what you know, write one line of reply text: what you found, then `Now: [task]. Next: [task].`" (was "Between handoffs, a one-line update on what you just found, ending with `Now: [task]. Next: [task].`, helps the user follow along."). The option's doc comment names its only caller. The default branch ("Between handoffs, work without narration."), the handoff moments, the block template and the language rule are unchanged.
+- Only the Claude Fable 5.1 preset passes `briefUpdatesBetweenHandoffs: true`; the default dynamic prompt and every other preset render byte-identical before and after (24-render diff, 0 differences outside `claude-fable-5-1`).
+
+### Why
+
+- The sentence was a recommendation ("helps the user follow along") with no stated moment, and measured sessions showed it produced no more reply text between tool calls than cores that say "work without narration". The Fable 5.1 guide's remedy is a system-prompt line that says when user-facing text is wanted and what each update contains, so the sentence is rewritten at its source rather than reinforced from another section.
+
+### Why an extension could not handle it
+
+- The handoff section is built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only file. The `betweenRule` ternary and the `HandoffSectionOptions` doc comments in `handoff.ts`.
+
+## 2026-09-30 - Chat surface: no routing line, no handoff block, no ledger lines (senpi#2398)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/types.ts`: `PromptSurface` gains `chat`. New `TerminalOrApp` and `terminalOrApp(surface)`: `chat` takes every `app` entry of a wording table written for the two older surfaces.
+- `build.ts`: `resolvePromptSurface` returns `chat` for `SENPI_PROMPT_SURFACE=chat`; anything other than `app` or `chat` is still `terminal`.
+- `intent-gate.ts`, `verification.ts`, `style.ts`: `chat` renders the app Intent Gate, the app claim audit (`APP_UNRUN_CHECK_RULE`) and "your stop condition".
+- `handoff.ts`: `buildHandoffSection` returns the new `CHAT_REPLIES_SECTION` ("## Replies" + `CHAT_REPLY_RULE`: each reply is a chat message to the people in the conversation, written as the answer itself in their language, with no status block, todo labels or progress ledger). New `CHAT_FINAL_MESSAGE` ("The final message is the answer itself") opens every core's final-message rule on `chat`; `style.ts` uses it in place of "The final message opens with the Handoff block; its For you slot is".
+- Terminal and app renders stay byte-identical (180 renders: the dynamic prompt and 29 presets, two input sets, surface omitted / `terminal` / `app`, main vs this branch: 0 differ).
+
+### Why
+
+- A chat bridge posts the final assistant text into a conversation. The terminal prompt asks for a routing line and the app prompt still asks for the Ask / For you / Now / Next block, so both reached the chat room verbatim. The handoff rule is replaced at its source on `chat`; nothing is appended to contradict it.
+
+### Why an extension could not handle it
+
+- The sections are built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. `HANDOFF_MOMENTS` / `buildHandoffSection` in `handoff.ts`; the surface ternaries in `style.ts` and `intent-gate.ts`.
+
+## 2026-09-30 - App surface: an unrun check is covered by the evidence that did run (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/verification.ts`: `buildVerificationSection({ surface })`. On `app` the claim audit reads "report only evidence-backed work and report failing tests with the output" followed by the new exported `APP_UNRUN_CHECK_RULE`: a check that did not run is covered by the evidence that did run and is named only when no other evidence supports the claim; tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for the agent to act on, reaches the user only when it changes what they get, and an unavailable tool or hook never does by itself. The terminal wording ("flag the unverified explicitly") is unchanged.
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: the app Intent Gate no longer carries the tool-feedback sentence; the verification rule is its one home.
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: passes `surface` to `buildVerificationSection`.
+- Terminal renders stay byte-identical (60-prompt render diff against main, 0 differences).
+
+### Why
+
+- A live app-surface run (glm-5.3, shared core plus the GLM5 tuning) ended its reply with "Note: the LSP diagnostics hook is unavailable in this sandbox ...". The Verification section asks for "diagnostics on changed files" and to "flag the unverified explicitly", right where the model writes its report, while the tool-feedback line sat in the Intent Gate. Category A on the app surface: the claim-audit rule itself told the model to name every check that did not run. The rule is rewritten at its source instead of being contradicted from another section, and the feedback guidance moves into it so each prompt states it once.
+
+### Why an extension could not handle it
+
+- The verification section is built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. `CLAIM_AUDIT` and `APP_UNRUN_CHECK_RULE` in `verification.ts`; the `APP_ROUTING` string in `intent-gate.ts`.
+
+## 2026-09-29 - App prompt surface: no routing line, tool feedback stays with the agent (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/types.ts`: new `PromptSurface = "terminal" | "app"`.
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `BuildDynamicSystemPromptOptions.surface?: PromptSurface` (omitted = `terminal`), `DynamicPromptCoreContext.surface` so `corePrompt` overrides render per surface, and `resolvePromptSurface(env)` / `PROMPT_SURFACE_ENV_VAR`: `SENPI_PROMPT_SURFACE=app` selects `app`, anything else (unset included) is `terminal`. The builder threads the surface into `buildIntentGate` and `buildHandoffSection`.
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: on `app` the routing-line paragraph is replaced (not overridden) by one that keeps the implementation-commit rule, the observable stop condition (decided before acting, not written out), and the scaffolding guard, and adds one sentence: tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for the agent to act on and reaches the user only when it changes what they get. The intent-family routing rules are unchanged.
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HandoffSectionOptions.surface`; on `app` the moment list and the language rule drop their references to the routing line. `HANDOFF_LANGUAGE_RULE` (terminal) is unchanged.
+- `packages/coding-agent/src/core/dynamic-prompt/style.ts`: `buildStyleSection({ surface })`; on `app` the context-limit line reads "Continue until your stop condition holds." ("declared" invites the model to write the condition out, which brings the routing line back).
+- `packages/coding-agent/src/core/dynamic-prompt/index.ts`: re-exports `PromptSurface`, `resolvePromptSurface`, `PROMPT_SURFACE_ENV_VAR`.
+- Terminal renders are byte-identical to the previous builder for the dynamic prompt and every preset (scratch render diff over all 29 preset names x 2 tool sets, empty).
+
+### Why
+
+- Behind an app (the OmO Desktop) every reply opened with the `> I read this as ...` line and relayed internal tool/hook notices; in a chat UI both read as harness chatter. Category C: the builder had no input saying where replies render, so the only option was one prompt for every surface. The app wording removes the mandate instead of appending an override, so no prompt carries both the instruction and its negation.
+
+### Why an extension could not handle it
+
+- The dynamic prompt and the preset cores render the routing line inside their own sections; an extension could only append a second, contradicting rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. The `surface` threading in `buildDynamicSystemPrompt` and the `TERMINAL_ROUTING` / `APP_ROUTING` split in `buildIntentGate`.
+
+## 2026-09-29 - The handoff contract names which parts stay fixed and which follow the user's language (senpi#2366)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: new exported `HANDOFF_LANGUAGE_RULE`, rendered in `buildHandoffSection` in place of the sentence `Now and Next are the todo labels verbatim.`, which it absorbs: the labels Ask, wanted, For you, Now, and Next stay exactly as written, and the routing line, slot contents, todo labels, and the reply itself are written in the user's language (the one their instructions name, else the one they write in).
+
+### Why
+
+- Claude cores carry no user-language rule, and the routing line and handoff block are English sentence templates the model copies verbatim, so a user with a "reply in Korean" rule got English todo labels, English `Now`/`Next` slots, and (per the report) English replies. Category C: the model had no way to know which template tokens are machine-parsed (the ttsr repetitive-turns detector reads `Ask:` through `For you:` / `Now:` in model output) and which are fill-in. Every Claude preset renders this section, so one rule covers all of them; GPT-6 Astra keeps its own language line.
+
+### Why an extension could not handle it
+
+- This is the shared handoff section; an extension could only append a second, competing rule.
+
+### Expected merge conflict zones
+
+- The closing sentence of `buildHandoffSection`. Fork-only file.
+
 ## 2026-09-25 - The brief-update sentence reads as a sentence (senpi#2143)
 
 ### What changed
@@ -461,3 +799,21 @@ All changes are within `extensions/builtin/prompt-preset/` and the matching test
 ### Expected merge conflict zones
 
 - `presets.ts`, `settings.ts`: If upstream renames or reshapes the preset settings. Resolution: keep the model-named taxonomy.
+
+## 2026-10-11 - Public Native prompt generation for adapters (#3104)
+
+### What changed
+
+`packages/coding-agent/src/core/dynamic-prompt/build.ts` forwards an optional host name to model cores, and `packages/coding-agent/src/core/dynamic-prompt/identity.ts` preserves the configured Native brand when it is omitted.
+
+### Why
+
+Hosts must reuse Native content without mutating global branding.
+
+### Why an extension could not handle it
+
+Core rendering receives these inputs before extension appends.
+
+### Expected merge conflict zones
+
+The builder option/context interfaces and default identity construction.

@@ -1,10 +1,17 @@
+import { writeFileSync } from "node:fs";
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
 import { createEventBus } from "../../src/core/event-bus.ts";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import { createMcpExtension } from "../../src/core/extensions/builtin/mcp/index.ts";
-import { getMcpService, McpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import {
+	getMcpService,
+	MCP_DEFERRED_DISPOSE_TIMEOUT_ENV,
+	McpService,
+	resetMcpServiceForTests,
+} from "../../src/core/extensions/builtin/mcp/service.ts";
+import { MCP_STARTUP_TIMEOUT_ENV } from "../../src/core/extensions/builtin/mcp/startup-race.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../../src/core/extensions/loader.ts";
 import type { Extension, SessionShutdownEvent, SessionStartEvent } from "../../src/core/extensions/types.ts";
 import { awaitMcpToolRegistration } from "./fixtures/register-call.ts";
@@ -31,6 +38,7 @@ describe("mcp builtin extension load", () => {
 	});
 
 	afterEach(async () => {
+		vi.unstubAllEnvs();
 		await Promise.all(scopedServices.splice(0).map((service) => service.dispose("quit")));
 		await getMcpService().dispose("quit");
 		resetMcpServiceForTests();
@@ -164,6 +172,61 @@ describe("mcp builtin extension load", () => {
 			removed: [{ path: "<builtin:mcp>", resolvedPath: "<builtin:mcp>" }],
 		});
 
+		expect(service.isDisposed()).toBe(true);
+		await assertProcessDead(pid);
+	});
+
+	it("finishes disposing when the MCP builtin is removed while its attach is still in flight", async () => {
+		// Given: a server whose tool listing is held, so the session's attach is still running.
+		vi.stubEnv(MCP_STARTUP_TIMEOUT_ENV, "20000");
+		const root = makeMcpRoot("removed-during-attach");
+		const gate = `${root.agentDir}/catalog-gate`;
+		setConfig(root, { fixture: stdioServer(["--tools", "1", "--list-tools-gate", gate]) });
+		const extension = await loadMcpBuiltinExtension();
+		const ctx = mcpContext(root);
+		await emitSessionStart(extension, "startup", ctx);
+		const service = getMcpService();
+		await awaitMcpConnected(service, "fixture");
+		const pid = requiredPid(service, "fixture");
+		await emitSessionShutdown(extension, "reload", ctx);
+
+		// When: the builtin is removed while that attach is pending, and the listing then completes.
+		const removed = emit(extension, "session_extensions_removed", {
+			type: "session_extensions_removed",
+			reason: "reload",
+			removed: [{ path: "<builtin:mcp>", resolvedPath: "<builtin:mcp>" }],
+		});
+		writeFileSync(gate, "");
+		await removed;
+
+		// Then: once the removal has settled, the service and its server are gone.
+		expect(service.isDisposed()).toBe(true);
+		await assertProcessDead(pid);
+	});
+
+	it("disposes after the deadline when the MCP builtin is removed while its attach never settles", async () => {
+		// Given: a server whose tool listing is never released, and a short dispose deadline.
+		vi.stubEnv(MCP_STARTUP_TIMEOUT_ENV, "60000");
+		vi.stubEnv(MCP_DEFERRED_DISPOSE_TIMEOUT_ENV, "300");
+		const root = makeMcpRoot("removed-attach-hung");
+		const gate = `${root.agentDir}/catalog-gate-never`;
+		setConfig(root, { fixture: stdioServer(["--tools", "1", "--list-tools-gate", gate]) });
+		const extension = await loadMcpBuiltinExtension();
+		const ctx = mcpContext(root);
+		await emitSessionStart(extension, "startup", ctx);
+		const service = getMcpService();
+		await awaitMcpConnected(service, "fixture");
+		const pid = requiredPid(service, "fixture");
+		await emitSessionShutdown(extension, "reload", ctx);
+
+		// When: the builtin is removed while the attach is stuck.
+		await emit(extension, "session_extensions_removed", {
+			type: "session_extensions_removed",
+			reason: "reload",
+			removed: [{ path: "<builtin:mcp>", resolvedPath: "<builtin:mcp>" }],
+		});
+
+		// Then: the removal still settles, with the service and its server disposed.
 		expect(service.isDisposed()).toBe(true);
 		await assertProcessDead(pid);
 	});

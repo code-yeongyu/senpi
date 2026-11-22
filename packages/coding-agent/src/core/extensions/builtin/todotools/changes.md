@@ -1,5 +1,268 @@
 # todotools Fork Tracker
 
+## 2026-11-20 - The first-turn plan default follows the prompt preset (#7110, senpi#7101)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: an unset `todo.firstTurnPlan` resolves through `presetFirstTurnPlanDefault` of the active preset (`off` under a GPT preset, `force` elsewhere); a value the user set still wins. `Task_Management` is not appended after a preset listed in `presetOwnsTodoRules` (`gpt-6.2`).
+- `packages/coding-agent/test/suite/todo-first-turn.test.ts`, `todo-first-turn-harness.ts`: the opener per model id and setting, and the system prompt after each preset.
+
+### Why
+
+- The opener made GPT sessions write a list before they had read anything: the first tool call was `todo` `init` in 9 of 9 measured sessions (senpi#7101). The 6.2 core now states the todo rules itself, so a second copy after it would be a second home for the same rule.
+
+### Why an extension could not handle it
+
+- The opener and the appended block live inside the todotools builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` handler in `index.ts`.
+
+## 2026-11-18 - The GPT cue labels derive from one constant (senpi#6982 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: the all-closed GPT cue builds its label list from `GPT_HANDOFF_LABELS` instead of a hardcoded copy (byte-identical output).
+- `packages/coding-agent/test/suite/todo-handoff-cue.test.ts`: the drift test splits the label constant and asserts every label appears in each rendered GPT-block preset prompt, so a label renamed on either side fails.
+
+### Why
+
+- The #6982 round-3 review noted the hardcoded copy and the underived test as proof-claim gaps; this folds both.
+
+### Why an extension could not handle it
+
+- The cue text and its tests live inside the todotools builtin itself.
+
+### Expected merge conflict zones
+
+- LOW: one template string in `todo-format.ts`; one test block.
+
+## 2026-11-18 - The handoff cue names the block the active preset defines (senpi#6977)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: `formatHandoffCue` takes the cue kind; new `GPT_HANDOFF_CUES` and `GPT_HANDOFF_BLOCK_LINE` quote the outcome-first block the GPT presets render, with `"none"` emitting no cue at all.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the todo tool resolves the kind through `resolveActivePresetName(ctx)` and `presetHandoffCueKind`, the same preset seam todotools already uses for shared sections.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/state.ts`: re-exports the new cue constants.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: `presetHandoffCueKind(name)` maps each preset - gpt-5.5 / gpt-5.6 / gpt-6-astra render the GPT block, the rewritten gpt-6.2 core renders none, everything else keeps the default Ask / For you cue.
+
+### Why
+
+- The cue told every non-chat session to "write the Ask / For you / Now / Next block", but under the GPT presets the system prompt defines the outcome-first block instead (and the rewritten 6.2 core defines no handoff block at all), so the tool result and the prompt handed the model two competing templates.
+
+### Why an extension could not handle it
+
+- The cue text is emitted inside the todotools builtin itself; only the todo tool can append it, and only the preset contract knows which block the active prompt renders.
+
+### Expected merge conflict zones
+
+- LOW: `HANDOFF_CUES` / `formatHandoffCue` in `todo-format.ts`; the cue emission block in `tools/todo.ts`; one function and two Sets in `contract.ts`.
+
+## 2026-11-03 - Full Todo Management section for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/prompt.ts`: `FULL_TASK_MANAGEMENT_SECTION`, the pre-#5342 section.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: appends it when `activeSharedSections(ctx)` is `full`.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the three pre-#5342 guidelines as `fullPromptGuidelines`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the before_agent_start section append and the tool definition's prompt fields.
+
+## 2026-11-03 - todo is loop-side on a split session (senpi#5646)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the `todo` tool declares `runs: "brain"` and reports each call it executes to `noteExecuted`.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: `session_start`, `session_tree`, `message_end`, `before_agent_start`, `before_provider_request`, `agent_end`, `session_abort` and `session_shutdown` register with `runs: "brain"`; `message_end` adopts a `todo` tool result of a call this instance did not execute (`tools/todo.ts` records each call it runs through the optional `noteExecuted` accessor) and re-renders the widget; a result of its own call, which arrives only after the whole batch, is never adopted, and results of other tools are ignored.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-storage.ts`: `getTodoStateFromToolResult()`, the tool-result parser `getLatestTodoStateFromBranchEntries` already used, now shared and exported from `state.ts`.
+
+### Why
+
+On a split session (brain/hand, S39) todo is a loop-side tool: its only effect is the session's list, Ask/Now/Next and widget. A hand's generation must not register handlers that read a session it does not own, and the loop must see a list that was built outside its process.
+
+### Why an extension could not handle it
+
+todotools is the builtin that owns the list; its own registrations are what declare the sides.
+
+### Expected merge conflict zones
+
+`index.ts` handler registrations; `todo-storage.ts` branch reader.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/prompt.ts`: `## Todo Management` keeps only the three-steps trigger and its four phases; the pointer to the description and the mark-done/reconcile sentence (the description's Rules block) are dropped.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the three `promptGuidelines`, each a restatement of the description's Rules block, are removed.
+- Terse pass: `packages/coding-agent/src/core/extensions/builtin/todotools/prompt.ts` shortens `## Todo Management` and `## Evidence`.
+
+### Why
+
+- senpi#5335: the todo rules had three homes.
+
+### Why an extension could not handle it
+
+- This extension owns the todo tool and its prompt section.
+
+### Expected merge conflict zones
+
+- LOW: `TASK_MANAGEMENT_SECTION` and the tool definition's guideline list.
+
+## 2026-11-02 - todo corrects near-canonical init shapes before validation (senpi#5332)
+
+### What changed
+
+- `normalize.ts`: `prepareTodoArguments` now rewrites six near-canonical `init` shapes before schema validation. Phase records nested inside `list[i].items` (or inside top-level `items` on an explicit `op: "init"`) are promoted to phases, and `{content}` item records become their string. A phase with tasks but no name gets a default name, an empty phase is dropped, a JSON-string `list` is parsed, stray strings in `list` are dropped, and an `op` with stray leading or trailing punctuation or whitespace (never digits) is trimmed to the known op; `rm`, `done`, `drop` and `start` are only corrected when the call names a `task` or `phase`, so a correction never turns into a bulk change. Each rewrite adds an `[auto-corrected]` notice under a reserved string key that is trusted only when `prepareTodoArguments` set it. A call no rule changes comes back as the same reference, and a rewrite that would leave `list` empty is abandoned.
+- `tools/todo.ts`: `execute` strips the reserved key with `splitPreparedCorrections` and prepends its notices to the corrections.
+- `prompt.ts`: the `init` row states that each `list` entry is one phase and that `items` holds only task strings.
+
+### Why
+
+- senpi#5332: schema validation runs before `execute`, so these shapes failed with `Validation failed for tool "todo"` and never reached the execute-time correction. A transcript scan found 78 such failures in 75 sessions, mostly from GLM and Kimi models.
+
+### Why an extension could not handle it
+
+- `prepareArguments` belongs to the tool definition this builtin registers; no extension hook sits between the provider stream and another tool's validation.
+
+### Expected merge conflict zones
+
+- LOW: `prepareTodoArguments` and the helper block in `normalize.ts`, the `execute` prologue in `tools/todo.ts`, and the `init` row in `prompt.ts`.
+
+## 2026-10-31 - todo unwraps a list wrapped one level too deep (senpi#5148)
+
+### What changed
+
+- `normalize.ts`: new `prepareTodoArguments` unwraps `list` when it arrives as a nested array (`[[{phase, items}]]`, or one inner array per phase) or as a lone `{list: [...]}` wrapper. Anything else, and any wrapper around an empty list, is passed through unchanged and fails validation as before.
+- `tools/todo.ts`: the todo tool registers it as `prepareArguments`, so the unwrap runs before schema validation on the loop's detached copy.
+
+### Why
+
+- A weaker tool-calling model sometimes sends the phased list wrapped one level too deep; the call failed validation (`list/0 must be object`) and the model often retried the same shape.
+
+### Why an extension could not handle it
+
+- `prepareArguments` belongs to the tool definition this builtin registers; no extension hook sits between the provider stream and another tool's validation.
+
+### Expected merge conflict zones
+
+- LOW: the `registerTodoTool` definition in `tools/todo.ts` and the helper block in `normalize.ts`.
+
+## 2026-10-15 - A one-task list reaches no handoff moment (senpi#3323)
+
+### What changed
+
+- `todo-format.ts` `handoffMomentOf`: a list with fewer than two tasks returns no moment, so its results carry no "Handoff due" cue.
+- `first-turn.ts` `FIRST_TURN_REMINDER`: "a question is one task, and its reply is the answer itself, with no handoff block" replaces "a question needs none past answering it".
+
+### Why
+
+- The opener arms for a first request that does not end in `?` or `!`, which includes most questions typed without a question mark ("explain this function"). The model planned it as one task, the todo result then said "write the Ask / For you / Now / Next block", and that cue outweighed the system prompt's "a reply that only answers a question is the answer itself" (senpi#2723). The senpi#2724 QA asked questions ending in `?`, which never arm the opener.
+
+## 2026-10-01 - The first-turn opener asks for the phases the request needs (senpi#2505)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts` `FIRST_TURN_REMINDER`: "a phased list covering the whole request end to end, with only the phases this request needs - a question needs none past answering it" replaces the enumerated "investigation, implementation, verification (diagnostics, tests, build, manual check), and the final report". The gate, the forced `tool_choice` and the tests are unchanged.
+
+### Why
+
+- The enumeration made every first request, including a yes/no status question, plan a verification phase; GPT-6 Astra then had to reason the planned "run diagnostics, tests and build" item away ("no code change, so tests and build are not run") after spending the turn around it. The decomposition mandate itself stays in `TASK_MANAGEMENT_SECTION`.
+
+### Why an extension could not handle it
+
+- This is the todotools builtin's own reminder text.
+
+### Expected merge conflict zones
+
+- `first-turn.ts` `FIRST_TURN_REMINDER`.
+
+## 2026-10-01 - The first gateway delivery gets the first-turn opener (senpi#2424)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts`: `shouldArmFirstTurn` treats `trigger: "delivery"` like `"prompt"` and counts earlier `session_control_delivery` entries with full admission provenance as requests, using the same shared predicate as the host. Question/exclamation, print/json and ask-user-answer exclusions apply equally to both paths; answer-frame deliveries do not consume the opener.
+- `test/suite/regressions/2424-delivery-first-turn.test.ts`: covers the delivery gate table, gateway-only first/later deliveries with forced `todo` choice, both prompt/delivery orders, hidden extension turns, and typed or delivered answer frames through the real `AgentSession`.
+
+### Why
+
+- A gateway-only session's admitted delivery is its work request. Skipping it gave that request no opener and incorrectly saved the opener for a later local prompt.
+
+### Why an extension could not handle it
+
+- This is the todotools builtin's first-request policy; it consumes the host's new delivery trigger and persisted delivery entries.
+
+### Expected merge conflict zones
+
+- Fork-only files. `first-turn.ts` gate and request-entry classifier.
+
+## 2026-09-30 - The first-turn opener never arms on an ask-user answer frame (senpi#2419)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts` `shouldArmFirstTurn`: returns `false` when the prompt parses as an ask-user answer frame (`parseAskUserAnswerFrame` from `../ask-user/format.ts`, the parser `todo-ask.ts` already uses), and the "no user request on the branch" check skips user messages that are answer frames.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-ask.ts`: `firstTextBlock` is exported so the gate reads a user message's text the same way Ask capture does.
+- `test/suite/regressions/2419-first-turn-answer-frame.test.ts`: gate rows for an answer frame (LF and CRLF), for a work request after an earlier answer, and for a text-less (image-only) user message still counting as a request; a faux-`pi` case where an answer frame gets no reminder and no forced `todo` tool_choice; a real-session case (an extension-triggered bootstrap, then an answer, then a work request) where only the work request arms. The faux `pi` scaffolding is shared with `test/suite/todo-first-turn.test.ts` through `test/suite/todo-first-turn-harness.ts`.
+
+### Why
+
+- When every earlier turn was an extension or custom message (an onboarding bootstrap, a control-endpoint delivery), the answer to an async question was the branch's first user message, so the opener armed on it. Under `force` the model got a named `todo` tool_choice instead of acting on the answer, and the user's real first request after it then got no opener.
+
+### Why an extension could not handle it
+
+- The gate is this builtin's own logic; no core file changed.
+
+### Expected merge conflict zones
+
+- Fork-only files. `shouldArmFirstTurn` and its doc comment; the `firstTextBlock` export in `todo-ask.ts`.
+
+## 2026-09-30 - No handoff cue on the chat surface (senpi#2398)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the handoff moment is skipped when the session's prompt surface (`ctx.getSystemPromptOptions().surface`, else `resolvePromptSurface(process.env)`) is `chat`, so no "Handoff due ... write the Ask / For you / Now / Next block" line is appended. Terminal and app keep the cue.
+- `test/suite/todo-handoff-cue.test.ts`: the four-call harness run asserts the cues on `terminal` and `app` and no cue on `chat`.
+
+### Why
+
+- The chat surface's prompt has no handoff block; a cue asking for one would bring it back right before the reply.
+
+### Why an extension could not handle it
+
+- This is the todotools extension itself; no core file changed.
+
+### Expected merge conflict zones
+
+- Fork-only file. The cue call in `tools/todo.ts` `execute`.
+
+## 2026-09-29 - The all-closed handoff cue stops handing the model an English `none` to copy (senpi#2366)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: `HANDOFF_CUES["all-closed"]` says `the Ask / For you / Now / Next block, with Now and Next saying no task remains` instead of `the Ask / For you / Now: none / Next: none block`.
+
+### Why
+
+- The cue lands right before the final message, and a Korean-rule run on `claude-opus-5-5` copied its literal `Now: none. Next: none.` into an otherwise Korean handoff. The shared handoff rule (`dynamic-prompt/handoff.ts` `HANDOFF_LANGUAGE_RULE`) keeps the labels fixed and puts the slot contents in the user's language; the cue now describes the slot contents instead of dictating English ones. Same length.
+
+### Why an extension could not handle it
+
+- This is the todotools extension itself; no core file changed.
+
+### Expected merge conflict zones
+
+- None (fork-only file).
+
 ## 2026-09-28 - The first-turn opener stops forcing a model that refused a forced choice (senpi#2218)
 
 ### What changed

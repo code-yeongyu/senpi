@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
@@ -81,10 +81,13 @@ describe("defaultTools setting", () => {
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
+		).toEqual(["bash", "edit", "find", "glob", "grep", "ls", "powershell", "read", "write"]);
 		expect(session.getActiveToolNames()).toEqual(["grep", "find"]);
-		expect(session.systemPrompt).toContain("- grep:");
-		expect(session.systemPrompt).not.toContain("- read:");
+		// The selection reaches the model as tool schemas; described tools get no snippet line (senpi#5335).
+		const schemaNames = session.agent.state.tools.map((tool) => tool.name);
+		expect(schemaNames).toEqual(expect.arrayContaining(["grep", "find"]));
+		expect(schemaNames).not.toContain("read");
+		expect(session.systemPrompt).not.toMatch(/^- (grep|read):/m);
 		session.dispose();
 	});
 
@@ -92,8 +95,27 @@ describe("defaultTools setting", () => {
 		const session = await createSession(["read", "powershell", "edit", "write"]);
 
 		expect(session.getActiveToolNames()).toEqual(["read", "powershell", "edit", "write"]);
-		expect(session.systemPrompt).toContain("- powershell: Execute PowerShell commands");
-		expect(session.systemPrompt).not.toContain("- bash:");
+		const schemaNames = session.agent.state.tools.map((tool) => tool.name);
+		expect(schemaNames).toContain("powershell");
+		expect(schemaNames).not.toContain("bash");
+		session.dispose();
+	});
+
+	it("activates an inactive extension tool with +name", async () => {
+		const session = await createSession(["+inactive_tool", "-write"], {}, [
+			(pi) => {
+				pi.registerTool({
+					name: "inactive_tool",
+					label: "Inactive Tool",
+					description: "Extension tool registered inactive",
+					parameters: Type.Object({}),
+					execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+					defaultActive: false,
+				});
+			},
+		]);
+
+		expect(session.getActiveToolNames().sort()).toEqual(["bash", "edit", "grep", "inactive_tool", "read"]);
 		session.dispose();
 	});
 
@@ -156,6 +178,107 @@ describe("defaultTools setting", () => {
 		toolLessSession.dispose();
 	});
 
+	describe("reload", () => {
+		const inactiveTool: InlineExtension = (pi) => {
+			pi.registerTool({
+				name: "inactive_tool",
+				label: "Inactive Tool",
+				description: "Extension tool registered inactive",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+				defaultActive: false,
+			});
+		};
+
+		// Fork builtin extensions (codemode routes bash and grep through eval) would change the initial set; keep them off.
+		const writeSettings = (settings: object) =>
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ enabledBuiltinExtensions: [], ...settings }));
+
+		async function createFileSession(options: ToolOptions = {}) {
+			if (!existsSync(join(agentDir, "settings.json"))) writeSettings({});
+			const settingsManager = SettingsManager.create(tempDir, agentDir);
+			const resourceLoader = new DefaultResourceLoader({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+				extensionFactories: [inactiveTool],
+			});
+			await resourceLoader.reload();
+			return (
+				await createAgentSession({
+					cwd: tempDir,
+					agentDir,
+					model: getModel("anthropic", "claude-sonnet-4-5")!,
+					settingsManager,
+					sessionManager: SessionManager.inMemory(tempDir),
+					resourceLoader,
+					...options,
+				})
+			).session;
+		}
+
+		// upstream #10245, with the fork defaults (read, bash, edit, write, grep)
+		it("activates only tools newly added to defaultTools", async () => {
+			const session = await createFileSession();
+			expect(session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write", "grep"]);
+			session.setActiveToolsByName(["read", "edit", "write", "grep"]);
+
+			writeSettings({ defaultTools: ["+inactive_tool", "+find"] });
+			await session.reload();
+			// bash was disabled during the session and is not newly added, so it stays off.
+			expect(session.getActiveToolNames().sort()).toEqual([
+				"edit",
+				"find",
+				"grep",
+				"inactive_tool",
+				"read",
+				"write",
+			]);
+
+			// Removing tools from the setting does not disable them.
+			writeSettings({ defaultTools: ["-read"] });
+			await session.reload();
+			expect(session.getActiveToolNames().sort()).toEqual([
+				"edit",
+				"find",
+				"grep",
+				"inactive_tool",
+				"read",
+				"write",
+			]);
+			session.dispose();
+		});
+
+		it("keeps explicit tool options on reload", async () => {
+			const allowlisted = await createFileSession({ tools: ["read"] });
+			writeSettings({ defaultTools: ["+find"] });
+			await allowlisted.reload();
+			expect(allowlisted.getActiveToolNames()).toEqual(["read"]);
+			allowlisted.dispose();
+
+			writeSettings({});
+			const builtinless = await createFileSession({ noTools: "builtin" });
+			writeSettings({ defaultTools: ["+find"] });
+			await builtinless.reload();
+			expect(builtinless.getActiveToolNames()).toEqual([]);
+			builtinless.dispose();
+
+			writeSettings({});
+			const excluded = await createFileSession({ excludeTools: ["find"] });
+			writeSettings({ defaultTools: ["+find", "+inactive_tool"] });
+			await excluded.reload();
+			expect(excluded.getActiveToolNames().sort()).toEqual([
+				"bash",
+				"edit",
+				"grep",
+				"inactive_tool",
+				"read",
+				"write",
+			]);
+			excluded.dispose();
+		});
+	});
+
 	it("applies through service-based session creation", async () => {
 		const settingsManager = SettingsManager.inMemory({ defaultTools: ["ls"] });
 		const services = await createAgentSessionServices({ cwd: tempDir, agentDir, settingsManager });
@@ -170,7 +293,7 @@ describe("defaultTools setting", () => {
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
+		).toEqual(["bash", "edit", "find", "glob", "grep", "ls", "powershell", "read", "write"]);
 		expect(session.getActiveToolNames()).toEqual(["ls"]);
 		session.dispose();
 	});

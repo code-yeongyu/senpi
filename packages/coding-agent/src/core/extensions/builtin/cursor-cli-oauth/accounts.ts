@@ -1,4 +1,5 @@
 import type { Credential, CredentialStore, OAuthCredential } from "@earendil-works/pi-ai";
+import { withoutOrderedAccount } from "@earendil-works/pi-ai/auth/pool/select";
 
 export type CursorCliAccountSlot = {
 	name: string;
@@ -16,6 +17,7 @@ export type CursorCliSlotState = Record<string, { blockedUntil?: number; blockRe
 export type CursorCliOauthCredential = OAuthCredential & {
 	accounts?: CursorCliAccountSlot[];
 	pinned?: string;
+	order?: string[];
 	slotState?: CursorCliSlotState;
 };
 
@@ -67,7 +69,7 @@ export function removeAccount(credential: CursorCliOauthCredential, name: string
 		accounts,
 	};
 	if (credential.pinned === name) delete next.pinned;
-	return next;
+	return withoutOrderedAccount(next, name);
 }
 
 export function pinAccount(credential: CursorCliOauthCredential, name: string): CursorCliOauthCredential {

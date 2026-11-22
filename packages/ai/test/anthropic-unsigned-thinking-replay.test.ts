@@ -5,6 +5,8 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 interface RequestBody {
 	messages?: Array<{
 		role: string;
@@ -94,7 +96,11 @@ function writeStartedSseThenError(response: ServerResponse): void {
 }
 
 async function run(model: Model<"anthropic-messages">, sessionId: string) {
-	const response = streamAnthropic(model, createContext(), { apiKey: "test-key", cacheRetention: "none", sessionId });
+	const response = streamAnthropic(model, normalizeContext(createContext()), {
+		apiKey: "test-key",
+		cacheRetention: "none",
+		sessionId,
+	});
 	for await (const event of response) {
 		if (event.type === "done" || event.type === "error") break;
 	}

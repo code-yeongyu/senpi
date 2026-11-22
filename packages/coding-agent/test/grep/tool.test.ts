@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { GrepEngineError } from "../../src/core/tools/grep/engine.ts";
 import { formatGrepContent } from "../../src/core/tools/grep/format.ts";
 import * as selector from "../../src/core/tools/grep/select-engine.ts";
@@ -26,7 +26,9 @@ describe("grep facade", () => {
 	});
 	afterAll(async () => rm(root, { recursive: true, force: true }));
 	const run = (input: GrepToolInput) =>
-		createGrepToolDefinition(root).execute("test", input, undefined, undefined, { cwd: root } as ExtensionContext);
+		createGrepToolDefinition(root).execute("test", input, undefined, undefined, {
+			cwd: root,
+		} as ExtensionToolContext);
 	it("schema accepts every field", () => {
 		expect(
 			Value.Check(createGrepToolDefinition(root).parameters, {
@@ -75,7 +77,7 @@ describe("grep facade", () => {
 					},
 					undefined,
 					undefined,
-					{ cwd: root } as ExtensionContext,
+					{ cwd: root } as ExtensionToolContext,
 				),
 			).rejects.toThrow("denied");
 			expect(spy).not.toHaveBeenCalled();
@@ -192,7 +194,7 @@ describe("grep facade", () => {
 				{ pattern: "needle", glob: "src/*.ts" },
 				undefined,
 				undefined,
-				{ cwd: corpus.root } as ExtensionContext,
+				{ cwd: corpus.root } as ExtensionToolContext,
 			);
 			expect(result.details?.fileMatches).toEqual([
 				{ path: "src/a.ts", count: 3 },
@@ -247,7 +249,7 @@ describe("grep facade", () => {
 				{ pattern: "needle\\n", path: "0000.txt" },
 				controller.signal,
 				undefined,
-				{ cwd: root } as ExtensionContext,
+				{ cwd: root } as ExtensionToolContext,
 			);
 			expect(spy.mock.calls[0][0]).toMatchObject({ multiline: true });
 			expect(spy.mock.calls[0][1]).toBe(controller.signal);
@@ -258,7 +260,7 @@ describe("grep facade", () => {
 					{ pattern: "needle", path: "0000.txt" },
 					controller.signal,
 					undefined,
-					{ cwd: root } as ExtensionContext,
+					{ cwd: root } as ExtensionToolContext,
 				),
 			).rejects.toMatchObject({ code: "ABORTED" });
 		} finally {

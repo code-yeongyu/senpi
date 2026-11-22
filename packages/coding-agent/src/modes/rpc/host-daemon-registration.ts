@@ -23,14 +23,17 @@
  * this module reads and writes through its primitives and never builds a path of its own.
  */
 import { rename, rm } from "node:fs/promises";
-import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import {
 	type DaemonPidFile,
 	ProcessIdentityUnreadableError,
 	parseDaemonPidFile,
+	processIsLive,
 	processMatchesPidFile,
+	processStartTimeMs,
 	readProcessStartTime,
-} from "../app-server/daemon/process.ts";
+	sameProcessStartMs,
+} from "../../utils/process-identity.ts";
 import {
 	createGenerationDirectory,
 	generationPaths,
@@ -40,7 +43,9 @@ import {
 	sameEndpoint,
 } from "./host-daemon-paths.ts";
 import { isRecord, parseJson, readFileOrUndefined, writeStateFile } from "./host-daemon-state.ts";
-import { pruneDeadGenerations } from "./host-generations.ts";
+import { endClaimsOfEndedGenerations, pruneDeadGenerations } from "./host-generations.ts";
+import { hostChildAlive } from "./host-stalled-evidence.ts";
+import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 /** Who wrote a registration: the process identity a later stop must match to be allowed. */
 export interface HostPidFileWriter {
@@ -56,6 +61,11 @@ export interface HostRegistration {
 	readonly generation: number;
 	/** The profile the spawned host was launched with, for a client comparing two generations. */
 	readonly launchProfileId: string;
+	/**
+	 * The build of the process this record names. Absent while it is not known yet (a handoff's
+	 * successor before it answers): the record then claims no engine version rather than the writer's.
+	 */
+	readonly build?: { readonly text: string; readonly ordinal: EngineOrdinal };
 }
 
 export interface RegisteredHost {
@@ -74,7 +84,19 @@ export interface RegisteredHost {
 export async function readHostRegistration(paths: HostDaemonPaths): Promise<RegisteredHost | undefined> {
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
 	if (!pointer || typeof pointer.instance_id !== "string") return undefined;
-	const text = await readFileOrUndefined(generationPaths(paths, pointer.instance_id).pidFile);
+	return readGenerationRegistration(paths, pointer.instance_id);
+}
+
+/**
+ * One NAMED generation's record, whatever the pointer says: a caller asking a superseded generation
+ * to drain addresses it by instance id (#3653). The record proves nothing by itself; `provenOwner`
+ * still decides whether it names a live process serving this endpoint.
+ */
+export async function readGenerationRegistration(
+	paths: HostDaemonPaths,
+	instanceId: string,
+): Promise<RegisteredHost | undefined> {
+	const text = await readFileOrUndefined(generationPaths(paths, instanceId).pidFile);
 	const record = text === undefined ? undefined : parseDaemonPidFile(text);
 	if (record === undefined) return undefined;
 	const parsed = parseJson(text) ?? {};
@@ -83,7 +105,7 @@ export async function readHostRegistration(paths: HostDaemonPaths): Promise<Regi
 		record,
 		...(writer && { writer }),
 		...(typeof parsed.socket === "string" && { socket: parsed.socket }),
-		instanceId: pointer.instance_id,
+		instanceId,
 		generation: typeof parsed.generation === "number" ? parsed.generation : 0,
 	};
 }
@@ -92,12 +114,19 @@ export async function readHostRegistration(paths: HostDaemonPaths): Promise<Regi
  * Registers a generation and points the daemon directory at it, under this process's writer stamp.
  * The stamp is what authorizes a later stop: only the process that wrote a record may signal the
  * host it names, and the recorded start time keeps a recycled pid from inheriting that right.
+ *
+ * `fresh` says the directory cannot hold an earlier generation (a terminal's endpoint, named by a
+ * socket built from a new instance id), so there is nothing to prune.
  */
-export async function writeHostRegistration(paths: HostDaemonPaths, registration: HostRegistration): Promise<void> {
+export async function writeHostRegistration(
+	paths: HostDaemonPaths,
+	registration: HostRegistration,
+	options: { readonly fresh?: boolean } = {},
+): Promise<void> {
 	// Every write is also the moment to drop what is no longer running: records of dead generations
 	// and their session-path claims otherwise accumulate for the life of the agent directory, and a
 	// stale pointer among them reads as "a daemon serves this endpoint" (#1893).
-	await pruneDeadGenerations(paths);
+	if (options.fresh !== true) await pruneDeadGenerations(paths);
 	const { generation, writer } = await writeGenerationRecord(paths, registration);
 	// The pointer is replaced by rename: a reader either sees the generation that owned the socket
 	// before this call or the one that owns it now, never a half-written pointer.
@@ -122,14 +151,13 @@ export async function writeGenerationRecord(
 ): Promise<{ generation: HostGenerationPaths; writer: HostPidFileWriter }> {
 	const generation = generationPaths(paths, registration.instanceId);
 	const writer: HostPidFileWriter = { pid: process.pid, startTime: await thisProcessStartTime() };
-	const build = engineBuildIdentity();
+	const { build } = registration;
 	await createGenerationDirectory(generation);
 	await writeStateFile(generation.pidFile, {
 		...registration.record,
 		instance_id: registration.instanceId,
 		generation: registration.generation,
-		engineVersion: build.text,
-		engineOrdinal: build.ordinal,
+		...(build && { engineVersion: build.text, engineOrdinal: build.ordinal }),
 		launchProfileId: registration.launchProfileId,
 		socket: registration.socket,
 		writer,
@@ -141,6 +169,9 @@ export async function writeGenerationRecord(
 export async function clearHostRegistration(paths: HostDaemonPaths): Promise<void> {
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
 	if (typeof pointer?.instance_id === "string") {
+		if (await hostChildAlive(generationPaths(paths, pointer.instance_id)))
+			throw new Error(`refusing to clear generation ${pointer.instance_id} with a live host child`);
+		await endClaimsOfEndedGenerations(paths, new Set([pointer.instance_id]));
 		await rm(generationPaths(paths, pointer.instance_id).dir, { recursive: true, force: true });
 	}
 	await rm(paths.settingsFile, { force: true });
@@ -152,14 +183,25 @@ export async function clearHostRegistration(paths: HostDaemonPaths): Promise<voi
  * Drops ONE generation's registration while the files still name it. After a handoff the pointer
  * belongs to the successor, so a draining predecessor removes only its own directory - taking the
  * pointer with it would leave every client reading no daemon at all while one is serving.
+ *
+ * A generation whose public socket another one TOOK (`superseded`) removes only its own directory,
+ * whatever the pointer says. The pointer and `settings.json` are then the replacer's to move: a handoff
+ * rewrites the settings before its successor boots and repoints the pointer only after it saw the rename
+ * land, and a predecessor that noticed the rename first would read "still mine" and remove both just as,
+ * or just after, the handoff moved them - leaving the successor serving with no registration (#2536).
  */
 export async function releaseGeneration(
 	paths: HostDaemonPaths,
-	owner: { readonly instanceId: string; readonly pid: number },
+	owner: { readonly instanceId: string; readonly pid: number; readonly superseded?: boolean },
 ): Promise<void> {
 	const generation = generationPaths(paths, owner.instanceId);
+	if (await hostChildAlive(generation)) return;
 	const record = parseDaemonPidFile((await readFileOrUndefined(generation.pidFile)) ?? "");
 	if (record !== undefined && record.pid !== owner.pid) return;
+	if (owner.superseded === true) {
+		await rm(generation.dir, { recursive: true, force: true });
+		return;
+	}
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
 	const ownsPointer = pointer?.instance_id === owner.instanceId;
 	if (ownsPointer) await rm(paths.settingsFile, { force: true });
@@ -169,12 +211,16 @@ export async function releaseGeneration(
 }
 
 /**
- * A LEGACY host's flat registration, if one is there. This build never writes and never removes it:
- * it is evidence that a host from before layout 2 may still own the socket, and nothing more.
+ * Drops the pointer and the boot settings while the pointer still names `instanceId`, and leaves that
+ * generation's directory to the generation itself: `host stop` signals a supervisor that still reads
+ * its stop intent from there before it releases it.
  */
-export async function readLegacyHostRecord(paths: HostDaemonPaths): Promise<DaemonPidFile | undefined> {
-	const text = await readFileOrUndefined(paths.legacyPidFile);
-	return text === undefined ? undefined : parseDaemonPidFile(text);
+export async function releaseRegistrationPointer(paths: HostDaemonPaths, instanceId: string): Promise<void> {
+	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
+	if (pointer?.instance_id !== instanceId) return;
+	await rm(paths.settingsFile, { force: true });
+	// Last: "no pointer" is what every reader takes as "no host here" (senpi#2241).
+	await rm(paths.pointerFile, { force: true });
 }
 
 /**
@@ -187,31 +233,18 @@ export async function provenOwner(
 	socket: string,
 ): Promise<{ pid: number; processStartTime: string; instanceId: string } | undefined> {
 	const record = registered?.record;
-	if (!record || record.processStartTime === null) return undefined;
+	if (!record) return undefined;
 	if (registered?.socket !== undefined && !sameEndpoint(registered.socket, socket)) return undefined;
-	const identity = { pid: record.pid, processStartTime: record.processStartTime };
-	return (await processMatchesPidFile(identity, readProcessStartTime).catch(() => false))
-		? { ...identity, instanceId: registered.instanceId }
-		: undefined;
-}
-
-/**
- * Whether a LEGACY host is still running behind the flat registration. An identity that cannot be
- * read on a live pid counts as running: the point of asking is to refuse rather than start a second
- * host beside a process that may still own the socket.
- */
-export async function legacyHostIsLive(
-	paths: HostDaemonPaths,
-	probe: (pid: number) => Promise<string | undefined>,
-): Promise<boolean> {
-	const record = await readLegacyHostRecord(paths);
-	if (record === undefined) return false;
-	try {
-		return await processMatchesPidFile(record, probe);
-	} catch (error: unknown) {
-		if (error instanceof ProcessIdentityUnreadableError) return true;
-		throw error;
+	if (record.processStartTime === null) {
+		if (processIsLive(record.pid)) logUnknownHostIdentity("host.pid", record.pid);
+		return undefined;
 	}
+	const identity = { pid: record.pid, processStartTime: record.processStartTime };
+	const proven = await processMatchesPidFile(identity, readProcessStartTime).catch((error: unknown) => {
+		if (error instanceof ProcessIdentityUnreadableError) logUnknownHostIdentity("host.pid", identity.pid);
+		return false;
+	});
+	return proven ? { ...identity, instanceId: registered.instanceId } : undefined;
 }
 
 /**
@@ -219,9 +252,21 @@ export async function legacyHostIsLive(
  * proven ours reads as foreign, so the worst case of an unreadable identity is a refusal rather
  * than a signal sent to another owner's host.
  */
-export async function writtenByThisProcess(writer: HostPidFileWriter | undefined): Promise<boolean> {
+export async function writtenByThisProcess(
+	writer: HostPidFileWriter | undefined,
+	readStartTime?: (pid: number) => Promise<string | undefined>,
+): Promise<boolean> {
 	if (writer === undefined || writer.pid !== process.pid || writer.startTime === null) return false;
-	return writer.startTime === (await thisProcessStartTime());
+	const startTime = readStartTime
+		? await readStartTime(process.pid).then(
+				(value) => value ?? null,
+				() => null,
+			)
+		: await thisProcessStartTime();
+	return sameProcessStartMs(
+		processStartTimeMs(writer.startTime),
+		startTime === null ? undefined : processStartTimeMs(startTime),
+	);
 }
 
 let selfStartTime: Promise<string | null> | undefined;
@@ -232,6 +277,11 @@ export function thisProcessStartTime(): Promise<string | null> {
 		() => null,
 	);
 	return selfStartTime;
+}
+
+/** A caller-supplied instance id names a directory under `generations/`: never a path of its own. */
+export function isGenerationId(instanceId: string): boolean {
+	return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(instanceId) && !instanceId.includes("..");
 }
 
 /** A record from a host started before writer stamps existed simply has no writer: it reads as foreign. */

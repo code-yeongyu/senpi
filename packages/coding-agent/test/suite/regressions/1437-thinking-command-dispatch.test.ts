@@ -41,9 +41,10 @@ type SubmitContext = {
 };
 
 type ThinkingContext = {
+	settingsManager: { setDefaultThinkingLevel: (level: string) => void };
 	session: {
 		thinkingLevel: string;
-		getAvailableThinkingLevels: () => string[] | Promise<string[]>;
+		getAvailableThinkingLevels: () => string[];
 		setThinkingLevel: (level: string) => void;
 		setSessionThinkingLevel: (level: string) => void;
 	};
@@ -89,8 +90,9 @@ function createSubmitContext(): SubmitContext {
 	return context;
 }
 
-function createThinkingContext(levels: string[] | Promise<string[]>): ThinkingContext {
+function createThinkingContext(levels: string[]): ThinkingContext {
 	const context: ThinkingContext = {
+		settingsManager: { setDefaultThinkingLevel: vi.fn() },
 		session: {
 			thinkingLevel: "medium",
 			getAvailableThinkingLevels: vi.fn(() => levels),
@@ -104,6 +106,9 @@ function createThinkingContext(levels: string[] | Promise<string[]>): ThinkingCo
 		showThinkingSelector: vi.fn(async () => {}),
 		selectThinkingLevel: vi.fn(),
 	};
+	context.session.setThinkingLevel = vi.fn((level) => {
+		context.session.thinkingLevel = level;
+	});
 	context.selectThinkingLevel = prototype.selectThinkingLevel.bind(context);
 	return context;
 }
@@ -167,9 +172,9 @@ describe("#1437 handleThinkingCommand", () => {
 		expect(context.showError).not.toHaveBeenCalled();
 	});
 
-	it("matches the level case-insensitively and awaits a shared-host level list", async () => {
-		//#given - the shared-host proxy answers getAvailableThinkingLevels over RPC
-		const context = createThinkingContext(Promise.resolve(["off", "low", "high"]));
+	it("matches the level case-insensitively", async () => {
+		//#given
+		const context = createThinkingContext(["off", "low", "high"]);
 
 		//#when
 		await prototype.handleThinkingCommand.call(context, "HIGH");
@@ -205,7 +210,7 @@ describe("#1437 handleThinkingCommand", () => {
 		expect(context.session.setSessionThinkingLevel).not.toHaveBeenCalled();
 	});
 
-	it("persists through setThinkingLevel only on the explicit default path", () => {
+	it("saves the startup default only on the explicit default path", () => {
 		//#given
 		const context = createThinkingContext(["off", "low", "high"]);
 
@@ -214,6 +219,7 @@ describe("#1437 handleThinkingCommand", () => {
 
 		//#then
 		expect(context.session.setThinkingLevel).toHaveBeenCalledWith("low");
+		expect(context.settingsManager.setDefaultThinkingLevel).toHaveBeenCalledWith("low");
 		expect(context.session.setSessionThinkingLevel).not.toHaveBeenCalled();
 		expect(context.showStatus).toHaveBeenCalledWith("Default thinking level: low");
 	});

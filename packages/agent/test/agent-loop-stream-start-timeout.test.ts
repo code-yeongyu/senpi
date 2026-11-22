@@ -6,7 +6,7 @@ import {
 	type Model,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { agentLoop, StreamStartTimeoutError } from "../src/agent-loop.ts";
+import { agentLoop, StreamStartTimeoutError } from "../src/index.ts";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage } from "../src/types.ts";
 
 /**
@@ -33,6 +33,7 @@ class AssistantEventStream extends EventStream<AssistantMessageEvent, AssistantM
 }
 
 class NeverStartingStream extends AssistantEventStream {
+	// oxlint-disable-next-line eslint/require-yield -- the generator throws before its first yield by design
 	override async *[Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
 		await new Promise<never>(() => {});
 	}

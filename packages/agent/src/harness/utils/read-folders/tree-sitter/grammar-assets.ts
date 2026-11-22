@@ -34,7 +34,7 @@ const embeddedRuntime = () =>
 	import("../../../../../assets/tree-sitter/web-tree-sitter.wasm", { with: { type: "file" } });
 
 async function embeddedPath(load: (() => Promise<{ default: string }>) | undefined): Promise<string | undefined> {
-	if (!load || !process.versions.bun) return undefined;
+	if (!load) return undefined;
 	try {
 		const module = await load();
 		return existsSync(module.default) ? module.default : undefined;

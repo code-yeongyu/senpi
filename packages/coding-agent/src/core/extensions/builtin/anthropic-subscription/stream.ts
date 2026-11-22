@@ -7,29 +7,46 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import { LONG_CONTEXT_FALLBACK_DIAGNOSTIC, LONG_CONTEXT_FALLBACK_NOTICE } from "../../../provider-notices.ts";
 import { getSessionClaudeAccountPin } from "./account-command.ts";
 import { queryWithAuthLane } from "./auth-lane.ts";
+import { markColdSeedOverflow } from "./cold-seed-budget.ts";
+import { CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW } from "./context-window.ts";
 import { buildCustomToolServers } from "./custom-tools.ts";
+import { resolveQuerySettingsEnv } from "./claude-settings-env.ts";
 import { sdkAssistantFailure, sdkResultFailure, sdkResultFailureUsage } from "./errors.ts";
 import { type ClaudeCodeRun, defaultExecutableDeps, resolveClaudeCodeRun } from "./executable.ts";
+import { estimateLongContextFallbackTokens } from "./long-context-budget.ts";
 import { buildAnthropicSubscriptionQueryOptions } from "./options.ts";
-import { buildPromptBlocks, buildPromptStream } from "./prompt-bridge.ts";
+import { buildDeferredPromptStream, buildPromptBlocks } from "./prompt-bridge.ts";
+import { type PromptCacheTtl, pinOneShotPromptCacheTtl } from "./prompt-cache-ttl.ts";
 import { dedupeUltraworkBlocks } from "./prompt-directive-dedupe.ts";
 import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
+import { forgetBinding } from "./session-reattach.ts";
+import { anthropicSubscriptionDiagnostic } from "./provider-diagnostic.ts";
+import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import { residentSessionMessages } from "./session-stream.ts";
-import { loadAnthropicSubscriptionProviderSettingsFromDisk } from "./settings.ts";
+import {
+	loadAnthropicSubscriptionProviderSettingsFromDisk,
+	resolveCompactionOwner,
+	resumeModeSource,
+} from "./settings.ts";
 import { applyStreamEvent } from "./stream-events.ts";
 import { withAuthGuidance } from "./stream-guidance.ts";
 import { emptyOutput, errorMessage, mapStopReason, type StreamBlock, updateUsage } from "./stream-protocol.ts";
 import { toolWatch } from "./tool-watch.ts";
 import { resolveSdkTools } from "./tools.ts";
 
+export const NATIVE_COMPACTION_WHILE_SENPI_OWNS =
+	'Claude Code compacted this session natively although senpi owns compaction on this lane (compactionOwner: "senpi"); the turn was stopped so only one side compacts. Run /compact, or set anthropicSubscriptionProvider.compactionOwner to "sdk" to let Claude Code compact.';
+
 export function streamAnthropicSubscription(
 	model: Model<Api>,
 	context: Context,
 	options?: SimpleStreamOptions,
+	recheckedAccounts?: Set<string>,
 ): AssistantMessageEventStream {
 	const stream = createAssistantMessageEventStream();
 	void (async () => {
@@ -40,6 +57,11 @@ export function streamAnthropicSubscription(
 		let wasAborted = false;
 		let started = false;
 		let sawStreamEvent = false;
+		const onAttemptStart = (): void => {
+			delete output.responseId;
+			output.usage = emptyOutput(model).usage;
+			sawStreamEvent = false;
+		};
 		const closeQuery = (): void => {
 			if (closed || !sdkQuery) return;
 			closed = true;
@@ -59,8 +81,12 @@ export function streamAnthropicSubscription(
 		if (options?.signal?.aborted) onAbort();
 		else options?.signal?.addEventListener("abort", onAbort, { once: true });
 		let claudeCodeRun: ClaudeCodeRun | undefined;
+		let coldSeedAttempt = false;
+		let coldSeedEstimate: number | undefined;
+		let nativeCompactionStopped = false;
 
 		try {
+			const cwd = requireAnthropicSubscriptionCwd(options?.cwd);
 			// Resident before the synchronous SDK member below (getSdkBoundary().query)
 			// reads it - see sdk-boundary.lazy.ts.
 			await loadClaudeAgentSdk();
@@ -69,16 +95,23 @@ export function streamAnthropicSubscription(
 			const sessionKey = options?.sessionId ? toolWatch.sessionKey(options.sessionId) : undefined;
 			if (sessionKey) toolWatch.reconcileWithContext(sessionKey, context);
 			const toolWatchNote = toolWatch.buildPromptNote(sessionKey, context, resolvedTools.customToolNameToSdk);
-			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(process.cwd());
+			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(cwd);
+			// The effective `env` block of the settings files this stream's queries load (senpi#2988 item 4): a
+			// lifetime set there is what Claude Code will actually use, so the pin must see it. Resolved once per
+			// stream; the pin only receives it for attempts whose settingSources are non-empty.
+			const settingsEnv = await resolveQuerySettingsEnv(cwd, providerSettings);
+			const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 			const toolLessRequest = options?.toolChoice === "none";
 			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
 			claudeCodeRun = resolveClaudeCodeRun(defaultExecutableDeps());
 			const executable = claudeCodeRun.executable;
+			let oneShotCacheTtl: PromptCacheTtl | undefined;
 			const buildOptions = (authLane: Parameters<typeof buildAnthropicSubscriptionQueryOptions>[0]["authLane"]) => {
 				const queryOptions = buildAnthropicSubscriptionQueryOptions({
 					model,
 					context,
 					streamOptions: options,
+					cwd,
 					providerSettings,
 					authLane,
 					tools: resolvedTools.sdkTools,
@@ -92,6 +125,19 @@ export function streamAnthropicSubscription(
 					},
 				});
 				if (mcpServers) queryOptions.mcpServers = mcpServers;
+				// The one-shot prompt is built after this, for the lane this attempt resolved (senpi#2982).
+				if (!useResidentSession) {
+					oneShotCacheTtl = pinOneShotPromptCacheTtl(
+						queryOptions,
+						authLane ?? providerSettings.tokenInjection ?? "ambient",
+						{ ...process.env, ...options?.env },
+						// Only the settings files this attempt loads can set its lifetime: managed lanes load
+						// none, so nothing is passed there (senpi#2988).
+						queryOptions.settingSources !== undefined && queryOptions.settingSources.length > 0
+							? settingsEnv
+							: undefined,
+					);
+				}
 				return queryOptions;
 			};
 			const recordContinuity = (observation: ContinuityObservation): void => {
@@ -105,8 +151,29 @@ export function streamAnthropicSubscription(
 					},
 				];
 			};
+			// The request keeps its model; only its window fell back, and the turn says so (senpi#4065).
+			const recordLongContextFallback = (): void => {
+				output.diagnostics = [
+					...(output.diagnostics ?? []),
+					{
+						type: LONG_CONTEXT_FALLBACK_DIAGNOSTIC,
+						timestamp: Date.now(),
+						details: {
+							contextWindow: CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW,
+							message: LONG_CONTEXT_FALLBACK_NOTICE,
+						},
+					},
+				];
+			};
 			const useResidentSession =
 				options?.streamKind === "main" && providerSettings.resumeMode !== "off" && options.sessionId !== undefined;
+			const contextTokens = () =>
+				estimateLongContextFallbackTokens(
+					context,
+					buildPromptBlocks(context, resolvedTools.customToolNameToSdk, toolWatchNote),
+					options?.sessionId,
+				);
+			const outputReserveTokens = options?.maxTokens;
 			if (options?.streamKind === "main" && !useResidentSession) {
 				// The reason must reflect the ACTUAL cause: resume mode "off"
 				// disables the lane by setting, while any other mode simply has no
@@ -115,7 +182,11 @@ export function streamAnthropicSubscription(
 					{
 						kind: "disabled",
 						reason: providerSettings.resumeMode === "off" ? "resume_mode_off" : "registry_miss",
+						...(providerSettings.resumeMode === "off"
+							? { settingSource: resumeModeSource(providerSettings) }
+							: {}),
 					},
+					options.sessionId,
 					recordContinuity,
 				);
 			}
@@ -124,12 +195,21 @@ export function streamAnthropicSubscription(
 						model,
 						context,
 						streamOptions: options,
+						recheckedAccounts,
 						providerSettings,
 						pinnedAccount: getSessionClaudeAccountPin(options.sessionId),
 						buildOptions,
 						customToolNameToSdk: resolvedTools.customToolNameToSdk,
 						toolWatchNote,
 						onContinuityDecision: recordContinuity,
+						onLongContextFallback: recordLongContextFallback,
+						contextTokens,
+						outputReserveTokens,
+						onAttemptStart,
+						onDispatchShape: (coldSeed, estimatedTokens) => {
+							coldSeedAttempt = coldSeed;
+							coldSeedEstimate = estimatedTokens;
+						},
 						onResumeFallback: (error) => {
 							output.diagnostics = [
 								...(output.diagnostics ?? []),
@@ -138,21 +218,34 @@ export function streamAnthropicSubscription(
 						},
 					})
 				: queryWithAuthLane({
-						prompt: buildPromptStream(
-							dedupeUltraworkBlocks(buildPromptBlocks(context, resolvedTools.customToolNameToSdk, toolWatchNote))
-								.blocks,
+						prompt: buildDeferredPromptStream(
+							() =>
+								dedupeUltraworkBlocks(
+									buildPromptBlocks(
+										context,
+										resolvedTools.customToolNameToSdk,
+										toolWatchNote,
+										oneShotCacheTtl === undefined ? {} : { cacheBreakpoint: oneShotCacheTtl },
+									),
+								).blocks,
 						),
 						query: getSdkBoundary().query,
+						onAttemptStart,
 						providerSettings,
 						env: options?.env,
+						recheckedAccounts,
 						signal: options?.signal,
 						sessionId: affinityKey,
+						model: model.id,
 						pinnedAccount: getSessionClaudeAccountPin(options?.sessionId),
 						onQuery: (query) => {
 							sdkQuery = query;
 							if (wasAborted) requestAbort();
 						},
 						buildOptions,
+						onLongContextFallback: recordLongContextFallback,
+						contextTokens,
+						outputReserveTokens,
 					});
 
 			for await (const message of messages) {
@@ -175,7 +268,21 @@ export function streamAnthropicSubscription(
 						{ model, output, blocks, stream, customToolNameToPi: resolvedTools.customToolNameToPi },
 						message.event,
 					);
+				} else if (message.type === "assistant") {
+					// Same first-id-wins turn identity as applyStreamEvent's message_start (oh-my-openagent#10547).
+					output.responseId ??= message.message.id || undefined;
+					// SDK assistant snapshots have placeholder output counts. Never replace streamed usage with them.
+					if (!sawStreamEvent && message.message.usage) {
+						updateUsage(model, output, message.message.usage, "request-start");
+					}
 				} else if (message.type === "system" && message.subtype === "compact_boundary") {
+					// The query was started with native auto-compact off: a boundary here means Claude
+					// Code compacted anyway. Fail the turn loudly instead of letting a second owner
+					// rewrite the transcript behind senpi's compaction.
+					if (senpiOwnsCompaction) {
+						nativeCompactionStopped = true;
+						throw new Error(NATIVE_COMPACTION_WHILE_SENPI_OWNS);
+					}
 					// Native compactions must reach the ledger: attach the boundary as a
 					// diagnostic so the lane-policy collector can build a ledger entry
 					// instead of the boundary being discarded in the stream.
@@ -200,7 +307,7 @@ export function streamAnthropicSubscription(
 					// A terminal result must never downgrade a toolUse turn that the stream
 					// already established, or the agent loop would stop instead of running
 					// the tool call sitting in `output.content`.
-					if (message.usage) updateUsage(model, output, message.usage);
+					if (message.usage) updateUsage(model, output, message.usage, "query");
 					if (message.stop_reason != null && output.stopReason !== "toolUse") {
 						output.stopReason = mapStopReason(message.stop_reason);
 					}
@@ -222,12 +329,19 @@ export function streamAnthropicSubscription(
 		} catch (error) {
 			// no-excuse-ok: catch
 			// Provider boundary converts every thrown SDK value into the stream error contract.
+			// Unwinding the stopped attempt kept a retry checkpoint on the Claude Code session that
+			// just compacted natively. Drop it, so the next turn rebuilds the resident session from
+			// senpi's own history instead of resuming that rewritten transcript.
+			if (nativeCompactionStopped && options?.sessionId) forgetBinding(options.sessionId);
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			// A failed result still bills its tokens; managed and resident lanes
 			// throw before the result reaches this loop, so account for it here.
 			const billed = sdkResultFailureUsage(error);
-			if (billed) updateUsage(model, output, billed);
+			if (billed) updateUsage(model, output, billed, "query");
 			output.errorMessage = withAuthGuidance(error, errorMessage(error), claudeCodeRun);
+			const diagnostic = output.stopReason === "error" ? anthropicSubscriptionDiagnostic(error) : undefined;
+			if (diagnostic !== undefined) output.providerDiagnostic = diagnostic;
+			markColdSeedOverflow(output, model, coldSeedAttempt, coldSeedEstimate, options?.sessionId);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 		} finally {
 			options?.signal?.removeEventListener("abort", onAbort);

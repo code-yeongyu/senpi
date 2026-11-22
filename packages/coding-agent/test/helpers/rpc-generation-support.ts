@@ -19,6 +19,7 @@ import {
 } from "../../src/modes/rpc/socket-transport.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER } from "./rpc-hermetic.ts";
 
+export { MOCK_MODEL, MOCK_PROVIDER } from "./rpc-hermetic.ts";
 export { processAlive, reapProcessesUnder, waitForPidGone } from "./spawned-host-reaper.ts";
 
 export type WireRecord = Record<string, unknown>;
@@ -41,7 +42,9 @@ export function generationScratch(label: string): GenerationScratch {
 		cwd: join(root, "w"),
 		socket: join(root, "rpc.sock"),
 	};
-	for (const dir of [scratch.agentDir, scratch.sessionDir, scratch.cwd]) mkdirSync(dir, { recursive: true });
+	// 0700 under any umask: a host refuses to publish its key into a group-writable agent dir (unsafe_key_record).
+	for (const dir of [scratch.agentDir, scratch.sessionDir, scratch.cwd])
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
 	return scratch;
 }
 
@@ -49,9 +52,17 @@ export function hostLifecycleEntry(): string {
 	return join(import.meta.dirname, "..", "..", "src", "modes", "rpc", "host-lifecycle.ts");
 }
 
+/**
+ * Whether a spawn starts a generation's supervisor. Where a user systemd manager answers, the launch is wrapped in
+ * `systemd-run --user --scope ... -- <node> host-lifecycle.ts ...` (senpi#7099), so the entry is not argv[0].
+ */
+export function isSupervisorSpawn(args: readonly string[]): boolean {
+	return args.some((arg) => arg.endsWith("host-lifecycle.ts"));
+}
+
 /** The launch seam both ensure and handoff take: supervisor argv in, spawnable command out. */
-export function supervisorLaunch(args: readonly string[]): { command: string; args: string[] } {
-	return { command: process.execPath, args: [hostLifecycleEntry(), ...args] };
+export function supervisorLaunch(args: readonly string[]): { command: string; args: string[]; reportsStartup: true } {
+	return { command: process.execPath, args: [hostLifecycleEntry(), ...args], reportsStartup: true };
 }
 
 export const GENERATION_HOST_ARGS = ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL] as const;
@@ -188,10 +199,12 @@ export class JsonlPeer {
 export class HeldAnthropicModel {
 	private readonly server: Server;
 	private readonly releaseHolds: () => void;
+	readonly requested: Promise<void>;
 
-	private constructor(server: Server, releaseHolds: () => void) {
+	private constructor(server: Server, releaseHolds: () => void, requested: Promise<void>) {
 		this.server = server;
 		this.releaseHolds = releaseHolds;
+		this.requested = requested;
 	}
 
 	static async start(): Promise<HeldAnthropicModel> {
@@ -199,12 +212,16 @@ export class HeldAnthropicModel {
 		const held = new Promise<void>((resolve) => {
 			releaseHolds = resolve;
 		});
+		const requested = Promise.withResolvers<void>();
 		const server = createServer((req, res) => {
 			req.resume();
-			req.on("end", () => void held.then(() => writeHeldAnswer(res)));
+			req.on("end", () => {
+				requested.resolve();
+				void held.then(() => writeHeldAnswer(res));
+			});
 		});
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-		return new HeldAnthropicModel(server, releaseHolds);
+		return new HeldAnthropicModel(server, releaseHolds, requested.promise);
 	}
 
 	get origin(): string {
@@ -216,6 +233,9 @@ export class HeldAnthropicModel {
 	}
 
 	close(): Promise<void> {
+		// A failed lifecycle assertion can enter cleanup before release(). Finish the response
+		// we own before joining server.close(), which otherwise waits for that response forever.
+		this.release();
 		return new Promise((resolve) => this.server.close(() => resolve()));
 	}
 }

@@ -9,8 +9,9 @@ import {
 	type TestAttachment,
 } from "vitest";
 import type { HarnessRun } from "vitest-evals/harness";
+import { PI_SESSION_SNAPSHOT_ARTIFACT } from "../report.ts";
 
-export const PI_SESSION_SNAPSHOT_ARTIFACT = "piSessionJsonl";
+export { PI_SESSION_SNAPSHOT_ARTIFACT };
 
 const evalSessionArtifactKey = Symbol("pi-evals-session-artifact");
 const evalSourceArtifactKey = Symbol("pi-evals-source-artifact");

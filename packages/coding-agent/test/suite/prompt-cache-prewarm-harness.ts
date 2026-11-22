@@ -1,4 +1,4 @@
-import type { Context, WarmPromptCacheOptions, WarmPromptCacheResult } from "@earendil-works/pi-ai";
+import type { Context, Model, WarmPromptCacheOptions, WarmPromptCacheResult } from "@earendil-works/pi-ai";
 import { vi } from "vitest";
 import { createCacheKeepAliveExtension } from "../../src/core/extensions/builtin/cache-keepalive/index.ts";
 import { PROMPT_CACHE_PREWARM_ENTRY_TYPE } from "../../src/core/extensions/builtin/cache-keepalive/prewarm-entry.ts";
@@ -33,21 +33,27 @@ export async function within<T>(promise: Promise<T>, label: string): Promise<T> 
 }
 
 export interface WarmCall {
+	readonly model: Model<string>;
 	readonly context: Context;
 	readonly options: WarmPromptCacheOptions | undefined;
 }
 
 export async function createPrewarmHarness(
 	warm: (call: WarmCall) => Promise<WarmPromptCacheResult>,
-	options: { extensionFactories?: ExtensionFactory[]; models?: HarnessOptions["models"] } = {},
+	options: {
+		extensionFactories?: ExtensionFactory[];
+		models?: HarnessOptions["models"];
+		settings?: HarnessOptions["settings"];
+	} = {},
 ) {
 	const warmCalled = deferred<WarmCall>();
 	const harness = await createHarness({
 		...(options.models ? { models: options.models } : {}),
+		settings: options.settings ?? { promptCache: { keepAlive: { enabled: true } } },
 		extensionFactories: [
 			createCacheKeepAliveExtension({
-				warmPromptCache: async (_model, context, options) => {
-					const call = { context, options };
+				warmPromptCache: async (model, context, options) => {
+					const call = { model, context, options };
 					warmCalled.resolve(call);
 					return warm(call);
 				},

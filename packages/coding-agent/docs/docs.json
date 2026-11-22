@@ -65,6 +65,10 @@
 					"path": "schedule.md"
 				},
 				{
+					"title": "Web Search",
+					"path": "web-search.md"
+				},
+				{
 					"title": "Skills",
 					"path": "skills.md"
 				},
@@ -75,6 +79,10 @@
 				{
 					"title": "Prompt Templates",
 					"path": "prompt-templates.md"
+				},
+				{
+					"title": "Shared Prompt Generation",
+					"path": "prompt-presets.md"
 				},
 				{
 					"title": "Themes",
@@ -91,6 +99,10 @@
 				{
 					"title": "Custom Providers",
 					"path": "custom-provider.md"
+				},
+				{
+					"title": "Virtual Models",
+					"path": "virtual-models.md"
 				}
 			]
 		},
@@ -100,6 +112,10 @@
 				{
 					"title": "Environment Variables",
 					"path": "environment-variables.md"
+				},
+				{
+					"title": "Agent Directory Selection",
+					"path": "agent-directory-selection.md"
 				},
 				{
 					"title": "Session Format",
@@ -117,14 +133,6 @@
 				{
 					"title": "RPC Mode",
 					"path": "rpc.md"
-				},
-				{
-					"title": "App Server Mode",
-					"path": "app-server.md"
-				},
-				{
-					"title": "App Server Daemon",
-					"path": "app-server-daemon.md"
 				},
 				{
 					"title": "JSON Event Stream Mode",

@@ -12,11 +12,12 @@ const importOAuthModule = (specifier: string): Promise<unknown> => {
 };
 
 type OAuthFlowLoaders = {
-	anthropic: () => OAuthAuth | Promise<OAuthAuth>;
 	chatgptSubscription: () => OAuthAuth | Promise<OAuthAuth>;
+	openaiChatGPT: () => OAuthAuth | Promise<OAuthAuth>;
 	githubCopilot: () => OAuthAuth | Promise<OAuthAuth>;
 	openrouter: () => OAuthAuth | Promise<OAuthAuth>;
 	kimiCoding: () => OAuthAuth | Promise<OAuthAuth>;
+	meta: () => OAuthAuth | Promise<OAuthAuth>;
 	xai: () => OAuthAuth | Promise<OAuthAuth>;
 	cursor: () => OAuthAuth | Promise<OAuthAuth>;
 	devin: () => OAuthAuth | Promise<OAuthAuth>;
@@ -30,15 +31,15 @@ export function registerBundledOAuthFlowLoaders(loaders: OAuthFlowLoaders): void
 	bundledLoaders = loaders;
 }
 
-export const loadAnthropicOAuth = async (): Promise<OAuthAuth> => {
-	if (bundledLoaders) return bundledLoaders.anthropic();
-	return ((await importOAuthModule("./anthropic.ts")) as { anthropicOAuth: OAuthAuth }).anthropicOAuth;
-};
-
 export const loadChatGptSubscriptionOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.chatgptSubscription();
 	return ((await importOAuthModule("./chatgpt-subscription.ts")) as { chatgptSubscriptionOAuth: OAuthAuth })
 		.chatgptSubscriptionOAuth;
+};
+
+export const loadOpenAIChatGPTOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.openaiChatGPT();
+	return ((await importOAuthModule("./openai-chatgpt.ts")) as { openaiChatGPTOAuth: OAuthAuth }).openaiChatGPTOAuth;
 };
 
 export const loadGitHubCopilotOAuth = async (): Promise<OAuthAuth> => {
@@ -54,6 +55,11 @@ export const loadOpenRouterOAuth = async (): Promise<OAuthAuth> => {
 export const loadKimiCodingOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.kimiCoding();
 	return ((await importOAuthModule("./kimi-coding.ts")) as { kimiCodingOAuth: OAuthAuth }).kimiCodingOAuth;
+};
+
+export const loadMetaOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.meta();
+	return ((await importOAuthModule("./meta.ts")) as { metaOAuth: OAuthAuth }).metaOAuth;
 };
 
 export const loadXaiOAuth = async (): Promise<OAuthAuth> => {

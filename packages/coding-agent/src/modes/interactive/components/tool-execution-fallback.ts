@@ -1,5 +1,5 @@
 import { type Component, Text } from "@earendil-works/pi-tui";
-import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
+import { formatToolCallWithArgs, getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { stripAnsi } from "../../../utils/ansi.ts";
 import { theme } from "../theme/theme.ts";
 import type { ToolExecutionResult } from "./tool-execution-types.ts";
@@ -102,8 +102,18 @@ function renderJsonView(value: JsonRecord | unknown[]): string {
 	return rows.join("\n");
 }
 
-export function createToolCallFallback(toolName: string): Component {
-	return new Text(theme.fg("toolTitle", theme.bold(toolName)), 0, 0);
+/** Terminal escapes and control characters in argument strings never reach the terminal; line breaks stay. */
+function sanitizeCallArgValue(_key: string, value: unknown): unknown {
+	return typeof value === "string"
+		? stripAnsi(value).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
+		: value;
+}
+
+/** Tools without a call renderer show their arguments on the title line (key=value; one line per key expanded). */
+export function createToolCallFallback(toolName: string, args?: unknown, expanded = false): Component {
+	// Tool-call arguments are JSON values (ToolCall.arguments: JsonObject), so the round trip cannot throw.
+	const safeArgs: unknown = args === undefined ? undefined : JSON.parse(JSON.stringify(args, sanitizeCallArgValue));
+	return new Text(formatToolCallWithArgs(sanitizeFallbackString(toolName), safeArgs, theme, expanded), 0, 0);
 }
 
 export function createToolResultFallback(

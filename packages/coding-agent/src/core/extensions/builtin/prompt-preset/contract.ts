@@ -1,0 +1,286 @@
+import {
+	extractClaudeOpusVersion,
+	extractGpt5Version,
+	isClaudeFable5Model,
+	isClaudeFable51Model,
+	isClaudeFable52Model,
+	isClaudeHaiku55Model,
+	isClaudeOpus5Model,
+	isClaudeOpus55Model,
+	isClaudeSonnet55Model,
+	isDeepseekV4Flash0731Model,
+	isDeepseekV4FlashModel,
+	isDeepseekV4ProModel,
+	isDeepseekV41FlashModel,
+	isGemini4ArgonModel,
+	isGlm52Model,
+	isGlm53Model,
+	isGpt6FamilyModel,
+	isGpt62Model,
+	isGrok45Model,
+	isGrok46Model,
+	isGrok47Model,
+	isKimiK3Model,
+	isKimiK31Model,
+	isKimiK26Model,
+	isKimiK27Model,
+	isKimiK28Model,
+	isSWE2Model,
+	type ModelWithPromptPresetMetadata,
+} from "./matchers.ts";
+import type { SharedSections } from "../../../dynamic-prompt/types.ts";
+import type { TodoFirstTurnPlan } from "../../../settings-shapes.ts";
+import type { PromptPresetName } from "./settings.ts";
+
+export type ResolvedPresetName = Exclude<PromptPresetName, "auto">;
+
+export function resolvePresetName(input: {
+	providerID: string;
+	modelID: string;
+	name?: string;
+}): ResolvedPresetName | undefined {
+	const model: ModelWithPromptPresetMetadata = { id: input.modelID, provider: input.providerID, name: input.name };
+	// The point release must resolve before the GPT-6 family signal, which accepts any point release.
+	if (isGpt62Model(model)) {
+		return "gpt-6.2";
+	}
+	if (isGpt6FamilyModel(model)) {
+		return "gpt-6-astra";
+	}
+	const gpt5Version = extractGpt5Version(model.id);
+	if (gpt5Version) {
+		return gpt5Version;
+	}
+	if (isKimiK31Model(model)) {
+		return "kimi-k3-1";
+	}
+	if (isSWE2Model(model) || isKimiK3Model(model)) {
+		return "kimi-k3";
+	}
+	if (isKimiK28Model(model)) {
+		return "kimi-k2-8";
+	}
+	if (isKimiK27Model(model)) {
+		return "kimi-k2-7";
+	}
+	if (isKimiK26Model(model)) {
+		return "kimi-k2-6";
+	}
+	// The dotted release must resolve before the generic fable-5 substring.
+	if (isClaudeFable52Model(model.id)) {
+		return "claude-fable-5-2";
+	}
+	if (isClaudeFable51Model(model.id)) {
+		return "claude-fable-5-1";
+	}
+	if (isClaudeFable5Model(model.id)) {
+		return "claude-fable-5";
+	}
+	// The dotted release must resolve before the generic opus-5 substring.
+	if (isClaudeOpus55Model(model.id)) {
+		return "claude-opus-5-5";
+	}
+	if (isClaudeOpus5Model(model.id)) {
+		return "claude-opus-5";
+	}
+	if (isClaudeSonnet55Model(model.id)) {
+		return "claude-sonnet-5-5";
+	}
+	if (isClaudeHaiku55Model(model.id)) {
+		return "claude-haiku-5-5";
+	}
+	const claudeVersion = extractClaudeOpusVersion(model.id);
+	if (claudeVersion) {
+		return claudeVersion;
+	}
+	if (isGlm53Model(model)) {
+		return "glm-5.3";
+	}
+	if (isGlm52Model(model)) {
+		return "glm-5.2";
+	}
+	// The dated snapshot must resolve before the generic flash alias.
+	if (isDeepseekV4Flash0731Model(model)) {
+		return "deepseek-v4-flash-0731";
+	}
+	if (isDeepseekV41FlashModel(model)) {
+		return "deepseek-v4-1-flash";
+	}
+	if (isDeepseekV4FlashModel(model)) {
+		return "deepseek-v4-flash";
+	}
+	if (isDeepseekV4ProModel(model)) {
+		return "deepseek-v4-pro";
+	}
+	if (isGrok47Model(model)) {
+		return "grok-4.7";
+	}
+	if (isGrok46Model(model)) {
+		return "grok-4.6";
+	}
+	if (isGrok45Model(model)) {
+		return "grok-4.5";
+	}
+	if (isGemini4ArgonModel(model)) {
+		return "gemini-4-argon";
+	}
+	return undefined;
+}
+
+/**
+ * Presets that render the shared prompt generators' full wording (senpi#5665): after the senpi#5335 diet
+ * shipped, Opus and Fable got slower and worse, so these keep the pre-diet text and every other preset,
+ * gpt-6-astra included, keeps the diet.
+ */
+const FULL_SHARED_SECTION_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
+	"claude-fable-5",
+	"claude-fable-5-1",
+	"claude-fable-5-2",
+	"claude-opus-5-5",
+	"claude-opus-5",
+	"claude-opus-4-8",
+	"claude-opus-4-7",
+	"claude-opus-4-6",
+	"claude-opus-4-5",
+]);
+
+/** The shared-section wording a preset declares; no preset (the default prompt) renders `diet`. */
+export function presetSharedSections(name: ResolvedPresetName | undefined): SharedSections {
+	return name !== undefined && FULL_SHARED_SECTION_PRESETS.has(name) ? "full" : "diet";
+}
+
+/**
+ * The handoff block a preset's prompt defines, so the todo tool's cue can name that block in the
+ * prompt's own words instead of the default core's (senpi#6977): the GPT block presets render the
+ * outcome-first block, the gpt-6.2 and deepseek-v4-1-flash cores render no handoff block on any
+ * surface (senpi#6979, senpi#7100), so a cue there would name a block those prompts do not define, and
+ * every other preset (and the default dynamic prompt) renders the Ask / For you / Now / Next block.
+ */
+export type HandoffCueKind = "default" | "gpt-block" | "none";
+
+const GPT_BLOCK_HANDOFF_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-5.5", "gpt-5.6", "gpt-6-astra"]);
+const NO_HANDOFF_BLOCK_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-6.2", "deepseek-v4-1-flash"]);
+
+export function presetHandoffCueKind(name: ResolvedPresetName | undefined): HandoffCueKind {
+	if (name === undefined) return "default";
+	if (GPT_BLOCK_HANDOFF_PRESETS.has(name)) return "gpt-block";
+	if (NO_HANDOFF_BLOCK_PRESETS.has(name)) return "none";
+	return "default";
+}
+
+/**
+ * Presets whose model plans after it has read. The first-turn plan opener (a hidden reminder and,
+ * under `force`, a named `todo` tool_choice) made GPT sessions write a list before they had read
+ * what the request points at (senpi#7101), and every measured DeepSeek V4.1 Flash session opened with
+ * that list as a text-less call (senpi#7100), so an unset `todo.firstTurnPlan` means `off` under these
+ * presets and `force` under every other preset and the default prompt. A value the user set wins.
+ */
+const PLAN_AFTER_READING_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
+	"gpt-6.2",
+	"gpt-6-astra",
+	"gpt-5.6",
+	"gpt-5.5",
+	"gpt-5.4",
+	"gpt-5.3-codex",
+	"gpt-5.2",
+	"gpt-5",
+	"deepseek-v4-1-flash",
+]);
+
+export function presetFirstTurnPlanDefault(name: ResolvedPresetName | undefined): TodoFirstTurnPlan {
+	return name !== undefined && PLAN_AFTER_READING_PRESETS.has(name) ? "off" : "force";
+}
+
+/**
+ * Presets whose core states the todo rules itself, so the todotools extension does not append the
+ * shared `Task_Management` block after them: one home per rule (senpi#7101, senpi#7100).
+ */
+const TODO_RULE_OWNER_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
+	"gpt-6.2",
+	"deepseek-v4-1-flash",
+]);
+
+export function presetOwnsTodoRules(name: ResolvedPresetName | undefined): boolean {
+	return name !== undefined && TODO_RULE_OWNER_PRESETS.has(name);
+}
+
+export type PromptPresetModelCase = {
+	readonly providerID: string;
+	readonly modelID: string;
+	readonly preset: ResolvedPresetName;
+};
+
+export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
+	{ providerID: "openai", modelID: "gpt-6.2-sol", preset: "gpt-6.2" },
+	{ providerID: "openai", modelID: "gpt-6-astra", preset: "gpt-6-astra" },
+	{ providerID: "openai", modelID: "gpt-5.6", preset: "gpt-5.6" },
+	{ providerID: "openai", modelID: "gpt-5.5", preset: "gpt-5.5" },
+	{ providerID: "openai", modelID: "gpt-5.4", preset: "gpt-5.4" },
+	{ providerID: "openai", modelID: "gpt-5.3-codex", preset: "gpt-5.3-codex" },
+	{ providerID: "openai", modelID: "gpt-5.2", preset: "gpt-5.2" },
+	{ providerID: "kimi-coding", modelID: "k3.1-pro", preset: "kimi-k3-1" },
+	{ providerID: "moonshotai", modelID: "kimi-k3", preset: "kimi-k3" },
+	{ providerID: "kimi-for-coding", modelID: "kimi-for-coding", preset: "kimi-k2-8" },
+	{ providerID: "kimi-for-coding", modelID: "kimi-for-coding-highspeed", preset: "kimi-k2-7" },
+	{ providerID: "moonshotai", modelID: "kimi-k2.6", preset: "kimi-k2-6" },
+	{ providerID: "zai-coding-plan", modelID: "glm-5.3", preset: "glm-5.3" },
+	{ providerID: "zai-coding-plan", modelID: "glm-5.2", preset: "glm-5.2" },
+	{ providerID: "deepseek", modelID: "deepseek-v4-flash-0731", preset: "deepseek-v4-flash-0731" },
+	{ providerID: "deepseek", modelID: "deepseek-flash", preset: "deepseek-v4-1-flash" },
+	{ providerID: "fireworks", modelID: "accounts/fireworks/models/deepseek-v4-flash", preset: "deepseek-v4-flash" },
+	{ providerID: "deepseek", modelID: "deepseek-v4-pro", preset: "deepseek-v4-pro" },
+	{ providerID: "anthropic", modelID: "claude-fable-5", preset: "claude-fable-5" },
+	{ providerID: "anthropic", modelID: "claude-fable-5.1", preset: "claude-fable-5-1" },
+	{ providerID: "anthropic", modelID: "claude-fable-5.2", preset: "claude-fable-5-2" },
+	{ providerID: "anthropic", modelID: "claude-opus-5.5", preset: "claude-opus-5-5" },
+	{ providerID: "anthropic", modelID: "claude-opus-5", preset: "claude-opus-5" },
+	{ providerID: "anthropic", modelID: "claude-sonnet-5.5", preset: "claude-sonnet-5-5" },
+	{ providerID: "anthropic", modelID: "claude-haiku-5.5", preset: "claude-haiku-5-5" },
+	{ providerID: "anthropic", modelID: "claude-opus-4-8", preset: "claude-opus-4-8" },
+	{ providerID: "anthropic", modelID: "claude-opus-4-7", preset: "claude-opus-4-7" },
+	{ providerID: "anthropic", modelID: "claude-opus-4-6", preset: "claude-opus-4-6" },
+	{ providerID: "anthropic", modelID: "claude-opus-4-5", preset: "claude-opus-4-5" },
+	{ providerID: "xai", modelID: "grok-4.7", preset: "grok-4.7" },
+	{ providerID: "xai", modelID: "grok-4.6", preset: "grok-4.6" },
+	{ providerID: "xai", modelID: "grok-4.5", preset: "grok-4.5" },
+	{ providerID: "google", modelID: "gemini-4-argon", preset: "gemini-4-argon" },
+];
+
+// Presets a model id can auto-resolve to. gpt-5 is a manual-only preset (settings union +
+// buildPreset, no model matcher), so it is intentionally absent here: a model-driven parity check
+// can only cover ids that resolve to a preset, and no real id auto-resolves to bare gpt-5.
+export const AUTO_RESOLVED_PRESET_NAMES: readonly ResolvedPresetName[] = [
+	"gpt-6.2",
+	"gpt-6-astra",
+	"gpt-5.6",
+	"gpt-5.5",
+	"gpt-5.4",
+	"gpt-5.3-codex",
+	"gpt-5.2",
+	"kimi-k3-1",
+	"kimi-k3",
+	"kimi-k2-8",
+	"kimi-k2-7",
+	"kimi-k2-6",
+	"glm-5.3",
+	"glm-5.2",
+	"deepseek-v4-flash-0731",
+	"deepseek-v4-1-flash",
+	"deepseek-v4-flash",
+	"deepseek-v4-pro",
+	"grok-4.7",
+	"grok-4.6",
+	"grok-4.5",
+	"claude-fable-5",
+	"claude-fable-5-1",
+	"claude-fable-5-2",
+	"claude-opus-5-5",
+	"claude-opus-5",
+	"claude-sonnet-5-5",
+	"claude-haiku-5-5",
+	"claude-opus-4-8",
+	"claude-opus-4-7",
+	"claude-opus-4-6",
+	"claude-opus-4-5",
+	"gemini-4-argon",
+];

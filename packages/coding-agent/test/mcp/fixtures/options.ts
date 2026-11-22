@@ -27,6 +27,10 @@ export interface FixtureOptions {
 	spawnGrandchild: boolean;
 	/** Hold every tools/list reply until this file exists; each request is logged to `<path>.requests`. */
 	listToolsGate: string | undefined;
+	/** Append each request's Authorization header (`-` when absent) to this file, one line per request. */
+	authLog: string | undefined;
+	/** End tools/list with `nextCursor: null`, as some servers do instead of omitting it. */
+	nullNextCursor: boolean;
 }
 
 export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
@@ -58,6 +62,8 @@ export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
 		bearerToken: readStringFlag(argv, "--bearer"),
 		spawnGrandchild: argv.includes("--spawn-grandchild"),
 		listToolsGate: readStringFlag(argv, "--list-tools-gate"),
+		authLog: readStringFlag(argv, "--auth-log"),
+		nullNextCursor: argv.includes("--null-next-cursor"),
 	};
 	validateArgs(argv, options);
 	return options;
@@ -131,6 +137,7 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 		"--port",
 		"--bearer",
 		"--list-tools-gate",
+		"--auth-log",
 	]);
 	const bare = new Set([
 		"--wedge",
@@ -145,6 +152,7 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 		"--require-list-before-tool-call",
 		"--always-expire-tool-calls",
 		"--spawn-grandchild",
+		"--null-next-cursor",
 	]);
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];

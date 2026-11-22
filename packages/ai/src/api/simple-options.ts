@@ -1,11 +1,11 @@
 import type {
 	Api,
-	Context,
 	Model,
 	SimpleStreamOptions,
 	StreamOptions,
 	ThinkingBudgets,
 	ThinkingLevel,
+	TranscriptContext,
 } from "../types.ts";
 import { clampMaxTokensToContext, MIN_ANSWER_TOKENS } from "./context-room.ts";
 
@@ -130,7 +130,7 @@ export const BEDROCK_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
 
 export function buildBaseOptions(
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 	apiKey?: string,
 ): StreamOptions {
@@ -150,10 +150,13 @@ export function buildBaseOptions(
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention ?? model.cacheRetention,
 		sessionId: options?.sessionId,
+		sessionAffinityKey: options?.sessionAffinityKey,
 		headers: options?.headers,
 		extraBody: options?.extraBody,
 		onPayload: options?.onPayload,
 		onResponse: options?.onResponse,
+		onProviderStreamEvent: options?.onProviderStreamEvent,
+		onTransportActivity: options?.onTransportActivity,
 		timeoutMs: options?.timeoutMs,
 		websocketConnectTimeoutMs: options?.websocketConnectTimeoutMs,
 		maxRetries: options?.maxRetries,

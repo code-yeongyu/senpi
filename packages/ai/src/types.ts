@@ -23,8 +23,24 @@ import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 export type { Model } from "./model.ts";
 export type { SessionAffinityFormat } from "./openai-responses-compat.ts";
 export type OpenAIResponsesCompat = BaseOpenAIResponsesCompat & {
+	/**
+	 * The selected credential uses Sign in with ChatGPT plan usage on the public Responses API.
+	 * Set per credential route, not by token prefix or provider id. Forces HTTP/SSE and SIWC
+	 * request restrictions; deferred tools use additional_tools when supported, otherwise eager tools.
+	 * Default: false. Never set for API keys or the ChatGPT backend/Codex route.
+	 */
+	siwc?: boolean;
+	/**
+	 * Exact native search type for a compatible Responses endpoint.
+	 * OpenAI supports both names; xAI documents only web_search.
+	 * https://developers.openai.com/api/docs/guides/tools-web-search
+	 * https://docs.x.ai/developers/tools/web-search
+	 */
+	webSearchToolType?: "web_search" | "web_search_preview";
 	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
 	supportsAdditionalTools?: boolean;
+	/** Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
+	supportsMidConvoSystemMessages?: boolean;
 };
 export type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
@@ -44,9 +60,13 @@ export type KnownApi =
 
 export type Api = KnownApi | (string & {});
 
-export type KnownImagesApi = "openrouter-images" | "openai-images";
+export type KnownImageApi = "openrouter-images" | "openai-images";
 
-export type ImagesApi = KnownImagesApi | (string & {});
+export type ImageApi = KnownImageApi | (string & {});
+
+export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one";
+
+export type ClassifierApi = KnownClassifierApi | (string & {});
 
 export type KnownProvider =
 	| "alibaba-token-plan"
@@ -65,6 +85,7 @@ export type KnownProvider =
 	| "ollama"
 	| "cursor"
 	| "radius"
+	| "typesafe"
 	| "nvidia"
 	| "deepseek"
 	| "github-copilot"
@@ -88,6 +109,7 @@ export type KnownProvider =
 	| "opencode"
 	| "opencode-go"
 	| "kimi-coding"
+	| "meta"
 	| "cloudflare-workers-ai"
 	| "cloudflare-ai-gateway"
 	| "qwen-token-plan"
@@ -145,6 +167,12 @@ export interface ThinkingBudgets {
 // Base options all providers share
 export type CacheRetention = "none" | "short" | "long";
 
+/**
+ * Best-effort prompt cache lifetime in seconds for each retention tier a request can ask for.
+ * A missing tier means the lifetime is unknown; pi does not warm such caches.
+ */
+export type ModelPromptCache = Partial<Record<Exclude<CacheRetention, "none">, number>>;
+
 export type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
 
 /** Provider-scoped environment overrides. Values take precedence over process.env. */
@@ -165,6 +193,8 @@ export interface ProviderResponse {
 /** Authentication, HTTP transport, and lifecycle callbacks shared by provider requests. */
 export interface ProviderRequestOptions<TModel = Model<Api>> {
 	signal?: AbortSignal;
+	/** Originating session working directory for subprocess-backed providers. */
+	cwd?: string;
 	/**
 	 * Abort the request when the provider reports that a safety classifier
 	 * declined the requested model and a substitute model served the turn
@@ -243,6 +273,18 @@ export interface ProviderRequestOptions<TModel = Model<Api>> {
 }
 
 export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
+	/**
+	 * Optional observer for each parsed provider stream event before Pi normalization.
+	 * Event data is adapter-owned and must be treated as read-only.
+	 * Adapter support is explicit; unsupported adapters do not invoke it.
+	 */
+	onProviderStreamEvent?: (data: unknown, model: Model<Api>) => void | Promise<void>;
+	/**
+	 * Called whenever the response body delivers bytes, keep-alives included (SSE `ping` events, `:` comments).
+	 * Liveness only: it says the connection is alive, not that the model produced anything. Adapter support is
+	 * explicit; unsupported adapters do not invoke it.
+	 */
+	onTransportActivity?: () => void;
 	temperature?: number;
 	/**
 	 * Arbitrary sampling parameters merged into the request body as-is, after the named request
@@ -269,6 +311,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * session-aware features. Ignored by providers that don't support it.
 	 */
 	sessionId?: string;
+	/**
+	 * Opaque, non-identifying routing key for the session. When set, Anthropic Messages sends it in
+	 * the session-affinity header instead of `sessionId`, so a gateway keeps the session on one
+	 * upstream account without learning the session id. Other providers ignore it.
+	 */
+	sessionAffinityKey?: string;
 	/**
 	 * Optional custom fields to merge into the outgoing provider request body.
 	 * Applied before `onPayload` so `onPayload` can observe/override them.
@@ -340,8 +388,12 @@ export type ApiStreamOptions<TApi extends Api> = TApi extends keyof ApiOptionsMa
  * `Provider.stream()` via `ApiStreamOptions`.
  */
 export interface ProviderStreams {
-	stream(model: Model<Api>, context: Context, options?: StreamOptions): AssistantMessageEventStream;
-	streamSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+	stream(model: Model<Api>, context: TranscriptContext, options?: StreamOptions): AssistantMessageEventStream;
+	streamSimple(
+		model: Model<Api>,
+		context: TranscriptContext,
+		options?: SimpleStreamOptions,
+	): AssistantMessageEventStream;
 	fetchDeferred?(
 		model: Model<Api>,
 		handle: DeferredHandle,
@@ -353,18 +405,36 @@ export interface ProviderStreams {
 /**
  * The uniform contract of an image-generation API implementation module:
  * every image API module under `src/api/` exports exactly `generateImages`,
- * so the module itself satisfies this interface. Lazy wrappers and image
- * provider factories pass these around as values.
+ * so the module itself satisfies this interface. Lazy wrappers and
+ * `createProvider({ images })` pass these around as values.
  */
 export interface ProviderImages {
 	generateImages(
-		model: ImagesModel<ImagesApi>,
+		model: ImageModel<ImageApi>,
 		context: ImagesContext,
 		options?: ImagesOptions,
 	): Promise<AssistantImages>;
 }
 
-export interface ImagesOptions extends ProviderRequestOptions<ImagesModel<ImagesApi>> {
+/** The uniform contract implemented by classifier API modules. */
+export interface ProviderClassifier {
+	classify(
+		model: ClassifierModel<ClassifierApi>,
+		context: ClassifierContext,
+		options?: ClassifierOptions,
+	): Promise<ClassifierResult>;
+}
+
+export interface ClassifierOptions extends ProviderRequestOptions<ClassifierModel<ClassifierApi>> {
+	/**
+	 * Divides the answer logits by this value before they are normalized into probabilities.
+	 * Values above 1 soften the distribution; values below 1 sharpen it. Must be positive.
+	 * APIs that cannot apply it ignore it.
+	 */
+	temperature?: number;
+}
+
+export interface ImagesOptions extends ProviderRequestOptions<ImageModel<ImageApi>> {
 	/**
 	 * Optional metadata to include in API requests.
 	 * Providers extract the fields they understand and ignore the rest.
@@ -407,11 +477,13 @@ export interface SimpleStreamOptions extends StreamOptions {
 }
 
 /** Tier preferences a caller can express; providers map `"auto"` to their default lane. */
-export type ServiceTierPreference = "auto" | "flex" | "priority";
+export type ServiceTierPreference = "auto" | "flex" | "priority" | "ultrafast";
 
 // Generic StreamFunction with typed options.
 //
 // Contract:
+// - Receives a normalized transcript: the system prompt and tools live in the
+//   leading system message, never on the context itself.
 // - Must return an AssistantMessageEventStream.
 // - Direct streamSimple() calls may throw synchronously when request auth is
 //   missing. Once a stream is returned, request/model/runtime failures should
@@ -420,15 +492,21 @@ export type ServiceTierPreference = "auto" | "flex" | "priority";
 //   "error" or "aborted" and errorMessage, emitted via the stream protocol.
 export type StreamFunction<TApi extends Api = Api, TOptions extends StreamOptions = StreamOptions> = (
 	model: Model<TApi>,
-	context: Context,
+	context: TranscriptContext,
 	options?: TOptions,
 ) => AssistantMessageEventStream;
 
-export type ImagesFunction<TApi extends ImagesApi = ImagesApi, TOptions extends ImagesOptions = ImagesOptions> = (
-	model: ImagesModel<TApi>,
+export type ImagesFunction<TOptions extends ImagesOptions = ImagesOptions> = (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: TOptions,
 ) => Promise<AssistantImages>;
+
+export type ClassifierFunction<TOptions extends ClassifierOptions = ClassifierOptions> = (
+	model: ClassifierModel<ClassifierApi>,
+	context: ClassifierContext,
+	options?: TOptions,
+) => Promise<ClassifierResult>;
 
 export interface TextSignatureV1 {
 	v: 1;
@@ -477,7 +555,7 @@ export interface ToolCall {
 	type: "toolCall";
 	id: string;
 	name: string;
-	arguments: Record<string, any>;
+	arguments: JsonObject;
 	/** Set by text tool-call middleware when a truncated call could not be recovered. Carriers of `incomplete` MUST NOT be executed. */
 	incomplete?: true;
 	/** Error explaining why an incomplete tool call could not be recovered. */
@@ -512,6 +590,13 @@ export interface ProviderNativeContent {
 }
 
 export interface Usage {
+	/**
+	 * Latest request's context when billing covers multiple internal requests.
+	 * Input includes cached reads and writes; output belongs to that request only.
+	 * Null means no request measurement is available (estimate from the transcript).
+	 * Absent preserves the legacy contract: the billing counters describe one request.
+	 */
+	contextUsage?: { readonly input: number; readonly output: number } | null;
 	input: number;
 	output: number;
 	cacheRead: number;
@@ -532,6 +617,8 @@ export interface Usage {
 		cacheWrite: number;
 		total: number;
 	};
+	/** The model has no known price, so `cost` is not a real amount; consumers must not report it as $0. */
+	costUnknown?: true;
 }
 
 /**
@@ -548,7 +635,56 @@ export interface PromptCacheDiagnostics {
 
 export type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
 
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+export type JsonValue = null | boolean | number | string | readonly JsonValue[] | JsonObject;
+export type JsonObject = { [key: string]: JsonValue };
+
+type IsAny<T> = 0 extends 1 & T ? true : false;
+type IsExactlyJsonValue<T> = [T] extends [JsonValue] ? ([JsonValue] extends [T] ? true : false) : false;
+type IsJsonProperty<T> =
+	IsAny<T> extends true
+		? false
+		: unknown extends T
+			? false
+			: [Exclude<T, undefined>] extends [never]
+				? true
+				: IsJsonCompatible<Exclude<T, undefined>>;
+type InvalidJsonKeys<T extends object> = {
+	[TKey in keyof T]-?: TKey extends string | number ? (IsJsonProperty<T[TKey]> extends true ? never : TKey) : TKey;
+}[keyof T];
+type IsJsonCompatible<T> =
+	IsAny<T> extends true
+		? false
+		: unknown extends T
+			? false
+			: IsExactlyJsonValue<T> extends true
+				? true
+				: T extends null | boolean | number | string
+					? true
+					: T extends undefined
+						? false
+						: T extends readonly (infer TItem)[]
+							? IsJsonCompatible<TItem>
+							: T extends (...args: never[]) => unknown
+								? false
+								: T extends object
+									? [InvalidJsonKeys<T>] extends [never]
+										? true
+										: false
+									: false;
+
+/** The JSON representation of a typed in-memory value. Optional object properties remain optional. */
+export type JsonRepresentation<T> =
+	IsAny<T> extends true
+		? JsonValue
+		: unknown extends T
+			? JsonValue
+			: [T] extends [JsonValue]
+				? T
+				: T extends readonly unknown[]
+					? { [TKey in keyof T]: JsonRepresentation<Exclude<T[TKey], undefined>> }
+					: T extends object
+						? { [TKey in keyof T]: JsonRepresentation<Exclude<T[TKey], undefined>> }
+						: never;
 
 export interface DeferredHandle {
 	provider: string;
@@ -564,6 +700,42 @@ export interface DeferredHandle {
 
 export type AssistantStopDetails = { type: "refusal"; explanation?: string } | { type: "sensitive" };
 
+/**
+ * System instructions and tool declarations at one point in the transcript.
+ *
+ * The leading system message is the system prompt. Later system messages change it:
+ * `content` adds instructions from that point on, `sections` replace or remove named
+ * prompt sections, and `toolsAdded`/`toolsRemoved` change the tool set. Replaying
+ * every system message in order yields the current prompt and tools. Providers that
+ * accept system messages mid-conversation send each one in place; other providers
+ * rebuild the leading system message from the replayed state.
+ */
+export interface SystemMessage {
+	role: "system";
+	/** Instruction text. On the leading message this is the base prompt; later, additional instructions. */
+	content: string | TextContent[];
+	/**
+	 * Named, ordered prompt sections rendered verbatim after `content`. The leading message
+	 * declares them; later messages replace sections by name, and `null` removes one. Keep
+	 * each section self-delimiting (a tag, a heading) so the model can relate an update to
+	 * the original. Avoid integer-like names; JSON objects reorder those.
+	 */
+	sections?: Record<string, string | null>;
+	/**
+	 * Leading message only: the start of the rendered prompt that is the same across sessions in the same
+	 * working directory. Providers with block-level prompt caching (Anthropic) send it as its own block
+	 * holding the system cache breakpoint when the rendered prompt still starts with it, so another session
+	 * reads it from cache even when the rest differs; a rewrite that no longer starts with it sends one block.
+	 * Request-time only; rendered text is unchanged (senpi#4447).
+	 */
+	stablePrefix?: string;
+	/** Complete definitions of tools that become available at this point. */
+	toolsAdded?: Tool[];
+	/** Tools that stop being available at this point. */
+	toolsRemoved?: ToolReference[];
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
@@ -578,16 +750,43 @@ export interface ConfigurationUpdateMessage {
 	timestamp: number;
 }
 
+/**
+ * When the agent loop asked for a response and when it streamed, as Unix timestamps in milliseconds (senpi#3879).
+ * Stamped by the agent loop on the final message, so it is persisted with the session.
+ */
+export interface AssistantMessageTiming {
+	/**
+	 * Just before the stream function was called. A stream function that throws or never starts still gets it, so it
+	 * marks the attempt, not proof that a request reached the provider. An empty-response recovery retry keeps the
+	 * first attempt's value, so time to first token then spans the retries.
+	 */
+	requestedAt: number;
+	/** First streamed text, thinking or tool-call delta. Absent when nothing streamed. */
+	firstTokenAt?: number;
+	/** Last streamed text, thinking or tool-call delta. Absent when nothing streamed. */
+	lastTokenAt?: number;
+	/** When the response settled: done, error or abort. */
+	endedAt: number;
+	/**
+	 * Streamed generation time in milliseconds, by the TPS notice's rule (senpi#3393): first delta to last delta,
+	 * or from the response's start when it reasoned before its first delta. Absent when nothing streamed. Stamped on
+	 * aborted and failed responses too: a consumer computing a rate skips those, as the TPS notice does.
+	 */
+	generationMs?: number;
+}
+
 export interface AssistantMessage {
 	role: "assistant";
 	content: (TextContent | ThinkingContent | ToolCall | ProviderNativeContent)[];
 	api: Api;
 	provider: ProviderId;
 	model: string;
-	responseModel?: string; // Concrete `chunk.model` when different from the requested `model` (e.g. OpenRouter `auto` -> `anthropic/...`)
+	responseModel?: string; // Concrete model reported by the provider when different from the requested `model`
 	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
 	/** Exact provider-native effort level used for this response. Absent for legacy or unmanaged responses. */
 	providerThinkingLevel?: string;
+	/** Pi thinking level the agent loop requested for this response. Absent outside the agent loop and for legacy responses. */
+	thinkingLevel?: ModelThinkingLevel;
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	/** Provider prompt-cache comparison against the previous response of the same model, when reported. */
 	promptCacheDiagnostics?: PromptCacheDiagnostics;
@@ -596,38 +795,89 @@ export interface AssistantMessage {
 	stopDetails?: AssistantStopDetails;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
+	/**
+	 * Redaction-safe cause: a provider limit projected as user-facing advice, or a model id its route does not
+	 * serve (`model_config`, never retried or fallen back).
+	 */
+	errorCause?: { type: "usage_limit"; scope: "account" | "model" } | { type: "model_config"; model: string };
 	/** Structured provider failure family, minted only by a provider adapter from structured error metadata. */
 	providerDiagnostic?: ProviderDiagnostic;
 	/** Explicit owner for an abort initiated by the provider retry watchdog. */
 	abortSource?: "provider";
+	/**
+	 * Set when the run failed in local code (session bookkeeping, a local file) rather than in a provider request.
+	 * No model produced the failure, so retry and model fallback must not act on it.
+	 */
+	failureSource?: "local";
+	/**
+	 * Set by the model runtime on a failed response when the same credential (provider, endpoint and key) served a
+	 * response moments before: an `auth` failure then means the provider refused this request, not the key.
+	 */
+	credentialServedRecently?: true;
 	rawStopReason?: string;
 	/**
 	 * Provider indication of whether the model explicitly ended its turn.
 	 * Preserved for debugging and does not currently affect agent control flow.
 	 */
 	endTurn?: boolean;
-	timestamp: number; // Unix timestamp in milliseconds
-}
-
-export interface ToolResultMessage<TDetails = any> {
-	role: "toolResult";
-	toolCallId: string;
-	toolName: string;
-	content: (TextContent | ImageContent)[]; // Supports text and images
-	details?: TDetails;
-	/** Usage from the tool execution itself, if available. Not part of main LLM context accounting. */
-	usage?: Usage;
 	/**
-	 * Names from `Context.tools` that became available after this result.
-	 * Providers with native deferred tool loading use this as the load point;
-	 * other providers ignore it and use `Context.tools` normally.
+	 * Request-only hint, never persisted: the history up to and including this message is a stable
+	 * prefix, so adapters with explicit prompt-cache breakpoints mark it. Context reduction sets it on
+	 * the last message its frontier leaves unchanged, so the next frontier step reads that prefix
+	 * instead of re-writing it (senpi#3242).
 	 */
-	addedToolNames?: string[];
-	isError: boolean;
+	promptCacheBreakpoint?: true;
+
+	/** Response timing stamped by the agent loop. Absent on older messages and on messages built outside the loop. */
+	timing?: AssistantMessageTiming;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
-export type Message = UserMessage | AssistantMessage | ToolResultMessage | ConfigurationUpdateMessage;
+/** A tool call that another tool made while it ran, for example from a codemode script. */
+export interface NestedToolCallRecord {
+	id: string;
+	name: string;
+	/** Omitted when over the size limits; `argumentsBytes` then gives their size. */
+	arguments?: JsonObject;
+	/** UTF-8 size of the arguments as JSON, set when `arguments` is omitted. */
+	argumentsBytes?: number;
+	/** `unfinished`: the call was still running when the calling tool finished. */
+	status: "ok" | "error" | "unfinished";
+	durationMs?: number;
+	/** Error text, truncated. */
+	error?: string;
+}
+
+/** Bounded record of the nested calls a tool made. Results are not recorded. */
+export interface NestedToolCalls {
+	calls: NestedToolCallRecord[];
+	/** False when calls were dropped, arguments omitted, or calls had not finished. */
+	complete: boolean;
+}
+
+export type ToolResultMessage<TDetails = JsonValue> =
+	IsJsonCompatible<TDetails> extends true
+		? {
+				role: "toolResult";
+				toolCallId: string;
+				toolName: string;
+				content: (TextContent | ImageContent)[]; // Supports text and images
+				details?: JsonRepresentation<TDetails>;
+				/** Usage from the tool execution itself, if available. Not part of main LLM context accounting. */
+				usage?: Usage;
+				/** Calls this tool made to other tools. Kept for the session record; not sent to the model. */
+				nestedCalls?: NestedToolCalls;
+				/**
+				 * Names from `Context.tools` that became available after this result. Fork tool-search
+				 * native deferred loading (tool_reference / tool_search / kimi) uses this as the load point.
+				 */
+				addedToolNames?: string[];
+				isError: boolean;
+				timestamp: number; // Unix timestamp in milliseconds
+			}
+		: never;
+
+export type Message = SystemMessage | UserMessage | AssistantMessage | ToolResultMessage | ConfigurationUpdateMessage;
 
 export type ImagesInputContent = TextContent | ImageContent;
 export type ImagesOutputContent = TextContent | ImageContent;
@@ -639,8 +889,8 @@ export interface ImagesContext {
 export type ImagesStopReason = "stop" | "error" | "aborted";
 
 export interface AssistantImages {
-	api: ImagesApi;
-	provider: ImagesProviderId;
+	api: ImageApi;
+	provider: ProviderId;
 	model: string;
 	output: ImagesOutputContent[];
 	responseId?: string;
@@ -648,6 +898,66 @@ export interface AssistantImages {
 	/** Background the provider reports for the returned images; unset when it reports `auto` or nothing. */
 	background?: "transparent" | "opaque";
 	stopReason: ImagesStopReason;
+	errorMessage?: string;
+	/** Structured classification of a provider rejection (HTTP status, category); set only on `error`. */
+	providerDiagnostic?: ProviderDiagnostic;
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
+export interface ClassifierChoiceQuestion {
+	type: "choice";
+	instructions: string;
+	criteria: Record<string, string>;
+}
+
+export interface ClassifierScoreQuestion {
+	type: "score";
+	instructions: string;
+	criteria: string[];
+}
+
+export interface ClassifierBoolQuestion {
+	type: "bool";
+	instructions: string;
+	criteria: { true: string; false: string };
+}
+
+export type ClassifierQuestion = ClassifierChoiceQuestion | ClassifierScoreQuestion | ClassifierBoolQuestion;
+
+export interface ClassifierContext {
+	state: JsonObject;
+	questions: Record<string, ClassifierQuestion>;
+}
+
+export interface ClassifierChoiceAnswer {
+	type: "choice";
+	choice: string;
+	probabilities: Record<string, number>;
+	confidence: number;
+}
+
+export interface ClassifierScoreAnswer {
+	type: "score";
+	score: number;
+	confidence: number;
+}
+
+export interface ClassifierBoolAnswer {
+	type: "bool";
+	probability: number;
+}
+
+export type ClassifierAnswer = ClassifierChoiceAnswer | ClassifierScoreAnswer | ClassifierBoolAnswer;
+export type ClassifierStopReason = "stop" | "error" | "aborted";
+
+export interface ClassifierResult {
+	api: ClassifierApi;
+	provider: ProviderId;
+	model: string;
+	answers: Record<string, ClassifierAnswer>;
+	/** Token usage and its cost at the model's catalog price, when the service reports token counts. */
+	usage?: Usage;
+	stopReason: ClassifierStopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
 }
@@ -689,17 +999,49 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	constrainedSampling?: false | ConstrainedSamplingConfig;
 }
 
+export interface ToolReference {
+	name: string;
+}
+
+/**
+ * Request input accepted by the public stream entry points (`Models.stream()`,
+ * `streamSimple()`, ...). `systemPrompt` and `tools` are shorthand for a leading
+ * system message; `normalizeContext()` folds them into one before the request
+ * reaches a provider.
+ */
 export interface Context {
 	systemPrompt?: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions in the same working directory; the rest
+	 * changes between sessions (memory, MCP instructions). Folded into the leading system message as
+	 * `stablePrefix` when `systemPrompt` starts with it (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	messages: Message[];
 	tools?: Tool[];
 	/**
 	 * Names from `tools` the model may call on this request; absent means every tool is callable.
-	 * Set only for models whose compat declares `supportsAllowedTools`: the adapter keeps `tools`
-	 * byte-stable and restricts callability through `tool_choice` (senpi#2095).
+	 * Set only for models that `supportsAllowedToolChoice` accepts (the compat flag on a native OpenAI API
+	 * host): the adapter keeps `tools` byte-stable and restricts callability through `tool_choice`
+	 * (senpi#2095, senpi#3080).
 	 */
 	activeToolNames?: string[];
 }
+
+declare const transcriptContextBrand: unique symbol;
+
+/**
+ * Normalized request context passed to providers and API implementations. The
+ * prompt and tool declarations are carried by the transcript's system messages.
+ * Only `normalizeContext()` produces this type, so a raw `Context` cannot reach
+ * provider code by accident.
+ */
+export type TranscriptContext = {
+	messages: Message[];
+	/** Carried from `Context.activeToolNames` by `normalizeContext()` (senpi#2095); absent means every declared tool is callable. */
+	activeToolNames?: string[];
+	readonly [transcriptContextBrand]: true;
+};
 
 /**
  * Event protocol for AssistantMessageEventStream.
@@ -741,6 +1083,16 @@ export type AssistantMessageEvent =
  * Use this to override URL-based auto-detection for custom providers.
  */
 export interface OpenAICompletionsCompat {
+	/**
+	 * In-turn web search support on this exact endpoint. OpenRouter and Moonshot
+	 * have documented native defaults; Z.AI PAYG chat requires explicit opt-in
+	 * because its coding-plan endpoint documents remote MCP search instead.
+	 * https://openrouter.ai/docs/guides/features/server-tools/web-search
+	 * https://platform.kimi.ai/docs/guide/use-web-search
+	 * https://docs.z.ai/guides/tools/web-search
+	 * https://docs.z.ai/devpack/mcp/search-mcp-server
+	 */
+	supportsWebSearch?: boolean;
 	/** Whether the provider supports the `store` field. Default: auto-detected from URL. */
 	supportsStore?: boolean;
 	/** Whether the provider supports the `developer` role (vs `system`). Default: auto-detected from URL. */
@@ -806,8 +1158,14 @@ export interface OpenAICompletionsCompat {
 	supportsThinkingTokenBudget?: boolean;
 	/** Whether the provider supports OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
-	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
+	/** Whether the exact model accepts system or developer messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
+	supportsMidConvoSystemMessages?: boolean;
+	/** Whether system messages can introduce additional tools mid-conversation. Requires `supportsMidConvoSystemMessages`. Default: false; the generated model catalog enables it for capable models. */
+	supportsMidConvoToolAdditions?: boolean;
+	/** Whether the provider supports the `strict` field in tool definitions. Default: false; generated capable models enable it explicitly. */
 	supportsStrictMode?: boolean;
+	/** Whether function tools may mix strict and non-strict sampling in one request. Default: true. */
+	mixedStrictTools?: boolean;
 	/**
 	 * Provider-specific JSON Schema flavor for tool parameters. `"moonshot-mfjs"`
 	 * normalizes schemas for Moonshot / Kimi backends that enforce a stricter subset.
@@ -823,7 +1181,7 @@ export interface OpenAICompletionsCompat {
 	cacheControlFormat?: "anthropic";
 	/** Whether to send session-affinity data from `options.sessionId`. Default: true for OpenRouter endpoints, false otherwise. */
 	sendSessionAffinityHeaders?: boolean;
-	/** Provider-specific deferred tool serialization mode. */
+	/** Provider-specific deferred tool serialization mode (fork tool-search native loading). */
 	deferredToolsMode?: "kimi";
 	/** Session-affinity header format: `openai` sends `session_id`, `x-client-request-id`, and `x-session-affinity`; `openai-nosession` sends `x-client-request-id` and `x-session-affinity`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
@@ -914,6 +1272,10 @@ export interface AnthropicMessagesCompat {
 	supportsStrictTools?: boolean;
 	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
 	supportsMidConvoEffort?: boolean;
+	/** Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt. Default: false. */
+	supportsMidConvoSystemMessages?: boolean;
+	/** Whether the exact model accepts mid-conversation `tool_addition` and `tool_removal` blocks. Requires `supportsMidConvoSystemMessages`. Default: false. */
+	supportsMidConvoToolChanges?: boolean;
 	/**
 	 * How to replay thinking blocks that have no usable Anthropic signature.
 	 * `"text"` demotes them to text; `"empty-signature"` preserves Anthropic's
@@ -943,12 +1305,24 @@ export interface AnthropicMessagesCompat {
 	 * the payload. Default: true only for the first-party Anthropic endpoint.
 	 */
 	supportsWebSearch?: boolean;
+	/**
+	 * Whether request bodies of 4096+ characters are sent with `Content-Encoding: gzip`. A refused encoding
+	 * (415, a proxy's 400/403, or the origin failing to parse the body) is resent uncompressed once and that
+	 * origin stays uncompressed for the process. Default: true only for the first-party Anthropic endpoint.
+	 */
+	supportsGzipRequestBody?: boolean;
 }
 
 /** Compatibility settings for Amazon Bedrock models. */
 export interface BedrockCompat {
 	/** Whether the model supports Bedrock strict tool schemas. Default: false. */
 	supportsStrictMode?: boolean;
+}
+
+/** Compatibility settings for the Mistral chat API. */
+export interface MistralConversationsCompat {
+	/** Whether the exact model accepts system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false. */
+	supportsMidConvoSystemMessages?: boolean;
 }
 
 /**
@@ -1050,9 +1424,59 @@ export interface ModelCostTier extends ModelCostRates {
 	inputTokensAbove: number;
 }
 
-export interface ModelCost extends ModelCostRates {
+export interface ModelCostCard extends ModelCostRates {
 	/** Request-wide pricing tiers. The highest matching input threshold applies to the full request. */
 	tiers?: ModelCostTier[];
+}
+
+export interface ModelCostEffectiveRate extends ModelCostCard {
+	/** ISO 8601 UTC instant from which this card replaces the base card and every earlier dated card. */
+	effectiveFrom: string;
+}
+
+export interface ModelCost extends ModelCostCard {
+	/** Scheduled list-price changes, each billed for requests at or after its `effectiveFrom`. */
+	effectiveRates?: ModelCostEffectiveRate[];
+	/** No price is known for this model (rates are placeholders): usage on it reports `costUnknown`, not a $0 cost. */
+	unknown?: true;
+}
+
+export interface ModelImageResizeOptions {
+	maxWidth?: number;
+	maxHeight?: number;
+	/** Maximum base64-encoded payload size in bytes. */
+	maxBytes?: number;
+	jpegQuality?: number;
+}
+
+export interface ModelImageInputLimits {
+	/** Cache-safe resize profile applied before a new image enters conversation history. */
+	resize?: ModelImageResizeOptions;
+	/** Maximum images accepted in one provider message. */
+	maxPerMessage?: number;
+	/** Maximum images accepted across one provider request. */
+	maxPerRequest?: number;
+}
+
+export interface ModelInputLimits {
+	/** Maximum serialized provider request size in bytes. */
+	maxRequestBytes?: number;
+	images?: ModelImageInputLimits;
+}
+
+/** Fields shared by every catalog entry, regardless of what you can do with it. */
+export interface BaseModel<TApi extends string> {
+	id: string;
+	name: string;
+	api: TApi;
+	provider: ProviderId;
+	baseUrl: string;
+	/** `"video"` rides the image block for models that declare it (see `isVideoMimeType`). */
+	input: ("text" | "image" | "video")[];
+	/** Provider input limits and cache-safe preprocessing metadata. */
+	inputLimits?: ModelInputLimits;
+	cost: ModelCost;
+	headers?: Record<string, string>;
 }
 
 export interface ImagesModelCost extends ModelCost {
@@ -1060,10 +1484,36 @@ export interface ImagesModelCost extends ModelCost {
 	imageInput?: number;
 }
 
-export interface ImagesModel<TApi extends ImagesApi>
-	extends Omit<Model<Api>, "api" | "provider" | "reasoning" | "contextWindow" | "maxTokens" | "compat" | "cost"> {
-	api: TApi;
-	provider: ImagesProviderId;
+/** Image-generation model: usable with `generateImages()` only. */
+export interface ImageModel<TApi extends ImageApi> extends BaseModel<TApi> {
+	type: "image";
+	/** Output modalities. Always includes `"image"`; `"text"` means the model can also return text blocks. */
 	output: ("text" | "image")[];
 	cost: ImagesModelCost;
 }
+
+/** Fork alias of {@link KnownImageApi}. */
+export type KnownImagesApi = KnownImageApi;
+/** Fork alias of {@link ImageApi}. */
+export type ImagesApi = ImageApi;
+/** Fork alias of {@link ImageModel}; entries must carry `type: "image"`. */
+export type ImagesModel<TApi extends ImageApi = ImageApi> = ImageModel<TApi>;
+
+/** Structured classifier model: usable with `classify()` only. */
+export interface ClassifierModel<TApi extends ClassifierApi> extends BaseModel<TApi> {
+	type: "classifier";
+	contextWindow: number;
+}
+
+/** Model shape for each model type. */
+export interface ModelTypeMap {
+	chat: Model<Api>;
+	image: ImageModel<ImageApi>;
+	classifier: ClassifierModel<ClassifierApi>;
+}
+
+/** What a catalog entry is for. Decides which `Models` operation accepts it. */
+export type ModelType = keyof ModelTypeMap;
+
+/** Anything a provider can list. Narrow with `isModelType()`. */
+export type AnyModel = ModelTypeMap[ModelType];

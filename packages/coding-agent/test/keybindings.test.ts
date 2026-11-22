@@ -1,3 +1,4 @@
+import { isWarpWslSession } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 import { KEYBINDINGS, useWindowsKeybindings } from "../src/core/keybindings.ts";
 
@@ -19,12 +20,13 @@ describe("Windows keybinding defaults", () => {
 		expect(useWindowsKeybindings("linux", {})).toBe(false);
 		expect(useWindowsKeybindings("darwin", {})).toBe(false);
 	});
-
 	it("applies the detected defaults consistently", () => {
 		const windowsKeybindings = useWindowsKeybindings();
 		const nativeWindows = process.platform === "win32";
 
-		expect(KEYBINDINGS["app.clipboard.pasteImage"].defaultKeys).toBe(windowsKeybindings ? "alt+v" : "ctrl+v");
+		expect(KEYBINDINGS["app.clipboard.pasteImage"].defaultKeys).toEqual(
+			isWarpWslSession() ? ["ctrl+v", "alt+v"] : windowsKeybindings ? "alt+v" : "ctrl+v",
+		);
 		expect(KEYBINDINGS["tui.altScreen.search"].defaultKeys).toBe(windowsKeybindings ? "ctrl+f" : "ctrl+shift+f");
 		expect(KEYBINDINGS["app.message.followUp"].defaultKeys).toBe(windowsKeybindings ? "ctrl+q" : "alt+enter");
 		expect(KEYBINDINGS["app.model.cycleBackward"].defaultKeys).toBe(windowsKeybindings ? "alt+p" : "shift+ctrl+p");

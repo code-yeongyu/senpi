@@ -6,7 +6,8 @@ import { orderedArgs, resolveToolMetadata, validateInvokeArgs } from "./kernel-t
 
 export { createToolNamespace };
 
-const DEFAULT_RESERVED = Object.freeze(["__agent__", "__output__", "__schema__"]);
+// "defined" and "undefine" are the tool namespace's own members, so a kernel tool by those names could never be reached.
+const DEFAULT_RESERVED = Object.freeze(["__agent__", "__output__", "__schema__", "defined", "undefine"]);
 
 function currentNames(source) {
 	return typeof source === "function" ? source() : (source ?? []);
@@ -44,24 +45,26 @@ export function createKernelToolRegistry(options = {}) {
 			return generation;
 		},
 		define(fn, metadata) {
+			if (options.disabled === true) throw kernelToolError("tools_unavailable", "kernel tools are turned off for this project (kernelTools.enabled is false)");
 			assertJs();
 			const parsed = parseToolFunction(fn);
 			const resolved = resolveToolMetadata(metadata, parsed.params);
-			if (sanitizeNamePart(parsed.name) !== parsed.name || parsed.name.length > MCP_TOOL_NAME_MAX_LENGTH) {
+			const name = resolved.name ?? parsed.name;
+			if (sanitizeNamePart(name) !== name || name.length > MCP_TOOL_NAME_MAX_LENGTH) {
 				throw kernelToolError("invalid_tool_definition", "Kernel tool name must match MCP name grammar");
 			}
-			const normalizedName = parsed.name;
-			const key = kernelToolKey(parsed.name);
-			if (reservedKeys.has(key)) throw kernelToolError("reserved_tool_name", `Kernel tool name is reserved: ${parsed.name}`);
+			const normalizedName = name;
+			const key = kernelToolKey(name);
+			if (reservedKeys.has(key)) throw kernelToolError("reserved_tool_name", `Kernel tool name is reserved: ${name}`);
 			if (hasNameKey(hostSource, key) || hasNameKey(foreignSource, key)) {
-				throw kernelToolError("tool_name_collision", `Kernel tool name collides: ${parsed.name}`);
+				throw kernelToolError("tool_name_collision", `Kernel tool name collides: ${name}`);
 			}
 			const existing = entries.get(key);
-			if (existing && existing.originalName !== parsed.name) {
-				throw kernelToolError("tool_name_collision", `Kernel tool name collides: ${parsed.name}`);
+			if (existing && existing.originalName !== name) {
+				throw kernelToolError("tool_name_collision", `Kernel tool name collides: ${name}`);
 			}
 			const entry = {
-				originalName: parsed.name,
+				originalName: name,
 				normalizedName,
 				fn,
 				params: parsed.params,
@@ -113,6 +116,13 @@ export function createKernelToolRegistry(options = {}) {
 				if (error instanceof Error && typeof error.code === "string") throw error;
 				throw kernelToolError("kernel_tool_failed", error instanceof Error ? error.message : String(error));
 			}
+		},
+		defined() {
+			return [...entries.values()].map((entry) => entry.normalizedName).sort();
+		},
+		undefine(name) {
+			if (typeof name !== "string") return false;
+			return entries.delete(kernelToolKey(name));
 		},
 		bumpGeneration() {
 			generation += 1;

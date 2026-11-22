@@ -6,6 +6,7 @@ import { AgentSession } from "../../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { ModelRegistry } from "../../src/core/model-registry.ts";
+import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import type { RpcConnectionSink } from "../../src/modes/rpc/connection-handler.ts";
@@ -51,7 +52,7 @@ export interface Harness {
 	cleanup: () => void;
 }
 
-export function makeHarness(tempDir: string): Harness {
+export function makeHarness(tempDir: string, options: { readonly modelsJsonPath?: string } = {}): Harness {
 	const model = getModel("anthropic", "claude-sonnet-4-5");
 	if (!model) throw new Error("model not found");
 	const agent = new Agent({
@@ -71,7 +72,14 @@ export function makeHarness(tempDir: string): Harness {
 	const authPath = join(tempDir, "auth.json");
 	const authStorage = AuthStorage.create(authPath);
 	authStorage.setRuntimeApiKey("anthropic", "test-key");
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+	const modelRegistry = new ModelRegistry(
+		ModelRuntime.createSync({
+			credentials: authStorage,
+			modelsPath: options.modelsJsonPath ?? tempDir,
+			agentDir: tempDir,
+		}),
+		authStorage,
+	);
 	const session = new AgentSession({
 		agent,
 		sessionManager,

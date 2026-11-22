@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent, Tool } from "../../types.ts";
+import type { ImageContent, TextContent, Tool, ToolCall } from "../../types.ts";
 import { validateToolArguments } from "../../utils/validation.ts";
 import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.ts";
 
@@ -646,7 +646,7 @@ class Gemma4StreamParser implements StreamParser {
 							type: "toolCall",
 							id: this.getCurrentToolCallId(),
 							name,
-							arguments: argumentsObject,
+							arguments: argumentsObject as ToolCall["arguments"],
 						});
 						this.emitFinalToolCall(events, name, validatedArguments);
 					} catch {

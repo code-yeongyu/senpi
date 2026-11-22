@@ -1,4 +1,16 @@
 import type { AssistantMessage, AssistantMessageEvent } from "../types.ts";
+import {
+	type AssistantProgress,
+	type CaptureHint,
+	captureAssistantEvent,
+	dropAssistantCapture,
+	enableAssistantCapture,
+	setAssistantProgressWriter,
+	setAssistantReader,
+} from "./assistant-capture.ts";
+import { sanitizeProviderErrorMessage } from "./provider-error.ts";
+
+type OrderedEntry<T> = { event: T } | { progress: AssistantProgress };
 
 class FifoQueue<T> {
 	private incoming: T[] = [];
@@ -10,6 +22,10 @@ class FifoQueue<T> {
 
 	enqueue(value: T): void {
 		this.incoming.push(value);
+	}
+
+	prepend(value: T): void {
+		this.outgoing.push(value);
 	}
 
 	dequeue(): T | undefined {
@@ -24,10 +40,13 @@ class FifoQueue<T> {
 
 // Generic event stream class for async iteration
 export class EventStream<T, R = T> implements AsyncIterable<T> {
-	#queue: T[] = [];
+	#queue: OrderedEntry<T>[] = [];
 	#queueHead = 0;
-	private waiting = new FifoQueue<{ resolve: (value: IteratorResult<T>) => void; reject: (error: unknown) => void }>();
-	private done = false;
+	private waiting = new FifoQueue<{
+		resolve: (value: IteratorResult<OrderedEntry<T>>) => void;
+		reject: (error: unknown) => void;
+	}>();
+	protected done = false;
 	#failed = false;
 	#error: unknown;
 	#localWorkDepth = 0;
@@ -48,14 +67,14 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	}
 
 	get queue(): T[] {
-		return this.#queue.slice(this.#queueHead);
+		return this.#queue.slice(this.#queueHead).flatMap((entry) => ("event" in entry ? [entry.event] : []));
 	}
 
-	#enqueue(event: T): void {
+	#enqueue(event: OrderedEntry<T>): void {
 		this.#queue.push(event);
 	}
 
-	#dequeue(): T {
+	#dequeue(): OrderedEntry<T> {
 		const event = this.#queue[this.#queueHead];
 		if (event === undefined) {
 			throw new Error("EventStream queue underflow");
@@ -76,12 +95,19 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 			this.resolveFinalResult(this.extractResult(event));
 		}
 
-		// Deliver to waiting consumer or queue it
+		this.#deliver({ event });
+	}
+
+	protected enqueueProgress(progress: AssistantProgress): void {
+		if (!this.done) this.#deliver({ progress });
+	}
+
+	#deliver(entry: OrderedEntry<T>): void {
 		const waiter = this.waiting.dequeue();
 		if (waiter) {
-			waiter.resolve({ value: event, done: false });
+			waiter.resolve({ value: entry, done: false });
 		} else {
-			this.#enqueue(event);
+			this.#enqueue(entry);
 		}
 	}
 
@@ -110,10 +136,15 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	}
 
 	[Symbol.asyncIterator](): AsyncIterator<T> {
+		return this.mapIterator((entry) => ("event" in entry ? { value: entry.event, done: false } : undefined));
+	}
+
+	protected mapIterator<V>(project: (entry: OrderedEntry<T>) => IteratorResult<V> | undefined): AsyncIterator<V> {
 		return {
 			next: () => {
-				if (this.#queueHead < this.#queue.length) {
-					return Promise.resolve({ value: this.#dequeue(), done: false });
+				while (this.#queueHead < this.#queue.length) {
+					const result = project(this.#dequeue());
+					if (result) return Promise.resolve(result);
 				}
 				if (this.#failed) {
 					return Promise.reject(this.#error);
@@ -121,7 +152,17 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 				if (this.done) {
 					return Promise.resolve({ value: undefined, done: true });
 				}
-				return new Promise<IteratorResult<T>>((resolve, reject) => this.waiting.enqueue({ resolve, reject }));
+				return new Promise<IteratorResult<V>>((resolve, reject) => {
+					const waiter = {
+						reject,
+						resolve: (next: IteratorResult<OrderedEntry<T>>) => {
+							const result = next.done ? { value: undefined, done: true as const } : project(next.value);
+							if (result) resolve(result);
+							else this.waiting.prepend(waiter);
+						},
+					};
+					this.waiting.enqueue(waiter);
+				});
 			},
 		};
 	}
@@ -153,7 +194,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 }
 
 export class AssistantMessageEventStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
-	constructor() {
+	constructor(options: { readonly captureBlocks?: boolean } = {}) {
 		super(
 			(event) => event.type === "done" || event.type === "error",
 			(event) => {
@@ -165,6 +206,36 @@ export class AssistantMessageEventStream extends EventStream<AssistantMessageEve
 				throw new Error("Unexpected event type for final result");
 			},
 		);
+		if (options.captureBlocks) enableAssistantCapture(this);
+		setAssistantProgressWriter(this, (progress) => this.enqueueProgress(progress));
+		// A subclass that replaces iteration (cancellation, snapshots, remapping) stays unaware unless it registers a reader;
+		// one that remaps contentIndex in push must register its own reader too, or progress keeps the unmapped indices.
+		if (new.target.prototype[Symbol.asyncIterator] === AssistantMessageEventStream.prototype[Symbol.asyncIterator])
+			setAssistantReader(this, (project) => this.mapIterator(project));
+	}
+
+	override push(event: AssistantMessageEvent, hint?: CaptureHint): void {
+		if (this.done) return;
+		// Classify raw provider errors and redact before capture or publication (senpi#4282).
+		if ("partial" in event) sanitizeProviderErrorMessage(event.partial);
+		if (event.type === "error") sanitizeProviderErrorMessage(event.error);
+		if (event.type === "done") sanitizeProviderErrorMessage(event.message);
+		captureAssistantEvent(this, event, hint);
+		super.push(event);
+	}
+
+	override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+		return this.mapIterator((entry) => {
+			if (!("event" in entry)) return undefined;
+			// Unaware wrappers may snapshot, remap, buffer or discard this event. Never forward its carrier.
+			dropAssistantCapture(entry.event);
+			return { value: entry.event, done: false };
+		});
+	}
+
+	override end(result?: AssistantMessage): void {
+		if (result !== undefined) sanitizeProviderErrorMessage(result);
+		super.end(result);
 	}
 }
 

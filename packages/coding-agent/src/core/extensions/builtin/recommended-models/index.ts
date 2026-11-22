@@ -25,14 +25,18 @@ const CLAUDE_PROVIDERS = [
 ] as const;
 const KIMI_PROVIDERS = ["kimi-coding", "kimi-for-coding", "moonshotai", "opencode-go"] as const;
 const GPT_PROVIDERS = ["chatgpt-subscription", "openai", "github-copilot", "opencode"] as const;
+// GitHub Copilot does not serve GPT-6.2; the GPT-6 Astra and 6.1 Sol rows behind them keep it.
+const GPT_6_2_PROVIDERS = ["chatgpt-subscription", "openai", "opencode"] as const;
 const GLM_PROVIDERS = ["zai-coding-plan", "opencode-go"] as const;
 
 export const RECOMMENDED_DEFAULT_MODELS = [
 	["claude-opus-5-5", "medium", CLAUDE_PROVIDERS],
-	["claude-fable-5-1", "xhigh", CLAUDE_PROVIDERS],
-	["kimi-k3", "max", KIMI_PROVIDERS],
+	["claude-fable-5-2", "xhigh", CLAUDE_PROVIDERS],
+	["kimi-k3.1-pro", "max", KIMI_PROVIDERS],
+	["gpt-6.2-astra", "xhigh", GPT_6_2_PROVIDERS],
 	["gpt-6-astra", "xhigh", GPT_PROVIDERS],
-	["gpt-6-sol", "medium", GPT_PROVIDERS],
+	["gpt-6.2-sol", "medium", GPT_6_2_PROVIDERS],
+	["gpt-6.1-sol", "medium", GPT_PROVIDERS],
 	["glm-5.3", "max", GLM_PROVIDERS],
 ] as const satisfies ReadonlyArray<readonly [string, ThinkingLevel, readonly string[]]>;
 
@@ -58,7 +62,8 @@ export function canonicalModelId(modelId: string): string {
 			}
 		}
 	}
-	return canonical === "k3" ? "kimi-k3" : canonical;
+	// Kimi Code serves the Moonshot models under bare ids (`k3`, `k3.1-pro`).
+	return canonical === "k3" || canonical === "k3.1-pro" ? `kimi-${canonical}` : canonical;
 }
 
 function recommendationsFor(configuredModelIds: string[] | undefined): readonly RecommendedModel[] {
@@ -138,9 +143,7 @@ export default function recommendedModelsExtension(pi: ExtensionAPI): void {
 		disabled = pi.getFlag(FLAG_NAME) === true || settingsManager.getWarnings().offRecommendedModel === true;
 		recommendations = recommendationsFor(settingsManager.getRecommendedModels());
 		canAutoSwitch =
-			ctx.mode !== "app-server" &&
-			event.initialModelProvenance !== undefined &&
-			AUTO_SWITCH_PROVENANCE.has(event.initialModelProvenance);
+			event.initialModelProvenance !== undefined && AUTO_SWITCH_PROVENANCE.has(event.initialModelProvenance);
 		if (disabled || !canAutoSwitch || isRecommended(ctx.model, recommendations)) {
 			return;
 		}

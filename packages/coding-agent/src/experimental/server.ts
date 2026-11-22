@@ -22,9 +22,9 @@ import {
 	SessionNotFoundError,
 } from "@earendil-works/pi-server";
 import { createUnixServer, getUnixSocketPath } from "@earendil-works/pi-server/unix";
-import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { getAgentDir } from "../config.ts";
+import { type HeldFileLock, lockWithLossHandling } from "../core/file-lock.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
 import { createPresentationFacetData } from "./plugins/bundled.ts";
@@ -86,6 +86,8 @@ const DEFAULT_SERVER_ID_FILE = "default-server-id";
 export interface ServerProfile {
 	readonly serverId: ServerId;
 	release(): Promise<void>;
+	/** Throws FileLockLostError when the launcher lock was lost; the caller aborts its operation. */
+	assertHeld(): void;
 }
 
 /** Lock one logical server ID in a shared experimental server directory. */
@@ -118,7 +120,7 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 		}
 	}
 
-	const release = await lockfile.lock(join(directory, `launcher-${serverId}`), {
+	const { release, assertHeld } = await lockWithLossHandling(join(directory, `launcher-${serverId}`), {
 		realpath: false,
 		stale: LOCK_STALE_MS,
 		update: LOCK_STALE_MS / 3,
@@ -130,11 +132,18 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 			maxRetryTime: LOCK_WAIT_MS,
 		},
 	});
-	return { serverId, release };
+	return { serverId, release, assertHeld };
 }
 
 const ACTIVATION_TIMEOUT_MS = 10_000;
 const ACTIVATION_RETRY_MS = 10;
+/**
+ * A server this activator started gets this long to become reachable while it is alive. The wait ends at once when the
+ * server accepts a connection, exits, fails to spawn, or the activation lock is lost; the bound only reports a server
+ * that is alive but never listens. A cold start under host load can take well over 10 s (senpi#6487), and the bound is
+ * measured on the monotonic clock, so a system clock step cannot end the wait early either.
+ */
+const ACTIVATION_STARTUP_HANG_MS = 120_000;
 
 export interface ActivatedServer {
 	readonly client: Client;
@@ -159,7 +168,7 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 	const serverId = profile.serverId;
 	await profile.release();
 	const route = { serverId, path: getUnixSocketPath(serverId, options.directory) };
-	const release = await acquireServerActivation(options.directory, serverId);
+	const activation = await acquireServerActivation(options.directory, serverId);
 	try {
 		const existing = await connect(route);
 		if (existing) {
@@ -179,21 +188,23 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 							model: options.model,
 						}),
 					];
+		activation.assertHeld();
 		const child = spawnInternalProcess("server", [options.directory, serverId, options.sessionDir, ...modelArgs]);
 		let spawnError: Error | undefined;
 		child.once("error", (error) => {
 			spawnError = error;
 		});
 		try {
-			const deadline = Date.now() + ACTIVATION_TIMEOUT_MS;
+			const deadline = performance.now() + ACTIVATION_STARTUP_HANG_MS;
 			while (true) {
+				activation.assertHeld();
 				const client = await connect(route);
 				if (client) return { client, route };
 				if (spawnError) throw new Error("Failed to automatically activate server", { cause: spawnError });
 				if (child.exitCode !== null || child.signalCode !== null) {
 					throw new Error("Automatically activated server exited during startup");
 				}
-				if (Date.now() >= deadline) throw new Error("Timed out waiting for automatically activated server");
+				if (performance.now() >= deadline) throw new Error("Timed out waiting for automatically activated server");
 				await new Promise<void>((resolve) => setTimeout(resolve, ACTIVATION_RETRY_MS));
 			}
 		} catch (error) {
@@ -201,12 +212,15 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 			throw error;
 		}
 	} finally {
-		await release();
+		await activation.release();
 	}
 }
 
-export function acquireServerActivation(directory: string, serverId: ServerId): Promise<() => Promise<void>> {
-	return lockfile.lock(join(directory, `activation-${serverId}`), {
+export async function acquireServerActivation(
+	directory: string,
+	serverId: ServerId,
+): Promise<Pick<HeldFileLock, "release" | "assertHeld">> {
+	return lockWithLossHandling(join(directory, `activation-${serverId}`), {
 		realpath: false,
 		stale: ACTIVATION_TIMEOUT_MS * 2,
 		update: ACTIVATION_TIMEOUT_MS,
@@ -535,7 +549,10 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			? undefined
 			: { ...(options.provider === undefined ? {} : { provider: options.provider }), model: options.model };
 	const directory = resolveServerDirectory(options.directory);
-	const { serverId, release } = await acquireServerProfile(directory, options.serverId ?? process.env[ENV_SERVER_ID]);
+	const { serverId, release, assertHeld } = await acquireServerProfile(
+		directory,
+		options.serverId ?? process.env[ENV_SERVER_ID],
+	);
 	const lifetime = new ServerLifetime(options.keepAlive ?? true);
 	let backend: RunningServerBackend | undefined;
 	let coordinator: CoordinatorConnection | undefined;
@@ -638,6 +655,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			(count) => lifetime.setConnectionCount(count),
 		);
 		await coordinator.connect();
+		assertHeld();
 		startupLease.close();
 		startupLease = undefined;
 		await workers.discover(coordinator.peerIds);
@@ -648,6 +666,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			auth: new RadiusRelayAuthResolver(options.relayAuth),
 			onStatus: options.onRelayStatus,
 		});
+		assertHeld();
 		relay.start();
 
 		const activeBackend = backend;
@@ -723,16 +742,23 @@ export async function startForegroundServer(
 	const profile = await acquireServerProfile(directory, options.serverId ?? process.env[ENV_SERVER_ID]);
 	const serverId = profile.serverId;
 	await profile.release();
-	const release = await acquireServerActivation(directory, serverId);
+	const activation = await acquireServerActivation(directory, serverId);
 	try {
-		return await startServer({
+		const server = await startServer({
 			...options,
 			directory,
 			serverId,
 			keepAlive: true,
 		});
+		try {
+			activation.assertHeld();
+		} catch (error) {
+			await server.close().catch(() => {});
+			throw error;
+		}
+		return server;
 	} finally {
-		await release();
+		await activation.release();
 	}
 }
 

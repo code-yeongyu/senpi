@@ -1,3 +1,9 @@
+import { isBrowserEngine } from "../../core/browser-engine.ts";
+import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
+import { MAX_TOOL_BARRIER_ID_LENGTH, toolBarrierSpecError } from "../../core/tool-barrier.ts";
+import { admitExternalMessageFieldError } from "./admit-external-message-wire.ts";
+import { validatePauseCommand } from "./pause-command-validation.ts";
+
 export const MAX_RPC_MESSAGE_CHARACTERS = 1_000_000;
 
 /**
@@ -85,11 +91,129 @@ function validSessionEntry(entry: unknown): boolean {
 export function rpcCommandPayloadError(command: unknown): string | undefined {
 	if (rpcCommandShapeError(command)) return undefined;
 	const value = command as Record<string, unknown>;
+	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		!clientMessageIdentitySchema.safeParse(value).success
+	) {
+		return "clientMessageId and clientTurnId must be non-empty strings of at most 256 characters.";
+	}
+	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		value.expectedTurnId !== undefined
+	) {
+		if (
+			!(
+				typeof value.expectedTurnId === "string" &&
+				value.expectedTurnId.length > 0 &&
+				value.expectedTurnId.length <= 256
+			)
+		)
+			return "expectedTurnId must be a non-empty string of at most 256 characters; read it from get_state.currentTurnId.";
+		if (value.type === "prompt" && value.streamingBehavior === undefined)
+			return 'expectedTurnId on a prompt needs streamingBehavior "steer" or "followUp".';
+	}
+	if (value.type === "prompt" && value.toolBarrier !== undefined) {
+		const barrierError = toolBarrierSpecError(value.toolBarrier);
+		if (barrierError !== undefined) return barrierError;
+	}
+	if (
+		value.type === "release_tool_barrier" &&
+		!(
+			typeof value.barrierId === "string" &&
+			value.barrierId.length > 0 &&
+			value.barrierId.length <= MAX_TOOL_BARRIER_ID_LENGTH
+		)
+	) {
+		return `barrierId must be a non-empty string of at most ${MAX_TOOL_BARRIER_ID_LENGTH} characters.`;
+	}
+	if (
+		(value.type === "dequeue_message" || value.type === "edit_queued_message") &&
+		!(typeof value.queuedId === "string" && value.queuedId.length > 0 && value.queuedId.length <= 256)
+	) {
+		return "queuedId must be a non-empty string of at most 256 characters; read it from get_state or queue_update.";
+	}
+	if (
+		value.type === "edit_queued_message" &&
+		!(typeof value.text === "string" && value.text.length > 0 && value.text.length <= MAX_RPC_MESSAGE_CHARACTERS)
+	) {
+		return `text must be a non-empty string of at most ${MAX_RPC_MESSAGE_CHARACTERS} characters; dequeue_message removes an input.`;
+	}
+	if (
+		(value.type === "dequeue_message" || value.type === "edit_queued_message") &&
+		value.expectedRevision !== undefined &&
+		!(Number.isSafeInteger(value.expectedRevision) && (value.expectedRevision as number) >= 1)
+	) {
+		return "expectedRevision must be a whole number of at least 1; read it from the input's revision in get_state or queue_update.";
+	}
+	if (
+		value.type === "resolve_path" &&
+		!(typeof value.path === "string" && value.path.trim().length > 0 && value.path.length <= 4096)
+	) {
+		return "path must be a non-empty string of at most 4096 characters.";
+	}
+	if (value.type === "unload_session") {
+		if (value.children !== undefined && value.children !== "refuse" && value.children !== "detach")
+			return 'children must be "refuse" or "detach".';
+		if (value.deliveries !== undefined && value.deliveries !== "refuse")
+			return 'deliveries must be "refuse"; omit it to hand unwritten deliveries back on an interrupt.';
+		for (const flag of ["interrupt", "clearQueue", "force", "graceful"] as const)
+			if (value[flag] !== undefined && typeof value[flag] !== "boolean") return `${flag} must be a boolean.`;
+		if (value.waitMs !== undefined && !(Number.isSafeInteger(value.waitMs) && Number(value.waitMs) > 0))
+			return "waitMs must be a positive integer of milliseconds.";
+		if (value.graceful === true && value.interrupt === true)
+			return "graceful and interrupt exclude each other: a graceful close never interrupts the turn.";
+	}
+	if (
+		(value.type === "steer" || value.type === "follow_up") &&
+		value.enqueueOrder !== undefined &&
+		!(typeof value.enqueueOrder === "number" && Number.isFinite(value.enqueueOrder))
+	) {
+		return "enqueueOrder must be a finite number.";
+	}
+	if (
+		(value.type === "steer" || value.type === "follow_up") &&
+		value.whenIdle !== undefined &&
+		value.whenIdle !== "queue" &&
+		value.whenIdle !== "start"
+	) {
+		return 'whenIdle must be "queue" or "start"; omit it to queue on an idle session.';
+	}
+	if (
+		(value.type === "abort" ||
+			value.type === "set_model" ||
+			value.type === "set_thinking_level" ||
+			value.type === "get_effect_status") &&
+		(value.effectId !== undefined || value.type === "get_effect_status") &&
+		!(typeof value.effectId === "string" && value.effectId.length > 0 && value.effectId.length <= 256)
+	) {
+		return "effectId must be a non-empty string of at most 256 characters.";
+	}
+	const fieldError = validatePauseCommand(value) ?? admitExternalMessageFieldError(value, MAX_RPC_MESSAGE_CHARACTERS);
+	if (fieldError !== undefined) return fieldError;
+	if (value.type === "get_pending_inputs" && value.knownClientMessageIds !== undefined) {
+		const ids: unknown = value.knownClientMessageIds;
+		if (
+			!Array.isArray(ids) ||
+			ids.length > 64 ||
+			!ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= 256)
+		) {
+			return "knownClientMessageIds must be an array of at most 64 non-empty strings of at most 256 characters.";
+		}
+	}
+	if (value.type === "get_effect_status" && value.sessionPath !== undefined && typeof value.sessionPath !== "string") {
+		return "sessionPath must be a string.";
+	}
 	if (value.type === "append_user_message" && !validContent(value.content)) {
 		return "append_user_message content must be a string or text/image content array.";
 	}
 	if (value.type === "append_session_entry" && !validSessionEntry(value.entry)) {
 		return "append_session_entry entry is malformed.";
+	}
+	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		typeof value.message !== "string"
+	) {
+		return "message must be a string.";
 	}
 	return undefined;
 }
@@ -143,6 +267,60 @@ export function sessionKindError(kind: unknown): string | undefined {
 export function sessionAutoTitleError(value: unknown): string | undefined {
 	if (value === undefined || typeof value === "boolean") return undefined;
 	return "auto_title must be a boolean.";
+}
+
+/**
+ * Detail for an `open_session.promptSurface` the host refuses, or undefined when the value is
+ * absent or a known surface. An unknown value is never read as `terminal`: a client that asked
+ * for the app or chat prompt must not silently get the routing line.
+ */
+export function sessionPromptSurfaceError(value: unknown): string | undefined {
+	if (value === undefined || value === "terminal" || value === "app" || value === "chat") return undefined;
+	return `promptSurface must be "terminal", "app" or "chat".`;
+}
+
+/**
+ * Detail for an `open_session.browserEngine` the host refuses, or undefined when the value is absent
+ * or a known engine. An unknown value is never read as `none`: a client that asked for the user's
+ * own browser must not silently run without one.
+ */
+export function sessionBrowserEngineError(value: unknown): string | undefined {
+	if (value === undefined || isBrowserEngine(value)) return undefined;
+	return `browserEngine must be "connected", "builtin" or "none".`;
+}
+
+const MAX_RETRY_FALLBACK_CHAINS = 32;
+const MAX_RETRY_FALLBACK_ENTRIES = 32;
+const MAX_RETRY_FALLBACK_SELECTOR_LENGTH = 512;
+
+/**
+ * Detail for an `open_session.retryFallback` the host refuses, or undefined when it is absent or well
+ * formed: `{ modelFallback: boolean, fallbackChains: Record<string, string[]> }`, at most 32 chains of at
+ * most 32 non-empty selectors. A malformed profile is refused rather than ignored, so a caller that asked
+ * for a chain never runs without one unknowingly.
+ */
+export function sessionRetryFallbackError(value: unknown): string | undefined {
+	if (value === undefined) return undefined;
+	const shape = "retryFallback must be { modelFallback: boolean, fallbackChains: Record<string, string[]> }.";
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return shape;
+	const record = value as Record<string, unknown>;
+	if (typeof record.modelFallback !== "boolean") return shape;
+	const chains = record.fallbackChains;
+	if (typeof chains !== "object" || chains === null || Array.isArray(chains)) return shape;
+	const entries = Object.entries(chains as Record<string, unknown>);
+	if (entries.length > MAX_RETRY_FALLBACK_CHAINS)
+		return `retryFallback allows at most ${MAX_RETRY_FALLBACK_CHAINS} chains.`;
+	for (const [key, selectors] of entries) {
+		if (!isSelector(key)) return shape;
+		if (!Array.isArray(selectors) || !selectors.every(isSelector)) return shape;
+		if (selectors.length > MAX_RETRY_FALLBACK_ENTRIES)
+			return `retryFallback allows at most ${MAX_RETRY_FALLBACK_ENTRIES} entries per chain.`;
+	}
+	return undefined;
+}
+
+function isSelector(value: unknown): value is string {
+	return typeof value === "string" && value.trim().length > 0 && value.length <= MAX_RETRY_FALLBACK_SELECTOR_LENGTH;
 }
 
 export function rpcCommandShapeError(command: unknown): string | undefined {

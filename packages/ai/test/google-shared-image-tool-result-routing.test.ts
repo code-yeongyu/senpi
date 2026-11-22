@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/google-shared.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function makeModel<TApi extends "google-generative-ai">(
 	api: TApi,
@@ -23,13 +24,16 @@ function makeModel<TApi extends "google-generative-ai">(
 
 function makeContext(model: { api: string; provider: string; id: string }): Context {
 	const now = Date.now();
+	// Same-model tool calls carry a thoughtSignature on the first part (Gemini 3 parallel-call
+	// shape), so the structured functionResponse routing under test stays on the wire path.
+	const thoughtSignature = model.id.startsWith("gemini-3") ? { thoughtSignature: "AAAAAAAAAAAAAAAAAAAAAA==" } : {};
 	return {
 		messages: [
 			{ role: "user", content: "read the files", timestamp: now },
 			{
 				role: "assistant",
 				content: [
-					{ type: "toolCall", id: "call_a", name: "read", arguments: { path: "a.txt" } },
+					{ type: "toolCall", id: "call_a", name: "read", arguments: { path: "a.txt" }, ...thoughtSignature },
 					{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "image.png" } },
 					{ type: "toolCall", id: "call_b", name: "read", arguments: { path: "b.txt" } },
 				],
@@ -79,7 +83,7 @@ describe("google-shared image tool result routing", () => {
 	// #2114: the synthetic image parts join the single tool-result user turn instead of opening adjacent user turns.
 	it("keeps synthetic image parts inside the single tool-result turn for Gemini 2.x Google API models", () => {
 		const model = makeModel("google-generative-ai", "google", "gemini-2.5-flash");
-		const contents = convertMessages(model, makeContext(model));
+		const contents = convertMessages(model, normalizeContext(makeContext(model)));
 
 		expect(contents.map((content) => content.role)).toEqual(["user", "model", "user"]);
 		const parts = contents[2].parts ?? [];
@@ -93,7 +97,7 @@ describe("google-shared image tool result routing", () => {
 
 	it("nests image tool results for Gemini 3 Google API models", () => {
 		const model = makeModel("google-generative-ai", "google", "gemini-3-pro-preview");
-		const contents = convertMessages(model, makeContext(model));
+		const contents = convertMessages(model, normalizeContext(makeContext(model)));
 
 		expect(contents).toHaveLength(3);
 		const toolResultTurn = contents[2];

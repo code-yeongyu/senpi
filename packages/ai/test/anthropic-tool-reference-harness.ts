@@ -5,6 +5,7 @@ import { streamAnthropic } from "../src/providers/anthropic.ts";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
 import type { AssistantMessage, Context, Tool, ToolResultMessage, UserMessage } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
 /**
  * Shared harness for the Anthropic tool-reference integrity suites: a fake
  * Anthropic client that captures the outgoing request, message fixtures, and
@@ -104,7 +105,7 @@ export async function captureParams(
 ): Promise<Record<string, unknown>> {
 	const captured: CapturedRequest = { params: {} };
 	const model = getModel("anthropic", modelId);
-	const s = streamAnthropic(model, context, {
+	const s = streamAnthropic(model, normalizeContext(context), {
 		apiKey: "fake-key",
 		client: createFakeAnthropicClient(captured),
 		...(onPayload ? { onPayload: (payload) => onPayload(payload) as never } : {}),

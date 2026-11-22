@@ -26,6 +26,8 @@ vi.mock("../src/api/anthropic-messages.lazy.ts", () => ({
 
 import { baiProvider } from "../src/providers/bai.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const context: Context = {
 	messages: [{ role: "user", content: "hi", timestamp: 1 }],
 };
@@ -74,7 +76,7 @@ describe("B.AI protocol routing", () => {
 		});
 
 		for (const entry of provider.getModels()) {
-			provider.streamSimple(entry, context, { apiKey: "test-key" });
+			provider.streamSimple(entry, normalizeContext(context), { apiKey: "test-key" });
 		}
 
 		expect(calls).toEqual(["responses:gpt-5.6-sol", "messages:claude-sonnet-5", "completions:gemini-3.8-flash"]);

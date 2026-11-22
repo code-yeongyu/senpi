@@ -17,12 +17,16 @@ export interface ActiveTurn {
 	aborted: boolean;
 	interruptReceipt?: unknown;
 	onMessage?: (message: SDKMessage) => void;
+	/** Awaited before the pump reads the next SDK message: the turn's consumer applies backpressure here. */
+	writable?: () => Promise<void>;
 	signal?: AbortSignal;
 	onAbort: () => void;
 	cancelAbort?: () => void;
 	resolve: (result: SessionTurnResult) => void;
 	reject: (error: Error) => void;
 	limits: PreReplayBufferLimits;
+	/** Settles (never rejects) once the turn resolved or rejected; a turn submitted behind it waits here. */
+	settled?: Promise<void>;
 }
 
 export interface PreReplayBufferLimits {

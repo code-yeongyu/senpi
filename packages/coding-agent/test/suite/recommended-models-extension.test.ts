@@ -1,4 +1,3 @@
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
@@ -11,9 +10,7 @@ import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
-import { createAppServerRuntime } from "../../src/modes/app-server/runtime.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
-import { configureModeEnv, scratchRoot, seedFauxConfig } from "./app-server-mode-harness.ts";
 import { createHarness, model } from "./recommended-models-harness.ts";
 
 afterEach(() => {
@@ -21,13 +18,15 @@ afterEach(() => {
 });
 
 describe("recommended-models builtin", () => {
-	it("#given the shipped recommendation list #when order is read #then opus 5.5, fable 5.1, kimi k3, astra, sol, glm 5.3 at their levels", () => {
+	it("#given the shipped recommendation list #when order is read #then opus 5.5, fable 5.2, kimi k3.1 pro, 6.2 astra, astra, 6.2 sol, 6.1 sol, glm 5.3 at their levels", () => {
 		expect(RECOMMENDED_DEFAULT_MODELS.map(([modelId, level]) => `${modelId} ${level}`)).toEqual([
 			"claude-opus-5-5 medium",
-			"claude-fable-5-1 xhigh",
-			"kimi-k3 max",
+			"claude-fable-5-2 xhigh",
+			"kimi-k3.1-pro max",
+			"gpt-6.2-astra xhigh",
 			"gpt-6-astra xhigh",
-			"gpt-6-sol medium",
+			"gpt-6.2-sol medium",
+			"gpt-6.1-sol medium",
 			"glm-5.3 max",
 		]);
 		for (const [, , providers] of RECOMMENDED_DEFAULT_MODELS) {
@@ -47,8 +46,8 @@ describe("recommended-models builtin", () => {
 		expect(harness.getThinkingLevel()).toBe("medium");
 	});
 
-	it("#given claude only through a gateway aggregator #when a session starts #then the gateway is skipped and kimi k3 is selected", async () => {
-		const kimi = model("kimi-k3", "kimi-coding");
+	it("#given claude only through a gateway aggregator #when a session starts #then the gateway is skipped and kimi k3.1 pro is selected", async () => {
+		const kimi = model("k3.1-pro", "kimi-coding");
 		const harness = createHarness({
 			active: model("off-list"),
 			available: [
@@ -64,8 +63,8 @@ describe("recommended-models builtin", () => {
 		expect(harness.getThinkingLevel()).toBe("max");
 	});
 
-	it("#given opus 5.5 only on a provider outside the ranking #when a session starts #then the rung is skipped and kimi k3 is selected", async () => {
-		const kimi = model("kimi-k3", "kimi-coding");
+	it("#given opus 5.5 only on a provider outside the ranking #when a session starts #then the rung is skipped and kimi k3.1 pro is selected", async () => {
+		const kimi = model("k3.1-pro", "kimi-coding");
 		const harness = createHarness({
 			active: model("off-list"),
 			available: [model("claude-opus-5-5", "venice"), kimi],
@@ -90,24 +89,25 @@ describe("recommended-models builtin", () => {
 		expect(harness.getThinkingLevel()).toBe("medium");
 	});
 
-	it("#given chatgpt-subscription/gpt-6-sol and gpt-5.6-sol #when an off-list model starts by provider default #then it switches to gpt-6-sol at medium", async () => {
+	it("#given chatgpt-subscription/gpt-6.1-sol, gpt-6-sol and gpt-5.6-sol #when an off-list model starts by provider default #then it switches to gpt-6.1-sol at medium", async () => {
+		const gpt61Sol = model("gpt-6.1-sol", "chatgpt-subscription");
 		const gpt6Sol = model("gpt-6-sol", "chatgpt-subscription");
 		const sol = model("gpt-5.6-sol", "chatgpt-subscription");
 		const harness = createHarness({
 			active: model("off-list"),
-			available: [sol, gpt6Sol],
+			available: [sol, gpt6Sol, gpt61Sol],
 		});
 
 		await harness.start("provider-default");
 
-		expect(harness.getActiveModel()).toBe(gpt6Sol);
+		expect(harness.getActiveModel()).toBe(gpt61Sol);
 		expect(harness.getThinkingLevel()).toBe("medium");
-		expect(harness.notices).toEqual([{ message: "Switched to recommended model 'gpt-6-sol'.", type: "info" }]);
+		expect(harness.notices).toEqual([{ message: "Switched to recommended model 'gpt-6.1-sol'.", type: "info" }]);
 	});
 
 	it("#given chatgpt-subscription/gpt-6-astra and sol #when an implicit-fallback provenance starts #then it switches to astra at xhigh", async () => {
 		const astra = model("gpt-6-astra", "chatgpt-subscription");
-		const sol = model("gpt-6-sol", "chatgpt-subscription");
+		const sol = model("gpt-6.1-sol", "chatgpt-subscription");
 		const harness = createHarness({
 			active: model("off-list"),
 			available: [sol, astra],
@@ -126,7 +126,7 @@ describe("recommended-models builtin", () => {
 
 		const harness = createHarness({
 			active: model("gpt-6-astra-fast"),
-			available: [model("gpt-6-sol", "chatgpt-subscription"), model("gpt-6-astra", "chatgpt-subscription")],
+			available: [model("gpt-6.1-sol", "chatgpt-subscription"), model("gpt-6-astra", "chatgpt-subscription")],
 		});
 
 		await harness.start("first-available");
@@ -137,7 +137,7 @@ describe("recommended-models builtin", () => {
 
 	it("#given an off-list saved default #when settings provenance starts #then it keeps the saved default without switching, persisting, or notifying", async () => {
 		const offList = model("off-list");
-		const harness = createHarness({ active: offList, available: [model("kimi-k3", "kimi-coding")] });
+		const harness = createHarness({ active: offList, available: [model("k3.1-pro", "kimi-coding")] });
 
 		await harness.start("settings");
 
@@ -164,7 +164,7 @@ describe("recommended-models builtin", () => {
 	});
 
 	it("#given recommended warnings are disabled #when a session starts #then it neither switches nor warns", async () => {
-		const kimi = model("kimi-k3", "kimi-coding");
+		const kimi = model("k3.1-pro", "kimi-coding");
 		const harness = createHarness({
 			active: model("off-list"),
 			available: [kimi],
@@ -179,7 +179,7 @@ describe("recommended-models builtin", () => {
 	});
 
 	it("#given a recommendedModels override #when a session starts #then it follows the override priority", async () => {
-		const kimi = model("kimi-k3", "kimi-coding");
+		const kimi = model("k3.1-pro", "kimi-coding");
 		const glm = model("glm-5.3", "zai-coding-plan");
 		const harness = createHarness({
 			active: model("off-list"),
@@ -193,11 +193,11 @@ describe("recommended-models builtin", () => {
 		expect(harness.settings.getDefaultThinkingLevel()).toBe("max");
 	});
 
-	it("#given suffix and k3 aliases #when the active model is already recommended #then it keeps the active model", async () => {
-		for (const activeId of ["gpt-6-sol-fast", "kimi-k3-ultrafast", "k3"]) {
+	it("#given suffix and kimi code k3.1 aliases #when the active model is already recommended #then it keeps the active model", async () => {
+		for (const activeId of ["gpt-6.1-sol-fast", "kimi-k3.1-pro", "k3.1-pro"]) {
 			const harness = createHarness({
 				active: model(activeId),
-				available: [model("kimi-k3", "kimi-coding"), model("gpt-6-sol", "openai")],
+				available: [model("k3.1-pro", "kimi-coding"), model("gpt-6.1-sol", "openai")],
 			});
 
 			await harness.start("first-available");
@@ -207,9 +207,37 @@ describe("recommended-models builtin", () => {
 		}
 	});
 
+	it("#given kimi k3 and kimi k3.1 pro on the same provider #when a session starts #then k3.1 pro is selected and k3 is no longer recommended", async () => {
+		const k3 = model("k3", "kimi-coding");
+		const k31 = model("k3.1-pro", "kimi-coding");
+		const harness = createHarness({ active: model("off-list"), available: [k3, k31] });
+
+		await harness.start("first-available");
+
+		expect(harness.getActiveModel()).toBe(k31);
+		expect(harness.getThinkingLevel()).toBe("max");
+		expect(canonicalModelId("k3.1-pro")).toBe("kimi-k3.1-pro");
+		expect(RECOMMENDED_DEFAULT_MODELS.map(([modelId]) => modelId)).not.toContain("kimi-k3");
+	});
+
+	it("#given a recommendedModels override naming kimi code k3 #when a session starts #then the k3 alias and the -ultrafast suffix still canonicalize to kimi-k3", async () => {
+		const k3 = model("k3", "kimi-coding");
+		const harness = createHarness({
+			active: model("off-list"),
+			available: [k3],
+			settings: { recommendedModels: ["k3"] },
+		});
+
+		await harness.start("first-available");
+
+		expect(harness.getActiveModel()).toBe(k3);
+		expect(canonicalModelId("kimi-k3-ultrafast")).toBe("kimi-k3");
+		expect(canonicalModelId("k3")).toBe("kimi-k3");
+	});
+
 	it("#given cli or scoped provenance #when an off-list model starts #then it never switches or persists", async () => {
 		for (const provenance of ["cli", "scoped"] as const) {
-			const harness = createHarness({ active: model("off-list"), available: [model("kimi-k3", "kimi-coding")] });
+			const harness = createHarness({ active: model("off-list"), available: [model("k3.1-pro", "kimi-coding")] });
 
 			await harness.start(provenance);
 
@@ -222,7 +250,7 @@ describe("recommended-models builtin", () => {
 	it("#given the run flag #when a session starts #then it leaves recommended-model behavior disabled", async () => {
 		const harness = createHarness({
 			active: model("off-list"),
-			available: [model("kimi-k3", "kimi-coding")],
+			available: [model("k3.1-pro", "kimi-coding")],
 			flag: true,
 		});
 
@@ -282,28 +310,6 @@ describe("recommended-models builtin", () => {
 			expect(events).toEqual([{ type: "session_start", reason: "startup", initialModelProvenance: "settings" }]);
 		} finally {
 			session.dispose();
-		}
-	});
-
-	it("#given an app-server faux settings default #when recommended models initialize #then the faux model remains selected", async () => {
-		const root = await scratchRoot();
-		const faux = registerFauxProvider();
-		faux.setResponses([fauxAssistantMessage("faux response")]);
-		await seedFauxConfig(root, faux);
-		configureModeEnv(root);
-		const runtime = createAppServerRuntime(() => {});
-		const entry = await runtime.threads.createThread({ cwd: root });
-		try {
-			expect(entry.session.model?.provider).toBe(faux.getModel().provider);
-			expect(entry.session.model?.id).toBe(faux.getModel().id);
-
-			await entry.session.prompt("use the configured faux model");
-
-			expect(faux.state.callCount).toBe(1);
-		} finally {
-			entry.session.dispose();
-			runtime.dispose();
-			faux.unregister();
 		}
 	});
 

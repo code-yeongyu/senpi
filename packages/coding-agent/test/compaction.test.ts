@@ -58,6 +58,7 @@ import type {
 	MessageEndEvent,
 	ModelSelectEvent,
 } from "../src/core/extensions/index.ts";
+import type { HistoryReducer } from "../src/core/session-history-reduce.ts";
 import {
 	buildSessionContext,
 	type CompactionEntry,
@@ -69,6 +70,7 @@ import {
 	type SessionMessageEntry,
 	type ThinkingLevelChangeEntry,
 } from "../src/core/session-manager.ts";
+import { reduceEntries } from "./helpers/reduce-entries.ts";
 
 const AGENT_DIR = createTempAgentDir();
 
@@ -273,7 +275,10 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager: Object.assign(Object.create(null), {
+			getSessionId: () => "session-test",
 			getEntries: () => [],
+			getBranch: () => [],
+			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries([], reducer),
 		}) as ExtensionContext["sessionManager"],
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,
@@ -353,8 +358,10 @@ async function expectSpeculativeCompactionInvalidatedBy(
 	const ctx = createExtensionContext({
 		model: currentModel,
 		sessionManager: Object.assign(Object.create(null), {
+			getSessionId: () => "session-test",
 			getEntries: () => branchEntries,
 			getBranch: () => branchEntries,
+			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(branchEntries, reducer),
 		}) as ExtensionContext["sessionManager"],
 		modelRegistry: Object.assign(Object.create(null), {
 			getApiKeyAndHeaders: async () => ({
@@ -694,6 +701,36 @@ describe("findCutPoint", () => {
 		expect(result.firstKeptEntryIndex).toBe(0);
 	});
 
+	// senpi#4617: keepRecentTokens is measured against wire tokens, and CJK text
+	// tokenizes near 1 token per 1.5 chars, not 4. A 4000-char Korean user turn
+	// is ~1000 tokens under chars/4 but ~3000 under the CJK-weighted estimate,
+	// so a 2000-token budget must cut before it, not keep the whole history.
+	it("should weight CJK text when accumulating the keep budget", () => {
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("old")),
+			createMessageEntry(createAssistantMessage("old answer")),
+			createMessageEntry(createUserMessage("한".repeat(4000))),
+			createMessageEntry(createAssistantMessage("ok")),
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, 2000);
+		expect(result.firstKeptEntryIndex).toBe(2);
+	});
+
+	it("should not change the keep budget for ASCII text", () => {
+		// Spaced prose: no base64-run weighting and no CJK correction, so the
+		// same-length ASCII turn stays at ~1000 tokens and fits the budget.
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("old")),
+			createMessageEntry(createAssistantMessage("old answer")),
+			createMessageEntry(createUserMessage("hello world ".repeat(334))),
+			createMessageEntry(createAssistantMessage("ok")),
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, 2000);
+		expect(result.firstKeptEntryIndex).toBe(0);
+	});
+
 	it("should keep everything if all messages fit within budget", () => {
 		const entries: SessionEntry[] = [
 			createMessageEntry(createUserMessage("1")),
@@ -775,6 +812,70 @@ describe("findCutPoint", () => {
 		expect(customFitsBudget.firstKeptEntryIndex).toBe(2);
 		expect(customFitsBudget.isSplitTurn).toBe(false);
 		expect(customFitsBudget.turnStartIndex).toBe(-1);
+	});
+
+	// senpi#2480: the attempts that follow the overflowing turn are never sent, so they
+	// must not absorb the budget of the overflow ladder's second rung (keepRecentTokens 0).
+	it("lands a zero keep budget on the turn being answered, past a failed attempt and its orphaned tool result", () => {
+		const oldUser = createMessageEntry(createUserMessage("old history"));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old answer"));
+		const currentUser = createMessageEntry(createUserMessage("continue the task"));
+		const failedToolCall = createMessageEntry({
+			...createAssistantMessage(""),
+			content: [{ type: "toolCall", id: "failed-call", name: "read", arguments: { path: "big.txt" } }],
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+		});
+		const orphanedResult = createMessageEntry({
+			role: "toolResult",
+			toolCallId: "failed-call",
+			toolName: "read",
+			content: [{ type: "text", text: "x".repeat(8000) }],
+			isError: false,
+			timestamp: Date.now(),
+		});
+		const entries = [oldUser, oldAssistant, currentUser, failedToolCall, orphanedResult];
+
+		const result = findCutPoint(entries, 0, entries.length, 0);
+
+		expect(result.firstKeptEntryIndex).toBe(2);
+		expect(result.isSplitTurn).toBe(false);
+	});
+
+	// Regression test for #9740.
+	it("should fall back to the latest valid cut point before oversized trailing tool results", () => {
+		const oldUser = createMessageEntry(createUserMessage("old history"));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old answer"));
+		const currentUser = createMessageEntry(createUserMessage("read the large file"));
+		const toolCall = createMessageEntry({
+			...createAssistantMessage(""),
+			content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "big.txt" } }],
+			stopReason: "toolUse",
+		});
+		const toolResult = createMessageEntry({
+			role: "toolResult",
+			toolCallId: "call-1",
+			toolName: "read",
+			content: [{ type: "text", text: "x".repeat(8000) }],
+			isError: false,
+			timestamp: Date.now(),
+		});
+		const entries = [oldUser, oldAssistant, currentUser, toolCall, toolResult];
+
+		const result = findCutPoint(entries, 0, entries.length, 1000);
+		expect(result).toEqual({
+			firstKeptEntryIndex: 3,
+			turnStartIndex: 2,
+			isSplitTurn: true,
+		});
+
+		const preparation = prepareCompaction(entries, {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1000,
+		});
+		expect(preparation?.firstKeptEntryId).toBe(toolCall.id);
+		expect(preparation?.messagesToSummarize).toEqual([oldUser.message, oldAssistant.message]);
+		expect(preparation?.turnPrefixMessages).toEqual([currentUser.message]);
 	});
 });
 
@@ -918,6 +1019,59 @@ describe("prepareCompaction source messages", () => {
 		expect(preparation.turnPrefixSourceMessages).toEqual(preparation.turnPrefixMessages);
 		expect(extractText(preparation.turnPrefixSourceMessages)).toContain("large request");
 		expect(extractText(preparation.turnPrefixSourceMessages)).not.toContain("kept");
+	});
+
+	it("summarizes only entries after a retain-none compaction", () => {
+		const oldUser = createMessageEntry(createUserMessage("old user ".repeat(20)));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old assistant ".repeat(20)));
+		const handoff = createCompactionEntry("handoff", "pending");
+		// appendCompaction(summary, null, ...) records a compaction that keeps no earlier entry as its own first kept id.
+		handoff.firstKeptEntryId = handoff.id;
+		const afterUser = createMessageEntry(createUserMessage("after handoff ".repeat(20)));
+		const afterAssistant = createMessageEntry(createAssistantMessage("after work ".repeat(20)));
+		const recentUser = createMessageEntry(createUserMessage("recent user"));
+		const recentAssistant = createMessageEntry(createAssistantMessage("ok"));
+		const settings: CompactionSettings = {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 3,
+		};
+
+		const preparation = prepareCompaction(
+			[oldUser, oldAssistant, handoff, afterUser, afterAssistant, recentUser, recentAssistant],
+			settings,
+		);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		expect(preparation.firstKeptEntryId).toBe(recentUser.id);
+		expect(preparation.previousSummary).toBe("handoff");
+		expect(preparation.messagesToSummarize).toEqual([afterUser.message, afterAssistant.message]);
+		expect(preparation.sourceMessages[0]?.role).toBe("compactionSummary");
+		expect(preparation.sourceMessages.slice(1)).toEqual(preparation.messagesToSummarize);
+		expect(extractText(preparation.sourceMessages)).not.toContain("old user");
+	});
+});
+
+describe("prepareCompaction", () => {
+	it("does not treat system messages as conversation history", () => {
+		const system = createMessageEntry({
+			role: "system",
+			content: "",
+			sections: { preamble: "current prompt" },
+			timestamp: Date.now(),
+		});
+		const user = createMessageEntry(createUserMessage("one long turn"));
+		const assistant = createMessageEntry(createAssistantMessage("assistant suffix"));
+		const preparation = prepareCompaction([system, user, assistant], {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1,
+		});
+
+		expect(preparation).toBeDefined();
+		expect(preparation?.firstKeptEntryId).toBe(assistant.id);
+		expect(preparation?.isSplitTurn).toBe(true);
+		expect(preparation?.messagesToSummarize).toEqual([]);
+		expect(preparation?.turnPrefixMessages).toEqual([user.message]);
 	});
 });
 
@@ -1107,7 +1261,10 @@ describe("builtin compaction extension threshold regressions", () => {
 		const ctx = createExtensionContext({
 			model,
 			sessionManager: Object.assign(Object.create(null), {
+				getSessionId: () => "session-test",
 				getEntries: () => [firstUser, firstAssistant, secondUser, secondAssistant],
+				reduceHistory: (reducer: HistoryReducer<unknown>) =>
+					reduceEntries([firstUser, firstAssistant, secondUser, secondAssistant], reducer),
 				getBranch: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 			}) as ExtensionContext["sessionManager"],
 			modelRegistry: Object.assign(Object.create(null), {
@@ -1167,8 +1324,10 @@ describe("builtin compaction extension threshold regressions", () => {
 		const ctx = createExtensionContext({
 			model,
 			sessionManager: Object.assign(Object.create(null), {
+				getSessionId: () => "session-test",
 				getEntries: () => branchEntries,
 				getBranch: () => branchEntries,
+				reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(branchEntries, reducer),
 			}) as ExtensionContext["sessionManager"],
 			modelRegistry: Object.assign(Object.create(null), {
 				getApiKeyAndHeaders: async () => ({
@@ -1218,7 +1377,10 @@ describe("builtin compaction extension threshold regressions", () => {
 		const ctx = createExtensionContext({
 			model,
 			sessionManager: Object.assign(Object.create(null), {
+				getSessionId: () => "session-test",
 				getEntries: () => [firstUser, firstAssistant, secondUser, secondAssistant],
+				reduceHistory: (reducer: HistoryReducer<unknown>) =>
+					reduceEntries([firstUser, firstAssistant, secondUser, secondAssistant], reducer),
 				getBranch: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 			}) as ExtensionContext["sessionManager"],
 			modelRegistry: Object.assign(Object.create(null), {

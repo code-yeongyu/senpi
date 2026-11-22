@@ -85,4 +85,35 @@ describe("codemode memory settings", () => {
 		expect(loaded.warnings).toHaveLength(1);
 		expect(loaded.settings.memory.ceilingMb).toBe(defaultMemoryCeilingMb());
 	});
+
+	it("Given no idle-park setting when settings load then kernels are never parked", async () => {
+		const loaded = await loadFile({ memory: { noticeMb: 512 } });
+
+		expect(loaded.warnings).toEqual([]);
+		expect(loaded.settings.memory.idleParkMinutes).toBeUndefined();
+	});
+
+	it("Given an idle-park time in the file when settings load then it is kept", async () => {
+		const loaded = await loadFile({ memory: { idleParkMinutes: 5 } });
+
+		expect(loaded.warnings).toEqual([]);
+		expect(loaded.settings.memory.idleParkMinutes).toBe(5);
+	});
+
+	it("Given the longest idle-park time a timer can wait when settings load then it is kept, and one minute more is rejected", async () => {
+		const longest = await loadFile({ memory: { idleParkMinutes: 35_791 } });
+		const tooLong = await loadFile({ memory: { idleParkMinutes: 35_792 } });
+
+		expect(longest.warnings).toEqual([]);
+		expect(longest.settings.memory.idleParkMinutes).toBe(35_791);
+		expect(tooLong.warnings).toHaveLength(1);
+		expect(tooLong.settings.memory.idleParkMinutes).toBeUndefined();
+	});
+
+	it("Given a negative idle-park time in the file when settings load then the file is rejected with a warning and parking stays off", async () => {
+		const loaded = await loadFile({ memory: { idleParkMinutes: -1 } });
+
+		expect(loaded.warnings).toHaveLength(1);
+		expect(loaded.settings.memory.idleParkMinutes).toBeUndefined();
+	});
 });

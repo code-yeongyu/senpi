@@ -8,14 +8,6 @@ const SPIKE = join(
 );
 
 describe("claude-sdk-oauth live persistent query spike", () => {
-	it("is skipped by default and never touches credentials", () => {
-		const output = execFileSync(process.execPath, [SPIKE], {
-			env: { PATH: process.env.PATH },
-			encoding: "utf8",
-		});
-		expect(output).toContain("SKIPPED");
-	});
-
 	it.runIf(process.env.SENPI_LIVE_CLAUDE_SDK_OAUTH === "1")(
 		"accepts denial recovery, subprocess cleanup, and replay uuid correlation",
 		() => {

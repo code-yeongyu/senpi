@@ -12,6 +12,8 @@
  * `installCursorContextLimitPersistence` - see `utils/cursor-context-limit.ts`.
  */
 
+import { processSingleton } from "../utils/process-singleton.ts";
+
 export type CursorContextLimitPersistence = {
 	/** Limits observed by earlier processes. Called at most once per install. */
 	readonly load: () => ReadonlyMap<string, number>;
@@ -19,24 +21,34 @@ export type CursorContextLimitPersistence = {
 	readonly save: (limits: ReadonlyMap<string, number>) => void;
 };
 
-const observedLimits = new Map<string, number>();
-let persistence: CursorContextLimitPersistence | undefined;
-let hydrated = false;
+type ObservedLimitsStore = {
+	readonly limits: Map<string, number>;
+	persistence: CursorContextLimitPersistence | undefined;
+	hydrated: boolean;
+};
+
+// The Cursor stream records into this store and the coding agent reads it; the release bundle
+// gives each of them its own copy of this module, so the state is process-wide.
+const store = processSingleton<ObservedLimitsStore>("@earendil-works/pi-ai:cursor-context-limits", () => ({
+	limits: new Map(),
+	persistence: undefined,
+	hydrated: false,
+}));
 
 /** Installs the process-wide persistence port. Idempotent per port identity. */
 export function installCursorContextLimitPersistence(port: CursorContextLimitPersistence): void {
-	if (persistence === port) return;
-	persistence = port;
-	hydrated = false;
+	if (store.persistence === port) return;
+	store.persistence = port;
+	store.hydrated = false;
 }
 
 function hydrate(): void {
-	if (hydrated) return;
+	if (store.hydrated) return;
 	// Set before loading: a load that observes nothing must not retry per read.
-	hydrated = true;
-	if (!persistence) return;
-	for (const [modelId, maxTokens] of persistence.load()) {
-		if (!observedLimits.has(modelId)) observedLimits.set(modelId, maxTokens);
+	store.hydrated = true;
+	if (!store.persistence) return;
+	for (const [modelId, maxTokens] of store.persistence.load()) {
+		if (!store.limits.has(modelId)) store.limits.set(modelId, maxTokens);
 	}
 }
 
@@ -47,14 +59,14 @@ function hydrate(): void {
 export function recordCursorContextLimit(modelId: string, maxTokens: number | undefined): void {
 	if (maxTokens === undefined || !Number.isFinite(maxTokens) || maxTokens <= 0) return;
 	hydrate();
-	if (observedLimits.get(modelId) === maxTokens) return;
-	observedLimits.set(modelId, maxTokens);
-	persistence?.save(observedLimits);
+	if (store.limits.get(modelId) === maxTokens) return;
+	store.limits.set(modelId, maxTokens);
+	store.persistence?.save(store.limits);
 }
 
 export function getCursorContextLimit(modelId: string): number | undefined {
 	hydrate();
-	return observedLimits.get(modelId);
+	return store.limits.get(modelId);
 }
 
 /** The window to trust for `modelId`: what the server reported, else the catalog. */
@@ -64,6 +76,6 @@ export function resolveCursorContextWindow(modelId: string, catalogWindow: numbe
 
 /** Drops in-memory state so the next read re-hydrates from the installed port. */
 export function resetCursorContextLimitStoreForTest(): void {
-	observedLimits.clear();
-	hydrated = false;
+	store.limits.clear();
+	store.hydrated = false;
 }

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -87,7 +89,7 @@ describe("anthropic 429 retry-hint marker", () => {
 		const fetchMock = vi.fn(async () => makeErrorResponse(429, errorBody, { "retry-after": "1258" }));
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			apiKey: "sk-test",
 			maxRetries: 0,
 		}).result();
@@ -125,7 +127,7 @@ describe("anthropic 429 retry-hint marker", () => {
 		);
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			apiKey: "sk-test",
 			maxRetries: 0,
 		}).result();
@@ -162,7 +164,7 @@ describe("anthropic 429 retry-hint marker", () => {
 		);
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			apiKey: "sk-test",
 			maxRetries: 0,
 		}).result();
@@ -186,7 +188,7 @@ describe("anthropic 429 retry-hint marker", () => {
 		const fetchMock = vi.fn(async () => makeErrorResponse(500, errorBody));
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			apiKey: "sk-test",
 			maxRetries: 0,
 		}).result();
@@ -212,7 +214,7 @@ describe("anthropic 429 retry-hint marker", () => {
 		);
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			apiKey: "sk-test",
 			maxRetries: 0,
 		}).result();

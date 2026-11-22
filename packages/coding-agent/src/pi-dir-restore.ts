@@ -9,7 +9,7 @@ import {
 	isWithinOrSamePath,
 	pathsPointToSameLocation,
 } from "./legacy-dir-copy.ts";
-import { MIGRATIONS_STATE_FILENAME, type ScanMigrationName } from "./migrations-state.ts";
+import { MIGRATIONS_STATE_FILENAME, recordLegacyPiAgentDirCopy, type ScanMigrationName } from "./migrations-state.ts";
 
 /** Upstream pi's agent-dir entries; anything else in our agent dir is our own state and never goes to pi. */
 const UPSTREAM_PI_AGENT_ENTRIES: ReadonlySet<string> = new Set([
@@ -60,9 +60,9 @@ function holdsNoUserState(dir: string): boolean {
 	return readdirSync(dir).every((entry) => isRegenerableEntry(entry) || isEmptyJsonStub(join(dir, entry)));
 }
 
-function restoreDir(from: string, to: string, include: (entry: string) => boolean): void {
-	if (!isDirectory(from) || !holdsNoUserState(to)) return;
-	if (existsSync(to) && pathsPointToSameLocation(from, to)) return;
+function restoreDir(from: string, to: string, include: (entry: string) => boolean): boolean {
+	if (!isDirectory(from) || !holdsNoUserState(to)) return false;
+	if (existsSync(to) && pathsPointToSameLocation(from, to)) return false;
 	for (const entry of existsSync(to) ? readdirSync(to) : []) {
 		if (include(entry) && existsSync(join(from, entry)) && isEmptyJsonStub(join(to, entry))) {
 			rmSync(join(to, entry));
@@ -73,6 +73,7 @@ function restoreDir(from: string, to: string, include: (entry: string) => boolea
 		console.log(chalk.green(`Restored ${to} from ${from}: an earlier start had moved it there.`));
 		console.log(chalk.dim("Both directories now hold independent copies."));
 	}
+	return restored.length > 0;
 }
 
 /** Copies back what an earlier start moved out of `~/.pi`, only into an agent/mom dir holding no user state. */
@@ -85,7 +86,9 @@ export function restoreDrainedPiDirs(completed: ReadonlySet<ScanMigrationName>, 
 	if (!movingMigrationMayHaveRun(agentDir, completed)) return;
 
 	try {
-		restoreDir(agentDir, join(piDir, "agent"), (entry) => UPSTREAM_PI_AGENT_ENTRIES.has(entry));
+		if (restoreDir(agentDir, join(piDir, "agent"), (entry) => UPSTREAM_PI_AGENT_ENTRIES.has(entry))) {
+			recordLegacyPiAgentDirCopy(agentDir);
+		}
 		restoreDir(join(brandDir, "mom"), join(piDir, "mom"), (entry) => !isRegenerableEntry(entry));
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);

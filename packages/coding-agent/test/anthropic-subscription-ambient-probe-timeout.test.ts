@@ -7,6 +7,7 @@ function stubChild() {
 	const listeners = { close: undefined as CloseListener | undefined };
 	const kill = vi.fn();
 	const child = {
+		pid: 4242,
 		once(event: "error" | "close", listener: (...args: never[]) => void) {
 			if (event === "close") listeners.close = listener as CloseListener;
 			return child;

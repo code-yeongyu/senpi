@@ -8,7 +8,7 @@ import {
 	InMemoryCredentialStore,
 	type Model,
 } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, assert, describe, expect, it } from "vitest";
 import { subscribeProviderAccountEvents } from "../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
 import {
 	type AccountSlot,
@@ -16,6 +16,10 @@ import {
 	addAccount,
 	emptyCredential,
 } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	DEFAULT_AFFINITY_KEY,
+	rendezvousOrder,
+} from "../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import {
 	overrideAuthLaneBoundary,
 	resetAuthLaneBoundary,
@@ -36,6 +40,7 @@ import {
 	resetSessionRegistryBoundary,
 } from "../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
 import { streamAnthropicSubscription } from "../src/core/extensions/builtin/anthropic-subscription/stream.ts";
+import { cliAccountOf, cliLaneEnv, cliSlot } from "./support/claude-cli-test-slots.ts";
 
 const model: Model<Api> = {
 	id: "claude-test",
@@ -92,10 +97,6 @@ async function storeWith(...credentials: AccountSlot[]): Promise<CredentialStore
 	return store;
 }
 
-function slot(name: string, access: string, expires = Date.now() + 60 * 60_000) {
-	return { name, access, refresh: `${name}-refresh`, expires, source: "login" as const };
-}
-
 function managedEnvironment(): NodeJS.ProcessEnv {
 	return {
 		PATH: "/usr/bin",
@@ -107,6 +108,7 @@ function managedEnvironment(): NodeJS.ProcessEnv {
 		CLAUDE_CODE_USE_VERTEX: "1",
 		SENPI_CLAUDE_SDK_OAUTH_SYSTEM_PROMPT_MODE: "untrusted",
 		SENPI_SEED: "parent-seed",
+		...cliLaneEnv(),
 	};
 }
 
@@ -177,11 +179,17 @@ function finiteAttempt(outcome: "success" | "failure" | "visible-failure"): Clos
 class FailoverResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 	closes = 0;
 	private readonly outcome: "success" | "failure" | "visible-failure";
+	private readonly onPrompt: (() => void) | undefined;
 	private readonly queued: SDKMessage[] = [];
 	private readonly readers: Array<(value: IteratorResult<SDKMessage>) => void> = [];
 
-	constructor(prompt: AsyncIterable<SDKUserMessage>, outcome: "success" | "failure" | "visible-failure") {
+	constructor(
+		prompt: AsyncIterable<SDKUserMessage>,
+		outcome: "success" | "failure" | "visible-failure",
+		onPrompt?: () => void,
+	) {
 		this.outcome = outcome;
+		this.onPrompt = onPrompt;
 		void this.consume(prompt);
 	}
 
@@ -210,6 +218,7 @@ class FailoverResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage>
 
 	private async consume(prompt: AsyncIterable<SDKUserMessage>): Promise<void> {
 		for await (const message of prompt) {
+			this.onPrompt?.();
 			const uuid = message.uuid ?? "submitted";
 			this.emit({ ...message, uuid, isReplay: true } as SDKMessage);
 			if (this.outcome === "visible-failure") {
@@ -257,21 +266,20 @@ class FailoverResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage>
 }
 
 describe("Claude SDK OAuth auth lanes", () => {
-	it("injects an OAuth slot and strips higher-precedence API-key sources", async () => {
-		const store = await storeWith(slot("default", "slot-access"));
+	it("injects an env OAuth token and strips higher-precedence API-key sources", async () => {
+		const store = await storeWith();
 		const captured: Options[] = [];
 		configureAuth(store, managedEnvironment(), undefined, "oauth-slots");
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(captured).toHaveLength(1);
-		expect(captured[0]?.env).toMatchObject({ PATH: "/usr/bin", CLAUDE_CODE_OAUTH_TOKEN: "slot-access" });
+		expect(captured[0]?.env).toMatchObject({ PATH: "/usr/bin", CLAUDE_CODE_OAUTH_TOKEN: "parent-oauth-token" });
 		expect(captured[0]?.env).not.toHaveProperty("ANTHROPIC_API_KEY");
 		expect(captured[0]?.env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
 		expect(captured[0]?.env).not.toHaveProperty("ANTHROPIC_BASE_URL");
 		expect(captured[0]?.env).not.toHaveProperty("CLAUDE_CODE_USE_BEDROCK");
-		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("slot-access");
 		expect(captured[0]?.env).not.toHaveProperty("CLAUDE_CODE_USE_VERTEX");
 	});
 
@@ -281,7 +289,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		configureAuth(new InMemoryCredentialStore(), ambientEnvironment);
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(captured).toHaveLength(1);
 		expect(captured[0]?.env).toBeDefined();
@@ -291,39 +299,11 @@ describe("Claude SDK OAuth auth lanes", () => {
 		expect(captured[0]?.env).not.toHaveProperty("SENPI_SEED");
 	});
 
-	it("refreshes an expired slot before spawning the SDK query", async () => {
-		const store = await storeWith(slot("default", "stale-access", Date.now() - 1));
-		const captured: Options[] = [];
-		let refreshes = 0;
-		let receivedSignal: AbortSignal | undefined;
-		const controller = new AbortController();
-		configureAuth(store, managedEnvironment(), undefined, "oauth-slots");
-		overrideAuthLaneBoundary({
-			refresher: async (_refresh, signal) => {
-				refreshes++;
-				receivedSignal = signal;
-				return { access: "fresh-access", refresh: "fresh-refresh", expires: Date.now() + 60 * 60_000 };
-			},
-		});
-		overrideSdkBoundary({ query: queryCapturing(captured) });
-
-		await streamAnthropicSubscription(model, context, { signal: controller.signal }).result();
-
-		expect(refreshes).toBe(1);
-		expect(receivedSignal).toBe(controller.signal);
-		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("fresh-access");
-		const credential = (await store.read(providerId)) as AnthropicSubscriptionCredential;
-		expect(credential.accounts?.[0]).toMatchObject({ access: "fresh-access", refresh: "fresh-refresh" });
-	});
-
-	it("writes a private Claude config directory with the CLI OAuth schema", async () => {
+	it("writes a private Claude config directory with the CLI OAuth schema for an env token account", async () => {
 		const agentDir = temporaryDirectory();
-		const store = await storeWith(slot("work", "config-access", Date.now() + 60 * 60_000));
-		await store.modify(providerId, async (current) =>
-			current?.type === "oauth" ? { ...current, pinned: "work" } : current,
-		);
+		const store = await storeWith();
 		const captured: Options[] = [];
-		configureAuth(store, managedEnvironment(), agentDir);
+		configureAuth(store, { ...managedEnvironment(), CLAUDE_CODE_OAUTH_TOKEN: "config-access" }, agentDir);
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
 		writeFileSync(
@@ -331,16 +311,16 @@ describe("Claude SDK OAuth auth lanes", () => {
 			JSON.stringify({ claudeSdkOauthProvider: { tokenInjection: "config-dir" } }),
 		);
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
-		const configDir = join(agentDir, "anthropic-subscription-accounts", "work");
+		const configDir = join(agentDir, "anthropic-subscription-accounts", "env");
 		expect(captured[0]?.env?.CLAUDE_CONFIG_DIR).toBe(configDir);
 		expect(captured[0]?.env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
 		expect(statSync(configDir).mode & 0o777).toBe(0o700);
 		expect(JSON.parse(readFileSync(join(configDir, ".credentials.json"), "utf8"))).toEqual({
 			claudeAiOauth: {
 				accessToken: "config-access",
-				refreshToken: "work-refresh",
+				refreshToken: "",
 				expiresAt: expect.any(Number),
 				scopes: expect.arrayContaining(["user:inference", "user:sessions:claude_code"]),
 			},
@@ -349,14 +329,15 @@ describe("Claude SDK OAuth auth lanes", () => {
 
 	for (const lane of ["oauth-slots", "config-dir", "ambient"] as const) {
 		it(`scrubs every SENPI_* variable on the ${lane} auth lane while preserving non-SENPI inheritance`, async () => {
-			const store =
-				lane === "ambient" ? new InMemoryCredentialStore() : await storeWith(slot("default", "slot-access"));
+			const store = new InMemoryCredentialStore();
 			const captured: Options[] = [];
-			const { CLAUDE_CODE_OAUTH_TOKEN: _oauthToken, ...ambientEnvironment } = managedEnvironment();
-			configureAuth(store, ambientEnvironment, undefined, lane === "ambient" ? undefined : lane);
+			const { CLAUDE_CODE_OAUTH_TOKEN: oauthToken, ...ambientEnvironment } = managedEnvironment();
+			const environment =
+				lane === "ambient" ? ambientEnvironment : { ...ambientEnvironment, CLAUDE_CODE_OAUTH_TOKEN: oauthToken };
+			configureAuth(store, environment, undefined, lane === "ambient" ? undefined : lane);
 			overrideSdkBoundary({ query: queryCapturing(captured) });
 
-			await streamAnthropicSubscription(model, context).result();
+			await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 			expect(captured).toHaveLength(1);
 			const env = captured[0]?.env ?? {};
@@ -369,44 +350,69 @@ describe("Claude SDK OAuth auth lanes", () => {
 		});
 	}
 
+	it("serves the stored account order ahead of HRW (senpi#3591)", async () => {
+		const accounts = [cliSlot("A"), cliSlot("B")];
+		const hrwLast = rendezvousOrder(DEFAULT_AFFINITY_KEY, accounts).at(-1)?.name;
+		const store = await storeWith(...accounts);
+		configureAuth(store, managedEnvironment(), undefined, "oauth-slots");
+		await store.modify(providerId, async (current) =>
+			current?.type === "oauth" && hrwLast !== undefined ? { ...current, order: [hrwLast] } : current,
+		);
+		const captured: Options[] = [];
+		overrideSdkBoundary({ query: queryCapturing(captured) });
+
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
+
+		expect(cliAccountOf(captured[0]?.env)).toBe(hrwLast);
+	});
+
+	// senpi#7197: another test can allocate generations before this one.
 	it("transfers resident-query ownership on failover and fences the discarded generation", async () => {
-		const store = await storeWith(slot("A", "access-a"), slot("B", "access-b"));
+		const store = await storeWith(cliSlot("A"), cliSlot("B"));
 		configureAuth(store, managedEnvironment(), undefined, "oauth-slots");
 		await store.modify(providerId, async (current) =>
 			current?.type === "oauth" ? { ...current, pinned: "A" } : current,
 		);
 		const queries: CloseTrackedQuery[] = [];
+		const sessionId = "resident-failover";
+		let discardedGeneration: number | undefined;
 		overrideSdkBoundary({
 			query: ({ prompt, options }) => {
-				const outcome = options?.env?.CLAUDE_CODE_OAUTH_TOKEN === "access-a" ? "failure" : "success";
+				const outcome = cliAccountOf(options?.env) === "A" ? "failure" : "success";
 				const query =
 					options?.extraArgs?.["replay-user-messages"] === "" && typeof prompt !== "string"
-						? new FailoverResidentQuery(prompt, outcome)
+						? new FailoverResidentQuery(prompt, outcome, () => {
+								if (outcome === "failure") discardedGeneration = getSession(sessionId)?.generation;
+							})
 						: finiteAttempt(outcome);
 				queries.push(query);
 				return query;
 			},
 		});
-		const sessionId = "resident-failover";
 		residentSessionIds.add(sessionId);
 
 		const result = await streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
-			{ sessionId, streamKind: "main" },
+			{ cwd: process.cwd(), sessionId, streamKind: "main" },
 		).result();
 
 		expect(result.content).toEqual([{ type: "text", text: "ok" }]);
 		expect(queries).toHaveLength(2);
 		expect(queries[0]?.closes).toBe(1);
 		expect(queries[1]?.closes).toBe(0);
-		expect(isCurrentGeneration(sessionId, 1)).toBe(false);
-		expect(getSession(sessionId)).toMatchObject({ generation: 2 });
-		expect(getSession(sessionId)?.accountName).not.toBe("A");
+		const replacement = getSession(sessionId);
+		assert.isDefined(discardedGeneration);
+		assert.isDefined(replacement);
+		expect(isCurrentGeneration(sessionId, discardedGeneration)).toBe(false);
+		expect(replacement.generation).toBeGreaterThan(discardedGeneration);
+		expect(isCurrentGeneration(sessionId, replacement.generation)).toBe(true);
+		expect(replacement.query).toBe(queries[1]);
+		expect(replacement.accountName).not.toBe("A");
 	});
 
 	it("discards a failed resident query without retrying after a visible delta", async () => {
-		const store = await storeWith(slot("A", "access-a"), slot("B", "access-b"));
+		const store = await storeWith(cliSlot("A"), cliSlot("B"));
 		configureAuth(store, managedEnvironment(), undefined, "oauth-slots");
 		await store.modify(providerId, async (current) =>
 			current?.type === "oauth" ? { ...current, pinned: "A" } : current,
@@ -428,7 +434,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		const result = await streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
-			{ sessionId, streamKind: "main" },
+			{ cwd: process.cwd(), sessionId, streamKind: "main" },
 		).result();
 
 		expect(result.stopReason).toBe("error");
@@ -438,27 +444,30 @@ describe("Claude SDK OAuth auth lanes", () => {
 		expect(getSession(sessionId)).toBeUndefined();
 	});
 
-	it("fails over from an invalid stale slot before the first delta without surfacing an OAuth error", async () => {
-		const store = await storeWith(
-			slot("A", "expired-access", Date.now() - 1),
-			slot("B", "valid-access", Date.now() + 60 * 60_000),
-		);
+	it("fails over from a rejected sign-in before the first delta without surfacing an OAuth error", async () => {
+		const store = await storeWith(cliSlot("A"), cliSlot("B"));
 		const captured: Options[] = [];
 		const { CLAUDE_CODE_OAUTH_TOKEN: _oauthToken, ...environment } = managedEnvironment();
 		configureAuth(store, environment, undefined, "oauth-slots");
 		await store.modify(providerId, async (current) =>
 			current?.type === "oauth" ? { ...current, pinned: "A" } : current,
 		);
-		overrideAuthLaneBoundary({ refresher: async () => Promise.reject(new Error("invalid refresh")) });
-		overrideSdkBoundary({ query: queryCapturing(captured) });
+		const served = queryCapturing(captured);
+		overrideSdkBoundary({
+			query: (input) => {
+				if (cliAccountOf(input.options?.env) === "A")
+					throw new Error("Failed to authenticate. API Error: 401 (authentication_failed)");
+				return served(input);
+			},
+		});
 		const accountEvents: Array<Record<string, unknown>> = [];
 		const unsubscribe = subscribeProviderAccountEvents((event) => accountEvents.push(event));
 
 		try {
-			const result = await streamAnthropicSubscription(model, context).result();
+			const result = await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 			expect(result.content).toEqual([{ type: "text", text: "ok" }]);
-			expect(captured.map((options) => options.env?.CLAUDE_CODE_OAUTH_TOKEN)).toEqual(["valid-access"]);
+			expect(captured.map((options) => cliAccountOf(options.env))).toEqual(["B"]);
 			const credential = (await store.read(providerId)) as AnthropicSubscriptionCredential;
 			expect(credential.accounts?.find((account) => account.name === "A")).toMatchObject({
 				blockReason: "auth_error",

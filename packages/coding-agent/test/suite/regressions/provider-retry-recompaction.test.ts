@@ -77,7 +77,7 @@ describe("provider retry recompaction", () => {
 				];
 			});
 			const queueAwareContinue = vi.spyOn(harness.agent, "continueWithQueuedMessages");
-			let queuedInput: Promise<void> | undefined;
+			let queuedInput: Promise<unknown> | undefined;
 			harness.session.subscribe((event) => {
 				if (queueState === "queued" && event.type === "auto_retry_start" && queuedInput === undefined) {
 					queuedInput = harness.session.steer("queued after timeout");

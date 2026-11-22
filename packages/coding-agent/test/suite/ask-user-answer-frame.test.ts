@@ -15,5 +15,7 @@ it.each<QuestionResponse["status"]>([
 	expect(parseAskUserAnswerFrame).toBe(parseChipFrame);
 	const requestId = "call-frame-1857";
 	const response: QuestionResponse = { status, answers: { q1: { selected: ["A"] } }, unanswered: [] };
-	expect(parseAskUserAnswerFrame(formatUserMessage(response, requestId))?.requestId).toBe(requestId);
+	const content = formatUserMessage(response, requestId);
+	const frame = typeof content === "string" ? content : (content[0]?.text ?? "");
+	expect(parseAskUserAnswerFrame(frame)?.requestId).toBe(requestId);
 });

@@ -25,6 +25,7 @@ export type FakeEditor = Text & {
 };
 
 export type FakeSession = {
+	admitHumanAnswer: Mock<() => void>;
 	isStreaming: boolean;
 	isCompacting: boolean;
 	messages: unknown[];
@@ -46,7 +47,7 @@ export type FakeInteractiveMode = {
 	};
 	/** Read through the prototype's `session` getter from `runtimeHost.session`. */
 	readonly session: FakeSession;
-	runtimeHost: { session: FakeSession; sendHostUiProgress?: Mock<(record: unknown) => void> };
+	runtimeHost: { session: FakeSession };
 	onInputCallback: Mock<(input: unknown) => void>;
 	handleDebugCommand: Mock<() => void>;
 	showStatus: Mock<(message: string) => void>;
@@ -75,6 +76,7 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 	let focused: unknown = editor;
 	editorContainer.addChild(editor);
 	const session: FakeSession = {
+		admitHumanAnswer: vi.fn(),
 		isStreaming: options.isStreaming ?? false,
 		isCompacting: false,
 		messages: [],
@@ -100,7 +102,6 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 		},
 		keybindings: new KeybindingsManager(),
 		getNormalTerminalTitle: () => "senpi",
-		questionArrivalEpochMs: Date.now(),
 		runtimeHost: { session },
 		onInputCallback: vi.fn(),
 		handleDebugCommand: vi.fn(),

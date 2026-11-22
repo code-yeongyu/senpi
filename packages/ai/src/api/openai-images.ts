@@ -1,16 +1,22 @@
 import OpenAI from "openai";
 import type { ImageEditParamsNonStreaming, ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	AssistantImages,
+	ImageApi,
 	ImageContent,
+	ImageModel,
 	ImagesContext,
 	ImagesFunction,
-	ImagesModel,
 	ProviderHeaders,
 	TextContent,
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import {
+	awaitProviderTransport,
+	openAICompatibleProviderDiagnosticFromError,
+} from "../utils/provider-diagnostic-sources.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { buildEditParams } from "./openai-images-edit.ts";
@@ -30,8 +36,8 @@ export {
 
 const ENDPOINT_SUFFIXES = ["/chat/completions", "/responses", "/models"] as const;
 
-export const generateImages: ImagesFunction<"openai-images", OpenAIImagesOptions> = async (
-	model: ImagesModel<"openai-images">,
+export const generateImages: ImagesFunction<OpenAIImagesOptions> = async (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: OpenAIImagesOptions,
 ) => {
@@ -73,11 +79,14 @@ export const generateImages: ImagesFunction<"openai-images", OpenAIImagesOptions
 			() => {
 				// openai SDK pinned at 6.26.0 predates gpt-image-2.5 quality tiers
 				const sdkParams = params as ImageGenerateParamsNonStreaming & ImageEditParamsNonStreaming;
-				return (
-					method === "edit"
-						? client.images.edit(sdkParams, requestOptions)
-						: client.images.generate(sdkParams, requestOptions)
-				).withResponse();
+				return awaitProviderTransport(
+					() =>
+						(method === "edit"
+							? client.images.edit(sdkParams, requestOptions)
+							: client.images.generate(sdkParams, requestOptions)
+						).withResponse(),
+					openAICompatibleProviderDiagnosticFromError,
+				);
 			},
 			{
 				maxRetries: options?.maxRetries,
@@ -106,6 +115,8 @@ export const generateImages: ImagesFunction<"openai-images", OpenAIImagesOptions
 	} catch (error) {
 		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 		output.errorMessage = formatProviderError(normalizeProviderError(error));
+		const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+		if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 		return output;
 	}
 };
@@ -141,7 +152,7 @@ interface RawImageUsage {
 }
 
 /** Image input tokens carry their own rate; without a breakdown every input token is text. */
-function parseUsage(rawUsage: RawImageUsage, model: ImagesModel<"openai-images">) {
+function parseUsage(rawUsage: RawImageUsage, model: ImageModel<ImageApi>) {
 	const input = rawUsage.input_tokens ?? 0;
 	const output = rawUsage.output_tokens ?? 0;
 	const imageTokens = rawUsage.input_tokens_details?.image_tokens ?? 0;

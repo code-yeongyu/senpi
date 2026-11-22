@@ -17,6 +17,6 @@ export function prepareAgentToolCallArguments(tool: AgentTool, toolCall: AgentTo
 	if (!tool.prepareArguments) return toolCall;
 	return {
 		...toolCall,
-		arguments: prepareToolArguments(tool.prepareArguments, toolCall.arguments) as Record<string, unknown>,
+		arguments: prepareToolArguments(tool.prepareArguments, toolCall.arguments) as AgentToolCall["arguments"],
 	};
 }

@@ -123,6 +123,7 @@ function modelCommand(models: ModelsService, ui: PresentationUI): SlashCommandCo
 		name: "model",
 		description: "Select model",
 		argumentHint: "<provider/model>",
+		requiresArguments: false,
 		getArgumentCompletions(prefix) {
 			const normalized = prefix.toLowerCase();
 			return (models.state.value?.catalog.availableModels ?? [])
@@ -173,6 +174,7 @@ function thinkingCommand(models: ModelsService, ui: PresentationUI): SlashComman
 		name: "thinking",
 		description: "Set thinking level",
 		argumentHint: "<level>",
+		requiresArguments: false,
 		async run(args, context) {
 			const levels = await models.getThinkingLevels(context);
 			let selected = levels.find((level) => level === args.toLowerCase());
@@ -206,6 +208,7 @@ function compactCommand(controller: AgentController, ui: PresentationUI): SlashC
 		name: "compact",
 		description: "Manually compact the session context",
 		argumentHint: "<instructions>",
+		requiresArguments: false,
 		run(args, context) {
 			ui.showStatus("Compacting…", context);
 			return controller.compact({ customInstructions: args.length === 0 ? null : args }, context);

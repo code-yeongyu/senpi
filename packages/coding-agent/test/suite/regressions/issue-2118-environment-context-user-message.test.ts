@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type Context, fauxAssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { type Context, fauxAssistantMessage, type Model, normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { convertMessages, getCompat } from "../../../../ai/src/api/openai-completions.ts";
 import { createEnvironmentContextMessage, formatEnvironmentContext } from "../../../src/core/environment-context.ts";
@@ -29,7 +29,11 @@ const CHAT_COMPLETIONS_MODEL: Model<"openai-completions"> = {
 
 function chatPayload(context: Context | undefined): Array<Record<string, unknown>> {
 	if (!context) throw new Error("no captured request");
-	const payload = convertMessages(CHAT_COMPLETIONS_MODEL, context, getCompat(CHAT_COMPLETIONS_MODEL));
+	const payload = convertMessages(
+		CHAT_COMPLETIONS_MODEL,
+		normalizeContext(context),
+		getCompat(CHAT_COMPLETIONS_MODEL),
+	);
 	return JSON.parse(JSON.stringify(payload)) as Array<Record<string, unknown>>;
 }
 

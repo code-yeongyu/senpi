@@ -1,7 +1,11 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { builtinProviders } from "./providers/all.js";
+import { redactOAuthUrl } from "./utils/oauth-url.js";
 const AUTH_FILE = "auth.json";
 const PROVIDERS = builtinProviders().filter((provider) => provider.auth.oauth !== undefined);
 function prompt(rl, question) {
@@ -19,6 +23,21 @@ function loadAuth() {
 }
 function saveAuth(auth) {
     writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), "utf-8");
+}
+function getOrCreateDeviceId() {
+    const directory = join(homedir(), ".senpi", "ai");
+    const path = join(directory, "device-id");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    if (!existsSync(path)) {
+        try {
+            writeFileSync(path, randomUUID(), { flag: "wx", mode: 0o600 });
+        }
+        catch (error) {
+            if (error.code !== "EEXIST")
+                throw error;
+        }
+    }
+    return readFileSync(path, "utf-8").trim();
 }
 async function answerPrompt(rl, authPrompt) {
     if (authPrompt.type === "select") {
@@ -46,7 +65,7 @@ async function login(providerId) {
             notify: (event) => {
                 switch (event.type) {
                     case "auth_url":
-                        console.log(`\nOpen this URL in your browser:\n${event.url}`);
+                        console.log(`\nOpen this URL in your browser:\n${redactOAuthUrl(event.url)}`);
                         if (event.instructions)
                             console.log(event.instructions);
                         break;
@@ -60,7 +79,7 @@ async function login(providerId) {
                         break;
                 }
             },
-        });
+        }, { getDeviceId: getOrCreateDeviceId });
         const auth = loadAuth();
         auth[providerId] = credential;
         saveAuth(auth);

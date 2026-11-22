@@ -31,10 +31,26 @@ describe("endpoint.json writes", () => {
 		await ensureEndpointIdentity(paths, qa.shard, { repair: true });
 		expect(JSON.parse(await readFile(paths.endpointFile, "utf8"))).toEqual({
 			layout: 2,
+			registry_version: 1,
+			endpoint_kind: "rpc_host",
 			socket: qa.shard,
 			created_at: expect.any(String),
 		});
 		expect((await readdir(paths.dir)).filter((name) => name.startsWith("endpoint.json"))).toEqual(["endpoint.json"]);
+	});
+
+	it("keeps the first writer's kind: a later ensure, repairing or not, never turns a tui record into a host's", async () => {
+		const qa = endpointScratch("eidk");
+		const socket = join(qa.root, "rpc", "tui", "t-kind.sock");
+		const paths = createHostDaemonPaths({ socket, agentDir: qa.agentDir });
+		await ensureEndpointIdentity(paths, socket, { kind: "tui" });
+		const first = await readFile(paths.endpointFile, "utf8");
+
+		await ensureEndpointIdentity(paths, socket);
+		await ensureEndpointIdentity(paths, socket, { repair: true });
+
+		expect(await readFile(paths.endpointFile, "utf8")).toBe(first);
+		expect(JSON.parse(first)).toMatchObject({ endpoint_kind: "tui", registry_version: 1 });
 	});
 });
 

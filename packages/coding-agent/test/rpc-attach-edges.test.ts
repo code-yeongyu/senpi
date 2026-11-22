@@ -12,6 +12,7 @@ import type { RpcResponse } from "../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 
 const directories: string[] = [];
 
@@ -19,12 +20,13 @@ afterEach(async () => {
 	await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): CreateAgentSessionRuntimeResult {
-	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+async function runtime(
+	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
+): Promise<CreateAgentSessionRuntimeResult> {
+	await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
-			sessionManager: options.sessionManager,
-			agentDir: options.agentDir,
+			...fakeSessionBase(options),
 			isFastModeActive: () => false,
 			agent: { state: {} },
 			isStreaming: false,
@@ -33,7 +35,7 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 			favoriteModels: [],
 			scopedModels: [],
 			isBashRunning: false,
-			extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+			extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 			abort: async () => {},
 			waitForIdle: async () => {},
 			dispose: () => {},
@@ -131,19 +133,26 @@ describe("RPC attachment edge regressions", () => {
 	});
 
 	test("disconnect waits for an in-flight open before releasing its reservation", async () => {
+		const enteredRuntime = Promise.withResolvers<void>();
+		const deadline = AbortSignal.timeout(10_000);
+		deadline.addEventListener("abort", () => enteredRuntime.reject(deadline.reason), { once: true });
 		let releaseRuntime!: () => void;
 		const runtimeReady = new Promise<void>((resolve) => {
 			releaseRuntime = resolve;
 		});
 		const { dir, registry, writer, router } = await setup(async (options) => {
+			enteredRuntime.resolve();
 			await runtimeReady;
 			return runtime(options);
 		});
 		const opening = writer.withConnection("connection", () => router.handle(open(dir, join(dir, "race.jsonl"))));
 		const released = router.releaseConnection("connection");
-		await Promise.resolve();
-		expect(registry.list()[0]?.status).toBe("opening");
-		releaseRuntime();
+		try {
+			await enteredRuntime.promise;
+			expect(registry.list()[0]?.status).toBe("opening");
+		} finally {
+			releaseRuntime();
+		}
 		await Promise.all([opening, released]);
 		expect(registry.list()).toEqual([]);
 	});

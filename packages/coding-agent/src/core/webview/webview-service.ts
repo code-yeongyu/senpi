@@ -3,6 +3,28 @@ import { MessageChannel, type MessagePort } from "node:worker_threads";
 import { retireBunChrome, settleDeadBunChrome } from "./bun-chrome.ts";
 import { mainThreadWebViewClass, type NativeWebView, type NativeWebViewClass } from "./native-webview.ts";
 import { closeQuietly, WebViewServiceClient } from "./webview-client.ts";
+import {
+	type AttachDeadline,
+	attachedWithin,
+	DEFAULT_READINESS,
+	type ReadinessEvent,
+	readinessLogFromEnvironment,
+	retireFailureLogFromEnvironment,
+	timedDeadline,
+	WebViewNotReadyError,
+	type WebViewReadinessPolicy,
+} from "./webview-readiness.ts";
+
+export interface WebViewServiceOptions {
+	readonly readiness?: Partial<WebViewReadinessPolicy>;
+	readonly onReadiness?: (event: ReadinessEvent) => void;
+	/** The readiness bound of each launch; defaults to `attachBoundMs`. Tests signal it instead of waiting. */
+	readonly attachDeadline?: (launch: number) => AttachDeadline;
+	/** Ends the Chrome no view uses; defaults to `retireBunChrome`. Tests substitute it to fail a retirement. */
+	readonly retireChrome?: (webViewClass: NativeWebViewClass) => Promise<void>;
+	/** Told when a retirement failed; without it (or when it throws) the failure becomes a process warning. */
+	readonly onRetireFailure?: (message: string) => void;
+}
 
 export interface WebViewClientGrant {
 	readonly clientId: string;
@@ -16,14 +38,27 @@ export interface WebViewClientGrant {
  */
 export class WebViewService {
 	readonly #webViewClass: NativeWebViewClass;
+	readonly #readiness: WebViewReadinessPolicy;
+	readonly #onReadiness: (event: ReadinessEvent) => void;
+	readonly #attachDeadline: (launch: number) => AttachDeadline;
+	readonly #retireChrome: (webViewClass: NativeWebViewClass) => Promise<void>;
+	readonly #onRetireFailure: ((message: string) => void) | undefined;
 	readonly #clients = new Map<string, WebViewServiceClient>();
+	// senpi#5936: one drop per client, so a release after the port-close drop awaits that same drop.
+	readonly #drops = new WeakMap<WebViewServiceClient, Promise<void>>();
 	#retiring: Promise<void> = Promise.resolve();
 	#chromeInUse = false;
 	// Views being constructed and not yet adopted by their client: Chrome must outlive them.
 	#launching = 0;
 
-	constructor(webViewClass: NativeWebViewClass) {
+	constructor(webViewClass: NativeWebViewClass, options: WebViewServiceOptions = {}) {
 		this.#webViewClass = webViewClass;
+		this.#readiness = { ...DEFAULT_READINESS, ...options.readiness };
+		this.#onReadiness = options.onReadiness ?? (() => {});
+		const boundMs = this.#readiness.attachBoundMs;
+		this.#attachDeadline = options.attachDeadline ?? (() => timedDeadline(boundMs));
+		this.#retireChrome = options.retireChrome ?? retireBunChrome;
+		this.#onRetireFailure = options.onRetireFailure;
 	}
 
 	get viewCount(): number {
@@ -36,8 +71,9 @@ export class WebViewService {
 		const clientId = randomUUID();
 		const channel = new MessageChannel();
 		const client = new WebViewServiceClient(clientId, owner, channel.port1, {
-			createView: (options, onConsole, adopt) => this.#createView(options, onConsole, adopt),
-			onClientClosed: (closed) => void this.#drop(closed),
+			createView: (options, onConsole, adopt, wanted) => this.#createView(options, onConsole, adopt, wanted),
+			// A failed retirement was already reported by the chain; this path has no caller to hand it to.
+			onClientClosed: (closed) => void this.#drop(closed).catch(() => {}),
 		});
 		this.#clients.set(clientId, client);
 		return { clientId, port: channel.port2 };
@@ -61,29 +97,62 @@ export class WebViewService {
 	}
 
 	/**
-	 * Launches a view and hands it to `adopt` in the same turn, so no retirement can slip between the
-	 * launch and the client's bookkeeping. A launch that fails, or whose client was released while it
-	 * was in flight, retires the Chrome it started unless another view still needs it.
+	 * Launches a view, waits until it is ready, and hands it to `adopt` in the same turn, so no
+	 * retirement can slip between the launch and the client's bookkeeping. A launch that fails, never
+	 * becomes ready, or whose client was released while it was in flight, retires the Chrome it started
+	 * unless another view still needs it; a launch that never became ready is retried once on a fresh
+	 * Chrome before the create fails naming the phase it stalled in.
 	 */
 	async #createView(
 		options: Readonly<Record<string, unknown>>,
 		onConsole: ((...args: unknown[]) => void) | undefined,
 		adopt: (view: NativeWebView) => boolean,
+		wanted: () => boolean,
 	): Promise<NativeWebView> {
-		this.#launching++;
-		let view: NativeWebView;
-		try {
-			view = await this.#launch(onConsole ? { ...options, console: onConsole } : options);
-		} catch (error) {
+		const viewOptions = onConsole ? { ...options, console: onConsole } : options;
+		for (let launch = 1; ; launch++) {
+			this.#launching++;
+			let view: NativeWebView | undefined;
+			try {
+				view = await this.#launchReady(viewOptions, launch);
+			} catch (error) {
+				this.#launching--;
+				await this.#retireIfIdle();
+				throw error;
+			}
 			this.#launching--;
+			if (view) {
+				if (adopt(view)) return view;
+				closeQuietly(view);
+				await this.#retireIfIdle();
+				throw new Error("WebView client released");
+			}
 			await this.#retireIfIdle();
+			if (!wanted()) throw new Error("WebView client released");
+			if (launch >= this.#readiness.launchAttempts) throw new WebViewNotReadyError(launch, this.#readiness);
+		}
+	}
+
+	/** A launched view whose readiness navigation settled, or undefined (the view closed) when it stalled. */
+	async #launchReady(
+		viewOptions: Readonly<Record<string, unknown>>,
+		launch: number,
+	): Promise<NativeWebView | undefined> {
+		const view = await this.#launch(viewOptions);
+		let attachMs: number | undefined;
+		try {
+			attachMs = await attachedWithin(view, this.#attachDeadline(launch));
+		} catch (error) {
+			closeQuietly(view);
 			throw error;
 		}
-		this.#launching--;
-		if (adopt(view)) return view;
+		if (attachMs !== undefined) {
+			this.#onReadiness({ type: "ready", launch, attachMs });
+			return view;
+		}
 		closeQuietly(view);
-		await this.#retireIfIdle();
-		throw new Error("WebView client released");
+		this.#onReadiness({ type: "stalled", phase: "cdp-target-attach", launch });
+		return undefined;
 	}
 
 	async #launch(viewOptions: Readonly<Record<string, unknown>>): Promise<NativeWebView> {
@@ -101,20 +170,48 @@ export class WebViewService {
 		}
 	}
 
-	async #drop(client: WebViewServiceClient): Promise<void> {
-		if (this.#clients.get(client.id) !== client) return await this.#retiring;
-		this.#clients.delete(client.id);
+	#drop(client: WebViewServiceClient): Promise<void> {
+		let dropped = this.#drops.get(client);
+		if (!dropped) {
+			dropped = this.#retireClient(client);
+			this.#drops.set(client, dropped);
+		}
+		return dropped;
+	}
+
+	/** The client stays findable until its launches settled and its Chrome retired, so its owner can await that. */
+	async #retireClient(client: WebViewServiceClient): Promise<void> {
 		client.release();
-		await client.settled();
-		await this.#retireIfIdle();
+		try {
+			await client.settled();
+			await this.#retireIfIdle();
+		} finally {
+			this.#clients.delete(client.id);
+		}
 	}
 
 	/** Retires Chrome once no view uses it and no launch is pending; resolves when retirement ends. */
 	#retireIfIdle(): Promise<void> {
 		if (!this.#chromeInUse || this.#busy()) return this.#retiring;
 		this.#chromeInUse = false;
-		this.#retiring = this.#retiring.then(() => (this.#busy() ? undefined : retireBunChrome(this.#webViewClass)));
-		return this.#retiring;
+		const retirement = this.#retiring.then(() => (this.#busy() ? undefined : this.#retireChrome(this.#webViewClass)));
+		// senpi#2993: the chain every later launch and retirement awaits must not keep a failure, or one
+		// failed retirement would fail every launch after it. The caller of this one still gets the error.
+		this.#retiring = retirement.catch((error: unknown) => this.#reportRetireFailure(error));
+		return retirement;
+	}
+
+	#reportRetireFailure(error: unknown): void {
+		const message = error instanceof Error ? error.message : String(error);
+		try {
+			if (this.#onRetireFailure) {
+				this.#onRetireFailure(message);
+				return;
+			}
+		} catch {
+			// The diagnostics log can be the thing that failed; fall through to the process warning.
+		}
+		process.emitWarning(`WebView Chrome retirement failed: ${message}`, { code: "SENPI_WEBVIEW_RETIRE_FAILED" });
 	}
 
 	#busy(): boolean {
@@ -144,7 +241,12 @@ export function mainThreadWebViewService(): WebViewService | undefined {
 	if (isWebViewService(existing)) return existing;
 	const webViewClass = mainThreadWebViewClass();
 	if (!webViewClass) return undefined;
-	const service = new WebViewService(webViewClass);
+	const onReadiness = readinessLogFromEnvironment();
+	const onRetireFailure = retireFailureLogFromEnvironment();
+	const service = new WebViewService(webViewClass, {
+		...(onReadiness ? { onReadiness } : {}),
+		...(onRetireFailure ? { onRetireFailure } : {}),
+	});
 	Reflect.set(globalThis, SERVICE_KEY, service);
 	return service;
 }

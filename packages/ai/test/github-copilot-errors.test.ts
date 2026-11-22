@@ -6,6 +6,8 @@ import { getModel } from "../src/compat.ts";
 import type { AssistantMessage, AssistantMessageEventStream, Context } from "../src/types.ts";
 import { classifyErrorMessage } from "../src/utils/retry.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const context: Context = { messages: [{ role: "user", content: "Reply with OK.", timestamp: 0 }] };
 const REQUEST_ID = "C6FD:A429:AEB5500:CC3FDF2:6ABA4D81";
 
@@ -24,7 +26,7 @@ async function failure(events: AssistantMessageEventStream): Promise<AssistantMe
 describe("GitHub Copilot failures are explained, not bare statuses (#2297)", () => {
 	it("names an empty-body 403 on the Responses API and records its status", async () => {
 		const error = await failure(
-			streamResponses(getModel("github-copilot", "gpt-5.6-sol"), context, {
+			streamResponses(getModel("github-copilot", "gpt-5.6-sol"), normalizeContext(context), {
 				apiKey: "tid=test",
 				fetch: replying(() => new Response("", { status: 403, headers: { "x-github-request-id": REQUEST_ID } })),
 			}),
@@ -37,7 +39,7 @@ describe("GitHub Copilot failures are explained, not bare statuses (#2297)", () 
 
 	it("names a 403 on the Anthropic Messages API", async () => {
 		const error = await failure(
-			streamAnthropic(getModel("github-copilot", "claude-opus-5"), context, {
+			streamAnthropic(getModel("github-copilot", "claude-opus-5"), normalizeContext(context), {
 				apiKey: "tid=test",
 				fetch: replying(() => new Response("", { status: 403, headers: { "x-github-request-id": REQUEST_ID } })),
 			}),
@@ -50,7 +52,7 @@ describe("GitHub Copilot failures are explained, not bare statuses (#2297)", () 
 
 	it("calls a 402 and a 429 quota_exceeded a quota, not an access problem", async () => {
 		const paymentRequired = await failure(
-			streamCompletions(getModel("github-copilot", "kimi-k3"), context, {
+			streamCompletions(getModel("github-copilot", "kimi-k3"), normalizeContext(context), {
 				apiKey: "tid=test",
 				fetch: replying(() =>
 					Response.json(
@@ -61,7 +63,7 @@ describe("GitHub Copilot failures are explained, not bare statuses (#2297)", () 
 			}),
 		);
 		const tooMany = await failure(
-			streamCompletions(getModel("github-copilot", "kimi-k3"), context, {
+			streamCompletions(getModel("github-copilot", "kimi-k3"), normalizeContext(context), {
 				apiKey: "tid=test",
 				fetch: replying(
 					() =>

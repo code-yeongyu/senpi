@@ -17,9 +17,12 @@ import {
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import { selectProviderDefault } from "./provider-default-selection.ts";
+import { ultrafastSelectionWarning } from "./ultrafast-lanes.ts";
 
 /**
  * Scope resolution only ever reads the available-model list, so a caller that
@@ -38,27 +41,28 @@ type ModelScopeSource = ModelRuntime | ModelRegistry | AvailableModelsSource;
 /** Default model IDs for each known provider */
 export const defaultModelPerProvider: Record<string, string> = {
 	"alibaba-token-plan": "qwen3.7-max",
-	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
+	"amazon-bedrock": "us.anthropic.claude-opus-5-5",
 	"ant-ling": "Ring-2.6-1T",
-	anthropic: "claude-opus-4-8",
+	"anthropic-subscription": "claude-opus-5-5",
+	anthropic: "claude-opus-5-5",
 	bai: "gpt-5.6-sol",
-	openai: "gpt-6-sol",
+	openai: "gpt-6.2-sol",
 	"azure-openai-responses": "gpt-5.4",
-	"chatgpt-subscription": "gpt-6-sol",
+	"chatgpt-subscription": "gpt-6.2-sol",
 	ollama: "qwen3.5:397b",
 	// Cursor ships no models until its chat protocol is ported; "auto" matches
 	// the Cursor agent's native model auto-selection once models exist.
 	cursor: "auto",
 	// Radius resolves its catalog after discovery; "balanced" is the selectable default.
 	radius: "balanced",
-	nvidia: "nvidia/nemotron-3-super-120b-a12b",
+	nvidia: "nvidia/nemotron-3-ultra-550b-a55b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
 	"google-vertex": "gemini-3.1-pro-preview",
 	"github-copilot": "gpt-5.4",
 	openrouter: "moonshotai/kimi-k2.6",
 	"vercel-ai-gateway": "zai/glm-5.1",
-	opengateway: "moonshotai/kimi-k3",
+	opengateway: "moonshotai/kimi-k3.1-pro",
 	xai: "grok-4.7",
 	groq: "openai/gpt-oss-120b",
 	cerebras: "gpt-oss-120b",
@@ -67,25 +71,26 @@ export const defaultModelPerProvider: Record<string, string> = {
 	mistral: "devstral-medium-latest",
 	minimax: "MiniMax-M2.7",
 	"minimax-cn": "MiniMax-M2.7",
-	moonshotai: "kimi-k2.6",
-	"moonshotai-cn": "kimi-k2.6",
+	moonshotai: "kimi-k3.1-pro",
+	"moonshotai-cn": "kimi-k3.1-pro",
 	huggingface: "moonshotai/Kimi-K2.6",
 	fireworks: "accounts/fireworks/models/kimi-k3",
-	together: "moonshotai/Kimi-K2.6",
+	together: "moonshotai/Kimi-K3",
 	venice: "z-ai-glm-5-3",
 	baseten: "zai-org/GLM-5.2",
 	opencode: "kimi-k2.6",
-	"opencode-go": "kimi-k3",
+	"opencode-go": "kimi-k3.1-pro",
 	"kimi-coding": "kimi-for-coding",
+	meta: "muse-spark-1.3",
 	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
 	"cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.6",
 	"qwen-token-plan": "qwen3.7-max",
 	"qwen-token-plan-cn": "qwen3.7-max",
 	"qwen-token-plan-individual": "qwen3.8-max",
-	xiaomi: "mimo-v2.5-pro",
-	"xiaomi-token-plan-cn": "mimo-v2.5-pro",
-	"xiaomi-token-plan-ams": "mimo-v2.5-pro",
-	"xiaomi-token-plan-sgp": "mimo-v2.5-pro",
+	xiaomi: "mimo-v2.6-pro",
+	"xiaomi-token-plan-cn": "mimo-v2.6-pro",
+	"xiaomi-token-plan-ams": "mimo-v2.6-pro",
+	"xiaomi-token-plan-sgp": "mimo-v2.6-pro",
 };
 
 export interface ScopedModel {
@@ -324,6 +329,27 @@ export function resolveStoredModelReference(
 	return direct ? { model: direct } : undefined;
 }
 
+type StoredModelAuthSource = Pick<ModelRuntime, "getModel" | "hasConfiguredAuth">;
+
+/**
+ * A saved selection, preferring a lane that can authenticate it. A Claude subscription moved from
+ * the direct `anthropic` provider to the Agent SDK lane (senpi#3259), so a saved `anthropic/<id>`
+ * follows it to `anthropic-subscription/<id>` when only that lane holds auth.
+ */
+function resolveStoredModelWithAuth(
+	provider: string,
+	modelId: string,
+	modelRuntime: StoredModelAuthSource,
+): ResolvedModelReference | undefined {
+	const resolved = resolveStoredModelReference(provider, modelId, modelRuntime);
+	if (resolved && modelRuntime.hasConfiguredAuth(resolved.model.provider)) return resolved;
+	if (provider === "anthropic") {
+		const lane = resolveStoredModelReference(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, modelId, modelRuntime);
+		if (lane && modelRuntime.hasConfiguredAuth(lane.model.provider)) return lane;
+	}
+	return resolved;
+}
+
 function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Model<Api> | undefined {
 	const exactMatch = findExactModelReferenceMatch(modelPattern, availableModels);
 	if (exactMatch) {
@@ -380,10 +406,26 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 	};
 }
 
-const SERVICE_TIER_VALUES: readonly ServiceTier[] = ["auto", "flex", "priority"];
+const SERVICE_TIER_VALUES: readonly ServiceTier[] = ["auto", "flex", "priority", "ultrafast"];
 
 function isServiceTier(value: string): value is ServiceTier {
 	return (SERVICE_TIER_VALUES as readonly string[]).includes(value);
+}
+
+/** Invalid-decorator warnings discard the decorators parsed with them. An Ultrafast advisory does not. */
+function dropsParsedDecorators(warning: string | undefined): boolean {
+	return warning?.startsWith("Invalid thinking level") ?? false;
+}
+
+function pushUltrafastAdvisory(
+	diagnostics: ModelScopeDiagnostic[],
+	pattern: string,
+	model: { provider: string; id: string },
+	serviceTier: ServiceTier | undefined,
+): void {
+	const message = ultrafastSelectionWarning(model, serviceTier);
+	if (!message) return;
+	diagnostics.push({ type: "warning", code: "ultrafast-undocumented", message, pattern });
 }
 
 /**
@@ -438,7 +480,7 @@ export function parseModelPattern(
 	if (isValidThinkingLevel(suffix)) {
 		const result = parseModelPattern(prefix, availableModels, options);
 		if (result.model) {
-			const thinkingLevel = result.warning ? undefined : (result.thinkingLevel ?? suffix);
+			const thinkingLevel = dropsParsedDecorators(result.warning) ? undefined : (result.thinkingLevel ?? suffix);
 			return {
 				model: result.model,
 				thinkingLevel,
@@ -451,12 +493,13 @@ export function parseModelPattern(
 	} else if (isServiceTier(suffix)) {
 		const result = parseModelPattern(prefix, availableModels, options);
 		if (result.model) {
+			const serviceTier = dropsParsedDecorators(result.warning) ? undefined : (result.serviceTier ?? suffix);
 			return {
 				model: result.model,
 				thinkingLevel: result.thinkingLevel,
 				thinkingSelection: result.thinkingSelection,
-				serviceTier: result.warning ? undefined : (result.serviceTier ?? suffix),
-				warning: result.warning,
+				serviceTier,
+				warning: result.warning ?? ultrafastSelectionWarning(result.model, serviceTier),
 			};
 		}
 		return result;
@@ -493,7 +536,7 @@ export function parseModelPattern(
  */
 export interface ModelScopeDiagnostic {
 	type: "warning";
-	code: "no-match" | "invalid-thinking-level";
+	code: "no-match" | "invalid-thinking-level" | "ultrafast-undocumented";
 	message: string;
 	pattern: string;
 }
@@ -561,6 +604,7 @@ export function resolveModelScopeFromModels(
 			if (exactMatch) {
 				const thinkingSelection = thinkingLevel ? { level: thinkingLevel, source: "explicit" as const } : undefined;
 				const owned = addScoped({ model: exactMatch, thinkingLevel, thinkingSelection, serviceTier });
+				pushUltrafastAdvisory(diagnostics, pattern, exactMatch, serviceTier);
 				patternResolutions.push({
 					pattern,
 					ownedIds: owned ? [owned] : [],
@@ -628,6 +672,7 @@ export function resolveModelScopeFromModels(
 					}
 				}
 				const owned = addScoped({ model, thinkingLevel: projectedLevel, thinkingSelection, serviceTier });
+				pushUltrafastAdvisory(diagnostics, pattern, model, serviceTier);
 				if (owned) ownedIds.push(owned);
 			}
 			patternResolutions.push({
@@ -645,7 +690,17 @@ export function resolveModelScopeFromModels(
 			pattern,
 			availableModels,
 		);
-		if (warning) diagnostics.push({ type: "warning", code: "invalid-thinking-level", message: warning, pattern });
+		if (warning) {
+			diagnostics.push({
+				type: "warning",
+				code:
+					model && warning === ultrafastSelectionWarning(model, serviceTier)
+						? "ultrafast-undocumented"
+						: "invalid-thinking-level",
+				message: warning,
+				pattern,
+			});
+		}
 		if (!model) {
 			diagnostics.push({
 				type: "warning",
@@ -1002,7 +1057,7 @@ export async function findInitialModel(options: {
 
 	// 3. Try saved default from settings if auth is configured.
 	if (defaultProvider && defaultModelId) {
-		const resolved = resolveStoredModelReference(defaultProvider, defaultModelId, modelRuntime);
+		const resolved = resolveStoredModelWithAuth(defaultProvider, defaultModelId, modelRuntime);
 		if (resolved && modelRuntime.hasConfiguredAuth(resolved.model.provider)) {
 			model = resolved.model;
 			return {
@@ -1023,27 +1078,13 @@ export async function findInitialModel(options: {
 			: await modelRuntime.getAvailable()),
 	];
 
-	if (availableModels.length > 0) {
-		// Try to find a default model from known providers
-		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			const defaultId = defaultModelPerProvider[provider];
-			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
-			if (match) {
-				return {
-					model: match,
-					thinkingLevel: undefined,
-					fallbackMessage: undefined,
-					provenance: "provider-default",
-				};
-			}
-		}
-
-		// If no default found, use first available
+	const selected = selectProviderDefault(availableModels, defaultModelPerProvider, modelRuntime);
+	if (selected) {
 		return {
-			model: availableModels[0],
+			model: selected.model,
 			thinkingLevel: undefined,
 			fallbackMessage: undefined,
-			provenance: "first-available",
+			provenance: selected.provenance,
 		};
 	}
 
@@ -1070,21 +1111,18 @@ export async function restoreModelFromSession(
 	thinkingSelection?: ThinkingSelection;
 	fallbackMessage: string | undefined;
 }> {
-	const restored = resolveStoredModelReference(savedProvider, savedModelId, modelRuntime);
+	const restored = resolveStoredModelWithAuth(savedProvider, savedModelId, modelRuntime);
 	const restoredModel = restored?.model;
 
-	// Check if restored model exists and still has auth configured
-	const hasConfiguredAuth = restoredModel ? modelRuntime.hasConfiguredAuth(restoredModel.provider) : false;
-
-	if (restoredModel && hasConfiguredAuth) {
+	// A signed-out provider keeps its model; the first prompt asks for a login (senpi#4410).
+	if (restoredModel) {
 		if (shouldPrintMessages) {
-			console.log(chalk.dim(`Restored model: ${savedProvider}/${savedModelId}`));
+			console.log(chalk.dim(`Restored model: ${restoredModel.provider}/${restoredModel.id}`));
 		}
 		return { model: restoredModel, thinkingSelection: restored.thinkingSelection, fallbackMessage: undefined };
 	}
 
-	// Model not found or no API key - fall back
-	const reason = !restoredModel ? "model no longer exists" : "no auth configured";
+	const reason = "model no longer exists";
 
 	if (shouldPrintMessages) {
 		console.error(chalk.yellow(`Warning: Could not restore model ${savedProvider}/${savedModelId} (${reason}).`));
@@ -1108,23 +1146,8 @@ export async function restoreModelFromSession(
 			: await modelRuntime.getAvailable()),
 	];
 
-	if (availableModels.length > 0) {
-		// Try to find a default model from known providers
-		let fallbackModel: Model<Api> | undefined;
-		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			const defaultId = defaultModelPerProvider[provider];
-			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
-			if (match) {
-				fallbackModel = match;
-				break;
-			}
-		}
-
-		// If no default found, use first available
-		if (!fallbackModel) {
-			fallbackModel = availableModels[0];
-		}
-
+	const fallbackModel = selectProviderDefault(availableModels, defaultModelPerProvider, modelRuntime)?.model;
+	if (fallbackModel) {
 		if (shouldPrintMessages) {
 			console.log(chalk.dim(`Falling back to: ${fallbackModel.provider}/${fallbackModel.id}`));
 		}

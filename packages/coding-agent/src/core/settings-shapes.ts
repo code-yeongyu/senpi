@@ -10,12 +10,19 @@ export interface PromptCacheSettings {
 	safetyBufferSeconds?: number; // default: 30 (headroom subtracted from the cache TTL)
 	goalBackstopMaxSeconds?: number; // default: 270 (Goal monitor re-check backstop while wake sources are live; 5m TTL - 30s buffer)
 	keepAlive?: PromptCacheKeepAliveSettings;
+	sessionAffinity?: boolean; // default: true (send a hashed per-session key on Anthropic Messages requests so a multi-account gateway keeps a session on one account)
+}
+
+export interface HandoffHintSettings {
+	enabled?: boolean; // default: true (offer "start fresh with a handoff" when a large session's cache has expired)
+	minContextTokens?: number; // default: 200000 (no hint below this context size)
+	minSavingUsd?: number; // default: 1 (no hint unless a fresh session saves at least this much on the next reply)
 }
 
 export type TodoFirstTurnPlan = "force" | "remind" | "off";
 
 export interface TodoSettings {
-	firstTurnPlan?: TodoFirstTurnPlan; // default: "force" (first prompt of a session gets a hidden plan reminder; "force" also names the todo tool in tool_choice where the provider allows it)
+	firstTurnPlan?: TodoFirstTurnPlan; // default: "force", or "off" under a GPT prompt preset or deepseek-v4-1-flash (first prompt of a session gets a hidden plan reminder; "force" also names the todo tool in tool_choice where the provider allows it)
 	turnEndBackstop?: boolean; // default: true (a main-session turn that ends text-only with open todo tasks and no active goal gets a hidden nudge, at most two per chain)
 }
 
@@ -23,6 +30,14 @@ export interface ImageSettings {
 	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
 	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
 	maxHistoricalImages?: number; // default: undefined (preserve existing transport behavior)
+}
+
+export const JOB_WIDGETS_DEFAULT_AUTHOR_AFTER_MS = 15_000;
+
+export interface JobWidgetsSettings {
+	enabled?: boolean; // default: true (live widgets for long background jobs)
+	model?: string; // default: undefined (host-injected model, else the session's model); `provider/model-id`
+	authorAfterMs?: number; // default: 15000 (job age before its widget is written)
 }
 
 export interface LookAtSettings {
@@ -55,9 +70,14 @@ export interface MarkdownSettings {
 }
 
 export interface OpenAISettings {
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 }
 
 export interface ProviderConcurrencySettings {
 	maxConcurrency?: number; // default: unlimited; 0 disables the cap
+}
+
+export interface TurnDeadlineSettings {
+	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; renewed only by tool execution events and admitted user input
+	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables; hard cap from prompt accept
 }

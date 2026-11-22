@@ -1,5 +1,95 @@
 # changes
 
+## 2026-11-21 - Run server tests with native Bun (senpi#4763)
+
+### What changed
+
+- `packages/server/package.json`: select native `bun test --isolate` through the existing temp-owning test launcher.
+
+### Why
+
+- Both runners execute the same 44 cases. The conformance tests retain their bounded assertions without relying on Vitest-only polling or unobserved promise rejections.
+
+### Why an extension could not handle it
+
+- The package manifest selects the runner before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/server/package.json`: preserve the native runner, isolation, and temp-owning launcher.
+
+## 2026-11-11 - Test alias for the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/server/vitest.config.ts`: aliases `@earendil-works/pi-realm-registry` to its source.
+
+### Why
+
+- pi-ai imports the helper, and this package's tests load pi-ai from source.
+
+### Why an extension could not handle it
+
+- Test configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the alias list.
+
+## 2026-10-29 - Run certified Vitest suites on Bun (senpi#4763)
+
+### What changed
+
+- `packages/server/package.json`: launch the existing temp-owning Vitest runner with `bun --bun` instead of Node.
+
+### Why
+
+- The full Node and Vitest-on-Bun controls match at 6 files and 44 passing tests. Bun avoids Node test workers.
+
+### Why an extension could not handle it
+
+- Package test scripts select the runtime before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/server/package.json`: preserve the Bun launcher and forwarded Vitest arguments.
+
+## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
+
+### What changed
+
+- `packages/server/package.json`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+
+### Why
+
+- Vitest SSR copies and interrupted fixture writes must not accumulate in the OS temp directory.
+
+### Why an extension could not handle it
+
+- Test-process bootstrap is repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): chord, client, protocol, server, telemetry, sqlite-node
+
+### What changed
+
+- `packages/server/package.json`: resolved by L11 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; chord/client/protocol/server/telemetry/sqlite-node take upstream versions with fork exact pins (plan D-12).
+
+### Why an extension could not handle it
+
+Package manifests and wire-protocol packages are shared infrastructure below the extension layer.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-21 - Migrate the test runner to Vitest 5 (senpi#1895)
 
 ### What changed
@@ -192,3 +282,23 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - LOW: `socket.on("data", ...)` handlers in both source files; `packages/server/package.json` name/version/dependency lines.
+
+## 2026-10-02 - Server drops its agent-core dependency (D-16) (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/server/package.json`
+
+The server package's dependency set follows upstream: `pi-agent-core` is removed and `BACKGROUND_CONTEXT` imports from `@earendil-works/chord/context`.
+
+### Why
+
+Upstream simplified the server's dependencies; the fork modifies nothing here.
+
+### Why an extension could not handle it
+
+Package dependency declarations are not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream server manifest edits at the next sync.

@@ -6,6 +6,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Provider } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { z } from "zod";
 import { parseArgs } from "../../src/cli/args.ts";
@@ -23,6 +24,24 @@ import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
  */
 export const PROBE_EXTENSION = `export default function (pi) {
 	pi.rpc.handle("probe.identity", () => ({ kind: pi.sessionKind, context: pi.sessionContext }));
+}`;
+
+/**
+ * A skill-facing state publisher: a tool the eval cell reaches as `tool.browser_state_probe(...)`
+ * that republishes its arguments as this session's own extension event.
+ */
+export const BROWSER_STATE_EXTENSION = `import { Type } from "typebox";
+export default function (pi) {
+	pi.registerTool({
+		name: "browser_state_probe",
+		label: "browser_state_probe",
+		description: "Publishes the browser state of this session.",
+		parameters: Type.Object({ state: Type.String() }),
+		async execute(_id, params) {
+			pi.rpc.emit("omo.browser.state", { state: params.state });
+			return { content: [{ type: "text", text: "published" }], details: undefined };
+		},
+	});
 }`;
 
 type WireRecord = Record<string, unknown> & { id?: string; type?: string; sessionId?: string };
@@ -43,6 +62,11 @@ interface OpenFields {
 	readonly kind?: "interactive" | "worker";
 	readonly context?: Record<string, string>;
 	readonly auto_title?: boolean;
+	readonly promptSurface?: "terminal" | "app" | "chat";
+	readonly browserEngine?: "connected" | "builtin" | "none";
+	readonly retryFallback?: { modelFallback: boolean; fallbackChains: Record<string, string[]> };
+	readonly env?: Record<string, string>;
+	readonly spawnedBy?: { parentSessionId: string; rootSessionId: string; taskId: string };
 }
 
 /**
@@ -73,7 +97,20 @@ export function responseData(record: WireRecord | undefined): Record<string, unk
  * replaced, so every connection's inbox is observable per connection.
  */
 export async function contextHost(
-	options: { idleEvictionMs?: number; autoTitleSessions?: boolean; titleModel?: boolean } = {},
+	options: {
+		idleEvictionMs?: number;
+		autoTitleSessions?: boolean;
+		titleModel?: boolean;
+		browserStateExtension?: boolean;
+		/** Extension under test, loaded through the real host runtime. */
+		extension?: string;
+		/** A faux provider every session can reach (`--provider`/`--model` select its first model). */
+		faux?: ReturnType<typeof fauxProvider>;
+		/** Additional independently authenticated providers for fallback profile tests. */
+		additionalProviders?: readonly Provider[];
+		/** Global settings written to `<agentDir>/settings.json` before the host starts. */
+		globalSettings?: Record<string, unknown>;
+	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-context-"));
 	const cwd = join(scratch, "cwd");
@@ -81,10 +118,27 @@ export async function contextHost(
 	await mkdir(cwd);
 	await mkdir(agentDir);
 	const probe = join(scratch, "probe.mjs");
-	await writeFile(probe, PROBE_EXTENSION);
-	const faux = options.titleModel === true ? fauxProvider({ api: "fauxtitle", provider: "fauxtitle" }) : undefined;
+	await writeFile(probe, options.extension ?? PROBE_EXTENSION);
+	const browserState = join(scratch, "browser-state.mjs");
+	await writeFile(browserState, BROWSER_STATE_EXTENSION);
+	if (options.globalSettings !== undefined) {
+		await writeFile(join(agentDir, "settings.json"), `${JSON.stringify(options.globalSettings, null, 2)}\n`);
+	}
+	if (options.additionalProviders?.length) {
+		await writeFile(
+			join(agentDir, "auth.json"),
+			JSON.stringify(
+				Object.fromEntries(
+					options.additionalProviders.map((provider) => [provider.id, { type: "api_key", key: "spare-key" }]),
+				),
+			),
+		);
+	}
+	const faux =
+		options.faux ??
+		(options.titleModel === true ? fauxProvider({ api: "fauxtitle", provider: "fauxtitle" }) : undefined);
 	const model = faux?.getModel();
-	if (faux) {
+	if (faux && options.faux === undefined) {
 		faux.setResponses([
 			fauxAssistantMessage("turn complete"),
 			fauxAssistantMessage("<title>Generated Title</title>"),
@@ -99,6 +153,7 @@ export async function contextHost(
 		"--no-context-files",
 		"--extension",
 		probe,
+		...(options.browserStateExtension === true ? ["--extension", browserState] : []),
 		...(options.autoTitleSessions === true ? ["--auto-title-sessions"] : []),
 		...(model ? ["--provider", model.provider, "--model", model.id, "--api-key", "faux-key"] : []),
 	]);
@@ -107,7 +162,18 @@ export async function contextHost(
 		agentDir,
 		createRuntime: createCliRuntimeFactory(
 			{ parsed, cwd, agentDir, appMode: "rpc" },
-			faux ? { extensionFactories: [(pi) => pi.registerProvider(faux.provider)] } : {},
+			faux
+				? {
+						extensionFactories: [
+							(pi) => {
+								pi.registerProvider(faux.provider);
+								for (const provider of options.additionalProviders ?? []) {
+									pi.registerProvider(provider);
+								}
+							},
+						],
+					}
+				: {},
 		),
 		closeGraceMs: 1_000,
 		now: () => clock.now,
@@ -176,12 +242,14 @@ export async function contextHost(
 	return {
 		cwd,
 		scratch,
+		agentDir,
 		clock,
 		router,
 		faux,
 		inbox: (connection: string): readonly WireRecord[] => inboxes.get(connect(connection)) ?? [],
 		connect,
 		send,
+		waitFor,
 		async prompt(connection: string, sessionId: string, message: string): Promise<void> {
 			const idle = waitFor((record) => record.type === "agent_idle" && record.sessionId === sessionId);
 			const record = await send(connection, { type: "prompt", sessionId, message });
@@ -199,6 +267,29 @@ export async function contextHost(
 			const outcome = z.object({ success: z.boolean(), error: z.string().optional() }).parse(record);
 			if (outcome.success) throw new Error("open_session unexpectedly succeeded");
 			return outcome.error ?? "";
+		},
+		/** The system prompt the session's runtime currently holds. */
+		systemPrompt(sessionId: string): string {
+			const prompt = registry.peek(sessionId)?.runtime?.session.systemPrompt;
+			if (prompt === undefined) throw new Error(`no runtime for ${sessionId}`);
+			return prompt;
+		},
+		/** Calls a registered tool of THIS session the way an eval cell's `tool.<name>(...)` does. */
+		async callTool(sessionId: string, name: string, args: Record<string, unknown>): Promise<void> {
+			const session = registry.peek(sessionId)?.runtime?.session;
+			if (!session) throw new Error(`no runtime for ${sessionId}`);
+			await session.executeTool(name, args);
+			await settle();
+		},
+		/** What a shell command run by THIS session's bash tool prints: its real subprocess, its real environment. */
+		async bashOutput(sessionId: string, command: string): Promise<string> {
+			const bash = registry.peek(sessionId)?.runtime?.session.getRegisteredTool("bash");
+			if (!bash) throw new Error(`no bash tool for ${sessionId}`);
+			const result = await bash.execute("probe", { command });
+			return (result.content as Array<{ type: string; text?: string }>)
+				.flatMap((block) => (block.type === "text" && block.text !== undefined ? [block.text] : []))
+				.join("")
+				.trim();
 		},
 		/** The identity the session's own extension instance saw at registration time. */
 		async probe(connection: string, sessionId: string): Promise<z.infer<typeof identitySchema>> {

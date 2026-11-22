@@ -205,29 +205,29 @@ export const providersBuiltinSessionFacet = defineFacet({
 				if (configuration.model === null) return;
 				const spec = findSpec(catalog, configuration.model);
 				if (spec === undefined || !spec.reasoning) return;
-				state.set(
-					{
-						...state.value,
-						configuration: {
-							...configuration,
-							thinkingLevel: nextThinkingLevel(configuration.thinkingLevel),
-						},
-					},
-					context,
-				);
+				state.change(context, (draft) => {
+					draft.configuration.thinkingLevel = nextThinkingLevel(configuration.thinkingLevel);
+				});
 			},
 
 			async select(model, context) {
 				const spec = findSpec(state.value.catalog, model);
 				if (spec === undefined) throw new Error(`Unknown model: ${model.provider}/${model.modelId}`);
 				const thinkingLevel = spec.reasoning ? state.value.configuration.thinkingLevel : "off";
-				state.set({ ...state.value, configuration: { model, thinkingLevel } }, context);
+				state.change(context, (draft) => {
+					draft.configuration = { model, thinkingLevel };
+				});
 			},
 
 			async refresh(context) {
-				state.set({ ...state.value, refresh: { status: "refreshing" } }, context);
+				state.change(context, (draft) => {
+					draft.refresh = { status: "refreshing" };
+				});
 				const errors = await providers.refresh(context.abortSignal);
-				state.set({ ...state.value, catalog: providers.snapshot(), refresh: toRefreshStatus(errors) }, context);
+				state.change(context, (draft) => {
+					draft.catalog = providers.snapshot();
+					draft.refresh = toRefreshStatus(errors);
+				});
 			},
 		});
 
@@ -403,11 +403,13 @@ interface ReplicatedState<T> {
 	subscribe(listener: (value: T, context: Context) => void): () => void;
 }
 
-interface MutableReplicatedState<T> extends ReplicatedState<T> {
-	/** A providing state is always initialized. */
+interface MutableReplicatedState<T extends object> extends ReplicatedState<T> {
+	/** A providing state is always initialized and immutable. */
 	readonly value: T;
-	/** Transfers the JSON value to the state; the caller must not subsequently mutate it. */
-	set(value: T, context: Context): void;
+	/** Atomically publishes one copy-on-write transaction. */
+	change(context: Context, mutate: (draft: Draft<T>) => void): void;
+	/** Atomically replaces the complete value with a detached snapshot. */
+	replace(context: Context, value: T): void;
 }
 ```
 
@@ -417,9 +419,9 @@ Required behavior:
 2. A cold remote replica has no value. Its `.value` is `undefined`, and `subscribe()` registers the listener without invoking it. This `undefined` is local readiness state and never crosses the wire.
 3. **Hydration** installs a complete snapshot atomically before updates flow. Subscribing before hydration is valid, and updates emitted concurrently with the snapshot are buffered, so the listener observes snapshot then updates with no gap.
 4. Once hydrated, `.value` is synchronously readable and `subscribe()` immediately reports the current value, then future updates. Snapshot hydration uses a fresh delivery context parented to the subscription; later updates reconstruct fresh delivery contexts from source trace metadata.
-5. State values are borrowed immutable JSON. The state runtime does not defensively clone reads, writes, snapshots, or listener deliveries. Callers transfer ownership to `set()` and must not mutate or retain values returned by `.value` or passed to listeners; copy explicitly when ownership is required. Process and transport serialization may naturally produce a detached value, but callers must not depend on object identity or detachment.
+5. State values are immutable JSON. Reads and listener deliveries return the immutable revision directly. `change()` creates lazy copy-on-write draft proxies, copies assigned containers by value, structurally shares unchanged subtrees, and revokes every draft when the callback returns.
 6. Disconnect, provider withdrawal, and route switching clear readiness, so `.value` becomes `undefined`. Reconnect or singleton replacement installs a complete fresh snapshot in the existing member facade before later updates flow. A presentation that wants stale display data must retain it separately alongside connection or attachment health.
-7. `set(value, context)` passes its context to local source listeners and publishes source trace metadata. Remote delivery reconstructs a fresh local `Context`; it never retains the source context object.
+7. A successful `change()` or `replace()` passes its context to local source listeners and publishes source trace metadata. If a change callback throws, the original value and sequence remain unchanged. Remote delivery reconstructs a fresh local `Context`; it never retains the source context object.
 
 Anything a consumer must recover after reconnect is exposed as replicated state or pulled through a remote method. Replicated state is latest-value replication, not by itself durable session storage; the providing facet must reconstruct its authoritative value after a worker restart.
 
@@ -576,12 +578,18 @@ export const sessionDirectoryServerFacet = defineFacet({
 		const state = env.replicatedState({ revision: 0, sessions: [] as SessionRecordSummary[] });
 
 		function publish(_change: ManagedSessionChange, context: Context) {
-			state.set({ revision: state.value.revision + 1, sessions: managed.snapshot().map(toSummary) }, context);
+			state.change(context, (draft) => {
+				draft.revision += 1;
+				draft.sessions = managed.snapshot().map(toSummary);
+			});
 		}
 
 		env.own(managed.onChanged(publish));
 		env.onActivate(() =>
-			state.set({ revision: 1, sessions: managed.snapshot().map(toSummary) }, BACKGROUND_CONTEXT),
+			state.change(BACKGROUND_CONTEXT, (draft) => {
+				draft.revision = 1;
+				draft.sessions = managed.snapshot().map(toSummary);
+			}),
 		);
 
 		env.provide(SessionDirectory, { state });

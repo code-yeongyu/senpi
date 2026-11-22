@@ -5,6 +5,7 @@ import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "../../src/har
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { type BashToolDetails, createBashTool } from "../../src/harness/tools/bash.ts";
 import { createEditTool } from "../../src/harness/tools/edit.ts";
+import { detectSupportedImageMimeType } from "../../src/harness/tools/image.ts";
 import { createReadTool } from "../../src/harness/tools/read.ts";
 import { createWriteTool } from "../../src/harness/tools/write.ts";
 import {
@@ -167,6 +168,31 @@ class TimeoutOutputExecutionEnv extends NodeExecutionEnv {
 	}
 }
 
+/** Reports the full-output path only on the interrupted execution error, never through output updates. */
+class ErrorSpillPathExecutionEnv extends NodeExecutionEnv {
+	readonly interruption: { code: "timeout" | "aborted"; emitOutput: boolean };
+
+	constructor(
+		options: ConstructorParameters<typeof NodeExecutionEnv>[0],
+		interruption: { code: "timeout" | "aborted"; emitOutput: boolean },
+	) {
+		super(options);
+		this.interruption = interruption;
+	}
+
+	override async exec(
+		_command: string,
+		options: ShellExecOptions | undefined,
+		context: Context,
+	): Promise<Result<ShellExecResult, ExecutionError>> {
+		const output = `${Array.from({ length: TRUNCATED_OUTPUT_LINES }, (_, index) => `line-${index + 1}`).join("\n")}\n`;
+		const spillPath = getOrThrow(await this.createTempFile({ prefix: "interrupted-", suffix: ".log" }, context));
+		getOrThrow(await this.writeFile(spillPath, output, context));
+		if (this.interruption.emitOutput) fakeShellOutput(output, options);
+		return err(Object.assign(new ExecutionError(this.interruption.code, this.interruption.code), { spillPath }));
+	}
+}
+
 function createTinyBmp(): Uint8Array {
 	const bytes = new Uint8Array(58);
 	const view = new DataView(bytes.buffer);
@@ -185,6 +211,10 @@ function createTinyBmp(): Uint8Array {
 
 describe("AgentHarness tools", () => {
 	describe("read", () => {
+		it.each(["GIF87a", "GIF89a"])("detects the complete %s signature", (signature) => {
+			expect(detectSupportedImageMimeType(Buffer.from(signature, "ascii"))).toBe("image/gif");
+		});
+
 		it("reads text with offsets, limits, and continuation notices", async () => {
 			const context = createContext();
 			getOrThrow(
@@ -634,6 +664,40 @@ describe("AgentHarness tools", () => {
 			expect(fullOutput).toContain("line-1\nline-2");
 			expect(fullOutput).toContain(`line-${DEFAULT_MAX_LINES}\nline-${TRUNCATED_OUTPUT_LINES}`);
 		});
+
+		it.each([
+			["timeout", true, /Command timed out after 0\.05 seconds/],
+			["aborted", true, /Command aborted/],
+			["timeout", false, /Command timed out after 0\.05 seconds/],
+		] as const)(
+			"names the full-output path carried by a %s error (output updates: %s)",
+			async (code, emitOutput, status) => {
+				const env = new ErrorSpillPathExecutionEnv({ cwd: createTempDir() }, { code, emitOutput });
+				const error = await createBashTool()
+					.execute(
+						"bash-interrupted-spill",
+						{ command: "emit-output-then-stop", timeout: 0.05 },
+						noUpdate,
+						{ env },
+						invocation,
+						BACKGROUND_CONTEXT,
+					)
+					.then(
+						() => undefined,
+						(cause: unknown) => cause,
+					);
+
+				expect(error).toBeInstanceOf(Error);
+				const message = (error as Error).message;
+				expect(message).toMatch(status);
+				const fullOutputPath = message.match(/Full output: ([^\]\n]+)/)?.[1];
+				expect(fullOutputPath).toBeDefined();
+				expect(fullOutputPath).not.toBe("undefined");
+				const fullOutput = getOrThrow(await env.readTextFile(fullOutputPath!, BACKGROUND_CONTEXT));
+				expect(fullOutput).toContain(`line-1\nline-2`);
+				expect(fullOutput).toContain(`line-${TRUNCATED_OUTPUT_LINES}`);
+			},
+		);
 
 		it("ignores output callbacks after execution settles", async () => {
 			const env = new LateOutputExecutionEnv({ cwd: createTempDir() });

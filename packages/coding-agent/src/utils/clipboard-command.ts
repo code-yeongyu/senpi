@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { signalSpawnedChild } from "./child-signal.ts";
 
 /** Undefined means the command failed; an empty buffer is a successful result. */
 export function runClipboardCommand(
@@ -22,7 +23,7 @@ export function runClipboardCommand(
 			resolve(result);
 		};
 		const abort = (): void => {
-			child.kill("SIGKILL");
+			signalSpawnedChild(child, "SIGKILL");
 			child.stdout?.destroy();
 			child.stdin?.destroy();
 			finish(undefined);

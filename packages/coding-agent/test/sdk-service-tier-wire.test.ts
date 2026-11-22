@@ -1,11 +1,13 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 import {
 	type Api,
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
+	normalizeContext,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,7 +20,8 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
-type RegisteredModel = NonNullable<ProviderConfigInput["models"]>[number];
+// Chat member of the chat/image/classifier model-config union.
+type RegisteredModel = Extract<NonNullable<ProviderConfigInput["models"]>[number], { type?: "chat" }>;
 
 const PROVIDER = "tier-provider";
 const BASE_MODEL_ID = "tier-base";
@@ -26,7 +29,7 @@ const FAST_MODEL_ID = `${BASE_MODEL_ID}-fast`;
 
 /**
  * The request tier is a SESSION property, not an extension feature: an embedded/SDK session that
- * loads no builtin extensions (a delegated child, an app-server host) must still send the tier a
+ * loads no builtin extensions (for example, a delegated child) must still send the tier a
  * `-fast` catalog variant or session fast mode asks for. Every session here is extension-less.
  */
 describe("createAgentSession request service tier without extensions", () => {
@@ -57,9 +60,11 @@ describe("createAgentSession request service tier without extensions", () => {
 			models: { readonly base: Model<Api>; readonly fast: Model<Api> },
 			captured: Captured,
 		) => Promise<void>,
+		serviceTier?: ServiceTier,
+		provider: string = PROVIDER,
 	): Promise<void> {
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-		await authStorage.modify(PROVIDER, async () => ({ type: "api_key", key: "test-api-key" }));
+		await authStorage.modify(provider, async () => ({ type: "api_key", key: "test-api-key" }));
 		const modelRegistry = await createModelRegistry(authStorage, join(agentDir, "models.json"));
 		const captured: { options: SimpleStreamOptions | undefined } = { options: undefined };
 		const modelShape = {
@@ -69,7 +74,7 @@ describe("createAgentSession request service tier without extensions", () => {
 			contextWindow: 128000,
 			maxTokens: 4096,
 		} satisfies Omit<RegisteredModel, "id" | "name">;
-		modelRegistry.registerProvider(PROVIDER, {
+		modelRegistry.registerProvider(provider, {
 			api,
 			baseUrl: "https://tier.invalid/v1",
 			models: [
@@ -87,14 +92,15 @@ describe("createAgentSession request service tier without extensions", () => {
 				return doneStream(api);
 			},
 		});
-		const base = modelRegistry.find(PROVIDER, BASE_MODEL_ID);
-		const fast = modelRegistry.find(PROVIDER, FAST_MODEL_ID);
+		const base = modelRegistry.find(provider, BASE_MODEL_ID);
+		const fast = modelRegistry.find(provider, FAST_MODEL_ID);
 		if (!base || !fast) throw new Error("test provider models did not register");
 
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir,
 			model: base,
+			serviceTier,
 			modelRuntime: getModelRuntime(modelRegistry),
 			settingsManager: SettingsManager.inMemory({}),
 			sessionManager: SessionManager.inMemory(cwd),
@@ -104,7 +110,7 @@ describe("createAgentSession request service tier without extensions", () => {
 			await run(session, { base, fast }, captured);
 		} finally {
 			session.dispose();
-			modelRegistry.unregisterProvider(PROVIDER);
+			modelRegistry.unregisterProvider(provider);
 		}
 	}
 
@@ -114,10 +120,40 @@ describe("createAgentSession request service tier without extensions", () => {
 		captured: Captured,
 		requestOptions: SimpleStreamOptions = {},
 	): Promise<ServiceTier | undefined> {
-		const stream = await session.agent.streamFunction(model, { messages: [] }, requestOptions);
+		const stream = await session.agent.streamFunction(model, normalizeContext({ messages: [] }), requestOptions);
 		await stream.result();
 		return captured.options?.serviceTier;
 	}
+
+	it.each(["openai-responses", "openai-codex-responses"] as const)(
+		"sends an initial Ultrafast tier on %s",
+		async (api) => {
+			await withSession(
+				api,
+				async (session, models, captured) => {
+					expect(session.serviceTier).toBe("ultrafast");
+					session.setSessionFastMode(true);
+					expect(session.isFastModeActive()).toBe(false);
+					expect(await requestTier(session, models.base, captured)).toBe("ultrafast");
+				},
+				"ultrafast",
+				"openai",
+			);
+		},
+	);
+
+	it("never sends Ultrafast to a provider other than OpenAI and ChatGPT Subscription", async () => {
+		await withSession(
+			"openai-responses",
+			async (session, models, captured) => {
+				expect(session.serviceTier).toBe("ultrafast");
+				expect(await requestTier(session, models.base, captured)).toBeUndefined();
+				expect(await requestTier(session, models.base, captured, { serviceTier: "ultrafast" })).toBeUndefined();
+				expect(await requestTier(session, models.base, captured, { serviceTier: "priority" })).toBe("priority");
+			},
+			"ultrafast",
+		);
+	});
 
 	it("sends the catalog priority tier of a -fast variant selected on an extension-less session", async () => {
 		await withSession("openai-codex-responses", async (session, models, captured) => {
@@ -131,6 +167,78 @@ describe("createAgentSession request service tier without extensions", () => {
 			// then
 			expect(tier).toBe("priority");
 		});
+	});
+
+	it("sends the native Sol Ultrafast alias as Sol with its default tier and effort without extensions", async () => {
+		// Given: the builtin catalog, no models.json alias or service-tier extension.
+		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+		const token = `test.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "test" } })).toString("base64url")}.test`;
+		await authStorage.modify("chatgpt-subscription", async () => ({
+			type: "oauth",
+			access: token,
+			refresh: "test-refresh",
+			expires: Number.MAX_SAFE_INTEGER,
+		}));
+		const modelRegistry = await createModelRegistry(authStorage, join(agentDir, "models.json"));
+		const model = modelRegistry.find("chatgpt-subscription", "gpt-6.1-sol-ultrafast");
+		if (!model) throw new Error("Missing native Sol Ultrafast model");
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			model,
+			modelRuntime: getModelRuntime(modelRegistry),
+			settingsManager: SettingsManager.inMemory({}),
+			sessionManager: SessionManager.inMemory(cwd),
+			resourceLoader: createTestResourceLoader(),
+		});
+		let payload: unknown;
+		let headers: Headers | undefined;
+		try {
+			// When: the session's real stream function reaches the subscription adapter.
+			const stream = await session.agent.streamFunction(
+				model,
+				normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 0 }] }),
+				{
+					transport: "sse",
+					reasoning: session.thinkingLevel === "off" ? undefined : session.thinkingLevel,
+					fetch: async (input, init) => {
+						const request = new Request(input, init);
+						headers = request.headers;
+						const bytes = Buffer.from(await request.arrayBuffer());
+						const body = headers.get("content-encoding") === "zstd" ? zstdDecompressSync(bytes) : bytes;
+						payload = JSON.parse(body.toString("utf8"));
+						return new Response(
+							`data: ${JSON.stringify({
+								type: "response.completed",
+								response: {
+									status: "completed",
+									service_tier: "default",
+									output: [],
+									usage: { input_tokens: 100_000, output_tokens: 1000 },
+								},
+							})}\n\n`,
+							{ headers: { "content-type": "text/event-stream" } },
+						);
+					},
+				},
+			);
+			const result = await stream.result();
+
+			// Then: the catalog ID never leaks onto the wire, and Sol uses the published 8x included-usage multiplier.
+			expect(result.stopReason, result.errorMessage).toBe("stop");
+			expect(session.serviceTier).toBe("ultrafast");
+			expect(session.thinkingLevel).toBe("xhigh");
+			expect(payload).toMatchObject({
+				model: "gpt-6.1-sol",
+				service_tier: "ultrafast",
+				reasoning: { effort: "xhigh" },
+			});
+			expect(headers?.get("x-codex-routing-hint")).toBe("model=gpt-6.1-sol;tier=ultrafast");
+			expect(result.usage.cost.input).toBeCloseTo(1.6);
+			expect(result.usage.cost.output).toBeCloseTo(0.08);
+		} finally {
+			session.dispose();
+		}
 	});
 
 	it("sends priority once session fast mode is turned on for a Codex base model", async () => {

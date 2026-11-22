@@ -2,6 +2,7 @@ import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../../../../config.ts";
 import { AuthStorage } from "../../../auth-storage.ts";
 import type { ExtensionAPI, ProviderModelConfig } from "../../types.ts";
+import { toBuiltinProviderContext } from "../provider-context.ts";
 import { registerCursorCliAccountCommand } from "./account-command.ts";
 import { refreshCursorCliModelCatalogForLane } from "./catalog-refresh.ts";
 import { defaultCursorAgentExecutableDeps, resolveCursorAgentExecutable } from "./executable.ts";
@@ -75,11 +76,16 @@ export function registerCursorCliOauthExtension(pi: ExtensionAPI, deps: CursorCl
 		pi.registerProvider(CURSOR_CLI_OAUTH_PROVIDER_ID, {
 			baseUrl: CURSOR_CLI_OAUTH_PROVIDER_ID,
 			api: CURSOR_CLI_OAUTH_PROVIDER_ID,
+			// Like the Anthropic Subscription lane, this lane selects and fails over among its own
+			// accounts, so the generic credential pool must not choose a second time (senpi#2081).
+			ownsAccountSelection: true,
+			// Requests run the cursor-agent CLI as a subprocess, under Cursor logins on this machine.
+			localOnly: true,
 			models: models.map((entry) => ({ ...entry })),
 			// Settings, accounts, and the executable are re-resolved inside every
 			// turn; nothing captured here outlives a settings or credential change.
 			streamSimple: (model, context, options) =>
-				streamCursorCliOauth(model, context, options, { cwd, agentDir, store }),
+				streamCursorCliOauth(model, toBuiltinProviderContext(context), options, { cwd, agentDir, store }),
 			// A kill-switched lane, or one whose unacknowledged --force gate
 			// guarantees a refusal, must not consume an implicit fallback-expansion
 			// slot it can never serve. Only deterministic settings-level states

@@ -6,7 +6,7 @@ import { TODO_RESTORE_REQUEST_TYPE, TODO_STATE_ENTRY_TYPE, type TodoAsk } from "
 
 export const ASK_TEXT_LIMIT = 200;
 
-function firstTextBlock(content: unknown): string | undefined {
+export function firstTextBlock(content: unknown): string | undefined {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return undefined;
 	for (const block of content) {

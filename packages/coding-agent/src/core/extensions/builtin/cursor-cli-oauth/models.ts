@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalizeCursorCatalog } from "@earendil-works/pi-ai";
 import { resolveCursorContextWindow } from "@earendil-works/pi-ai/utils/cursor-context-limit";
-import type { ProviderModelConfig } from "../../types.ts";
+import type { ProviderChatModelConfig } from "../../types.ts";
 import { defaultCursorAgentExecutableDeps, resolveCursorAgentExecutable } from "./executable.ts";
 
 const MODEL_PROBE_TIMEOUT_MS = 15_000;
@@ -42,7 +42,7 @@ export type ResolveCursorCliModelCatalogOptions = {
 type CachedModelCatalog = {
 	readonly cachedAt: number;
 	readonly listing: string;
-	readonly models: readonly ProviderModelConfig[];
+	readonly models: readonly ProviderChatModelConfig[];
 };
 
 /**
@@ -51,8 +51,8 @@ type CachedModelCatalog = {
  * remain the offline fallback when that probe fails, exactly as they were served before.
  */
 type CachedModelRecord =
-	| { readonly kind: "listing"; readonly cachedAt: number; readonly models: readonly ProviderModelConfig[] }
-	| { readonly kind: "legacy"; readonly cachedAt: number; readonly models: readonly ProviderModelConfig[] };
+	| { readonly kind: "listing"; readonly cachedAt: number; readonly models: readonly ProviderChatModelConfig[] }
+	| { readonly kind: "legacy"; readonly cachedAt: number; readonly models: readonly ProviderChatModelConfig[] };
 
 type StaticModelDefinition = {
 	readonly id: string;
@@ -81,7 +81,7 @@ function stripAnsi(value: string): string {
 	return value.replace(ANSI_ESCAPE_SEQUENCE, "");
 }
 
-function normalizeEntries(raw: readonly { id: string; label: string }[]): ProviderModelConfig[] {
+function normalizeEntries(raw: readonly { id: string; label: string }[]): ProviderChatModelConfig[] {
 	return normalizeCursorCatalog(
 		raw.map(({ id, label }) => ({ id, name: label, input: ["text"] as const, cursorMaxMode: false })),
 	).map((entry) => ({
@@ -111,10 +111,10 @@ function normalizeEntries(raw: readonly { id: string; label: string }[]): Provid
 	}));
 }
 
-export const STATIC_CURSOR_CLI_MODELS: readonly ProviderModelConfig[] = normalizeEntries(STATIC_MODEL_DEFINITIONS);
+export const STATIC_CURSOR_CLI_MODELS: readonly ProviderChatModelConfig[] = normalizeEntries(STATIC_MODEL_DEFINITIONS);
 
 /** Parse the complete `cursor-agent models` listing into extension provider entries. */
-export function parseCursorAgentModelsListing(listing: string): ProviderModelConfig[] {
+export function parseCursorAgentModelsListing(listing: string): ProviderChatModelConfig[] {
 	const plainListing = stripAnsi(listing);
 	const lines = plainListing.split(/\r?\n/);
 	if (lines.some((line) => MISLEADING_ERROR_LINE.test(line))) return [];
@@ -167,7 +167,7 @@ function catalogTtlMs(settings: CursorCliModelCatalogSettings): number {
 	return validHours * 60 * 60 * 1_000;
 }
 
-function parseLegacyCachedModels(models: readonly unknown[]): ProviderModelConfig[] | undefined {
+function parseLegacyCachedModels(models: readonly unknown[]): ProviderChatModelConfig[] | undefined {
 	const rawCached: { id: string; label: string }[] = [];
 	const seen = new Set<string>();
 	for (const candidate of models) {
@@ -249,7 +249,7 @@ async function writeCache(
 /** Resolve a cached or probed catalog, always degrading to the exact offline fallback. */
 export async function resolveCursorCliModelCatalog(
 	options: ResolveCursorCliModelCatalogOptions,
-): Promise<readonly ProviderModelConfig[]> {
+): Promise<readonly ProviderChatModelConfig[]> {
 	const settings = options.settings ?? {};
 	const deps: CursorCliModelCatalogDeps = { ...defaultDeps(settings), ...options.deps };
 	const cacheDirectory = join(options.agentDir, "cursor-cli-oauth");

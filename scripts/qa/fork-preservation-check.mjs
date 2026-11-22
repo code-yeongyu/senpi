@@ -6,23 +6,32 @@
 //
 // usage: node scripts/qa/fork-preservation-check.mjs [--root <dir>]
 //          [--omo-loader-aliases <bundle-purity.test.ts copy>]
-//          [--expect-upstream-sha <sha>] [--anthropic-sdk <version>]
+//          [--expect-upstream-sha <sha>] [--anthropic-sdk <version>] [--expect-openai <version>]
 //          [--compare-exports <baseline-dist-index.js> <candidate-dist-index.js>]
 //
-// Hard-coded fork facts, read out of OURS (4f4cd7451, 2026-09-12) rather than
+// Hard-coded fork facts, read out of OURS (7e56f373d, 2026-09-30) rather than
 // trusted from the plan text:
-//   - theme validator symbol: `validateThemeJson` in
-//     packages/coding-agent/src/modes/interactive/theme/theme.ts:110. It exists at
-//     the merge base and at OURS but is gone at upstream THEIRS (71dca871b), so it
-//     is exactly the symbol an upstream-favouring resolution deletes.
+//   - theme validator symbol: `validateThemeJson` is defined in
+//     packages/coding-agent/src/modes/interactive/theme/theme-json.ts:104 (compiled
+//     ThemeJsonSchema at :98) and re-exported by theme.ts:29, which binds it as the
+//     always-on validator at theme.ts:35. Upstream also defines it in theme-json.ts
+//     (merge base 71dca871b, THEIRS 6a4af07d6) but keeps validation opt-in, so the
+//     fork surface an upstream-favouring resolution drops is the theme.ts binding.
+//   - held pins: openai 6.26.0 (packages/ai), vitest 5.0.1 (every workspace),
+//     signal-exit 3.0.7 (packages/coding-agent); `--expect-openai` overrides the
+//     openai pin once the sync decides the SDK bump.
+//   - 21 Astra catalog rows, every one at a 600000-token context window.
 //   - grok themes live in .../modes/interactive/theme/grok-{day,night}.json
 //     (`git ls-files | grep -i grok`), not in a themes/ subdirectory.
 //   - CACHE_FRIENDLY_CONTEXT_SAFETY_TOKENS is a module const in
-//     packages/coding-agent/src/core/compaction/compaction.ts:895, not an
+//     packages/coding-agent/src/core/compaction/compaction.ts:897, not an
 //     @earendil-works/pi-ai export; it is checked where it actually lives.
 //   - the loader alias list (VIRTUAL_MODULES + getAliases) is a superset of omo's
 //     SENPI_LOADER_ALIASES: senpi also aliases `*/pi-ai/providers/all`, which omo
 //     does not list. omo's 19 entries must all survive, extras are fine.
+//   - reachability: every fork-API census symbol must still occur under
+//     packages/*/src, and each regrafted fork construct must keep a use site (not
+//     only its definition or a re-export) in the consumer file listed below.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -33,6 +42,7 @@ import {
 	modelCatalogRows,
 	objectLiteralKeys,
 	packageManifests,
+	checkReachability,
 	quotedStringsInStatement,
 	readIfExists,
 	sourceExportsSymbol,
@@ -41,10 +51,42 @@ import {
 
 const CA = "packages/coding-agent";
 const THEME_DIR = `${CA}/src/modes/interactive/theme`;
-const HELD_PINS = { openai: "6.26.0", vitest: "4.1.11", "signal-exit": "3.0.7" };
+const HELD_PINS = { openai: "6.26.0", vitest: "5.0.1", "signal-exit": "3.0.7" };
 const ASTRA_ID = ["gpt", "6", "astra"].join("-");
 const ASTRA_CONTEXT_WINDOW = 600000;
-const ASTRA_MIN_ROWS = 13;
+const ASTRA_MIN_ROWS = 21;
+// Fork-API census symbols (the plan's baseline grep list); each must occur under packages/*/src.
+const FORK_API_CENSUS = [
+	"buildProviderContext",
+	"estimateContextTokens",
+	"CACHE_FRIENDLY_CONTEXT_SAFETY_TOKENS",
+	"chatgpt-subscription",
+	"anthropic-subscription",
+	"senpi-codemode",
+	"multi-session-host",
+	"model-shards",
+	"validateThemeJson",
+	"killWindowsProcessTree",
+	"toolBatchTerminated",
+	"abortServerSideFallback",
+	"firstProviderRequest",
+	"isCursorExecResolved",
+	"compactBeforeNextAdmission",
+	"registerLazyToolActivator",
+	"normalizeToolExposure",
+];
+// Regrafted fork constructs and the consumer file that must keep calling/reading them.
+const FORK_CALL_SITES = [
+	["toolBatchTerminated", "packages/agent/src/agent-loop.ts"],
+	["abortServerSideFallback", "packages/ai/src/api/anthropic-messages.ts"],
+	["firstProviderRequest", "packages/agent/src/agent-loop.ts"],
+	["isCursorExecResolved", "packages/agent/src/agent-loop.ts"],
+	["compactBeforeNextAdmission", `${CA}/src/core/agent-session.ts`],
+	["buildProviderContext", "packages/agent/src/agent-loop.ts"],
+	["estimateContextTokens", `${CA}/src/core/agent-session.ts`],
+	["validateThemeJson", `${THEME_DIR}/theme.ts`],
+	["killWindowsProcessTree", `${CA}/src/utils/shell.ts`],
+];
 const CALVER = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 
 function parseArgs(argv) {
@@ -55,10 +97,12 @@ function parseArgs(argv) {
 		else if (flag === "--omo-loader-aliases") args.omoLoaderAliases = argv[(index += 1)];
 		else if (flag === "--expect-upstream-sha") args.expectUpstreamSha = argv[(index += 1)];
 		else if (flag === "--anthropic-sdk") args.anthropicSdk = argv[(index += 1)];
+		else if (flag === "--expect-openai") args.expectOpenai = argv[(index += 1)];
 		else if (flag === "--compare-exports") args.compareExports = [argv[(index += 1)], argv[(index += 1)]];
 		else throw new Error(`unknown argument: ${flag}`);
 	}
 	if (args.root === undefined) throw new Error("--root requires a directory");
+	if ("expectOpenai" in args && args.expectOpenai === undefined) throw new Error("--expect-openai requires a version");
 	return args;
 }
 
@@ -152,7 +196,7 @@ function runSourceChecks(root, args, fail) {
 	}
 
 	// 9. held dependency pins across the root and workspace manifests.
-	const pins = { ...HELD_PINS, "@anthropic-ai/sdk": args.anthropicSdk };
+	const pins = { ...HELD_PINS, openai: args.expectOpenai ?? HELD_PINS.openai, "@anthropic-ai/sdk": args.anthropicSdk };
 	for (const relative of packageManifests(root)) {
 		const manifest = readJson(relative);
 		if (!manifest) continue;
@@ -248,6 +292,7 @@ async function main(argv) {
 	try {
 		const args = parseArgs(argv);
 		runSourceChecks(args.root, args, fail);
+		checkReachability(args.root, FORK_API_CENSUS, FORK_CALL_SITES, fail);
 		if (args.compareExports !== undefined) await compareExports(args.compareExports, fail);
 	} catch (error) {
 		fail(`fork-preservation-check error: ${error instanceof Error ? error.message : String(error)}`);

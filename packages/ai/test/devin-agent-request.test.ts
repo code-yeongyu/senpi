@@ -8,6 +8,8 @@ import {
 } from "../src/api/devin-agent/wire.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const MODEL: Model<"devin-agent"> = {
@@ -58,7 +60,7 @@ describe("devin-agent chat request", () => {
 	it("flattens the system prompt and orders history with Cascade roles", () => {
 		const request = buildDevinChatRequest({
 			model: MODEL,
-			context: context(),
+			context: normalizeContext(context()),
 			apiKey: "abc",
 			userJwt: "jwt-1",
 			cascadeId: "conv-1",
@@ -95,9 +97,24 @@ describe("devin-agent chat request", () => {
 	});
 
 	it("mints UUID-shaped message ids that are stable per cascade and index", () => {
-		const first = buildDevinChatRequest({ model: MODEL, context: context(), apiKey: "abc", cascadeId: "conv-1" });
-		const again = buildDevinChatRequest({ model: MODEL, context: context(), apiKey: "abc", cascadeId: "conv-1" });
-		const other = buildDevinChatRequest({ model: MODEL, context: context(), apiKey: "abc", cascadeId: "conv-2" });
+		const first = buildDevinChatRequest({
+			model: MODEL,
+			context: normalizeContext(context()),
+			apiKey: "abc",
+			cascadeId: "conv-1",
+		});
+		const again = buildDevinChatRequest({
+			model: MODEL,
+			context: normalizeContext(context()),
+			apiKey: "abc",
+			cascadeId: "conv-1",
+		});
+		const other = buildDevinChatRequest({
+			model: MODEL,
+			context: normalizeContext(context()),
+			apiKey: "abc",
+			cascadeId: "conv-2",
+		});
 
 		const ids = first.chatMessagePrompts.map((p) => p.messageId);
 		expect(ids[0]).toMatch(UUID_SHAPE);
@@ -127,7 +144,12 @@ describe("devin-agent chat request", () => {
 				{ role: "assistant", content: [] },
 			],
 		} as unknown as Context;
-		const request = buildDevinChatRequest({ model: MODEL, context: native, apiKey: "abc", cascadeId: "conv-1" });
+		const request = buildDevinChatRequest({
+			model: MODEL,
+			context: normalizeContext(native),
+			apiKey: "abc",
+			cascadeId: "conv-1",
+		});
 		expect(request.chatMessagePrompts).toHaveLength(2);
 		expect(request.chatMessagePrompts[1]).toMatchObject({
 			messageId: "msg-native-1",
@@ -158,7 +180,12 @@ describe("devin-agent chat request", () => {
 				},
 			],
 		} as unknown as Context;
-		const request = buildDevinChatRequest({ model: MODEL, context: withImages, apiKey: "abc", cascadeId: "c" });
+		const request = buildDevinChatRequest({
+			model: MODEL,
+			context: normalizeContext(withImages),
+			apiKey: "abc",
+			cascadeId: "c",
+		});
 		expect(request.chatMessagePrompts[0]?.prompt).toBe("look");
 		expect(request.chatMessagePrompts[0]?.images).toEqual([
 			expect.objectContaining({ base64Data: "AAAA", mimeType: "image/png" }),
@@ -170,7 +197,12 @@ describe("devin-agent chat request", () => {
 	});
 
 	it("sends the released CLI completion configuration and never a zero temperature", () => {
-		const request = buildDevinChatRequest({ model: MODEL, context: context(), apiKey: "abc", cascadeId: "c" });
+		const request = buildDevinChatRequest({
+			model: MODEL,
+			context: normalizeContext(context()),
+			apiKey: "abc",
+			cascadeId: "c",
+		});
 		expect(request.configuration).toMatchObject({
 			numCompletions: 1n,
 			maxTokens: 128_000n,
@@ -185,7 +217,7 @@ describe("devin-agent chat request", () => {
 
 		const tuned = buildDevinChatRequest({
 			model: MODEL,
-			context: context(),
+			context: normalizeContext(context()),
 			apiKey: "abc",
 			cascadeId: "c",
 			maxTokens: 4096,
@@ -207,13 +239,18 @@ describe("devin-agent chat request", () => {
 			upstreamModelId: "adaptive-wire",
 			compat: { modelRouter: true, supportsParallelToolCalls: true },
 		} as unknown as Model<"devin-agent">;
-		const plain = buildDevinChatRequest({ model: routed, context: context(), apiKey: "abc", cascadeId: "c" });
+		const plain = buildDevinChatRequest({
+			model: routed,
+			context: normalizeContext(context()),
+			apiKey: "abc",
+			cascadeId: "c",
+		});
 		expect(plain.chatModelUid).toBe("adaptive-wire");
 		expect(plain.disableParallelToolCalls).toBe(false);
 
 		const assigned = buildDevinChatRequest({
 			model: routed,
-			context: context(),
+			context: normalizeContext(context()),
 			apiKey: "abc",
 			cascadeId: "c",
 			assignment: { modelUid: "claude-sonnet-5-medium", assignmentJwt: "assign-jwt" },

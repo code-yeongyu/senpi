@@ -1,6 +1,7 @@
-import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
+import type { KernelPreludeContribution, ToolDefinition } from "@code-yeongyu/senpi";
 import { type Static, Type } from "typebox";
 import { Check, Errors } from "typebox/value";
+import { virtualEvalSchema } from "./eval-virtual-schemas.ts";
 
 const schemaArgsSchema = Type.Object(
 	{ name: Type.Optional(Type.String({ minLength: 1 })) },
@@ -12,8 +13,13 @@ type SchemaArgs = Static<typeof schemaArgsSchema>;
 export interface EvalSchemaToolInfo {
 	readonly name: string;
 	readonly description?: string | undefined;
+	readonly exposure?: string | undefined;
+	readonly evalOnly?: boolean | undefined;
 	readonly parameters?: unknown;
 	readonly kernelPrelude?: KernelPreludeContribution | undefined;
+	/** The tool's own row renderers: a nested `tool.<name>()` call in a cell is drawn with them when present. */
+	readonly renderCall?: ToolDefinition["renderCall"];
+	readonly renderResult?: ToolDefinition["renderResult"];
 }
 
 export interface RunEvalSchemaOptions {
@@ -46,6 +52,9 @@ export function runEvalSchema(args: unknown, options: RunEvalSchemaOptions): Eva
 	const tools = options.listTools();
 	if (parsed.name === undefined) return { tools: tools.map((tool) => tool.name) };
 
+	// Documentation-only entries; they are not tools and the listing above stays the ordinary catalog.
+	const virtual = virtualEvalSchema(parsed.name);
+	if (virtual !== undefined) return virtual;
 	const match = tools.find((tool) => tool.name === parsed.name);
 	if (match) return { name: match.name, description: match.description, parameters: match.parameters };
 	throw new SchemaUnknownToolError(parsed.name, nearestNames(parsed.name, tools));

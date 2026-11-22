@@ -51,13 +51,20 @@ describe("claude-sdk-oauth retry checkpoint continuity", () => {
 	it("ignores a checkpoint whose pre-turn prefix no longer matches", () => {
 		const decision = decideNativeContinuity(
 			input({
-				binding: restored({ unansweredTurnDigest: sentHashPrefixDigest(["h1", "h2-rewritten", "h3"]) }),
+				binding: restored({
+					unansweredTurnDigest: sentHashPrefixDigest(["h1", "h2-rewritten", "h3"]),
+					assistantUuidByIndex: [
+						[1, "uuid-a1"],
+						[2, "uuid-a2"],
+					],
+				}),
 				currentHashes: ["h1", "h2-rewritten", "h3"],
 			}),
 		);
 
-		// Falls through to the pre-existing divergence branch, which owns this shape.
-		expect(decision).toMatchObject({ kind: "fork", reason: "history_rolled_back", atUuid: "uuid-a2" });
+		// Falls through to the divergence branch, which owns this shape: the fork
+		// anchors at the newest boundary INSIDE the shared prefix (senpi#1974).
+		expect(decision).toMatchObject({ kind: "fork", reason: "history_rolled_back", atUuid: "uuid-a1", from: 1 });
 	});
 
 	it("ignores a checkpoint whose restored prefix digest no longer matches", () => {
@@ -97,9 +104,20 @@ describe("claude-sdk-oauth retry checkpoint continuity", () => {
 
 	// senpi#1432: the same turn failing over to another account is exactly the
 	// checkpoint's case - fork past the un-answered message under the new account.
-	it("lets the checkpoint fork a same-turn account failover on a shared-root lane", () => {
-		expect(decideNativeContinuity(input({ accountName: "secondary" }))).toMatchObject({
+	// oh-my-openagent#10304: it is labelled a seat switch, because prompt caches never
+	// cross accounts and the new seat writes the whole prefix; a same-seat retry keeps
+	// timeout_retry (and reads its cache).
+	it("lets the checkpoint fork a same-turn account failover on a shared-root lane, labelled as the seat switch", () => {
+		expect(decideNativeContinuity(input({ accountName: "secondary" }))).toEqual({
 			kind: "fork",
+			sdkSessionId: "sdk-1",
+			atUuid: "uuid-a2",
+			from: 2,
+			reason: "account_changed",
+		});
+		expect(decideNativeContinuity(input())).toEqual({
+			kind: "fork",
+			sdkSessionId: "sdk-1",
 			atUuid: "uuid-a2",
 			from: 2,
 			reason: "timeout_retry",

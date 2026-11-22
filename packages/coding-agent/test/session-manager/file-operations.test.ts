@@ -1,10 +1,22 @@
 import { constants as bufferConstants } from "buffer";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "fs";
+import {
+	appendFileSync,
+	closeSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	openSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+	writeSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { APP_NAME } from "../../src/config.ts";
 import { findMostRecentSession, loadEntriesFromFile, SessionManager } from "../../src/core/session-manager.ts";
+import { assistantMsg, readSessionFileRoles, userMsg } from "../utilities.ts";
 
 const HEADER_SCAN_LIMIT_BYTES = 1024 * 1024;
 
@@ -428,6 +440,22 @@ describe("SessionManager custom flat session directory", () => {
 		const continuedA = SessionManager.continueRecent(projectA, tempDir);
 		expect(continuedA.getSessionFile()).toBe(sessionA);
 	});
+
+	it("rejects a cancelled session listing", async () => {
+		createPersistedSession(projectA, "from A");
+		createPersistedSession(projectB, "from B");
+		const controller = new AbortController();
+		const listing = SessionManager.listAll(
+			tempDir,
+			(_loaded, _total, partialSessions) => {
+				if (partialSessions) controller.abort();
+			},
+			controller.signal,
+		);
+
+		await expect(listing).rejects.toMatchObject({ name: "AbortError" });
+		await expect(SessionManager.listAll(undefined, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+	});
 });
 
 describe("SessionManager.setSessionFile with corrupted files", () => {
@@ -505,5 +533,45 @@ describe("SessionManager.setSessionFile with corrupted files", () => {
 		const sm2 = SessionManager.open(emptyFile, tempDir);
 		expect(sm2.getSessionId()).toBe(sessionId);
 		expect(sm2.getHeader()?.type).toBe("session");
+	});
+});
+
+describe("SessionManager session file creation", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-session-persist-"));
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("does not create a file for a session with only setup entries", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendModelChange("anthropic", "claude-sonnet-4-5");
+		session.appendThinkingLevelChange("off");
+
+		expect(existsSync(session.getSessionFile()!)).toBe(false);
+	});
+
+	// #10000: the first prompt must survive a first turn that never produces an assistant message
+	it("creates the file when the first user message is appended", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendModelChange("anthropic", "claude-sonnet-4-5");
+		session.appendMessage(userMsg("first question"));
+
+		const file = session.getSessionFile()!;
+		expect(readSessionFileRoles(file)).toEqual(["session", "model_change", "user"]);
+		expect(SessionManager.open(file, tempDir).buildSessionContext().messages).toHaveLength(1);
+	});
+
+	it("appends later entries to the file without rewriting earlier ones", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendMessage(userMsg("first question"));
+		session.appendCustomEntry("preset-state", { name: "plan" });
+		session.appendMessage(assistantMsg("first answer"));
+
+		expect(readSessionFileRoles(session.getSessionFile()!)).toEqual(["session", "user", "custom", "assistant"]);
 	});
 });

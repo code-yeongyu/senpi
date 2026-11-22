@@ -1,23 +1,41 @@
-import type { ExtensionContext } from "../../types.ts";
+import type { ExtensionContext, ExtensionUIDialogOptions } from "../../types.ts";
 import type { Reply, ReplyInput, Request } from "./types.ts";
 
-export async function showPermissionPrompt(ctx: ExtensionContext, request: Request): Promise<ReplyInput> {
+export async function showPermissionPrompt(
+	ctx: ExtensionContext,
+	request: Request,
+	signal?: AbortSignal,
+): Promise<ReplyInput> {
 	const title = `Permission required: ${request.permission}`;
 	const message = formatRequestForDisplay(request);
 
 	const displayTitle = `${title}\n\n${message}`;
 
-	const options = ["Allow once", "Allow always", "Deny", "Deny with feedback"];
+	const wider = request.widerAlways;
+	const options = ["Allow once", "Allow always", ...(wider ? [wider.label] : []), "Deny", "Deny with feedback"];
 
-	const choice = await ctx.ui.select(displayTitle, options);
+	// Clients bind the dialog to the call it approves by this id; with several calls of one tool in
+	// flight (the engine prepares a message's calls before running them), nothing else says which.
+	const call: ExtensionUIDialogOptions = request.tool
+		? {
+				toolCallId: request.tool.callID,
+				...(request.tool.parentCallID === undefined ? {} : { parentToolCallId: request.tool.parentCallID }),
+			}
+		: {};
+	if (signal !== undefined) call.signal = signal;
+	const choice = await ctx.ui.select(displayTitle, options, call);
 
 	if (choice === "Deny with feedback") {
-		const feedback = await ctx.ui.input("Feedback", "Why are you denying this permission? (optional)");
+		const feedback = await ctx.ui.input("Feedback", "Why are you denying this permission? (optional)", call);
 		return {
 			requestID: request.id,
 			reply: "reject",
 			message: feedback || undefined,
 		};
+	}
+
+	if (wider !== undefined && choice === wider.label) {
+		return { requestID: request.id, reply: "always", always: [...wider.patterns] };
 	}
 
 	const replyMap: Record<string, Reply> = {
@@ -59,13 +77,14 @@ function formatRequestForDisplay(request: Request): string {
 			parts.push(`Query: ${meta.query || "Unknown"}`);
 			break;
 		case "external_directory": {
-			const parent = typeof meta.parentDir === "string" ? meta.parentDir : undefined;
-			const filepath = typeof meta.filepath === "string" ? meta.filepath : undefined;
-			const pattern = request.patterns?.[0];
-			const derived =
-				typeof pattern === "string" ? (pattern.includes("*") ? pattern.split("*")[0] : pattern) : undefined;
-			const dir = parent ?? filepath ?? derived ?? "Unknown";
-			parts.push(`Directory: ${dir}`);
+			// These are resolved targets, not approval globs. Caller metadata cannot name the
+			// approved directory, and a literal '*' in a filename must survive (senpi#4316).
+			for (const target of request.patterns.length ? request.patterns : ["Unknown"]) {
+				parts.push(`Directory: ${target}`);
+			}
+			if (request.originalPaths?.length) {
+				parts.push(`Requested paths:\n${request.originalPaths.map((p) => `  - ${p}`).join("\n")}`);
+			}
 			break;
 		}
 		default:

@@ -1,5 +1,11 @@
 import type { AnthropicMessagesCompat, Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import {
+	hasServerSearchFailed,
+	isServerSearchDisabled,
+	isServerSearchFallback,
+	markServerSearchFallback,
+} from "../server-search-fallback.ts";
 
 type ToolDefinition = Record<string, unknown>;
 type AnthropicWebSearchModel = Pick<Model<Api>, "api" | "provider" | "baseUrl" | "compat">;
@@ -53,18 +59,12 @@ function resolveTarget(target: AnthropicWebSearchTarget): AnthropicWebSearchMode
 	return target;
 }
 
-function isNativeAnthropicEndpoint(model: AnthropicWebSearchModel): boolean {
-	try {
-		return new URL(model.baseUrl).hostname === "api.anthropic.com";
-	} catch {
-		return false;
-	}
-}
-
-// Mirrors pi-ai's `AnthropicMessagesCompat.supportsWebSearch` default:
-// first-party api.anthropic.com only. Anthropic-compatible endpoints (e.g.,
-// kimi-coding) may execute the server-side search but reject the replayed
-// server_tool_use / web_search_tool_result blocks on the next request.
+// https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+// supportsWebSearch means BOTH main-request search and unchanged encrypted-result
+// replay. Preserve main's first-party API/Claude OAuth default; gateways opt in.
+// ccapi's Messages route passed a real search + replay for senpi#3122; opt its
+// provider/model entries in with compat.supportsWebSearch: true. Never infer that
+// compatibility from a proxy hostname. Other compatible routes remain explicit.
 export function supportsNativeAnthropicWebSearch(target: AnthropicWebSearchTarget): boolean {
 	const model = resolveTarget(target);
 	if (model?.api !== "anthropic-messages") {
@@ -72,7 +72,12 @@ export function supportsNativeAnthropicWebSearch(target: AnthropicWebSearchTarge
 	}
 
 	const compat = model.compat as AnthropicMessagesCompat | undefined;
-	return compat?.supportsWebSearch ?? isNativeAnthropicEndpoint(model);
+	if (compat?.supportsWebSearch !== undefined) return compat.supportsWebSearch;
+	try {
+		return new URL(model.baseUrl).hostname === "api.anthropic.com";
+	} catch {
+		return false;
+	}
 }
 
 function parseDomainListEnv(envVar: string): string[] | undefined {
@@ -163,6 +168,8 @@ export function addAnthropicWebSearchToPayload(target: AnthropicWebSearchTarget,
 	if (!isRecord(payload)) {
 		return payload;
 	}
+	if (isServerSearchDisabled(payload) || isServerSearchFallback(payload))
+		return stripNativeAnthropicWebSearch(payload);
 
 	if (!supportsNativeAnthropicWebSearch(model)) {
 		// Anthropic-compatible endpoints (e.g., kimi-coding) may execute the
@@ -214,7 +221,11 @@ Prefer web_search over guessing when freshness matters.
 
 export default function anthropicWebSearchExtension(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", (event, ctx) => {
-		return addAnthropicWebSearchToPayload(ctx.model, event.payload);
+		const model = event.model ?? ctx.model;
+		const payload = hasServerSearchFailed(ctx.sessionManager, model)
+			? markServerSearchFallback(event.payload)
+			: event.payload;
+		return addAnthropicWebSearchToPayload(model, payload);
 	});
 
 	pi.on("session_start", async (_event, ctx) => {

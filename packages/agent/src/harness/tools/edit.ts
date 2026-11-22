@@ -53,9 +53,10 @@ export interface EditToolDetails {
 	firstChangedLine?: number;
 }
 
+/** Works on a copy, so the provider's tool call arguments stay unchanged; arrays are left for validation to reject. */
 function prepareEditArguments(input: unknown): EditToolInput {
-	if (!input || typeof input !== "object") return input as EditToolInput;
-	const args = input as Record<string, unknown>;
+	if (!input || typeof input !== "object" || Array.isArray(input)) return input as EditToolInput;
+	const args: Record<string, unknown> = { ...input };
 	if (typeof args.edits === "string") {
 		try {
 			const parsed: unknown = JSON.parse(args.edits);

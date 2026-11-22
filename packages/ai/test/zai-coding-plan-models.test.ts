@@ -11,7 +11,8 @@ it("exposes GLM-4.6V on the China Coding Plan catalog", () => {
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		reasoning: true,
 		input: ["text", "image"],
-		cost: { input: 0.3, output: 0.9, cacheRead: 0, cacheWrite: 0 },
+		// Prices come from the regenerated z.ai catalog (packages/ai/src/providers/data/zai-coding-cn.json); update them together with the data file.
+		cost: { input: 0.3, output: 0.9, cacheRead: 0.05, cacheWrite: 0 },
 		contextWindow: 128000,
 		maxTokens: 32768,
 		compat: {
@@ -42,6 +43,8 @@ it("uses API-equivalent reference costs for Coding Plan models", () => {
 
 it("keeps zero costs for Coding Plan models without a matching API price", () => {
 	const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
+	expect(getBuiltinModel("zai", "glm-5.2-highspeed").cost).toEqual(zeroCost);
 
 	for (const provider of ["zai", "zai-coding-cn"] as const) {
 		expect(getBuiltinModel(provider, "glm-5.3-highspeed").cost).toEqual(zeroCost);

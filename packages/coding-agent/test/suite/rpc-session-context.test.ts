@@ -1,4 +1,7 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -8,6 +11,7 @@ import {
 	PROBE_EXTENSION,
 	responseData,
 } from "./rpc-session-context-support.ts";
+import { rawClient } from "./rpc-raw-socket-client.ts";
 import { startInProcessHost } from "./rpc-worker-host-support.ts";
 
 it("gives each session's extension exactly the kind and context that opened it", async () => {
@@ -228,6 +232,72 @@ it("carries kind and context across a real socket host", async () => {
 		expect(refused.error).toMatch(/^invalid_session_context: .*16384/);
 	} finally {
 		await host.dispose();
+	}
+}, 600_000);
+
+it("applies each session's permission preset on a warmed socket host (#2461)", async () => {
+	// Given: a socket host whose sessions load a faux model scripted to read a file outside the project.
+	const outside = join(tmpdir(), `senpi-2461-outside-${process.pid}`);
+	await mkdir(outside, { recursive: true });
+	await writeFile(join(outside, "secret.txt"), "outside secret\n");
+	const faux = pathToFileURL(fileURLToPath(new URL("../../../ai/dist/providers/faux.js", import.meta.url))).href;
+	const host =
+		await startInProcessHost(`import { fauxAssistantMessage, fauxProvider, fauxToolCall } from ${JSON.stringify(faux)};
+export default function (pi) {
+	const faux = fauxProvider({ api: "fauxsock", provider: "fauxsock" });
+	faux.setResponses([
+		fauxAssistantMessage([fauxToolCall("read", { path: ${JSON.stringify(join(outside, "secret.txt"))} }, { id: "call-1" })], { stopReason: "toolUse" }),
+		fauxAssistantMessage("done"),
+	]);
+	pi.registerProvider(faux.provider);
+}`);
+	try {
+		const client = await rawClient(host.socketPath);
+		const warmed = await client.request({ type: "warm", cwd: host.cwd });
+		expect((warmed.data as { state?: unknown } | undefined)?.state).toBe("warmed");
+
+		// When: one session per preset opens after the warm and runs the scripted turn, denying any prompt.
+		const turn = async (permissionPreset: string) => {
+			const opened = await client.request({
+				type: "open_session",
+				cwd: host.cwd,
+				permissionPreset,
+				provider: "fauxsock",
+				modelId: "faux-1",
+			});
+			const sessionId = String((opened.data as { sessionId?: unknown } | undefined)?.sessionId);
+			const asked: string[] = [];
+			// Settles on the turn's idle; a permission prompt on the way is recorded and denied.
+			const idle = client.wait((record) => {
+				if (record.sessionId !== sessionId) return false;
+				if (record.type === "extension_ui_request" && record.method === "select") {
+					asked.push(String(record.title).split("\n")[0]);
+					client.send({ type: "extension_ui_response", sessionId, id: record.id, value: "Deny" });
+					return false;
+				}
+				return record.type === "agent_idle";
+			}, 60_000);
+			const ended = client.wait(
+				(record) => record.type === "tool_execution_end" && record.sessionId === sessionId,
+				60_000,
+			);
+			await client.request({ type: "prompt", sessionId, message: "go" });
+			const end = await ended;
+			await idle;
+			return { asked, result: JSON.stringify(end) };
+		};
+
+		// Then: accept-edits asks and never returns the file; full-access reads it with no prompt.
+		const guarded = await turn("accept-edits");
+		expect(guarded.asked).toEqual(["Permission required: external_directory"]);
+		expect(guarded.result).not.toContain("outside secret");
+		const open = await turn("full-access");
+		expect(open.asked).toEqual([]);
+		expect(open.result).toContain("outside secret");
+		client.close();
+	} finally {
+		await host.dispose();
+		await rm(outside, { recursive: true, force: true });
 	}
 }, 600_000);
 

@@ -1,11 +1,18 @@
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../types.ts";
+import { freshEscapeResidueRetry } from "./escape-residue.ts";
 import { TOOL_NAMES } from "./family.ts";
 import { parseAskUserAnswerFrame } from "./format.ts";
-import { ASK_USER_SETTLEMENT_ENTRY } from "./notify.ts";
+import { ASK_USER_SETTLEMENT_ENTRY, emitAskUserClosed } from "./notify.ts";
 import { getPendingQuestions } from "./registry.ts";
-import { type AskUserVariant, DEFAULT_ASK_USER_TIMEOUT_MS, type QuestionRequest, toCanonical } from "./schema.ts";
-import { startQuestion } from "./tool.ts";
+import {
+	type AskUserVariant,
+	DEFAULT_ASK_USER_TIMEOUT_MS,
+	type QuestionRequest,
+	type QuestionResponse,
+	toCanonical,
+} from "./schema.ts";
+import { deliverAnswer, startQuestion } from "./tool.ts";
 
 export const ASK_USER_RESUMED_ENTRY = "ask-user:resumed";
 
@@ -73,7 +80,7 @@ function findDanglingQuestions(entries: readonly SessionEntry[]): DanglingQuesti
 			if (!variant || settled.has(block.id)) continue;
 			const call = { toolCallId: block.id, variant, args: block.arguments };
 			const request = requestFromCall(call, DEFAULT_ASK_USER_TIMEOUT_MS);
-			if (results.has(block.id) && (request.waitForAnswer || !accepted.has(block.id))) continue;
+			if (results.has(block.id) && (request?.waitForAnswer === true || !accepted.has(block.id))) continue;
 			if (resumed.has(block.id)) continue;
 			dangling.push(call);
 		}
@@ -81,28 +88,69 @@ function findDanglingQuestions(entries: readonly SessionEntry[]): DanglingQuesti
 	return dangling;
 }
 
-function requestFromCall(dangling: DanglingQuestion, timeoutMs: number): QuestionRequest {
+/** The restorable request, or undefined when the recorded arguments no longer form a valid question set. */
+function requestFromCall(dangling: DanglingQuestion, timeoutMs: number): QuestionRequest | undefined {
 	try {
 		return toCanonical(dangling.variant, dangling.args, {
 			requestId: dangling.toolCallId,
 			timeoutMs,
 		});
 	} catch {
-		return {
-			requestId: dangling.toolCallId,
-			questions: [],
-			waitForAnswer: false,
-			timeoutMs,
-		};
+		return undefined;
 	}
+}
+
+/**
+ * A call that cannot be restored never reaches the UI: it settles as
+ * orphaned-after-restart, like a restored question whose UI is gone, so the
+ * model learns it was lost and can ask again.
+ */
+function settleUnrestorable(
+	pi: Pick<ExtensionAPI, "appendEntry" | "sendUserMessage" | "events">,
+	ctx: ExtensionContext,
+	dangling: DanglingQuestion,
+	timeoutMs: number,
+): void {
+	const required = isRecord(dangling.args) && dangling.args.required === true;
+	const lost: QuestionRequest = {
+		requestId: dangling.toolCallId,
+		questions: [],
+		waitForAnswer: false,
+		timeoutMs,
+		...(required ? { required: true } : {}),
+	};
+	const response: QuestionResponse = { status: "orphaned-after-restart", answers: {}, unanswered: [] };
+	pi.appendEntry(ASK_USER_SETTLEMENT_ENTRY, { requestId: lost.requestId, status: response.status });
+	emitAskUserClosed(pi, lost.requestId, response);
+	deliverAnswer(pi, ctx, lost, response, dangling.variant);
 }
 
 export async function resumeDanglingQuestion(
 	pi: Pick<ExtensionAPI, "appendEntry" | "sendUserMessage" | "events">,
-	event: Pick<SessionStartEvent, "reason">,
+	event: Pick<SessionStartEvent, "reason" | "sizesOnly">,
 	ctx: ExtensionContext,
 ): Promise<void> {
-	if (event.reason !== "resume" && event.reason !== "reload") return;
+	// Diagnostic sizes-only startup starts no turn, so it restores nothing.
+	if (event.sizesOnly) return;
+	// senpi#4764: the CLI's initial runtime passes no explicit session_start
+	// event, so a restarted CLI opening an existing session file arrives with
+	// reason "startup" — the same as a fresh session. That is safe to include:
+	// a fresh session has no branch entries, so findDanglingQuestions finds
+	// nothing, while a reopened file's dangling question is restored exactly
+	// like on the switch_session "resume" path.
+	// Headless startup (print mode, `-p` / `--mode json`) has no question UI:
+	// restoring there would settle the question as `orphaned-after-restart`
+	// (sending a follow-up message and starting a model turn the user never
+	// asked for) and write the `ask-user:resumed` marker, so a later
+	// interactive open could never re-ask it. Skip startup restores entirely
+	// when `ctx.hasUI` is false; resume/reload keep their existing no-UI
+	// orphan delivery. Note: CLI `--fork <file>` also arrives as "startup"
+	// with copied branch entries, so a fork re-presents the source's dangling
+	// question, unlike runtime `/fork` (reason "fork", excluded above). The
+	// event carries no signal telling a forked startup from a plain restart,
+	// so this divergence is documented, not filtered.
+	if (event.reason !== "resume" && event.reason !== "reload" && event.reason !== "startup") return;
+	if (event.reason === "startup" && !ctx.hasUI) return;
 	const pending = new Set(
 		getPendingQuestions(ctx.sessionManager.getSessionId()).map((entry) => entry.request.requestId),
 	);
@@ -112,9 +160,21 @@ export async function resumeDanglingQuestion(
 		pending.add(dangling.toolCallId);
 		pi.appendEntry(ASK_USER_RESUMED_ENTRY, { toolCallId: dangling.toolCallId });
 		const request = requestFromCall(dangling, timeoutMs);
+		if (!request) {
+			settleUnrestorable(pi, ctx, dangling, timeoutMs);
+			continue;
+		}
 		// The runtime registration owns delivery, including after another reload.
-		void startQuestion(pi, ctx, request, ctx.signal, { timedOut: false, unavailable: false }, dangling.variant, {
-			resuming: true,
-		});
+		void startQuestion(
+			pi,
+			ctx,
+			request,
+			ctx.signal,
+			{ timedOut: false, unavailable: false, escapeResidue: freshEscapeResidueRetry() },
+			dangling.variant,
+			{
+				resuming: true,
+			},
+		);
 	}
 }

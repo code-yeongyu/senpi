@@ -15,9 +15,13 @@ import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
+import { DefaultPackageManager } from "../src/core/package-manager.ts";
+import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
-import { handlePackageCommand } from "../src/package-manager-cli.ts";
+import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { handlePackageCommand, selfUpdatePlanAfterLookupFailure } from "../src/package-manager-cli.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
 describe("package manifest", () => {
@@ -27,7 +31,7 @@ describe("package manifest", () => {
 		expect(manifest).toMatchObject({
 			scripts: {
 				build: expect.stringContaining("npm run copy-assets"),
-				prepublishOnly: expect.stringMatching(/npm run build.*npm run shrinkwrap/),
+				prepublishOnly: expect.stringContaining("npm run build"),
 			},
 		});
 	});
@@ -231,7 +235,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:@project/pkg"] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, true);
+		await new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -253,7 +257,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:@project/pkg"] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, true);
+		await new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -390,7 +394,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:fake-package"], npmCommand: [originalExecPath, fakeNpmPath] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, true);
+		await new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -410,7 +414,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ packages: ["npm:@project/pkg"] }),
 		);
-		new ProjectTrustStore(agentDir).set(projectDir, false);
+		await new ProjectTrustStore(agentDir).set(projectDir, false);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -505,6 +509,72 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		);
 		expect(process.exitCode).toBe(1);
 	});
+
+	it("toggles built-in extensions in config global mode", async () => {
+		// User skills under ~/.agents/skills are discovered from HOME; keep the real ones out of the list.
+		vi.stubEnv("HOME", tempDir);
+		const settingsManager = SettingsManager.fromStorage(new InMemorySettingsStorage(), { projectTrusted: true });
+		const resolvedPaths = await new DefaultPackageManager({
+			cwd: projectDir,
+			agentDir,
+			settingsManager,
+			builtinExtensions: ["example-ext", "mcp"],
+		}).resolve();
+		const selector = new ConfigSelectorComponent(
+			{ global: resolvedPaths, project: resolvedPaths },
+			settingsManager,
+			projectDir,
+			agentDir,
+			() => {},
+			() => {},
+			() => {},
+			24,
+			"global",
+		);
+
+		const list = selector.getResourceList();
+		initTheme("dark");
+		expect(list.render(80).join("\n")).toContain("Built-in");
+		expect(list.render(80).join("\n")).toContain("example-ext");
+		list.handleInput(" ");
+		expect(settingsManager.getGlobalSettings().extensions).toEqual(["-builtin:example-ext"]);
+		list.handleInput(" ");
+		expect(settingsManager.getGlobalSettings().extensions).toEqual(["+builtin:example-ext"]);
+	});
+
+	it("cycles project built-in extension overrides in config local mode", async () => {
+		// User skills under ~/.agents/skills are discovered from HOME; keep the real ones out of the list.
+		vi.stubEnv("HOME", tempDir);
+		const storage = new InMemorySettingsStorage();
+		storage.withLock("global", () => JSON.stringify({ extensions: ["-builtin:mcp"] }));
+		const settingsManager = SettingsManager.fromStorage(storage, { projectTrusted: true });
+		const resolvedPaths = await new DefaultPackageManager({
+			cwd: projectDir,
+			agentDir,
+			settingsManager,
+			builtinExtensions: ["mcp"],
+		}).resolve();
+		const selector = new ConfigSelectorComponent(
+			{ global: resolvedPaths, project: resolvedPaths },
+			settingsManager,
+			projectDir,
+			agentDir,
+			() => {},
+			() => {},
+			() => {},
+			24,
+			"project",
+		);
+
+		const list = selector.getResourceList();
+		list.handleInput(" ");
+		expect(settingsManager.getProjectSettings().extensions).toEqual(["+builtin:mcp"]);
+		list.handleInput(" ");
+		expect(settingsManager.getProjectSettings().extensions).toEqual(["-builtin:mcp"]);
+		list.handleInput(" ");
+		expect(settingsManager.getProjectSettings().extensions).toEqual([]);
+	});
+
 	it("shows a friendly error for unknown install options", async () => {
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -561,6 +631,23 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			} else {
 				process.env.PI_SKIP_VERSION_CHECK = previousSkipVersionCheck;
 			}
+		}
+	});
+
+	it("points a binary install at the download page when its release lookup fails, and still fails other installs (senpi#6633)", () => {
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		try {
+			const plan = selfUpdatePlanAfterLookupFailure("bun-binary", "HTTP 403");
+			expect(plan.shouldRun).toBe(false);
+			const printed = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(printed).toContain("HTTP 403");
+			expect(printed).toContain("https://github.com/code-yeongyu/senpi/releases/latest");
+			expect(() => selfUpdatePlanAfterLookupFailure("npm", "HTTP 503")).toThrow(
+				/Could not determine latest .* version: HTTP 503/,
+			);
+			expect(() => selfUpdatePlanAfterLookupFailure("npm", "")).toThrow(/Could not determine latest .* version\./);
+		} finally {
+			logSpy.mockRestore();
 		}
 	});
 

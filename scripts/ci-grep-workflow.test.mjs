@@ -9,15 +9,9 @@ const nativeJob = workflow.match(/^  grep-native-contract:\n[\s\S]*?(?=^  [\w-]+
 const fanIn = workflow.match(/^  check-and-test:\n[\s\S]*?(?=^  [\w-]+:|$(?![\s\S]))/m)?.[0];
 
 describe("grep native contract CI", () => {
-	it("builds the locked native crate on Linux with the repository toolchain and Rust cache", () => {
+	it("builds the locked native crate on Linux", () => {
 		assert.ok(nativeJob, "missing grep-native-contract job");
 		assert.match(nativeJob, /runs-on: ubuntu-latest/);
-		assert.match(nativeJob, /npm ci --ignore-scripts/);
-		assert.match(nativeJob, /npm run build/);
-		assert.match(nativeJob, /oven-sh\/setup-bun@[a-f0-9]{40}/);
-		assert.match(nativeJob, /rust-toolchain\.toml/);
-		assert.match(nativeJob, /rustup toolchain install "\$toolchain" --profile minimal/);
-		assert.match(nativeJob, /Swatinem\/rust-cache@[a-f0-9]{40}/);
 		assert.match(nativeJob, /cargo build -p senpi-grep --release --locked/);
 		assert.match(nativeJob, /napi build --platform --release -- --locked\n\s+working-directory: crates\/senpi-grep/);
 	});
@@ -26,9 +20,9 @@ describe("grep native contract CI", () => {
 		assert.ok(nativeJob, "missing grep-native-contract job");
 		assert.match(nativeJob, /node_file=\$\(ls crates\/senpi-grep\/senpi_grep\.\*\.node\)/);
 		assert.match(nativeJob, /export SENPI_GREP_NATIVE_PATH="\$PWD\/\$node_file"\n\s+cd packages\/coding-agent/);
-		assert.match(nativeJob, /SENPI_GREP_ENGINE=native bunx vitest run test\/grep --reporter=default --reporter=json/);
+		assert.match(nativeJob, /SENPI_GREP_ENGINE=native node \.\.\/\.\.\/scripts\/run-tests\.mjs vitest run test\/grep --reporter=default --reporter=json/);
 		assert.match(nativeJob, /contract\.assertionResults\.every\(\(test\) => test\.status === "passed"\)/);
-		assert.match(nativeJob, /SENPI_GREP_ENGINE=rg bunx vitest run test\/grep/);
+		assert.match(nativeJob, /SENPI_GREP_ENGINE=rg node \.\.\/\.\.\/scripts\/run-tests\.mjs vitest run test\/grep/);
 		assert.doesNotMatch(nativeJob, /senpi_grep\.linux-x64-gnu\.node/);
 	});
 

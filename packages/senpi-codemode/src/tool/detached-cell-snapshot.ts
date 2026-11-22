@@ -63,6 +63,23 @@ export function currentDetachedResult(cell: DetachedCellResultSource): AgentTool
 	return cell.terminalResult ?? cell.liveResult?.() ?? fallbackResult(cell.input);
 }
 
+/**
+ * The result a cell cancelled before its handler finished settles with: its buffered output, not the live progress
+ * frame ("1/1 cells running"), so a stopped cell never reads as still running.
+ */
+export function cancelledDetachedResult(cell: DetachedCellResultSource): AgentToolResult<EvalToolDetails> {
+	if (cell.terminalResult !== undefined) return cell.terminalResult;
+	const current = currentDetachedResult(cell);
+	const output = detachedOutputTail(current);
+	return {
+		content: [
+			{ type: "text", text: output.length > 0 ? output : "(no output)" },
+			...current.content.filter((part) => part.type === "image"),
+		],
+		details: current.details,
+	};
+}
+
 export function detachedErrorResult(cell: DetachedCellResultSource, error: Error): AgentToolResult<EvalToolDetails> {
 	const current = currentDetachedResult(cell);
 	const output = detachedOutputTail(current);

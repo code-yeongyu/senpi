@@ -1,9 +1,19 @@
-import { setKeybindings, TuiAltScreen, type TuiMouseEvent, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	setKeybindings,
+	type TUI,
+	TuiAltScreen,
+	TuiMainScreen,
+	type TuiMouseEvent,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../../tui/test/virtual-terminal.ts";
 import type { QuestionRequest } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
-import { AskUserAsyncWidget } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
+import {
+	AskUserAsyncWidget,
+	selectionBypassHint,
+} from "../../src/modes/interactive/components/ask-user-async-widget.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 
 const request: QuestionRequest = {
@@ -146,6 +156,46 @@ describe("pending widget mouse (#1645)", () => {
 		} finally {
 			widget.dispose();
 			vi.unstubAllEnvs();
+		}
+	});
+	it.each([
+		["iTerm.app", "darwin", "option+drag"],
+		["Apple_Terminal", "darwin", "cmd+r (toggle mouse reporting)"],
+		["vscode", "darwin", "option+drag (with terminal.integrated.macOptionClickForcesSelection)"],
+		["vscode", "win32", "shift+drag"],
+		["vscode", "linux", "shift+drag"],
+		["tmux", "darwin", "shift+drag (option+drag on iTerm2)"],
+		["ghostty", "darwin", "shift+drag"],
+		["WezTerm", "linux", "shift+drag"],
+		["", "win32", "shift+drag"],
+	] as const)("names the selection bypass for %s on %s (#3604)", (termProgram, platform, expected) => {
+		expect(selectionBypassHint(termProgram, platform)).toBe(expected);
+	});
+	it("follows the live main-screen capture state: armed, yielded by the wheel, armed again by a key (#3604)", () => {
+		const terminal = new VirtualTerminal(120, 34);
+		const tui = new TuiMainScreen(terminal);
+		const tty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+		Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+		vi.stubEnv("WT_SESSION", "wheel-test");
+		vi.stubEnv("TERM_PROGRAM", "");
+		const widget = new AskUserAsyncWidget({ ...setup(), tui: tui as unknown as TUI });
+		try {
+			tui.start();
+			tui.acquireMouseCapture("pending-question");
+			const armed = plain(widget.render(120)).join("\n");
+			expect(armed).toContain("click an option · shift+drag to select text");
+			terminal.sendInput("\x1b[<64;5;3M");
+			const yielded = plain(widget.render(120)).join("\n");
+			expect(yielded).toContain("wheel scrolls · press any key to click options again");
+			expect(yielded).not.toContain("click an option");
+			terminal.sendInput("a");
+			expect(plain(widget.render(120)).join("\n")).toContain("click an option · shift+drag to select text");
+		} finally {
+			widget.dispose();
+			tui.stop();
+			vi.unstubAllEnvs();
+			if (tty) Object.defineProperty(process.stdout, "isTTY", tty);
+			else Reflect.deleteProperty(process.stdout, "isTTY");
 		}
 	});
 	it("receives the actual fullscreen press/release dispatch", () => {

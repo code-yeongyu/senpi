@@ -4,6 +4,8 @@ import { BAI_MODELS } from "../src/providers/bai.models.ts";
 import { type BaiApi, baiProvider } from "../src/providers/bai.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const unionRootTool: Tool = {
 	name: "workpool",
 	description: "Union-root function schema compatibility probe.",
@@ -37,7 +39,7 @@ async function captureRequest(id: string, tools: Tool[]): Promise<{ url: string;
 	};
 	let captured: { url: string; body: Record<string, unknown> } | undefined;
 	const events: unknown[] = [];
-	const stream = baiProvider({ models: [model] }).streamSimple(model, context, {
+	const stream = baiProvider({ models: [model] }).streamSimple(model, normalizeContext(context), {
 		apiKey: "bai-test-key",
 		maxTokens: 16,
 		fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {

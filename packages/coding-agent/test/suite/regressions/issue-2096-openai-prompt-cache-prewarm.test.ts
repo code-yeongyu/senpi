@@ -1,4 +1,10 @@
-import { type Context, fauxAssistantMessage, type WarmPromptCacheResult } from "@earendil-works/pi-ai";
+import {
+	type Context,
+	fauxAssistantMessage,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	type WarmPromptCacheResult,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
@@ -16,8 +22,8 @@ function toolShapes(tools: Context["tools"]) {
 	return tools?.map(({ name, description, parameters }) => ({ name, description, parameters }));
 }
 
-// senpi#2096: the session-start prompt-cache prewarm is fire-and-forget.
-describe("session-start OpenAI prompt-cache prewarm (#2096)", () => {
+// senpi#2096: the first-activity prompt-cache prewarm is fire-and-forget.
+describe("first-activity OpenAI prompt-cache prewarm (#2096)", () => {
 	afterEach(cleanupPrewarmHarnesses);
 
 	it("runs the first turn while the prewarm is still in flight and records its cost afterwards", async () => {
@@ -26,6 +32,7 @@ describe("session-start OpenAI prompt-cache prewarm (#2096)", () => {
 		harness.setResponses([fauxAssistantMessage("first answer")]);
 
 		await harness.session.bindExtensions({});
+		harness.session.recordUserActivity("draft");
 		const call = await within(warmCalled, "the prewarm request");
 		expect(call.context.messages).toEqual([]);
 		expect(call.context.systemPrompt).toBe(harness.session.systemPrompt);
@@ -65,7 +72,7 @@ describe("session-start OpenAI prompt-cache prewarm (#2096)", () => {
 				parameters: Type.Object({ query: Type.String() }),
 				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
 			});
-			// Finishes after cache-keepalive's session_start has already started the prewarm.
+			// Finishes after cache-keepalive's session_start has armed the prewarm.
 			pi.on("session_start", async () => {
 				await lateSessionStart.promise;
 				pi.setActiveTools(["lookup"]);
@@ -95,15 +102,16 @@ describe("session-start OpenAI prompt-cache prewarm (#2096)", () => {
 		const binding = harness.session.bindExtensions({});
 		lateSessionStart.resolve();
 		await within(binding, "extension binding");
+		harness.session.recordUserActivity("draft");
 		const warm = await within(warmCalled, "the prewarm request");
 		await within(harness.session.prompt("hello"), "the first turn");
 
 		const [turn] = turnRequests;
 		expect(warm.context.messages).toEqual([]);
 		expect(warm.context.systemPrompt).toContain("Composed per turn by before_agent_start.");
-		expect(warm.context.systemPrompt).toBe(turn?.context.systemPrompt);
+		expect(warm.context.systemPrompt).toBe(getCurrentSystemPrompt(turn?.context.messages ?? []));
 		expect(warm.context.tools?.map((tool) => tool.name)).toEqual(["lookup"]);
-		expect(toolShapes(warm.context.tools)).toEqual(toolShapes(turn?.context.tools));
+		expect(toolShapes(warm.context.tools)).toEqual(toolShapes(getCurrentTools(turn?.context.messages ?? [])));
 		expect(warm.options?.reasoning).toBe("high");
 		expect(warm.options?.reasoning).toBe(turn?.options?.reasoning);
 		expect(warm.options?.sessionId).toBe(turn?.options?.sessionId);
@@ -117,6 +125,7 @@ describe("session-start OpenAI prompt-cache prewarm (#2096)", () => {
 		harness.setResponses([fauxAssistantMessage("still answered")]);
 
 		await harness.session.bindExtensions({});
+		harness.session.recordUserActivity("draft");
 		await within(warmCalled, "the prewarm request");
 		const entry = await within(entryAppended, "the failed prewarm entry");
 		expect(entry.data).toMatchObject({ phase: "failed", error: "prewarm rejected" });

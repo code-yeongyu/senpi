@@ -11,7 +11,7 @@ import type { BranchPreparation, BranchSummaryResult } from "../../compaction/br
 import { generateBranchSummaryWithRequest } from "../../compaction/branch-summarization.ts";
 import type { CompactionPreparation, CompactResult, SummaryRequest } from "../../compaction/compaction.ts";
 import { compactWithRequest, prepareCompaction, shouldCompact } from "../../compaction/compaction.ts";
-import { type Context, getTelemetryContext, withAbortSignal } from "../../context.ts";
+import { type Context, getTelemetryContext, withAbortSignal, withSessionCwd } from "../../context.ts";
 import { AbortRequested } from "../../execution/effect-gate.ts";
 import { applyStreamOptionsPatch } from "../../hooks.ts";
 import { insertEntry, insertUsage } from "../../session/commit.ts";
@@ -866,6 +866,7 @@ async function performStructuralAttempt<TContext extends object | undefined>(
 		return response;
 	};
 
+	const summaryContext = withSessionCwd(lane.session.metadata.cwd, drive.context);
 	try {
 		if (summaryKind(effect.task) === "compaction") {
 			if (!("messagesToSummarize" in preparation)) {
@@ -879,7 +880,7 @@ async function performStructuralAttempt<TContext extends object | undefined>(
 					thinkingLevel: effect.summaryContext.configuration.thinkingLevel,
 				},
 				request,
-				drive.context,
+				summaryContext,
 			);
 			if (!result.ok) {
 				return {
@@ -902,7 +903,7 @@ async function performStructuralAttempt<TContext extends object | undefined>(
 			preparation,
 			{ customInstructions: effect.task.customInstructions },
 			request,
-			drive.context,
+			summaryContext,
 		);
 		if (!result.ok) {
 			return {
@@ -1114,6 +1115,11 @@ export async function recoverStructuralGeneration<TContext extends object | unde
 	return published.kind === "cancel_requested" ? { kind: "continue" } : published.value;
 }
 
+/** Automatic compaction needs history before its cut; summarizing nothing only spends a provider request. */
+function summarizesHistory(preparation: CompactionPreparation): boolean {
+	return preparation.messagesToSummarize.length > 0 || preparation.turnPrefixMessages.length > 0;
+}
+
 /** Prepare threshold compaction only when no newer compaction already guards this trigger. */
 export async function prepareCompactionThreshold<TContext extends object | undefined>(
 	lane: Lane<TContext>,
@@ -1142,7 +1148,11 @@ export async function prepareCompactionThreshold<TContext extends object | undef
 	}
 	const prepared = prepareCompaction(path.value, settings);
 	if (!prepared.ok) throw prepared.error;
-	if (prepared.value === undefined || !shouldCompact(prepared.value.tokensBefore, model.contextWindow, settings)) {
+	if (
+		prepared.value === undefined ||
+		!summarizesHistory(prepared.value) ||
+		!shouldCompact(prepared.value.tokensBefore, model.contextWindow, settings)
+	) {
 		return { kind: "result", value: undefined };
 	}
 	return {
@@ -1157,12 +1167,12 @@ export async function prepareOverflowCompaction<TContext extends object | undefi
 	drive: Drive,
 	generation: AssistantEffectPendingOperation,
 ): Promise<{ taskId: string; preparation: DurableStructuralPreparation } | undefined> {
-	if (generation.generationContext.overflowRecoveryUsed) return undefined;
+	if (generation.generationContext.overflowRecoveryUsed || !generation.settings.compaction.enabled) return undefined;
 	const path = await readBoundedEntries(lane, drive, generation);
 	if (path.kind === "cancel_requested") return undefined;
 	const prepared = prepareCompaction(path.value, generation.settings.compaction);
 	if (!prepared.ok) throw prepared.error;
-	if (prepared.value === undefined) return undefined;
+	if (prepared.value === undefined || !summarizesHistory(prepared.value)) return undefined;
 	return {
 		taskId: lane.session.idGenerator.next(),
 		preparation: durableCompactionPreparation(prepared.value),

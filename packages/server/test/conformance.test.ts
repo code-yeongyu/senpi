@@ -1,5 +1,6 @@
+import { rejects } from "node:assert/strict";
 import type { ServiceCall } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT, type SessionMetadata } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { afterEach, describe, expect, test } from "vitest";
 import type { ByteConnection, ByteConnectionHandler } from "../src/connection.ts";
 import { SessionAmbiguousError } from "../src/errors.ts";
@@ -11,7 +12,8 @@ import {
 	TestServerHost,
 	type WireChannel,
 } from "../src/testing/index.ts";
-import type { ServerHost } from "../src/types.ts";
+import type { ServerHost, SessionMetadata } from "../src/types.ts";
+import { assertEventually } from "./fixtures/assert-eventually.ts";
 
 const serverId = "00000000-0000-4000-8000-000000000001";
 const servers = new Set<Server>();
@@ -105,9 +107,6 @@ describe("Session protocol", () => {
 		type BackendMetadata = SessionMetadata & { path: string; modifiedAt: number };
 		const metadata: BackendMetadata = {
 			id: "session-1",
-			createdAt: 1,
-			storageVersion: 1,
-			cwd: "/workspace",
 			path: "/sessions/session-1.jsonl",
 			modifiedAt: 2,
 		};
@@ -176,7 +175,7 @@ describe("Session protocol", () => {
 		await expect(detached).resolves.toMatchObject({ type: "attachment", attachment: null });
 		expect(backing.latestHarness("session-1").attachedClients).toBe(0);
 		await client.close();
-		await expect.poll(() => releaseCount).toBe(1);
+		await assertEventually(() => expect(releaseCount).toBe(1));
 	});
 
 	test("permits multiple client attachments per Session", async () => {
@@ -195,7 +194,7 @@ describe("Session protocol", () => {
 		expect(host.latestHarness("session-1").attachedClients).toBe(2);
 
 		await first.close();
-		await expect.poll(() => host.latestHarness("session-1").attachedClients).toBe(1);
+		await assertEventually(() => expect(host.latestHarness("session-1").attachedClients).toBe(1));
 		await expect(second.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
 	});
 
@@ -214,8 +213,8 @@ describe("Session protocol", () => {
 		harness.failAttachmentRelease = releaseError;
 
 		await first.close();
-		await expect.poll(() => harness.attachmentReleaseCount).toBe(1);
-		await expect.poll(() => errors).toContain(releaseError);
+		await assertEventually(() => expect(harness.attachmentReleaseCount).toBe(1));
+		await assertEventually(() => expect(errors).toContain(releaseError));
 		harness.failAttachmentRelease = undefined;
 		await expect(second.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
 	});
@@ -308,14 +307,16 @@ describe("Session protocol", () => {
 		const harness = host.latestHarness("session-1");
 		const gate = harness.gateNextServiceCall();
 		const calling = client.requestSessionService(serverId, "session-1", sessionCall("run"));
-		const disconnectedCall = expect(calling).rejects.toThrow(/closed/i);
-		await gate.entered.promise;
-
-		await client.close();
-		expect(harness.attachedClients).toBe(1);
-		gate.release.resolve(undefined);
+		const disconnectedCall = rejects(calling, { message: /closed/i });
+		try {
+			await gate.entered.promise;
+			await client.close();
+			expect(harness.attachedClients).toBe(1);
+		} finally {
+			gate.release.resolve(undefined);
+		}
 		await disconnectedCall;
-		await expect.poll(() => harness.attachedClients).toBe(0);
+		await assertEventually(() => expect(harness.attachedClients).toBe(0));
 	});
 
 	test("rejects requests addressed to another server before repository access", async () => {
@@ -373,7 +374,7 @@ describe("Session protocol", () => {
 
 		await firstHarness.terminate(new Error("worker crashed"));
 		await firstHarness.terminated;
-		await expect.poll(() => firstHarness.attachedClients).toBe(0);
+		await assertEventually(() => expect(firstHarness.attachedClients).toBe(0));
 		expect(firstHarness.attachmentReleaseCount).toBe(1);
 
 		await expect(client.attach(serverId, "session-1")).resolves.toMatchObject({ ok: true });
@@ -390,7 +391,7 @@ describe("Session protocol", () => {
 		const harness = host.latestHarness("session-1");
 
 		await client.close();
-		await expect.poll(() => harness.attachedClients).toBe(0);
+		await assertEventually(() => expect(harness.attachedClients).toBe(0));
 		expect(harness.closeCount).toBe(0);
 		await server.close();
 		expect(harness.closeCount).toBe(1);
@@ -399,7 +400,7 @@ describe("Session protocol", () => {
 
 describe("routed Session acquisition failures", () => {
 	test("releases a lease acquired concurrently with Harness termination", async () => {
-		const metadata: SessionMetadata = { id: "session-1", createdAt: 1, storageVersion: 1 };
+		const metadata: SessionMetadata = { id: "session-1" };
 		const acquiring = new Deferred<void>();
 		const continueAcquiring = new Deferred<void>();
 		const terminated = new Deferred<Error | undefined>();
@@ -468,11 +469,10 @@ describe("routed Session acquisition failures", () => {
 		const gate = host.gateNextOpenSession();
 		const attach = client.attach(serverId, "session-1");
 		await gate.entered.promise;
-		const closing = server.close();
+		const closing = Promise.all([server.close(), rejects(attach, { message: /closed/i })]);
 		gate.release.resolve(undefined);
 
 		await closing;
-		await expect(attach).rejects.toThrow(/closed/i);
 		expect(host.latestHarness("session-1").closeCount).toBe(1);
 	});
 
@@ -488,12 +488,15 @@ describe("routed Session acquisition failures", () => {
 		const attach = client.attach(serverId, "session-1");
 		await gate.entered.promise;
 
-		const closing = server.close();
+		const closeFailure = { message: /Failed to close routed Sessions/ };
+		const closing = Promise.all([
+			rejects(server.close(), closeFailure),
+			rejects(server.closed, closeFailure),
+			rejects(attach, { message: /closed/i }),
+		]);
 		gate.release.resolve(undefined);
 
-		await expect(closing).rejects.toThrow(/Failed to close routed Sessions/);
-		await expect(server.closed).rejects.toThrow(/Failed to close routed Sessions/);
-		await expect(attach).rejects.toThrow(/closed/i);
+		await closing;
 		expect(host.latestHarness("session-1").closeCount).toBe(1);
 
 		servers.delete(server);

@@ -10,6 +10,9 @@ import { STATUS_EVENT_HISTORY_LIMIT } from "../src/tool/status-events.ts";
 import type { EvalToolDetails } from "../src/tool/types.ts";
 import { errorResult, FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
+// Base64 of the PNG signature: display() keeps only data with a recognised image signature.
+const PNG_HEADER = "iVBORw0KGgo=";
+
 type ToolContent = AgentToolResult<unknown>["content"][number];
 type TextPart = Extract<ToolContent, { type: "text" }>;
 type ImagePart = Extract<ToolContent, { type: "image" }>;
@@ -219,7 +222,7 @@ describe("eval tool output pipeline", () => {
 	it("resizes display images and appends dimension notes to text output", async () => {
 		// Given
 		const kernel = new FakeKernel([
-			{ type: "display", mimeType: "image/png", dataBase64: "source-image" },
+			{ type: "display", mimeType: "image/png", dataBase64: PNG_HEADER },
 			result("image-cell", ""),
 		]);
 		const imageResizer = vi.fn(async () => ({
@@ -244,10 +247,7 @@ describe("eval tool output pipeline", () => {
 		);
 
 		// Then
-		expect(imageResizer).toHaveBeenCalledWith(
-			{ type: "image", mimeType: "image/png", data: "source-image" },
-			undefined,
-		);
+		expect(imageResizer).toHaveBeenCalledWith({ type: "image", mimeType: "image/png", data: PNG_HEADER }, undefined);
 		expect(toolResult.content.filter(isImagePart)).toEqual([
 			{ type: "image", mimeType: "image/jpeg", data: "resized-image" },
 		]);

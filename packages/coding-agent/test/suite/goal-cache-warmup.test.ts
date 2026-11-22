@@ -4,6 +4,7 @@ import {
 	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
 	type GoalCacheWarmupEntryData,
 } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	type AppendedGoalEntry,
 	cleanAssistantStop,
@@ -69,7 +70,9 @@ async function setupWarmHarness(
 			: {}),
 	});
 	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-	await harness.tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+	await harness.tools
+		.get("create_goal")
+		?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx as ExtensionToolContext);
 	harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 	await harness.events.flush();
 	await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -173,8 +176,9 @@ describe("goal cache-warm continuation story", () => {
 		]);
 	});
 
-	it("celebrates the cache-warm wake when the deferred continuation fires", async () => {
+	it("records a timer wake when the deferred continuation fires", async () => {
 		vi.useFakeTimers();
+		vi.setSystemTime(0);
 		const { harness, notices } = await setupWarmHarness("thread-cache-warm-resumed");
 
 		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
@@ -190,6 +194,8 @@ describe("goal cache-warm continuation story", () => {
 				goalId: expect.any(String),
 				delayMs: BACKSTOP_DELAY_MS,
 				waitedMs: BACKSTOP_DELAY_MS,
+				dueAtMs: BACKSTOP_DELAY_MS,
+				wakeCause: "timer",
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({
@@ -206,6 +212,8 @@ describe("goal cache-warm continuation story", () => {
 			expect.objectContaining({
 				phase: "resumed",
 				waitedMs: BACKSTOP_DELAY_MS,
+				dueAtMs: BACKSTOP_DELAY_MS,
+				wakeCause: "timer",
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000 }),
@@ -303,7 +311,7 @@ describe("goal cache-warm continuation story", () => {
 		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 		await harness.tools
 			.get("create_goal")
-			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx as ExtensionToolContext);
 		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 		await harness.events.flush();
 		await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);

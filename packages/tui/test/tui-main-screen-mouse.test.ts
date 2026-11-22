@@ -118,8 +118,105 @@ it("consumes wheel, motion, other buttons and modifiers without dispatch", () =>
 	const { terminal, tui, events } = setup();
 	try {
 		tui.acquireMouseCapture("pending-question");
-		for (const button of [64, 65, 32, 35, 1, 2, 4, 8, 16]) terminal.sendInput(`\x1b[<${button};5;3M`);
+		for (const button of [32, 35, 1, 2, 4, 8, 16]) terminal.sendInput(`\x1b[<${button};5;3M`);
+		assert.equal(terminal.writes.filter((s) => s === MOUSE_TRACKING.disable).length, 0);
+		for (const button of [64, 65]) terminal.sendInput(`\x1b[<${button};5;3M`);
 		assert.deepEqual(events, []);
+	} finally {
+		tui.stop();
+	}
+});
+it("yields the mouse to the terminal on the first wheel report so the wheel scrolls scrollback (#3604)", () => {
+	const { terminal, tui, events } = setup();
+	try {
+		tui.acquireMouseCapture("pending-question");
+		assert.equal(tui.mouseCaptureState(), "armed");
+		terminal.sendInput("\x1b[<64;5;3M");
+		assert.equal(terminal.writes.filter((s) => s === MOUSE_TRACKING.disable).length, 1);
+		assert.equal(tui.mouseCaptureState(), "yielded");
+		terminal.sendInput("\x1b[<65;5;3M");
+		click(terminal);
+		assert.equal(terminal.writes.filter((s) => s === MOUSE_TRACKING.disable).length, 1);
+		assert.deepEqual(events, []);
+	} finally {
+		tui.stop();
+	}
+});
+it("re-arms on the next key press, which still reaches the focused component (#3604)", () => {
+	const { terminal, tui, events, root } = setup();
+	try {
+		const editor = new Editor(tui, defaultEditorTheme);
+		root.addChild(editor);
+		tui.setFocus(editor);
+		tui.acquireMouseCapture("pending-question");
+		terminal.sendInput("\x1b[<64;5;3M");
+		terminal.sendInput("a");
+		assert.equal(editor.getText(), "a");
+		assert.equal(terminal.writes.filter((s) => s === MOUSE_TRACKING.inline).length, 2);
+		assert.equal(tui.mouseCaptureState(), "armed");
+		assert.deepEqual(events, []);
+	} finally {
+		tui.stop();
+	}
+});
+it("answers clicks again once a key press re-armed the mouse (#3604)", () => {
+	const { terminal, tui, events } = setup();
+	try {
+		tui.acquireMouseCapture("pending-question");
+		terminal.sendInput("\x1b[<64;5;3M");
+		click(terminal);
+		assert.equal(events.filter((e) => e.type === "click").length, 0);
+		terminal.sendInput("a");
+		click(terminal);
+		assert.equal(events.filter((e) => e.type === "click").length, 1);
+	} finally {
+		tui.stop();
+	}
+});
+it("stays yielded across terminal reports and focus changes (#3604)", () => {
+	const { terminal, tui } = setup();
+	try {
+		tui.acquireMouseCapture("pending-question");
+		terminal.sendInput("\x1b[<64;5;3M");
+		for (const report of [
+			"\x1b[<35;5;3M",
+			"\x1b]11;rgb:0/0/0\x1b\\",
+			"\x1b[?1;2c",
+			"\x1b[8;24;80t",
+			"\x1b[I",
+			"\x1b[O",
+		])
+			terminal.sendInput(report);
+		assert.equal(terminal.writes.filter((s) => s === MOUSE_TRACKING.inline).length, 1);
+		assert.equal(tui.mouseCaptureState(), "yielded");
+	} finally {
+		tui.stop();
+	}
+});
+it("a Kitty key release alone does not re-arm after a yield (#3604)", () => {
+	const { terminal, tui } = setup();
+	try {
+		tui.acquireMouseCapture("pending-question");
+		terminal.sendInput("\x1b[<64;5;3M");
+		terminal.sendInput("\x1b[97;1:3u");
+		assert.equal(tui.mouseCaptureState(), "yielded");
+		assert.equal(terminal.writes.filter((s) => s === MOUSE_TRACKING.inline).length, 1);
+	} finally {
+		tui.stop();
+	}
+});
+it("a released and re-acquired lease arms again after a yield (#3604)", () => {
+	const { terminal, tui } = setup();
+	try {
+		const release = tui.acquireMouseCapture("pending-question");
+		terminal.sendInput("\x1b[<64;5;3M");
+		release();
+		assert.equal(tui.mouseCaptureState(), "off");
+		terminal.sendInput("a");
+		assert.equal(terminal.writes.filter((s) => s === MOUSE_TRACKING.inline).length, 1);
+		tui.acquireMouseCapture("pending-question");
+		assert.equal(terminal.writes.filter((s) => s === MOUSE_TRACKING.inline).length, 2);
+		assert.equal(tui.mouseCaptureState(), "armed");
 	} finally {
 		tui.stop();
 	}

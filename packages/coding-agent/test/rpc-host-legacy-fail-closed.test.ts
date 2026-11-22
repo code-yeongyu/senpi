@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
-import { processMatchesPidFile, readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
+import { processMatchesPidFile, readProcessStartTime } from "../src/utils/process-identity.ts";
 import {
 	ensureFixtureHost,
 	LEGACY_VERSION,

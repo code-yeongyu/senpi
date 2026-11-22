@@ -1,6 +1,16 @@
 // Core session management
+export { attachHostTools, HOST_TOOL_ROUTE_CHANNEL, HOST_TOOL_ROUTE_UNAVAILABLE } from "./host-tools.ts";
+export { showHtmlPageTool, type ShowHtmlPageDetails, writeHtmlPage } from "./extensions/html-render/tool.ts";
+export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./core/extensions/secret-input.ts";
+export type { RpcSecretInputSettledEvent } from "./modes/rpc/rpc-types.ts";
+export type {
+	PresenterAccountAuthority,
+	PresenterAttestation,
+	PresenterAttestationRefusal,
+	PresenterAttestationResult,
+} from "./modes/rpc/mcp-presenter-account.ts";
 
-export { sanitizeTerminalLabel } from "@earendil-works/pi-tui";
+export { sanitizeTerminalLabel, visibleWidth } from "@earendil-works/pi-tui";
 export { type Args, parseArgs } from "./cli/args.ts";
 // The shared-daemon command surface: one JSON line, one exit code, for launchers without a shell
 export { runHostCommand } from "./cli/host-command.ts";
@@ -15,6 +25,7 @@ export {
 	VERSION,
 } from "./config.ts";
 export {
+	type AgentAbortCause,
 	AgentSession,
 	type AgentSessionConfig,
 	type AgentSessionEvent,
@@ -25,7 +36,13 @@ export {
 	parseSkillBlock,
 	type SessionStats,
 } from "./core/agent-session.ts";
-export { type OAuthCredential, readStoredCredential } from "./core/auth-storage.ts";
+export { AuthStorage, type OAuthCredential, readStoredCredential } from "./core/auth-storage.ts";
+export {
+	type ConfigValueObservation,
+	type ConfigValueObserver,
+	resolveConfigValue,
+} from "./core/resolve-config-value.ts";
+export { REQUIRED_COMPACTION_ERROR_MESSAGE, RequiredCompactionError } from "./core/required-compaction-error.ts";
 // Compaction
 export {
 	type BranchPreparation,
@@ -62,8 +79,51 @@ export {
 	engineBuildIdentityFrom,
 } from "./core/engine-build-identity.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
+export {
+	decideKillGuardRequest,
+	KILL_GUARD_TAG,
+	type KillGuardRequest,
+	type KillGuardVerdict,
+} from "./core/kill-guard/index.ts";
+export {
+	KILL_GUARD_MODULE_URL,
+	type KillGuardSetting,
+	killGuardProtectedPids,
+	readKillGuardSetting,
+} from "./core/kill-guard/host.ts";
+export {
+	type ActivateKillGuardRuntimeOptions,
+	activateKillGuardRuntime,
+	activeKillGuardEnvironment,
+	type KillGuardRuntime,
+	releaseKillGuardRuntime,
+} from "./core/kill-guard/runtime.ts";
+export { CREDENTIAL_PLACEHOLDER, withCredentialProxy } from "./core/credential-proxy/runtime.ts";
+// Job widgets: hosts register background jobs and their widget-author model route
+export * from "./core/extensions/builtin/job-widgets/public.ts";
+export {
+	type CancelReceipt,
+	EVAL_HANDLE_ERROR_CODES,
+	EvalHandleError,
+	type EvalHandleErrorCode,
+	type EvalHandleHost,
+	type HandleCallContext,
+	type HandleError,
+	type HandleKind,
+	type HandleOutcome,
+	type HandlePhase,
+	type HandleRef,
+	type HandleSnapshot,
+	type HandleWatch,
+	type OutputRequest,
+	type OutputSnapshot,
+} from "./core/extensions/eval-handle-host.ts";
 // Extension system
 export type {
+	AfterProviderResponseEvent,
+	AgentActivityOutcome,
+	AgentBeforeSettleEvent,
+	AgentBeforeSettleEventResult,
 	AgentEndEvent,
 	AgentSettledEvent,
 	AgentStartEvent,
@@ -77,10 +137,19 @@ export type {
 	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
+	BoundaryContextPreview,
+	BoundaryResult,
+	BoundaryState,
 	BuildSystemPromptOptions,
+	CompactionEntryDraft,
 	CompactOptions,
+	ContextEditEntryDraft,
 	ContextEvent,
+	ContextEventResult,
 	ContextUsage,
+	ContextWithSystemEvent,
+	CustomEntryDraft,
+	CustomMessageEntryDraft,
 	CustomToolCallEvent,
 	EditToolCallEvent,
 	EntryRenderer,
@@ -88,6 +157,7 @@ export type {
 	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
+	ExecuteToolOptions,
 	Extension,
 	ExtensionActions,
 	ExtensionAPI,
@@ -101,10 +171,14 @@ export type {
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionRpcRequestHandler,
+	ExtensionRpcRequestContext,
 	ExtensionRuntime,
 	ExtensionShortcut,
+	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionUIInputOptions,
+	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	FilesystemOperation,
 	FilesystemPolicy,
@@ -114,6 +188,7 @@ export type {
 	FindToolCallEvent,
 	GrepToolCallEvent,
 	InlineExtension,
+	InputAttribution,
 	InputDispositionEvent,
 	InputEvent,
 	InputEventResult,
@@ -125,12 +200,18 @@ export type {
 	MarkdownTransformContext,
 	MarkdownTransformer,
 	McpServerDeclaration,
+	McpServersChangeEvent,
 	MessageEndEvent,
+	MessageEndEventResult,
 	MessageRenderer,
 	MessageRenderOptions,
 	MessageStartEvent,
 	MessageUpdateEvent,
+	ModelSelectEvent,
+	ModelSelectSource,
+	NormalizedBuildSystemPromptOptions,
 	PowerShellToolCallEvent,
+	ProgramStatus,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventDecision,
@@ -138,15 +219,25 @@ export type {
 	ProjectTrustHandler,
 	ProviderConfig,
 	ProviderModelConfig,
+	ProviderStreamEvent,
 	ReadToolCallEvent,
 	RegisteredCommand,
+	RegisteredMcpServer,
 	RegisteredTool,
 	ResolvedCommand,
+	ResourcesDiscoverEvent,
+	ResourcesDiscoverResult,
 	SessionBeforeCompactEvent,
+	SessionBeforeCompactResult,
 	SessionBeforeForkEvent,
+	SessionBeforeForkResult,
 	SessionBeforeSwitchEvent,
+	SessionBeforeSwitchResult,
 	SessionBeforeTreeEvent,
+	SessionBeforeTreeResult,
+	SessionBoundaryDraft,
 	SessionCompactEvent,
+	SessionCompactFailedEvent,
 	SessionInfoChangedEvent,
 	SessionParkedEvent,
 	SessionResumedEvent,
@@ -157,6 +248,8 @@ export type {
 	SlashCommandSource,
 	SourceInfo,
 	TerminalInputHandler,
+	ThinkingLevelSelectEvent,
+	ToolAnnotations,
 	ToolCallEvent,
 	ToolCallEventResult,
 	ToolDefinition,
@@ -164,11 +257,17 @@ export type {
 	ToolExecutionMode,
 	ToolExecutionStartEvent,
 	ToolExecutionUpdateEvent,
+	ToolExposure,
 	ToolInfo,
+	ToolLoadout,
+	ToolLoadoutChanges,
+	ToolNamespace,
 	ToolPermissionRequest,
 	ToolRenderResultOptions,
 	ToolResultEvent,
+	ToolResultEventResult,
 	TurnEndEvent,
+	TurnEndEventResult,
 	TurnStartEvent,
 	UIPromptEndEvent,
 	UIPromptKind,
@@ -202,6 +301,7 @@ export {
 	type KernelToolInvokeScope,
 	kernelToolsStorage,
 } from "./core/extensions/kernel-tools-context.ts";
+export { ReservedCustodyKey } from "./core/extensions/lifecycle-api.ts";
 // Notice primitives
 export {
 	buildNoticeBox,
@@ -211,6 +311,7 @@ export {
 	noticeEntryRenderer,
 	noticeMessageRenderer,
 } from "./core/extensions/notice/index.ts";
+export * from "./core/extensions/session-control-types.ts";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
 export { convertToLlm } from "./core/messages.ts";
@@ -246,6 +347,21 @@ export {
 	readOwnFootprint,
 	readProcessFootprint,
 } from "./core/process-footprint.ts";
+// Which session spawned a process, attested by its spawner (senpi#6972)
+export {
+	attestSessionSpawn,
+	type PidSession,
+	resolvePidSession,
+	type SessionSpawnAttestation,
+	sessionSpawnsDir,
+} from "./core/session-spawn-attestation.ts";
+export {
+	findReservedKeywordRuns,
+	findReservedKeywordSpans,
+	type ReservedKeyword,
+	type ReservedKeywordRun,
+	type ReservedKeywordSpan,
+} from "./core/reserved-keywords.ts";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.ts";
 // SDK for programmatic usage
@@ -277,11 +393,30 @@ export {
 	createWriteTool,
 	type PromptTemplate,
 } from "./core/sdk.ts";
+export type {
+	ChildLifecycleReport,
+	DeliveryTicketId,
+	HumanWait,
+	LifecycleApi,
+	LifecycleHold,
+	LifecycleWaits,
+	ObligationKind,
+	ObligationToken,
+	SelfSettleResult,
+	SessionLifecycle,
+	SessionLifecycleEvent,
+	SessionLifecycleState,
+	SpawnedBy,
+	WorkObligations,
+} from "./core/session-lifecycle-types.ts";
 export {
 	type BranchSummaryEntry,
 	buildContextEntries,
 	buildSessionContext,
+	buildSessionProjection,
 	type CompactionEntry,
+	type ContextEditableContent,
+	type ContextEditEntry,
 	CURRENT_SESSION_VERSION,
 	type CustomEntry,
 	type CustomMessageEntry,
@@ -290,6 +425,7 @@ export {
 	type ModelChangeEntry,
 	migrateSessionEntries,
 	type NewSessionOptions,
+	type ProjectedSessionEntry,
 	parseSessionEntries,
 	type SessionContext,
 	type SessionEntry,
@@ -299,6 +435,7 @@ export {
 	type SessionInfoEntry,
 	SessionManager,
 	type SessionMessageEntry,
+	type SessionProjection,
 	type SessionTreeNode,
 	sessionEntryToContextMessages,
 	type ThinkingLevelChangeEntry,
@@ -310,6 +447,7 @@ export {
 	type FullscreenExitOutput,
 	type ImageSettings,
 	type PackageSource,
+	type QuietStartup,
 	type RetrySettings,
 	SettingsManager,
 	type SettingsManagerCreateOptions,
@@ -327,6 +465,16 @@ export {
 } from "./core/skills.ts";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
+// The device a session's tools run on (registerDeviceMachine; OMO_TOOLS_VIA_DAEMON).
+export type {
+	ExecRequest as MachineExecRequest,
+	ExecResult as MachineExecResult,
+	MachineOps,
+	OpContext,
+} from "@code-yeongyu/senpi-machine-ops";
+export { DeviceMachineConflictError } from "./core/extensions/types.ts";
+export { DeviceUnavailableError } from "./core/tools/bash.ts";
+export { createToolMachine, type ToolMachine, type ToolPathPolicy } from "./core/tools/machine.ts";
 // Tools
 export {
 	type BashOperations,
@@ -384,26 +532,51 @@ export {
 	registerReadClassifier,
 } from "./core/tools/read-classifiers.ts";
 export {
+	registerRpcRemoteSource,
+	type RpcRemoteHandlers,
+	type RpcRemoteOpenOptions,
+	type RpcRemoteSettledTurn,
+	type RpcRemoteSource,
+	type RpcRemoteState,
+	type RpcRemoteSubscription,
+	type RpcRemoteTarget,
+} from "./core/extensions/builtin/terminal/rpc-remote-source.ts";
+export {
 	hasTrustRequiringProjectResources,
 	type ProjectTrustDecision,
 	ProjectTrustStore,
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
+export { UnknownCommandError, type UnknownCommandReason } from "./core/unknown-command.ts";
+export {
+	type ModelRoute,
+	type ModelRouteReason,
+	type ModelRouteRequest,
+	VIRTUAL_MODEL_STATE_ENTRY,
+	type VirtualModelDefinition,
+	type VirtualModelStateData,
+} from "./core/virtual-models.ts";
 // Main-thread Bun.WebView service for eval kernels running in worker threads
 export { connectWebViewService, type WebViewServiceConnection } from "./core/webview/webview-broker.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage
 export {
+	classifyEndpointLiveness,
 	createHostDaemonPaths,
 	DEFAULT_HOST_LAUNCH_SPEC,
 	daemonDirectoryName,
 	decideHostAction,
+	ENDPOINT_REGISTRY_VERSION,
+	type EndpointKind,
+	type EndpointLiveness,
 	type EnsuredHost,
 	type EnsureHostOptions,
+	endpointProbeTimeoutMs,
 	ensureHost,
 	GENERATION_HANDOFF_CAPABILITY,
+	gcHostEndpoints,
 	type HandoffHostOptions,
 	type HandoffRefusal,
 	type HandoffResult,
@@ -419,8 +592,14 @@ export {
 	type HostDecisionClient,
 	type HostDecisionPolicy,
 	type HostDecisionWarning,
+	type HostEndpointEntry,
+	type HostEndpointIdentitySource,
+	type HostEndpointStatus,
 	HostEnsureRefusedError,
+	type HostGcOptions,
+	type HostGcResult,
 	type HostGenerationRow,
+	type HostHolder,
 	type HostLaunchSpec,
 	type HostLaunchSpecCore,
 	HostLaunchSpecError,
@@ -439,6 +618,7 @@ export {
 	type InteractiveModeOptions,
 	isTransportGoneError,
 	type JsonAgentSessionEvent,
+	listHostEndpoints,
 	loadHostLaunchSpec,
 	type ModelInfo,
 	PINNED_HOST_CLIENT_CAPABILITIES,
@@ -454,6 +634,8 @@ export {
 	RpcClientOpenInFlightError,
 	type RpcClientOptions,
 	type RpcCommand,
+	type RpcEvalCell,
+	type RpcEvalCellSnapshot,
 	type RpcEventListener,
 	type RpcExtensionEvent,
 	type RpcExtensionUIRequest,
@@ -461,6 +643,7 @@ export {
 	type RpcResponse,
 	type RpcSessionState,
 	RpcTransportGoneError,
+	readAllHostStatus,
 	readHostStatus,
 	runHostRequest,
 	runPrintMode,
@@ -472,6 +655,7 @@ export {
 	shardSocketPath,
 	shardSocketPathForKey,
 	stopHost,
+	TUI_PROBE_TIMEOUT_MS,
 } from "./modes/index.ts";
 // UI components for extensions
 export {
@@ -522,15 +706,21 @@ export {
 	highlightCode,
 	initTheme,
 	Theme,
+	type ThemeAppearance,
+	type ThemeBg,
 	type ThemeColor,
+	type ThemeStyle,
+	type ThemeToken,
 } from "./modes/interactive/theme/theme.ts";
 // Exact-pid collection of children whose owning thread is gone (#1962)
 export { collectOrphanedChildren } from "./modes/rpc/child-reaper.ts";
+// Shell utilities
+export { childEnvironmentOf } from "./modes/rpc/host-identity-env.ts";
+export { withBundledBunCommands } from "./utils/bundled-bun.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.ts";
 export { convertToPng } from "./utils/image-convert.ts";
 export { formatDimensionNote, type ResizedImage, resizeImage } from "./utils/image-resize.ts";
 export { detectSupportedImageMimeTypeFromFile } from "./utils/mime.ts";
-// Shell utilities
 export { getPowerShellConfig, getShellConfig } from "./utils/shell.ts";

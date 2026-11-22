@@ -82,6 +82,10 @@ export interface GoalHarness extends SentMessageHarness {
 	readonly handlers: Map<string, GoalHandler[]>;
 	readonly events: TestEventBus;
 	readonly entries: AppendedGoalEntry[];
+	/** What the extension published to RPC clients (`pi.rpc.emit`), in order. */
+	readonly rpcEmitted: { readonly name: string; readonly data: unknown }[];
+	/** RPC request handlers the extension registered (`pi.rpc.handle`). */
+	readonly rpcHandlers: Map<string, (data: unknown) => unknown>;
 }
 
 export interface GoalContextState {
@@ -117,17 +121,19 @@ export function createGoalStatusHarness(): GoalStatusHarness {
 	return { updates, setStatus, [statusWaiters]: waiters };
 }
 
-export function createGoalHarness(): GoalHarness {
+export function createGoalHarness(appendEntry?: ExtensionAPI["appendEntry"]): GoalHarness {
 	const tools = new Map<string, AnyTool>();
 	const handlers = new Map<string, GoalHandler[]>();
 	const messages = createSentMessageHarness();
 	const events = new TestEventBus();
 	const entries: AppendedGoalEntry[] = [];
+	const rpcEmitted: { name: string; data: unknown }[] = [];
+	const rpcHandlers = new Map<string, (data: unknown) => unknown>();
 	const pi = {
 		registerTool: (tool: AnyTool) => tools.set(tool.name, tool),
 		registerCommand: () => {},
 		registerEntryRenderer: () => {},
-		appendEntry: (customType: string, data?: unknown) => entries.push({ customType, data }),
+		appendEntry: appendEntry ?? ((customType: string, data?: unknown) => entries.push({ customType, data })),
 		on: (event: string, handler: GoalHandler) => {
 			const registered = handlers.get(event) ?? [];
 			registered.push(handler);
@@ -135,9 +141,13 @@ export function createGoalHarness(): GoalHarness {
 		},
 		sendMessage: messages.sendMessage,
 		events,
+		rpc: {
+			emit: (name: string, data: unknown) => rpcEmitted.push({ name, data }),
+			handle: (name: string, handler: (data: unknown) => unknown) => rpcHandlers.set(name, handler),
+		},
 	} as unknown as ExtensionAPI;
 	goalExtension(pi);
-	return { tools, handlers, events, entries, ...messages };
+	return { tools, handlers, events, entries, rpcEmitted, rpcHandlers, ...messages };
 }
 
 const tempDirs: string[] = [];
@@ -184,6 +194,7 @@ export function waitForGoalStatus(
 	const waiters = harness[statusWaiters];
 	return new Promise((resolve, reject) => {
 		let completed = false;
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let timeout: ReturnType<typeof setRealTimeout> | undefined;
 		const waiter: StatusWaiter = { matches, complete };
 		waiters.add(waiter);
@@ -213,6 +224,7 @@ export function waitForSentCount(
 
 	return new Promise((resolve, reject) => {
 		let completed = false;
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let timeout: ReturnType<typeof setRealTimeout> | undefined;
 		const waiter: SentCountWaiter = { expectedCount, complete };
 		waiters.add(waiter);

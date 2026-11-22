@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateImages, type OpenAIImagesOptions } from "../src/api/openai-images.ts";
-import type { ImageContent, ImagesContext, ImagesModel } from "../src/types.ts";
+import type { ImageContent, ImageModel, ImagesContext } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => {
 	const response: Record<string, unknown> = {};
@@ -24,7 +24,8 @@ vi.mock("openai", () => ({
 const png: ImageContent = { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" };
 const ENCODED = { png: png.data, jpeg: "/9j/4AAQSkZJRg==", webp: "UklGRiQAAABXRUJQVlA4" } as const;
 const mask: ImageContent = { type: "image", data: "iVBORw0KGgoAAAANSUhEUg==", mimeType: "image/png" };
-const model: ImagesModel<"openai-images"> = {
+const model: ImageModel<"openai-images"> = {
+	type: "image",
 	id: "gpt-image-2.5-flare",
 	name: "GPT Image 2.5 Flare",
 	api: "openai-images",

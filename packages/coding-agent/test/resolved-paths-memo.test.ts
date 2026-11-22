@@ -4,6 +4,7 @@ import { clearResolvedPathsMemo, memoizeResolvedPaths, resolvedPathsMemoKey } fr
 const baseInput = {
 	agentDir: "/agent",
 	cwd: "/cwd",
+	projectTrusted: true,
 	globalSettings: { packages: ["a"], theme: "dark" },
 	projectSettings: { packages: ["b"] },
 	additionalExtensionPaths: ["./x.ts"],
@@ -16,6 +17,7 @@ describe("resolvedPathsMemoKey", () => {
 			projectSettings: { packages: ["b"] },
 			globalSettings: { theme: "dark", packages: ["a"], extra: undefined },
 			cwd: "/cwd",
+			projectTrusted: true,
 			agentDir: "/agent",
 		};
 		expect(resolvedPathsMemoKey(reordered)).toBe(resolvedPathsMemoKey(baseInput));
@@ -25,6 +27,8 @@ describe("resolvedPathsMemoKey", () => {
 		const key = resolvedPathsMemoKey(baseInput);
 		expect(resolvedPathsMemoKey({ ...baseInput, cwd: "/other" })).not.toBe(key);
 		expect(resolvedPathsMemoKey({ ...baseInput, agentDir: "/other" })).not.toBe(key);
+		// senpi#2371: resolution reads the trust state, so trust alone must split the key.
+		expect(resolvedPathsMemoKey({ ...baseInput, projectTrusted: false })).not.toBe(key);
 		expect(resolvedPathsMemoKey({ ...baseInput, globalSettings: { packages: ["a", "c"] } })).not.toBe(key);
 		expect(resolvedPathsMemoKey({ ...baseInput, projectSettings: {} })).not.toBe(key);
 		expect(resolvedPathsMemoKey({ ...baseInput, additionalExtensionPaths: [] })).not.toBe(key);

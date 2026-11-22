@@ -1,6 +1,14 @@
-import { type AgentToolResult, type ExtensionContext, kernelToolsStorage } from "@code-yeongyu/senpi";
+import { AsyncResource } from "node:async_hooks";
+import {
+	type AgentToolResult,
+	type ExtensionContext,
+	type ExtensionToolContext,
+	kernelToolsStorage,
+} from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
+import { ReplaceableKernel } from "../src/extension/kernel-replacement.ts";
+import { hasKernelTools } from "../src/extension/kernel-tools-probe.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import type { KernelToolsDescribeResult } from "../src/kernels/js/kernel-tools-types.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
@@ -8,6 +16,14 @@ import type { EvalKernel, EvalKernelManager, EvalLanguage, EvalToolDetails } fro
 import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
 type ProbeArgs = { readonly phase: string; readonly tool?: string; readonly arg?: number };
+
+function isProbeArgs(value: unknown): value is ProbeArgs {
+	return typeof value === "object" && value !== null && "phase" in value && typeof value.phase === "string";
+}
+
+function isKernelToolsDescribeResult(value: unknown): value is KernelToolsDescribeResult {
+	return typeof value === "object" && value !== null && "results" in value && Array.isArray(value.results);
+}
 
 type HostObservation = {
 	readonly phase: string;
@@ -22,7 +38,7 @@ type HostObservation = {
  * `kernelToolsStorage.getStore()` in packages/coding-agent/src/core/extensions/runner.ts, resolved
  * when a tool's `execute` touches it.
  */
-function hostContext(): ExtensionContext {
+function hostContext(): ExtensionToolContext {
 	return {
 		...fakeExtensionContext(),
 		get kernelTools() {
@@ -54,7 +70,8 @@ class LiveJavaScriptKernelManager implements EvalKernelManager {
 	 * cell it dispatches for, which is exactly what the capability must not depend on (#1754).
 	 */
 	async startWorker(): Promise<JavaScriptKernel> {
-		const kernel = (await this.getKernel("js", () => undefined)) as JavaScriptKernel;
+		const kernel = await this.getKernel("js", () => undefined);
+		if (!(kernel instanceof JavaScriptKernel)) throw new Error("this manager only serves JavaScriptKernel instances");
 		const warmUp = await kernel.run({ cellId: "warm-up", code: "1", timeoutMs: 8_000 });
 		if (!warmUp.ok) throw new Error(`warm-up cell failed: ${warmUp.error.message}`);
 		return kernel;
@@ -63,6 +80,11 @@ class LiveJavaScriptKernelManager implements EvalKernelManager {
 	async close(): Promise<void> {
 		await this.#kernel?.close();
 	}
+}
+
+async function describeThrough(kernel: EvalKernel): Promise<unknown> {
+	if (!hasKernelTools(kernel)) throw new Error("the kernel exposes no kernel tools");
+	return await kernel.describeKernelTools(["add"]);
 }
 
 function textResult(text: string): AgentToolResult<unknown> {
@@ -80,13 +102,15 @@ function outputText(cell: AgentToolResult<EvalToolDetails>): string {
  */
 function probingExecuteTool(ctx: ExtensionContext, observations: HostObservation[]) {
 	return async (_toolName: string, params: unknown): Promise<AgentToolResult<unknown>> => {
-		const probe = params as ProbeArgs;
+		if (!isProbeArgs(params)) throw new Error(`probe expected { phase: string }, got ${JSON.stringify(params)}`);
+		const probe = params;
 		const kernelTools = ctx.kernelTools;
 		if (!kernelTools) {
 			observations.push({ phase: probe.phase, kernelToolsDefined: false });
 			return textResult("kernel tools unavailable");
 		}
-		const described = (await kernelTools.describe([probe.tool ?? ""])) as KernelToolsDescribeResult;
+		const described = await kernelTools.describe([probe.tool ?? ""]);
+		if (!isKernelToolsDescribeResult(described)) throw new Error("describe returned an unexpected shape");
 		const entry = described.results[0];
 		if (entry?.ok !== true) {
 			observations.push({ phase: probe.phase, kernelToolsDefined: true, failure: `describe refused ${probe.tool}` });
@@ -203,16 +227,20 @@ describe("kernel tools on the real worker tool-call path", () => {
 	});
 
 	it("leaves a host tool dispatched by a non-JS cell without a kernel-tool capability", async () => {
-		// A stub py kernel keeps the negative interpreter-free; the language gate lives in
-		// run-eval-cell.ts, and py/rb/jl kernels expose no describe/invoke at all.
+		// A stub py kernel keeps the negative interpreter-free: a kernel gets the capability only if it
+		// exposes describe/invoke, and this one exposes neither.
 		const kernel = new FakeKernel([
 			{ type: "tool-call", callId: "py-1", toolName: "probe", args: { phase: "py" } },
 			result("kernel-tools-host-dispatch-py", "done"),
 		]);
+		const workerContext = new AsyncResource("non-js-worker");
+		const run = kernel.run.bind(kernel);
+		kernel.run = (...args) => workerContext.runInAsyncScope(run, kernel, ...args);
 		const ctx = hostContext();
 		const observations: HostObservation[] = [];
 		const executeTool = async (_toolName: string, params: unknown): Promise<AgentToolResult<unknown>> => {
-			const probe = params as ProbeArgs;
+			if (!isProbeArgs(params)) throw new Error(`probe expected { phase: string }, got ${JSON.stringify(params)}`);
+			const probe = params;
 			observations.push({ phase: probe.phase, kernelToolsDefined: ctx.kernelTools !== undefined });
 			return textResult("host tool done");
 		};
@@ -223,20 +251,121 @@ describe("kernel tools on the real worker tool-call path", () => {
 			executeTool,
 		});
 
-		const cell = await tool.execute(
-			"kernel-tools-host-dispatch-py",
+		const cell = await kernelToolsStorage.run(
 			{
-				language: "py",
-				code: "tool.probe(phase='py')",
-				summary: "call a host tool from a python cell",
+				capabilities: { invokeScope: true },
+				describe: async () => undefined,
+				invoke: async () => undefined,
 			},
-			undefined,
-			undefined,
-			ctx,
+			() =>
+				tool.execute(
+					"kernel-tools-host-dispatch-py",
+					{
+						language: "py",
+						code: "tool.probe(phase='py')",
+						summary: "call a host tool from a python cell",
+					},
+					undefined,
+					undefined,
+					ctx,
+				),
 		);
+		workerContext.emitDestroy();
 
 		expect(observations).toEqual([{ phase: "py", kernelToolsDefined: false }]);
 		expect(cell.details.toolCalls[0]).toMatchObject({ name: "probe", ok: true });
 		expect(ctx.kernelTools).toBeUndefined();
+	});
+
+	it("Given the replaceable kernel a session holds for rb and jl when it is probed for kernel tools then it exposes none of the interpreter's stubs", async () => {
+		for (const language of ["rb", "jl"] as const) {
+			const inner = Object.assign(new FakeKernel([]), {
+				describeKernelTools: async () => {
+					throw new Error("tools_unavailable");
+				},
+				invokeKernelTool: async () => {
+					throw new Error("tools_unavailable");
+				},
+				drainPending: () => [],
+			});
+			const held = await ReplaceableKernel.create(language, async () => inner);
+
+			expect("describeKernelTools" in held).toBe(false);
+			expect("invokeKernelTool" in held).toBe(false);
+			await held.close();
+		}
+	});
+
+	it("Given the replaceable kernel a session holds for py when its interpreter is replaced then kernel tools reach only the new instance", async () => {
+		const instances: string[] = [];
+		const deaths: Array<() => void> = [];
+		const start = async (lifecycle: { onDeath: (reason: string) => void }) => {
+			const name = `instance-${instances.length + 1}`;
+			instances.push(name);
+			let alive = true;
+			deaths.push(() => {
+				alive = false;
+				lifecycle.onDeath("interpreter exited");
+			});
+			return Object.assign(new FakeKernel([]), {
+				describeKernelTools: async (names: readonly string[]): Promise<KernelToolsDescribeResult> => ({
+					results: names.map((requested) => ({
+						name: requested,
+						ok: true as const,
+						descriptor: {
+							name: requested,
+							description: `from ${name}`,
+							input_schema: {},
+							language: "py" as const,
+							kernel_generation: 1,
+							definition_revision: 1,
+						},
+					})),
+				}),
+				invokeKernelTool: async (): Promise<unknown> => name,
+				drainPending: () => [],
+				isAlive: () => alive,
+			});
+		};
+		const held = await ReplaceableKernel.create("py", start);
+		expect(hasKernelTools(held)).toBe(true);
+		expect(await describeThrough(held)).toEqual({
+			results: [
+				{
+					name: "add",
+					ok: true,
+					descriptor: {
+						name: "add",
+						description: "from instance-1",
+						input_schema: {},
+						language: "py",
+						kernel_generation: 1,
+						definition_revision: 1,
+					},
+				},
+			],
+		});
+
+		deaths[0]?.();
+		await held.reset();
+
+		expect(instances).toEqual(["instance-1", "instance-2"]);
+		expect(await describeThrough(held)).toEqual({
+			results: [
+				{
+					name: "add",
+					ok: true,
+					descriptor: {
+						name: "add",
+						description: "from instance-2",
+						input_schema: {},
+						language: "py",
+						kernel_generation: 1,
+						definition_revision: 1,
+					},
+				},
+			],
+		});
+		await held.close();
 	});
 });

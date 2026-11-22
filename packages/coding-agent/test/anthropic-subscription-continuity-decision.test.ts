@@ -159,7 +159,7 @@ describe("claude-sdk-oauth native continuity decisions", () => {
 		expect(decision).toEqual({ kind: "flatten", reason: "transcript_missing" });
 	});
 
-	it("never flattens while a live resident session exists with boundaries", () => {
+	it("preserves live continuity except when compaction replaces the transcript", () => {
 		const kinds = [
 			decideNativeContinuity(input({ accountName: "secondary" })),
 			decideNativeContinuity(input({ modelId: "other" })),
@@ -167,7 +167,8 @@ describe("claude-sdk-oauth native continuity decisions", () => {
 			decideNativeContinuity(input({ entry: resident({ pendingForkReason: "compaction" }) })),
 		].map((decision) => decision.kind);
 
-		expect(kinds).not.toContain("flatten");
+		expect(kinds.slice(0, -1)).not.toContain("flatten");
+		expect(kinds.at(-1)).toBe("flatten");
 	});
 
 	it("flattens with registry_miss when a diverged binding has no assistant boundary", () => {

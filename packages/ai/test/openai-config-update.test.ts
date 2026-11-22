@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
 import { getModels, supportsConfigurationUpdate } from "../src/compat.ts";
 import type { Message, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function catalogModel(provider: "openai" | "chatgpt-subscription", id: string): Model<any> {
 	const model = getModels(provider).find((candidate) => candidate.id === id);
@@ -10,7 +11,7 @@ function catalogModel(provider: "openai" | "chatgpt-subscription", id: string): 
 }
 
 function convert(model: Model<any>, messages: Message[]) {
-	return convertResponsesMessages(model, { systemPrompt: "", messages, tools: [] }, new Set());
+	return convertResponsesMessages(model, normalizeContext({ systemPrompt: "", messages, tools: [] }), new Set());
 }
 
 const updateThenUser: Message[] = [
@@ -61,7 +62,15 @@ describe("OpenAI mid-session configuration updates", () => {
 		["openai", "gpt-6-luna-fast"],
 		["openai", "gpt-5.6-luna"],
 		["openai", "gpt-6-sol"],
+		["openai", "gpt-6.1-sol"],
 		["chatgpt-subscription", "gpt-6-astra-fast"],
+		["chatgpt-subscription", "gpt-6.1-sol"],
+		["chatgpt-subscription", "gpt-6.1-sol-fast"],
+		["chatgpt-subscription", "gpt-6.1-sol-ultrafast"],
+		["openai", "gpt-6.2-astra"],
+		["openai", "gpt-6.2-sol"],
+		["chatgpt-subscription", "gpt-6.2-astra"],
+		["chatgpt-subscription", "gpt-6.2-sol-ultrafast"],
 	] as const)("emits the update for flagged %s/%s", (provider, id) => {
 		expect(convert(catalogModel(provider, id), updateThenUser)).toMatchObject([
 			{ type: "configuration_update", reasoning: { effort: "high" } },
@@ -103,7 +112,8 @@ describe("OpenAI mid-session configuration updates", () => {
 });
 
 // senpi#2094: the direct API accepts the item on the GPT-5.6+ family that prices cache writes;
-// the Codex backend was verified only on gpt-6-astra.
+// the Codex backend was verified on gpt-6-astra, and gpt-6.1-sol, gpt-6.2-astra and gpt-6.2-sol carry
+// codex's own `supports_reasoning_effort_updates` flag (senpi#2390, senpi#6942).
 describe("configuration_update catalog flag", () => {
 	it("flags exactly the openai rows that accept prompt_cache_options", () => {
 		for (const model of getModels("openai")) {
@@ -112,11 +122,22 @@ describe("configuration_update catalog flag", () => {
 		}
 	});
 
-	it("flags only gpt-6-astra and its -fast variant on the ChatGPT subscription", () => {
+	it("flags only gpt-6-astra, gpt-6.1-sol, the GPT-6.2 tiers and their tier variants on the ChatGPT subscription", () => {
 		const flagged = getModels("chatgpt-subscription")
 			.filter((model) => supportsConfigurationUpdate(model))
 			.map((model) => model.id)
 			.sort();
-		expect(flagged).toEqual(["gpt-6-astra", "gpt-6-astra-fast"]);
+		expect(flagged).toEqual([
+			"gpt-6-astra",
+			"gpt-6-astra-fast",
+			"gpt-6.1-sol",
+			"gpt-6.1-sol-fast",
+			"gpt-6.1-sol-ultrafast",
+			"gpt-6.2-astra",
+			"gpt-6.2-astra-fast",
+			"gpt-6.2-sol",
+			"gpt-6.2-sol-fast",
+			"gpt-6.2-sol-ultrafast",
+		]);
 	});
 });

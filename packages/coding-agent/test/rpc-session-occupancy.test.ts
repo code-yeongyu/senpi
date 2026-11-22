@@ -17,6 +17,7 @@ import {
 } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { type RpcSessionLaunchProfile, RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 
 /**
  * Occupancy contract for the shared multi-session RPC host:
@@ -50,7 +51,7 @@ function createRuntimeFactory(): {
 } {
 	const states: FakeRuntimeState[] = [];
 	const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		const state: FakeRuntimeState = {
 			isStreaming: false,
 			isBashRunning: false,
@@ -60,10 +61,10 @@ function createRuntimeFactory(): {
 			runtimeDisposals: 0,
 		};
 		states.push(state);
+		const flagValues = new Map<string, boolean | string>();
 		return {
 			session: {
-				sessionManager: options.sessionManager,
-				agentDir: options.agentDir,
+				...fakeSessionBase(options),
 				isFastModeActive: () => false,
 				agent: { state: {} },
 				getContextUsage: () => undefined,
@@ -86,7 +87,14 @@ function createRuntimeFactory(): {
 						hasActiveWakeSource: state.hasBackgroundJob,
 					});
 				},
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				// Records flags like ExtensionRunner: an attach and a runtime replacement set the permission preset here.
+				extensionRunner: {
+					hasHandlers: () => false,
+					emitBusEvent: () => {},
+					emit: async () => {},
+					setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),
+					getFlagValues: () => new Map(flagValues),
+				},
 				abort: async () => {},
 				abortBash: () => {},
 				waitForIdle: async () => {},

@@ -1,5 +1,63 @@
 # Tool Search Builtin Changes
 
+## 2026-11-17 - tool_search lists matching eval-only tools (senpi#6886)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/service.ts`: `searchEvalOnly(query, limit, options)` ranks the tools `getAllTools()` marks `evalOnly` in an index of their own, so catalog ranking is unchanged and no feeder can activate them.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/extension-document.ts` (new): `extensionDocument`, moved out of `service.ts` so both indexes build the same document.
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/tool.ts`: matching eval-only tools get their own section with parameters and `call: tool.<name>({ ... }) inside eval`, and `details.evalOnly`; a tool the query names exactly keeps its redirect hint instead (senpi#1682). The description says eval-only matches are listed separately.
+
+### Why
+
+- tool_search never returned eval-only tools, so a model that could not see a tool a prompt named concluded it was not registered.
+
+### Why an extension could not handle it
+
+- tool_search is this builtin's tool.
+
+### Expected merge conflict zones
+
+- LOW: `execute` and `buildToolSearchResultText` in `tool.ts`; `search` in `service.ts`.
+
+## 2026-10-07 - Tool-search context hook declares non-mutation (senpi#2525)
+
+### What changed
+
+- `index.ts`: the `context` handler is registered `{ mutatesMessages: false }`; `maybeRehydrateFromHistory` is a read-only scan over the messages.
+
+### Why
+
+senpi#2525: with both builtin `context` handlers declared, the runner skips the per-turn whole-context clone for the default extension set.
+
+### Why an extension could not handle it
+
+This is the extension itself; only its own registration can declare its mutation behavior to the runner.
+
+### Expected merge conflict zones
+
+- `index.ts`: the `pi.on("context")` registration.
+
+## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
+
+### What changed
+
+- `service.ts`: the module-level singleton that sessions shared is gone. Services are registered per extension load, `dispose(sessionId, reason)` makes every later use throw an error naming the session, and `getToolSearchService()` remains only for session-free callers (provider scope, else the only live session, else a standalone service; several live sessions throw).
+- `index.ts`: every load creates its own service (the RPC provider-scope install is unchanged), and a retired generation's lazy activator declines.
+
+### Why
+
+- Outside the RPC host, `toolSearchExtension` fell back to the module-level service from `getToolSearchService(runtime)` and `createToolSearchExtension` rebound it to each loading session's `pi`. When another in-process session (a task child, a replaced session) closed, the live session's `context` and `before_provider_request` hooks threw the stale-ctx error from `getCatalog` and its tool search stopped working.
+
+### Why an extension could not handle it
+
+- The fix is in the builtin itself; the session that binds each extension load adopts and retires its service (`core/changes.md`, same date).
+
+### Expected merge conflict zones
+
+- `service.ts`: the service fields, the disposal guard at each public entry point, and the module-level registry functions at the end of the file.
+- `index.ts`: the lazy activator registration and the default factory.
+
 ## 2026-09-14 - Side-effect-free tool_search with precision gating and hidden-tool hints (senpi #1682)
 
 ### What changed

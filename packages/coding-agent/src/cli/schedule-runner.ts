@@ -35,7 +35,7 @@ import {
 	nextRecurringDueAt,
 	type ScheduledJob,
 } from "../core/extensions/builtin/schedule/types.ts";
-import type { DeferProbe, Delivery, DeliveryResult } from "./schedule-delivery.ts";
+import { type DeferProbe, type Delivery, type DeliveryResult, movedJobPaths } from "./schedule-delivery.ts";
 
 export type RunnerEvent =
 	| {
@@ -87,6 +87,8 @@ export interface RunDueOptions {
 	/** Delivery time limit, recorded in the session lock for ungated (Windows) deliveries. */
 	readonly deliveryTimeoutMs?: number;
 	readonly shouldDefer?: DeferProbe;
+	/** Only this session's jobs: the pass a live session runs for itself. */
+	readonly sessionId?: string;
 	/** Live runners, for recovering occurrences of dead ones; defaults to reading the leases. */
 	readonly runners?: () => Promise<readonly LiveRunner[]>;
 }
@@ -152,7 +154,7 @@ async function fireOne(options: RunDueOptions, listed: ScheduledJob): Promise<Ru
 	try {
 		const job = await freshPendingJob(options, listed.id);
 		if (job === undefined) return undefined;
-		const deferReason = await options.shouldDefer?.(job);
+		const deferReason = await options.shouldDefer?.({ ...job, ...movedJobPaths(job) });
 		if (deferReason !== undefined)
 			return { event: "deferred", id: job.id, sessionId: job.sessionId, reason: deferReason };
 		return await deliverClaimed(options, job, (pid) => lock.attachDelivery(pid));
@@ -194,8 +196,7 @@ async function deliverClaimed(
 				type: "scheduled_prompt",
 				id: job.id,
 				sessionId: job.sessionId,
-				sessionFile: job.sessionFile,
-				cwd: job.cwd,
+				...movedJobPaths(job),
 				prompt: job.prompt,
 				message: formatScheduledMessage(job, firedAt),
 				dueAt: job.dueAt,
@@ -207,6 +208,13 @@ async function deliverClaimed(
 		);
 	} catch (error) {
 		result = { ok: false, error: error instanceof Error ? error.message : String(error) };
+	}
+	if (!result.ok && result.sessionHeld === true) {
+		// Opened elsewhere after the shouldDefer check: nothing ran, so this is a deferral, not a failed occurrence.
+		// Put the claimed generation back (a recurring job's re-arm is undone first) and retry like any deferral.
+		if (job.everyMs !== null) await rearmRecurringJob(options.dir, job);
+		await restorePending(options.dir, record, job.id);
+		return { event: "deferred", id: job.id, sessionId: job.sessionId, reason: result.error };
 	}
 	await settleOccurrence(
 		options.dir,
@@ -231,7 +239,11 @@ async function deliverClaimed(
 export async function runDueJobs(options: RunDueOptions): Promise<RunDueResult> {
 	const listing = await listScheduledJobs(options.dir);
 	const events: RunnerEvent[] = listing.invalid.map((invalid) => ({ event: "invalid", ...invalid }));
-	const recovery = await recoverAbandoned(options, listing.jobs);
+	const jobs =
+		options.sessionId === undefined
+			? listing.jobs
+			: listing.jobs.filter((record) => record.job.sessionId === options.sessionId);
+	const recovery = await recoverAbandoned(options, jobs);
 	events.push(...recovery.events);
 	await pruneTombstones(options.dir, listing, options.now());
 
@@ -241,7 +253,7 @@ export async function runDueJobs(options: RunDueOptions): Promise<RunDueResult> 
 	};
 	for (const dueAt of recovery.restoredDueAt) noteNext(dueAt);
 	const bySession = new Map<string, ScheduledJob[]>();
-	for (const { state, job } of listing.jobs) {
+	for (const { state, job } of jobs) {
 		if (state !== "pending") continue;
 		if (job.dueAt > options.now()) {
 			noteNext(job.dueAt);

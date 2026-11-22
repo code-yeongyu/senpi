@@ -13,47 +13,62 @@ type JsonSchema = {
 };
 
 function schemaToZod(schema: JsonSchema): ZodTypeAny {
+	let converted: ZodTypeAny | undefined;
 	if (schema.const !== undefined) {
-		return schema.const === null ? z.null() : z.literal(schema.const);
-	}
-	if (schema.enum && schema.enum.length > 0) {
+		converted = schema.const === null ? z.null() : z.literal(schema.const);
+	} else if (schema.enum && schema.enum.length > 0) {
 		const values = schema.enum.filter((value): value is string | number | boolean =>
 			["string", "number", "boolean"].includes(typeof value),
 		);
 		if (values.length === 1) {
-			return z.literal(values[0]!);
-		}
-		if (values.length > 1) {
+			converted = z.literal(values[0]!);
+		} else if (values.length > 1) {
 			const [first, second, ...rest] = values.map((value) => z.literal(value));
-			return z.union([first!, second!, ...rest]);
+			converted = z.union([first!, second!, ...rest]);
 		}
 	}
-	const variants = schema.anyOf ?? schema.oneOf;
-	if (variants && variants.length > 0) {
-		const converted = variants.map((variant) => schemaToZod(variant));
-		if (converted.length === 1) return converted[0]!;
-		const [first, second, ...rest] = converted;
-		return z.union([first!, second!, ...rest]);
+	if (converted === undefined) {
+		const variants = schema.anyOf ?? schema.oneOf;
+		if (variants && variants.length > 0) {
+			const variantsConverted = variants.map((variant) => schemaToZod(variant));
+			if (variantsConverted.length === 1) {
+				converted = variantsConverted[0]!;
+			} else {
+				const [first, second, ...rest] = variantsConverted;
+				converted = z.union([first!, second!, ...rest]);
+			}
+		} else {
+			const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
+			switch (type) {
+				case "string":
+					converted = z.string();
+					break;
+				case "number":
+					converted = z.number();
+					break;
+				case "integer":
+					converted = z.number().int();
+					break;
+				case "boolean":
+					converted = z.boolean();
+					break;
+				case "null":
+					converted = z.null();
+					break;
+				case "array":
+					converted = z.array(schema.items ? schemaToZod(schema.items) : z.unknown());
+					break;
+				case "object":
+					converted = objectToShape(schema);
+					break;
+				default:
+					converted = z.unknown();
+					break;
+			}
+		}
 	}
-	const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
-	switch (type) {
-		case "string":
-			return z.string();
-		case "number":
-			return z.number();
-		case "integer":
-			return z.number().int();
-		case "boolean":
-			return z.boolean();
-		case "null":
-			return z.null();
-		case "array":
-			return z.array(schema.items ? schemaToZod(schema.items) : z.unknown());
-		case "object":
-			return objectToShape(schema);
-		default:
-			return z.unknown();
-	}
+	if (converted === undefined) throw new Error("schema conversion did not produce a Zod type");
+	return typeof schema.description === "string" ? converted.describe(schema.description) : converted;
 }
 
 export function objectToShape(schema: JsonSchema): ZodTypeAny {

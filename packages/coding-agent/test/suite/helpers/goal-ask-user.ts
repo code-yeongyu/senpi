@@ -23,6 +23,7 @@ import type { Goal } from "../../../src/core/extensions/builtin/goal/types.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../../src/core/extensions/builtin/monitor-state-event.ts";
 import type {
 	AgentToolResult,
+	ExtensionToolContext,
 	QuestionRequest,
 	QuestionResponse,
 	ToolDefinition,
@@ -127,13 +128,22 @@ export async function createGoalAskUserWorld(threadId: string, timeoutMinutes = 
 			{ questions: ASYNC_QUESTIONS, waitForAnswer },
 			undefined,
 			undefined,
-			requestTimeoutMinutes === undefined
+			(requestTimeoutMinutes === undefined
 				? askCtx
-				: { ...askCtx, getAskUserSettings: () => ({ enabled: true, timeoutMinutes: requestTimeoutMinutes }) },
+				: {
+						...askCtx,
+						getAskUserSettings: () => ({ enabled: true, timeoutMinutes: requestTimeoutMinutes }),
+					}) as ExtensionToolContext,
 		);
 
 	await runGoalHandlers(goal.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-	await goalTool("create_goal").execute("create-goal", { objective: "Keep moving" }, undefined, undefined, ctx);
+	await goalTool("create_goal").execute(
+		"create-goal",
+		{ objective: "Keep moving" },
+		undefined,
+		undefined,
+		ctx as ExtensionToolContext,
+	);
 
 	return {
 		goal,
@@ -189,7 +199,7 @@ export async function createGoalAskUserWorld(threadId: string, timeoutMinutes = 
 		cleanup: async () => {
 			unsubscribe();
 			const pending = getPendingQuestions(askCtx.sessionManager.getSessionId());
-			for (const entry of pending) entry.cancel();
+			for (const entry of pending) entry.cancel("session_closed");
 			await Promise.all(pending.map((entry) => entry.completion));
 			await runGoalHandlers(goal.handlers, "session_shutdown", { type: "session_shutdown", reason: "quit" }, ctx);
 			ask.harness.cleanup();

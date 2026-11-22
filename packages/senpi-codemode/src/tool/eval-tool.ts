@@ -1,5 +1,6 @@
 import type { AgentToolResult, ToolDefinition } from "@code-yeongyu/senpi";
 import type { TUnsafe } from "typebox";
+import { resolveAdvertiseHelpers, resolveSandbox } from "../config/feature-settings.ts";
 import {
 	DEFAULT_FOREGROUND_WINDOW_SECONDS,
 	defaultCodemodeSettings,
@@ -7,8 +8,15 @@ import {
 } from "../config/settings.ts";
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
 import { EvalDetachedCellManager } from "./detached-cell-manager.ts";
+import { registerEvalArgumentValidator } from "./eval-argument-validator.ts";
+import { evalLanguageInferredNote } from "./eval-language-inference.ts";
 import { executeEvalControl } from "./detached-eval-result.ts";
-import { isEvalControlRequest, normalizeEvalSummary, parseEvalRequest } from "./eval-request.ts";
+import {
+	EvalIsolateInvalidError,
+	isEvalControlRequest,
+	normalizeEvalSummary,
+	parseEvalRequest,
+} from "./eval-request.ts";
 import type { CreateEvalToolOptions } from "./eval-tool-options.ts";
 import { runEvalCell } from "./run-eval-cell.ts";
 import {
@@ -19,6 +27,7 @@ import {
 	type EvalListInput,
 	type EvalResultDetails,
 	type EvalToolDetails,
+	type EvalToolInput,
 	type EvalToolRequest,
 	enabledLanguageList,
 } from "./types.ts";
@@ -28,8 +37,9 @@ export type { CreateEvalToolOptions } from "./eval-tool-options.ts";
 export type { EnabledEvalLanguages, EvalKernel, EvalKernelManager } from "./types.ts";
 
 type EvalExecuteArgs<Request extends EvalToolRequest> = Parameters<
-	ToolDefinition<TUnsafe<Request>, EvalToolDetails>["execute"]
+	ToolDefinition<TUnsafe<Request | Partial<EvalToolInput>>, EvalToolDetails>["execute"]
 >;
+type RunArgs = EvalExecuteArgs<EvalToolInput>;
 
 export function createEvalTool(options: CreateEvalToolOptions) {
 	const foregroundWindowSeconds = options.foregroundWindowSeconds ?? DEFAULT_FOREGROUND_WINDOW_SECONDS;
@@ -43,9 +53,11 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		foregroundWindowSeconds,
 		hardLimitSeconds: options.hardLimitSeconds ?? defaultEvalDeadlineSeconds.hardLimitSeconds,
 	};
-	const parameters = createEvalInputSchema(options.enabledLanguages, deadlines);
+	const sandbox = resolveSandbox(options.settings ?? defaultCodemodeSettings).enabled;
+	const parameters = createEvalInputSchema(options.enabledLanguages, deadlines, { sandbox });
 	const prompt = buildEvalPrompt(options.enabledLanguages, {
 		spawns: options.spawns ?? false,
+		...(resolveAdvertiseHelpers(options.settings ?? defaultCodemodeSettings) ? { advertiseHelpers: true } : {}),
 		monitor: options.monitor,
 		maxDetachedCells,
 		runBudgetSeconds: deadlines.runBudgetSeconds,
@@ -55,8 +67,10 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		...(options.runtimes?.js === undefined ? {} : { jsRuntime: options.runtimes.js }),
 		...(options.bunSkillPath === undefined ? {} : { bunSkillPath: options.bunSkillPath }),
 		...(options.promptKernelPreludes === undefined ? {} : { kernelPreludes: options.promptKernelPreludes }),
+		...(options.evalOnlyTools === undefined ? {} : { evalOnlyTools: options.evalOnlyTools }),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
+	registerEvalArgumentValidator(parameters, languages);
 	const cellManager =
 		options.cellManager ??
 		new EvalDetachedCellManager({
@@ -74,9 +88,27 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 	async function execute(
 		...[toolCallId, params, signal, onUpdate, ctx]: EvalExecuteArgs<EvalToolRequest>
 	): Promise<AgentToolResult<EvalResultDetails>> {
-		const request = parseEvalRequest(params, languages);
+		const request = parseEvalRequest(params, languages, { sandbox });
 		if (isEvalControlRequest(request)) return await executeEvalControl(cellManager, request);
-		if (options.proxyExecutor) return await options.proxyExecutor(request, signal);
+		const output = await executeRun(request, toolCallId, signal, onUpdate, ctx);
+		if (request.language_inferred === undefined) return output;
+		// The model sees that its omitted language was filled, and how, so it passes language next time (senpi#5154).
+		const note = evalLanguageInferredNote(request.language, request.language_inferred);
+		return { ...output, content: [{ type: "text", text: note }, ...output.content] };
+	}
+	async function executeRun(
+		request: EvalToolInput,
+		toolCallId: RunArgs[0],
+		signal: RunArgs[2],
+		onUpdate: RunArgs[3],
+		ctx: RunArgs[4],
+	): Promise<AgentToolResult<EvalResultDetails>> {
+		if (options.proxyExecutor) {
+			// A proxy runs cells elsewhere and knows nothing of sandbox cells: an isolated cell must never run unisolated.
+			if ("isolate" in request && request.isolate === true)
+				throw new EvalIsolateInvalidError("isolate: true is not available through this eval proxy");
+			return await options.proxyExecutor(request, signal);
+		}
 		if (!languages.includes(request.language))
 			throw new RangeError(
 				`Unsupported eval language "${request.language}". Enabled languages: ${languages.join(", ")}`,
@@ -103,6 +135,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		description: prompt.description,
 		promptSnippet: prompt.promptSnippet,
 		promptGuidelines: [...prompt.promptGuidelines],
+		fullPromptGuidelines: [...prompt.fullPromptGuidelines],
 		parameters,
 		executionMode: "sequential",
 		prepareArguments: (args) => {

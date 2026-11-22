@@ -2,6 +2,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import modelFallbackExtension from "../../src/core/extensions/builtin/model-fallback/index.ts";
 import { renderFallbackState } from "../../src/core/extensions/builtin/model-fallback/ui.ts";
+import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
@@ -122,10 +123,16 @@ describe("model fallback host wiring", () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			settings: {
-				retry: { enabled: true, maxRetries: 0, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+				retry: {
+					enabled: true,
+					maxRetries: 0,
+					baseDelayMs: 1,
+					fallbackChains: { [primary]: ["faux-spare/faux-2"] },
+				},
 			},
 		});
 		harnesses.push(harness);
+		registerFallbackModels(harness, "faux-spare", ["faux-2"]);
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: billingError }),
 			fauxAssistantMessage("recovered"),

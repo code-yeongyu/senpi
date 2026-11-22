@@ -14,20 +14,31 @@ export interface BuiltinSlashCommand {
 	name: string;
 	description: string;
 	argumentHint?: string;
+	requiresArguments?: boolean;
 }
 
 export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "settings", description: "Open settings menu" },
-	{ name: "model", description: "Select model (opens selector UI)", argumentHint: "<provider/model>" },
+	{
+		name: "model",
+		description: "Select model (opens selector UI)",
+		argumentHint: "<provider/model>",
+		requiresArguments: false,
+	},
 	{ name: "tree", description: "Navigate session tree (switch branches)" },
-	{ name: "thinking", description: "Set thinking level", argumentHint: "<level>" },
+	{ name: "thinking", description: "Set thinking level", argumentHint: "<level>", requiresArguments: false },
 	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling" },
 	{ name: "favorite-models", description: "Manage favorite models for Ctrl+P cycling" },
 	{ name: "export", description: "Export session (HTML default, or specify path: .html/.jsonl)" },
-	{ name: "import", description: "Import and resume a session from a JSONL file" },
+	{
+		name: "import",
+		description: "Import and resume a session from a JSONL file",
+		argumentHint: "<path.jsonl>",
+		requiresArguments: true,
+	},
 	{ name: "share", description: "Share session as a secret GitHub gist" },
 	{ name: "copy", description: "Copy last agent message to clipboard" },
-	{ name: "rename", description: "Rename the current session", argumentHint: "[name]" },
+	{ name: "rename", description: "Rename the current session", argumentHint: "[name]", requiresArguments: false },
 	{ name: "name", description: "Alias of /rename (set session display name)" },
 	{ name: "session", description: "Show session info and stats" },
 	{ name: "changelog", description: "Show changelog entries" },
@@ -35,7 +46,12 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "fork", description: "Create a new fork from a previous user message" },
 	{ name: "clone", description: "Duplicate the current session at the current position" },
 	{ name: "trust", description: "Save project trust decision for future sessions" },
-	{ name: "login", description: "Configure provider authentication", argumentHint: "<provider>" },
+	{
+		name: "login",
+		description: "Configure provider authentication",
+		argumentHint: "<provider>",
+		requiresArguments: false,
+	},
 	{ name: "logout", description: "Remove provider authentication" },
 	{ name: "new", description: "Start a new session" },
 	{ name: "compact", description: "Manually compact the session context" },

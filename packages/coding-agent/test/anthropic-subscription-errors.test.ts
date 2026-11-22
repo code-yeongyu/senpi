@@ -73,3 +73,17 @@ describe("Claude SDK OAuth error extraction", () => {
 		expect(guided).toContain(entitlementGuidance);
 	});
 });
+
+describe("transient SDK failures never classify as an auth rejection (senpi#2081)", () => {
+	it.each([
+		"API Error: upstream unauthorized (HTTP 503, api_error)",
+		"proxy said unauthorized (HTTP 502)",
+		"timed out waiting for authorization server (HTTP 408)",
+	])("%s is a transient failure, not auth_error", (text) => {
+		expect(errors.classifySdkError(new Error(text))).toEqual({ kind: "other", retryable: true });
+	});
+
+	it("a 401 rejection is still auth_error", () => {
+		expect(errors.classifySdkError(new Error("Invalid bearer token (HTTP 401)")).kind).toBe("auth_error");
+	});
+});

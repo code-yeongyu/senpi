@@ -1,0 +1,22 @@
+{
+  "results": [
+    {
+      "url": "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+      "title": "Documentation - TypeScript 4.9",
+      "text": "TypeScript 4.9 introduces the satisfies operator, which checks a value against a type without widening it.",
+      "published": "2024-11-20"
+    },
+    {
+      "url": "https://www.typescriptlang.org/docs/handbook/everyday-types.html",
+      "title": "Everyday Types - TypeScript",
+      "text": "TypeScript's type system works structurally; the satisfies keyword validates a value while keeping its narrowest inferred type."
+    },
+    {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators",
+      "title": "Expressions and operators - JavaScript | MDN"
+    },
+    {
+      "url": "https://example.com/guides/satisfies-operator"
+    }
+  ]
+}

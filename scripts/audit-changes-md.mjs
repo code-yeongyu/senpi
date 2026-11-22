@@ -1,12 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import {
-	auditChangesMdCoverage,
-	isProductionPath,
-	parseTrackerEntries,
-	UPSTREAM_PIN_PATH,
-} from "./changes-md-policy.mjs";
+import { FRAGMENT_DIR, FRAGMENT_README, isChangelogTarget, parseFragment } from "./changes-fragments.mjs";
 import {
 	ensureCommitExists,
 	filesInCommit,
@@ -15,6 +10,12 @@ import {
 	readUpstreamPin,
 	runGit,
 } from "./changes-md-git.mjs";
+import {
+	auditChangesMdCoverage,
+	isProductionPath,
+	parseTrackerEntries,
+	UPSTREAM_PIN_PATH,
+} from "./changes-md-policy.mjs";
 
 /** Direct tree comparison (pin vs HEAD) with rename-aware change kinds. */
 function resolveRangeNameStatus(from, to) {
@@ -31,7 +32,7 @@ function resolveRangeNameStatus(from, to) {
 function buildAuditReport(upstreamPath) {
 	const pin = readUpstreamPin(upstreamPath);
 	ensureCommitExists(pin.sha);
-	const { changedFiles, renames, deletions } = resolveRangeNameStatus(pin.sha, "HEAD");
+	const { changedFiles, renames } = resolveRangeNameStatus(pin.sha, "HEAD");
 	const upstreamTree = filesInCommit(pin.sha);
 	const upstreamRenames = renames.filter((rename) => upstreamTree.has(rename.from));
 	const upstreamRenameTargets = new Set(upstreamRenames.map((rename) => rename.to));
@@ -44,13 +45,23 @@ function buildAuditReport(upstreamPath) {
 			trackerDiffs[tracker] = entries;
 		}
 	}
+	// Entries still waiting in changes/unreleased/<pr>.md count as written: the release cut moves them
+	// into the trackers later, and the tree is covered either way (senpi#3610).
+	const fragmentNames = existsSync(FRAGMENT_DIR) ? readdirSync(FRAGMENT_DIR) : [];
+	for (const name of fragmentNames) {
+		const path = `${FRAGMENT_DIR}/${name}`;
+		if (path === FRAGMENT_README) continue;
+		for (const { log, body } of parseFragment(readFileSync(path, "utf8")).blocks) {
+			if (isChangelogTarget(log)) continue;
+			trackerDiffs[log] = [...(trackerDiffs[log] ?? []), ...parseTrackerEntries(body, log)];
+		}
+	}
 	const divergentFiles = changedFiles.filter(isProductionPath);
 	const trackerPolicy = {
 		forkOnly,
 		trackerDiffs,
 		existingTrackers,
 		renames: upstreamRenames,
-		deletions,
 		upstreamSync: { pinChanged: true, divergentFiles },
 	};
 	const { covered, uncovered } = auditChangesMdCoverage({ changedFiles, trackerPolicy });

@@ -5,8 +5,11 @@ import {
 	isClassifierRefusal,
 	isCursorExecResolved,
 	readProviderDiagnostic,
+	sanitizeProviderErrorMessage,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
+import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
+import { OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC } from "@earendil-works/pi-ai/utils/retry";
 import type { AgentLoopConfig } from "./types.ts";
 
 const EMPTY_USAGE = {
@@ -56,6 +59,11 @@ export function promoteStopWithPendingToolCalls(message: AssistantMessage): Assi
 	return { ...message, stopReason: "toolUse" };
 }
 
+/** The stop reason the loop acts on; applied before `message_end` so every consumer sees the same object. */
+export function settleStopReason(message: AssistantMessage): AssistantMessage {
+	return demoteToolUseWithoutToolCalls(promoteStopWithPendingToolCalls(message));
+}
+
 export function shouldTerminateAssistantTurn(message: AssistantMessage): boolean {
 	return message.stopReason === "error" || message.stopReason === "aborted" || isClassifierRefusal(message);
 }
@@ -87,7 +95,7 @@ export function createTerminalFailureAssistantMessage(
 ): AssistantMessage {
 	const errorMessage = error instanceof Error ? error.message : String(error);
 	const providerDiagnostic = reason === "error" ? readProviderDiagnostic(error) : undefined;
-	return {
+	const message: AssistantMessage = {
 		role: "assistant",
 		content: partialMessage?.content ?? [{ type: "text", text: "" }],
 		api: partialMessage?.api ?? model.api,
@@ -95,7 +103,17 @@ export function createTerminalFailureAssistantMessage(
 		model: partialMessage?.model ?? model.id,
 		responseModel: partialMessage?.responseModel,
 		responseId: partialMessage?.responseId,
-		diagnostics: partialMessage?.diagnostics,
+		diagnostics:
+			reason === "error" && isOAuthRefreshUnavailableError(error)
+				? [
+						...(partialMessage?.diagnostics ?? []),
+						{
+							type: OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC,
+							timestamp: Date.now(),
+							details: { provider: model.provider },
+						},
+					]
+				: partialMessage?.diagnostics,
 		usage: partialMessage?.usage ?? EMPTY_USAGE,
 		stopReason: reason,
 		errorMessage: errorMessage || (reason === "aborted" ? "Request was aborted" : "Error"),
@@ -103,6 +121,9 @@ export function createTerminalFailureAssistantMessage(
 		...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
 		timestamp: partialMessage?.timestamp ?? Date.now(),
 	};
+	// A thrown provider error never passed the stream boundary: classify and redact it the same way (senpi#4282).
+	sanitizeProviderErrorMessage(message);
+	return message;
 }
 
 export function normalizeTerminalAssistantMessage(

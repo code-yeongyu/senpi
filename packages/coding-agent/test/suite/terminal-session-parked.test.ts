@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import terminalExtension from "../../src/core/extensions/builtin/terminal/extension.ts";
 import { FILE_MONITOR_POLL_MS } from "../../src/core/extensions/builtin/terminal/monitor-file-watch.ts";
 import { MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { createHarness } from "./harness.ts";
 
 afterEach(() => {
@@ -36,7 +37,7 @@ it("stops durable file polling while parked and preserves an explicit mute when 
 			{ path, event: "modify", persistent: true, description: "poll" },
 			undefined,
 			undefined,
-			h.getExtensionRunner().createContext(),
+			h.getExtensionRunner().createContext() as ExtensionToolContext,
 		);
 		const registry = registryCapture.mock.instances[0];
 		if (!(registry instanceof MonitorRegistry)) throw new Error("Missing live monitor registry");

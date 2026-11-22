@@ -1,6 +1,8 @@
 import { Text } from "@earendil-works/pi-tui";
+import { toolResultUserWords } from "../../../tool-result-user-words.ts";
 import type { ToolDefinition } from "../../types.ts";
 import { TOOL_NAMES } from "./family.ts";
+import { resolveUserWordReferences } from "./user-words.ts";
 
 export const renderCall: NonNullable<ToolDefinition["renderCall"]> = (args, theme) => {
 	const values = typeof args === "object" && args !== null ? args : {};
@@ -20,6 +22,7 @@ export const renderCall: NonNullable<ToolDefinition["renderCall"]> = (args, them
 export const renderResult: NonNullable<ToolDefinition["renderResult"]> = (result) => {
 	const details: unknown = result.details;
 	let summary = "";
+	const words = toolResultUserWords({ details });
 	if (typeof details === "object" && details !== null && "status" in details) {
 		summary = String(details.status);
 		if ("answers" in details && typeof details.answers === "object" && details.answers !== null)
@@ -28,7 +31,9 @@ export const renderResult: NonNullable<ToolDefinition["renderResult"]> = (result
 			summary += `; ${details.unanswered.length} unanswered`;
 	}
 	return new Text(
-		[summary, ...result.content.flatMap((c) => (c.type === "text" ? [c.text] : []))].filter(Boolean).join("\n"),
+		[summary, ...result.content.flatMap((c) => (c.type === "text" ? [resolveUserWordReferences(c.text, words)] : []))]
+			.filter(Boolean)
+			.join("\n"),
 		0,
 		0,
 	);

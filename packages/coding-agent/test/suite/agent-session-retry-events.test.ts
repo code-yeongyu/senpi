@@ -11,6 +11,8 @@ const hint1258ms = "HTTP 429: rate_limit_error (retry-after-ms: 1258)";
 function normalizeEventOrder(events: Harness["events"]): string[] {
 	const normalized: string[] = [];
 	for (const event of events) {
+		// Design 4.4 adds lifecycle publications; preserve the exact original agent/retry ordering.
+		if (event.type === "session_lifecycle") continue;
 		const label =
 			event.type === "message_start" || event.type === "message_end"
 				? `${event.type}:${event.message.role}`
@@ -219,6 +221,32 @@ describe("AgentSession retry and event characterization", () => {
 		).toContain(".");
 	});
 
+	// Regression test for #9340.
+	it("finalizes retry state when abort is requested after a retry attempt fails", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 0 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+		]);
+
+		let errorCount = 0;
+		harness.session.subscribe((event) => {
+			if (event.type !== "message_end" || event.message.role !== "assistant") return;
+			if (event.message.stopReason === "error" && ++errorCount === 2) void harness.session.abort();
+		});
+
+		await harness.session.prompt("test");
+
+		expect(harness.session.retryAttempt).toBe(0);
+		expect(harness.eventsOfType("agent_end").at(-1)?.willRetry).toBe(false);
+		expect(harness.eventsOfType("auto_retry_end").at(-1)).toMatchObject({
+			success: false,
+			attempt: 1,
+			finalError: "Retry cancelled",
+		});
+	});
+
 	it("exhausts max retries and emits a failure event", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } } });
 		harnesses.push(harness);
@@ -247,7 +275,7 @@ describe("AgentSession retry and event characterization", () => {
 			settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 0 } },
 		});
 		harnesses.push(harness);
-		let queuedSteering: Promise<void> | undefined;
+		let queuedSteering: Promise<unknown> | undefined;
 		harness.session.subscribe((event) => {
 			if (event.type === "auto_retry_start" && queuedSteering === undefined) {
 				queuedSteering = harness.session.steer("retain after retry exhaustion");
@@ -535,7 +563,7 @@ describe("AgentSession retry and event characterization", () => {
 
 		expect(harness.eventsOfType("agent_end")).toHaveLength(1);
 		await harness.session.waitForIdle();
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_idle");
+		expect(normalizeEventOrder(harness.events).at(-1)).toBe("agent_idle");
 	});
 
 	it("delivers retry_probe_scheduled to a subscribed listener with payload intact", async () => {
@@ -656,7 +684,7 @@ describe("AgentSession retry and event characterization", () => {
 
 		expect(harness.eventsOfType("agent_end")).toHaveLength(1);
 		await harness.session.waitForIdle();
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_idle");
+		expect(normalizeEventOrder(harness.events).at(-1)).toBe("agent_idle");
 		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
 		expect(lastMessage?.role).toBe("assistant");
 		if (lastMessage?.role === "assistant") {

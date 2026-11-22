@@ -97,6 +97,14 @@ describe("claude-sdk-oauth restart binding drift (#7884)", () => {
 	it("lets a sent-stream divergence dominate the drift reason", () => {
 		const decision = decideNativeContinuity(
 			input({
+				binding: binding({
+					// senpi#1974: an in-prefix boundary keeps the divergence on the fork
+					// path; a binding with none flattens fail-closed instead.
+					assistantUuidByIndex: [
+						[1, "uuid-a1"],
+						[2, "uuid-a2"],
+					],
+				}),
 				currentHashes: ["h1", "h2-rewritten", "h3"],
 				fingerprint: { systemPromptHash: "prompt-v2", toolsetHash: "tools-v2" },
 			}),

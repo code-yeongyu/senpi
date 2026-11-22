@@ -2,17 +2,18 @@
  * Builds the Cascade `GetChatMessage` request from senpi's provider-neutral
  * context.
  *
- * Cascade has no system role: the system prompt travels in the top-level
- * `prompt` field, and history is a flat list of `ChatMessagePrompt` entries
- * whose `source` carries the role. Message ids must be UUID-shaped; they are
- * derived deterministically from the conversation id and the entry index so a
- * retried turn re-sends the same ids instead of forking the server-side
- * transcript, while a native Devin turn is replayed under the id the server
- * minted for it.
+ * Cascade has no system role: the system prompt (replayed from the transcript's
+ * system messages) travels in the top-level `prompt` field, and history is a
+ * flat list of `ChatMessagePrompt` entries whose `source` carries the role.
+ * Message ids must be UUID-shaped; they are derived deterministically from the
+ * conversation id and the entry index so a retried turn re-sends the same ids
+ * instead of forking the server-side transcript, while a native Devin turn is
+ * replayed under the id the server minted for it.
  */
 
 import { create } from "@bufbuild/protobuf";
-import type { Context, Message, Model, Tool } from "../../types.ts";
+import type { Message, Model, Tool, TranscriptContext } from "../../types.ts";
+import { getCurrentSystemPrompt, getCurrentTools } from "../../utils/transcript.ts";
 import { deterministicUuid } from "../cursor-agent/deterministic-id.ts";
 import {
 	CacheControlType,
@@ -53,7 +54,7 @@ export interface DevinModelAssignment {
 
 export interface DevinChatRequestInput {
 	model: Model<"devin-agent">;
-	context: Context;
+	context: TranscriptContext;
 	apiKey: string | undefined;
 	userJwt?: string;
 	cascadeId: string;
@@ -71,17 +72,20 @@ type ToolResultMessage = Extract<Message, { role: "toolResult" }>;
 export function buildDevinChatRequest(input: DevinChatRequestInput): GetChatMessageRequest {
 	const temperature = Math.max(input.temperature ?? DEFAULT_TEMPERATURE, MIN_TEMPERATURE);
 	const stopPatterns = [...DEVIN_DEFAULT_STOP_PATTERNS, ...(input.stopSequences ?? [])];
+	const { messages } = input.context;
+	// History ids derive from the entry index, so system messages leave the list before mapping.
+	const history = messages.filter((message) => message.role !== "system");
 	return create(GetChatMessageRequestSchema, {
 		metadata: devinCliMetadata(input.apiKey, input.userJwt ?? ""),
-		prompt: input.context.systemPrompt ?? "",
-		chatMessagePrompts: mapHistory(input.context.messages, input.cascadeId, input.model),
+		prompt: getCurrentSystemPrompt(messages),
+		chatMessagePrompts: mapHistory(history, input.cascadeId, input.model),
 		requestType: ChatMessageRequestType.CASCADE,
 		plannerMode: ConversationalPlannerMode.DEFAULT,
 		chatModelUid: input.assignment?.modelUid ?? input.model.upstreamModelId ?? input.model.id,
 		...(input.assignment ? { modelAssignmentJwt: input.assignment.assignmentJwt } : {}),
 		cascadeId: input.cascadeId,
 		executionId: crypto.randomUUID(),
-		tools: (input.context.tools ?? []).map(toolDefinition),
+		tools: getCurrentTools(messages).map(toolDefinition),
 		toolChoice: { choice: { case: "optionName", value: "auto" } },
 		systemPromptCacheOptions: create(PromptCacheOptionsSchema, { type: CacheControlType.EPHEMERAL }),
 		disableParallelToolCalls: input.model.compat?.supportsParallelToolCalls !== true,

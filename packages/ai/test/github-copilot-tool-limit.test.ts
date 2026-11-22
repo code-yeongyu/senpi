@@ -5,6 +5,8 @@ import { stream as streamOpenAICompletions } from "../src/api/openai-completions
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import type { Api, AssistantMessage, Context, Model, Tool } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const COPILOT_TOOL_LIMIT = 128;
 
 function makeTools(count: number): Tool[] {
@@ -87,7 +89,7 @@ describe("GitHub Copilot tool limit", () => {
 	it("limits Chat Completions requests and reports omitted tools", async () => {
 		const context = makeContext();
 		const { payload, result } = await captureRequest((fetch) =>
-			streamOpenAICompletions(makeModel("openai-completions"), context, {
+			streamOpenAICompletions(makeModel("openai-completions"), normalizeContext(context), {
 				apiKey: "test-key",
 				fetch,
 				maxRetries: 0,
@@ -102,7 +104,7 @@ describe("GitHub Copilot tool limit", () => {
 	it("limits Responses requests and reports omitted tools", async () => {
 		const context = makeContext();
 		const { payload, result } = await captureRequest((fetch) =>
-			streamOpenAIResponses(makeModel("openai-responses"), context, {
+			streamOpenAIResponses(makeModel("openai-responses"), normalizeContext(context), {
 				apiKey: "test-key",
 				fetch,
 				maxRetries: 0,
@@ -116,7 +118,7 @@ describe("GitHub Copilot tool limit", () => {
 	it("limits Anthropic Messages requests and reports omitted tools", async () => {
 		const context = makeContext();
 		const { payload, result } = await captureRequest((fetch) =>
-			streamAnthropic(makeModel("anthropic-messages"), context, {
+			streamAnthropic(makeModel("anthropic-messages"), normalizeContext(context), {
 				apiKey: "test-key",
 				fetch,
 				maxRetries: 0,
@@ -130,7 +132,7 @@ describe("GitHub Copilot tool limit", () => {
 	it("keeps a forced Chat Completions tool from beyond the first 128", async () => {
 		const context = makeContext();
 		const { payload } = await captureRequest((fetch) =>
-			streamOpenAICompletions(makeModel("openai-completions"), context, {
+			streamOpenAICompletions(makeModel("openai-completions"), normalizeContext(context), {
 				apiKey: "test-key",
 				fetch,
 				maxRetries: 0,
@@ -147,7 +149,7 @@ describe("GitHub Copilot tool limit", () => {
 	it("keeps a forced Responses tool from beyond the first 128", async () => {
 		const context = makeContext();
 		const { payload } = await captureRequest((fetch) =>
-			streamOpenAIResponses(makeModel("openai-responses"), context, {
+			streamOpenAIResponses(makeModel("openai-responses"), normalizeContext(context), {
 				apiKey: "test-key",
 				fetch,
 				maxRetries: 0,
@@ -155,13 +157,40 @@ describe("GitHub Copilot tool limit", () => {
 			}).result(),
 		);
 
-		expect(wireToolNames(payload).at(-1)).toBe("tool_129");
+		expect(wireToolNames(payload)).toHaveLength(COPILOT_TOOL_LIMIT);
+		expect(wireToolNames(payload)).toContain("tool_129");
+	});
+
+	it("drops the Responses registration tail, not tools that sort after it (omo#10775 review)", async () => {
+		const core = ["read", "write", "todo", "task", "bash", "edit"];
+		const tools: Tool[] = [
+			...core.map((name) => ({ name, description: name, parameters: Type.Object({}) })),
+			...Array.from({ length: 130 }, (_, index) => ({
+				name: `mcp_srv_${String(index).padStart(3, "0")}`,
+				description: `MCP ${index}`,
+				parameters: Type.Object({}),
+			})),
+		];
+		const context: Context = { messages: [{ role: "user", content: "Use a tool.", timestamp: 1 }], tools };
+		const { payload } = await captureRequest((fetch) =>
+			streamOpenAIResponses(makeModel("openai-responses"), normalizeContext(context), {
+				apiKey: "test-key",
+				fetch,
+				maxRetries: 0,
+			}).result(),
+		);
+
+		const names = wireToolNames(payload);
+		expect(names).toHaveLength(COPILOT_TOOL_LIMIT);
+		for (const name of core) expect(names).toContain(name);
+		expect(names).not.toContain("mcp_srv_129");
+		expect(names).toEqual([...names].sort());
 	});
 
 	it("keeps a forced Anthropic tool from beyond the first 128", async () => {
 		const context = makeContext();
 		const { payload } = await captureRequest((fetch) =>
-			streamAnthropic(makeModel("anthropic-messages"), context, {
+			streamAnthropic(makeModel("anthropic-messages"), normalizeContext(context), {
 				apiKey: "test-key",
 				fetch,
 				maxRetries: 0,
@@ -175,7 +204,7 @@ describe("GitHub Copilot tool limit", () => {
 	it("applies the cap after payload hooks and keeps a hook-forced tool", async () => {
 		const context = makeContext();
 		const { payload } = await captureRequest((fetch) =>
-			streamOpenAICompletions(makeModel("openai-completions"), context, {
+			streamOpenAICompletions(makeModel("openai-completions"), normalizeContext(context), {
 				apiKey: "test-key",
 				fetch,
 				maxRetries: 0,
@@ -209,7 +238,7 @@ describe("GitHub Copilot tool limit", () => {
 		const context = makeContext();
 		const nonCopilotModel = { ...makeModel("openai-completions"), provider: "test-provider" };
 		const { payload, result } = await captureRequest((fetch) =>
-			streamOpenAICompletions(nonCopilotModel, context, {
+			streamOpenAICompletions(nonCopilotModel, normalizeContext(context), {
 				apiKey: "test-key",
 				fetch,
 				maxRetries: 0,
@@ -224,7 +253,7 @@ describe("GitHub Copilot tool limit", () => {
 		const context = makeContext();
 		const nonCopilotModel = { ...makeModel("openai-responses"), provider: "test-provider" };
 		const { payload, result } = await captureRequest((fetch) =>
-			streamOpenAIResponses(nonCopilotModel, context, {
+			streamOpenAIResponses(nonCopilotModel, normalizeContext(context), {
 				apiKey: "test-key",
 				fetch,
 				maxRetries: 0,

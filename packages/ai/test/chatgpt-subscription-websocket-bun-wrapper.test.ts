@@ -5,6 +5,7 @@ import {
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 type Listener = (event: unknown) => void;
 
@@ -127,13 +128,13 @@ describe("openai-codex websocket on the Bun proxy-aware wrapper", () => {
 		const runtime = installRuntimeWebSocket();
 		const options = { apiKey: mockToken(), transport: "auto" as const, sessionId: "bun-parked", timeoutMs: 1_000 };
 
-		const first = await streamOpenAICodexResponses(model, context, options).result();
+		const first = await streamOpenAICodexResponses(model, normalizeContext(context), options).result();
 		expect(first.stopReason).toBe("stop");
 		expect(runtime.connections()).toBe(1);
 
 		runtime.sockets[0]?.dispatch("close", { code: 1001, reason: "server idle", wasClean: true });
 
-		const secondPromise = streamOpenAICodexResponses(model, context, options).result();
+		const secondPromise = streamOpenAICodexResponses(model, normalizeContext(context), options).result();
 		await vi.advanceTimersByTimeAsync(0);
 		await vi.advanceTimersByTimeAsync(options.timeoutMs);
 		const second = await secondPromise;
@@ -146,13 +147,13 @@ describe("openai-codex websocket on the Bun proxy-aware wrapper", () => {
 		const runtime = installRuntimeWebSocket();
 		const options = { apiKey: mockToken(), transport: "auto" as const, sessionId: "bun-stale", timeoutMs: 1_000 };
 
-		const first = await streamOpenAICodexResponses(model, context, options).result();
+		const first = await streamOpenAICodexResponses(model, normalizeContext(context), options).result();
 		expect(first.stopReason).toBe("stop");
 
 		const parked = runtime.sockets[0];
 		if (parked) parked.readyState = 3;
 
-		const secondPromise = streamOpenAICodexResponses(model, context, options).result();
+		const secondPromise = streamOpenAICodexResponses(model, normalizeContext(context), options).result();
 		await vi.advanceTimersByTimeAsync(0);
 		await vi.advanceTimersByTimeAsync(options.timeoutMs);
 		const second = await secondPromise;

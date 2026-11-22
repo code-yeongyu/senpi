@@ -1,7 +1,10 @@
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources/messages.js";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { buildPromptBlocks } from "../src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts";
+import {
+	buildPromptBlocks,
+	CONVERSATION_HISTORY_CLOSER,
+} from "../src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts";
 import { dedupeUltraworkBlocks } from "../src/core/extensions/builtin/anthropic-subscription/prompt-directive-dedupe.ts";
 
 const OPEN = "<ultrawork-mode>";
@@ -43,7 +46,7 @@ function countDirectiveSpans(text: string): number {
 }
 
 describe("Claude SDK OAuth prompt directive dedupe", () => {
-	it("collapses repeated directive blocks to the single most recent copy", () => {
+	it("keeps the first history copy and the current message's copy, collapsing repeats in between", () => {
 		const context: Context = {
 			messages: [
 				userMsg(`${OPEN}${BODY}${CLOSE}`, 1),
@@ -55,19 +58,23 @@ describe("Claude SDK OAuth prompt directive dedupe", () => {
 		};
 		const { blocks, collapsedDirectives } = dedupeUltraworkBlocks(buildPromptBlocks(context));
 		const full = blocksToText(blocks);
-		expect(countDirectiveSpans(full)).toBe(1);
-		expect((full.match(/ultrawork directive superseded/g) ?? []).length).toBe(2);
-		expect(collapsedDirectives).toBe(2);
+		expect(countDirectiveSpans(full)).toBe(2);
+		expect((full.match(/ultrawork directive repeated/g) ?? []).length).toBe(1);
+		expect(collapsedDirectives).toBe(1);
 	});
 
 	it("keeps surrounding user text intact when collapsing a directive span", () => {
 		const context: Context = {
-			messages: [userMsg(`do X\n${OPEN}${BODY}${CLOSE}`, 1), userMsg(`${OPEN}${BODY}${CLOSE}`, 2)],
+			messages: [
+				userMsg(`${OPEN}${BODY}${CLOSE}`, 1),
+				userMsg(`do X\n${OPEN}${BODY}${CLOSE}`, 2),
+				userMsg("current", 3),
+			],
 		};
 		const { blocks } = dedupeUltraworkBlocks(buildPromptBlocks(context));
 		const full = blocksToText(blocks);
 		expect(full).toContain("do X");
-		expect((full.match(/ultrawork directive superseded/g) ?? []).length).toBe(1);
+		expect((full.match(/ultrawork directive repeated/g) ?? []).length).toBe(1);
 	});
 
 	it("returns blocks byte-identical when no directive spans are present", () => {
@@ -104,7 +111,7 @@ describe("Claude SDK OAuth prompt directive dedupe", () => {
 		expect(countDirectiveSpans(blocksToText(blocks))).toBe(1);
 	});
 
-	it("keeps the LAST copy intact and removes every earlier body", () => {
+	it("keeps distinct directives intact; only identical repeats collapse", () => {
 		const first = "FIRST-BODY-SENTINEL";
 		const second = "SECOND-BODY-SENTINEL";
 		const last = "LAST-BODY-SENTINEL";
@@ -120,10 +127,10 @@ describe("Claude SDK OAuth prompt directive dedupe", () => {
 		const { blocks, collapsedDirectives } = dedupeUltraworkBlocks(buildPromptBlocks(context));
 		const full = blocksToText(blocks);
 
-		expect(collapsedDirectives).toBe(2);
+		expect(collapsedDirectives).toBe(0);
 		expect(full).toContain(last);
-		expect(full).not.toContain(first);
-		expect(full).not.toContain(second);
+		expect(full).toContain(first);
+		expect(full).toContain(second);
 	});
 
 	it("fails closed when nesting is split across separate text blocks", () => {
@@ -138,21 +145,30 @@ describe("Claude SDK OAuth prompt directive dedupe", () => {
 
 		expect(collapsedDirectives).toBe(0);
 		expect(full).toContain("PRIOR-FLAT");
-		expect((full.match(/ultrawork directive superseded/g) ?? []).length).toBe(0);
+		expect((full.match(/ultrawork directive repeated/g) ?? []).length).toBe(0);
 	});
 
 	it("still collapses flat directives that merely span separate blocks", () => {
 		const blocks: ContentBlockParam[] = [
-			{ type: "text", text: `${OPEN}EARLIER-FLAT${CLOSE}` },
+			{ type: "text", text: `${OPEN}FLAT${CLOSE}` },
 			{ type: "text", text: "interleaved prose" },
-			{ type: "text", text: `${OPEN}LATEST-FLAT${CLOSE}` },
+			{ type: "text", text: `${OPEN}FLAT${CLOSE}` },
+			{ type: "text", text: CONVERSATION_HISTORY_CLOSER },
+			{ type: "text", text: `${OPEN}FLAT${CLOSE}` },
 		];
 		const { blocks: out, collapsedDirectives } = dedupeUltraworkBlocks(blocks);
-		const full = blocksToText(out);
 
 		expect(collapsedDirectives).toBe(1);
-		expect(full).toContain("LATEST-FLAT");
-		expect(full).not.toContain("EARLIER-FLAT");
+		expect(countDirectiveSpans(blocksToText(out))).toBe(2);
+		expect(blocksToText(out.slice(2, 3))).toContain("ultrawork directive repeated");
+	});
+
+	it("collapses nothing without a replayed history", () => {
+		const blocks: ContentBlockParam[] = [
+			{ type: "text", text: `${OPEN}FLAT${CLOSE}` },
+			{ type: "text", text: `${OPEN}FLAT${CLOSE}` },
+		];
+		expect(dedupeUltraworkBlocks(blocks).collapsedDirectives).toBe(0);
 	});
 
 	it("leaves nested directive tags untouched, failing closed rather than corrupting them", () => {
@@ -167,7 +183,7 @@ describe("Claude SDK OAuth prompt directive dedupe", () => {
 		expect(full).toContain(BODY);
 		expect(full).toContain("inner");
 		expect(full).toContain("tail");
-		expect((full.match(/ultrawork directive superseded/g) ?? []).length).toBe(0);
+		expect((full.match(/ultrawork directive repeated/g) ?? []).length).toBe(0);
 	});
 
 	it("also collapses a directive copy echoed in an assistant message (superset of user-only)", () => {
@@ -179,7 +195,7 @@ describe("Claude SDK OAuth prompt directive dedupe", () => {
 			],
 		};
 		const { blocks, collapsedDirectives } = dedupeUltraworkBlocks(buildPromptBlocks(context));
-		expect(collapsedDirectives).toBe(2);
-		expect(countDirectiveSpans(blocksToText(blocks))).toBe(1);
+		expect(collapsedDirectives).toBe(1);
+		expect(countDirectiveSpans(blocksToText(blocks))).toBe(2);
 	});
 });

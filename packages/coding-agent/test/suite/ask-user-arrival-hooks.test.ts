@@ -7,7 +7,7 @@ import askUserExtension from "../../src/core/extensions/builtin/ask-user/index.t
 import hooksExtension, { parseHookConfig } from "../../src/core/extensions/builtin/hooks/index.ts";
 import { createHookTrustEntry, hookTrustId } from "../../src/core/extensions/builtin/hooks/trust.ts";
 import type { HookSourceMetadata, HookTrustEntry } from "../../src/core/extensions/builtin/hooks/types.ts";
-import type { ExtensionContext, QuestionResponse } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { createHarness } from "./harness.ts";
 
 describe("ask-user arrival hooks", () => {
@@ -85,7 +85,7 @@ describe("ask-user arrival hooks", () => {
 					{ questions: [{ header: "Auth", question: "Which flow?", multiSelect: false }], waitForAnswer },
 					undefined,
 					undefined,
-					ctx,
+					ctx as ExtensionToolContext,
 				);
 				await completed.promise;
 				const rows = readFileSync(received, "utf8")

@@ -62,8 +62,9 @@ export function spawnInternalProcess(
 		throw new Error("A compiled Bun executable cannot launch an external internal-process entrypoint");
 	}
 	const entryUrl = defaultEntryUrl(role, options.entryUrl);
+	// --import takes a module specifier; a raw path breaks on Windows drives and on `#`, `?`, or `%` in the path.
 	const sourceRuntimeArgs = import.meta.url.endsWith(".ts")
-		? ["--import", fileURLToPath(new URL("source-resolver.ts", import.meta.url))]
+		? ["--import", new URL("source-resolver.ts", import.meta.url).href]
 		: [];
 	const childEnv: NodeJS.ProcessEnv = {
 		...process.env,

@@ -16,7 +16,8 @@ interface LoadedFootprintResult {
 const execFileAsync = promisify(execFile);
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const workerPath = fileURLToPath(new URL("./loaded-footprint-worker.ts", import.meta.url));
-const tsconfigPath = fileURLToPath(new URL("../tsconfig.json", import.meta.url));
+// Resolve workspace packages to their sources, matching the root tsconfig paths.
+const sourceResolverUrl = new URL("../../../coding-agent/src/experimental/source-resolver.ts", import.meta.url).href;
 const results: LoadedFootprintResult[] = [];
 
 for (const target of storageBenchmarkTargets) {
@@ -26,12 +27,12 @@ for (const target of storageBenchmarkTargets) {
 			[
 				"--expose-gc",
 				"--import",
-				"tsx",
+				sourceResolverUrl,
 				workerPath,
 				target.name,
 				dataset.name,
 			],
-			{ cwd: packageRoot, env: { ...process.env, TSX_TSCONFIG_PATH: tsconfigPath } },
+			{ cwd: packageRoot },
 		);
 		results.push(JSON.parse(stdout) as LoadedFootprintResult);
 	}

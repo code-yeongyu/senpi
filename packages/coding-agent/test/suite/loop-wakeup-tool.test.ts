@@ -14,6 +14,7 @@ import type {
 	AgentToolResult,
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionToolContext,
 	ToolDefinition,
 } from "../../src/core/extensions/types.ts";
 
@@ -71,7 +72,7 @@ function captureTool(scheduler: ScheduleWakeupSchedulerPort): WakeupTool {
 }
 
 async function run(tool: WakeupTool, params: ScheduleWakeupParams): Promise<AgentToolResult<ScheduleWakeupDetails>> {
-	return tool.execute("call-1", params as SchemaParams, undefined, undefined, ctx);
+	return tool.execute("call-1", params as SchemaParams, undefined, undefined, ctx as ExtensionToolContext);
 }
 
 async function runError(tool: WakeupTool, params: ScheduleWakeupParams): Promise<Error> {

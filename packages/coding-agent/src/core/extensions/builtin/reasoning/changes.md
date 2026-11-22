@@ -1,5 +1,23 @@
 # reasoning Extension Changes
 
+## 2026-10-12 - Reasoning commands preserve startup defaults (senpi#3178)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/reasoning/index.ts`: `/reasoning on` persists its effective model memory without setting `defaultThinkingLevel`. Other command paths inherit memory-only persistence from the shared session setter.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/reasoning/index.ts`: a reasoning toggle is not an explicit configuration save.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/reasoning/index.ts`: this builtin owns the model-specific last-on restore behavior.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/reasoning/index.ts`: `/reasoning on` persistence after clamping.
+
 ## Capability-aware /reasoning and /efforts commands (2026-08-16)
 
 ### What changed

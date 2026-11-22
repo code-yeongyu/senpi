@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 /**
@@ -20,7 +21,7 @@ const MODULE_PATH = resolve(__dirname, "..", "src", "compile-cache.ts");
 // Loads the seam, then reports what a spawned child would inherit plus the effective cache dir.
 const driverSource = `import { getCompileCacheDir } from "node:module";
 const { enableStartupCompileCache } = await import(process.env.MODULE_URL);
-enableStartupCompileCache();
+await enableStartupCompileCache();
 // Compile something after the call: ESM static imports are hoisted, so only modules loaded
 // after enablement can populate the cache.
 await import(process.env.PAYLOAD_URL);
@@ -41,7 +42,16 @@ function runDriver(env: NodeJS.ProcessEnv): { status: number | null; stdout: str
 	writeFileSync(payload, payloadSource);
 	const result = spawnSync(process.execPath, [driver], {
 		encoding: "utf8",
-		env: { ...process.env, MODULE_URL: MODULE_PATH, PAYLOAD_URL: payload, ...env },
+		// The host may disable or redirect the cache (#4114: receipt runners export
+		// NODE_DISABLE_COMPILE_CACHE=1); each case states its own cache settings instead.
+		env: {
+			...process.env,
+			NODE_DISABLE_COMPILE_CACHE: undefined,
+			NODE_COMPILE_CACHE: undefined,
+			MODULE_URL: MODULE_PATH,
+			PAYLOAD_URL: payload,
+			...env,
+		},
 	});
 	return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
@@ -68,6 +78,52 @@ afterEach(() => {
 });
 
 describe("startup compile cache", () => {
+	// #3166: guard the engine-free version path by observing module resolution, not timing.
+	test.each(["--version", "-v", "--help"])("loads the parser only when the candidate flag is %s", (flag) => {
+		const hooks = join(hostDir, "parser-hooks.mjs");
+		const probe = join(hostDir, "parser-probe.mjs");
+		writeFileSync(
+			hooks,
+			`export async function resolve(specifier, context, next) {
+	if (specifier === "./cli/args.ts" && context.parentURL === process.env.MODULE_URL) {
+		console.error("PARSER_IMPORTED");
+		return { url: "stub:args", shortCircuit: true };
+	}
+	return next(specifier, context);
+}
+export async function load(url, context, next) {
+	if (url === "stub:args") {
+		return { format: "module", shortCircuit: true, source: "export const parseArgs = () => ({ help: true });" };
+	}
+	return next(url, context);
+}
+`,
+		);
+		writeFileSync(
+			probe,
+			`import { register } from "node:module";
+import { pathToFileURL } from "node:url";
+register(pathToFileURL(process.env.HOOKS_PATH));
+const { enableStartupCompileCache } = await import(process.env.MODULE_URL);
+await enableStartupCompileCache();
+console.log("SURVIVED");
+`,
+		);
+		const result = spawnSync(process.execPath, [probe, "--provider", "openai-codex", flag], {
+			encoding: "utf8",
+			env: {
+				...process.env,
+				MODULE_URL: pathToFileURL(MODULE_PATH).href,
+				HOOKS_PATH: hooks,
+				NODE_COMPILE_CACHE: undefined,
+			},
+		});
+
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout).toContain("SURVIVED");
+		expect(result.stderr.includes("PARSER_IMPORTED")).toBe(flag === "--help");
+	});
+
 	describe("#given a fresh cache directory", () => {
 		test("#when the seam runs #then it populates the cache and children inherit that exact directory", () => {
 			const cacheDir = join(hostDir, "cache");
@@ -144,7 +200,7 @@ export async function load(url, context, next) {
 import { pathToFileURL } from "node:url";
 register(pathToFileURL(process.env.HOOKS_PATH));
 const { enableStartupCompileCache } = await import(process.env.MODULE_URL);
-enableStartupCompileCache();
+await enableStartupCompileCache();
 console.log("SURVIVED " + JSON.stringify(process.env.NODE_COMPILE_CACHE ?? null));
 `,
 			);

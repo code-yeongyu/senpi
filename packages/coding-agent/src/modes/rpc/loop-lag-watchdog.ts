@@ -1,18 +1,43 @@
-import { parseIdleExitMs } from "./host-lifecycle.ts";
+import { parseIdleExitMs } from "./host-lifecycle-policy.ts";
+import { ownGenerationDir, writeHeartbeat, writeStallEvidence } from "./host-stalled-evidence.ts";
 import { recordLoopBlockedMs } from "./loop-blocked-time.ts";
+import { loopLagErrorMs } from "./loop-lag-threshold.ts";
 import type { RpcHostStalledEvent } from "./rpc-types.ts";
-import { type SessionAttribution, sessionActivityMark, sessionActivitySince } from "./session-attribution.ts";
+import {
+	describeAttribution,
+	onSessionActivityStart,
+	sessionActivityMark,
+	sessionActivitySince,
+} from "./session-attribution.ts";
 
 /** Environment override for the drift that logs a warning, in milliseconds. */
 export const LOOP_LAG_WARN_MS_ENV = "SENPI_RPC_LOOP_LAG_WARN_MS";
-/** Environment override for the drift that also emits `host_stalled`, in milliseconds. */
-export const LOOP_LAG_ERROR_MS_ENV = "SENPI_RPC_LOOP_LAG_ERROR_MS";
 export const DEFAULT_LOOP_LAG_WARN_MS = 500;
-export const DEFAULT_LOOP_LAG_ERROR_MS = 5_000;
+export { DEFAULT_LOOP_LAG_ERROR_MS, LOOP_LAG_ERROR_MS_ENV, loopLagErrorMs } from "./loop-lag-threshold.ts";
 /** Measurement interval: short enough to bound the blamed window, cheap enough to ignore. */
 export const LOOP_LAG_TICK_MS = 200;
+/**
+ * Measurement interval once no session has done any work for `LOOP_LAG_IDLE_AFTER_MS` (senpi#3738, omo-desktop-app#3359):
+ * an idle host has nothing to blame, and a 200 ms tick was its largest source of idle wakeups. Drift is the
+ * lateness of a tick against its scheduled time, so a stall is only seen when a tick falls due during it: on
+ * this tick a stall can read up to 1 s short. Attributed work therefore restores the 200 ms tick the moment it
+ * starts (`onSessionActivityStart`), before it can block the loop, and a stall it causes is measured to within
+ * 200 ms as before. Never longer than the heartbeat interval, so the heartbeat stays as fresh as before.
+ */
+export const LOOP_LAG_IDLE_TICK_MS = 1_000;
+/** How long the host must stay without session activity before the tick slows down. */
+export const LOOP_LAG_IDLE_AFTER_MS = 2_000;
 /** One warning per window, however many stalls it covers. */
 export const LOOP_LAG_WARN_INTERVAL_MS = 10_000;
+
+/**
+ * A heartbeat is refreshed at most once per this fraction of the stall threshold: a reader calls the host
+ * stalled only once the heartbeat is older than the threshold, so a beat this often keeps it at most a
+ * fifth stale without a disk write on every 200 ms tick.
+ */
+const HEARTBEAT_THRESHOLD_FRACTION = 5;
+/** A beat counts as due this much before a full interval, so timer and clock rounding never skips one. */
+const HEARTBEAT_EARLY_TOLERANCE_MS = LOOP_LAG_TICK_MS / 2;
 
 export interface LoopLagWatchdogOptions {
 	/** Delivers one `host_stalled` lifecycle record to every connection. */
@@ -25,17 +50,14 @@ export interface LoopLagWatchdogOptions {
 	readonly cpuUsage?: () => { readonly user: number; readonly system: number };
 	/** Live JS heap in bytes; defaults to `process.memoryUsage().heapUsed`. */
 	readonly heapUsed?: () => number;
+	/** Refreshes the generation's heartbeat file; defaults to `writeHeartbeat`. */
+	readonly writeHeartbeat?: (generationDir: string, at: string) => Promise<void>;
 }
 
 const BYTES_PER_MB = 1024 * 1024;
 
 function describeWindow(processCpuMs: number, heapDeltaMb: number): string {
 	return `cpu=${processCpuMs}ms heap=${heapDeltaMb >= 0 ? "+" : ""}${heapDeltaMb}MB`;
-}
-
-function describeAttribution(attribution: SessionAttribution | undefined): string {
-	if (attribution?.sessionId === undefined && attribution?.tool === undefined) return "no attributed session";
-	return `sessionId=${attribution.sessionId ?? "unknown"}${attribution.tool ? ` tool=${attribution.tool}` : ""}`;
 }
 
 /**
@@ -61,14 +83,31 @@ export class LoopLagWatchdog {
 	private readonly now: () => number;
 	private readonly warnMs: number;
 	private readonly errorMs: number;
-	private timer: ReturnType<typeof setInterval> | undefined;
+	private timer: ReturnType<typeof setTimeout> | undefined;
 	private expectedTickAt: number | undefined;
+	private intervalMs = LOOP_LAG_TICK_MS;
+	private quietMs = 0;
+	private readonly idleIntervalMs: number;
+	private unsubscribeActivity: (() => void) | undefined;
 	private activityMark = 0;
 	private lastWarnAt: number | undefined;
 	private readonly cpuUsage: () => { readonly user: number; readonly system: number };
 	private readonly heapUsed: () => number;
 	private cpuMicrosAtTick = 0;
 	private heapBytesAtTick = 0;
+	/** This host's own generation directory when a supervisor launched it; evidence goes nowhere else. */
+	private readonly evidenceDir: string | undefined;
+	private heartbeatInFlight = false;
+	private lastHeartbeatAt: number | undefined;
+	private readonly heartbeatIntervalMs: number;
+	private readonly writeHeartbeat: (generationDir: string, at: string) => Promise<void>;
+	/**
+	 * The parent this host was launched under. Once it is gone the host is orphaned and on its way out:
+	 * its generation directory belongs to nobody now (gc may be judging or removing it), so the host
+	 * stops writing evidence there instead of racing that with a heartbeat a dying process may leave torn.
+	 */
+	private readonly launchParentPid = process.ppid;
+	private evidenceFailureLogged = false;
 
 	constructor(options: LoopLagWatchdogOptions) {
 		const env = options.env ?? process.env;
@@ -77,25 +116,51 @@ export class LoopLagWatchdog {
 		this.now = options.now ?? Date.now;
 		this.cpuUsage = options.cpuUsage ?? (() => process.cpuUsage());
 		this.heapUsed = options.heapUsed ?? (() => process.memoryUsage().heapUsed);
+		this.writeHeartbeat = options.writeHeartbeat ?? writeHeartbeat;
 		this.warnMs = parseIdleExitMs(env[LOOP_LAG_WARN_MS_ENV]) ?? DEFAULT_LOOP_LAG_WARN_MS;
-		this.errorMs = parseIdleExitMs(env[LOOP_LAG_ERROR_MS_ENV]) ?? DEFAULT_LOOP_LAG_ERROR_MS;
+		this.errorMs = loopLagErrorMs(env);
+		this.heartbeatIntervalMs = Math.max(LOOP_LAG_TICK_MS, Math.floor(this.errorMs / HEARTBEAT_THRESHOLD_FRACTION));
+		this.idleIntervalMs = Math.min(LOOP_LAG_IDLE_TICK_MS, this.heartbeatIntervalMs);
+		this.evidenceDir = ownGenerationDir(env);
 	}
 
 	start(): void {
 		if (this.timer !== undefined) return;
+		this.intervalMs = LOOP_LAG_TICK_MS;
+		this.quietMs = 0;
 		this.expectedTickAt = this.now() + LOOP_LAG_TICK_MS;
 		this.activityMark = sessionActivityMark();
 		const cpu = this.cpuUsage();
 		this.cpuMicrosAtTick = cpu.user + cpu.system;
 		this.heapBytesAtTick = this.heapUsed();
+		this.unsubscribeActivity = onSessionActivityStart(() => this.wake());
+		this.schedule();
+	}
+
+	/** Back to the 200 ms tick, from now: attributed work just started and may block the loop next. */
+	private wake(): void {
+		this.quietMs = 0;
+		if (this.timer === undefined || this.intervalMs === LOOP_LAG_TICK_MS) return;
+		clearTimeout(this.timer);
+		this.intervalMs = LOOP_LAG_TICK_MS;
+		this.expectedTickAt = this.now() + LOOP_LAG_TICK_MS;
+		this.schedule();
+	}
+
+	private schedule(): void {
+		this.timer = setTimeout(() => {
+			this.tick();
+			if (this.timer !== undefined) this.schedule();
+		}, this.intervalMs);
 		// Unref'd: watching the loop must never be the reason the host stays alive.
-		this.timer = setInterval(() => this.tick(), LOOP_LAG_TICK_MS);
 		this.timer.unref?.();
 	}
 
 	stop(): void {
+		this.unsubscribeActivity?.();
+		this.unsubscribeActivity = undefined;
 		if (this.timer === undefined) return;
-		clearInterval(this.timer);
+		clearTimeout(this.timer);
 		this.timer = undefined;
 		this.expectedTickAt = undefined;
 	}
@@ -108,8 +173,11 @@ export class LoopLagWatchdog {
 		const now = this.now();
 		const expectedAt = this.expectedTickAt ?? now;
 		const previousMark = this.activityMark;
-		this.expectedTickAt = now + LOOP_LAG_TICK_MS;
 		this.activityMark = sessionActivityMark();
+		const quiet = this.activityMark === previousMark && sessionActivitySince(previousMark) === undefined;
+		this.quietMs = quiet ? this.quietMs + this.intervalMs : 0;
+		this.intervalMs = this.quietMs >= LOOP_LAG_IDLE_AFTER_MS ? this.idleIntervalMs : LOOP_LAG_TICK_MS;
+		this.expectedTickAt = now + this.intervalMs;
 		const cpu = this.cpuUsage();
 		const cpuMicros = cpu.user + cpu.system;
 		const heapBytes = this.heapUsed();
@@ -119,23 +187,73 @@ export class LoopLagWatchdog {
 		this.heapBytesAtTick = heapBytes;
 		const driftMs = Math.round(now - expectedAt);
 		recordLoopBlockedMs(driftMs);
-		if (driftMs <= this.warnMs) return;
+		if (driftMs <= this.warnMs) {
+			this.beat(now);
+			return;
+		}
 		const attribution = sessionActivitySince(previousMark);
 		const processCpuMs = Math.round((cpuMicros - previousCpuMicros) / 1000);
 		const heapDeltaMb = Math.round((heapBytes - previousHeapBytes) / BYTES_PER_MB);
-		if (driftMs > this.errorMs)
-			this.emit({
+		if (driftMs > this.errorMs) {
+			const record: RpcHostStalledEvent = {
 				type: "host_stalled",
 				driftMs,
 				sessionId: attribution?.sessionId,
 				tool: attribution?.tool,
 				processCpuMs,
 				heapDeltaMb,
-			});
+			};
+			this.emit(record);
+			this.persistStall(now, record);
+		}
 		if (this.lastWarnAt !== undefined && now - this.lastWarnAt < LOOP_LAG_WARN_INTERVAL_MS) return;
 		this.lastWarnAt = now;
 		this.log(
 			`senpi rpc host stall: event loop blocked ${driftMs}ms (${describeAttribution(attribution)}; ${describeWindow(processCpuMs, heapDeltaMb)})\n`,
+		);
+	}
+
+	/**
+	 * A healthy tick refreshes the heartbeat a reader takes as "this loop is running"; it stops the moment
+	 * the loop does, which is how a stall in progress becomes visible (senpi#2566). Async and best-effort:
+	 * the session loop never waits on it, and a write still in flight skips the next beat.
+	 */
+	private beat(now: number): void {
+		if (!this.ownsEvidenceDir() || this.evidenceDir === undefined || this.heartbeatInFlight) return;
+		// The early tolerance matters on the 1 s idle tick: a tick that reads a millisecond short of the interval would
+		// otherwise skip its beat and leave the heartbeat two intervals stale (senpi#3738).
+		const due = this.heartbeatIntervalMs - HEARTBEAT_EARLY_TOLERANCE_MS;
+		if (this.lastHeartbeatAt !== undefined && now - this.lastHeartbeatAt < due) return;
+		this.lastHeartbeatAt = now;
+		this.heartbeatInFlight = true;
+		void this.writeHeartbeat(this.evidenceDir, new Date(now).toISOString())
+			.catch((cause: unknown) => this.evidenceFailed(cause))
+			.finally(() => {
+				this.heartbeatInFlight = false;
+			});
+	}
+
+	private persistStall(now: number, record: RpcHostStalledEvent): void {
+		if (!this.ownsEvidenceDir() || this.evidenceDir === undefined) return;
+		void writeStallEvidence(this.evidenceDir, {
+			at: new Date(now).toISOString(),
+			driftMs: record.driftMs,
+			processCpuMs: record.processCpuMs ?? 0,
+			heapDeltaMb: record.heapDeltaMb ?? 0,
+			...(record.sessionId ? { sessionId: record.sessionId } : {}),
+			...(record.tool ? { tool: record.tool } : {}),
+		}).catch((cause: unknown) => this.evidenceFailed(cause));
+	}
+
+	private ownsEvidenceDir(): boolean {
+		return process.ppid === this.launchParentPid;
+	}
+
+	private evidenceFailed(cause: unknown): void {
+		if (this.evidenceFailureLogged) return;
+		this.evidenceFailureLogged = true;
+		this.log(
+			`senpi rpc host stall evidence not written: ${cause instanceof Error ? cause.message : String(cause)}\n`,
 		);
 	}
 }

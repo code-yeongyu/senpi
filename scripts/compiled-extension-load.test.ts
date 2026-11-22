@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { compiledLoaderProbeSource, extensionSource } from "./compiled-extension-fixtures.ts";
 import { compiledExtensionPlatform } from "./compiled-extension-platform.ts";
+import { bunReleaseExternalFlags } from "./bun-release-externals.mjs";
 import { renameSyncRetry } from "./rename-sync-retry.mjs";
 
 const repo = resolve(import.meta.dir, "..");
@@ -30,7 +31,7 @@ const probeSchema = z.object({
 	sentinel: z.literal("native-extension"), value: z.number(), dynamicIdentity: z.boolean(),
 	typeboxKind: z.string(), tuiText: z.string(), url: z.string(), path: z.string(),
 });
-const optimizationFlags = ["--splitting", "--minify", "--keep-names"];
+const optimizationFlags = ["--splitting", "--minify", "--keep-names", ...bunReleaseExternalFlags];
 const releaseEntries = [
 	"./dist/bun/cli.js", "./src/modes/rpc/session-worker.ts", "./src/utils/image-resize-worker.ts",
 ];
@@ -88,7 +89,10 @@ test("preserves host identity and factory cache semantics when the production lo
 	// When
 	const result = spawnSync(probeBinary, [extension], {
 		cwd: relocated, encoding: "utf8", timeout: 60_000,
-		env: { PATH: process.env.PATH, HOME: scratch, TMPDIR: scratch, SENPI_CODING_AGENT_DIR: join(scratch, "probe-agent"), PI_OFFLINE: "1" },
+		env: {
+			PATH: process.env.PATH, HOME: scratch, TMPDIR: scratch, TEMP: scratch, TMP: scratch,
+			SENPI_CODING_AGENT_DIR: join(scratch, "probe-agent"), PI_OFFLINE: "1",
+		},
 	});
 	// Then: the child asserts reference identity against its own bundled host namespaces.
 	expect(result.status, result.stderr).toBe(0);
@@ -105,7 +109,8 @@ for (const shared of [false, true]) {
 		writeFileSync(join(state, "settings.json"), JSON.stringify({ disabledBuiltinExtensions: ["codemode"] }));
 		const child = spawn(binary, ["--mode", "rpc", ...(shared ? ["--multi-session"] : []), "-e", extension], {
 			cwd: state, stdio: ["pipe", "pipe", "pipe"], env: {
-				PATH: process.env.PATH, HOME: join(state, "home"), TMPDIR: scratch, SENPI_CODING_AGENT_DIR: state, PI_OFFLINE: "1",
+				PATH: process.env.PATH, HOME: join(state, "home"), TMPDIR: scratch, TEMP: scratch, TMP: scratch,
+				SENPI_CODING_AGENT_DIR: state, PI_OFFLINE: "1",
 			},
 		});
 		const exit = once(child, "exit", { signal: AbortSignal.timeout(185_000) });

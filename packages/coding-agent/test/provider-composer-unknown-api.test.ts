@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { ModelConfig } from "../src/core/model-config.ts";
 import { composeModelProvider } from "../src/core/provider-composer.ts";
@@ -44,9 +45,12 @@ describe("composed provider with an unregistered api", () => {
 	it("names the model and the fix in the stream error", async () => {
 		const { provider, model } = createProviderWithUnregisteredApi();
 
-		const stream = provider.stream(model, {
-			messages: [{ role: "user", content: "hello", timestamp: 0 }],
-		});
+		const stream = provider.stream(
+			model,
+			normalizeContext({
+				messages: [{ role: "user", content: "hello", timestamp: 0 }],
+			}),
+		);
 		const result = await stream.result();
 
 		expect(result.stopReason).toBe("error");

@@ -64,4 +64,23 @@ describe("session environment contract", () => {
 		expect(applied).toEqual({ PATH: "/usr/bin", PI_SESSION_ID: "session-77" });
 		expect(base).toHaveProperty("PI_SESSION_ID", "stale-session");
 	});
+
+	it("carries the browser engine only for a session that chose one", () => {
+		expect(sessionEnvironmentFrom({ ...fullSource, browserEngine: "connected" })).toHaveProperty(
+			"OMO_BROWSER_ENGINE",
+			"connected",
+		);
+		expect(sessionEnvironmentFrom(fullSource)).not.toHaveProperty("OMO_BROWSER_ENGINE");
+	});
+
+	it("replaces an inherited browser engine with the session's own and clears it for a session with none", () => {
+		const base: NodeJS.ProcessEnv = { PATH: "/usr/bin", OMO_BROWSER_ENGINE: "connected", BSK_HOME: "/opt/bsk" };
+
+		expect(applySessionEnvironment(base, { OMO_BROWSER_ENGINE: "builtin" })).toEqual({
+			PATH: "/usr/bin",
+			OMO_BROWSER_ENGINE: "builtin",
+			BSK_HOME: "/opt/bsk",
+		});
+		expect(applySessionEnvironment(base, {})).toEqual({ PATH: "/usr/bin", BSK_HOME: "/opt/bsk" });
+	});
 });

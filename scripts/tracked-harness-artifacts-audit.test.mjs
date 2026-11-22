@@ -61,7 +61,7 @@ describe("tracked harness artifacts audit", () => {
 			"local-ignore/qa-evidence/20260708-mcp-w3-todo28/INDEX.md",
 			".qa-evidence/senpi-RED.txt",
 			"packages/ai/.qa-evidence/GREEN.txt",
-			"packages/coding-agent/test/qa/app-server/task20-doc-example-check.ts",
+			"packages/coding-agent/scripts/qa-rpc-socket/run.mjs",
 			"scripts/qa/eval-multi-job.ts",
 		]);
 		assert.deepEqual(reported, [

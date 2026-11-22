@@ -45,6 +45,8 @@ const nonCanonicalModelRequestRejectionMessages = [
 	"Error: The model request was rejected because max_tokens must be greater than or equal to 1.",
 	"Error: The model request was rejected by the safety classifier.",
 ] as const;
+const azurePeakLoadError =
+	"The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.";
 
 describe("provider retry classification", () => {
 	it("applies bounded injectable Codex-style jitter", () => {
@@ -142,7 +144,12 @@ describe("provider retry classification", () => {
 		["Idle timeout waiting for provider stream after 300000ms", true, true],
 		["Provider stream start timed out after 90000ms", true, true],
 		[
-			"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
+			"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs: retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
+			true,
+			true,
+		],
+		[
+			"Provider stream sent only keep-alives and timed out after 900000ms (raise streamKeepAliveTimeoutMs: retry.provider.keepAliveTimeoutMs in senpi settings; 0 disables)",
 			true,
 			true,
 		],
@@ -241,7 +248,7 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", {
 					stopReason: "error",
 					errorMessage:
-						"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
+						"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs: retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
 				}),
 			),
 		).toBe(true);
@@ -463,6 +470,13 @@ describe("provider retry classification", () => {
 		).toBe(false);
 	});
 
+	it("matches Azure peak-load capacity errors", () => {
+		// Regression for #9669.
+		expect(
+			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: azurePeakLoadError })),
+		).toBe(true);
+	});
+
 	it("keeps provider limit errors non-retryable", () => {
 		expect(
 			isRetryableAssistantError(
@@ -482,9 +496,28 @@ describe("provider retry classification", () => {
 		).toBe(false);
 	});
 
+	it("keeps the ChatGPT subscription usage limit non-retryable", () => {
+		const errorMessage =
+			'OpenAI API error (429): {"code":"subscription_sharing_usage_limit_exceeded","message":"Usage limit reached."}';
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
+	});
+
+	it.each([
+		"subscription_sharing_usage_unavailable: Usage cannot be checked.",
+		"subscription_sharing_user_unavailable: User cannot be loaded.",
+	])("retries temporary ChatGPT subscription errors: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
 	it("classifies assistant error messages", () => {
 		expect(
 			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })),
+		).toBe(true);
+		// Regression for #9627.
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "520 status code (no body)" }),
+			),
 		).toBe(true);
 		expect(
 			isRetryableAssistantError(

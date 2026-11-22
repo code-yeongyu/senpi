@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentToolResult, ExtensionContext } from "@code-yeongyu/senpi";
+import type { AgentToolResult, ExtensionContext, ExtensionToolContext } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
@@ -85,7 +85,7 @@ async function sessionCwd(): Promise<string> {
 	return cwd;
 }
 
-function wiringContext(cwd: string): ExtensionContext {
+function wiringContext(cwd: string): ExtensionToolContext {
 	const base = fakeExtensionContext();
 	const sessionManager = Object.create(null);
 	sessionManager.getSessionId = (): string => "wiring-test-session";

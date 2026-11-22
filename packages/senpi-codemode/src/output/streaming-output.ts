@@ -47,6 +47,11 @@ function lineCount(text: string): number {
 	return text.length === 0 ? 0 : countNewlines(text) + 1;
 }
 
+export interface PushOptions {
+	/** `false` exempts the chunk from the per-line column clamp; the byte and line budgets still apply. */
+	readonly clampColumns?: boolean;
+}
+
 export class OutputSink {
 	readonly #artifactPath: string | undefined;
 	readonly #spillThreshold: number;
@@ -82,7 +87,7 @@ export class OutputSink {
 		this.#tail = new TailBuffer(this.#spillThreshold);
 	}
 
-	push(chunk: string): void {
+	push(chunk: string, options: PushOptions = {}): void {
 		if (chunk.length === 0) return;
 		this.#emitPreview(chunk);
 		const rawBytes = Buffer.byteLength(chunk, "utf8");
@@ -90,7 +95,9 @@ export class OutputSink {
 		this.#totalNewlines += countNewlines(chunk);
 		this.#sawData = true;
 		const droppedBefore = this.#columnDroppedBytes;
-		const retained = this.#maxColumns > 0 ? this.#clampColumns(chunk) : chunk;
+		const clamp = this.#maxColumns > 0 && options.clampColumns !== false;
+		if (!clamp) this.#trackLineBytes(chunk);
+		const retained = clamp ? this.#clampColumns(chunk) : chunk;
 		this.#mirrorRaw(chunk, this.#columnDroppedBytes > droppedBefore);
 		this.#retain(retained);
 	}
@@ -144,6 +151,16 @@ export class OutputSink {
 		this.#tail.append(tailText);
 		const effectiveBytes = this.#totalBytes - this.#columnDroppedBytes;
 		if (effectiveBytes > this.#headBytes + this.#tail.bytes()) this.#truncated = true;
+	}
+
+	#trackLineBytes(chunk: string): void {
+		const newline = chunk.lastIndexOf("\n");
+		if (newline === -1) {
+			this.#currentLineBytes += Buffer.byteLength(chunk, "utf8");
+			return;
+		}
+		this.#currentLineBytes = Buffer.byteLength(chunk.substring(newline + 1), "utf8");
+		this.#columnCapped = false;
 	}
 
 	#clampColumns(chunk: string): string {

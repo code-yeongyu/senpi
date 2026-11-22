@@ -1,6 +1,5 @@
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AccountSlot } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import type { SdkQueryHandle } from "../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
 import { decideNativeContinuity } from "../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
 import {
@@ -12,7 +11,6 @@ import {
 	closeSession,
 	getOrCreateSession,
 	getSession,
-	isBoundAccountTokenExpiring,
 	overrideSessionRegistryBoundary,
 	resetSessionRegistryBoundary,
 	SESSION_REGISTRY_IDLE_TTL_MS,
@@ -524,19 +522,6 @@ describe("Claude SDK OAuth session registry", () => {
 		expect(entry.branchInfo).toEqual({ oldLeafId: "old", newLeafId: "new" });
 	});
 
-	it("reports whether the bound non-environment account token is expiring", () => {
-		let now = 10_000;
-		overrideSessionRegistryBoundary({ now: () => now, queryFactory: () => fakeQuery() });
-		const entry = new AnthropicSubscriptionSessionRegistry().getOrCreate(input("session-a"));
-		const accounts: AccountSlot[] = [
-			{ name: "default", access: "a", refresh: "r", expires: now + 5 * 60_000, source: "login" },
-		];
-
-		expect(isBoundAccountTokenExpiring(entry, accounts)).toBe(true);
-		now--;
-		expect(isBoundAccountTokenExpiring(entry, accounts)).toBe(false);
-	});
-
 	it("preserves a matching early terminal result", async () => {
 		const { query, registry, entry } = pumpFixture();
 		const turn = submitSessionTurn(registry, entry, { message: userContent });
@@ -666,12 +651,34 @@ describe("Claude SDK OAuth session registry", () => {
 		expect(entry.taintedReason).toBeNull();
 	});
 
-	it("throws on a second concurrent turn admission", () => {
+	it("queues a second concurrent turn admission behind the active turn", async () => {
 		const { registry, entry } = pumpFixture();
 		void submitSessionTurn(registry, entry, { message: userContent });
-		expect(() => submitSessionTurn(registry, entry, { message: userContent })).toThrow(
-			ConcurrentSessionTurnAdmissionError,
+		let state = "pending";
+		const second = submitSessionTurn(registry, entry, { message: userContent });
+		second.then(
+			() => {
+				state = "resolved";
+			},
+			() => {
+				state = "rejected";
+			},
 		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(state).toBe("pending");
+	});
+
+	it("refuses a second concurrent turn admission once the wait bound elapses", async () => {
+		const { registry, entry } = pumpFixture();
+		void submitSessionTurn(registry, entry, { message: userContent });
+		const second = submitSessionTurn(registry, entry, {
+			message: userContent,
+			scheduleAbort: (callback) => {
+				callback();
+				return () => {};
+			},
+		});
+		await expect(second).rejects.toBeInstanceOf(ConcurrentSessionTurnAdmissionError);
 	});
 
 	it("discards messages from a superseded generation", async () => {

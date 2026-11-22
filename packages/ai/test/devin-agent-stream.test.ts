@@ -7,6 +7,7 @@ import {
 } from "../src/api/devin-agent/gen/cascade_pb.ts";
 import { stream as devinStream } from "../src/api/devin-agent.ts";
 import type { Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 import {
 	ASSIGN_MODEL_PATH,
 	CHAT_PATH,
@@ -46,7 +47,9 @@ describe("devin-agent stream: auth, host and router", () => {
 			},
 		});
 
-		const events = await collect(devinStream({ ...MODEL, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...MODEL, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const done = events.at(-1);
 
 		expect(events[0]?.type).toBe("start");
@@ -111,7 +114,9 @@ describe("devin-agent stream: auth, host and router", () => {
 		});
 
 		const events = await collect(
-			devinStream({ ...MODEL, baseUrl: seeded.baseUrl }, CONTEXT, { apiKey: "session-abc" } as never),
+			devinStream({ ...MODEL, baseUrl: seeded.baseUrl }, normalizeContext(CONTEXT), {
+				apiKey: "session-abc",
+			} as never),
 		);
 		expect(events.at(-1)?.type).toBe("done");
 		expect(deltas(events, "text_delta")).toEqual(["tenant"]);
@@ -128,7 +133,9 @@ describe("devin-agent stream: auth, host and router", () => {
 			},
 		});
 		const failed = await collect(
-			devinStream({ ...MODEL, baseUrl: rejected.baseUrl }, CONTEXT, { apiKey: "session-abc" } as never),
+			devinStream({ ...MODEL, baseUrl: rejected.baseUrl }, normalizeContext(CONTEXT), {
+				apiKey: "session-abc",
+			} as never),
 		);
 		const last = failed.at(-1);
 		expect(last?.type).toBe("error");
@@ -144,7 +151,9 @@ describe("devin-agent stream: auth, host and router", () => {
 			},
 		});
 		const emptyEvents = await collect(
-			devinStream({ ...MODEL, baseUrl: empty.baseUrl }, CONTEXT, { apiKey: "session-abc" } as never),
+			devinStream({ ...MODEL, baseUrl: empty.baseUrl }, normalizeContext(CONTEXT), {
+				apiKey: "session-abc",
+			} as never),
 		);
 		const emptyLast = emptyEvents.at(-1);
 		expect(emptyLast?.type).toBe("error");
@@ -165,7 +174,9 @@ describe("devin-agent stream: auth, host and router", () => {
 			},
 		});
 
-		const events = await collect(devinStream({ ...router, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...router, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const done = events.at(-1);
 		expect(done?.type).toBe("done");
 		if (done?.type !== "done") throw new Error("expected done");
@@ -194,7 +205,9 @@ describe("devin-agent stream: auth, host and router", () => {
 				res.end();
 			},
 		});
-		const events = await collect(devinStream({ ...router, baseUrl }, CONTEXT, { apiKey: "session-abc" } as never));
+		const events = await collect(
+			devinStream({ ...router, baseUrl }, normalizeContext(CONTEXT), { apiKey: "session-abc" } as never),
+		);
 		const last = events.at(-1);
 		expect(last?.type).toBe("error");
 		if (last?.type !== "error") throw new Error("expected error");

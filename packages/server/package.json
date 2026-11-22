@@ -1,6 +1,6 @@
 {
 	"name": "@code-yeongyu/senpi-server",
-	"version": "2026.9.28-7",
+	"version": "2026.11.22-2",
 	"description": "experimental server package for senpi",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -27,8 +27,8 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
-		"build": "tsgo -p tsconfig.build.json",
-		"test": "vitest --run",
+		"build": "tsc -p tsconfig.build.json",
+		"test": "bun --bun ../../scripts/run-tests.mjs bun test --isolate",
 		"typecheck": "tsc -p tsconfig.test.json",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
@@ -47,10 +47,9 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "0.85.1",
-		"@earendil-works/pi-agent-core": "^2026.9.28-7",
-		"@earendil-works/pi-ai": "^2026.9.28-7",
-		"@earendil-works/pi-protocol": "^2026.9.28-7"
+		"@earendil-works/chord": "0.99.1",
+		"@earendil-works/pi-ai": "^2026.11.22-2",
+		"@earendil-works/pi-protocol": "^2026.11.22-2"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

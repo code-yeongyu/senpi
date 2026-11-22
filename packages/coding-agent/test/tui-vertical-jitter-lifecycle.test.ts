@@ -39,6 +39,8 @@ type Surface = {
 	settingsManager: { getShowTerminalProgress(): boolean };
 	ui: {
 		requestRender(): void;
+		catchUpScrollback(): void;
+		setScrollbackReplayHold(hold: boolean | "until-input"): void;
 		getClearOnShrink(): boolean;
 		terminal: { setProgress(value: boolean): void; columns: number; rows: number };
 	};
@@ -84,6 +86,8 @@ function createSurface(session: Harness["session"]): Surface {
 		settingsManager: { getShowTerminalProgress: () => false },
 		ui: {
 			requestRender: vi.fn(),
+			catchUpScrollback: vi.fn(),
+			setScrollbackReplayHold: vi.fn(),
 			getClearOnShrink: () => false,
 			terminal: { setProgress: vi.fn(), columns: 80, rows: 24 },
 		},
@@ -230,7 +234,11 @@ describe("real AgentSession vertical-jitter lifecycle", () => {
 
 	it("C4 clears retained Working when a locally buffered prompt is handled", async () => {
 		const harness = await createHarness({
-			extensionFactories: [(pi) => pi.on("input", () => ({ action: "handled" }))],
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", () => ({ action: "handled" }));
+				},
+			],
 		});
 		harnesses.push(harness);
 		const surface = createSurface(harness.session);
@@ -278,7 +286,11 @@ describe("real AgentSession vertical-jitter lifecycle", () => {
 
 	it("C7 keeps the dock when a handled prompt is not the last buffered input", async () => {
 		const harness = await createHarness({
-			extensionFactories: [(pi) => pi.on("input", () => ({ action: "handled" }))],
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", () => ({ action: "handled" }));
+				},
+			],
 		});
 		harnesses.push(harness);
 		const surface = createSurface(harness.session);

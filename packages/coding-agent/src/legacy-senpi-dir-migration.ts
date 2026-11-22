@@ -2,13 +2,14 @@ import os from "node:os";
 import chalk from "chalk";
 import { existsSync, mkdirSync, readdirSync, renameSync } from "fs";
 import { dirname, join } from "path";
-import { CONFIG_DIR_NAME, getAgentDir } from "./config.ts";
+import { APP_NAME, CONFIG_DIR_NAME, getAgentDir } from "./config.ts";
 import {
 	copyMissingEntries,
 	isRegenerableEntry,
 	isWithinOrSamePath,
 	pathsPointToSameLocation,
 } from "./legacy-dir-copy.ts";
+import { recordLegacyPiAgentDirCopy } from "./migrations-state.ts";
 
 /**
  * Official `.pi` directories belong to an upstream pi install that keeps running on this machine,
@@ -21,12 +22,20 @@ interface LegacyDir {
 	readonly to: string;
 	readonly label: string;
 	readonly transfer: LegacyDirTransfer;
+	/** The global agent copy is where config lives from now on: its time is recorded and its line says so. */
+	readonly isAgentConfig?: boolean;
 }
 
-function copyLegacyDir({ from, to, label }: LegacyDir): void {
+function copyLegacyDir({ from, to, label, isAgentConfig }: LegacyDir): void {
 	const copied = copyMissingEntries(from, to, (entry) => !isRegenerableEntry(entry));
-	if (copied.length > 0) {
-		console.log(chalk.green(`Copied ${label} ${from} → ${to}`));
+	if (copied.length === 0) return;
+	console.log(chalk.green(`Copied ${label} ${from} → ${to}`));
+	if (isAgentConfig) {
+		recordLegacyPiAgentDirCopy(to);
+		console.log(
+			chalk.dim(`${APP_NAME} reads its config from ${to} now; edits to ${from} no longer reach ${APP_NAME}.`),
+		);
+	} else {
 		console.log(chalk.dim("The original directory is untouched; the two installs keep separate state from now on."));
 	}
 }
@@ -95,6 +104,7 @@ export function migrateLegacySenpiDirs(cwd: string): void {
 				to: globalNewAgentDir,
 				label: "global agent directory",
 				transfer: "copy",
+				isAgentConfig: true,
 			},
 			{
 				from: join(homeDir, CONFIG_DIR_NAME, ".pi", "agent"),

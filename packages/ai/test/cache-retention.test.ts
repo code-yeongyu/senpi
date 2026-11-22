@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
-import { getModel, stream } from "../src/compat.ts";
+import { getModel, normalizeContext, stream } from "../src/compat.ts";
 import { MODELS } from "../src/models.generated.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { Model } from "../src/types.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -51,10 +51,10 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		}
 	});
 
-	const context: Context = {
+	const context = normalizeContext({
 		systemPrompt: "You are a helpful assistant.",
 		messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
-	};
+	});
 
 	describe("Anthropic Provider", () => {
 		it.skipIf(!process.env.ANTHROPIC_API_KEY)(
@@ -187,6 +187,38 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 			expect(capturedPayload).not.toBeNull();
 			expect(capturedPayload.system[0].cache_control).toEqual({ type: "ephemeral" });
+		});
+
+		it("should send the one-hour ttl for a proxy that opts into long cache retention", async () => {
+			const baseModel = getModel("anthropic", "claude-haiku-4-5");
+			const proxyModel = {
+				...baseModel,
+				baseUrl: "https://my-proxy.example.com/v1",
+				compat: { supportsLongCacheRetention: true },
+			};
+			const capturedPayloads: AnthropicCachePayload[] = [];
+
+			const { streamAnthropic } = await import("../src/providers/anthropic.ts");
+
+			try {
+				const s = streamAnthropic(proxyModel, context, {
+					apiKey: "fake-key",
+					cacheRetention: "long",
+					onPayload: (payload) => {
+						capturedPayloads.push(payload as AnthropicCachePayload);
+					},
+				});
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected to fail: the proxy host does not exist.
+			}
+
+			const capturedPayload = capturedPayloads[0];
+			expect(capturedPayload).toBeDefined();
+			expect(capturedPayload?.system?.[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
 		});
 
 		it("should omit ttl when supportsLongCacheRetention is false", async () => {
@@ -328,6 +360,13 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 	});
 
 	describe("OpenAI Responses Provider", () => {
+		it.each(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6-sol"] as const)(
+			"does not enable cache warming from the documented TTL alone for %s",
+			(modelId) => {
+				expect(getModel("openai", modelId).promptCache).toBeUndefined();
+			},
+		);
+
 		it.skipIf(!process.env.OPENAI_API_KEY)(
 			"should not set prompt_cache_retention when PI_CACHE_RETENTION is not set",
 			async () => {
@@ -389,7 +428,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 			try {
 				const s = streamOpenAIResponses(proxyModel, context, {
-					apiKey: "fake-key",
+					apiKey: "sk-fake-key",
 					onPayload: (payload) => {
 						capturedPayload = payload;
 					},
@@ -418,7 +457,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 			try {
 				const s = streamOpenAIResponses(model, context, {
-					apiKey: "fake-key",
+					apiKey: "sk-fake-key",
 					cacheRetention: "long",
 					sessionId: "session-compat-false",
 					onPayload: (payload) => {
@@ -445,7 +484,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 			try {
 				const s = streamOpenAIResponses(model, context, {
-					apiKey: "fake-key",
+					apiKey: "sk-fake-key",
 					cacheRetention: "none",
 					sessionId: "session-1",
 					onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
@@ -472,7 +511,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 			try {
 				const s = streamOpenAIResponses(model, context, {
-					apiKey: "fake-key",
+					apiKey: "sk-fake-key",
 					cacheRetention: "none",
 					sessionId: "session-1",
 					onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
@@ -493,38 +532,39 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it.each([
-			["gpt-4o-mini", "24h", undefined, "session-2"],
-			["gpt-6-astra", undefined, { ttl: "30m" }, undefined],
-		] as const)(
-			"should use the supported long cache field for %s",
-			async (modelId, retention, cacheOptions, cacheKey) => {
-				const model = getModel("openai", modelId);
-				let capturedPayload: OpenAIResponsesCachePayload | undefined;
+			["gpt-4o-mini", "24h", undefined],
+			// senpi#6290: "long" buys the longest documented lifetime; "30m" is the default and bought nothing.
+			["gpt-6-astra", undefined, { ttl: "12h" }],
+			["gpt-6-sol", undefined, { ttl: "12h" }],
+			["gpt-6-luna", undefined, { ttl: "12h" }],
+		] as const)("should use the supported long cache field for %s", async (modelId, retention, cacheOptions) => {
+			const model = getModel("openai", modelId);
+			let capturedPayload: OpenAIResponsesCachePayload | undefined;
 
-				const { streamOpenAIResponses } = await import("../src/providers/openai-responses.ts");
+			const { streamOpenAIResponses } = await import("../src/providers/openai-responses.ts");
 
-				try {
-					const s = streamOpenAIResponses(model, context, {
-						apiKey: "fake-key",
-						cacheRetention: "long",
-						sessionId: "session-2",
-						onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
-							capturedPayload = payload;
-						}),
-					});
+			try {
+				const s = streamOpenAIResponses(model, context, {
+					apiKey: "fake-key",
+					cacheRetention: "long",
+					sessionId: "session-2",
+					onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
+						capturedPayload = payload;
+					}),
+				});
 
-					for await (const event of s) {
-						if (event.type === "error") break;
-					}
-				} catch {
-					// Expected to fail
+				for await (const event of s) {
+					if (event.type === "error") break;
 				}
+			} catch {
+				// Expected to fail
+			}
 
-				expect(capturedPayload?.prompt_cache_key).toBe(cacheKey);
-				expect(capturedPayload?.prompt_cache_retention).toBe(retention);
-				expect(capturedPayload?.prompt_cache_options).toEqual(cacheOptions);
-			},
-		);
+			expect(capturedPayload?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+			expect(capturedPayload?.prompt_cache_key).not.toBe("session-2");
+			expect(capturedPayload?.prompt_cache_retention).toBe(retention);
+			expect(capturedPayload?.prompt_cache_options).toEqual(cacheOptions);
+		});
 
 		it("uses model cacheRetention when request options omit cacheRetention", async () => {
 			const model = {
@@ -549,7 +589,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			}
 
 			expect(capturedPayload).toMatchObject({
-				prompt_cache_key: "model-default-session",
+				prompt_cache_key: expect.stringMatching(/^.{1,64}$/),
 				prompt_cache_retention: "24h",
 			});
 		});
@@ -685,5 +725,70 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload?.prompt_cache_key).toBeUndefined();
 			expect(capturedPayload?.prompt_cache_retention).toBeUndefined();
 		});
+
+		it.each([MODELS.cerebras["gpt-oss-120b"], MODELS.cerebras["qwen-3.8-27b"]] as const)(
+			"should omit strict field on tools for cerebras/$id",
+			async (metadata) => {
+				const model = metadata as Model<"openai-completions">;
+
+				const contextWithTools = {
+					messages: [
+						{
+							role: "system" as const,
+							content: "test",
+							toolsAdded: [
+								{
+									name: "t1",
+									description: "strict tool",
+									parameters: {
+										type: "object" as const,
+										properties: { x: { type: "string" } },
+										required: ["x"],
+									},
+									constrainedSampling: { type: "json_schema" as const },
+								},
+								{
+									name: "t2",
+									description: "non-strict tool",
+									parameters: {
+										type: "object" as const,
+										properties: { y: { type: "string" } },
+										required: ["y"],
+									},
+								},
+							],
+							timestamp: 0,
+						},
+						{ role: "user" as const, content: "hello", timestamp: 1 },
+					],
+				};
+
+				let capturedPayload: any;
+
+				try {
+					const s = streamOpenAICompletions(model, contextWithTools as any, {
+						apiKey: "fake-key",
+						sessionId: "test",
+						onPayload: stopAfterPayload((payload: any) => {
+							capturedPayload = payload;
+						}),
+					});
+
+					for await (const event of s) {
+						if (event.type === "error") break;
+					}
+				} catch {
+					// Expected to fail
+				}
+
+				expect(model.compat?.supportsStrictMode).toBeUndefined();
+				expect(capturedPayload).toBeDefined();
+				const tools = capturedPayload?.tools as any[] | undefined;
+				expect(tools).toBeDefined();
+				for (const tool of tools!) {
+					expect(tool.function).not.toHaveProperty("strict");
+				}
+			},
+		);
 	});
 });

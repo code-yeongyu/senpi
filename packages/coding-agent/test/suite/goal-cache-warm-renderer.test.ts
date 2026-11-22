@@ -56,8 +56,8 @@ describe("goal cache-warm entry renderer", () => {
 		expect(text).toMatch(/resumes as soon as a wake source\s+delivers/);
 		expect(text).toMatch(/5m\s+prompt-cache TTL/);
 		expect(text).not.toContain("stays inside");
-		expect(text).toContain("~120K tokens kept warm");
-		expect(text).toContain("$0.324 saved");
+		expect(text).toContain("~120K cache-read/write tokens (cumulative)");
+		expect(text).toContain("$0.324 discount if reused");
 	});
 
 	// code-yeongyu/senpi#831: a best-effort cache has no TTL, so the card claims neither warmth nor savings.
@@ -72,7 +72,7 @@ describe("goal cache-warm entry renderer", () => {
 				iteration: 1,
 				cache: { cachedTokens: 120_000, cacheLifetime: "best-effort" },
 			});
-			expect(text).toMatch(/~120K tokens were cached after the prior turn/);
+			expect(text).toContain("~120K cache-read/write tokens (cumulative)");
 			expect(text).toMatch(/best-effort/);
 			expect(text).not.toContain("TTL");
 			expect(text).not.toContain("kept warm");
@@ -81,7 +81,7 @@ describe("goal cache-warm entry renderer", () => {
 		}
 	});
 
-	it("renders the resumed wake with savings", () => {
+	it("renders elapsed wait with a conditional cache estimate", () => {
 		const text = renderToText({
 			phase: "resumed",
 			goalId: "goal-1",
@@ -93,10 +93,10 @@ describe("goal cache-warm entry renderer", () => {
 			cache: { ttlSeconds: 300, cachedTokens: 120_000, estimatedSavedUsd: 0.324 },
 		});
 		expect(text).toContain("Cache-warm wake · iteration 3");
-		expect(text).toContain("ready 2026-07-29 00:04 UTC (4m 30s)");
+		expect(text).toContain("waited 4m 30s");
 		expect(text).toContain("2 wake sources on duty");
-		expect(text).toContain("~120K tokens stayed warm");
-		expect(text).toContain("$0.324 saved");
+		expect(text).toContain("~120K cache-read/write tokens (cumulative)");
+		expect(text).toContain("$0.324 discount if reused");
 	});
 
 	it("renders the ready time in the local timezone", () => {

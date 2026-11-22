@@ -9,14 +9,18 @@
  * that IS defaulted is `protocolVersion`, to `0`, because no client speaks protocol 0: a reply from
  * before the field existed therefore fails closed instead of matching.
  */
+import { parsePathIdentityResolverStatus, type PathIdentityResolverStatus } from "./path-identity-status.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
+import { parseRuntimeBuildId } from "./runtime-build-id.ts";
 
 /**
  * A `get_protocol_info` answer as a CLIENT reads it. Every identity field is optional because a
  * host from an older release answers without them; absence is read as "uncomparable", never as zero.
  */
 export interface HostProtocolInfo {
+	/** Absent on older hosts. A stopping generation never admits a new session. */
+	readonly lifecycle?: "ready" | "stopping";
 	readonly protocolVersion: number;
 	/** Informational only. Nothing in this module compares it. */
 	readonly serverVersion: string;
@@ -30,6 +34,14 @@ export interface HostProtocolInfo {
 	readonly launch_profile?: RpcLaunchProfile;
 	/** Whether the answering host's memory sampler reads pressure right now; absent on classic and older hosts. */
 	readonly memory_pressure?: boolean;
+	/** The permission system's path identity resolver as the host reports it; absent on older hosts. */
+	readonly path_identity_resolver?: PathIdentityResolverStatus;
+	/** Content digest of the runtime the host loaded at startup (`sha256:<64 hex>`); absent on older hosts. */
+	readonly runtimeBuildId?: string;
+	/** The agent directory the host reads and writes; absent on older hosts. Only a client of the same dir may replace it. */
+	readonly agentDir?: string;
+	/** The conditional idle handover this host holds, as it reported it. */
+	readonly handover?: Readonly<Record<string, unknown>>;
 }
 
 /** Parses the `data` of a `get_protocol_info` reply. Unknown or malformed identity fields are dropped, not guessed. */
@@ -38,13 +50,16 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 	if (!Array.isArray(data.capabilities) || !data.capabilities.every((entry) => typeof entry === "string")) {
 		return undefined;
 	}
-	const ordinal = parseOrdinal(data.engineOrdinal);
+	const ordinal = parseEngineOrdinal(data.engineOrdinal);
 	const launchProfile = parseLaunchProfile(data.launch_profile);
+	const runtimeBuildId = parseRuntimeBuildId(data.runtimeBuildId);
+	const pathIdentityResolver = parsePathIdentityResolverStatus(data.path_identity_resolver);
 	return {
 		// A reply without a protocol version predates the field; 0 never matches, so it fails closed.
 		protocolVersion: typeof data.protocolVersion === "number" ? data.protocolVersion : 0,
 		serverVersion: data.serverVersion,
 		capabilities: data.capabilities,
+		...((data.lifecycle === "ready" || data.lifecycle === "stopping") && { lifecycle: data.lifecycle }),
 		...(typeof data.instanceId === "string" && { instanceId: data.instanceId }),
 		...(typeof data.generation === "number" &&
 			Number.isSafeInteger(data.generation) && { generation: data.generation }),
@@ -52,10 +67,15 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 		...(ordinal && { engineOrdinal: ordinal }),
 		...(launchProfile && { launch_profile: launchProfile }),
 		...(typeof data.memory_pressure === "boolean" && { memory_pressure: data.memory_pressure }),
+		...(pathIdentityResolver !== undefined && { path_identity_resolver: pathIdentityResolver }),
+		...(runtimeBuildId !== undefined && { runtimeBuildId }),
+		...(typeof data.agentDir === "string" && data.agentDir !== "" && { agentDir: data.agentDir }),
+		...(isRecord(data.handover) && { handover: data.handover }),
 	};
 }
 
-function parseOrdinal(value: unknown): EngineOrdinal | undefined {
+/** An engine ordinal on the wire: exactly five numbers, else `undefined` (never a guessed ordinal). */
+export function parseEngineOrdinal(value: unknown): EngineOrdinal | undefined {
 	if (!Array.isArray(value) || value.length !== 5 || !value.every((part) => typeof part === "number"))
 		return undefined;
 	return [value[0], value[1], value[2], value[3], value[4]];

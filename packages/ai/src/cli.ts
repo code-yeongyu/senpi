@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { AuthPrompt, OAuthCredential, Provider } from "./index.ts";
 import { builtinProviders } from "./providers/all.ts";
+import { redactOAuthUrl } from "./utils/oauth-url.ts";
 
 const AUTH_FILE = "auth.json";
 const PROVIDERS = builtinProviders().filter(
@@ -28,6 +32,20 @@ function saveAuth(auth: Record<string, OAuthCredential>): void {
 	writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), "utf-8");
 }
 
+function getOrCreateDeviceId(): string {
+	const directory = join(homedir(), ".senpi", "ai");
+	const path = join(directory, "device-id");
+	mkdirSync(directory, { recursive: true, mode: 0o700 });
+	if (!existsSync(path)) {
+		try {
+			writeFileSync(path, randomUUID(), { flag: "wx", mode: 0o600 });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+	}
+	return readFileSync(path, "utf-8").trim();
+}
+
 async function answerPrompt(rl: ReturnType<typeof createInterface>, authPrompt: AuthPrompt): Promise<string> {
 	if (authPrompt.type === "select") {
 		console.log(`\n${authPrompt.message}`);
@@ -47,26 +65,29 @@ async function login(providerId: string): Promise<void> {
 	if (!provider) throw new Error(`Unknown provider: ${providerId}`);
 	const rl = createInterface({ input: process.stdin, output: process.stdout });
 	try {
-		const credential = await provider.auth.oauth.login({
-			signal: new AbortController().signal,
-			prompt: (authPrompt) => answerPrompt(rl, authPrompt),
-			notify: (event) => {
-				switch (event.type) {
-					case "auth_url":
-						console.log(`\nOpen this URL in your browser:\n${event.url}`);
-						if (event.instructions) console.log(event.instructions);
-						break;
-					case "device_code":
-						console.log(`\nOpen this URL in your browser:\n${event.verificationUri}`);
-						console.log(`Enter code: ${event.userCode}`);
-						break;
-					case "info":
-					case "progress":
-						console.log(event.message);
-						break;
-				}
+		const credential = await provider.auth.oauth.login(
+			{
+				signal: new AbortController().signal,
+				prompt: (authPrompt) => answerPrompt(rl, authPrompt),
+				notify: (event) => {
+					switch (event.type) {
+						case "auth_url":
+							console.log(`\nOpen this URL in your browser:\n${redactOAuthUrl(event.url)}`);
+							if (event.instructions) console.log(event.instructions);
+							break;
+						case "device_code":
+							console.log(`\nOpen this URL in your browser:\n${event.verificationUri}`);
+							console.log(`Enter code: ${event.userCode}`);
+							break;
+						case "info":
+						case "progress":
+							console.log(event.message);
+							break;
+					}
+				},
 			},
-		});
+			{ getDeviceId: getOrCreateDeviceId },
+		);
 		const auth = loadAuth();
 		auth[providerId] = credential;
 		saveAuth(auth);

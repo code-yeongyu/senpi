@@ -85,6 +85,26 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 
 	let changed = false;
 	const availableToolNames = [...available];
+	// A native search pair whose every reference stopped resolving is demoted as a
+	// unit: the result decides, and its `server_tool_use` follows. The pair can span
+	// two assistant messages (a deferred server tool resumes in the continuation), so
+	// the decision is collected over the whole request before any message is rewritten.
+	const droppedSearchUseIds = new Set<string>();
+	const droppedSearchNames = new Map<string, string[]>();
+	for (const message of messages) {
+		if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+		for (const block of message.content) {
+			if (!isNativeToolSearchResultBlock(block)) continue;
+			const names = block.content.tool_references
+				.filter((item): item is Record<string, unknown> => isRecord(item) && item.type === "tool_reference")
+				.map((item) => (typeof item.tool_name === "string" ? item.tool_name : ""));
+			if (names.length > 0 && names.every((name) => resolve(name) === undefined)) {
+				droppedSearchUseIds.add(block.tool_use_id);
+				droppedSearchNames.set(block.tool_use_id, names);
+			}
+		}
+	}
+
 	const seenDemotedCallNames = new Set<string>();
 	const rewrittenMessages: MessageParam[] = [];
 	for (const message of messages) {
@@ -93,22 +113,6 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 			continue;
 		}
 		let messageChanged = false;
-		// A native search pair whose every reference stopped resolving is demoted
-		// as a unit: the result decides, and its `server_tool_use` follows.
-		const droppedSearchUseIds = new Set<string>();
-		const droppedSearchNames = new Map<string, string[]>();
-		if (message.role === "assistant") {
-			for (const block of message.content) {
-				if (!isNativeToolSearchResultBlock(block)) continue;
-				const names = block.content.tool_references
-					.filter((item): item is Record<string, unknown> => isRecord(item) && item.type === "tool_reference")
-					.map((item) => (typeof item.tool_name === "string" ? item.tool_name : ""));
-				if (names.length > 0 && names.every((name) => resolve(name) === undefined)) {
-					droppedSearchUseIds.add(block.tool_use_id);
-					droppedSearchNames.set(block.tool_use_id, names);
-				}
-			}
-		}
 		const content: ContentBlockParam[] = [];
 		for (const block of message.content) {
 			if (message.role === "assistant" && isRecord(block) && block.type === "tool_use") {
@@ -180,7 +184,9 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 			}
 			content.push(block);
 		}
-		if (content.length === 0) {
+		// Only a message this pass emptied is dropped; a message that arrived empty (a per-message
+		// effort marker carries `content: []` by design) passes through untouched (senpi#2912).
+		if (messageChanged && content.length === 0) {
 			changed = true;
 			continue;
 		}
@@ -194,6 +200,115 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 
 	if (!changed) return params;
 	return { ...params, messages: rewrittenMessages };
+}
+
+/**
+ * Some Anthropic-compatible endpoints run a native tool search inside one request
+ * but reject every `tool_reference` replayed from history once the request
+ * carries more than a handful of tools: "Tool reference '<name>' not found in
+ * available tools" even though `tools` defines the name (senpi #2568). The
+ * request is then retried with the replay demoted to text: a native search pair
+ * (`server_tool_use` plus its `tool_search_tool_result`, which may sit in a later
+ * assistant message) becomes a note naming the tools it found, and
+ * `tool_reference` items inside a client `tool_result` become one text item.
+ * A deferred tool is loaded only by a replayed reference, so every tool the demoted
+ * references named is sent without `defer_loading`: it stays callable without another
+ * search. Returns `params` unchanged when the history replays no reference.
+ */
+export function demoteToolReferenceReplay(params: MessageCreateParamsStreaming): MessageCreateParamsStreaming {
+	const messages = params.messages;
+	if (!Array.isArray(messages) || messages.length === 0) return params;
+
+	const searchUseIds = new Set<string>();
+	for (const message of messages) {
+		if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+		for (const block of message.content) {
+			if (isRecord(block) && block.type === "tool_search_tool_result" && typeof block.tool_use_id === "string") {
+				searchUseIds.add(block.tool_use_id);
+			}
+		}
+	}
+
+	let changed = false;
+	const demotedNames = new Set<string>();
+	const rewrittenMessages: MessageParam[] = [];
+	for (const message of messages) {
+		if (!Array.isArray(message.content)) {
+			rewrittenMessages.push(message);
+			continue;
+		}
+		let messageChanged = false;
+		const content: ContentBlockParam[] = [];
+		for (const block of message.content) {
+			if (message.role === "assistant" && isRecord(block)) {
+				if (block.type === "server_tool_use" && typeof block.id === "string" && searchUseIds.has(block.id)) {
+					messageChanged = true;
+					continue;
+				}
+				if (block.type === "tool_search_tool_result") {
+					messageChanged = true;
+					const names = isNativeToolSearchResultBlock(block)
+						? toolReferenceNames(block.content.tool_references)
+						: [];
+					for (const name of names) demotedNames.add(name);
+					content.push({
+						type: "text",
+						text: names.length > 0 ? `Tool search found: ${names.join(", ")}` : "Tool search found no tools.",
+					});
+					continue;
+				}
+			}
+			if (isRecord(block) && block.type === "tool_result" && Array.isArray(block.content)) {
+				const names = toolReferenceNames(block.content);
+				if (names.length > 0) {
+					messageChanged = true;
+					for (const name of names) demotedNames.add(name);
+					const kept = block.content.filter((item) => !(isRecord(item) && item.type === "tool_reference"));
+					content.push({
+						...block,
+						content: [...kept, { type: "text", text: `Tools loaded: ${names.join(", ")}` }],
+					} as ContentBlockParam);
+					continue;
+				}
+			}
+			content.push(block);
+		}
+		if (!messageChanged) {
+			rewrittenMessages.push(message);
+			continue;
+		}
+		changed = true;
+		if (content.length > 0) rewrittenMessages.push({ ...message, content });
+	}
+
+	if (!changed) return params;
+	return { ...params, messages: rewrittenMessages, ...residentTools(params.tools, demotedNames) };
+}
+
+/** Drops `defer_loading` from the tools a demoted reference named; the rest keep their deferral. */
+function residentTools(
+	tools: MessageCreateParamsStreaming["tools"],
+	names: ReadonlySet<string>,
+): Pick<MessageCreateParamsStreaming, "tools"> | Record<string, never> {
+	if (!Array.isArray(tools) || names.size === 0) return {};
+	let changed = false;
+	const rewritten = tools.map((tool) => {
+		if (!isRecord(tool) || tool.defer_loading !== true || typeof tool.name !== "string" || !names.has(tool.name))
+			return tool;
+		changed = true;
+		const { defer_loading: _deferLoading, ...resident } = tool;
+		return resident as typeof tool;
+	});
+	return changed ? { tools: rewritten } : {};
+}
+
+function toolReferenceNames(items: readonly unknown[]): string[] {
+	const names = new Set<string>();
+	for (const item of items) {
+		if (isRecord(item) && item.type === "tool_reference" && typeof item.tool_name === "string")
+			names.add(item.tool_name);
+	}
+	return [...names];
 }
 
 /**

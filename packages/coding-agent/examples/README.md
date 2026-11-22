@@ -1,6 +1,16 @@
 # Examples
 
-Example code for the senpi SDK and extensions.
+Example code for the senpi SDK, process integration, and extensions.
+
+## CLI integration
+
+[`rpc-client.ts`](rpc-client.ts) uses the typed `RpcClient` to run senpi in a child process, stream events, and wait for the run to settle.
+
+Build the coding-agent package before running it from a repository checkout:
+
+```bash
+bunx tsx examples/rpc-client.ts "Explain this repository"
+```
 
 ## Directories
 
@@ -23,6 +33,7 @@ An experimental plugin package for the source-only remote harness; in a checkout
 
 ## Documentation
 
-- [SDK Reference](sdk/README.md)
+- [SDK Examples](sdk/README.md)
+- [RPC Mode](../docs/rpc.md)
 - [Extensions Documentation](../docs/extensions.md)
 - [Skills Documentation](../docs/skills.md)

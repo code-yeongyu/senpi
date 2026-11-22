@@ -1,12 +1,10 @@
 import { Container, Spacer, type TUI } from "@earendil-works/pi-tui";
 import { isModelOnlyText } from "../../../core/tools/model-only-text.ts";
-import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { GrokToolRow } from "../grok/tool-row.ts";
-import { theme } from "../theme/theme.ts";
-import { readToolProgress } from "../tool-progress.ts";
-import { keyHint } from "./keybinding-hints.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
-import { hasCompletedTodoTasks, TODO_STRIKE_FRAME_INTERVAL_MS, TODO_STRIKE_TOTAL_FRAMES } from "./todo-strike.ts";
+import { ToolExecutionAnimation, toolCardSpins, toolCardStrikes } from "./tool-execution-animation.ts";
+import { serializedToolResultBytes, ToolExecutionRenderCache } from "./tool-execution-cache.ts";
+import { collapseFallbackResult } from "./tool-execution-fallback-preview.ts";
 import { ToolExecutionImages } from "./tool-execution-images.ts";
 import { ToolExecutionRenderer } from "./tool-execution-renderer.ts";
 import type {
@@ -26,27 +24,6 @@ export interface ToolExecutionOptions {
 /** Visual shell chosen by interactive chrome; classic remains the default. */
 export type ToolExecutionPresentation = "classic" | "grok";
 
-const PENDING_RENDER_FRAME_INTERVAL_MS = 80;
-const FALLBACK_PREVIEW_LINES = 10;
-
-function collapseFallbackResult(
-	result: ToolExecutionResult | undefined,
-	showImages: boolean,
-	expanded: boolean,
-): ToolExecutionResult | undefined {
-	if (!result || expanded) return result;
-	const output = getRenderedTextOutput(result, showImages);
-	if (!output) return result;
-	const lines = output.split("\n");
-	if (lines.length <= FALLBACK_PREVIEW_LINES) return result;
-
-	const remaining = lines.length - FALLBACK_PREVIEW_LINES;
-	const text =
-		lines.slice(0, FALLBACK_PREVIEW_LINES).join("\n") +
-		`${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
-	return { ...result, content: [{ type: "text", text }] };
-}
-
 export class ToolExecutionComponent extends Container {
 	private readonly identity: ToolExecutionIdentity;
 	private readonly ui: TUI;
@@ -61,14 +38,18 @@ export class ToolExecutionComponent extends Container {
 	private isPartial = true;
 	private executionStarted = false;
 	private argsComplete = false;
-	private spinnerFrame?: number;
-	private spinnerInterval?: NodeJS.Timeout;
-	private todoStrikeInterval?: NodeJS.Timeout;
 	private result?: ToolExecutionResult;
-	private cachedLines?: string[];
-	private cachedSignature?: string;
-	private cachedWidth?: number;
 	private lastDisplaySignature?: string;
+	/** Built content was dropped by `invalidate`; the next render rebuilds it. */
+	private displayReleased = false;
+	private readonly renderCache = new ToolExecutionRenderCache();
+	private readonly animation = new ToolExecutionAnimation({
+		invalidate: () => this.invalidateRenderCache(),
+		redraw: () => {
+			this.updateDisplay();
+			this.ui.requestRender();
+		},
+	});
 
 	constructor(
 		toolName: string,
@@ -100,8 +81,11 @@ export class ToolExecutionComponent extends Container {
 			this.renderer = new ToolExecutionRenderer(
 				this.identity,
 				initialState,
+				// A renderer asking for a rerender (`context.invalidate()`, e.g. after an async load it cached on its
+				// own component) rebuilds now and keeps that component as `lastComponent`; only invalidation from
+				// the TUI tree releases the content.
 				() => {
-					this.invalidate();
+					this.rebuildNow();
 					this.ui.requestRender();
 				},
 				// Left-clicking a finished tool card toggles it like the expand keybinding does.
@@ -151,22 +135,27 @@ export class ToolExecutionComponent extends Container {
 	updateResult(result: ToolExecutionResult, isPartial = false): void {
 		this.result = result;
 		this.isPartial = isPartial;
-		if (!isPartial) this.argsComplete = true;
+		// senpi#1960: a finished card's retained result is measured once at finalize; a streaming card keeps its last figure.
+		if (!isPartial) {
+			this.argsComplete = true;
+			this.renderCache.finalizeResult(serializedToolResultBytes(result));
+		}
 		this.lastDisplaySignature = undefined;
 		this.updateSpinnerAnimation();
 		this.updateTodoStrikeAnimation();
 		this.updateDisplay();
 		this.images?.updateResult(result);
+		this.renderCache.setImages(result.content.filter((part) => part.type === "image").length);
 		this.invalidateRenderCache();
 	}
 
 	stopAnimation(): void {
-		this.stopSpinnerAnimation();
-		this.stopTodoStrikeAnimation();
+		this.animation.stop();
 	}
 
 	override dispose(): void {
 		this.stopAnimation();
+		this.renderCache.dispose();
 		super.dispose();
 	}
 
@@ -185,20 +174,61 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
-	override invalidate(): void {
+	/**
+	 * Drops the built call and result content (and its styled output) instead of rebuilding it here;
+	 * `render` rebuilds it from the card's state the next time the card is painted (#2537). Every card
+	 * in the transcript is invalidated together (theme or terminal-capability changes, and the cards
+	 * that scroll above the kept main-screen history), so an eager rebuild kept every finished card's
+	 * output for the rest of the session. Grok rows and animating cards are rebuilt at once, as before.
+	 */
+	private rebuildNow(): void {
 		this.invalidateRenderCache();
 		super.invalidate();
 		this.lastDisplaySignature = undefined;
 		this.updateDisplay();
 	}
 
+	override invalidate(): void {
+		this.invalidateRenderCache();
+		super.invalidate();
+		this.lastDisplaySignature = undefined;
+		const renderer = this.renderer;
+		if (renderer !== undefined && !this.animation.running) {
+			renderer.releaseContent();
+			this.displayReleased = true;
+			return;
+		}
+		this.updateDisplay();
+	}
+
+	/**
+	 * A finished card renders from state that only changes through this class's setters, each of which
+	 * moves the revision. Cards still streaming arguments, running, animating, or in the grok
+	 * presentation keep rendering every frame because their output can change between setter calls.
+	 */
+	override getRenderRevision(): number | undefined {
+		if (
+			this.presentation === "grok" ||
+			this.isPartial ||
+			!this.argsComplete ||
+			this.result === undefined ||
+			this.animation.running
+		) {
+			return undefined;
+		}
+		return this.renderCache.revision;
+	}
+
 	override render(width: number): string[] {
 		if (this.presentation === "grok") return super.render(width);
 
-		const signature = this.createRenderSignature();
-		if (this.cachedLines && this.cachedWidth === width && this.cachedSignature === signature) {
-			return [...this.cachedLines];
+		if (this.displayReleased) {
+			this.displayReleased = false;
+			this.updateDisplay();
 		}
+		const signature = this.createRenderSignature();
+		const cached = this.renderCache.read(width, signature);
+		if (cached) return cached;
 
 		let lines: string[];
 		const renderer = this.renderer!;
@@ -212,13 +242,17 @@ export class ToolExecutionComponent extends Container {
 			lines = super.render(width);
 		}
 
-		this.cachedWidth = width;
-		this.cachedSignature = signature;
-		this.cachedLines = [...lines];
+		this.renderCache.store(width, signature, lines);
 		return lines;
 	}
 
 	private updateDisplay(): void {
+		// A released card (expand-all, show-images, a new image width) only records the change; `render`
+		// rebuilds it if the card is painted again, so cards far above the kept history stay released.
+		if (this.displayReleased) {
+			this.invalidateRenderCache();
+			return;
+		}
 		const displaySignature = this.createRenderSignature();
 		if (this.lastDisplaySignature === displaySignature) return;
 		this.lastDisplaySignature = displaySignature;
@@ -253,7 +287,7 @@ export class ToolExecutionComponent extends Container {
 			isPartial: this.isPartial,
 			expanded: this.expanded,
 			showImages: this.showImages,
-			spinnerFrame: this.spinnerFrame,
+			spinnerFrame: this.animation.frame,
 			result: this.result
 				? { ...this.result, content: this.result.content.filter((part) => !isModelOnlyText(part)) }
 				: undefined,
@@ -270,78 +304,14 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateSpinnerAnimation(): void {
-		const isStreamingArgs = !this.argsComplete && ["edit", "write", "apply_patch"].includes(this.identity.toolName);
-		const isPartialTask = this.isPartial && this.identity.toolName === "task" && this.result !== undefined;
-		const isPartialProgress =
-			this.isPartial && this.result !== undefined && readToolProgress(this.result.details) !== undefined;
-		if (isStreamingArgs || isPartialTask || isPartialProgress) this.startSpinnerAnimation();
-		else this.stopSpinnerAnimation();
+		this.animation.spin(toolCardSpins(this.identity.toolName, this.createRenderState()));
 	}
 
 	private updateTodoStrikeAnimation(): void {
-		const shouldAnimate =
-			this.identity.toolName === "todo" &&
-			this.executionStarted &&
-			!this.isPartial &&
-			this.result !== undefined &&
-			!this.result.isError &&
-			hasCompletedTodoTasks(this.result.details);
-		if (!shouldAnimate) {
-			this.stopTodoStrikeAnimation();
-			return;
-		}
-		if (this.todoStrikeInterval) return;
-
-		this.spinnerFrame = 0;
-		this.todoStrikeInterval = setInterval(() => {
-			const next = (this.spinnerFrame ?? 0) + 1;
-			if (next > TODO_STRIKE_TOTAL_FRAMES) {
-				this.stopTodoStrikeAnimation();
-				return;
-			}
-			this.spinnerFrame = next;
-			this.invalidateRenderCache();
-			this.updateDisplay();
-			this.ui.requestRender();
-		}, TODO_STRIKE_FRAME_INTERVAL_MS);
-		this.todoStrikeInterval.unref?.();
-	}
-
-	private stopTodoStrikeAnimation(): void {
-		if (this.todoStrikeInterval) {
-			clearInterval(this.todoStrikeInterval);
-			this.todoStrikeInterval = undefined;
-		}
-		if (!this.spinnerInterval && this.spinnerFrame !== undefined) {
-			this.spinnerFrame = undefined;
-			this.invalidateRenderCache();
-			this.updateDisplay();
-			this.ui.requestRender();
-		}
-	}
-
-	private startSpinnerAnimation(): void {
-		if (this.spinnerInterval) return;
-		this.spinnerInterval = setInterval(() => {
-			this.spinnerFrame = ((this.spinnerFrame ?? -1) + 1) % 10;
-			this.invalidateRenderCache();
-			this.updateDisplay();
-			this.ui.requestRender();
-		}, PENDING_RENDER_FRAME_INTERVAL_MS);
-		this.spinnerInterval.unref?.();
-	}
-
-	private stopSpinnerAnimation(): void {
-		if (!this.spinnerInterval) return;
-		clearInterval(this.spinnerInterval);
-		this.spinnerInterval = undefined;
-		if (!this.todoStrikeInterval) this.spinnerFrame = undefined;
-		this.invalidateRenderCache();
+		this.animation.strike(toolCardStrikes(this.identity.toolName, this.createRenderState()));
 	}
 
 	private invalidateRenderCache(): void {
-		this.cachedLines = undefined;
-		this.cachedSignature = undefined;
-		this.cachedWidth = undefined;
+		this.renderCache.invalidate();
 	}
 }

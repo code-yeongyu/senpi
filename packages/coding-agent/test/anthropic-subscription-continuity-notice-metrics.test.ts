@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, JsonObject } from "@earendil-works/pi-ai";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
 	CONTINUITY_DIAGNOSTIC_TYPE,
@@ -33,7 +33,7 @@ function flattenMessage(details: Record<string, unknown>): AssistantMessage {
 		},
 		stopReason: "stop",
 		timestamp: 1,
-		diagnostics: [{ type: CONTINUITY_DIAGNOSTIC_TYPE, timestamp: 1, details }],
+		diagnostics: [{ type: CONTINUITY_DIAGNOSTIC_TYPE, timestamp: 1, details: details as JsonObject }],
 	};
 }
 

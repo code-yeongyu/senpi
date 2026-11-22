@@ -232,7 +232,7 @@ describe("eval run budget through the tool path", () => {
 		expect(result.status).toBe("rejected");
 		expect(result.reason?.name).toBe("TimeoutError");
 		expect(result.reason?.message).toContain("3s run budget");
-		expect(result.reason?.message).toMatch(/remains running|preserved/i);
+		expect(result.reason?.message).toMatch(/not restarted; variables from earlier cells are kept/i);
 		expect(manager.peek("print-cell")).toMatchObject({ state: "cancelled", runBudgetSeconds: 3 });
 	});
 

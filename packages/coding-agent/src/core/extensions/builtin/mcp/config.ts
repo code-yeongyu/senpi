@@ -1,14 +1,16 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TLocalizedValidationError } from "typebox/error";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
-import type { RegisteredMcpServerDeclaration } from "../../types.ts";
+import { McpConfigValidationError } from "./config-error.ts";
+import { hashConfig } from "./config-identity.ts";
+import { interpolateValue } from "./config-interpolation.ts";
+import { normalizeServer } from "./config-normalize.ts";
+import { rememberMcpReferenceOrigins } from "./config-references.ts";
 import {
 	defaultSettings,
 	getServerEndpointValidationError,
 	type LoadMcpConfigOptions,
-	type McpServerConfig,
 	type McpServerSource,
 	type McpSettings,
 	type RawConfig,
@@ -17,14 +19,12 @@ import {
 	validateConfig,
 } from "./config-schema.ts";
 import { inheritMcpSharingScope } from "./sharing-policy.ts";
-import { MCP_STARTUP_RACE_MS } from "./startup-race.ts";
 
-export class McpConfigValidationError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "McpConfigValidationError";
-	}
-}
+export { McpConfigValidationError } from "./config-error.ts";
+export { mergeExtensionMcpServers, resolveExtensionMcpServer } from "./config-extension.ts";
+export { hashConfig } from "./config-identity.ts";
+export { interpolateValue } from "./config-interpolation.ts";
+export { normalizeServer } from "./config-normalize.ts";
 
 interface JsonReadResult {
 	raw: unknown;
@@ -73,7 +73,7 @@ export function loadMcpConfig(options: LoadMcpConfigOptions): ResolvedMcpConfig 
 
 	for (const item of sources) {
 		if (item.trusted && item.config?.mcpServers) {
-			addTrustedServers(result, item.config.mcpServers, item.source, item.path);
+			addTrustedServers(result, item.config.mcpServers, { source: item.source, sourcePath: item.path, agentDir });
 			continue;
 		}
 		if (!item.trusted) {
@@ -103,6 +103,24 @@ function readTrustedConfig(
 	path: string,
 	env: Record<string, string | undefined>,
 	raw = readConfigJson(path, true).raw,
+): RawConfig | undefined {
+	const config = resolveTrustedConfig(raw, path, env);
+	rememberMcpReferenceOrigins(config?.mcpServers, path);
+	return config;
+}
+
+/**
+ * Throws the `McpConfigValidationError` loading `raw` as the trusted file at `path` would throw, without loading it:
+ * a candidate is checked with the loader's own steps before anything writes it (senpi#6485).
+ */
+export function assertLoadableMcpConfig(raw: unknown, path: string, env = trustedEnv): void {
+	resolveTrustedConfig(raw, path, env);
+}
+
+function resolveTrustedConfig(
+	raw: unknown,
+	path: string,
+	env: Record<string, string | undefined>,
 ): RawConfig | undefined {
 	const config = interpolateConfig(validateRaw(raw, path), env);
 	const endpointError = config ? getServerEndpointValidationError(config) : undefined;
@@ -164,18 +182,17 @@ function normalizeSettings(settings: RawConfig["settings"]): McpSettings {
 function addTrustedServers(
 	result: ResolvedMcpConfig,
 	servers: NonNullable<RawConfig["mcpServers"]>,
-	source: McpServerSource,
-	sourcePath: string,
+	origin: { readonly source: McpServerSource; readonly sourcePath: string; readonly agentDir: string },
 ): void {
 	for (const [name, server] of Object.entries(servers)) {
 		const config = normalizeServer(server);
 		inheritMcpSharingScope(server, config);
 		result.servers[name] = {
 			config,
-			configHash: hashConfig(config),
+			configHash: hashConfig(config, origin.agentDir),
 			name,
-			source,
-			sourcePath,
+			source: origin.source,
+			sourcePath: origin.sourcePath,
 			state: config.enabled ? "enabled" : "disabled",
 			transport: config.type,
 		};
@@ -207,101 +224,6 @@ function readServerNames(raw: unknown): string[] {
 	return Object.keys(servers);
 }
 
-/**
- * Resolve an extension-declared MCP server. Preserves the declared exposure,
- * directTools, filters, lifecycle, and enabled state. A stdio declaration
- * without an explicit `cwd` defaults to the extension's registration cwd.
- */
-export function resolveExtensionMcpServer(
-	name: string,
-	raw: NonNullable<RawConfig["mcpServers"]>[string],
-	sourcePath: string,
-	registrationCwd: string,
-): ResolvedMcpServer {
-	const withCwd = { ...raw, cwd: raw.cwd ?? registrationCwd };
-	const config = normalizeServer(withCwd);
-	return {
-		config,
-		configHash: hashConfig(config),
-		name,
-		source: "extension",
-		sourcePath,
-		state: config.enabled ? "enabled" : "disabled",
-		transport: config.type,
-	};
-}
-
-/**
- * Merge extension-declared MCP servers into a resolved config. Trusted file
- * sources (global/claude/project) win, including disabled entries. An
- * extension entry replaces an untrusted placeholder and records a diagnostic.
- */
-export function mergeExtensionMcpServers(
-	result: ResolvedMcpConfig,
-	declarations: readonly RegisteredMcpServerDeclaration[],
-): void {
-	for (const decl of declarations) {
-		const existing = result.servers[decl.name];
-		if (existing !== undefined && existing.state !== "untrusted") {
-			result.diagnostics.push(
-				`Extension MCP server '${decl.name}' from ${decl.extensionPath} skipped; ${existing.source} config at ${existing.sourcePath} wins.`,
-			);
-			continue;
-		}
-		if (existing !== undefined) {
-			result.diagnostics.push(
-				`Extension MCP server '${decl.name}' from ${decl.extensionPath} replaces untrusted ${existing.source} placeholder from ${existing.sourcePath}.`,
-			);
-		}
-		result.servers[decl.name] = resolveExtensionMcpServer(
-			decl.name,
-			decl.config,
-			decl.extensionPath,
-			decl.registrationCwd,
-		);
-	}
-}
-
-/**
- * Resolve a skill-declared MCP server (mcp.json sidecar or SKILL.md
- * frontmatter). Exposure is forced to search with no directTools so the
- * catalog registers with ZERO active tools until the owning skill loads
- * (0 pre-load payload tokens); lifecycle stays lazy.
- */
-export function resolveSkillMcpServer(
-	name: string,
-	raw: NonNullable<RawConfig["mcpServers"]>[string],
-	sourcePath: string,
-): ResolvedMcpServer {
-	const config = { ...normalizeServer(raw), directTools: [], exposure: "search" as const };
-	return {
-		config,
-		configHash: hashConfig(config),
-		name,
-		source: "skill",
-		sourcePath,
-		state: config.enabled ? "enabled" : "disabled",
-		transport: config.type,
-	};
-}
-
-function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): McpServerConfig {
-	const type = server.type ?? (server.url ? "http" : "stdio");
-	return {
-		args: server.args ?? [],
-		connectTimeoutMs: server.connectTimeoutMs ?? 15_000,
-		enabled: server.enabled ?? true,
-		exposure: server.exposure ?? "auto",
-		idleTimeoutMin: server.idleTimeoutMin ?? 10,
-		lifecycle: server.lifecycle ?? "lazy",
-		logLevel: server.logLevel ?? "info",
-		requestTimeoutMs: server.requestTimeoutMs ?? 30_000,
-		startupTimeoutMs: server.startupTimeoutMs ?? MCP_STARTUP_RACE_MS,
-		type,
-		...server,
-	};
-}
-
 function interpolateConfig(
 	config: RawConfig | undefined,
 	env: Record<string, string | undefined>,
@@ -312,51 +234,4 @@ function interpolateConfig(
 		if (server !== undefined) inheritMcpSharingScope(raw, server);
 	}
 	return resolved;
-}
-
-function interpolateValue(value: unknown, path: string, env: Record<string, string | undefined>): unknown {
-	if (typeof value === "string") return interpolateString(value, path, env);
-	if (Array.isArray(value)) return value.map((item, index) => interpolateValue(item, `${path}.${index}`, env));
-	if (typeof value === "object" && value !== null) {
-		const out: Record<string, unknown> = {};
-		for (const [key, item] of Object.entries(value)) out[key] = interpolateValue(item, `${path}.${key}`, env);
-		return out;
-	}
-	return value;
-}
-
-function interpolateString(value: string, path: string, env: Record<string, string | undefined>): string {
-	if (value.trimStart().startsWith("!") || value.includes("$(")) {
-		const displayPath = path.replace(/^mcp\./, "");
-		throw new McpConfigValidationError(
-			`MCP config interpolation rejected command substitution at ${displayPath}: config values may reference only environment variables for security; shell commands are never executed.`,
-		);
-	}
-	return value.replace(
-		/\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}/g,
-		(_match, name: string, _fallback: string, fallbackValue: string | undefined) => {
-			return env[name] ?? fallbackValue ?? "";
-		},
-	);
-}
-
-function hashConfig(config: McpServerConfig): string {
-	// startupTimeoutMs is a client-side startup-race policy, not a connection or
-	// catalog-shape input. Excluding it from the identity hash keeps the catalog
-	// cache valid across upgrades (configs written before the field existed hash
-	// identically) and avoids a needless reconnect when only the window changes.
-	const hashable: Record<string, unknown> = { ...config };
-	delete hashable.startupTimeoutMs;
-	return createHash("sha256").update(stableStringify(hashable)).digest("hex");
-}
-
-function stableStringify(value: unknown): string {
-	if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-	if (typeof value === "object" && value !== null) {
-		return `{${Object.keys(value)
-			.sort()
-			.map((key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`)
-			.join(",")}}`;
-	}
-	return JSON.stringify(value);
 }

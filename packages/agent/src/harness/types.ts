@@ -200,6 +200,8 @@ export class ExecutionError extends Error {
 	readonly cause?: unknown;
 	/** Backend-independent error code. */
 	public code: ExecutionErrorCode;
+	/** Complete output preserved before a timeout or abort interrupted the command, when it spilled. */
+	spillPath?: string;
 
 	constructor(code: ExecutionErrorCode, message: string, cause?: unknown) {
 		super(message, cause === undefined ? undefined : { cause });

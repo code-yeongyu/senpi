@@ -16,7 +16,7 @@
  * protocol expects.
  */
 
-import type { AssistantMessage, Context, Model, StreamFunction, ToolCall } from "../types.ts";
+import type { AssistantMessage, Model, StreamFunction, ToolCall, TranscriptContext } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import {
 	AssignModelRequestSchema,
@@ -46,10 +46,10 @@ import {
 
 export const stream: StreamFunction<"devin-agent", DevinAgentOptions> = (
 	model: Model<"devin-agent">,
-	context: Context,
+	context: TranscriptContext,
 	options?: DevinAgentOptions,
 ) => {
-	const events = new AssistantMessageEventStream();
+	const events = new AssistantMessageEventStream({ captureBlocks: true });
 	void run(model, context, events, options);
 	return events;
 };
@@ -64,7 +64,7 @@ interface DevinSession {
 
 async function run(
 	model: Model<"devin-agent">,
-	context: Context,
+	context: TranscriptContext,
 	events: AssistantMessageEventStream,
 	options: DevinAgentOptions | undefined,
 ): Promise<void> {
@@ -180,7 +180,7 @@ async function mintUserJwt(
  */
 async function assignModel(
 	model: Model<"devin-agent">,
-	context: Context,
+	context: TranscriptContext,
 	baseUrl: string,
 	cascadeId: string,
 	apiKey: string | undefined,

@@ -2,8 +2,10 @@ import type { JsonValue } from "../types.ts";
 
 export type { JsonValue } from "../types.ts";
 
+const isObj = (value: unknown): value is object => value !== null && typeof value === "object";
+
 // ─────────────────────────────────────────────────────────────────────────────
-// chord/delta — flush-time change tracking over plain JSON.
+// chord/delta — immutable revision tracking and operations over plain JSON.
 //
 // Depends on nothing else in the harness. Session storage, the runtime and the
 // facet host consume it; keep the arrows pointing that way.
@@ -20,9 +22,9 @@ export type PathRef<P extends Path = Path> = P | number;
  * Tuples are the form — in memory, on the wire, on disk.
  *
  * `r` is the ONLY op that replaces a whole value. `s`/`d`/`a`/`t` cannot target
- * the root: the type forbids it. `p` may, and only because a tracked value can
- * itself be an array — but a `p` that replaces its entire target is normalised to
- * `r`/`s` at flush time, so a root `p` is always a partial modification.
+ * the root: the type forbids it. `p` and `m` may, because a tracked value can
+ * itself be an array. Operation shape is not canonical: an array may be emptied by either
+ * a replacement or a root splice.
  *
  * `Op` knows nothing about the path dictionary. Interning, id references and
  * omitted paths live in `WireOp` and exist only between `encode` and `decode`.
@@ -33,7 +35,9 @@ export type Op =
 	| readonly ["d", NonEmptyPath]
 	| readonly ["a", NonEmptyPath, string]
 	| readonly ["t", NonEmptyPath, number]
-	| readonly ["p", Path, number, number, JsonValue[]];
+	| readonly ["p", Path, number, number, JsonValue[]]
+	/** Reorder an array in place: `new[i] = old[permutation[i]]`. */
+	| readonly ["m", Path, number[]];
 
 /**
  * What crosses a boundary. Adds two compressions and nothing else:
@@ -57,6 +61,8 @@ export type WireOp =
 	| readonly ["t", number]
 	| readonly ["p", PathRef, number, number, JsonValue[]]
 	| readonly ["p", number, number, JsonValue[]]
+	| readonly ["m", PathRef, number[]]
+	| readonly ["m", number[]]
 	| readonly ["#", number, Path];
 
 // ─── Classification ──────────────────────────────────────────────────────────
@@ -103,650 +109,11 @@ export function overlap(a: string, b: string, scan: number, probe = 64, maxCandi
 	return 0;
 }
 
-// ─── Tracker ─────────────────────────────────────────────────────────────────
+// ─── Immutable revision tracking ─────────────────────────────────────────────
 
-export interface TrackerOptions {
-	maxOverlapScan?: number;
-}
-
-export interface Tracker<T extends object> {
-	/**
-	 * The tracked value. Mutate and read state only through this proxy. Values
-	 * inserted into it are adopted: callers may retain read-only references, but
-	 * must not mutate them outside this proxy.
-	 */
-	state: T;
-	/** The untracked current value. Mutating it bypasses change tracking. */
-	readonly target: T;
-	flush(): Op[];
-	/** Make the next flush a complete base batch without changing the value. */
-	rebase(): void;
-	/** Accept pending mutations locally without emitting them. */
-	discard(): void;
-	readonly dirty: boolean;
-}
-
-const isObj = (value: unknown): value is object => value !== null && typeof value === "object";
-const cloneJson = <T extends JsonValue>(value: T): T => {
-	if (!isObj(value)) return value;
-	if (Array.isArray(value)) return value.map((item) => cloneJson(item)) as T;
-	const result = Object.create(Object.getPrototypeOf(value) === null ? null : Object.prototype) as Record<
-		string,
-		JsonValue
-	>;
-	for (const [key, child] of Object.entries(value)) {
-		Object.defineProperty(result, key, {
-			value: cloneJson(child),
-			writable: true,
-			enumerable: true,
-			configurable: true,
-		});
-	}
-	return result as T;
-};
-
-const INDEX = /^(?:0|[1-9]\d*)$/;
-const norm = (target: object, key: string | symbol): Seg | symbol =>
-	typeof key === "symbol" ? key : Array.isArray(target) && INDEX.test(key) ? Number(key) : key;
-const MUTATORS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "copyWithin"]);
-const MISSING = Symbol("missing");
-type MaybeJson = JsonValue | typeof MISSING;
-type ArrayDirty = { kind: "append"; start: number } | { kind: "diff" } | { kind: "replace" };
-type DirtyNode = { valueDirty?: true; array?: ArrayDirty; children: Map<Seg, DirtyNode> };
-
-const dirtyNode = (): DirtyNode => ({ children: new Map() });
-
-const spliceItems = (target: unknown[], index: number, remove: number, items: JsonValue[]): JsonValue[] => {
-	const removed = Reflect.apply(Array.prototype.splice, target, [index, remove]) as JsonValue[];
-	const chunkSize = 10_000;
-	for (let offset = 0; offset < items.length; offset += chunkSize) {
-		Reflect.apply(Array.prototype.splice, target, [index + offset, 0, ...items.slice(offset, offset + chunkSize)]);
-	}
-	return removed;
-};
-
-const jsonEqual = (left: JsonValue, right: JsonValue): boolean => {
-	if (left === right) return true;
-	if (!isObj(left) || !isObj(right) || Array.isArray(left) !== Array.isArray(right)) return false;
-	if (Array.isArray(left) && Array.isArray(right)) {
-		if (left.length !== right.length) return false;
-		for (let index = 0; index < left.length; index++) {
-			if (!jsonEqual(left[index]!, right[index]!)) return false;
-		}
-		return true;
-	}
-	const leftObject = left as Record<string, JsonValue>;
-	const rightObject = right as Record<string, JsonValue>;
-	const leftKeys = Object.keys(leftObject);
-	const rightKeys = Object.keys(rightObject);
-	if (leftKeys.length !== rightKeys.length) return false;
-	for (const key of leftKeys) {
-		if (!Object.hasOwn(rightObject, key) || !jsonEqual(leftObject[key]!, rightObject[key]!)) return false;
-	}
-	return true;
-};
-
-const ownValue = (value: JsonValue, segment: Seg): MaybeJson => {
-	if (!isObj(value) || !Object.hasOwn(value, segment)) return MISSING;
-	return (value as Record<Seg, JsonValue>)[segment]!;
-};
-
-const emitSet = (path: Path, value: JsonValue, out: Op[]): void => {
-	const snapshot = cloneJson(value);
-	if (path.length === 0) out.push(["r", snapshot]);
-	else out.push(["s", [...path] as unknown as NonEmptyPath, snapshot]);
-};
-
-const emitDelete = (path: Path, out: Op[]): void => {
-	if (path.length === 0) throw new TypeError("the tracked root cannot be deleted");
-	out.push(["d", [...path] as unknown as NonEmptyPath]);
-};
-
-const diffString = (before: string, after: string, path: Path, scan: number, out: Op[]): void => {
-	if (before === after) return;
-	if (path.length === 0) {
-		emitSet(path, after, out);
-		return;
-	}
-	const at = [...path] as unknown as NonEmptyPath;
-	// NOT `after.startsWith(before)`. `after` is usually a cons string — the
-	// producer just did `s += chunk` — and V8's startsWith walks a cons char by
-	// char. `slice(...) === before` flattens once and compares with memcmp.
-	// Measured on a 200 KB string growing by 8 bytes per flush: 845 us -> 42 us.
-	if (after.length > before.length && after.slice(0, before.length) === before) {
-		out.push(["a", at, after.slice(before.length)]);
-		return;
-	}
-	const shared = overlap(before, after, scan);
-	if (shared === 0) {
-		out.push(["s", at, after]);
-		return;
-	}
-	out.push(["t", at, before.length - shared]);
-	if (after.length > shared) out.push(["a", at, after.slice(shared)]);
-};
-
-const diffValue = (before: MaybeJson, after: MaybeJson, path: Path, scan: number, out: Op[]): void => {
-	if (before === MISSING) {
-		if (after !== MISSING) emitSet(path, after, out);
-		return;
-	}
-	if (after === MISSING) {
-		emitDelete(path, out);
-		return;
-	}
-	if (before === after) return;
-	if (typeof before === "string" && typeof after === "string") {
-		diffString(before, after, path, scan, out);
-		return;
-	}
-	if (Array.isArray(before) && Array.isArray(after)) {
-		diffArray(before, after, path, scan, out);
-		return;
-	}
-	if (isObj(before) && isObj(after) && !Array.isArray(before) && !Array.isArray(after)) {
-		diffObject(before as Record<string, JsonValue>, after as Record<string, JsonValue>, path, scan, out);
-		return;
-	}
-	emitSet(path, after, out);
-};
-
-function diffObject(
-	before: Record<string, JsonValue>,
-	after: Record<string, JsonValue>,
-	path: Path,
-	scan: number,
-	out: Op[],
-): void {
-	if ([...Object.keys(before), ...Object.keys(after)].some((key) => RESERVED_SEGMENTS.has(key))) {
-		emitSet(path, after, out);
-		return;
-	}
-	for (const key of Object.keys(after)) {
-		diffValue(Object.hasOwn(before, key) ? before[key]! : MISSING, after[key]!, [...path, key], scan, out);
-	}
-	for (const key of Object.keys(before)) {
-		if (!Object.hasOwn(after, key)) emitDelete([...path, key], out);
-	}
-}
-
-function diffArray(before: JsonValue[], after: JsonValue[], path: Path, scan: number, out: Op[]): void {
-	if (before.length === after.length) {
-		for (let index = 0; index < after.length; index++) {
-			diffValue(before[index]!, after[index]!, [...path, index], scan, out);
-		}
-		return;
-	}
-
-	let prefix = 0;
-	while (prefix < before.length && prefix < after.length && jsonEqual(before[prefix]!, after[prefix]!)) prefix++;
-	let suffix = 0;
-	while (
-		suffix < before.length - prefix &&
-		suffix < after.length - prefix &&
-		jsonEqual(before[before.length - 1 - suffix]!, after[after.length - 1 - suffix]!)
-	) {
-		suffix++;
-	}
-	const shorter = Math.min(before.length, after.length);
-	if (prefix + suffix === shorter) {
-		const remove = before.length - prefix - suffix;
-		const items = after.slice(prefix, after.length - suffix);
-		if (prefix === 0 && remove === before.length) emitSet(path, after, out);
-		else out.push(["p", [...path], prefix, remove, cloneJson(items)]);
-		return;
-	}
-
-	// Structural movement combined with retained-index edits has no unique
-	// alignment. Preserve the retained index deltas and express only the tail
-	// length change structurally. It may be broader than the producer's intent,
-	// but never degrades those edits to a whole-array replacement.
-	for (let index = 0; index < shorter; index++) {
-		diffValue(before[index]!, after[index]!, [...path, index], scan, out);
-	}
-	if (after.length > before.length) {
-		out.push(["p", [...path], before.length, 0, cloneJson(after.slice(before.length))]);
-	} else if (before.length > after.length) {
-		if (after.length === 0) emitSet(path, after, out);
-		else out.push(["p", [...path], after.length, before.length - after.length, []]);
-	}
-}
-
-const walkDirty = (before: JsonValue, after: JsonValue, node: DirtyNode, path: Path, scan: number, out: Op[]): void => {
-	if (node.valueDirty) {
-		diffValue(before, after, path, scan, out);
-		return;
-	}
-	if (node.array !== undefined) {
-		if (node.array.kind === "replace") {
-			if (!jsonEqual(before, after)) emitSet(path, after, out);
-			return;
-		}
-		if (!Array.isArray(before) || !Array.isArray(after) || node.array.kind === "diff") {
-			diffValue(before, after, path, scan, out);
-			return;
-		}
-		const start = node.array.start;
-		if (before.length !== start || after.length < start) {
-			diffValue(before, after, path, scan, out);
-			return;
-		}
-		for (const [segment, child] of node.children) {
-			if (typeof segment !== "number" || segment >= start) continue;
-			const previous = ownValue(before, segment);
-			const current = ownValue(after, segment);
-			if (previous === MISSING || current === MISSING || child.valueDirty) {
-				diffValue(previous, current, [...path, segment], scan, out);
-			} else if (isObj(previous) && isObj(current)) {
-				walkDirty(previous as JsonValue, current as JsonValue, child, [...path, segment], scan, out);
-			} else {
-				diffValue(previous, current, [...path, segment], scan, out);
-			}
-		}
-		const items = after.slice(start);
-		if (items.length > 0) out.push(["p", [...path], start, 0, cloneJson(items)]);
-		return;
-	}
-	for (const [segment, child] of node.children) {
-		const previous = ownValue(before, segment);
-		const current = ownValue(after, segment);
-		if (previous === MISSING || current === MISSING || child.valueDirty) {
-			diffValue(previous, current, [...path, segment], scan, out);
-			continue;
-		}
-		if (!isObj(previous) || !isObj(current)) {
-			diffValue(previous, current, [...path, segment], scan, out);
-			continue;
-		}
-		walkDirty(previous as JsonValue, current as JsonValue, child, [...path, segment], scan, out);
-	}
-};
-
-/**
- * Bring `baseline` up to `root` along the dirty paths by sharing references.
- * Returns false — having changed nothing — if any dirty node is an array
- * change other than a pure append, so the caller can replay ops instead.
- * Cloning a whole array there is O(n) per flush; replay is O(changes).
- *
- * Strings are immutable, so root's `after` is shared outright, and sharing it
- * also means the next flush compares against a flat string rather than a cons.
- * Objects are cloned because root keeps mutating them.
- */
-const syncBaseline = (baseline: JsonValue, root: JsonValue, node: DirtyNode): boolean => {
-	if (!canSync(node)) return false;
-	syncInto(baseline, root, node);
-	return true;
-};
-
-const canSync = (node: DirtyNode): boolean => {
-	if (node.array !== undefined && node.array.kind !== "append") return false;
-	for (const child of node.children.values()) if (!canSync(child)) return false;
-	return true;
-};
-
-const syncInto = (baseline: JsonValue, root: JsonValue, node: DirtyNode): void => {
-	const parent = baseline as Record<string | number, JsonValue>;
-	if (node.array?.kind === "append" && Array.isArray(baseline) && Array.isArray(root)) {
-		const start = node.array.start;
-		for (const [index, child] of node.children) {
-			if (typeof index === "number" && index < start) syncChild(parent, root, index, child);
-		}
-		for (let i = start; i < root.length; i++) {
-			baseline.push(isObj(root[i]) ? cloneJson(root[i] as JsonValue) : (root[i] as JsonValue));
-		}
-		return;
-	}
-	for (const [segment, child] of node.children) syncChild(parent, root, segment, child);
-};
-
-const syncChild = (
-	parent: Record<string | number, JsonValue>,
-	root: JsonValue,
-	segment: Seg,
-	child: DirtyNode,
-): void => {
-	const current = ownValue(root, segment);
-	const previous = ownValue(parent as JsonValue, segment);
-	if (current === MISSING) {
-		if (Array.isArray(parent)) parent.splice(segment as number, 1);
-		else delete parent[segment];
-		return;
-	}
-	if (child.valueDirty || !isObj(current) || !isObj(previous) || Array.isArray(current) !== Array.isArray(previous)) {
-		parent[segment] = isObj(current) ? cloneJson(current as JsonValue) : (current as JsonValue);
-		return;
-	}
-	syncInto(previous as JsonValue, current as JsonValue, child);
-};
-
-const cloneOp = (op: Op): Op => {
-	switch (op[0]) {
-		case "r":
-			return ["r", cloneJson(op[1])];
-		case "s":
-			return ["s", op[1], cloneJson(op[2])];
-		case "p":
-			return ["p", op[1], op[2], op[3], cloneJson(op[4])];
-		default:
-			return op;
-	}
-};
-
-export function track<T extends object>(root: T, options: TrackerOptions = {}): Tracker<T> {
-	const scan = options.maxOverlapScan ?? 65_536;
-	let pending = dirtyNode();
-	let hasPending = false;
-	let baseline: JsonValue | undefined;
-	let forceBase = true;
-
-	const clearPending = (): void => {
-		pending = dirtyNode();
-		hasPending = false;
-	};
-
-	const ensureNode = (path: Path): DirtyNode | undefined => {
-		hasPending = true;
-		let node = pending;
-		for (const segment of path) {
-			if (node.valueDirty || node.array?.kind === "diff" || node.array?.kind === "replace") return undefined;
-			let child = node.children.get(segment);
-			if (child === undefined) child = dirtyNode();
-			else node.children.delete(segment);
-			node.children.set(segment, child);
-			node = child;
-		}
-		return node;
-	};
-
-	const findNode = (path: Path): DirtyNode | undefined => {
-		let node = pending;
-		for (const segment of path) {
-			const child = node.children.get(segment);
-			if (child === undefined) return undefined;
-			node = child;
-		}
-		return node;
-	};
-
-	const markValue = (path: Path): void => {
-		const node = ensureNode(path);
-		if (node === undefined) return;
-		node.valueDirty = true;
-		node.array = undefined;
-		node.children.clear();
-	};
-
-	const markArrayAppend = (path: Path, start: number): void => {
-		const node = ensureNode(path);
-		if (node === undefined || node.valueDirty || node.array?.kind === "diff" || node.array?.kind === "replace") {
-			return;
-		}
-		if (node.array === undefined) node.array = { kind: "append", start };
-	};
-
-	const markArrayDiff = (path: Path): void => {
-		const node = ensureNode(path);
-		if (node === undefined || node.valueDirty || node.array?.kind === "replace") return;
-		node.array = { kind: "diff" };
-		node.children.clear();
-	};
-
-	const markArrayReplace = (path: Path): void => {
-		const node = ensureNode(path);
-		if (node === undefined || node.valueDirty) return;
-		node.array = { kind: "replace" };
-		node.children.clear();
-	};
-
-	const appendStart = (path: Path): number | undefined => {
-		const array = findNode(path)?.array;
-		return array?.kind === "append" ? array.start : undefined;
-	};
-
-	const guard = (segment: Seg | symbol): Seg => {
-		if (typeof segment === "symbol") throw new UnsafePathError(String(segment));
-		if (typeof segment === "string" && RESERVED_SEGMENTS.has(segment)) throw new UnsafePathError(segment);
-		return segment;
-	};
-
-	const adoptItems = (values: readonly unknown[]): JsonValue[] => values as JsonValue[];
-
-	const integer = (value: unknown): number => {
-		const number = Number(value);
-		if (Number.isNaN(number) || number === 0) return 0;
-		return Number.isFinite(number) ? Math.trunc(number) : number;
-	};
-
-	const spliceRange = (length: number, args: readonly unknown[]): { index: number; remove: number } => {
-		const rawStart = args.length === 0 ? 0 : integer(args[0]);
-		const index = rawStart < 0 ? Math.max(0, length + rawStart) : Math.min(rawStart, length);
-		const remove =
-			args.length === 0
-				? 0
-				: args.length === 1
-					? length - index
-					: Math.max(0, Math.min(integer(args[1]), length - index));
-		return { index, remove };
-	};
-
-	const wrap = <V extends object>(object: V, path: Path, blockedSegment?: Seg): V => {
-		const childProxies = new Map<string | symbol, { target: object; proxy: object }>();
-		const proxy = new Proxy(object, {
-			get(target, key, receiver) {
-				if (Array.isArray(target) && typeof key === "string" && MUTATORS.has(key)) {
-					return (...args: unknown[]) => {
-						if (blockedSegment !== undefined) throw new UnsafePathError(blockedSegment);
-						const before = target.length;
-						let result: unknown;
-						switch (key) {
-							case "push": {
-								const items = adoptItems(args);
-								if (items.length > 0) markArrayAppend(path, before);
-								spliceItems(target, before, 0, items);
-								result = target.length;
-								break;
-							}
-							case "unshift": {
-								const items = adoptItems(args);
-								if (items.length > 0) markArrayDiff(path);
-								spliceItems(target, 0, 0, items);
-								result = target.length;
-								break;
-							}
-							case "pop":
-								if (before > 0) {
-									const start = appendStart(path);
-									if (start === undefined || before - 1 < start) markArrayDiff(path);
-								}
-								result = Reflect.apply(Array.prototype.pop, target, args);
-								break;
-							case "shift":
-								if (before > 0) markArrayDiff(path);
-								result = Reflect.apply(Array.prototype.shift, target, args);
-								break;
-							case "splice": {
-								const items = adoptItems(args.slice(2));
-								const { index, remove } = spliceRange(before, args);
-								if (remove > 0 || items.length > 0) {
-									const start = appendStart(path);
-									if (index === 0 && remove === before) markArrayReplace(path);
-									else if (start !== undefined && index >= start) {
-										// The final append payload includes all tail edits.
-									} else if (index === before && remove === 0) markArrayAppend(path, before);
-									else markArrayDiff(path);
-								}
-								result = spliceItems(target, index, remove, items);
-								break;
-							}
-							default:
-								markArrayDiff(path);
-								result = Reflect.apply(Array.prototype[key as "sort"], target, args);
-						}
-						if (key === "pop") childProxies.delete(String(before - 1));
-						else if (key !== "push") childProxies.clear();
-						return key === "sort" || key === "reverse" || key === "fill" || key === "copyWithin" ? proxy : result;
-					};
-				}
-				const value = Reflect.get(target, key, receiver);
-				if (!isObj(value)) return value;
-				const cached = childProxies.get(key);
-				if (cached?.target === value) return cached.proxy;
-				const rawSegment = norm(target, key);
-				let segment: Seg;
-				let childBlocked = blockedSegment;
-				if (blockedSegment !== undefined) {
-					if (typeof rawSegment === "symbol") throw new UnsafePathError(String(rawSegment));
-					segment = rawSegment;
-				} else if (
-					typeof rawSegment === "string" &&
-					RESERVED_SEGMENTS.has(rawSegment) &&
-					Object.hasOwn(target, key)
-				) {
-					segment = rawSegment;
-					childBlocked = rawSegment;
-				} else segment = guard(rawSegment);
-				const child = wrap(value, [...path, segment], childBlocked);
-				childProxies.set(key, { target: value, proxy: child });
-				return child;
-			},
-
-			set(target, key, value) {
-				if (blockedSegment !== undefined) throw new UnsafePathError(blockedSegment);
-				if (Array.isArray(target) && key === "length") {
-					const before = target.length;
-					const next = Number(value);
-					if (!Number.isSafeInteger(next) || next < 0 || next > 4_294_967_295) {
-						return Reflect.set(target, key, value);
-					}
-					if (next < before) {
-						const start = appendStart(path);
-						if (next === 0) markArrayReplace(path);
-						else if (start === undefined || next < start) markArrayDiff(path);
-						Reflect.set(target, key, next);
-						childProxies.clear();
-					} else if (next > before) {
-						markArrayAppend(path, before);
-						target.length = next;
-						target.fill(null, before);
-					}
-					return true;
-				}
-
-				const segment = guard(norm(target, key));
-				if (Array.isArray(target)) {
-					if (typeof segment !== "number") throw new UnsafePathError(segment);
-					if (segment > target.length) throw new UnsafePathError(segment);
-				}
-				const at = [...path, segment] as unknown as NonEmptyPath;
-
-				if (value === undefined) {
-					if (Array.isArray(target)) {
-						throw new TypeError("undefined would create a sparse array; use splice instead");
-					}
-					markValue(at);
-					childProxies.delete(key);
-					return Reflect.deleteProperty(target, key);
-				}
-
-				const previous = (target as Record<string | symbol, unknown>)[key];
-				if (previous === value) return true;
-				const cached = childProxies.get(key);
-				if (cached !== undefined && cached.target === previous && cached.proxy === value) return true;
-				if (Array.isArray(target)) {
-					const index = segment as number;
-					if (index === target.length) markArrayAppend(path, target.length);
-					else {
-						const start = appendStart(path);
-						if (start === undefined || index < start) markValue(at);
-					}
-				} else markValue(at);
-				childProxies.delete(key);
-				return Reflect.set(target, key, value);
-			},
-
-			deleteProperty(target, key) {
-				if (blockedSegment !== undefined) throw new UnsafePathError(blockedSegment);
-				const segment = guard(norm(target, key));
-				if (Array.isArray(target)) {
-					if (typeof segment !== "number") throw new UnsafePathError(segment);
-					throw new TypeError("delete would create a sparse array; use splice instead");
-				}
-				markValue([...path, segment]);
-				childProxies.delete(key);
-				return Reflect.deleteProperty(target, key);
-			},
-
-			defineProperty() {
-				throw new TypeError("defineProperty is not supported on tracked state; use assignment");
-			},
-			setPrototypeOf() {
-				throw new TypeError("setPrototypeOf is not supported on tracked state");
-			},
-			preventExtensions() {
-				throw new TypeError("preventExtensions is not supported on tracked state");
-			},
-		});
-
-		return proxy as V;
-	};
-
-	let state = wrap(root, []);
-
-	return {
-		get state() {
-			return state;
-		},
-		get target() {
-			return root;
-		},
-		set state(next: T) {
-			if (next === state) {
-				clearPending();
-				forceBase = true;
-				return;
-			}
-			clearPending();
-			root = next;
-			state = wrap(root, []);
-			baseline = undefined;
-			forceBase = true;
-		},
-		rebase() {
-			clearPending();
-			forceBase = true;
-		},
-		get dirty() {
-			return forceBase || hasPending;
-		},
-		discard() {
-			baseline = cloneJson(root as unknown as JsonValue);
-			clearPending();
-		},
-		flush() {
-			if (forceBase) {
-				const value = cloneJson(root as unknown as JsonValue);
-				baseline = cloneJson(root as unknown as JsonValue);
-				forceBase = false;
-				clearPending();
-				return [["r", value]];
-			}
-			if (!hasPending || baseline === undefined) return [];
-			const out: Op[] = [];
-			walkDirty(baseline, root as unknown as JsonValue, pending, [], scan, out);
-			// Advance the baseline by SHARING references from root where that is
-			// cheap and exact — scalars, strings, and array appends. Replaying the
-			// ops rebuilds every touched string via slice + concat: two window-sized
-			// allocations per flush and a cons the next flush must flatten. For
-			// anything the sync cannot express cheaply (a non-append array change),
-			// it declines and the original replay runs unchanged.
-			if (!syncBaseline(baseline as JsonValue, root as unknown as JsonValue, pending)) {
-				if (out.length > 0) baseline = apply(baseline, out.map(cloneOp));
-			}
-			clearPending();
-			return out;
-		},
-	};
-}
+export { diffRevisions } from "./diff.ts";
+export type { Draft } from "./draft.ts";
+export { type Change, type Prepared, type Tracker, track } from "./tracker.ts";
 
 // ─── Path safety ─────────────────────────────────────────────────────────────
 
@@ -812,6 +179,11 @@ export function assertValidOp(op: unknown): asserts op is Op {
 			if (!Array.isArray(op[4])) throw new TypeError("p items");
 			return;
 		}
+		case "m":
+			if (op.length !== 3) throw new TypeError("m arity");
+			assertPathArg(op[1]);
+			assertPermutation(op[2]);
+			return;
 		// Silently skipping an unknown verb is how a newer producer's op vanishes.
 		default:
 			throw new TypeError(`unknown op verb: ${String(op[0])}`);
@@ -822,6 +194,17 @@ function assertPathArg(p: unknown, nonEmpty = false): void {
 	if (!Array.isArray(p)) throw new TypeError("path is not an array");
 	if (nonEmpty && p.length === 0) throw new TypeError("path is empty");
 	assertSafePath(p as Path);
+}
+
+function assertPermutation(value: unknown): asserts value is number[] {
+	if (!Array.isArray(value)) throw new TypeError("m permutation is not an array");
+	const seen = new Uint8Array(value.length);
+	for (const index of value) {
+		if (!Number.isInteger(index) || index < 0 || index >= value.length || seen[index] !== 0) {
+			throw new TypeError("m permutation is not a bijection");
+		}
+		seen[index] = 1;
+	}
 }
 
 /** The same, for the wire grammar: ids and short forms are legal here. */
@@ -875,6 +258,11 @@ export function assertValidWireOp(op: unknown): asserts op is WireOp {
 			if (!Array.isArray(items)) throw new TypeError("p items");
 			return;
 		}
+		case "m":
+			if (op.length === 3) okRef(op[1]);
+			else if (op.length !== 2) throw new TypeError("m arity");
+			assertPermutation(op[op.length - 1]);
+			return;
 		case "#": {
 			if (op.length !== 3 || !Number.isInteger(op[1]) || (op[1] as number) < 0 || !Array.isArray(op[2])) {
 				throw new TypeError("# shape");
@@ -969,6 +357,13 @@ function applyOps<T>(target: T | undefined, ops: readonly Op[]): T {
 			}
 			continue;
 		}
+		if (op[0] === "m") {
+			const target_ = path.length === 0 ? root : resolve(root, path);
+			if (!Array.isArray(target_) || target_.length !== op[2].length) throw new PathError(path);
+			const previous = target_.slice();
+			for (let index = 0; index < op[2].length; index++) target_[index] = previous[op[2][index]!]!;
+			continue;
+		}
 
 		// s/d/a/t can never target the root — the type forbids it.
 		const parent = resolve(root, path.slice(0, -1)) as Record<Seg, JsonValue>;
@@ -1010,22 +405,35 @@ function applyOps<T>(target: T | undefined, ops: readonly Op[]): T {
 	return root as unknown as T;
 }
 
-/** Apply decoded operations without mutating the previous immutable value. */
+/** Apply one decoded operation batch without mutating the previous immutable value. */
 export function applyImmutable<T>(target: T | undefined, ops: readonly Op[]): T {
+	return applyImmutableBatches(target, [ops]);
+}
+
+/**
+ * Apply decoded operation batches as one final-result-only replay.
+ *
+ * Containers copied for an earlier batch may be mutated while applying a later
+ * batch, so this deliberately exposes no intermediate revisions.
+ */
+export function applyImmutableBatches<T>(target: T | undefined, batches: Iterable<readonly Op[]>): T {
 	let root = target as unknown as JsonValue;
-	for (const op of ops) {
-		if (op[0] === "r") {
+	const owned = new WeakSet<object>();
+	for (const ops of batches) {
+		for (const op of ops) {
 			assertValidOp(op);
-			root = op[1];
-			continue;
+			if (op[0] === "r") {
+				root = op[1];
+				continue;
+			}
+			root = copyContainers(root, op[0] === "p" || op[0] === "m" ? op[1] : op[1].slice(0, -1), owned);
+			root = applyOps(root, [op]);
 		}
-		root = copyContainers(root, op[0] === "p" ? op[1] : op[1].slice(0, -1));
-		root = applyOps(root, [op]);
 	}
 	return root as unknown as T;
 }
 
-function copyContainers(root: JsonValue, path: Path): JsonValue {
+function copyContainers(root: JsonValue, path: Path, owned: WeakSet<object>): JsonValue {
 	const copy = (value: JsonValue): JsonValue[] | Record<string, JsonValue> => {
 		if (Array.isArray(value)) return value.slice();
 		if (!isObj(value)) throw new PathError(path);
@@ -1043,13 +451,23 @@ function copyContainers(root: JsonValue, path: Path): JsonValue {
 		}
 		return result;
 	};
-	const copiedRoot = copy(root);
-	let source = root;
+	if (!isObj(root)) throw new PathError(path);
+	let copiedRoot: JsonValue[] | Record<string, JsonValue>;
+	if (owned.has(root)) copiedRoot = root as JsonValue[] | Record<string, JsonValue>;
+	else {
+		copiedRoot = copy(root);
+		owned.add(copiedRoot);
+	}
 	let destination = copiedRoot;
 	for (const segment of path) {
-		if (!isObj(source) || !Object.hasOwn(source, segment)) throw new PathError(path);
-		if (Array.isArray(source) && typeof segment !== "number") throw new UnsafePathError(segment);
-		const child = (source as Record<Seg, JsonValue>)[segment]!;
+		if (!Object.hasOwn(destination, segment)) throw new PathError(path);
+		if (Array.isArray(destination) && typeof segment !== "number") throw new UnsafePathError(segment);
+		const child = (destination as Record<Seg, JsonValue>)[segment]!;
+		if (!isObj(child)) throw new PathError(path);
+		if (owned.has(child)) {
+			destination = child as JsonValue[] | Record<string, JsonValue>;
+			continue;
+		}
 		const copiedChild = copy(child);
 		Object.defineProperty(destination, segment, {
 			value: copiedChild,
@@ -1057,7 +475,7 @@ function copyContainers(root: JsonValue, path: Path): JsonValue {
 			enumerable: true,
 			configurable: true,
 		});
-		source = child;
+		owned.add(copiedChild);
 		destination = copiedChild;
 	}
 	return copiedRoot;
@@ -1150,6 +568,9 @@ export function encoder(): Encoder {
 						case "p":
 							out.push(["p", op[2], op[3], op[4]]);
 							break;
+						case "m":
+							out.push(["m", op[2]]);
+							break;
 					}
 					continue;
 				}
@@ -1182,6 +603,9 @@ export function encoder(): Encoder {
 						break;
 					case "p":
 						out.push(["p", ref, op[2], op[3], op[4]]);
+						break;
+					case "m":
+						out.push(["m", ref, op[2]]);
 						break;
 				}
 				previous = key;
@@ -1238,7 +662,7 @@ export function decoder(): Decoder {
 					previous = path;
 				}
 
-				if (op[0] !== "p" && path.length === 0) throw new PathError(path);
+				if (op[0] !== "p" && op[0] !== "m" && path.length === 0) throw new PathError(path);
 				switch (op[0]) {
 					case "s":
 						out.push(["s", path as NonEmptyPath, (short ? op[1] : op[2]) as JsonValue]);
@@ -1259,6 +683,9 @@ export function decoder(): Decoder {
 						out.push(["p", path, i, r, items]);
 						break;
 					}
+					case "m":
+						out.push(["m", path, (short ? op[1] : op[2]) as number[]]);
+						break;
 				}
 			}
 			return out;

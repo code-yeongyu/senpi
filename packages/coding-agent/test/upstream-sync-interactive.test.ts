@@ -28,7 +28,12 @@ vi.mock("../src/utils/clipboard-image.ts", async (importOriginal) => {
 
 vi.mock("../src/utils/clipboard.ts", async (importOriginal) => {
 	const original = await importOriginal<typeof import("../src/utils/clipboard.ts")>();
-	return { ...original, readClipboardText: clipboardTextMock.readClipboardText };
+	// The paste handler reads clipboard file paths first; stub it so tests never read the host clipboard.
+	return {
+		...original,
+		readClipboardFilePaths: vi.fn(async () => null),
+		readClipboardText: clipboardTextMock.readClipboardText,
+	};
 });
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";

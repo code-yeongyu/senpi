@@ -5,9 +5,11 @@ export interface SessionTeardownHost {
 	readonly closeGraceMs: number;
 	get(handle: string): RpcSessionEntry | undefined;
 	delete(handle: string): void;
-	releaseReservation(key: string): void;
+	releaseReservation(key: string): Promise<void>;
 	/** Publishes that this path is retained with no client attached, for the cross-generation claim. */
 	markDetached(key: string): void;
+	/** The registry's clock, so the detach stamp shares the sweep's timeline. */
+	now(): number;
 	sync(): void;
 }
 
@@ -41,6 +43,7 @@ export function beginSessionClose(
 	// reservation, and is torn down only by an explicit close or the idle window.
 	if (options?.detach && entry.retainOnDisconnect) {
 		entry.attachments = 0;
+		entry.detachedAt ??= host.now();
 		// A retained session nobody is attached to is what another generation may reclaim the path
 		// from (#1893) - but only once nothing is still WRITING it. A session mid-turn keeps its claim
 		// until it parks, because reclaiming it would put two writers on one transcript.
@@ -53,6 +56,36 @@ export function beginSessionClose(
 		entry.closeResolve = resolve;
 	});
 	return entry;
+}
+
+/**
+ * Close waits for the claim file to be gone, but a removal that never settles (a wedged mount)
+ * must not hold the close past the grace window: the close completes and the failure is reported.
+ */
+export async function releaseWithinGrace(
+	host: Pick<SessionTeardownHost, "closeGraceMs" | "releaseReservation">,
+	handle: string,
+	key: string,
+): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<"late">((resolve) => {
+		timer = setTimeout(() => resolve("late"), host.closeGraceMs);
+	});
+	const removal = host.releaseReservation(key).then(
+		() => "removed" as const,
+		(cause: unknown) => {
+			reportDetachedFailure(handle, cause);
+			return "failed" as const;
+		},
+	);
+	const outcome = await Promise.race([removal, late]);
+	clearTimeout(timer);
+	if (outcome === "late") {
+		reportDetachedFailure(
+			handle,
+			new Error(`session path reservation was not removed within ${host.closeGraceMs} ms; closing anyway`),
+		);
+	}
 }
 
 export function closeSession(host: SessionTeardownHost, handle: string): Promise<void> {
@@ -91,13 +124,13 @@ export function closeMarkedSession(host: SessionTeardownHost, handle: string): P
 		await disposeOnce().catch(() => undefined);
 		await entry.scope.close?.();
 	};
-	const release = (): void => {
+	const release = async (): Promise<void> => {
 		if (released) return;
 		released = true;
 		if (releaseTimer) clearTimeout(releaseTimer);
+		if (entry.reservationKey) await releaseWithinGrace(host, handle, entry.reservationKey);
 		entry.state = "closed";
 		host.delete(handle);
-		if (entry.reservationKey) host.releaseReservation(entry.reservationKey);
 	};
 	const graceful = (async (): Promise<void> => {
 		await previousLifecycle;
@@ -123,22 +156,22 @@ export function closeMarkedSession(host: SessionTeardownHost, handle: string): P
 		}
 	})();
 	let settled = false;
-	const finish = (): void => {
+	const finish = async (): Promise<void> => {
 		if (settled) return;
 		settled = true;
-		release();
+		await release();
 		entry.closeResolve?.();
 	};
 	releaseTimer = setTimeout(() => {
 		void disposeOnce().catch((cause) => reportDetachedFailure(handle, cause));
 		void closeScopeOnce().catch((cause) => reportDetachedFailure(handle, cause));
 		void graceful.catch((cause) => reportDetachedFailure(handle, cause));
-		finish();
+		void finish();
 	}, host.closeGraceMs);
 
 	void graceful.then(finish, (cause) => {
 		reportDetachedFailure(handle, cause);
-		finish();
+		return finish();
 	});
 	return completion;
 }

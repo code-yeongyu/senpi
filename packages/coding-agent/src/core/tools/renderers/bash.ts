@@ -15,17 +15,14 @@ import type { BashToolDetails } from "../bash.ts";
 import { getTextOutput, invalidArgText, normalizeDisplayText, replaceTabs, str } from "../render-utils.ts";
 
 const BASH_PREVIEW_LINES = 5;
-export const BASH_UPDATE_THROTTLE_MS = 100;
 type BashResultRenderState = {
 	cachedWidth: number | undefined;
 	cachedLines: string[] | undefined;
-	cachedSkipped: number | undefined;
 };
 class BashResultRenderComponent extends Container {
 	state: BashResultRenderState = {
 		cachedWidth: undefined,
 		cachedLines: undefined,
-		cachedSkipped: undefined,
 	};
 }
 /** Whole-second elapsed/took display (fork): sub-second runs read `<1s`, longer ones roll up to m/h. */
@@ -92,24 +89,24 @@ function rebuildBashResultRenderComponent(
 		} else {
 			component.addChild({
 				render: (width: number) => {
+					// Cache the complete output: this renders on every frame for every bash result in the transcript.
 					if (state.cachedLines === undefined || state.cachedWidth !== width) {
 						const preview = truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width);
-						state.cachedLines = preview.visualLines;
-						state.cachedSkipped = preview.skippedCount;
+						const hintLines: string[] = [];
+						if (preview.skippedCount > 0) {
+							const hint =
+								theme.fg("muted", `... (${preview.skippedCount} earlier lines,`) +
+								` ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+							hintLines.push(truncateToWidth(hint, width, "..."));
+						}
+						state.cachedLines = ["", ...hintLines, ...preview.visualLines];
 						state.cachedWidth = width;
 					}
-					if (state.cachedSkipped && state.cachedSkipped > 0) {
-						const hint =
-							theme.fg("muted", `... (${state.cachedSkipped} earlier lines,`) +
-							` ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
-						return ["", truncateToWidth(hint, width, "..."), ...(state.cachedLines ?? [])];
-					}
-					return ["", ...(state.cachedLines ?? [])];
+					return state.cachedLines;
 				},
 				invalidate: () => {
 					state.cachedWidth = undefined;
 					state.cachedLines = undefined;
-					state.cachedSkipped = undefined;
 				},
 			});
 		}

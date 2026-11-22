@@ -3,19 +3,8 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	type AgentSessionRuntime,
-	createAgentSessionFromServices,
-	createAgentSessionRuntime,
-	createAgentSessionServices,
-} from "../../src/core/agent-session-runtime.ts";
-import { SessionManager } from "../../src/core/session-manager.ts";
-import { SettingsManager } from "../../src/core/settings-manager.ts";
-import {
-	createRemoteSessionProxy,
-	RemoteInteractiveRuntime,
-} from "../../src/modes/interactive/interactive-host-runtime.ts";
 import { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
+import { answerProtocolInfo } from "../helpers/rpc-legacy-protocol.ts";
 
 type LineSink = { lines: string[]; nextLine(): Promise<string> };
 
@@ -35,10 +24,11 @@ async function listen(socketPath: string): Promise<{ server: Server; sink: LineS
 			while (index >= 0) {
 				const line = buffer.slice(0, index);
 				buffer = buffer.slice(index + 1);
+				index = buffer.indexOf("\n");
+				if (answerProtocolInfo(socket, JSON.parse(line))) continue;
 				const waiter = waiters.shift();
 				if (waiter) waiter(line);
 				else lines.push(line);
-				index = buffer.indexOf("\n");
 			}
 		});
 	});
@@ -72,28 +62,7 @@ async function connectedClient(): Promise<{ client: RpcClient; sink: LineSink; c
 	return { client, sink, cwd };
 }
 
-async function localRuntime(cwd: string): Promise<AgentSessionRuntime> {
-	const settingsManager = SettingsManager.create(cwd, cwd);
-	const sessionManager = SessionManager.inMemory(cwd);
-	const createRuntime = async (options: { cwd: string; sessionManager: SessionManager }) => {
-		const services = await createAgentSessionServices({
-			cwd: options.cwd,
-			agentDir: cwd,
-			settingsManager,
-			resourceLoaderOptions: { noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true },
-		});
-		return {
-			...(await createAgentSessionFromServices({ services, sessionManager: options.sessionManager })),
-			services,
-			diagnostics: services.diagnostics,
-		};
-	};
-	const runtime = await createAgentSessionRuntime(createRuntime, { cwd, agentDir: cwd, sessionManager });
-	cleanups.push(() => runtime.dispose());
-	return runtime;
-}
-
-describe("host-attached question progress seam", () => {
+describe("RpcClient question progress seam", () => {
 	it("RpcClient writes extension_ui_progress with the request id intact and no reply wait", async () => {
 		const { client, sink } = await connectedClient();
 		await client.sendExtensionUIProgress({
@@ -107,39 +76,6 @@ describe("host-attached question progress seam", () => {
 			id: "ui-1",
 			answers: { auth: { selected: ["OAuth"] } },
 			comment: "par",
-		});
-	});
-
-	it("RemoteInteractiveRuntime.sendHostUiProgress forwards the record through the client", async () => {
-		const { client, sink, cwd } = await connectedClient();
-		const local = await localRuntime(cwd);
-		const proxy = createRemoteSessionProxy(local.session, cwd, client, {
-			thinkingLevel: "off",
-			isStreaming: false,
-			isCompacting: false,
-			pendingMessageCount: 0,
-			usageTotals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, latestCacheHitRate: undefined },
-			retryAttempt: 0,
-			isBashRunning: false,
-			sessionId: "own",
-			cwd,
-			projectTrusted: false,
-			fastMode: false,
-			steeringMode: "all",
-			followUpMode: "all",
-			autoCompactionEnabled: false,
-			favoriteModels: [],
-			scopedModels: [],
-			steering: [],
-			followUp: [],
-			ordered: [],
-		});
-		const runtime = new RemoteInteractiveRuntime(local, proxy, client);
-		runtime.sendHostUiProgress({ type: "extension_ui_progress", id: "ui-2", comment: "draft" });
-		expect(JSON.parse(await sink.nextLine())).toEqual({
-			type: "extension_ui_progress",
-			id: "ui-2",
-			comment: "draft",
 		});
 	});
 });

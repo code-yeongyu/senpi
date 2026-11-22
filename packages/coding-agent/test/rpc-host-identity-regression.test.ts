@@ -5,20 +5,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
-import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
+import { settledOpportunisticHostGc } from "../src/modes/rpc/host-gc-pass.ts";
 import {
 	authenticateSocket,
 	createSocketSecret,
 	resolveSocketTransportAddress,
 	socketSecretPath,
 } from "../src/modes/rpc/socket-transport.ts";
+import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../src/utils/process-identity.ts";
 
 describe("RPC ownership observation", () => {
 	it("does not classify an absent identity on a live pid as gone", async () => {
 		await expect(
 			processMatchesPidFile(
-				{ pid: process.pid, processStartTime: "identity" },
+				{ pid: process.pid, processStartTime: "2026-10-08T12:00:00.000Z" },
 				async () => undefined,
 				() => true,
 				{ attempts: 1 },
@@ -27,7 +28,7 @@ describe("RPC ownership observation", () => {
 	});
 
 	it("still recognizes confirmed absence and a different process identity", async () => {
-		const recorded = { pid: process.pid, processStartTime: "identity" };
+		const recorded = { pid: process.pid, processStartTime: "2026-10-08T12:00:00.000Z" };
 		expect(
 			await processMatchesPidFile(
 				recorded,
@@ -39,7 +40,7 @@ describe("RPC ownership observation", () => {
 		expect(
 			await processMatchesPidFile(
 				recorded,
-				async () => "replacement",
+				async () => "2026-10-08T12:01:00.000Z",
 				() => true,
 				{ attempts: 1 },
 			),
@@ -48,6 +49,7 @@ describe("RPC ownership observation", () => {
 
 	it("concurrent callers reuse a compatible endpoint without consulting an unavailable ownership probe", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-identity-"));
+		const agentDirs = [join(root, "one"), join(root, "two")];
 		const socketPath = join(root, "rpc.sock");
 		const secret = process.platform === "win32" ? await createSocketSecret(socketSecretPath(socketPath)) : undefined;
 		const connections = new Set<Socket>();
@@ -75,7 +77,6 @@ describe("RPC ownership observation", () => {
 			const listening = once(server, "listening", { signal: AbortSignal.timeout(5_000) });
 			server.listen(resolveSocketTransportAddress(socketPath, process.platform, secret));
 			await listening;
-			const agentDirs = [join(root, "one"), join(root, "two")];
 			for (const agentDir of agentDirs) {
 				const paths = createHostDaemonPaths({ socket: socketPath, agentDir });
 				await mkdir(join(paths.generationsDir, "regression"), { recursive: true });
@@ -114,6 +115,8 @@ describe("RPC ownership observation", () => {
 		} finally {
 			for (const socket of connections) socket.destroy();
 			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+			// senpi#2779: ensureHost returns before its GC completion marker is written.
+			await Promise.all(agentDirs.map(settledOpportunisticHostGc));
 			await rm(root, { recursive: true, force: true });
 		}
 	});

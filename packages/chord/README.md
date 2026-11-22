@@ -32,16 +32,17 @@ The design has a few connected pieces:
   stable facade while a provider disconnects or is replaced.
 
 - **Replicated state** exposes authoritative state to local and remote
-  connected consumers. Producers mutate the tracked `state` proxy and call
-  `publish(context)`; consumers receive complete immutable values. Chord flushes
-  one decoded operation batch per publication, while each remote client/state
-  stream owns independent path-codec state. Replicas become unready on disconnect
-  or replacement until they are rehydrated.
+  connected consumers. Producers publish atomic overlay transactions with
+  `change(context, callback)`; consumers receive complete immutable values. Draft
+  proxies exist only during the callback and become unusable afterward. Preparation
+  materializes a structurally shared immutable candidate and one exact decoded
+  operation batch, while each remote client/state stream owns independent path-codec
+  state. Replicas become unready on disconnect or replacement until rehydrated.
 
-- **Delta tracking** derives compact operations from tracked plain JSON at
-  flush time. It preserves string append/front-truncation and array-append
-  behavior without retaining mutation history, supports durable base batches,
-  and validates untrusted operations as they are applied.
+- **Delta tracking** records and coalesces operations over tracked plain JSON.
+  It preserves common string and array operations, supports durable base
+  batches, and validates untrusted operations as they are applied. Batches
+  guarantee convergence but are not canonical or necessarily minimal.
 
 - **Remote service sources** advertise services available outside a facet host
   and open bindings for the services its facets require. Bindings carry logical
@@ -86,40 +87,98 @@ close, or fresh hydration. Applications may place these values inside any
 routing, request, response, or event envelope; Chord does not prescribe that
 outer protocol.
 
+Provider subscriptions atomically capture a snapshot and buffer subsequent
+updates until activation. Activation and reentrant publication use the same FIFO.
+The provider retains at most 100 pending updates per subscription, excluding the
+running delivery. Adding update 101 replaces the entire pending queue with
+`{ type: "reset", snapshot }`: a current full subscription snapshot whose state
+members contain `[["r", value]]` and their new sequence baselines. It also captures
+current instance membership, so discarded spawn/close/replacement events cannot
+leave stale instances behind. Live keyed generations retain their existing handles.
+The reset carries the context of the publication that triggered overflow.
+
+Consumers and codecs must handle this explicit reset before accepting subsequent
+ordinary deltas. A root operation in an ordinary `state` update does **not** permit
+a sequence gap. Resets restart the subscription's path dictionaries, and later
+deltas must be contiguous from each reset baseline. Transport adapters must
+preserve snapshot/reset/update order; they must not drop encoded delta batches or
+assume their own asynchronous queues are bounded by the provider's queue.
+
 ## Tracking JSON deltas
 
-Import the standalone delta primitive from `@earendil-works/chord/delta`:
+Import the standalone transactional tracker from `@earendil-works/chord/delta`:
 
 ```ts
-import { apply, track } from "@earendil-works/chord/delta";
+import { applyImmutable, track } from "@earendil-works/chord/delta";
 
-const changes = track({ output: "", count: 0 });
-changes.flush(); // opening base batch
-changes.state.output += "done\n";
-changes.state.count += 1;
+const tracker = track({ output: "", count: 0 });
+const change = tracker.beginChange();
+change.state.output += "done\n";
+change.state.count += 1;
+const prepared = change.prepare();
 
-const ops = changes.flush();
-const replica = apply({ output: "", count: 0 }, ops);
+tracker.adopt(prepared);
+const replica = applyImmutable(prepared.base, prepared.ops);
 ```
 
-The first flush is always a complete base batch. Later flushes contain path-based
-changes. `applyImmutable()` applies those batches while preserving prior replica
-revisions. `replicatedState(initial)` uses tracking directly:
+`tracker.value` is always the latest adopted immutable revision. Preparation does
+not change authority; adoption validates the preparation and swaps the root pointer.
+Assigned containers are copied by value and unchanged subtrees may be shared between
+revisions.
+
+The tracker uses trusted immutable ownership rather than defensive copying or
+freezing. `track(initial)`, `prepareReplace(value)`, `replicatedState(initial)`, and
+`replace(context, value)` take ownership of alias-free strict-JSON roots without
+walking them. Callers must not mutate transferred or published data. Values placed
+through drafts are already copied, so that walk also rejects non-strict JSON before
+the draft changes. Published values are not frozen. In-process loopback consumers
+may share their containers with the provider; mutating a consumed value violates
+the contract and can corrupt authority. Clone or serialize at any mutable trust
+boundary.
+
+Replicated state provides the same model through a callback:
 
 ```ts
-const status = env.replicatedState({ output: "", count: 0 });
-status.state.output += "done\n";
-status.state.count += 1;
-status.publish(context);
+const initial = { output: "", count: 0 };
+const status = env.replicatedState(initial); // transfers ownership of initial
+status.change(context, (draft) => {
+	draft.output += "done\n";
+	draft.count += 1;
+});
 ```
 
-`publish()` flushes once; remote connection plumbing encodes that operation batch
-independently for every client/state pairing. String assignments preserve pure
-appends and rolling-window movement as append and front-truncate operations;
-unrelated rewrites fall back to a set. Values inserted into tracked state become
-tracker-owned and must subsequently be mutated only through `state`. See the
-[Delta guide](src/delta/README.md) for mutation, array, lifecycle, and
-consumer-ownership rules.
+A successful `change()` publishes exactly one atomic revision. If its callback
+throws, the original value and sequence remain unchanged. Draft handles become
+unusable when the callback returns. Chord emits string append and front-truncate
+operations, array splices and permutations, sets, and deletes; large edit sets may
+fold into a complete replacement. Remote connection plumbing encodes each batch
+independently for every client/state pairing.
+
+### Public state subscriptions
+
+`state.subscribe(async (value, context, delivery) => { ... })` serializes callbacks
+independently for each subscription. Hydration starts immediately when a value is
+available, and its returned promise must settle before updates start. Synchronous
+callbacks still run synchronously. Read the captured `value` inside an asynchronous
+callback: `state.value` may already refer to a later revision.
+
+Each subscription retains at most 100 pending complete-value deliveries, excluding
+the running callback. On overflow, only the newest pending value, context, and
+delivery metadata are retained; a not-yet-started initial hydration is preserved.
+Thus public delivery sequences may skip. This is a frame-count policy, not a byte
+limit. Internal exact-operation subscriptions remain synchronous and receive every
+revision, independently of slow public callbacks.
+
+The returned unsubscribe function immediately discards pending work and prevents
+new callbacks. It neither aborts nor waits for the running callback. Synchronous
+throws and promise rejections are observed, reported, and do not stop other
+subscriptions or subsequent callbacks. Attached sources and remote bindings use
+their `onError` handler; local mutable states (and attached sources without a
+handler) report failures by throwing in a microtask. Unsubscribing does not hide a
+later rejection from the running callback.
+
+The standalone [Delta guide](src/delta/README.md) defines the complete ownership,
+lifecycle, operation, and replica contracts.
 
 ## Bundling and loading facets
 
@@ -193,10 +252,10 @@ receiving host.
 
 To reload, load a candidate, pass its facets to `FacetHost.reload()`, dispose the
 candidate on failure, and dispose the retired `LoadedFacets` only after a
-successful cutover. The host activates and validates the candidate while the old
-providers remain routed, then replaces each singleton directly without an
-unavailable interval. Stable service handles therefore do not become disconnected
-during an ordinary reload. Keyed instances
+successful cutover. The host activates and validates the candidate while the
+currently active providers remain routed, then replaces each singleton directly
+without an unavailable interval. Stable service handles therefore do not become
+disconnected during an ordinary reload. Keyed instances
 remain incarnation-specific and replacements receive fresh generations. The
 bundler writes a complete temporary directory before replacing the previous
 output, so loaders do not observe partially built generations.

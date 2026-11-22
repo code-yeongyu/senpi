@@ -1,0 +1,40 @@
+{
+	"biome": "@biomejs/biome@2.5.14",
+	"rules": {
+		"biome-port/no-implicit-any-let": [
+			4,
+			5,
+			10,
+			11,
+			12,
+			13,
+			14,
+			15,
+			20
+		],
+		"biome-port/no-string-case-mismatch": [
+			3,
+			5,
+			8,
+			9,
+			11,
+			12,
+			14,
+			15,
+			21,
+			25,
+			26,
+			27
+		],
+		"senpi/model-type-comparison": [
+			3,
+			4,
+			5,
+			6,
+			7,
+			8,
+			11,
+			17
+		]
+	}
+}

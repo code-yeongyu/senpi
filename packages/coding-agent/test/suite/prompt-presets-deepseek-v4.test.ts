@@ -108,9 +108,9 @@ function expectedCatalogPreset(model: Model<Api>): string | undefined {
 
 function getDeepseekV4CatalogModels(): Array<{ model: Model<Api>; expected: string }> {
 	return getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[])
+		getModels(provider)
 			.map((model) => ({ model, expected: expectedCatalogPreset(model) }))
-			.filter((entry): entry is { model: Model<Api>; expected: string } => entry.expected !== undefined),
+			.filter((entry): entry is typeof entry & { expected: string } => entry.expected !== undefined),
 	);
 }
 
@@ -209,17 +209,9 @@ describe("DeepSeek V4 prompt presets", () => {
 			.map(({ model, expected }) => `${model.provider}/${model.id} != ${expected}`);
 
 		// then
-		expect(catalogModelIds).toEqual(
-			expect.arrayContaining([
-				"deepseek/deepseek-v4-pro",
-				"openrouter/deepseek/deepseek-v4-flash-0731",
-				"openrouter/deepseek/deepseek-v4-flash",
-				"openrouter/deepseek/deepseek-v4-pro",
-				"opencode/deepseek-v4-flash",
-				"huggingface/deepseek-ai/DeepSeek-V4-Flash",
-				"together/deepseek-ai/DeepSeek-V4-Pro",
-			]),
-		);
+		// The catalog is regenerated before every release, so it names no catalog id; it only
+		// requires a non-empty scan, so the misses check below cannot pass vacuously.
+		expect(catalogModelIds.length).toBeGreaterThan(0);
 		expect(misses).toEqual([]);
 	});
 });

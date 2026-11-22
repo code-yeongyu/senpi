@@ -29,7 +29,7 @@ export const kernelToolDescriptorSchema = Type.Object({
 	name: Type.String({ minLength: 1 }),
 	description: Type.String(),
 	input_schema: Type.Unknown(),
-	language: Type.Literal("js"),
+	language: Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")]),
 	kernel_generation: Type.Integer({ minimum: 0 }),
 	definition_revision: Type.Integer({ minimum: 1 }),
 });
@@ -92,12 +92,20 @@ export const kernelToolKernelToHostSchemas = [
 		requestId: Type.String({ minLength: 1 }),
 		ok: Type.Literal(true),
 		value: Type.Unknown(),
+		/** Python: text the tool printed during this call (never the parent cell's output). */
+		output: Type.Optional(Type.String()),
 	}),
 	Type.Object({
 		type: Type.Literal("kernel-tool-invoke-reply"),
 		requestId: Type.String({ minLength: 1 }),
 		ok: Type.Literal(false),
 		error: kernelToolErrorSchema,
+		output: Type.Optional(Type.String()),
+	}),
+	/** Python: the kernel's tool names after a define or undefine, for cross-language collision checks. */
+	Type.Object({
+		type: Type.Literal("kernel-tools-defined"),
+		names: Type.Array(Type.String({ minLength: 1 })),
 	}),
 ] as const;
 

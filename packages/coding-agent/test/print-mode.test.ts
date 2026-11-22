@@ -1,5 +1,6 @@
 import type { AssistantMessage, ImageContent, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { REQUIRED_COMPACTION_ERROR_MESSAGE, RequiredCompactionError } from "../src/core/required-compaction-error.ts";
 import type { SessionShutdownEvent } from "../src/index.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";
 
@@ -65,7 +66,7 @@ function createAssistantMessage(options?: {
 	};
 }
 
-function createToolResultMessage(): ToolResultMessage<unknown> {
+function createToolResultMessage(): ToolResultMessage {
 	return {
 		role: "toolResult",
 		toolCallId: "call-1",
@@ -146,21 +147,78 @@ describe("runPrintMode", () => {
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
 	});
 
-	it("emits session_shutdown and returns non-zero on assistant error", async () => {
+	// senpi#4061: output format must not change the final run's success status.
+	it.each(["text", "json"] as const)(
+		"emits session_shutdown and returns non-zero on assistant error (%s)",
+		async (mode) => {
+			const runtimeHost = createRuntimeHost(
+				createAssistantMessage({ stopReason: "error", errorMessage: "provider failure" }),
+			);
+			const { session } = runtimeHost;
+			const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+			const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+				mode,
+			});
+
+			expect(exitCode).toBe(1);
+			if (mode === "text") expect(errorSpy).toHaveBeenCalledWith("provider failure");
+			else expect(errorSpy).not.toHaveBeenCalled();
+			expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
+			expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
+		},
+	);
+
+	it("json mode returns non-zero when the run ran out of context (senpi#2925)", async () => {
 		const runtimeHost = createRuntimeHost(
-			createAssistantMessage({ stopReason: "error", errorMessage: "provider failure" }),
+			createAssistantMessage({ stopReason: "error", errorMessage: REQUIRED_COMPACTION_ERROR_MESSAGE }),
 		);
-		const { session } = runtimeHost;
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
-			mode: "text",
+			mode: "json",
+			initialMessage: "Survey the pages",
 		});
 
 		expect(exitCode).toBe(1);
-		expect(errorSpy).toHaveBeenCalledWith("provider failure");
-		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
-		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
+	});
+
+	// senpi#4212: print mode has no slash commands, so the failed-compaction error must not name any.
+	it.each(["turn stop", "rejected prompt"] as const)(
+		"reports a failed compaction without slash commands in text mode (%s)",
+		async (route) => {
+			const runtimeHost = createRuntimeHost(
+				route === "turn stop"
+					? createAssistantMessage({ stopReason: "error", errorMessage: REQUIRED_COMPACTION_ERROR_MESSAGE })
+					: [],
+			);
+			if (route === "rejected prompt") runtimeHost.session.prompt.mockRejectedValue(new RequiredCompactionError());
+			const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+			const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+				mode: "text",
+				initialMessage: "Survey the pages",
+			});
+
+			expect(exitCode).toBe(1);
+			expect(errorSpy).toHaveBeenCalledWith(REQUIRED_COMPACTION_ERROR_MESSAGE);
+			expect(REQUIRED_COMPACTION_ERROR_MESSAGE).not.toMatch(/\/\w/);
+		},
+	);
+
+	it.each(["text", "json"] as const)("returns zero after an error recovers during settlement (%s)", async (mode) => {
+		const runtimeHost = createRuntimeHost(
+			createAssistantMessage({ stopReason: "error", errorMessage: "provider down" }),
+		);
+		runtimeHost.session.waitForSettledSessionWork.mockImplementation(async () => {
+			runtimeHost.session.state.messages.push(createAssistantMessage({ text: "recovered" }));
+		});
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode,
+			initialMessage: "Say hi",
+		});
+
+		expect(exitCode).toBe(0);
 	});
 
 	it("prints the last assistant text when a terminating tool result trails it", async () => {
@@ -177,19 +235,23 @@ describe("runPrintMode", () => {
 		expect(outputGuard.stdout.join("")).toBe("final answer\n");
 	});
 
-	it("returns non-zero when an aborted assistant message is followed by a tool result", async () => {
-		const runtimeHost = createRuntimeHost([
-			createAssistantMessage({ stopReason: "aborted", errorMessage: "user aborted" }),
-			createToolResultMessage(),
-		]);
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+	it.each(["text", "json"] as const)(
+		"returns non-zero when an aborted assistant message is followed by a tool result (%s)",
+		async (mode) => {
+			const runtimeHost = createRuntimeHost([
+				createAssistantMessage({ stopReason: "aborted", errorMessage: "user aborted" }),
+				createToolResultMessage(),
+			]);
+			const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
-			mode: "text",
-		});
+			const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+				mode,
+			});
 
-		expect(exitCode).toBe(1);
-		expect(errorSpy).toHaveBeenCalledWith("user aborted");
-		expect(outputGuard.stdout.join("")).toBe("");
-	});
+			expect(exitCode).toBe(1);
+			if (mode === "text") expect(errorSpy).toHaveBeenCalledWith("user aborted");
+			else expect(errorSpy).not.toHaveBeenCalled();
+			expect(outputGuard.stdout.join("")).toBe("");
+		},
+	);
 });

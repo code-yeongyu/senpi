@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import * as slotsNamespace from "../src/auth/pool/slots.ts";
 import { isManagedSentinelSlot } from "../src/auth/pool/slots.ts";
-import { normalizeProviderId } from "../src/legacy-provider-ids.ts";
 import type { Api, Model } from "../src/types.ts";
 import { resolvePromptCacheTtlSeconds } from "../src/utils/prompt-cache-ttl.ts";
 
@@ -16,15 +14,6 @@ import { resolvePromptCacheTtlSeconds } from "../src/utils/prompt-cache-ttl.ts";
  */
 
 describe("anthropic-subscription provider rename", () => {
-	it("normalizes the legacy claude-sdk-oauth id to anthropic-subscription", () => {
-		expect(normalizeProviderId("claude-sdk-oauth")).toBe("anthropic-subscription");
-		expect(normalizeProviderId("anthropic-subscription")).toBe("anthropic-subscription");
-	});
-
-	it("exposes a widened managedSentinelMaterials helper", () => {
-		expect(typeof slotsNamespace.managedSentinelMaterials).toBe("function");
-	});
-
 	it("matches BOTH the canonical and the legacy managed-sentinel material under the new id", () => {
 		// Stored credentials written by older builds keep `claude-sdk-oauth-managed`
 		// verbatim; a matcher keyed only on the new provider id would stop
@@ -63,6 +52,10 @@ describe("anthropic-subscription provider rename", () => {
 	});
 
 	it("keeps the wire api id frozen on the prompt-cache ttl table", () => {
-		expect(resolvePromptCacheTtlSeconds({ api: "claude-sdk-oauth" } as Model<Api>)).toBe(300);
+		// Only the Claude SDK lane reads Claude Code's own TTL override, so these prove the frozen id still reaches it
+		// whatever billing env the runner has.
+		const model = { api: "claude-sdk-oauth" } as Model<Api>;
+		expect(resolvePromptCacheTtlSeconds(model, { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" })).toBe(3600);
+		expect(resolvePromptCacheTtlSeconds(model, { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" })).toBe(300);
 	});
 });

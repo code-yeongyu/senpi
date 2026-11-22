@@ -4,8 +4,11 @@ import { kernelToolError } from "./kernel-tools-errors.js";
 // Only host-tool sugar: no admission, worker, or queue state belongs to the kernel.
 export async function createWorkpool(callTool, agent, name, options = {}) {
 	if (inKernelToolInvoke()) throw kernelToolError("kernel_tool_recursion", "kernel tools may not invoke workpool()");
-	if (options === null || typeof options !== "object" || Array.isArray(options) || Object.keys(options).some(key => key !== "mode")) {
-		throw new TypeError("workpool() options only accept mode");
+	if (options === null || typeof options !== "object" || Array.isArray(options) || Object.keys(options).some(key => key !== "mode" && key !== "tools")) {
+		throw new TypeError("workpool() options only accept mode and tools");
+	}
+	if (options.tools !== undefined && (!Array.isArray(options.tools) || !options.tools.every(name => typeof name === "string"))) {
+		throw workpoolError("invalid_tools", `workpool() tools takes an array of tool names; got ${Array.isArray(options.tools) ? "an array with a non-string" : typeof options.tools}`);
 	}
 	const call = async args => {
 		try {

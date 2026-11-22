@@ -15,6 +15,18 @@ export function abortedMessageForRendering(
 	return { ...message, errorMessage: abortedErrorLabel(message.errorMessage, retryAttempt, abortSource) };
 }
 
+/** Result text for a tool call the model emitted but that never ran because the turn ended (senpi#5064). */
+export const UNRUN_AFTER_ERROR = "Not run: the request failed.";
+
+/**
+ * `rendered` has been through `abortedMessageForRendering`. An abort keeps its label: when the turn ends in a
+ * tool call, the card is the abort's only notice. An error stop shows its classified notice once elsewhere, so the
+ * card never repeats the raw provider error.
+ */
+export function unrunToolCallText(rendered: AssistantMessage): string {
+	return rendered.stopReason === "aborted" ? rendered.errorMessage || "Provider request failed" : UNRUN_AFTER_ERROR;
+}
+
 export function abortedErrorLabel(
 	persisted: string | undefined,
 	retryAttempt: number,

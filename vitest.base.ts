@@ -7,16 +7,19 @@ export const workspaceSourcePaths = {
 	chordDelta: fileURLToPath(new URL("./packages/chord/src/delta/index.ts", import.meta.url)),
 	chordBundler: fileURLToPath(new URL("./packages/chord/src/bundler.ts", import.meta.url)),
 	chordNode: fileURLToPath(new URL("./packages/chord/src/node.ts", import.meta.url)),
+	realmRegistryIndex: fileURLToPath(new URL("./packages/realm-registry/src/index.ts", import.meta.url)),
 	telemetryIndex: fileURLToPath(new URL("./packages/telemetry/src/index.ts", import.meta.url)),
 	telemetryTesting: fileURLToPath(new URL("./packages/telemetry/src/testing/index.ts", import.meta.url)),
 	aiIndex: fileURLToPath(new URL("./packages/ai/src/index.ts", import.meta.url)),
 	aiCompat: fileURLToPath(new URL("./packages/ai/src/compat.ts", import.meta.url)),
 	aiOAuth: fileURLToPath(new URL("./packages/ai/src/oauth.ts", import.meta.url)),
+	aiApi: fileURLToPath(new URL("./packages/ai/src/api", import.meta.url)),
 	aiProviders: fileURLToPath(new URL("./packages/ai/src/providers", import.meta.url)),
 	aiAuthPool: fileURLToPath(new URL("./packages/ai/src/auth", import.meta.url)),
 	aiUtils: fileURLToPath(new URL("./packages/ai/src/utils", import.meta.url)),
 	agentIndex: fileURLToPath(new URL("./packages/agent/src/index.ts", import.meta.url)),
 	agentNode: fileURLToPath(new URL("./packages/agent/src/node.ts", import.meta.url)),
+	agentReadFolders: fileURLToPath(new URL("./packages/agent/src/read-folders.ts", import.meta.url)),
 	protocolIndex: fileURLToPath(new URL("./packages/protocol/src/index.ts", import.meta.url)),
 	clientIndex: fileURLToPath(new URL("./packages/client/src/index.ts", import.meta.url)),
 	clientUnix: fileURLToPath(new URL("./packages/client/src/unix.ts", import.meta.url)),
@@ -24,6 +27,11 @@ export const workspaceSourcePaths = {
 	serverUnix: fileURLToPath(new URL("./packages/server/src/transports/unix/index.ts", import.meta.url)),
 	codingAgentIndex: fileURLToPath(new URL("./packages/coding-agent/src/index.ts", import.meta.url)),
 	tuiIndex: fileURLToPath(new URL("./packages/tui/src/index.ts", import.meta.url)),
+	machineOpsIndex: fileURLToPath(new URL("./packages/machine-ops/src/index.ts", import.meta.url)),
+	machineOpsInProcessHolder: fileURLToPath(
+		new URL("./packages/machine-ops/src/process/in-process-holder.ts", import.meta.url),
+	),
+	machineOpsConformance: fileURLToPath(new URL("./packages/machine-ops/test/conformance/index.ts", import.meta.url)),
 } as const;
 
 export default defineConfig({
@@ -34,6 +42,7 @@ export default defineConfig({
 			{ find: /^@earendil-works\/chord\/delta$/, replacement: workspaceSourcePaths.chordDelta },
 			{ find: /^@earendil-works\/chord\/bundler$/, replacement: workspaceSourcePaths.chordBundler },
 			{ find: /^@earendil-works\/chord\/node$/, replacement: workspaceSourcePaths.chordNode },
+			{ find: /^@earendil-works\/pi-realm-registry$/, replacement: workspaceSourcePaths.realmRegistryIndex },
 			{ find: /^@earendil-works\/pi-telemetry$/, replacement: workspaceSourcePaths.telemetryIndex },
 			{ find: /^@earendil-works\/pi-telemetry\/testing$/, replacement: workspaceSourcePaths.telemetryTesting },
 			{ find: /^@earendil-works\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
@@ -42,6 +51,10 @@ export default defineConfig({
 			{
 				find: /^@earendil-works\/pi-ai\/utils\/(.+)$/,
 				replacement: `${workspaceSourcePaths.aiUtils}/$1.ts`,
+			},
+			{
+				find: /^@earendil-works\/pi-ai\/api\/(.+)$/,
+				replacement: `${workspaceSourcePaths.aiApi}/$1.ts`,
 			},
 			{
 				find: /^@earendil-works\/pi-ai\/providers\/(.+)$/,
@@ -53,12 +66,22 @@ export default defineConfig({
 			},
 			{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 			{ find: /^@earendil-works\/pi-agent-core\/node$/, replacement: workspaceSourcePaths.agentNode },
+			{ find: /^@earendil-works\/pi-agent-core\/read-folders$/, replacement: workspaceSourcePaths.agentReadFolders },
 			{ find: /^@earendil-works\/pi-protocol$/, replacement: workspaceSourcePaths.protocolIndex },
 			{ find: /^@earendil-works\/pi-client$/, replacement: workspaceSourcePaths.clientIndex },
 			{ find: /^@earendil-works\/pi-client\/unix$/, replacement: workspaceSourcePaths.clientUnix },
 			{ find: /^@earendil-works\/pi-server$/, replacement: workspaceSourcePaths.serverIndex },
 			{ find: /^@earendil-works\/pi-server\/unix$/, replacement: workspaceSourcePaths.serverUnix },
 			{ find: /^@earendil-works\/pi-tui$/, replacement: workspaceSourcePaths.tuiIndex },
+			{ find: /^@code-yeongyu\/senpi-machine-ops$/, replacement: workspaceSourcePaths.machineOpsIndex },
+			{
+				find: /^@code-yeongyu\/senpi-machine-ops\/in-process-holder$/,
+				replacement: workspaceSourcePaths.machineOpsInProcessHolder,
+			},
+			{
+				find: /^@code-yeongyu\/senpi-machine-ops\/conformance$/,
+				replacement: workspaceSourcePaths.machineOpsConformance,
+			},
 		],
 	},
 });

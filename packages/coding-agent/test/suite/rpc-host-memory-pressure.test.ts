@@ -25,12 +25,18 @@ interface SamplerHarness {
 	advance(ms: number): void;
 	/** Sets the footprint; RSS follows it unless given, as it does before any memory is returned. */
 	setMemoryMb(footprintMb: number, rssMb?: number): void;
+	/** Replaces the kernel listing the sampler reads; tests drive swap-outs between samples. */
+	setKernels(read: () => { sessionId: string; language: string; liveBytes: number; measure: string }[]): void;
+	/** Replaces the main-thread heap reading. */
+	setMainHeapBytes(bytes: number): void;
 }
 
 function createSampler(env: Record<string, string | undefined> = {}): SamplerHarness {
 	let clock = 0;
 	let footprintBytes = 0;
 	let rssBytes = 0;
+	let mainHeapBytes = 0;
+	let kernels: () => { sessionId: string; language: string; liveBytes: number; measure: string }[] = () => [];
 	const records: RpcHostMemoryPressureEvent[] = [];
 	const logs: string[] = [];
 	const pressure: boolean[] = [];
@@ -42,6 +48,8 @@ function createSampler(env: Record<string, string | undefined> = {}): SamplerHar
 		now: () => clock,
 		readFootprint: () => ({ bytes: footprintBytes, measure: "phys_footprint" }),
 		readRssBytes: () => rssBytes,
+		readMainHeap: () => mainHeapBytes,
+		readKernels: () => kernels(),
 		env,
 	});
 	return {
@@ -55,6 +63,12 @@ function createSampler(env: Record<string, string | undefined> = {}): SamplerHar
 		setMemoryMb: (footprintMb, rssMb = footprintMb) => {
 			footprintBytes = footprintMb * MEGABYTE;
 			rssBytes = rssMb * MEGABYTE;
+		},
+		setKernels: (read) => {
+			kernels = read;
+		},
+		setMainHeapBytes: (bytes) => {
+			mainHeapBytes = bytes;
 		},
 	};
 }
@@ -90,6 +104,8 @@ describe("host memory pressure", () => {
 			footprintMb,
 			measure: "phys_footprint",
 			sessions: 3,
+			main: { heapBytes: 0 },
+			kernels: [],
 		};
 		expect(harness.records).toEqual([record, record, record]);
 		expect(harness.logs).toHaveLength(2);
@@ -119,7 +135,15 @@ describe("host memory pressure", () => {
 		harness.sampler.sample();
 		// Then the override decides
 		expect(harness.records).toEqual([
-			{ type: "host_memory_pressure", rssMb: 300, footprintMb: 300, measure: "phys_footprint", sessions: 3 },
+			{
+				type: "host_memory_pressure",
+				rssMb: 300,
+				footprintMb: 300,
+				measure: "phys_footprint",
+				sessions: 3,
+				main: { heapBytes: 0 },
+				kernels: [],
+			},
 		]);
 	});
 
@@ -170,6 +194,8 @@ describe("host memory pressure", () => {
 			log: () => {},
 			readFootprint: () => ({ bytes: (DEFAULT_HOST_RSS_WARN_MB + 8) * MEGABYTE, measure: "rss_anon" }),
 			readRssBytes: () => (DEFAULT_HOST_RSS_WARN_MB + 20) * MEGABYTE,
+			readMainHeap: () => 96 * MEGABYTE,
+			readKernels: () => [],
 			env: {},
 		});
 		// When a sample lands above the threshold
@@ -182,6 +208,8 @@ describe("host memory pressure", () => {
 			footprintMb: DEFAULT_HOST_RSS_WARN_MB + 8,
 			measure: "rss_anon",
 			sessions: 12,
+			main: { heapBytes: 96 * MEGABYTE },
+			kernels: [],
 		});
 	});
 
@@ -238,6 +266,113 @@ describe("host memory pressure", () => {
 			router.sweepIdleSessions();
 			// Then the full window applies again and the session keeps running
 			expect(registry.closes).toEqual([]);
+		} finally {
+			await router.dispose();
+		}
+	});
+
+	it("carries the main heap and each session's kernels on the pressure event", () => {
+		// senpi#1960: one sample above the threshold names the main-thread heap and every kernel the
+		// registry holds, so a client sees which session owns the pressure without an external probe.
+		// Given a host above the threshold with one kernel on each of two sessions
+		const harness = createSampler();
+		harness.setKernels(() => [
+			{ sessionId: "sess-a", language: "js", liveBytes: 220 * MEGABYTE, measure: "heap" },
+			{ sessionId: "sess-b", language: "py", liveBytes: 150 * MEGABYTE, measure: "footprint" },
+		]);
+		harness.setMainHeapBytes(64 * MEGABYTE);
+		harness.setMemoryMb(DEFAULT_HOST_RSS_WARN_MB + 512);
+		// When it samples
+		harness.sampler.sample();
+		// Then the record carries the main heap and the per-session kernel split
+		expect(harness.records).toEqual([
+			{
+				type: "host_memory_pressure",
+				rssMb: DEFAULT_HOST_RSS_WARN_MB + 512,
+				footprintMb: DEFAULT_HOST_RSS_WARN_MB + 512,
+				measure: "phys_footprint",
+				sessions: 3,
+				main: { heapBytes: 64 * MEGABYTE },
+				kernels: [
+					{ sessionId: "sess-a", language: "js", liveBytes: 220 * MEGABYTE, measure: "heap" },
+					{ sessionId: "sess-b", language: "py", liveBytes: 150 * MEGABYTE, measure: "footprint" },
+				],
+			},
+		]);
+	});
+
+	it("reports a kernel without a reading yet as liveBytes 0, and a vanished kernel not at all", () => {
+		// Given a host above the threshold whose kernel registry first holds a reading-less kernel
+		const harness = createSampler();
+		const kernels = [{ sessionId: "sess-a", language: "js", liveBytes: 0, measure: "heap" }];
+		harness.setKernels(() => kernels);
+		harness.setMainHeapBytes(32 * MEGABYTE);
+		harness.setMemoryMb(DEFAULT_HOST_RSS_WARN_MB + 1);
+		// When it samples
+		harness.sampler.sample();
+		// Then the kernel is present with liveBytes 0, never a stale or null number
+		expect(harness.records[0]?.kernels).toEqual([
+			{ sessionId: "sess-a", language: "js", liveBytes: 0, measure: "heap" },
+		]);
+		// When the kernel crashes out of the registry between samples
+		harness.setKernels(() => []);
+		harness.sampler.sample();
+		// Then the next reading names no kernel rather than the stale one
+		expect(harness.records[1]?.kernels).toEqual([]);
+	});
+});
+
+describe("per-session memory on the session listing (#1960)", () => {
+	it("publishes main and kernel heap per session row on list_sessions, and zeros without a kernel", async () => {
+		// Given a router whose kernel view holds one JS kernel on its only session
+		const entry = idleEntry(0);
+		const registry = evictionRegistry(entry);
+		const router = new SessionCommandRouter(
+			registry,
+			new SessionEventWriter(() => {}),
+			{ cwd: process.cwd() },
+			undefined,
+			{},
+			{ idleEvictionMs: Number.POSITIVE_INFINITY },
+		);
+		try {
+			router.setHostMemoryView({
+				mainHeapBytes: () => 48 * MEGABYTE,
+				kernels: () => [{ sessionId: "rpc-1", language: "js", liveBytes: 200 * MEGABYTE, measure: "heap" }],
+			});
+			// When a client lists sessions
+			const reply = await router.handle({ id: "list-1", type: "list_sessions", include_workers: true });
+			// Then the row carries the main heap and that kernel's heap, so the owner is visible on the wire
+			expect(reply).toMatchObject({
+				type: "response",
+				command: "list_sessions",
+				success: true,
+				data: {
+					sessions: [
+						{
+							sessionId: "rpc-1",
+							memory: { main_heap_bytes: 48 * MEGABYTE, kernel_heap_bytes: 200 * MEGABYTE, kernel_count: 1 },
+						},
+					],
+				},
+			});
+			// When the kernel is gone from the view (crash, close)
+			router.setHostMemoryView({
+				mainHeapBytes: () => 48 * MEGABYTE,
+				kernels: () => [],
+			});
+			const empty = await router.handle({ id: "list-2", type: "list_sessions", include_workers: true });
+			// Then the row reports zeros, never null and never the stale kernel
+			expect(empty).toMatchObject({
+				data: {
+					sessions: [
+						{
+							sessionId: "rpc-1",
+							memory: { main_heap_bytes: 48 * MEGABYTE, kernel_heap_bytes: 0, kernel_count: 0 },
+						},
+					],
+				},
+			});
 		} finally {
 			await router.dispose();
 		}

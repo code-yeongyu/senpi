@@ -33,8 +33,6 @@ src/core/extensions/builtin/       In-tree fork extensions; bundled extensions (
 src/core/tools/                    Upstream-parity built-in tools
 src/core/compaction/               Core compaction mechanics
 src/modes/interactive/             TUI mode and components
-src/modes/app-server/              App-server transport and RPC registry; runtime.ts
-                                   wiring, search/ fuzzy file search
 src/modes/rpc/                     JSONL RPC mode/client/types, shared Unix-socket multi-session host,
                                    ensureHost handshake, lifecycle supervisor/watchdog, and the ordered command
                                    surface (get_commands / commands_changed)
@@ -55,7 +53,7 @@ src/changes.md                     Root fork-change record
 | Change model/provider/catalog/auth runtime | `src/core/model-runtime.ts` + related `model-*/provider-*` modules |
 | Change keybinding | `src/core/keybindings.ts` |
 | Change interactive UI | `src/modes/interactive/` |
-| Change RPC/app-server | matching directory under `src/modes/` |
+| Change RPC | `src/modes/rpc/` |
 | Add regression | `test/suite/regressions/` |
 | Add or update an example | `examples/` and the matching public docs |
 
@@ -68,7 +66,7 @@ src/changes.md                     Root fork-change record
 - Keep branding consistent: package `@code-yeongyu/senpi`, binary `senpi`, config directory `.senpi`.
 - Preserve the inlined UUIDv7 implementation; do not add a `uuid` dependency.
 - Do not run real providers in tests. Use `test/suite/harness.ts` and the faux provider.
-- RPC-mode JSONL is bounded and strict: LF-only framing, `MAX_RPC_LINE_CHARACTERS` 16 MiB line ceiling with oversized-record resynchronization, and `MAX_RPC_MESSAGE_CHARACTERS` 1,000,000-character message limit (`src/modes/rpc/jsonl.ts`, `src/modes/rpc/rpc-input-validation.ts`); preserve those bounds. App-server outbound stdio waits for stdout backpressure (`transports/stdio.ts`) and WebSocket closes slow clients at queue cap (`transports/websocket-connection-handler.ts`); app-server inbound NDJSON readers are not size-bounded — preserve those contracts.
+- RPC-mode JSONL is bounded and strict: LF-only framing, `MAX_RPC_LINE_CHARACTERS` 16 MiB line ceiling with oversized-record resynchronization, and `MAX_RPC_MESSAGE_CHARACTERS` 1,000,000-character message limit (`src/modes/rpc/jsonl.ts`, `src/modes/rpc/rpc-input-validation.ts`); preserve those bounds.
 - The RPC command surface (`get_commands`, post-baseline `commands_changed`, `command_invocation`/`skill_invocation` metadata) is owned by `src/modes/rpc/`; the suppressed initial `commands_changed` (baseline digest starts `undefined`) is intentional — see `src/modes/rpc/AGENTS.md`.
 - MCP token/log storage preserves restricted directory/file permissions; do not widen inherited child environments. RPC child stderr is currently emitted and embedded raw, so treat diagnostics as potentially secret-bearing and do not claim redaction without implementing it.
 
@@ -99,7 +97,6 @@ These pages must track their implementation counterparts. Treat them as specs, n
 | Page | Tracks |
 |------|--------|
 | `docs/rpc.md` | `src/modes/rpc/` |
-| `docs/app-server.md` | `src/modes/app-server/` |
 | `json.md` | JSONL wire format and record shapes |
 | `session-format.md` | Session file structure and field types |
 | `extensions.md` | Public extension API in `src/core/extensions/`; largest page — API tables must match `types.ts` |
@@ -107,12 +104,6 @@ These pages must track their implementation counterparts. Treat them as specs, n
 
 Preserve LF line endings and exact field names in these pages. Field spellings and JSONL record
 structures are asserted by tests; prose-only rewording can still break them.
-
-### Validators
-
-- `packages/coding-agent/test/qa/app-server/task20-doc-example-check.ts`: Spins up a live
-  app-server process and validates that JSON examples in `app-server.md` match actual server
-  behavior. Prose edits to `app-server.md` that change JSON shapes will fail this test.
 
 ### Terminology
 
@@ -135,7 +126,6 @@ Consistent names: CLI binary is `senpi`, config directory is `.senpi`, npm packa
 ### Anti-patterns
 
 - No new `.md` file without a `docs.json` entry.
-- Don't edit protocol page prose without checking whether `task20-doc-example-check.ts` would break.
 - Don't copy claims from upstream Pi docs without verifying they apply to the senpi fork.
 - Don't embed bearer tokens, session IDs, or raw API keys in example output.
 
@@ -152,7 +142,7 @@ Consistent names: CLI binary is `senpi`, config directory is `.senpi`, npm packa
 - Run changed test files from this package; issue regressions use `<issue>-<slug>.test.ts`.
 - Code changes require root `bun run check` plus the applicable `senpi-qa` CLI channel and saved evidence.
 - Interactive changes also follow `src/modes/interactive/AGENTS.md`; extension/tool changes follow their nearest child guide.
-- App-server, test, and example changes follow their local `AGENTS.md` files.
+- RPC, test, and example changes follow their local `AGENTS.md` files.
 - Keep `src/changes.md`, nested `changes.md`, public docs, and examples aligned with fork behavior.
 
 ---

@@ -1,10 +1,19 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import { formatModelTruncationNotice } from "../output/output-meta.ts";
 import { DEFAULT_MAX_BYTES, TailLineRing } from "../output/streaming-output.ts";
 import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
-import type { EvalMemoryDetails, EvalRuntimeInfo, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
+import { type CellToolUpdateSink, NestedToolOutput } from "./nested-tool-output.ts";
+import type {
+	EvalKernelState,
+	EvalMemoryDetails,
+	EvalRuntimeInfo,
+	EvalStatusEvent,
+	EvalToolDetails,
+	EvalToolInput,
+} from "./types.ts";
 
 const LIVE_UPDATE_LINES = 8;
 /** Same cadence as the core bash tool's streaming updates (BASH_UPDATE_THROTTLE_MS). */
@@ -43,10 +52,14 @@ export interface CellResultBuilderOptions {
 	readonly state: CellState;
 }
 
-export class CellResultBuilder {
+export class CellResultBuilder implements CellToolUpdateSink {
 	readonly #output: EvalOutputCollector;
+	readonly #nestedTools = new NestedToolOutput();
+	#finished = false;
 	readonly #state: CellState;
 	#memory: KernelMemoryReport | undefined;
+	#restartNotice: string | undefined;
+	#kernelState: EvalKernelState | undefined;
 	readonly #liveLines = new TailLineRing({ maxBytes: DEFAULT_MAX_BYTES * 2, maxLines: LIVE_UPDATE_LINES });
 	#lastOutputUpdateAt = 0;
 	#outputUpdateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -60,6 +73,7 @@ export class CellResultBuilder {
 			...(options.artifactPath === undefined ? {} : { artifactPath: options.artifactPath }),
 			...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
 			onChunk: (chunk) => {
+				this.#nestedTools.releaseSettled();
 				this.#liveLines.append(chunk);
 				this.#scheduleOutputUpdate();
 			},
@@ -84,8 +98,10 @@ export class CellResultBuilder {
 	async finalize(result: KernelResult): Promise<AgentToolResult<EvalToolDetails>> {
 		this.#state.durationMs = result.durationMs;
 		this.#memory = result.memory;
+		this.#restartNotice = result.notice;
+		this.#kernelState = result.kernelState;
 		if (result.ok) {
-			if (result.valueRepr) this.#output.push(`${result.valueRepr}\n`);
+			if (result.valueRepr) this.#output.pushValue(`${result.valueRepr}\n`);
 			this.#state.status = "complete";
 		} else {
 			this.#state.error = result.error.message;
@@ -106,8 +122,29 @@ export class CellResultBuilder {
 		await this.#output.flush();
 	}
 
+	/** A nested tool's partial result streams through the same throttled live update as the cell's own output (#6167). */
+	nestedToolUpdate(callId: string, partial: AgentToolResult<unknown>): void {
+		if (this.#finished || !this.#nestedTools.update(callId, partial)) return;
+		this.#scheduleOutputUpdate();
+	}
+
+	/** Settling changes nothing on screen (the call's lines stay until the cell replaces them), so it emits nothing. */
+	nestedToolSettled(callId: string): void {
+		this.dropNestedTool(callId);
+	}
+
+	/**
+	 * Marks a call settled without emitting: its lines stay in the live view until the cell's own next output or its
+	 * completion replaces them (#6257).
+	 */
+	dropNestedTool(callId: string): boolean {
+		if (!this.#nestedTools.drop(callId)) return false;
+		this.#state.output = this.#liveCellOutput();
+		return true;
+	}
+
 	liveResult(): AgentToolResult<EvalToolDetails> {
-		this.#state.output = this.#output.cellTailText();
+		this.#state.output = this.#liveCellOutput();
 		return {
 			content: [{ type: "text", text: this.#liveUpdateText() }],
 			details: this.#details(undefined, this.#state.status === "error"),
@@ -137,8 +174,12 @@ export class CellResultBuilder {
 
 	#emitOutputUpdate(): void {
 		this.#lastOutputUpdateAt = Date.now();
-		this.#state.output = this.#output.cellTailText();
+		this.#state.output = this.#liveCellOutput();
 		this.emitUpdate(false);
+	}
+
+	#liveCellOutput(): string {
+		return this.#nestedTools.appendTo(this.#output.cellTailText());
 	}
 
 	#clearOutputUpdateTimer(): void {
@@ -148,19 +189,23 @@ export class CellResultBuilder {
 	}
 
 	async #finish(isError: boolean): Promise<AgentToolResult<EvalToolDetails>> {
+		this.#finished = true;
+		this.#nestedTools.clear();
 		this.#clearOutputUpdateTimer();
 		const output = await this.#output.finish();
 		this.#state.output = output.output;
 		const details = this.#details(output, isError);
 		this.emitUpdate(isError);
-		const text =
+		const shown =
 			output.output ||
 			(output.images.length > 0
 				? `(displayed ${output.images.length} image${output.images.length === 1 ? "" : "s"}; no text output)`
 				: "(no output)");
-		const notice = this.#memory?.notice;
-		const noticePart = notice === undefined ? [] : [{ type: "text" as const, text: notice }];
-		return { content: [{ type: "text", text }, ...noticePart, ...output.images], details };
+		const text = output.meta === undefined ? shown : `${shown}\n${formatModelTruncationNotice(output.meta)}`;
+		const noticeParts = [this.#restartNotice, this.#memory?.notice].flatMap((notice) =>
+			notice === undefined ? [] : [{ type: "text" as const, text: notice }],
+		);
+		return { content: [{ type: "text", text }, ...noticeParts, ...output.images], details };
 	}
 
 	#details(output: EvalOutputResult | undefined, isError: boolean): EvalToolDetails {
@@ -200,15 +245,18 @@ export class CellResultBuilder {
 			...(output?.notice === undefined ? {} : { notice: output.notice }),
 			...(output?.meta === undefined ? {} : { meta: output.meta }),
 			...(output === undefined || this.#memory === undefined ? {} : { memory: memoryDetails(this.#memory) }),
+			...(this.#kernelState === undefined ? {} : { kernelState: this.#kernelState }),
 		};
 	}
 
 	#liveUpdateText(): string {
-		if (this.#state.status === "queued" && this.#state.queuedBehind?.length) {
-			return `queued behind ${this.#state.queuedBehind.join(", ")} in the ${this.#state.input.language} kernel`;
+		if (this.#state.status === "queued" && this.#state.queuedBehind !== undefined) {
+			return this.#state.queuedBehind.length === 0
+				? `waiting for the ${this.#state.input.language} kernel to be ready`
+				: `queued behind ${this.#state.queuedBehind.join(", ")} in the ${this.#state.input.language} kernel`;
 		}
 		const summary = this.#state.input.summary === undefined ? "" : ` ${this.#state.input.summary}`;
-		const output = this.#liveLines.text();
+		const output = this.#nestedTools.appendLines(this.#liveLines.text(), LIVE_UPDATE_LINES);
 		return `1/1 cells ${this.#state.status}\n[1] ${this.#state.input.language}${summary} ${this.#state.status}${output.length === 0 ? "" : `\n${output}`}`;
 	}
 }

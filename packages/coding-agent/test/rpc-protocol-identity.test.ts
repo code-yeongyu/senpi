@@ -11,11 +11,16 @@
  * Cells: the pure derivation (argv -> profile, env -> generation), then one spawned
  * socket host (the daemon path) and one spawned classic stdio host (the other answer
  * site, `connection-handler.ts`).
+ *
+ * Both answers also carry `method_classes` (senpi#5473): a remote forwarder classifies with its
+ * own copy of the method-class table only while that copy's digest equals the running engine's,
+ * so the advertised pair must be the table this process actually loaded.
  */
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
 import { engineBuildIdentity, engineBuildIdentityFrom } from "../src/core/engine-build-identity.ts";
+import { RPC_METHOD_CLASSES_DIGEST, RPC_METHOD_CLASSES_VERSION } from "../src/modes/rpc/method-classes.ts";
 import { hostGeneration, hostLaunchProfile } from "../src/modes/rpc/protocol-identity.ts";
 import { MOCK_MODEL, MOCK_PROVIDER } from "./helpers/rpc-hermetic.ts";
 import {
@@ -28,6 +33,9 @@ import {
 	waitForJsonLine,
 	waitForStderr,
 } from "./rpc-protocol-identity-support.ts";
+
+/** The running table, as every `get_protocol_info` answer must advertise it. */
+const METHOD_CLASSES = { version: RPC_METHOD_CLASSES_VERSION, digest: RPC_METHOD_CLASSES_DIGEST };
 
 afterEach(cleanupSpawnedHosts);
 
@@ -124,6 +132,7 @@ describe("get_protocol_info identity", () => {
 			engineVersion: engineBuildIdentity().text,
 			engineOrdinal: [...engineBuildIdentityFrom({ version: VERSION }).ordinal],
 			launch_profile: { profile_id: expectedProfileId(core), core },
+			method_classes: METHOD_CLASSES,
 		});
 		expect(second.instanceId).toBe(first.instanceId);
 		expect((second.launch_profile as RecordValue).profile_id).toBe((first.launch_profile as RecordValue).profile_id);
@@ -146,6 +155,7 @@ describe("get_protocol_info identity", () => {
 				profile_id: expect.stringMatching(/^[0-9a-f]{64}$/),
 				core: { extensions: [], multi_session: false, session_runtime: "worker" },
 			},
+			method_classes: METHOD_CLASSES,
 		});
 	}, 60_000);
 });

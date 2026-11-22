@@ -10,11 +10,18 @@
  * verifies that the truth-table rows discriminating native-vs-client fail.
  */
 
-import type { AssistantImages, ImagesContext, ImagesModel, Model, ProviderImagesOptions } from "@earendil-works/pi-ai";
+import type {
+	AssistantImages,
+	ImageApi,
+	ImageModel,
+	ImagesContext,
+	Model,
+	ProviderImagesOptions,
+} from "@earendil-works/pi-ai";
 import { registerImagesApiProvider, unregisterImagesApiProviders } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ImageGenAuthRegistry } from "../../../src/core/extensions/builtin/imagegen/auth.ts";
-import imageGenExtension, { IMAGE_GEN_SECTION } from "../../../src/core/extensions/builtin/imagegen/index.ts";
+import imageGenExtension from "../../../src/core/extensions/builtin/imagegen/index.ts";
 import { setImageGenRegistry, setNativeBypass } from "../../../src/core/extensions/builtin/imagegen/state.ts";
 import type { GenerateImageDetails } from "../../../src/core/extensions/builtin/imagegen/tool.ts";
 import { supportsNativeOpenAiImageGeneration } from "../../../src/core/extensions/builtin/openai-image-gen/gate.ts";
@@ -132,7 +139,7 @@ function registerStubImagesProvider(): StubController {
 		{
 			api: "openai-images" as const,
 			async generateImages(
-				model: ImagesModel<"openai-images">,
+				model: ImageModel<ImageApi>,
 				_context: ImagesContext,
 				_options?: ProviderImagesOptions,
 			): Promise<AssistantImages> {
@@ -198,8 +205,6 @@ type EnvDirection = "on" | "off";
 interface Expected {
 	/** Skill paths emitted by resources_discover. */
 	skillPresent: boolean;
-	/** IMAGE_GEN_SECTION (client) from imagegen before_agent_start. */
-	clientSection: boolean;
 	/** OPENAI_IMAGE_GEN_SECTION (native) from openai-image-gen before_agent_start. */
 	nativeSection: boolean;
 	/** Tool behavior: missing_config | live | bypass. */
@@ -242,14 +247,14 @@ function registryFor(creds: CredDirection): ImageGenAuthRegistry {
 // skill must agree on the active image-generation surface.
 //
 // Native injection depends on: model (api=responses + official-or-compat) AND env=on.
-// Client tool behavior depends on: nativeBypass (set by injector) or resolveImageGenAuth.
-// Skill contribution depends on: resolveImageGenAuth != none.
+// Client tool behavior depends on: nativeBypass (set by injector) or imageGenAvailability.
+// Skill contribution depends on: imageGenAvailability != none.
 //
 // Coherence rules:
 //   nativeInjection > 0  →  toolBehavior = bypass  AND  nativeSection = true
 //   nativeInjection = 0  →  nativeSection = false
-//   creds != none        →  skillPresent = true  AND  clientSection = true (when not native)
-//   creds = none         →  skillPresent = false  AND  clientSection = false
+//   creds != none        →  skillPresent = true
+//   creds = none         →  skillPresent = false
 //   creds = none + nativeInjection = 0  →  toolBehavior = missing_config
 //   creds != none + nativeInjection = 0  →  toolBehavior = live
 
@@ -262,7 +267,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "no creds, official endpoint, env on → native injection without client creds",
 		expected: {
 			skillPresent: false,
-			clientSection: false,
 			nativeSection: true,
 			toolBehavior: "provider_native_bypass",
 			nativeInjection: 1,
@@ -275,7 +279,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "no creds, official endpoint, env off → unavailable",
 		expected: {
 			skillPresent: false,
-			clientSection: false,
 			nativeSection: false,
 			toolBehavior: "missing_config",
 			nativeInjection: 0,
@@ -288,7 +291,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "no creds, proxied endpoint, env on → unavailable",
 		expected: {
 			skillPresent: false,
-			clientSection: false,
 			nativeSection: false,
 			toolBehavior: "missing_config",
 			nativeInjection: 0,
@@ -301,7 +303,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "no creds, proxied endpoint, env off → unavailable",
 		expected: {
 			skillPresent: false,
-			clientSection: false,
 			nativeSection: false,
 			toolBehavior: "missing_config",
 			nativeInjection: 0,
@@ -314,7 +315,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "no creds, completions api, env on → unavailable, native stripped",
 		expected: {
 			skillPresent: false,
-			clientSection: false,
 			nativeSection: false,
 			toolBehavior: "missing_config",
 			nativeInjection: 0,
@@ -327,7 +327,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "no creds, azure responses, env on → unavailable (azure defaults false)",
 		expected: {
 			skillPresent: false,
-			clientSection: false,
 			nativeSection: false,
 			toolBehavior: "missing_config",
 			nativeInjection: 0,
@@ -342,7 +341,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "gateway creds, official endpoint, env on → native injection + bypass",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: true,
 			toolBehavior: "provider_native_bypass",
 			nativeInjection: 1,
@@ -355,7 +353,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "gateway creds, official endpoint, env off → client tool live",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -368,7 +365,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "gateway creds, proxied endpoint, env on → client tool live",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -381,7 +377,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "gateway creds, proxied endpoint, env off → client tool live",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -394,7 +389,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "gateway creds, completions api, env on → client tool live, native stripped",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -407,7 +401,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "gateway creds, azure responses, env on → client tool live (azure defaults false)",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -422,7 +415,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "native creds, official endpoint, env on → native injection + bypass",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: true,
 			toolBehavior: "provider_native_bypass",
 			nativeInjection: 1,
@@ -435,7 +427,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "native creds, official endpoint, env off → client tool live",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -448,7 +439,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "native creds, proxied endpoint, env on → client tool live (proxied defaults client)",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -461,7 +451,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "native creds, proxied endpoint, env off → client tool live",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -474,7 +463,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "native creds, completions api, env on → client tool live, native stripped",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -487,7 +475,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "native creds, azure responses, env on → client tool live (azure defaults false)",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -502,7 +489,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "gateway creds, official + compat false, env on → client tool live",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: false,
 			toolBehavior: "live",
 			nativeInjection: 0,
@@ -515,7 +501,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "gateway creds, proxied + compat true, env on → native injection + bypass",
 		expected: {
 			skillPresent: true,
-			clientSection: true,
 			nativeSection: true,
 			toolBehavior: "provider_native_bypass",
 			nativeInjection: 1,
@@ -528,7 +513,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "no creds, proxied + compat true, env on → native injection without client creds",
 		expected: {
 			skillPresent: false,
-			clientSection: false,
 			nativeSection: true,
 			toolBehavior: "provider_native_bypass",
 			nativeInjection: 1,
@@ -541,7 +525,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "no creds, proxied + compat true, env off → unavailable",
 		expected: {
 			skillPresent: false,
-			clientSection: false,
 			nativeSection: false,
 			toolBehavior: "missing_config",
 			nativeInjection: 0,
@@ -554,7 +537,6 @@ const TRUTH_TABLE: TruthRow[] = [
 		label: "no creds, official + compat false, env on → unavailable",
 		expected: {
 			skillPresent: false,
-			clientSection: false,
 			nativeSection: false,
 			toolBehavior: "missing_config",
 			nativeInjection: 0,
@@ -667,9 +649,8 @@ describe("imagegen arbitration truth table", () => {
 
 			// ── prompt section coherence ────────────────────────────────
 			const systemPrompt = await getSystemPrompt(harness);
-			expect(systemPrompt.includes(IMAGE_GEN_SECTION.trim()), "client section presence must match").toBe(
-				exp.clientSection,
-			);
+			// senpi#5335: the client lane adds no prompt section; the skill catalog line carries the trigger.
+			expect(systemPrompt, "client section is never added").not.toContain("read the gpt-image-gen skill");
 			expect(systemPrompt.includes(OPENAI_IMAGE_GEN_SECTION.trim()), "native section presence must match").toBe(
 				exp.nativeSection,
 			);
@@ -695,7 +676,6 @@ describe("imagegen arbitration truth table", () => {
 					hasNative,
 				);
 				expect(exp.nativeSection, `${row.label}: native section ⟺ native injection`).toBe(hasNative);
-				expect(exp.clientSection, `${row.label}: client section ⟺ creds exist`).toBe(row.creds !== "none");
 			}
 		});
 

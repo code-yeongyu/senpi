@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { FIXTURE_MAX_MODEL_ID, installMaxEffortFixtureCatalog } from "../../../ai/test/fixture-model-catalog.ts";
 import { discoverProviderModels } from "../../src/core/model-discovery.ts";
 import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { type ListingServer, readProviderModels, startListingServer } from "./models-discover-support.ts";
@@ -92,6 +93,23 @@ describe("discoverProviderModels", () => {
 		const model = await runtimeModel("effort-model");
 		expect(model.defaultThinkingLevel).toBe("high");
 		expect(getSupportedThinkingLevels(model)).toEqual(["low", "high"]);
+	});
+
+	it("keeps discovered efforts authoritative when the same fixture id has a catalog max", async () => {
+		installMaxEffortFixtureCatalog();
+		writeProvider({ compat: { supportsReasoningEffort: true } });
+		server.listing = {
+			status: 200,
+			body: {
+				data: [{ id: FIXTURE_MAX_MODEL_ID, reasoning_efforts: [{ value: "low" }, { value: "high" }] }],
+			},
+		};
+
+		await discover();
+		const model = await runtimeModel(FIXTURE_MAX_MODEL_ID);
+
+		expect(getSupportedThinkingLevels(model)).toEqual(["low", "high"]);
+		expect(clampThinkingLevel(model, "max")).toBe("high");
 	});
 
 	it("ignores advertised efforts without compat.supportsReasoningEffort", async () => {

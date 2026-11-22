@@ -22,6 +22,8 @@ export function createKernelToolRegistry(options?: KernelToolRegistryOptions): {
 		},
 		signal?: AbortSignal,
 	): Promise<unknown>;
+	defined(): string[];
+	undefine(name: unknown): boolean;
 	bumpGeneration(): number;
 	setCollisionNames(hostToolNames?: readonly string[], foreignLanguageNames?: readonly string[]): void;
 };

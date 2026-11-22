@@ -1,4 +1,6 @@
-import { isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
+import { type AssistantMessage, describeProviderFailureForUser, isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
+import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
+import type { SessionEntry } from "../session-manager.ts";
 import { isBillingErrorMessage } from "./billing.ts";
 
 /**
@@ -11,20 +13,97 @@ import { isBillingErrorMessage } from "./billing.ts";
  */
 export type UsageLimitScope = "model" | "account";
 
+export class AccountUsageLimitError extends Error {
+	/**
+	 * `families`: a no-family weekly limit confirmed on these families before it held the provider (senpi#5596).
+	 * `accountsOut`: a pooled provider's accounts, each with why it cannot serve (senpi#5590).
+	 */
+	constructor(
+		provider: string,
+		raw = "usage limit reached",
+		resetsAt?: number,
+		families?: readonly string[],
+		accountsOut?: string,
+	) {
+		const message = describeProviderFailureForUser(raw, {
+			model: provider,
+			usageLimit: "account",
+			...(resetsAt === undefined ? {} : { resetsAt: formatResetTime(resetsAt) }),
+		});
+		const withFamilies =
+			families === undefined || families.length === 0
+				? message
+				: `${message} The limit named no model family; it was confirmed on ${families.join(" and ")}.`;
+		super(accountsOut === undefined ? withFamilies : `${withFamilies} No account can serve: ${accountsOut}.`);
+		this.name = "AccountUsageLimitError";
+	}
+}
+
+// The same reader-local time plus timezone the credential pool's blocked message uses.
+export function formatResetTime(epochMs: number): string {
+	return new Date(epochMs).toLocaleString("en-US", {
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+		timeZoneName: "short",
+	});
+}
+
 // Subscription limit prose that carries no quota/billing keyword, e.g. Claude's
 // "You've hit your session limit · resets 3pm" and the SDK terminal reasons.
 const SUBSCRIPTION_LIMIT_PATTERN =
 	/\bhit\s+your\b[^.]*\blimit\b|\b(?:session|weekly|monthly|daily|hourly|\d+[- ]hour|usage)\s+limit\b|\bblocking_limit\b|\brapid_refill_breaker\b/i;
+// A plan cap that tells the user to switch models, e.g. Devin's "Reached free model rate limit. ...
+// switch to a different model" (senpi#2660). An ordinary "rate limit exceeded" stays transient.
+const PLAN_MODEL_LIMIT_PATTERN =
+	/\breached\b[^.]*\b(?:free|plan|tier|model)\b[^.]*\blimit\b[\s\S]*\bswitch to (?:a |an )?(?:different|another) model\b/i;
 const MODEL_SCOPE_PATTERN = /\bmodels?\b|\bpremium\b|\b(?:opus|sonnet|haiku|fable|mythos)\b/i;
 
-export function usageLimitScope(errorMessage: string | undefined): UsageLimitScope | undefined {
+export function usageLimitScope(
+	failure: string | undefined | Pick<AssistantMessage, "errorMessage" | "errorCause">,
+): UsageLimitScope | undefined {
+	if (typeof failure === "object" && failure.errorCause?.type === "usage_limit") {
+		const scope = failure.errorCause.scope;
+		if (scope === "account" || scope === "model") return scope;
+	}
+	const errorMessage = typeof failure === "object" ? failure.errorMessage : failure;
 	if (errorMessage === undefined) return undefined;
+	// Claude Code's "You've reached your Fable limit. Switch to another model" carries
+	// none of the keywords below, yet it names the one family it binds (senpi#2555).
+	if (rateLimitModelFamily(errorMessage) !== undefined) return "model";
 	const limited =
 		isQuotaExhaustionMessage(errorMessage) ||
 		isBillingErrorMessage(errorMessage) ||
-		SUBSCRIPTION_LIMIT_PATTERN.test(errorMessage);
+		SUBSCRIPTION_LIMIT_PATTERN.test(errorMessage) ||
+		PLAN_MODEL_LIMIT_PATTERN.test(errorMessage);
 	if (!limited) return undefined;
 	return MODEL_SCOPE_PATTERN.test(errorMessage) ? "model" : "account";
+}
+
+/** Project advice without mutating the diagnostic-bearing engine message. */
+export function describeUsageLimitMessage(message: AssistantMessage): AssistantMessage {
+	const scope = usageLimitScope(message);
+	if (!scope || (message.errorCause?.type === "usage_limit" && message.errorCause.scope === scope)) return message;
+	return {
+		...message,
+		errorCause: { type: "usage_limit", scope },
+		...(scope === "account"
+			? {
+					errorMessage: describeProviderFailureForUser(message.errorMessage, {
+						model: `${message.provider}/${message.model}`,
+						usageLimit: scope,
+					}),
+				}
+			: {}),
+	};
+}
+
+/** Project an assistant entry without mutating its persisted identity or payload. */
+export function describeUsageLimitEntry(entry: SessionEntry): SessionEntry {
+	if (entry.type !== "message" || entry.message.role !== "assistant") return entry;
+	const message = describeUsageLimitMessage(entry.message);
+	return message === entry.message ? entry : { ...entry, message };
 }
 
 /** The notice clause naming what hit the limit, or undefined when no usage limit caused the switch. */

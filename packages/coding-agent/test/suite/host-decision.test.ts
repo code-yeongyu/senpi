@@ -27,6 +27,9 @@ import type { RpcLaunchProfile } from "../../src/modes/rpc/rpc-types.ts";
 const OMO_PLUGIN = "/opt/omo/plugin";
 const MEMBER_BUNDLE = "/opt/omo/members";
 const EPOCH = 1_758_000_000;
+const PLUGIN_SET_A = ["/opt/omo-a/plugin", "/opt/omo-a/plugin/extensions/memory.js"];
+const PLUGIN_SET_B = ["/srv/runtime-b/plugin", "/srv/runtime-b/plugin/extensions/memory.js"];
+const PLUGIN_SET_WINDOWS = ["C:\\omo\\plugin", "C:\\omo\\plugin\\extensions\\memory.js"];
 
 function identity(version: string, epoch?: number): EngineBuildIdentity {
 	return engineBuildIdentityFrom(epoch === undefined ? { version } : { version, epoch, sha7: "abc1234" });
@@ -72,6 +75,13 @@ interface Row {
 }
 
 const rows: readonly Row[] = [
+	{
+		name: "a stopping host refuses adoption even when the client could upgrade it",
+		client: client(),
+		host: host({ lifecycle: "stopping" }),
+		policy: "upgrade",
+		expected: { action: "refuse", reason: "host_stopping", upgradeable: false },
+	},
 	{
 		name: "no host on the socket -> start",
 		client: client(),
@@ -172,6 +182,61 @@ const rows: readonly Row[] = [
 		expected: { action: "reuse", reason: "compatible", upgradeable: true },
 	},
 	{
+		name: "same plugin set from another install root, same engine -> reuse with no profile warning",
+		client: client({ identity: identity("2026.9.16-3"), launchProfile: profile(PLUGIN_SET_B) }),
+		host: host({ launch_profile: profile(PLUGIN_SET_A) }),
+		policy: "upgrade",
+		expected: { action: "reuse", reason: "compatible", upgradeable: true },
+	},
+	{
+		name: "same plugin set from another install root, newer engine -> handoff:newer_engine, not a profile mismatch",
+		client: client({ identity: identity("2026.9.18"), launchProfile: profile(PLUGIN_SET_B) }),
+		host: host({ launch_profile: profile(PLUGIN_SET_A) }),
+		policy: "upgrade",
+		expected: { action: "handoff", reason: "newer_engine", upgradeable: true },
+	},
+	{
+		name: "same plugin set spelled with Windows separators -> reuse with no profile warning",
+		client: client({ identity: identity("2026.9.16-3"), launchProfile: profile(PLUGIN_SET_WINDOWS) }),
+		host: host({ launch_profile: profile(PLUGIN_SET_A) }),
+		policy: "upgrade",
+		expected: { action: "reuse", reason: "compatible", upgradeable: true },
+	},
+	{
+		name: "another install root that adds a plugin extension -> a proper superset still warns and can hand off",
+		client: client({
+			identity: identity("2026.9.18"),
+			launchProfile: profile([...PLUGIN_SET_B, "/srv/runtime-b/plugin/extensions/extra.js"]),
+		}),
+		host: host({ launch_profile: profile(PLUGIN_SET_A) }),
+		policy: "upgrade",
+		expected: { action: "handoff", reason: "newer_engine", upgradeable: true },
+	},
+	{
+		name: "another install root that lacks a plugin extension the host loads -> narrower, never handed off",
+		client: client({ identity: identity("2026.9.18"), launchProfile: profile(PLUGIN_SET_B.slice(0, 1)) }),
+		host: host({ launch_profile: profile(PLUGIN_SET_A) }),
+		policy: "upgrade",
+		expected: { action: "reuse", reason: "compatible", upgradeable: true, warning: "profile_narrower_attached" },
+	},
+	{
+		name: "a different plugin extension under another install root is a different role -> narrower",
+		client: client({
+			identity: identity("2026.9.18"),
+			launchProfile: profile(["/srv/runtime-b/plugin", "/srv/runtime-b/plugin/extensions/other.js"]),
+		}),
+		host: host({ launch_profile: profile(PLUGIN_SET_A) }),
+		policy: "upgrade",
+		expected: { action: "reuse", reason: "compatible", upgradeable: true, warning: "profile_narrower_attached" },
+	},
+	{
+		name: "a non-plugin extension at another path is NOT the same role -> still narrower",
+		client: client({ identity: identity("2026.9.18"), launchProfile: profile([OMO_PLUGIN, "/srv/other/members"]) }),
+		host: host({ launch_profile: profile([OMO_PLUGIN, MEMBER_BUNDLE]) }),
+		policy: "upgrade",
+		expected: { action: "reuse", reason: "compatible", upgradeable: true, warning: "profile_narrower_attached" },
+	},
+	{
 		name: "older engine, identical profile -> reuse",
 		client: client({ identity: identity("2026.9.16") }),
 		host: host(),
@@ -214,6 +279,14 @@ const rows: readonly Row[] = [
 			upgradeable: false,
 			warning: "profile_mismatch_attached",
 		},
+	},
+	{
+		// senpi#7040: a desktop runtime on engine 2026.11.18 handed a compiled omo 5.1.78 host ([5,1,78,0,0]) down.
+		name: "a CalVer client never supersedes a host whose ordinal is an omo version -> reuse",
+		client: client({ identity: identity("2026.11.18") }),
+		host: host({ engineVersion: "5.1.78", engineOrdinal: identity("5.1.78").ordinal }),
+		policy: "upgrade",
+		expected: { action: "reuse", reason: "compatible", upgradeable: true },
 	},
 	{
 		name: "a host that reports no ordinal is uncomparable -> reuse",

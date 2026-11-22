@@ -1,13 +1,16 @@
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
-import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
-import { accountLabel, listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
-import { type Component, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
+import { applyAccountOrder, rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
+import { accountLabel, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
+import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { AgentSession } from "../../../core/agent-session.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../../core/extensions/builtin/anthropic-subscription/provider-id.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
-import type { InteractiveSession } from "../interactive-host-runtime.ts";
 import { theme } from "../theme/theme.ts";
 import { type FooterSegment, planFooterLayout } from "./footer-layout.ts";
+import { buildRightLabel, colorRightSide } from "./footer-right-label.ts";
 
 const FAST_MODE_INDICATOR = "\u26a1 ";
 
@@ -41,19 +44,69 @@ export function formatTokens(count: number): string {
 /**
  * Mirrors the provider-shown-only-when->1 rule for accounts: the active account
  * name appears only when the provider actually pools more than one slot. The
- * pick shown is the pin when present, else the session's HRW winner - the same
- * hash the rotation engine uses, so the footer names the slot that will serve.
+ * pick shown is the effective pin (CLI > settings > stored, senpi#5983) when
+ * present, else the first account of the user order (senpi#3591), else the
+ * session's HRW winner - the same ranking the rotation engine uses, so the
+ * footer names the slot that will serve. The effective pin only reaches the
+ * footer for the Anthropic subscription provider (senpi#6222 review); other
+ * pooled providers keep their stored pin even when a slot shares the pin's
+ * name. A blocked pin (blockedUntil in the
+ * future) is skipped for the first usable slot in that ranking, and the
+ * suffix marks the blocked pin (`@B (A blocked until 14:00)`); when every
+ * slot is blocked it names the top-ranked slot and marks it blocked instead
+ * of silently naming a slot that cannot serve. Block state rides on the
+ * stored slots (SlotBlockState); slots without it are treated as usable.
  */
-export function accountFooterSuffix(credential: Credential | undefined, sessionId: string): string {
-	const slots = listSlots(credential);
+export type AccountFooterOptions = {
+	/** Effective pin from CLI/settings, outranking the stored pin (senpi#5983). */
+	pinnedAccount?: string;
+	/** Override for "now" (tests); defaults to `Date.now()`. */
+	now?: number;
+};
+
+function formatBlockedUntil(until: number): string {
+	const date = new Date(until);
+	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+export function accountFooterSuffix(
+	credential: Credential | undefined,
+	sessionId: string,
+	options: AccountFooterOptions = {},
+): string {
+	const pooled: PooledCredential | undefined = credential;
+	// Only slots the credential can serve with; a mixed pool's other-kind slot never does (senpi#3486).
+	const slots = credential ? slotsOfOwnKind(credential) : [];
 	if (slots.length < 2) return "";
-	const pinned = Object.entries(credential ?? {}).find(([key]) => key === "pinned")?.[1];
-	const pinnedSlot = slots.find((slot) => slot.name === pinned);
-	if (pinnedSlot) return `@${footerAccountLabel(pinnedSlot)}`;
-	const winner = rendezvousOrder(sessionId, slots, (input) =>
-		createHash("sha256").update(input).digest().readBigUInt64BE(0),
-	)[0];
-	return winner === undefined ? "" : `@${footerAccountLabel(winner)}`;
+	const now = options.now ?? Date.now();
+	// Block state rides on the stored slots at runtime (SlotBlockState) but
+	// is not part of the CredentialSlot type, so read it through unknown.
+	const blockedUntilOf = (slot: object): number | undefined =>
+		(slot as unknown as { blockedUntil?: number }).blockedUntil;
+	const isBlocked = (slot: object): boolean => {
+		const until = blockedUntilOf(slot);
+		return until !== undefined && until > now;
+	};
+	const ranked = applyAccountOrder(
+		pooled?.order,
+		rendezvousOrder(sessionId, slots, (input) => createHash("sha256").update(input).digest().readBigUInt64BE(0)),
+	);
+	const storedPinned = Object.entries(credential ?? {}).find(([key]) => key === "pinned")?.[1];
+	const pinnedName = options.pinnedAccount ?? storedPinned;
+	const pinnedSlot = pinnedName === undefined ? undefined : slots.find((slot) => slot.name === pinnedName);
+	if (pinnedSlot) {
+		if (!isBlocked(pinnedSlot)) return `@${footerAccountLabel(pinnedSlot)}`;
+		const until = blockedUntilOf(pinnedSlot) as number;
+		const serving = ranked.find((slot) => slot !== pinnedSlot && !isBlocked(slot));
+		if (serving)
+			return `@${footerAccountLabel(serving)} (${footerAccountLabel(pinnedSlot)} blocked until ${formatBlockedUntil(until)})`;
+		return `@${footerAccountLabel(pinnedSlot)} (blocked until ${formatBlockedUntil(until)})`;
+	}
+	const winner = ranked.find((slot) => !isBlocked(slot)) ?? ranked[0];
+	if (winner === undefined) return "";
+	if (isBlocked(winner))
+		return `@${footerAccountLabel(winner)} (blocked until ${formatBlockedUntil(blockedUntilOf(winner) as number)})`;
+	return `@${footerAccountLabel(winner)}`;
 }
 
 /**
@@ -87,53 +140,28 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 	return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
 }
 
-/** One coloured run of the right side, in render order. */
-type RightSideRun = { readonly text: string; readonly color: "muted" | "warning" | "accent" | "dim" };
-
-/**
- * Color the right side of the footer: (provider) muted, model accent, :thinking dim.
- *
- * The runs come from the values that produced the text, never from re-parsing
- * the rendered string: an account display name may legally contain `)` or `:`,
- * and a regex over the rendered segment would then colour the provider prefix
- * as the model, or cut the model id into a "thinking level".
- *
- * `plain` is the rendered segment, which the layout pass may have truncated at
- * the tail (and whose truncation can append reset sequences); each run is
- * clipped to the visible text that survived, so a run boundary can never cut
- * an escape sequence in half.
- */
-function colorRightSide(runs: readonly RightSideRun[], plain: string): string {
-	const text = stripTerminalSequences(plain);
-	if (!text) return "";
-	let offset = 0;
-	let colored = "";
-	for (const run of runs) {
-		if (offset >= text.length) break;
-		const visible = text.slice(offset, offset + run.text.length);
-		if (visible.length === 0) break;
-		colored += theme.fg(run.color, visible);
-		offset += visible.length;
-	}
-	return colored;
-}
-
 /**
  * Footer component that shows pwd, token stats, and context usage.
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
  */
 export class FooterComponent implements Component {
-	private session: InteractiveSession;
+	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private autoCompactEnabled = true;
 	private compactionDelegated = false;
+	private resolveAccountPin: ((sessionId: string) => string | undefined) | undefined;
 
-	constructor(session: InteractiveSession, footerData: ReadonlyFooterDataProvider) {
+	constructor(
+		session: AgentSession,
+		footerData: ReadonlyFooterDataProvider,
+		options: { resolveAccountPin?: (sessionId: string) => string | undefined } = {},
+	) {
 		this.session = session;
 		this.footerData = footerData;
+		this.resolveAccountPin = options.resolveAccountPin;
 	}
 
-	setSession(session: InteractiveSession): void {
+	setSession(session: AgentSession): void {
 		this.session = session;
 	}
 
@@ -217,8 +245,12 @@ export class FooterComponent implements Component {
 		const usingSubscription = state.model
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
 			: false;
-		if (totalCost || usingSubscription) {
-			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+		// The subagent tree's spend (reported by the extension that runs it) follows the session's own,
+		// oh-my-pi style: `$0.380 (+1.270)`, so a session that fans out does not look cheaper than it is.
+		const subagentCost = this.footerData.getSubagentCost?.() ?? 0;
+		if (totalCost || usingSubscription || subagentCost > 0) {
+			const subagentStr = subagentCost > 0 ? ` (+${subagentCost.toFixed(3)})` : "";
+			const costStr = `$${totalCost.toFixed(3)}${usageTotals.costUnknown ? "+?" : ""}${usingSubscription ? " (sub)" : ""}${subagentStr}`;
 			middle.push({ plain: costStr, colored: theme.fg("success", costStr) });
 		}
 
@@ -242,28 +274,29 @@ export class FooterComponent implements Component {
 		});
 		let tail: FooterSegment = makeTail(delegationIndicator !== "");
 
-		// Model label pinned to the right edge; the provider prefix stays only when
-		// the full line fits.
+		// Model label pinned to the right edge; the forms ladder and what each form
+		// may cost the left side live in ./footer-right-label.ts.
 		const modelName = state.model?.id || "no-model";
 		const fastIndicator = this.session.isFastModeActive() ? FAST_MODE_INDICATOR : "";
-		let minimalRight = `${fastIndicator}${modelName}`;
-		if (state.model?.reasoning) {
-			const thinkingLevel = state.thinkingLevel || "off";
-			minimalRight = thinkingLevel === "off" ? `${minimalRight}:off` : `${minimalRight}:${thinkingLevel}`;
-		}
-		const thinkingSuffix = state.model?.reasoning ? `:${state.thinkingLevel || "off"}` : "";
-		const modelRuns: RightSideRun[] = [
-			...(fastIndicator ? [{ text: fastIndicator, color: "warning" as const }] : []),
-			{ text: modelName, color: "accent" as const },
-			...(thinkingSuffix ? [{ text: thinkingSuffix, color: "dim" as const }] : []),
-		];
-		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(modelRuns, minimalRight) };
+		const routed = this.session.routedModel;
+		const pending = this.session.pendingModelSwitch;
 		let accountSuffix = "";
 		if (state.model) {
 			try {
+				const sessionId = this.session.sessionManager.getSessionId();
+				// The resolver carries the Anthropic CLI/settings pin; resolve
+				// it only when the current model uses the Anthropic
+				// subscription provider. A same-named slot of another pooled
+				// provider (e.g. openai-codex "default") keeps its own stored
+				// pin instead (senpi#6222 review).
+				const pinnedAccount =
+					state.model.provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID
+						? this.resolveAccountPin?.(sessionId)
+						: undefined;
 				accountSuffix = accountFooterSuffix(
 					this.session.modelRegistry.authStorage.get(state.model.provider),
-					this.session.sessionManager.getSessionId(),
+					sessionId,
+					pinnedAccount === undefined ? undefined : { pinnedAccount },
 				);
 			} catch {
 				// The footer must render even when credential storage is unreadable.
@@ -273,15 +306,17 @@ export class FooterComponent implements Component {
 			(this.footerData.getAvailableProviderCount() > 1 || accountSuffix !== "") && state.model
 				? `(${state.model.provider}${accountSuffix}) `
 				: "";
-		const full: FooterSegment | undefined = providerPrefix
-			? {
-					plain: `${providerPrefix}${minimalRight}`,
-					colored: colorRightSide(
-						[{ text: providerPrefix, color: "muted" }, ...modelRuns],
-						`${providerPrefix}${minimalRight}`,
-					),
-				}
-			: undefined;
+		const rightLabel = buildRightLabel({
+			modelName,
+			fastIndicator,
+			routed: routed ? { modelId: routed.model.id, thinkingLevel: routed.thinkingLevel } : undefined,
+			pending: pending ? { modelId: pending.model.id } : undefined,
+			reasoning: state.model?.reasoning === true,
+			thinkingLevel: state.thinkingLevel || "off",
+			providerPrefix,
+			separator,
+		});
+		const { forms, floor: floorRight, floorRuns } = rightLabel;
 
 		const marker: FooterSegment = { plain: "…", colored: theme.fg("dim", "…") };
 		const planWithTail = (tailSegment: FooterSegment) =>
@@ -291,7 +326,7 @@ export class FooterComponent implements Component {
 				pwdIndex,
 				middle,
 				tail: tailSegment,
-				right: { minimal, full },
+				right: { forms },
 				separator,
 				minPadding: 2,
 				ellipsisMarker: marker,
@@ -317,16 +352,16 @@ export class FooterComponent implements Component {
 		let left: { colored: string; width: number };
 		let right: FooterSegment;
 		if (plan.kind === "full") {
-			right = plan.useFullRight && full ? full : minimal;
+			right = forms[plan.rightForm] ?? floorRight;
 			left = joinSegments([...anchor, ...middle, tail]);
 		} else if (plan.kind === "middle-elided") {
-			right = plan.useFullRight && full ? full : minimal;
+			right = forms[plan.rightForm] ?? floorRight;
 			const segments = [...anchor, ...middle.slice(0, plan.keptMiddleCount)];
 			if (plan.showMarker) segments.push(marker);
 			segments.push(tail);
 			left = joinSegments(segments);
 		} else if (plan.kind === "pwd-elided") {
-			right = plan.useFullRight && full ? full : minimal;
+			right = forms[plan.rightForm] ?? floorRight;
 			const segments: FooterSegment[] = [
 				...anchor.map((segment, index) =>
 					index === pwdIndex ? { plain: plan.pwdPlain, colored: theme.fg("accent", plan.pwdPlain) } : segment,
@@ -337,11 +372,11 @@ export class FooterComponent implements Component {
 			segments.push(tail);
 			left = joinSegments(segments);
 		} else if (plan.kind === "left-elided") {
-			right = minimal;
+			right = floorRight;
 			left = { colored: theme.fg("muted", plan.leftPlain), width: visibleWidth(plan.leftPlain) };
 		} else {
 			left = { colored: "", width: 0 };
-			right = { plain: plan.rightPlain, colored: colorRightSide(modelRuns, plan.rightPlain) };
+			right = { plain: plan.rightPlain, colored: colorRightSide(floorRuns, plan.rightPlain) };
 		}
 
 		const rightWidth = visibleWidth(right.plain);

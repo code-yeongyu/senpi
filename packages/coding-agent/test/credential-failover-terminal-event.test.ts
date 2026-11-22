@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent, Model } from "@earendil-works/pi-ai";
@@ -31,8 +32,8 @@ beforeEach(() => {
 	repository = new CredentialSlotRepository(join(dir, "credential-pool-state.json"));
 });
 
-afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+	await rm(dir, { recursive: true, force: true });
 });
 
 function pooled(): PooledCredential {
@@ -143,6 +144,8 @@ async function drive(runAttempt: (attempt: number) => AsyncIterable<AssistantMes
 	const seen: string[] = [];
 	for await (const event of stream) seen.push(event.type);
 	const result = await stream.result();
+	// The terminal frame precedes onSuccess's state write; await producer cleanup before deleting its directory.
+	await stream[Symbol.asyncIterator]().return?.();
 	return { attempts: () => attempts, seen, result };
 }
 

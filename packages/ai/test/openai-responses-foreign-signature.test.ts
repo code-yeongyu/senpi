@@ -3,6 +3,8 @@ import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts"
 import { getModel } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model, Usage } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const usage: Usage = {
 	input: 0,
 	output: 0,
@@ -64,7 +66,11 @@ describe("OpenAI Responses foreign thinking-signature replay", () => {
 			{ type: "text", text: "answer" },
 		]);
 
-		const input = convertResponsesMessages(model, makeContext(assistant), ALLOWED_TOOL_CALL_PROVIDERS);
+		const input = convertResponsesMessages(
+			model,
+			normalizeContext(makeContext(assistant)),
+			ALLOWED_TOOL_CALL_PROVIDERS,
+		);
 
 		expect(assistantTexts(input)).toContain("deeply considered result");
 		expect(input.some((item) => item.type === "reasoning")).toBe(false);
@@ -75,7 +81,11 @@ describe("OpenAI Responses foreign thinking-signature replay", () => {
 			{ type: "thinking", thinking: "claude was here", thinkingSignature: "EqQBCkYICxgCKkFudGVzdA==" },
 		]);
 
-		const input = convertResponsesMessages(model, makeContext(assistant), ALLOWED_TOOL_CALL_PROVIDERS);
+		const input = convertResponsesMessages(
+			model,
+			normalizeContext(makeContext(assistant)),
+			ALLOWED_TOOL_CALL_PROVIDERS,
+		);
 
 		expect(input.some((item) => item.type === "reasoning")).toBe(false);
 		expect(assistantTexts(input)).toContain("claude was here");
@@ -86,7 +96,11 @@ describe("OpenAI Responses foreign thinking-signature replay", () => {
 			{ type: "thinking", thinking: "", thinkingSignature: JSON.stringify({ type: "message", id: "msg_x" }) },
 		]);
 
-		const input = convertResponsesMessages(model, makeContext(assistant), ALLOWED_TOOL_CALL_PROVIDERS);
+		const input = convertResponsesMessages(
+			model,
+			normalizeContext(makeContext(assistant)),
+			ALLOWED_TOOL_CALL_PROVIDERS,
+		);
 
 		expect(input.some((item) => item.type === "reasoning")).toBe(false);
 	});
@@ -97,7 +111,11 @@ describe("OpenAI Responses foreign thinking-signature replay", () => {
 			{ type: "thinking", thinking: "", thinkingSignature: JSON.stringify(reasoningItem) },
 		]);
 
-		const input = convertResponsesMessages(model, makeContext(assistant), ALLOWED_TOOL_CALL_PROVIDERS);
+		const input = convertResponsesMessages(
+			model,
+			normalizeContext(makeContext(assistant)),
+			ALLOWED_TOOL_CALL_PROVIDERS,
+		);
 
 		const replayed = input.find((item) => item.type === "reasoning");
 		expect(replayed).toBeDefined();

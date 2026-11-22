@@ -3,12 +3,15 @@ import { getAnthropicCompat } from "@earendil-works/pi-ai/utils/prompt-cache-ttl
 import { hasRefusedForcedToolChoice } from "@earendil-works/pi-ai/utils/tool-choice-fallback";
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { TodoFirstTurnPlan } from "../../../settings-shapes.ts";
-import type { ExtensionMode } from "../../types.ts";
+import { isSessionControlDeliveryDetails, SESSION_CONTROL_DELIVERY_TYPE } from "../../session-control-types.ts";
+import type { BeforeAgentStartEvent, ExtensionMode } from "../../types.ts";
+import { parseAskUserAnswerFrame } from "../ask-user/format.ts";
+import { firstTextBlock } from "./todo-ask.ts";
 
 export const FIRST_TURN_CUSTOM_TYPE = "senpi.todo-first-turn";
 
 export const FIRST_TURN_REMINDER = `<system-reminder>
-This is the first request of the session. Before continuing, call the todo tool with op "init" and a phased list covering the whole request end to end: investigation, implementation, verification (diagnostics, tests, build, manual check), and the final report. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.
+This is the first request of the session. Before continuing, call the todo tool with op "init" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.
 </system-reminder>`;
 
 /** One-shot, non-interactive runs; the same set `terminal/notify.ts` never wakes. */
@@ -18,7 +21,7 @@ const TRAILING_CLOSERS = /[\s"'`\u2018\u2019\u201C\u201D)\]}]+$/u;
 
 export type FirstTurnGateInput = {
 	preview: boolean | undefined;
-	trigger: "prompt" | "extension";
+	trigger: BeforeAgentStartEvent["trigger"];
 	prompt: string;
 	branchEntries: readonly SessionEntry[];
 	todoActive: boolean;
@@ -27,19 +30,45 @@ export type FirstTurnGateInput = {
 };
 
 /**
- * Arms the first-turn plan opener only for a session's first user-authored request that asks for
- * work: never in a preview, never on a turn an extension triggered (senpi#2137), never once any
- * user message is on the branch (`before_agent_start` fires before the prompt is persisted), never
- * for a question or an exclamation, and never in print/json runs. Before the first user message a
- * list can only come from an extension-triggered turn, so an existing list does not block the
- * user's first request.
+ * Arms the first-turn plan opener only for a session's first work request, whether it is a prompt or
+ * a session-control delivery: never in a preview, never on another extension-triggered turn
+ * (senpi#2137), never once any request is on the branch (`before_agent_start` fires before the
+ * current one is persisted), never for a question or an exclamation, and never in print/json runs.
+ * An ask-user answer frame is a reply to a question asked on an earlier turn, not a request
+ * (senpi#2419): it never arms, and an earlier prompt or delivery answer on the branch does not count
+ * as the first request. Before the first request a list can only come from an extension-triggered
+ * turn, so an existing list does not block the first request.
  */
 export function shouldArmFirstTurn(input: FirstTurnGateInput): boolean {
-	if (input.preview || input.trigger !== "prompt" || input.setting === "off" || !input.todoActive) return false;
+	if (
+		input.preview ||
+		(input.trigger !== "prompt" && input.trigger !== "delivery") ||
+		input.setting === "off" ||
+		!input.todoActive
+	)
+		return false;
 	if (NON_INTERACTIVE_MODES.has(input.mode)) return false;
+	if (parseAskUserAnswerFrame(input.prompt) !== undefined) return false;
 	const request = input.prompt.trim().replace(TRAILING_CLOSERS, "");
 	if (request === "" || /[?!\uFF1F\uFF01]$/u.test(request)) return false;
-	return !input.branchEntries.some((entry) => entry.type === "message" && entry.message.role === "user");
+	return !input.branchEntries.some(isRequestEntry);
+}
+
+function isRequestEntry(entry: SessionEntry): boolean {
+	const content =
+		entry.type === "message" && entry.message.role === "user"
+			? entry.message.content
+			: isAdmittedDeliveryEntry(entry)
+				? entry.content
+				: undefined;
+	if (content === undefined) return false;
+	const text = firstTextBlock(content);
+	return text === undefined || parseAskUserAnswerFrame(text) === undefined;
+}
+
+function isAdmittedDeliveryEntry(entry: SessionEntry): entry is Extract<SessionEntry, { type: "custom_message" }> {
+	if (entry.type !== "custom_message" || entry.customType !== SESSION_CONTROL_DELIVERY_TYPE) return false;
+	return isSessionControlDeliveryDetails(entry.details);
 }
 
 /**

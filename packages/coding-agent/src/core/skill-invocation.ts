@@ -91,8 +91,6 @@ export interface SkillInvocationToken {
 	position: "inline" | "leading";
 }
 
-export const MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT = 64;
-
 const SKILL_NAMESPACE = "skill:";
 const LEADING_SKILL_INVOCATION_PATTERN = /^(?:\/skill:([a-zA-Z][a-zA-Z0-9:_-]*)|\$([a-zA-Z][a-zA-Z0-9:_-]*))(?=\s|$)/;
 const INLINE_DOLLAR_SKILL_INVOCATION_PATTERN = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
@@ -137,7 +135,6 @@ export function parseSkillInvocationTokens(
 			end: cursor + match[0].length,
 			position: "leading",
 		});
-		if (tokens.length >= MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT) return tokens;
 		cursor += match[0].length;
 	}
 
@@ -154,7 +151,6 @@ export function parseSkillInvocationTokens(
 			end: start + token.length + 1,
 			position: "inline",
 		});
-		if (tokens.length >= MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT) break;
 	}
 
 	return tokens;
@@ -174,6 +170,7 @@ function stripLeadingInvocationSeparators(text: string): string {
 	return text.slice(cursor);
 }
 
+/** Remove expanded invocation tokens, leaving `[skill: name]` where an inline one stood. */
 export function removeSkillInvocationTokens(text: string, tokens: readonly SkillInvocationToken[]): string {
 	let cursor = 0;
 	let result = "";
@@ -193,5 +190,14 @@ export function removeSkillInvocationTokens(text: string, tokens: readonly Skill
 	return tokens.some((token) => token.position === "leading") ? stripLeadingInvocationSeparators(result) : result;
 }
 
-/** Caps explicit skill expansion so one prompt cannot consume unbounded context. */
-export const MAX_SKILL_EXPANSIONS_PER_PROMPT = 5;
+/**
+ * Skill-body characters one prompt inlines. Every invoked skill still loads: once the inlined bodies
+ * would pass this budget, a skill is expanded as a reference to its file instead (the first skill is
+ * always inlined), so composing many skills never drops one and never grows the prompt without bound.
+ */
+export const SKILL_INLINE_BUDGET_CHARS = 128 * 1024;
+
+/** Body of a skill block whose instructions stay in the skill file, for the model to read before acting. */
+export function formatSkillReferenceBody(filePath: string): string {
+	return `This skill's instructions are not inlined here, to keep the prompt within the skill size budget. Read ${filePath} with the read tool before acting on the request, and follow it.`;
+}

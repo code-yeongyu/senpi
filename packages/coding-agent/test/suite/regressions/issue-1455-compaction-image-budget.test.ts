@@ -1,5 +1,5 @@
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, type JsonObject } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "../../../src/core/compaction/index.ts";
 import {
@@ -17,7 +17,7 @@ function createCase(content: ToolResultMessage["content"], args: Record<string, 
 	manager.appendMessage({ role: "user", content: "Inspect the image.", timestamp: 1 });
 	const boundary = manager.appendMessage({
 		...fauxAssistantMessage("", { timestamp: 2, stopReason: "toolUse" }),
-		content: [{ type: "toolCall", id: "read-image", name: "read", arguments: args }],
+		content: [{ type: "toolCall", id: "read-image", name: "read", arguments: args as JsonObject }],
 	});
 	manager.appendMessage({
 		role: "toolResult",

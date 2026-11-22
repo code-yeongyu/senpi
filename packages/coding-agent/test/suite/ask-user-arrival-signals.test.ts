@@ -1,7 +1,7 @@
 // Refs #1645: arrival notification and exactly-once blocked lifetime.
 import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { QuestionResponse } from "../../src/core/extensions/types.ts";
+import type { ExtensionToolContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
@@ -26,7 +26,7 @@ function signalHost(bell = true) {
 		emitExtensionEvent,
 		settingsManager: SettingsManager.inMemory({ askUser: { ...{ bell } } }),
 	});
-	Object.assign(fake, { getNormalTerminalTitle: () => "normal-title", questionArrivalEpochMs: Date.now() });
+	Object.assign(fake, { getNormalTerminalTitle: () => "normal-title" });
 	const controller = new AbortController();
 	cleanups.push(() => controller.abort());
 	const request = {
@@ -63,23 +63,6 @@ describe("ask-user arrival signals", () => {
 		h.controller.abort();
 		await Promise.all([pending, replay]);
 	});
-	it("does not ring for a hydrated host question", async () => {
-		const h = signalHost();
-		const host = h.fake as unknown as { handleHostUiRequest(request: object): Promise<unknown> };
-		const pending = host.handleHostUiRequest({
-			id: "ui-replay",
-			method: "question",
-			requestId: "auth",
-			waitForAnswer: false,
-			questions: h.request.questions,
-			timeout: 60_000,
-			remainingMs: 60_000,
-			askedAtMs: 0,
-		});
-		expect(h.terminal.write).not.toHaveBeenCalled();
-		await h.fake.submitEditorText("/answer skip");
-		await pending;
-	});
 	it("does not emit arrival events twice when a registered request is replayed", async () => {
 		const delivery = await createAskUserDelivery();
 		cleanups.push(() => delivery.harness.cleanup());
@@ -93,9 +76,9 @@ describe("ask-user arrival signals", () => {
 		const controller = new AbortController();
 		cleanups.push(() => controller.abort());
 		const args = { questions: ASYNC_QUESTIONS, waitForAnswer: false };
-		await delivery.tool.execute("replayed", args, controller.signal, undefined, ctx);
+		await delivery.tool.execute("replayed", args, controller.signal, undefined, ctx as ExtensionToolContext);
 		const settled = delivery.settled(ctx, "replayed");
-		await delivery.tool.execute("replayed", args, controller.signal, undefined, ctx);
+		await delivery.tool.execute("replayed", args, controller.signal, undefined, ctx as ExtensionToolContext);
 		expect(asked).toHaveLength(1);
 		expect(blocked).toHaveLength(1);
 		controller.abort();
@@ -122,11 +105,13 @@ describe("ask-user arrival signals", () => {
 					{ questions: ASYNC_QUESTIONS, waitForAnswer },
 					controller.signal,
 					undefined,
-					ctx,
+					ctx as ExtensionToolContext,
 				);
 				const settled = delivery.settled(ctx, "arrival");
 				expect(asked).toHaveLength(1);
-				expect(blocked).toEqual([{ active: true, id: "arrival", label: "Library — Which library?" }]);
+				expect(blocked).toEqual([
+					{ active: true, id: "arrival", label: "Library - Which library?", kind: "question" },
+				]);
 				if (outcome === "abort") controller.abort();
 				else
 					response.resolve({
@@ -141,13 +126,13 @@ describe("ask-user arrival signals", () => {
 				await Promise.resolve();
 				expect(asked).toHaveLength(1);
 				expect(blocked).toEqual([
-					{ active: true, id: "arrival", label: "Library — Which library?" },
+					{ active: true, id: "arrival", label: "Library - Which library?", kind: "question" },
 					{ active: false, id: "arrival" },
 				]);
 			},
 		);
 	}
-	it.each(["select", "confirm", "input", "editor"])("pairs host %s dialog open and close", async (method) => {
+	it.each(["select", "confirm", "input", "editor"] as const)("pairs %s dialog open and close", async (method) => {
 		const h = signalHost();
 		const done = Promise.withResolvers<string | boolean | undefined>();
 		const methods: Record<string, string> = {
@@ -157,21 +142,54 @@ describe("ask-user arrival signals", () => {
 			editor: "showExtensionEditor",
 		};
 		Object.assign(h.fake, { [methods[method]!]: () => done.promise });
-		const host = h.fake as unknown as { handleHostUiRequest(request: object): Promise<unknown> };
-		const pending = host.handleHostUiRequest({
-			id: "host-dialog",
-			method,
-			title: "Choose a flow",
-			options: ["OAuth"],
-		});
+		const ui = h.fake.createExtensionUIContext();
+		const pending =
+			method === "select"
+				? ui.select("Choose a flow", ["OAuth"])
+				: method === "confirm"
+					? ui.confirm("Choose a flow", "")
+					: method === "input"
+						? ui.input("Choose a flow")
+						: ui.editor("Choose a flow");
 		expect(h.emitExtensionEvent).toHaveBeenCalledExactlyOnceWith("herdr:blocked", {
 			active: true,
-			id: "host-dialog",
+			id: expect.any(String),
 			label: "Choose a flow",
 		});
+		const [, opened] = h.emitExtensionEvent.mock.calls[0] as [string, { id: string }];
 		done.resolve(method === "confirm" ? true : "OAuth");
 		await pending;
-		expect(h.emitExtensionEvent).toHaveBeenLastCalledWith("herdr:blocked", { active: false, id: "host-dialog" });
+		expect(h.emitExtensionEvent).toHaveBeenLastCalledWith("herdr:blocked", { active: false, id: opened.id });
 		expect(h.emitExtensionEvent).toHaveBeenCalledTimes(2);
 	});
+	it.each(["select", "confirm", "input"] as const)(
+		"marks a %s dialog about a tool call as permission",
+		async (method) => {
+			const h = signalHost();
+			const done = Promise.withResolvers<string | boolean | undefined>();
+			const methods = {
+				select: "showExtensionSelector",
+				confirm: "showExtensionConfirm",
+				input: "showExtensionInput",
+			} as const;
+			Object.assign(h.fake, { [methods[method]]: () => done.promise });
+			const ui = h.fake.createExtensionUIContext();
+			const opts = { toolCallId: "call-1" };
+			const pending =
+				method === "select"
+					? ui.select("Allow bash?", ["Allow"], opts)
+					: method === "confirm"
+						? ui.confirm("Allow bash?", "", opts)
+						: ui.input("Allow bash?", undefined, opts);
+			expect(h.emitExtensionEvent).toHaveBeenCalledExactlyOnceWith("herdr:blocked", {
+				active: true,
+				id: expect.any(String),
+				label: "Allow bash?",
+				kind: "permission",
+			});
+			done.resolve(method === "confirm" ? true : "Allow");
+			await pending;
+			expect(h.emitExtensionEvent).toHaveBeenCalledTimes(2);
+		},
+	);
 });

@@ -6,6 +6,8 @@ import { streamAnthropic } from "../src/providers/anthropic.ts";
 import { fauxAssistantMessage, fauxToolCall } from "../src/providers/faux.ts";
 import type { Context, Tool, ToolResultMessage, UserMessage } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const FIRST_TOOL_USE_ID = "toolu_first";
 const SECOND_TOOL_USE_ID = "toolu_second";
 
@@ -101,7 +103,7 @@ describe("Anthropic final tool-pair guard", () => {
 			tools: [makeTool("read"), makeTool("bash")],
 		};
 
-		const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), context, {
+		const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), normalizeContext(context), {
 			apiKey: "fake-key",
 			client,
 			onPayload: (payload) => {

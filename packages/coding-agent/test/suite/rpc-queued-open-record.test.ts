@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -61,5 +61,61 @@ describe("open_session queued record", () => {
 			expect(queued?.position as number).toBeGreaterThanOrEqual(1);
 			expect(queued?.id).toBeUndefined();
 		}
+	});
+
+	// senpi#2871: a prompt's preflight runs on the session's loop; on a starved host it outlived the client's
+	// 30 s request deadline, the client discarded the session, and the late reply hit its closed scope.
+	it("tells the client a routed prompt was received before its preflight runs", async () => {
+		let releasePreflight!: () => void;
+		const preflight = new Promise<void>((resolve) => {
+			releasePreflight = resolve;
+		});
+		let handled = false;
+		const received = Promise.withResolvers<Record<string, unknown>>();
+		const deadline = AbortSignal.timeout(10_000);
+		deadline.addEventListener("abort", () => received.reject(deadline.reason), { once: true });
+		await using rig = createInProcessRig(
+			dir,
+			undefined,
+			async (command) => {
+				if (command.type !== "prompt") return;
+				await preflight;
+				handled = true;
+			},
+			{
+				onRecord: (record) => {
+					if (record.type === "queued" && record.for_request === "prompt-1") received.resolve(record);
+				},
+			},
+		);
+		mkdirSync(join(dir, "p"));
+		const opened = await rig.open("c1", { cwd: join(dir, "p"), sessionPath: join(dir, "s1.jsonl") });
+		const sessionId = (opened?.data as { sessionId?: string } | undefined)?.sessionId;
+		if (sessionId === undefined) throw new Error(`open failed: ${JSON.stringify(opened)}`);
+
+		const prompt = rig.send("c1", { type: "prompt", id: "prompt-1", sessionId, message: "first prompt" });
+		try {
+			const acknowledgement = await received.promise;
+			expect(handled).toBe(false);
+			expect(acknowledgement.id).toBeUndefined();
+		} finally {
+			releasePreflight();
+		}
+		await prompt;
+		expect(handled).toBe(true);
+	});
+
+	it("sends no received record for a command that is not a prompt", async () => {
+		await using rig = createInProcessRig(dir);
+		mkdirSync(join(dir, "p"));
+		const opened = await rig.open("c1", { cwd: join(dir, "p"), sessionPath: join(dir, "s1.jsonl") });
+		const sessionId = (opened?.data as { sessionId?: string } | undefined)?.sessionId;
+		if (sessionId === undefined) throw new Error(`open failed: ${JSON.stringify(opened)}`);
+
+		await rig.send("c1", { type: "get_state", id: "state-1", sessionId });
+
+		expect(rig.recordsFor("c1").some((record) => record.type === "queued" && record.for_request === "state-1")).toBe(
+			false,
+		);
 	});
 });

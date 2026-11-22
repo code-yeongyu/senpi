@@ -105,8 +105,7 @@ async function runDefaultScenario(
 		else throw error;
 	}
 	console.log(`RB_REJECTED: ${rubyRejected}`);
-	// The call shape that used to fail with the opaque "eval run requires language": no language, no code.
-	// Tool execute failures surface to the model as an error result; only validation throws.
+	// senpi#2240: incomplete runs must now fail schema validation before execution.
 	let omittedLanguageError = "";
 	try {
 		const rejected = await session.executeTool("eval", { summary: "Run a cell without naming its kernel", timeout: 60 });
@@ -120,8 +119,12 @@ async function runDefaultScenario(
 	if (!result.details.truncated) throw new QaScenarioError("eval output was not truncated");
 	if (!spillExists) throw new QaScenarioError("eval spill artifact was not written");
 	if (!rubyRejected) throw new QaScenarioError("disabled Ruby input was accepted");
-	if (omittedLanguageError !== 'eval run requires language — one of "js", "py"')
-		throw new QaScenarioError(`omitted-language call did not fail with the actionable error: ${omittedLanguageError}`);
+	// senpi#5138: one teaching error per missing run field, in field order, instead of the generic anyOf report.
+	const omittedFields = omittedLanguageError
+		.split("\n")
+		.flatMap((line) => /^ {2}- (language|code|summary): eval run requires \1\b.* \(required\)$/u.exec(line)?.[1] ?? []);
+	if (!omittedLanguageError.includes('Validation failed for tool "eval":\n') || omittedFields.join(",") !== "language,code")
+		throw new QaScenarioError(`omitted-language call did not fail schema validation: ${omittedLanguageError}`);
 }
 
 async function runAbortScenario(

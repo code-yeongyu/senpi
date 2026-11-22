@@ -75,6 +75,7 @@ export const COMPLETIONS_COMPAT = {
 	thinkingTokenBudgetField: undefined,
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,
+	mixedStrictTools: true,
 	toolSchemaFlavor: undefined,
 	toolCallFormat: undefined,
 	cacheControlFormat: "anthropic",
@@ -84,6 +85,8 @@ export const COMPLETIONS_COMPAT = {
 	supportsMaxOutputTokens: true,
 	supportsForcedToolChoice: true,
 	supportsLongCacheRetention: true,
+	supportsMidConvoSystemMessages: false,
+	supportsMidConvoToolAdditions: false,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,
 	| "cacheControlFormat"
@@ -93,7 +96,9 @@ export const COMPLETIONS_COMPAT = {
 	| "thinkingTokenBudgetField"
 	| "vllmPriority"
 	| "veniceParameters"
+	| "supportsWebSearch"
 > & {
+	supportsWebSearch?: OpenAICompletionsCompat["supportsWebSearch"];
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];

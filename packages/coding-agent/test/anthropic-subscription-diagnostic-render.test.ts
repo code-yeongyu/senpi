@@ -134,12 +134,16 @@ describe("Claude SDK OAuth continuity diagnostics", () => {
 		overrideContinuityObservabilityBoundary({ log: () => {} });
 		const sessionId = "diagnostic-degraded";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		markTainted(sessionId, "compaction");
 		const result = await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), { role: "user", content: "two", timestamp: 3 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(result.diagnostics).toEqual([
@@ -156,17 +160,28 @@ describe("Claude SDK OAuth continuity diagnostics", () => {
 		overrideContinuityObservabilityBoundary({ log: () => {} });
 		const sessionId = "diagnostic-healthy";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		const result = await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), { role: "user", content: "two", timestamp: 3 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(result.diagnostics).toEqual([
 			expect.objectContaining({
 				type: "claude_sdk_oauth_session_continuity",
-				details: { kind: "delta", reason: "prefix_matched", deltaMessages: 1 },
+				// The serving seat as a digest, unchanged on a healthy turn (oh-my-openagent#10304).
+				details: {
+					kind: "delta",
+					reason: "prefix_matched",
+					deltaMessages: 1,
+					seat: expect.stringMatching(/^[0-9a-f]{8}$/),
+					seatChanged: false,
+				},
 			}),
 		]);
 	});
@@ -191,6 +206,22 @@ describe("Continuity notice rendering", () => {
 
 		expect(notice).toContain("Session continuity");
 		expect(notice).toContain("tainted_compaction");
+	});
+
+	it("stays silent for a failed-attempt diagnostic, which re-sent nothing", () => {
+		const tracker = new ContinuityNoticeTracker();
+
+		expect(
+			tracker.noticeFor(
+				diagnosticMessage([
+					{
+						type: "claude_sdk_oauth_session_continuity",
+						timestamp: 1,
+						details: { kind: "failed", reason: "query_failed" },
+					},
+				]),
+			),
+		).toBeUndefined();
 	});
 
 	it("stays silent for a healthy delta diagnostic", () => {

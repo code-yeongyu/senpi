@@ -5,6 +5,8 @@ import {
 	create,
 	handle,
 	inspectById,
+	listedTools,
+	mistypedTools,
 	omittedMode,
 	operations,
 	setup,
@@ -106,6 +108,36 @@ for (const language of languages) {
 			try {
 				const result = await f.run(language, `${setup[language]}\n${catchCode(language, create[language])}`);
 				expect(result.details.jsonOutputs, JSON.stringify(result)).toEqual([{ code: "workpool_unavailable" }]);
+			} finally {
+				await f.manager.dispose();
+			}
+		});
+
+		it("refuses tools given as a single string with a typed error, and posts nothing to the host", async () => {
+			const calls: unknown[] = [];
+			const f = await fixture(async (_name, args) => {
+				calls.push(args);
+				return hostResult(record);
+			});
+			try {
+				const result = await f.run(language, `${setup[language]}\n${catchCode(language, mistypedTools[language])}`);
+				expect(result.details.jsonOutputs, JSON.stringify(result)).toEqual([{ code: "invalid_tools" }]);
+				expect(calls).toEqual([]);
+			} finally {
+				await f.manager.dispose();
+			}
+		});
+
+		it("forwards a list of tool names unchanged", async () => {
+			const calls: unknown[] = [];
+			const f = await fixture(async (_name, args) => {
+				calls.push(args);
+				return hostResult(record);
+			});
+			try {
+				const result = await f.run(language, `${setup[language]}\n${listedTools[language]}`);
+				expect(toolResultIsError(result), JSON.stringify(result)).toBe(false);
+				expect(calls).toEqual([{ op: "create", agent: agentSpec, name: "listed", tools: ["add", "mul"] }]);
 			} finally {
 				await f.manager.dispose();
 			}

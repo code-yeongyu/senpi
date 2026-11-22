@@ -50,7 +50,7 @@ The names below are provisional, but the distinctions are required.
 - **Provider**: the owner of one singleton service or one keyed service collection.
 - **Connection**: a transport-neutral source of services outside the current host.
 - **Peer**: one endpoint of a symmetric RPC channel. Either peer may provide and consume services.
-- **Replicated state**: initialized mutable source state with read-only local or remote replicas.
+- **Replicated state**: initialized immutable source revisions with read-only local or remote replicas.
 
 A product feature may ship multiple plugin-module entries for different application environments. Chord does not group those entries into a cross-process runtime object and does not interpret their entry names.
 
@@ -361,7 +361,7 @@ An instance address is `(service ID, key, generation)`. Reusing a closed key cre
 
 Replicated state is authoritative one-writer latest-value replication.
 
-The source API has an initialized value, `set(value, context)`, and subscriptions. A remote or disconnected replica has `value === undefined` until hydration.
+The source API has an initialized immutable value, `change(context, callback)`, `replace(context, value)`, and subscriptions. A remote or disconnected replica has `value === undefined` until hydration.
 
 Required semantics:
 
@@ -371,12 +371,12 @@ Required semantics:
 4. Subscribing to cold state registers without immediate delivery.
 5. Subscription establishment installs update capture before taking the snapshot.
 6. Updates racing the snapshot are buffered and delivered after the snapshot with no gap.
-7. The source API exposes a tracked mutable state and explicit publication. Each publication flushes one decoded operation batch; connection adapters encode it independently per client/state stream, and replicas apply batches only in sequence order.
+7. The source API exposes atomic copy-on-write transactions. A successful transaction publishes one decoded operation batch; a callback failure discards all tentative copies. Connection adapters encode each batch independently per client/state stream, and replicas apply batches only in sequence order.
 8. A sequence gap clears readiness and triggers complete resubscription or reports a terminal binding error; stale state must not continue as current silently.
 9. Disconnect, provider withdrawal, route change, and replacement clear replica readiness.
 10. Reconnect or replacement installs a complete fresh snapshot in the existing state facade before later updates.
 11. Listener exceptions are isolated and reported through host policy.
-12. Values are immutable data. Chord does not defensively clone local reads, local writes, or local listener delivery. Delta application preserves prior values and may structurally share unchanged data, but callers must not depend on identity.
+12. Values are immutable data. Chord returns raw immutable values for reads and listener delivery. Transaction drafts are revocable and assigned containers are copied by value; committed revisions structurally share unchanged subtrees.
 
 State identity is structural:
 
@@ -392,10 +392,9 @@ Explicit non-goals:
 - event history;
 - CRDT merging or multiple writers;
 - offline mutation replay;
-- automatic unchanged-value suppression; and
 - high-frequency stream transport.
 
-Chord exposes an intent-preserving JSON delta primitive and uses its operation batches internally for remote replicated state. Initial hydration and reconnection carry a complete root replacement; producers mutate tracked state and flush compact operations on publication. Replicated-state sources do not select reducers or interact with path encoders. Every client/state pairing owns an independent encoder, and sequence handling rejects gaps before a later operation can be applied.
+Chord exposes an intent-preserving JSON delta primitive and uses its operation batches internally for remote replicated state. Initial hydration and reconnection carry a complete root replacement. Producers mutate a transaction-scoped copy-on-write draft; Chord derives compact operations from the previous and next immutable revisions and uses a complete replacement when that is smaller. Replicated-state sources do not select reducers or interact with path encoders. Every client/state pairing owns an independent encoder, and sequence handling rejects gaps before a later operation can be applied.
 
 ## 9. Symmetric RPC plumbing
 
@@ -560,7 +559,7 @@ The following must remain outside Chord:
 | slash-command, model, account, transcript, TUI, and agent-controller services | application contracts and plugin implementations |
 | `source-resolver.ts` and Pi internal process entrypoints | Pi source execution and process policy |
 
-`packages/agent/docs/plugins.md`, `packages/agent/docs/rpc.md`, the experimental service tests, and the remote plugin fixture are behavioral input. They are not normative Chord APIs. Once migration finishes, generic semantics should be documented in Chord and Pi documents should cover only their host-specific contracts and adapters.
+The Pico5 Chord usage guide, experimental service tests, and remote plugin fixture are behavioral input. They are not normative Chord APIs. Once migration finishes, generic semantics should be documented in Chord and Pi documents should cover only their host-specific contracts and adapters.
 
 Migration should happen only after Chord passes its standalone conformance suite:
 

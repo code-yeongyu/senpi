@@ -1,4 +1,4 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import imagegenExtension from "../../../src/core/extensions/builtin/imagegen/index.ts";
@@ -36,7 +36,7 @@ async function makeHarness(): Promise<Harness> {
 		{ factory: imagegenExtension, path: "<builtin:imagegen>" },
 		{ factory: evalAndCatalogExtension, path: "/workspace/extensions/eval-and-catalog.ts" },
 	];
-	const harness = await createHarness({ extensionFactories, evalOnlyToolNames: ["bash", "monitor"] });
+	const harness = await createHarness({ extensionFactories });
 	harnesses.push(harness);
 	await harness.getExtensionRunner().emit({ type: "session_start", reason: "startup" });
 	return harness;
@@ -58,13 +58,13 @@ describe("regression senpi#1682: tool_search is side-effect-free and answers hid
 		const providerTools: string[][] = [];
 		harness.setResponses([
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "bash execute shell command" }), {
 					stopReason: "toolUse",
 				});
 			},
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage("ok");
 			},
 		]);
@@ -78,23 +78,22 @@ describe("regression senpi#1682: tool_search is side-effect-free and answers hid
 		expect(providerTools[1]).toEqual(providerTools[0]);
 	});
 
-	it("generate_image is search-exposed, absent from the first payload, and activates on a by-name call", async () => {
+	it("generate_image is eval-exposed, absent from every payload, and a direct call gets the eval hint instead of activating it", async () => {
 		const harness = await makeHarness();
 		const registered = harness.session.getAllTools().find((tool) => tool.name === GENERATE_IMAGE_TOOL_NAME);
-		expect(registered).toMatchObject({ exposure: "search", allowLazyActivation: true });
-		expect(registered?.searchKeywords).toContain("image generation");
+		expect(registered).toMatchObject({ exposure: "eval" });
 		expect(harness.session.getActiveToolNames()).not.toContain(GENERATE_IMAGE_TOOL_NAME);
 
 		const providerTools: string[][] = [];
 		harness.setResponses([
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage(fauxToolCall(GENERATE_IMAGE_TOOL_NAME, { prompt: "a cat on a mat" }), {
 					stopReason: "toolUse",
 				});
 			},
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage("done");
 			},
 		]);
@@ -102,9 +101,9 @@ describe("regression senpi#1682: tool_search is side-effect-free and answers hid
 		await harness.session.prompt("draw a cat");
 
 		expect(providerTools[0]).not.toContain(GENERATE_IMAGE_TOOL_NAME);
-		expect(providerTools[1]).toContain(GENERATE_IMAGE_TOOL_NAME);
-		expect(harness.session.getActiveToolNames()).toContain(GENERATE_IMAGE_TOOL_NAME);
+		expect(providerTools[1]).not.toContain(GENERATE_IMAGE_TOOL_NAME);
+		expect(harness.session.getActiveToolNames()).not.toContain(GENERATE_IMAGE_TOOL_NAME);
 		const results = toolResultTexts(harness);
-		expect(results.some((text) => text.includes(`"toolName":"${GENERATE_IMAGE_TOOL_NAME}"`))).toBe(true);
+		expect(results.some((text) => text.includes('tool.generate_image({ prompt: \\"...\\" })'))).toBe(true);
 	});
 });

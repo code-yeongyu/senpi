@@ -3,16 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getAgentDir } from "../../src/config.ts";
-import { createConfigReloadLogger } from "../../src/core/extensions/builtin/config-reload/log.ts";
-import {
-	excludeRoutineOnlySettingsChanges,
-	updateSettingsContentSnapshot,
-} from "../../src/core/extensions/builtin/config-reload/routine-settings.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 
 const projectDirs: string[] = [];
 const agentDir = getAgentDir();
 const settingsPath = join(agentDir, "settings.json");
+const statePath = join(agentDir, "state.json");
 
 function createProjectDir(): string {
 	const projectDir = mkdtempSync(join(tmpdir(), "senpi-settings-tips-"));
@@ -27,6 +23,7 @@ function writeSettings(settings: unknown): void {
 
 afterEach(() => {
 	rmSync(settingsPath, { force: true });
+	rmSync(statePath, { force: true });
 	for (const projectDir of projectDirs.splice(0)) {
 		rmSync(projectDir, { recursive: true, force: true });
 	}
@@ -49,7 +46,7 @@ describe("SettingsManager tips settings", () => {
 		expect(manager.getTipsHistory()).toEqual(history);
 		await manager.flush();
 
-		const persisted = JSON.parse(readFileSync(settingsPath, "utf-8")) as { tipsHistory?: unknown };
+		const persisted = JSON.parse(readFileSync(statePath, "utf-8")) as { tipsHistory?: unknown };
 		expect(persisted.tipsHistory).toEqual(history);
 	});
 
@@ -67,7 +64,7 @@ describe("SettingsManager tips settings", () => {
 		await sessionA.flush();
 		await sessionB.flush();
 
-		const persisted = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
+		const persisted = JSON.parse(readFileSync(statePath, "utf-8")) as {
 			tipsHistory?: Record<string, number>;
 		};
 		expect(persisted.tipsHistory?.["tip-from-a"]).toBe(1_700_000_200_000);
@@ -80,24 +77,9 @@ describe("SettingsManager tips settings", () => {
 		const malformedValues: readonly unknown[] = ["not-a-history", [], null];
 
 		for (const tipsHistory of malformedValues) {
+			rmSync(statePath, { force: true });
 			writeSettings({ tipsHistory });
 			expect(SettingsManager.create(projectDir).getTipsHistory()).toEqual({});
 		}
-	});
-
-	it("suppresses tips-history-only settings changes but not non-routine changes", () => {
-		const projectDir = createProjectDir();
-		const logger = createConfigReloadLogger(agentDir);
-		const snapshots = new Map<string, string>();
-		writeSettings({ theme: "dark", tipsHistory: { "welcome-tip": 1_700_000_000_000 } });
-		updateSettingsContentSnapshot(snapshots, settingsPath);
-
-		writeSettings({ theme: "dark", tipsHistory: { "welcome-tip": 1_700_000_100_000 } });
-		expect(excludeRoutineOnlySettingsChanges([settingsPath], snapshots, agentDir, projectDir, logger)).toEqual([]);
-
-		writeSettings({ theme: "light", tipsHistory: { "welcome-tip": 1_700_000_100_000 } });
-		expect(excludeRoutineOnlySettingsChanges([settingsPath], snapshots, agentDir, projectDir, logger)).toEqual([
-			settingsPath,
-		]);
 	});
 });

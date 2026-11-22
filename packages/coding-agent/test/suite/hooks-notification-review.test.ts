@@ -24,7 +24,7 @@ import type {
 	HookInputWire,
 	HookTrustState,
 } from "../../src/core/extensions/builtin/hooks/types.ts";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -275,7 +275,9 @@ describe("Notification review regressions", () => {
 		async (activation) => {
 			const f = await fixture(activation);
 			const getSources = vi.spyOn(f.ctx, "getLoadedHookSources");
-			expect((await f.tool.execute("disabled", args, undefined, undefined, f.ctx)).details).toMatchObject({
+			expect(
+				(await f.tool.execute("disabled", args, undefined, undefined, f.ctx as ExtensionToolContext)).details,
+			).toMatchObject({
 				status: "answered",
 			});
 			expect(getSources).not.toHaveBeenCalled();
@@ -288,7 +290,13 @@ describe("Notification review regressions", () => {
 		async (waitForAnswer) => {
 			const f = await fixture();
 			const done = f.completed("answer");
-			const result = await f.tool.execute("answer", { ...args, waitForAnswer }, undefined, undefined, f.ctx);
+			const result = await f.tool.execute(
+				"answer",
+				{ ...args, waitForAnswer },
+				undefined,
+				undefined,
+				f.ctx as ExtensionToolContext,
+			);
 			expect(result.details).toMatchObject(
 				waitForAnswer ? { status: "answered" } : { status: "pending", requestId: "answer" },
 			);
@@ -317,7 +325,13 @@ describe("Notification review regressions", () => {
 			f.ctx.ui.question = vi.fn(() => ui.promise);
 			const done = f.completed("timeout");
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-			const execution = f.tool.execute("timeout", { ...args, waitForAnswer }, undefined, undefined, f.ctx);
+			const execution = f.tool.execute(
+				"timeout",
+				{ ...args, waitForAnswer },
+				undefined,
+				undefined,
+				f.ctx as ExtensionToolContext,
+			);
 			await vi.advanceTimersByTimeAsync(1800000);
 			const result = await execution;
 			ui.resolve(answer);
@@ -337,7 +351,13 @@ describe("Notification review regressions", () => {
 			const f = await fixture();
 			f.ctx.ui.question = async () => cancelled;
 			const getSources = vi.spyOn(f.ctx, "getLoadedHookSources");
-			await f.tool.execute("cancelled", { ...args, waitForAnswer }, undefined, undefined, f.ctx);
+			await f.tool.execute(
+				"cancelled",
+				{ ...args, waitForAnswer },
+				undefined,
+				undefined,
+				f.ctx as ExtensionToolContext,
+			);
 			await bounded(f.arrivalFinished);
 			expect(getSources).toHaveBeenCalledOnce();
 			expect(f.payloads()).toEqual([]);
@@ -351,8 +371,20 @@ describe("Notification review regressions", () => {
 		f.ctx.ui.question = (request) => (request.requestId === "first" ? first.promise : second.promise);
 		const firstDone = f.completed("first");
 		const secondDone = f.completed("second");
-		await f.tool.execute("first", { ...args, waitForAnswer: false }, undefined, undefined, f.ctx);
-		await f.tool.execute("second", { ...args, waitForAnswer: false }, undefined, undefined, f.ctx);
+		await f.tool.execute(
+			"first",
+			{ ...args, waitForAnswer: false },
+			undefined,
+			undefined,
+			f.ctx as ExtensionToolContext,
+		);
+		await f.tool.execute(
+			"second",
+			{ ...args, waitForAnswer: false },
+			undefined,
+			undefined,
+			f.ctx as ExtensionToolContext,
+		);
 		second.resolve(answer);
 		await bounded(secondDone);
 		first.resolve(timeout);
@@ -434,7 +466,9 @@ describe("Notification review regressions", () => {
 			});
 			const syncRead = vi.spyOn(FileHookStateStorage.prototype, "read");
 			const done = f.completed("gated");
-			const result = await bounded(f.tool.execute("gated", { ...args, waitForAnswer }, undefined, undefined, f.ctx));
+			const result = await bounded(
+				f.tool.execute("gated", { ...args, waitForAnswer }, undefined, undefined, f.ctx as ExtensionToolContext),
+			);
 			await bounded(entered.promise);
 			expect(result.details).toMatchObject({ status: waitForAnswer ? "answered" : "pending" });
 			expect(f.payloads()).toEqual([]);
@@ -458,7 +492,13 @@ describe("Notification review regressions", () => {
 		});
 		const done = f.completed("command-gated");
 		const result = await bounded(
-			f.tool.execute("command-gated", { ...args, waitForAnswer }, undefined, undefined, f.ctx),
+			f.tool.execute(
+				"command-gated",
+				{ ...args, waitForAnswer },
+				undefined,
+				undefined,
+				f.ctx as ExtensionToolContext,
+			),
 		);
 		await bounded(entered.promise);
 		expect(result.details).toMatchObject({ status: waitForAnswer ? "answered" : "pending" });
@@ -475,7 +515,7 @@ describe("Notification review regressions", () => {
 		mkdirSync(join(f.hooksPath, "..", "hooks-state.json.lock"));
 		const read = vi.spyOn(FileHookStateStorage.prototype, "read");
 		const readAsync = vi.spyOn(FileHookStateStorage.prototype, "readAsync");
-		await f.tool.execute("no-handlers", args, undefined, undefined, f.ctx);
+		await f.tool.execute("no-handlers", args, undefined, undefined, f.ctx as ExtensionToolContext);
 		await bounded(f.notificationFinished);
 		expect(read).not.toHaveBeenCalled();
 		expect(readAsync).not.toHaveBeenCalled();

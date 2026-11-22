@@ -1,19 +1,18 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
-// Matches GPT-5.x Sol, GPT-6 Sol and GPT-6 Astra variants, including provider-prefixed
-// forms. The trailing lookahead excludes unrelated ids that continue with letters.
-const SENSITIVE_MODEL_ID_PATTERN = /(?:gpt-5(?:\.\d+)?-sol|gpt-6-sol|gpt-6-astra)(?![a-z])/i;
-const ASTRA_MODEL_ID_PATTERN = /gpt-6-astra(?![a-z])/i;
+// Matches GPT-5.x Sol, GPT-6.x Sol (gpt-6-sol, gpt-6.1-sol, gpt-6.2-sol, Venice's dotless gpt-61-sol) and
+// GPT-6.x Astra (gpt-6-astra, gpt-6.2-astra) variants, including provider-prefixed forms. The trailing lookahead excludes
+// unrelated ids that continue with letters.
+const SENSITIVE_MODEL_ID_PATTERN = /(?:gpt-5(?:\.\d+)?-sol|gpt-6(?:\.\d+|\d)?-sol|gpt-6(?:\.\d+|\d)?-astra)(?![a-z])/i;
 
 export function isSensitiveHighReasoningModel(model: Pick<Model<Api>, "id">): boolean {
 	return SENSITIVE_MODEL_ID_PATTERN.test(model.id);
 }
 
+// One rule for every sensitive model, GPT-6 Astra included: warn only above "high", i.e. at xhigh and max.
 export function shouldWarnHighReasoning(model: Pick<Model<Api>, "id">, thinkingLevel: ThinkingLevel): boolean {
-	const isWarningLevel = ASTRA_MODEL_ID_PATTERN.test(model.id)
-		? thinkingLevel === "max"
-		: thinkingLevel === "xhigh" || thinkingLevel === "max";
+	const isWarningLevel = thinkingLevel === "xhigh" || thinkingLevel === "max";
 	return isWarningLevel && isSensitiveHighReasoningModel(model);
 }
 
@@ -27,7 +26,7 @@ export function buildHighReasoningWarning(
 	thinkingLevel: ThinkingLevel,
 ): HighReasoningWarningContent {
 	const modelId = model.id;
-	const title = `⚠ HIGH-REASONING MODEL WARNING — ${model.provider}/${modelId} @ ${thinkingLevel}`;
+	const title = `⚠ HIGH-REASONING MODEL WARNING - ${model.provider}/${modelId} @ ${thinkingLevel}`;
 	const body = [
 		`${modelId} is a frontier reasoning model. Running it at "${thinkingLevel}" effort makes it acutely sensitive to prompt quality.`,
 		"Driving this model directly from a human prompt is NOT recommended. Risks include:",
@@ -35,7 +34,7 @@ export function buildHighReasoningWarning(
 		'  • It may perform unrequested actions in order to "complete" the task.',
 		"  • It may take risky, irreversible, or dangerous actions to force completion.",
 		"Strongly recommended: use this model ONLY through the ultrabrain subagent.",
-		"Human prompts leave gaps; an agent-authored prompt is denser and stricter than a human's — exactly what these high-effort models need to stay bounded.",
+		"Human prompts leave gaps; an agent-authored prompt is denser and stricter than a human's: exactly what these high-effort models need to stay bounded.",
 		'From the main agent, delegate instead: "query ultrabrain with <task>".',
 		`If you drive this model directly at ${thinkingLevel}, YOU assume ALL responsibility for the consequences.`,
 	];

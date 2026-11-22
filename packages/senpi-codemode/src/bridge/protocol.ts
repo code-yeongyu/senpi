@@ -2,7 +2,12 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { kernelToolHostToKernelSchemas, kernelToolKernelToHostSchemas } from "./kernel-tools-protocol.ts";
-import { kernelMemoryReportSchema, kernelMemoryThresholdsSchema } from "./memory-protocol.ts";
+import {
+	kernelMemoryQueryHostToKernelSchemas,
+	kernelMemoryQueryKernelToHostSchemas,
+	kernelMemoryReportSchema,
+	kernelMemoryThresholdsSchema,
+} from "./memory-protocol.ts";
 
 export const BRIDGE_FRAME_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -11,6 +16,13 @@ const bridgeErrorSchema = Type.Object({
 	message: Type.String(),
 	stack: Type.Optional(Type.String()),
 	code: Type.Optional(Type.String()),
+	permissionRule: Type.Optional(
+		Type.Object({
+			permission: Type.String(),
+			pattern: Type.String(),
+			layer: Type.String(),
+		}),
+	),
 });
 
 const statusEventSchema = Type.Object({ op: Type.String() }, { additionalProperties: true });
@@ -29,16 +41,29 @@ const hostToKernelMessageSchema = Type.Union([
 		sessionId: Type.String({ minLength: 1 }),
 		connection: connectionConfigSchema,
 		sessionEnv: Type.Optional(Type.Record(Type.String(), Type.String())),
+		/** Worker-thread JS kernels: host names the worker's env copy drops, and values it sets (senpi#5635). */
+		removedEnv: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+		inheritedSet: Type.Optional(Type.Record(Type.String(), Type.String())),
 		kernelGeneration: Type.Optional(Type.Integer({ minimum: 1 })),
 		hostToolNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 		foreignLanguageNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 		memory: Type.Optional(kernelMemoryThresholdsSchema),
+		/** JS kernels: the kill guard's judge module (imported by URL in the worker) and the agent host's pid (senpi#5349). */
+		killGuard: Type.Optional(
+			Type.Object({ moduleUrl: Type.String({ minLength: 1 }), agentPid: Type.Integer({ minimum: 1 }) }),
+		),
 	}),
 	Type.Object({
 		type: Type.Literal("run"),
 		cellId: Type.String({ minLength: 1 }),
 		code: Type.String(),
 		timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
+		/** Python only: the published environment revision to import from, applied before the cell runs; empty removes the previous one. */
+		envRoot: Type.Optional(Type.String()),
+		/** The file a `%load` cell runs; the runner compiles under its name and imports beside it. */
+		sourceFile: Type.Optional(Type.String({ minLength: 1 })),
+		/** The run's bridge secret; the kernel attaches it to the cell's `/call` requests (see `EvalKernelRunInput`). */
+		bridgeCellToken: Type.Optional(Type.String({ minLength: 1 })),
 		/** Python only: active tool globals to install before the cell and deactivated ones to remove. */
 		preludes: Type.Optional(
 			Type.Object({
@@ -82,10 +107,23 @@ const hostToKernelMessageSchema = Type.Union([
 		error: bridgeErrorSchema,
 	}),
 	...kernelToolHostToKernelSchemas,
+	...kernelMemoryQueryHostToKernelSchemas,
 ]);
 
+/**
+ * Host-set: what a kernel death did to this cell's state. `lost`: the interpreter died while it ran;
+ * `restarted`: it ran on a kernel replaced after a death; `not-run`: it was failed without running.
+ */
+const kernelStateSchema = Type.Union([Type.Literal("lost"), Type.Literal("restarted"), Type.Literal("not-run")]);
+
+/** Python results: the user globals defined after the cell, so a notice can name what a lost kernel took with it. */
+const resultGlobalsSchema = {
+	globalCount: Type.Optional(Type.Integer({ minimum: 0 })),
+	globalNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 })),
+};
+
 const kernelToHostMessageSchema = Type.Union([
-	Type.Object({ type: Type.Literal("ready") }),
+	Type.Object({ type: Type.Literal("ready"), memoryGlobals: Type.Optional(Type.Boolean()) }),
 	Type.Object({ type: Type.Literal("init-failed"), error: bridgeErrorSchema }),
 	Type.Object({
 		type: Type.Literal("text"),
@@ -113,6 +151,10 @@ const kernelToHostMessageSchema = Type.Union([
 		valueRepr: Type.Optional(Type.String()),
 		durationMs: Type.Integer({ minimum: 0 }),
 		memory: Type.Optional(kernelMemoryReportSchema),
+		...resultGlobalsSchema,
+		/** Host-set: the bracketed notice that this cell ran on a kernel restarted after its interpreter died. */
+		notice: Type.Optional(Type.String()),
+		kernelState: Type.Optional(kernelStateSchema),
 	}),
 	Type.Object({
 		type: Type.Literal("result"),
@@ -121,10 +163,14 @@ const kernelToHostMessageSchema = Type.Union([
 		error: bridgeErrorSchema,
 		durationMs: Type.Integer({ minimum: 0 }),
 		memory: Type.Optional(kernelMemoryReportSchema),
+		...resultGlobalsSchema,
+		notice: Type.Optional(Type.String()),
+		kernelState: Type.Optional(kernelStateSchema),
 	}),
 	Type.Object({ type: Type.Literal("closed") }),
 	Type.Object({ type: Type.Literal("webview-connect"), requestId: Type.String({ minLength: 1 }) }),
 	...kernelToolKernelToHostSchemas,
+	...kernelMemoryQueryKernelToHostSchemas,
 ]);
 
 const bridgeMessageSchema = Type.Union([hostToKernelMessageSchema, kernelToHostMessageSchema]);
@@ -215,10 +261,15 @@ export function parseBridgeJsonLine(line: string, options: BridgeFrameOptions = 
 export function decodeBridgeFrame(line: string, options: BridgeFrameOptions = {}): BridgeMessageDecodeResult {
 	const parsed = parseBridgeJsonLine(line, options);
 	if (!parsed.ok) return parsed;
-	if (Value.Check(bridgeMessageSchema, parsed.value)) {
-		return { ok: true, message: parsed.value };
+	return validateBridgeMessage(parsed.value);
+}
+
+/** Checks an already-parsed frame against the bridge schema (for transports that transform values before checking). */
+export function validateBridgeMessage(value: unknown): BridgeMessageDecodeResult {
+	if (Value.Check(bridgeMessageSchema, value)) {
+		return { ok: true, message: value };
 	}
-	const firstError = Value.Errors(bridgeMessageSchema, parsed.value)[0];
+	const firstError = Value.Errors(bridgeMessageSchema, value)[0];
 	const message = firstError ? `Invalid bridge message: ${firstError.message}` : "Invalid bridge message";
 	return { ok: false, error: { code: "invalid_message", message } };
 }

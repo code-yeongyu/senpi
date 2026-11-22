@@ -1,5 +1,6 @@
 import { getAgentDir } from "../../../../config.ts";
 import { createSessionLogger, type SessionLogger } from "../../../session-log.ts";
+import type { ResumeModeSource } from "./settings.ts";
 
 /**
  * Per-turn continuity observability for the claude-sdk-oauth lane.
@@ -8,9 +9,10 @@ import { createSessionLogger, type SessionLogger } from "../../../session-log.ts
  * point and EMITTED only when the auth-lane retain/discard wrapper retains that
  * attempt (auth-attempt.ts). A discarded attempt emits nothing, so every
  * completed turn yields exactly one observation; a turn where every attempt
- * fails yields one terminal error observation instead.
+ * fails yields one terminal `failed` observation instead. `failed` is not a
+ * re-send: the next attempt still resumes from the retry checkpoint.
  */
-export type ContinuityKind = "bootstrap" | "delta" | "reattach" | "fork" | "flatten" | "disabled";
+export type ContinuityKind = "bootstrap" | "delta" | "reattach" | "fork" | "flatten" | "disabled" | "failed";
 
 /** Fixed vocabulary — arbitrary error text never reaches an observation. */
 export type ContinuityReason =
@@ -58,6 +60,17 @@ export type ContinuityObservation = {
 	deltaMessages?: number;
 	payloadBytes?: number;
 	collapsedDirectives?: number;
+	/** Where a `disabled`/`resume_mode_off` setting came from, so the notice can name it. */
+	settingSource?: ResumeModeSource;
+	/**
+	 * Short digest of the serving account, never its name: lets a quota cascade be attributed
+	 * to seats without reading credentials (oh-my-openagent#10304).
+	 */
+	seat?: string;
+	/** The attempt runs on a different seat than the lineage's last one: its prompt cache is cold. */
+	seatChanged?: boolean;
+	/** senpi#1975: first diverged field path behind an assistant_rewritten decision. Paths only, never values. */
+	divergedPath?: string;
 };
 
 export type ContinuityObservabilityBoundary = {
@@ -187,7 +200,7 @@ export function recordPendingCloseCause(senpiSessionId: string, reason: unknown)
 		if (oldest !== undefined) pendingCloseCauses.delete(oldest);
 	}
 	pendingCloseCauses.set(senpiSessionId, cause);
-	activeBoundary.log("claude_sdk_oauth_session_close", { reason: cause });
+	activeBoundary.log("claude_sdk_oauth_session_close", { reason: cause, sessionId: senpiSessionId });
 }
 
 /** Read the pending close cause WITHOUT consuming it (consumed at emit time). */
@@ -213,7 +226,9 @@ export function observeSessionSyncDecision(input: {
 	senpiSessionId: string;
 	payloadBytes?: number;
 	collapsedDirectives?: number;
+	divergedPath?: string;
 }): ContinuityObservation {
+	const diverged = input.divergedPath === undefined ? {} : { divergedPath: input.divergedPath };
 	if (input.kind === "incremental") {
 		return { kind: "delta", reason: "prefix_matched", deltaMessages: input.deltaMessages };
 	}
@@ -224,6 +239,7 @@ export function observeSessionSyncDecision(input: {
 			kind: "fork",
 			reason: retainedCause ?? (input.reason === undefined ? "branch_resume" : sanitizeReason(input.reason)),
 			deltaMessages: input.deltaMessages,
+			...diverged,
 		};
 	}
 	// Peek, not consume: the staged observation is emitted only when the
@@ -237,6 +253,7 @@ export function observeSessionSyncDecision(input: {
 		deltaMessages: input.deltaMessages,
 		...(input.payloadBytes !== undefined ? { payloadBytes: input.payloadBytes } : {}),
 		...(input.collapsedDirectives !== undefined ? { collapsedDirectives: input.collapsedDirectives } : {}),
+		...diverged,
 	};
 }
 
@@ -248,6 +265,7 @@ export type StagedContinuityDecision = {
 /** Stages an attempt's decision; `emit` fires only when the attempt is retained. */
 export function stageContinuityDecision(
 	observation: ContinuityObservation,
+	sessionId: string,
 	onDecision?: (observation: ContinuityObservation) => void,
 	beforeEmit?: () => void,
 ): StagedContinuityDecision {
@@ -258,13 +276,14 @@ export function stageContinuityDecision(
 			if (emitted) return;
 			emitted = true;
 			beforeEmit?.();
-			emitContinuityObservation(observation, onDecision);
+			emitContinuityObservation(observation, sessionId, onDecision);
 		},
 	};
 }
 
 export function emitContinuityObservation(
 	observation: ContinuityObservation,
+	sessionId: string | undefined,
 	onDecision?: (observation: ContinuityObservation) => void,
 ): void {
 	onDecision?.(observation);
@@ -273,5 +292,10 @@ export function emitContinuityObservation(
 		kind: observation.kind,
 		reason: observation.reason,
 		...(observation.deltaMessages === undefined ? {} : { count: observation.deltaMessages }),
+		...(observation.settingSource === undefined ? {} : { settingSource: observation.settingSource }),
+		...(observation.seat === undefined ? {} : { seat: observation.seat }),
+		...(observation.seatChanged === undefined ? {} : { seatChanged: observation.seatChanged }),
+		...(observation.divergedPath === undefined ? {} : { divergedPath: observation.divergedPath }),
+		...(sessionId === undefined ? {} : { sessionId }),
 	});
 }

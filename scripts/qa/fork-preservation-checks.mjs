@@ -3,6 +3,7 @@
 // Source-level only (no TypeScript compile, no dependencies): the fork
 // invariants must be checkable on an unbuilt tree, including a mid-merge one.
 
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -132,6 +133,97 @@ export function dependencyVersions(manifest, name) {
 		if (typeof version === "string") found.push({ field, version });
 	}
 	return found;
+}
+
+/** `packages/<name>/src` directories of the checked root (the pathspec the fork-API census greps). */
+export function packageSourceDirs(root) {
+	const packages = join(root, "packages");
+	if (!existsSync(packages)) return [];
+	return readdirSync(packages, { withFileTypes: true })
+		.filter((entry) => entry.isDirectory() && existsSync(join(packages, entry.name, "src")))
+		.map((entry) => `packages/${entry.name}/src`)
+		.sort();
+}
+
+/**
+ * `git grep -c -F <symbol> -- packages/<name>/src...` summed over files. `--no-index` so the same count
+ * works on a worktree and on a plain source copy (the negative control). Throws on a git error.
+ */
+export function grepCount(root, symbol, dirs) {
+	if (dirs.length === 0) return 0;
+	const result = spawnSync("git", ["grep", "--no-index", "-c", "-F", "-e", symbol, "--", ...dirs], {
+		cwd: root,
+		encoding: "utf8",
+		maxBuffer: 16 * 1024 * 1024,
+	});
+	if (result.status === 1) return 0;
+	if (result.status !== 0) throw new Error(`git grep ${symbol} exited ${result.status}: ${result.stderr.trim()}`);
+	return result.stdout
+		.split("\n")
+		.filter((line) => line !== "")
+		.reduce((total, line) => total + Number(line.slice(line.lastIndexOf(":") + 1)), 0);
+}
+
+const MODIFIERS = "(?:(?:export|default|declare|public|private|protected|static|readonly|abstract|override|async|get|set)\\s+)*";
+const DECLARED_BY_KEYWORD = /\b(?:function\*?|const|let|var|class|interface|type|enum)\s+$/;
+const MODULE_LIST_START = /^\s*(?:import\b|export\s+(?:type\s+)?[{*])/;
+
+/** True when the occurrence at `index` declares `name` (binding, method, property/key) instead of using it. */
+function isDeclarationSite(line, index, name) {
+	const prefix = line.slice(0, index);
+	if (DECLARED_BY_KEYWORD.test(prefix)) return true;
+	const leading = new RegExp(`^\\s*${MODIFIERS}$`).exec(prefix);
+	if (leading === null) return false;
+	const suffix = line.slice(index + name.length);
+	if (/^\s*\??\s*:/.test(suffix)) return true;
+	const hasModifier = leading[0].trim() !== "";
+	return /^\s*[(<]/.test(suffix) && (hasModifier || line.trimEnd().endsWith("{"));
+}
+
+/**
+ * 1-based lines that use `name`: every word occurrence except declarations, import/export lists
+ * and comment lines. A symbol whose only hits are its definition and re-exports is unreachable.
+ */
+export function useSiteLines(source, name) {
+	const word = new RegExp(`(?<![\\w$])${name.replace(/[$]/g, "\\$")}(?![\\w$])`, "g");
+	const uses = [];
+	let inModuleList = false;
+	source.split("\n").forEach((line, offset) => {
+		if (inModuleList) {
+			if (line.includes("}")) inModuleList = false;
+			return;
+		}
+		if (MODULE_LIST_START.test(line)) {
+			inModuleList = line.includes("{") && !line.includes("}");
+			return;
+		}
+		if (/^\s*(?:\/\/|\/\*|\*)/.test(line)) return;
+		for (const match of line.matchAll(word)) {
+			if (!isDeclarationSite(line, match.index, name)) {
+				uses.push(offset + 1);
+				return;
+			}
+		}
+	});
+	return uses;
+}
+
+/**
+ * Reachability group: every census symbol still occurs under packages/<name>/src, and every
+ * `[symbol, consumerFile]` pair still has a use site in that consumer file.
+ */
+export function checkReachability(root, census, callSites, fail) {
+	const dirs = packageSourceDirs(root);
+	for (const symbol of census) {
+		if (grepCount(root, symbol, dirs) === 0) fail(`reachability: packages/*/src: no occurrence of ${symbol}`);
+	}
+	for (const [symbol, file] of callSites) {
+		const source = readIfExists(join(root, file));
+		if (source === null) fail(`reachability: ${file}: missing (expected a call site of ${symbol})`);
+		else if (useSiteLines(source, symbol).length === 0) {
+			fail(`reachability: ${file}: no call site of ${symbol} (only definitions, imports or re-exports)`);
+		}
+	}
 }
 
 /** Flattened `<provider>/<modelId>` rows of packages/ai/src/providers/data/*.json. */

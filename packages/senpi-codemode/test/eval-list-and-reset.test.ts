@@ -136,7 +136,12 @@ describe("eval list and busy-kernel reset refusal", () => {
 		const cell = f.manager.create("legacy", { language: "py", code: `first\n${"x".repeat(80)}`, summary: "" });
 		try {
 			const listing = await f.list();
-			expect(listing.content).toEqual([{ type: "text", text: `legacy py queued 0s - first ${"x".repeat(54)}` }]);
+			expect(listing.content).toEqual([
+				{
+					type: "text",
+					text: `legacy py queued 0s waiting for the py kernel to be ready - first ${"x".repeat(54)}`,
+				},
+			]);
 		} finally {
 			f.manager.fail(cell, new Error("fixture complete"));
 		}

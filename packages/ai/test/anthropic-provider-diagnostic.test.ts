@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 // senpi#2197: a failed Anthropic turn carries a bounded providerDiagnostic minted only
 // from the SDK's HTTP error metadata or the explicit SSE `event: error` envelope.
 
@@ -61,7 +63,11 @@ function stubSse(lines: string[]): void {
 }
 
 async function run(options: Parameters<typeof streamAnthropic>[2] = {}): Promise<AssistantMessage> {
-	return streamAnthropic(makeModel(), context, { apiKey: "sk-test", maxRetries: 0, ...options }).result();
+	return streamAnthropic(makeModel(), normalizeContext(context), {
+		apiKey: "sk-test",
+		maxRetries: 0,
+		...options,
+	}).result();
 }
 
 afterEach(() => {
@@ -69,6 +75,30 @@ afterEach(() => {
 });
 
 describe("anthropic providerDiagnostic from HTTP errors", () => {
+	it("keeps the latest spent Claude window reset in the structured rate-limit diagnostic", async () => {
+		const reset = Math.ceil(Date.now() / 1000) + 7200;
+		stubHttp(429, errorBody("rate_limit_error"), "application/json", {
+			"anthropic-ratelimit-unified-5h-utilization": "1",
+			"anthropic-ratelimit-unified-5h-reset": String(reset - 3600),
+			"anthropic-ratelimit-unified-7d-utilization": "1",
+			"anthropic-ratelimit-unified-7d-reset": String(reset),
+		});
+
+		const result = await run();
+
+		expect(result.providerDiagnostic?.resetsAt).toBe(reset * 1000);
+	});
+
+	it("does not wait for an unspent Claude window", async () => {
+		const reset = Math.ceil(Date.now() / 1000) + 7200;
+		stubHttp(429, errorBody("rate_limit_error"), "application/json", {
+			"anthropic-ratelimit-unified-5h-utilization": "0.5",
+			"anthropic-ratelimit-unified-5h-reset": String(reset),
+		});
+
+		expect((await run()).providerDiagnostic?.resetsAt).toBeUndefined();
+	});
+
 	it.each([
 		[401, "authentication_error", "auth"],
 		[429, "rate_limit_error", "rate_limit"],

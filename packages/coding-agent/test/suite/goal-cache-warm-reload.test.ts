@@ -5,7 +5,7 @@ import {
 	type GoalCacheWarmupEntryData,
 } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
@@ -102,7 +102,7 @@ describe("goal cache-warm wait across reloads (#2051)", () => {
 		await runGoalHandlers(first.handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
 		await first.tools
 			.get("create_goal")
-			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx as ExtensionToolContext);
 		first.events.emit("terminal_monitor_state", { activeCount: 1 });
 		await first.events.flush();
 		await endTurn(first, ctx, 100_000);
@@ -152,7 +152,7 @@ describe("goal cache-warm wait across reloads (#2051)", () => {
 		await runGoalHandlers(first.handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
 		await first.tools
 			.get("create_goal")
-			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		const second = await reloadInto(generations, ctx);
 

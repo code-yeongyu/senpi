@@ -11,6 +11,7 @@ import {
 	WEBSOCKET_LIVENESS_PONG_TIMEOUT_MS,
 } from "../src/api/websocket-liveness.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 type Listener = (event: unknown) => void;
 
@@ -161,7 +162,7 @@ describe("openai-codex websocket liveness", () => {
 			onSend: (socket) => queueMicrotask(() => socket.dispatch("message", { data: messageStarted() })),
 		});
 
-		const resultPromise = streamOpenAICodexResponses(model, context, {
+		const resultPromise = streamOpenAICodexResponses(model, normalizeContext(context), {
 			apiKey: mockToken(),
 			transport: "auto",
 			timeoutMs: IDLE_TIMEOUT_MS,
@@ -193,7 +194,7 @@ describe("openai-codex websocket liveness", () => {
 			},
 		});
 
-		const resultPromise = streamOpenAICodexResponses(model, context, {
+		const resultPromise = streamOpenAICodexResponses(model, normalizeContext(context), {
 			apiKey: mockToken(),
 			transport: "auto",
 			timeoutMs: IDLE_TIMEOUT_MS,
@@ -221,7 +222,7 @@ describe("openai-codex websocket liveness", () => {
 			onSend: (socket) => queueMicrotask(() => socket.dispatch("message", { data: messageStarted() })),
 		});
 
-		const resultPromise = streamOpenAICodexResponses(model, context, {
+		const resultPromise = streamOpenAICodexResponses(model, normalizeContext(context), {
 			apiKey: mockToken(),
 			transport: "auto",
 			timeoutMs: idleTimeoutMs,
@@ -248,13 +249,13 @@ describe("openai-codex websocket liveness", () => {
 			timeoutMs: 1_000,
 		};
 
-		const first = await streamOpenAICodexResponses(model, context, options).result();
+		const first = await streamOpenAICodexResponses(model, normalizeContext(context), options).result();
 		expect(first.stopReason).toBe("stop");
 		expect(runtime.connections).toBe(1);
 
 		runtime.sockets[0]?.dispatch("close", { code: 1001, reason: "server idle", wasClean: true });
 
-		const secondPromise = streamOpenAICodexResponses(model, context, options).result();
+		const secondPromise = streamOpenAICodexResponses(model, normalizeContext(context), options).result();
 		await vi.advanceTimersByTimeAsync(0);
 		await vi.advanceTimersByTimeAsync(options.timeoutMs);
 		const second = await secondPromise;

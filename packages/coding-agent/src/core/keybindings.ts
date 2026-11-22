@@ -1,4 +1,5 @@
 import {
+	isWarpWslSession,
 	type Keybinding,
 	type KeybindingDefinitions,
 	type KeybindingsConfig,
@@ -10,6 +11,7 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { getAgentDir } from "../config.ts";
 import { stripBom } from "../utils/text.ts";
+import { isWSL } from "../utils/wsl.ts";
 
 export interface AppKeybindings {
 	"app.interrupt": true;
@@ -68,8 +70,9 @@ export type AppKeybinding = keyof AppKeybindings;
 export function useWindowsKeybindings(
 	platform: NodeJS.Platform = process.platform,
 	env: NodeJS.ProcessEnv = process.env,
+	procVersionPath?: string,
 ): boolean {
-	return platform === "win32" || (platform === "linux" && Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP));
+	return platform === "win32" || (platform === "linux" && isWSL(env, procVersionPath));
 }
 
 declare module "@earendil-works/pi-tui" {
@@ -139,7 +142,7 @@ export const KEYBINDINGS = {
 	},
 	"app.message.copy": {
 		defaultKeys: "ctrl+x",
-		description: "Copy message to clipboard",
+		description: "Copy selection or last assistant message",
 	},
 	"app.message.followUp": {
 		defaultKeys: windowsKeybindings ? "ctrl+q" : "alt+enter",
@@ -158,8 +161,8 @@ export const KEYBINDINGS = {
 		description: "Show the next pending question",
 	},
 	"app.clipboard.pasteImage": {
-		defaultKeys: windowsKeybindings ? "alt+v" : "ctrl+v",
-		description: "Paste image from clipboard (text fallback)",
+		defaultKeys: isWarpWslSession() ? ["ctrl+v", "alt+v"] : windowsKeybindings ? "alt+v" : "ctrl+v",
+		description: "Paste files on macOS, images, or text from clipboard",
 	},
 	"app.session.new": { defaultKeys: [], description: "Start a new session" },
 	"app.session.tree": { defaultKeys: [], description: "Open session tree" },

@@ -1,11 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CONFIG_DIR_NAME } from "../src/config.ts";
+import type { ProjectTrustContext } from "../src/core/extensions/types.ts";
 import { DefaultPackageManager } from "../src/core/package-manager.ts";
+import { resolveProjectTrusted } from "../src/core/project-trust.ts";
 import { clearResolvedPathsMemo } from "../src/core/resolved-paths-memo.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { buildSystemPrompt } from "../src/core/system-prompt.ts";
+import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 
 /**
  * A shared host builds one DefaultResourceLoader per session, and every one of
@@ -99,5 +104,130 @@ describe("DefaultResourceLoader package resolution memo", () => {
 		await Promise.all([makeLoader().reload(), makeLoader().reload(), makeLoader().reload()]);
 
 		expect(resolve).toHaveBeenCalledTimes(1);
+	});
+
+	// senpi#2371: resolution reads the project trust state, so the memo key must carry it.
+	// Startup resolves once untrusted (the pre-trust pass) and once after the saved decision;
+	// with no project settings file both passes had the same key and shared one result, in
+	// both directions: a trusted pass could get the untrusted result, and an untrusted open
+	// could get a trusted open's project resources.
+	describe("project trust from a saved decision (senpi#2371)", () => {
+		const ALL = {
+			skills: ["agents-skill", "project-skill"],
+			extensions: ["project-ext.ts"],
+			prompts: ["project-prompt"],
+			themes: ["project-theme"],
+			hooks: ["project-hooks.json"],
+		};
+		const NONE = { skills: [], extensions: [], prompts: [], themes: [], hooks: [] };
+		const noPromptContext: ProjectTrustContext = {
+			cwd: "",
+			mode: "print",
+			hasUI: false,
+			ui: {
+				select: () => Promise.reject(new Error("a saved decision must not prompt")),
+				confirm: () => Promise.reject(new Error("a saved decision must not prompt")),
+				input: () => Promise.reject(new Error("a saved decision must not prompt")),
+				notify: () => {},
+			},
+		};
+
+		const writeFile = (path: string, content: string) => {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, content);
+		};
+
+		// Every project resource kind resolve() returns, and no project settings file.
+		beforeEach(() => {
+			vi.stubEnv("HOME", scratch);
+			mkdirSync(join(cwd, ".git"));
+			const project = join(cwd, CONFIG_DIR_NAME);
+			const skill = (name: string) => `---\nname: ${name}\ndescription: Project skill behind trust.\n---\n`;
+			writeFile(join(cwd, ".agents", "skills", "agents-skill", "SKILL.md"), skill("agents-skill"));
+			writeFile(join(project, "skills", "project-skill", "SKILL.md"), skill("project-skill"));
+			writeFile(join(project, "extensions", "project-ext.ts"), "export default function () {}\n");
+			writeFile(join(project, "prompts", "project-prompt.md"), "---\ndescription: Project prompt.\n---\nhello\n");
+			const dark = JSON.parse(
+				readFileSync(new URL("../src/modes/interactive/theme/dark.json", import.meta.url), "utf8"),
+			);
+			writeFile(join(project, "themes", "project-theme.json"), JSON.stringify({ ...dark, name: "project-theme" }));
+			writeFile(join(project, "hooks", "project-hooks.json"), JSON.stringify({ hooks: {} }));
+		});
+
+		const makeTrustLoader = (projectTrusted: boolean) =>
+			new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.create(cwd, agentDir, { projectTrusted }),
+				extensionFactories: [],
+			});
+
+		const projectResources = (loader: DefaultResourceLoader) => {
+			const inProject = (path: string | undefined) => path?.startsWith(cwd) === true;
+			const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+			return {
+				skills: loader
+					.getSkills()
+					.skills.filter((s) => inProject(s.filePath))
+					.map((s) => s.name)
+					.sort(),
+				extensions: loader
+					.getExtensions()
+					.extensions.map((e) => e.path)
+					.filter(inProject)
+					.map(base),
+				prompts: loader
+					.getPrompts()
+					.prompts.filter((p) => inProject(p.filePath))
+					.map((p) => p.name),
+				themes: loader
+					.getThemes()
+					.themes.filter((t) => inProject(t.sourcePath))
+					.map((t) => t.name),
+				hooks: loader.getLoadedHookSources().projectHookSourcePaths.filter(inProject).map(base),
+			};
+		};
+
+		// Mirrors main.ts: no cached decision, so the loader starts untrusted and asks.
+		const startUp = async () => {
+			const trustStore = new ProjectTrustStore(agentDir);
+			const loader = makeTrustLoader(false);
+			await loader.reload({
+				resolveProjectTrust: ({ extensionsResult }) =>
+					resolveProjectTrusted({ cwd, trustStore, extensionsResult, projectTrustContext: noPromptContext }),
+			});
+			const prompt = buildSystemPrompt({ cwd, skills: loader.getSkills().skills });
+			return { resources: projectResources(loader), prompt };
+		};
+
+		it("loads a trusted project's resources, .agents/skills included, with no project settings file", async () => {
+			await new ProjectTrustStore(agentDir).set(cwd, true);
+
+			const { resources, prompt } = await startUp();
+
+			expect(resources).toEqual(ALL);
+			expect(prompt).toContain("<name>agents-skill</name>");
+		});
+
+		it("loads none of an untrusted project's resources", async () => {
+			await new ProjectTrustStore(agentDir).set(cwd, false);
+
+			const { resources, prompt } = await startUp();
+
+			expect(resources).toEqual(NONE);
+			expect(prompt).not.toContain("agents-skill");
+		});
+
+		it("loads none of an untrusted project's resources after a trusted open of the same folder", async () => {
+			const trusted = makeTrustLoader(true);
+			await trusted.reload();
+			expect(projectResources(trusted)).toEqual(ALL);
+			await new ProjectTrustStore(agentDir).set(cwd, false);
+
+			const { resources, prompt } = await startUp();
+
+			expect(resources).toEqual(NONE);
+			expect(prompt).not.toContain("agents-skill");
+		});
 	});
 });

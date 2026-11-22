@@ -3,11 +3,14 @@ import type {
 	CreateAgentSessionRuntimeResult,
 } from "../../src/core/agent-session-runtime.ts";
 import { isSessionBusySnapshot } from "../../src/core/session-activity.ts";
+import { holdSessionFile } from "../../src/core/session-holders.ts";
 import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
+import type { SessionPathReservations } from "../../src/modes/rpc/host-reservations.ts";
 import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { type RpcSessionIdlePolicy, SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "../helpers/fake-session-base.ts";
 import { assistantMessage } from "./rpc-inprocess-host-metrics.ts";
 
 /**
@@ -24,11 +27,12 @@ interface OpenFields {
 	cwd?: string;
 	sessionPath?: string;
 	retain_on_disconnect?: boolean;
+	kind?: "interactive" | "worker";
 }
 
 export interface TeardownGate {
-	/** Every teardown from here on blocks until `release()`. */
-	hold(): void;
+	/** Every teardown from here on blocks until `release()`; resolves when one reaches the gate. */
+	hold(): Promise<void>;
 	/** Lets the held teardowns finish. */
 	release(): void;
 }
@@ -41,6 +45,23 @@ export interface FakeTurn {
 	finish(): void;
 	/** True once the host aborted this session's run (the close path does). */
 	readonly aborted: boolean;
+	/**
+	 * A user bash starts; the returned promise settles when it ends. Like `AgentSession.executeBash`, the
+	 * end records a `bashExecution` entry - `cancelled` when `abortBash()` ended it.
+	 */
+	startBash(): Promise<void>;
+	/** Ends a running bash normally. */
+	finishBash(): void;
+	/** Delivery ids the admission ledger reports as held but not yet written. */
+	readonly pendingDeliveries: string[];
+	/** How many times the host held this session's automatic turns (`holdAutomaticTurns`). */
+	readonly automaticTurnHolds: number;
+}
+
+/** What the rig's binding reports beyond command handling. */
+export interface FakeBindingExtras {
+	readonly pendingPrompts?: () => readonly Promise<unknown>[];
+	readonly onRecord?: (record: WireRecord) => void;
 }
 
 /**
@@ -50,20 +71,22 @@ export interface FakeTurn {
  * the host aborted persists nothing - so a test that expects a turn to outlive its
  * client's disconnect fails if the host tore the session down instead.
  */
-function inProcessRuntimeFactory(): {
+export function inProcessRuntimeFactory(): {
 	createRuntime: CreateAgentSessionRuntimeFactory;
 	turns: Map<string, FakeTurn>;
 	teardown: TeardownGate;
 } {
 	const turns = new Map<string, FakeTurn>();
-	let held: { promise: Promise<void>; resolve: () => void } | undefined;
+	let held: { promise: Promise<void>; resolve: () => void; entered: () => void } | undefined;
 	const teardown: TeardownGate = {
 		hold: () => {
+			const entered = Promise.withResolvers<void>();
 			let resolve!: () => void;
 			const promise = new Promise<void>((settle) => {
 				resolve = settle;
 			});
-			held = { promise, resolve };
+			held = { promise, resolve, entered: entered.resolve };
+			return entered.promise;
 		},
 		release: () => {
 			held?.resolve();
@@ -71,9 +94,28 @@ function inProcessRuntimeFactory(): {
 		},
 	};
 	const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		const manager = options.sessionManager;
-		const state = { isStreaming: false, aborted: false };
+		const file = manager.getSessionFile();
+		const hold =
+			file === undefined
+				? undefined
+				: await holdSessionFile(file, manager.getSessionId(), {
+						cwd: options.cwd,
+						expectExisting: false,
+					});
+		const state = { isStreaming: false, aborted: false, automaticTurnHolds: 0 };
+		let bash: { end: (cancelled: boolean) => void } | undefined;
+		const pendingDeliveries: string[] = [];
+		const bashMessage = (cancelled: boolean) => ({
+			role: "bashExecution" as const,
+			command: "sleep",
+			output: "",
+			exitCode: cancelled ? undefined : 0,
+			cancelled,
+			truncated: false,
+			timestamp: Date.now(),
+		});
 		turns.set(manager.getSessionFile() ?? manager.getSessionId(), {
 			start: () => {
 				state.isStreaming = true;
@@ -85,11 +127,25 @@ function inProcessRuntimeFactory(): {
 			get aborted() {
 				return state.aborted;
 			},
+			startBash: () =>
+				new Promise<void>((resolve) => {
+					bash = {
+						end: (cancelled) => {
+							bash = undefined;
+							manager.appendMessage(bashMessage(cancelled));
+							resolve();
+						},
+					};
+				}),
+			finishBash: () => bash?.end(false),
+			pendingDeliveries,
+			get automaticTurnHolds() {
+				return state.automaticTurnHolds;
+			},
 		});
 		return {
 			session: {
-				sessionManager: manager,
-				agentDir: options.agentDir,
+				...fakeSessionBase({ ...options, sessionManager: manager }),
 				isFastModeActive: () => false,
 				agent: { state: {} },
 				getContextUsage: () => undefined,
@@ -104,33 +160,60 @@ function inProcessRuntimeFactory(): {
 				get isStreaming() {
 					return state.isStreaming;
 				},
-				isBashRunning: false,
+				get isBashRunning() {
+					return bash !== undefined;
+				},
 				isCompacting: false,
+				externalAdmission: {
+					list: () => ({ pending: [...pendingDeliveries], emitted: [] }),
+					close: () => {},
+					reopen: () => {},
+				},
+				// Queued deliveries leave the ledger exactly as `AgentSession.clearQueue` drops them.
+				clearQueue: () => {
+					pendingDeliveries.splice(0);
+					return Object.assign({ steering: [], followUp: [] }, { ordered: [] });
+				},
+				// Nothing identified is ever queued here, so a clear has nothing to record.
+				whenQueueClearRecorded: async () => {},
 				// Composed through the production predicate so this fake cannot drift
 				// from the activity contract the sweep consults.
 				get activitySnapshot() {
 					return {
 						isStreaming: state.isStreaming,
-						isBashRunning: false,
+						isBashRunning: bash !== undefined,
 						isCompacting: false,
 						hasSessionWork: false,
 						hasActiveWakeSource: false,
 					};
 				},
-				get isSessionBusy() {
+				get isSessionBusy(): boolean {
 					return isSessionBusySnapshot(this.activitySnapshot);
 				},
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: {
+					getFlagValues: () => new Map(),
+					hasHandlers: () => false,
+					emit: async () => {},
+					emitSessionMove: async () => [],
+				},
 				subscribe: () => () => {},
 				abort: async () => {
 					state.aborted = true;
 					state.isStreaming = false;
 				},
-				abortBash: () => {},
+				holdAutomaticTurns: () => {
+					state.automaticTurnHolds++;
+				},
+				// The real abort only signals the child; the cancelled entry is written when it settles.
+				abortBash: () => {
+					const running = bash;
+					if (running) queueMicrotask(() => running.end(true));
+				},
 				waitForIdle: async () => {
+					held?.entered();
 					await held?.promise;
 				},
-				dispose: () => {},
+				dispose: () => hold?.release(),
 				messages: [],
 				pendingMessageCount: 0,
 			},
@@ -151,18 +234,24 @@ export function createInProcessRig(
 	dir: string,
 	idle?: RpcSessionIdlePolicy,
 	handle: (command: RpcCommand) => Promise<void> = async () => {},
+	extras: FakeBindingExtras = {},
+	pathReservations?: SessionPathReservations,
 ) {
 	const { createRuntime, turns, teardown } = inProcessRuntimeFactory();
 	// One clock for both halves of the idle contract: the registry stamps `lastCommandAt`
 	// and the router's sweep compares against it.
-	const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime, now: idle?.now });
+	const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime, now: idle?.now, pathReservations });
 	const delivered: Array<{ connection?: string; record: WireRecord }> = [];
 	const writer = new SessionEventWriter((line) => delivered.push({ record: JSON.parse(line) as WireRecord }));
 	const registered = new Set<string>();
 	const connect = (connection: string): string => {
 		if (registered.has(connection)) return connection;
 		writer.registerConnection(connection, {
-			writeRaw: (line) => delivered.push({ connection, record: JSON.parse(line) as WireRecord }),
+			writeRaw: (line) => {
+				const record = JSON.parse(line) as WireRecord;
+				delivered.push({ connection, record });
+				extras.onRecord?.(record);
+			},
 			waitForBackpressure: async () => {},
 		});
 		registered.add(connection);
@@ -172,7 +261,12 @@ export function createInProcessRig(
 		registry,
 		writer,
 		{ cwd: dir },
-		async () => ({ handle, dispose: async () => {}, cancelPendingExtensionUiRequests: () => {} }),
+		async () => ({
+			handle,
+			dispose: async () => {},
+			cancelPendingExtensionUiRequests: () => {},
+			...(extras.pendingPrompts ? { pendingPrompts: extras.pendingPrompts } : {}),
+		}),
 		{},
 		idle,
 	);
@@ -196,6 +290,10 @@ export function createInProcessRig(
 		async open(connection: string, fields: OpenFields): Promise<WireRecord | undefined> {
 			const id = `open-${++requests}`;
 			return send(connection, { type: "open_session", id, ...fields }, id);
+		},
+		/** Any command, routed as `connection` sent it; resolves with its response once the host answered. */
+		async send(connection: string, command: RpcCommand & { id: string }): Promise<WireRecord | undefined> {
+			return send(connection, command, command.id);
 		},
 		async close(connection: string, sessionId: string): Promise<WireRecord | undefined> {
 			const id = `close-${++requests}`;

@@ -13,6 +13,7 @@ export interface SlashCommandContribution {
 	readonly name: string;
 	readonly description?: string;
 	readonly argumentHint?: string;
+	readonly requiresArguments?: boolean;
 	getArgumentCompletions?(
 		argumentPrefix: string,
 	): readonly SlashCommandCompletion[] | null | Promise<readonly SlashCommandCompletion[] | null>;

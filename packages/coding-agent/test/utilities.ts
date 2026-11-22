@@ -1,4 +1,4 @@
-// allow: SIZE_OK - shared legacy test harness remains oversized; this branch only injects a streamFn for app-server deterministic sessions.
+// allow: SIZE_OK - shared legacy test harness remains oversized; streamFn injection supports deterministic sessions.
 /**
  * Shared test utilities for coding-agent tests.
  */
@@ -151,6 +151,20 @@ export function assistantMsg(text: string) {
 		stopReason: "stop" as const,
 		timestamp: Date.now(),
 	};
+}
+
+/**
+ * Read a session JSONL file and return one label per record: the message role for
+ * message entries, otherwise the entry type (e.g. "session", "model_change").
+ */
+export function readSessionFileRoles(file: string): string[] {
+	return readFileSync(file, "utf-8")
+		.trim()
+		.split("\n")
+		.map((line) => {
+			const record = JSON.parse(line);
+			return record.message?.role ?? record.type;
+		});
 }
 
 /**

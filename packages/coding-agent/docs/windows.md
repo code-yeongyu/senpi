@@ -20,6 +20,8 @@ Use `defaultTools` to replace the model-facing `bash` tool:
 }
 ```
 
+`["-bash", "+powershell"]` does the same while keeping any other default tools you configured.
+
 Or enable both while comparing behavior:
 
 ```json

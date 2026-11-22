@@ -4,6 +4,8 @@ import { getModel } from "../src/compat.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 /**
  * The Anthropic SDK turns HTTP failures into a rejected `APIError`, so a 400
  * never produced a Response object and `onResponse` was never called. The
@@ -45,7 +47,7 @@ function streamWith(
 		messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
 		tools: [],
 	};
-	return streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), context, {
+	return streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), normalizeContext(context), {
 		apiKey: "fake-key",
 		client: createRejectingAnthropicClient(error),
 		onResponse: onResponse as never,

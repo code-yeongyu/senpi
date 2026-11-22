@@ -17,6 +17,7 @@ import type {
 	AgentToolResult,
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionToolContext,
 	ToolDefinition,
 } from "../../src/core/extensions/types.ts";
 
@@ -60,7 +61,13 @@ async function executeTodo(
 	context: ExtensionContext,
 ): Promise<AgentToolResult<TodoToolDetails>> {
 	if (!tool.execute) throw new Error("Expected todo execute");
-	return tool.execute("todo-rm-blank-bulk-clear", rawArgs as TodoParams, undefined, undefined, context);
+	return tool.execute(
+		"todo-rm-blank-bulk-clear",
+		rawArgs as TodoParams,
+		undefined,
+		undefined,
+		context as ExtensionToolContext,
+	);
 }
 
 async function executeError(

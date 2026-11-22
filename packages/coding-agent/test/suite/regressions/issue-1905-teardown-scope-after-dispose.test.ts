@@ -8,6 +8,7 @@ import type {
 } from "../../../src/core/agent-session-runtime.ts";
 import { ProjectTrustStore } from "../../../src/core/trust-manager.ts";
 import { type RpcSessionLaunchProfile, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "../../helpers/fake-session-base.ts";
 
 // senpi#1905: at the close grace deadline the registry used to fire runtime disposal
 // and scope.close() back to back. A disposal still running (a slow session_shutdown
@@ -26,15 +27,14 @@ const profile = (cwd: string, sessionPath: string): RpcSessionLaunchProfile => (
 // Runtime disposal is `session_shutdown` emission (the slow part: extension handlers)
 // followed by a synchronous `AgentSession.dispose()`, so the slow handler is where the
 // disposal's lifetime is modelled.
-function runtime(
+async function runtime(
 	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
 	onSessionShutdown: () => Promise<void>,
-): CreateAgentSessionRuntimeResult {
-	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+): Promise<CreateAgentSessionRuntimeResult> {
+	await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
-			sessionManager: options.sessionManager,
-			agentDir: options.agentDir,
+			...fakeSessionBase(options),
 			isFastModeActive: () => false,
 			agent: { state: {} },
 			getContextUsage: () => undefined,

@@ -1,5 +1,68 @@
 # changes — evals
 
+## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
+
+### What changed
+
+- `packages/evals/package.json`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+
+### Why
+
+- Vitest SSR copies and interrupted fixture writes must not accumulate in the OS temp directory.
+
+### Why an extension could not handle it
+
+- Test-process bootstrap is repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extensions eval layout rename
+
+### What changed
+
+- `packages/evals/src/extensions.eval.ts` -> `packages/evals/evals/extensions.eval.ts`. Upstream layout commit `d7296c063b` deleted the old `src/` suite while introducing `evals/extensions.docs.eval.ts`; the fork comparative host eval was ported to the new `evals/` directory.
+
+### Why
+
+The adopted eval layout keeps runner code under `src/` and executable suites under `evals/`. Retaining the old path would duplicate the extension evaluation outside the configured projects.
+
+### Why an extension could not handle it
+
+Eval discovery and project layout are repository test infrastructure.
+
+### Expected merge conflict zones
+
+- MEDIUM: upstream edits to extension eval discovery or `extensions.docs.eval.ts`; keep the fork host eval beside it under `evals/`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): evals
+
+### What changed
+
+- `packages/evals/docker/Dockerfile`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/docker/entrypoint.ts`: Docker runner files target the fork package: `node_modules/@code-yeongyu/senpi` (Dockerfile docs removal, `install-runtime.mjs`, `entrypoint.ts`), no `npm-shrinkwrap.json` requirement (senpi keeps shrinkwrap deleted), internal-dependency doc stripping checked across `@earendil-works` and `@code-yeongyu`; `src/docker.ts` reads the host auth from `SENPI_`/`PI_CODING_AGENT_DIR` or `~/.senpi/agent`.
+- `packages/evals/docker/install-runtime.mjs`: Docker runner files target the fork package: `node_modules/@code-yeongyu/senpi` (Dockerfile docs removal, `install-runtime.mjs`, `entrypoint.ts`), no `npm-shrinkwrap.json` requirement (senpi keeps shrinkwrap deleted), internal-dependency doc stripping checked across `@earendil-works` and `@code-yeongyu`; `src/docker.ts` reads the host auth from `SENPI_`/`PI_CODING_AGENT_DIR` or `~/.senpi/agent`.
+- `packages/evals/evals/configured-runtime.ts`: Upstream evals adopted as-is apart from the package import: `custom-provider`, `documentation-audit`, `extensions`, `models`, `openai-provider`, `tui` (`*.docs.eval.ts`) and `smoke.eval.ts`, plus fixtures `acme-server.ts`, `configured-runtime.ts` and the upstream unit tests (`acme-server`, `comparison`, `configured-runtime`, `harness`, `plan`, `report`).
+- `packages/evals/evals/documentation-audit.eval.ts`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/evals/tui.docs.eval.ts`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/package.json`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/src/docker.ts`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/src/harness.ts`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/vitest.evals.config.ts`: Upstream layout: eval suites flat under `evals/` (`*.docs.eval.ts` = documentation-lift, other `*.eval.ts` = host), runner code in `src/{cli,docker,harness,plan,report}.ts`, image build in `docker/`, one Vitest config `vitest.evals.config.ts` with projects `docs` and `host`. The fork's `vitest-evals` host harness is ported onto the upstream layout: `src/vitest-evals/{artifacts,harness-table,reporter,setup,summary}.ts` + their unit tests `test/vitest-evals/*.test.ts`, registered in `vitest.evals.config.ts` (`reporters` at root; `setupFiles` on the `host` project only, so container docs arms keep upstream's CLI reporters and are untouched). `artifacts.ts` keeps the `declare module "vitest"` `TestArtifactRegistry` augmentation and now shares upstream's `PI_SESSION_SNAPSHOT_ARTIFACT` constant from `src/report.ts` (one constant, one layout). Package imports use the fork package `@code-yeongyu/senpi` everywhere (harness, evals, fixtures, harness test); both `vitest.evals.config.ts` and `vitest.test.config.ts` alias `@code-yeongyu/senpi` and `@earendil-works/pi-coding-agent` to workspace source. `src/pi-harness.ts` (superseded by `src/harness.ts`; fork deltas ported as above), `test/pi-harness.test.ts` (its `resolveModelSelection` and `excludePiDocumentation` assertions are covered by upstream `test/harness.test.ts` for the sectioned prompt), `vitest.config.ts` (superseded by `vitest.evals.config.ts`).
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; packages/evals adopts the upstream eval layout and ports the fork vitest-evals harness (plan D-13).
+
+### Why an extension could not handle it
+
+The eval harness is repository test infrastructure, not a runtime extension point.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-21 - Migrate the eval harness to Vitest 5 (senpi#1895)
 
 ### What changed

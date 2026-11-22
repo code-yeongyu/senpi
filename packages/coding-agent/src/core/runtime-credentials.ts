@@ -5,6 +5,7 @@ import type {
 	CredentialStore,
 	OAuthAuth,
 } from "@earendil-works/pi-ai";
+import { projectSlot } from "@earendil-works/pi-ai/auth/pool/slots";
 
 type ExtensionOAuthRegistry = {
 	registerOAuthProvider(providerId: string, oauth: OAuthAuth): void;
@@ -20,11 +21,18 @@ function asExtensionOAuthRegistry(store: CredentialStore): ExtensionOAuthRegistr
 }
 /** Async credential store overlay for non-persistent runtime API keys. */
 export class RuntimeCredentials implements CredentialStore {
+	readonly withRefreshLock?: CredentialStore["withRefreshLock"];
 	private readonly store: CredentialStore;
 	private readonly overrides = new Map<string, string>();
 
 	constructor(store: CredentialStore) {
 		this.store = store;
+		this.withRefreshLock = store.withRefreshLock?.bind(store);
+	}
+
+	/** The store extension OAuth providers register into; a session's ModelRegistry reads it (senpi#3434). */
+	get backingStore(): CredentialStore {
+		return this.store;
 	}
 
 	registerOAuthProvider(providerId: string, oauth: OAuthAuth): void {
@@ -47,10 +55,31 @@ export class RuntimeCredentials implements CredentialStore {
 		return this.overrides.has(providerId);
 	}
 
+	/**
+	 * Reads that found the backing store locked and answered from its cached snapshot.
+	 * Stores that never report contention count as 0.
+	 */
+	busyReadCount(): number {
+		const store = this.store as CredentialStore & { getBusyReadCount?: () => number };
+		return typeof store.getBusyReadCount === "function" ? store.getBusyReadCount() : 0;
+	}
+
 	async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
 		options?.signal?.throwIfAborted();
 		const override = this.overrides.get(providerId);
 		return override ? { type: "api_key", key: override } : this.store.read(providerId, options);
+	}
+
+	async readSlot(
+		providerId: string,
+		slotName: string,
+		options?: AuthOperationOptions,
+	): Promise<Credential | undefined> {
+		options?.signal?.throwIfAborted();
+		const override = this.overrides.get(providerId);
+		if (override) return projectSlot({ type: "api_key", key: override }, slotName);
+		if (this.store.readSlot) return this.store.readSlot(providerId, slotName, options);
+		return projectSlot(await this.store.read(providerId, options), slotName);
 	}
 
 	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {

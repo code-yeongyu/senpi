@@ -1,3 +1,1415 @@
+## 2026-11-12 - The schedule runner awaits the boot instant (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/schedule/runner-lease.ts`: the runner lease, the delivery lock and the orphaned-delivery check await `processBootAtMs()`, which is async now; the lease resolves it before its write.
+
+### Why
+
+- The boot instant is read asynchronously (senpi#3152).
+
+### Why an extension could not handle it
+
+- The builtin schedule extension owns these leases.
+
+### Expected merge conflict zones
+
+- LOW: `runner-lease.ts`.
+
+## 2026-11-19 - A regression test pins the over-budget sentence first for an older hand's result with no text part (senpi#7062)
+
+### What changed
+
+- `packages/coding-agent/test/headless/hand-page-budget.test.ts`: a new case where an older hand (no `details.resultText`) leaves its show_html_page result with only an image part. The over-budget page must come back as `[text, image]` with the over-budget sentence first and `imagesInlined: false`. Test only; no source change.
+
+### Why
+
+- senpi#6939 asked for this test. The behaviour itself already landed on main with senpi#6938 (`applied` in `html-render/hand-page-budget.ts`), so senpi#6943's code change was superseded; this keeps its test.
+
+### Why an extension could not handle it
+
+- It tests the brain-side page budget, which is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: the end of the senpi#6921 describe block in `test/headless/hand-page-budget.test.ts`.
+
+## 2026-11-18 - An older hand's page text is still replaced when its page goes over budget (senpi#6938)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`: when a hand's show_html_page result carries no `details.resultText` (a hand on a release from before senpi#6934), the over-budget downgrade replaces the first text part that names the page's saved copy, else the first text part. The `resultText` rule still decides when the marker is present.
+
+### Why
+
+- senpi#6937. Without the marker nothing was replaced, so the tool's own "Local images were inlined." stayed next to `imagesInlined: false` for every older hand.
+
+### Why an extension could not handle it
+
+- The brain-side page budget is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `applied` and the new `olderHandOwnText` in `html-render/hand-page-budget.ts`.
+
+## 2026-11-19 - A hand page's own text is found by the resultText show_html_page emits (senpi#6936)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/tool.ts`: `ShowHtmlPageDetails.resultText` carries the exact text part of the result. `writeHtmlPage` always sets it. The session's over-budget rewrite (`handHtmlPage`) rewrites it the same way as the text part, so it stays equal to that part. A routed host result may omit it, but a non-string value is not accepted as page details.
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`: the brain-side over-budget downgrade replaces only the text part equal to `details.resultText` and leaves every other part. When no part equals it, nothing is replaced and the over-budget sentence is appended as its own part. A hand result with no `resultText` (a hand on an older version) keeps the first-text-part rule, so its "Local images were inlined." text is still replaced. The downgraded details carry the sentence as their `resultText`.
+
+### Why
+
+- senpi#6934. Matching by position (senpi#6933's first text part) replaced a note that a hand-side `tool_result` handler put in front of the page text. Matching by path (senpi#6931) missed a page text that a handler had rewritten. Either way, a stale "Local images were inlined." could stay next to `imagesInlined: false`.
+
+### Why an extension could not handle it
+
+- show_html_page and the brain-side page budget are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `ShowHtmlPageDetails`, the end of `writeHtmlPage`, the over-budget `details` in `handHtmlPage` and `isShowHtmlPageDetails` in `html-render/tool.ts`; `applied` and `overBudget` in `html-render/hand-page-budget.ts`.
+
+## 2026-11-19 - The hand link's page ledger empties when a run ends; the page text is found structurally (senpi#6933)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`:
+  - `withHandPageBudget` takes the brain session's agent and empties its ledger of pages it let through on `agent_end`, as the extension's own ledger is emptied. Its new `close()` unsubscribes and closes the wrapped hand link; the hand selection keeps and closes the wrapper, so no listener outlives its link.
+  - An over-budget page replaces the result's first text part, the one text part show_html_page emits, instead of the part that names the saved copy.
+
+### Why
+
+- senpi#6932. Pages an aborted run reserved kept using the budget for the rest of the hand link's life. A page text that a hand-side handler rewrote stayed next to the over-budget sentence and could still claim "Local images were inlined.".
+
+### Why an extension could not handle it
+
+- The brain-side page budget is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `withHandPageBudget` and `applied` in `html-render/hand-page-budget.ts`; `install` in `modes/headless/hand-selection.ts`.
+
+## 2026-11-18 - show_html_page on a hand: an over-budget page keeps the hand's additions (senpi#6931)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`: `withHandPageBudget` no longer replaces the whole content of an over-budget page's result. Only the page's own text part (the one naming its saved copy, `details.path`) becomes the over-budget sentence; every part a hand-side `tool_result` handler added stays in place, and a result whose page text is gone gets the sentence first. The downgrade is still decided once per call and is now applied to each copy's own content (`tool_execution_end`, the message events, the returned message).
+
+### Why
+
+- senpi#6928 L1. The brain-side downgrade dropped what a hand's `tool_result` handlers added, while a session running the tool itself keeps that output. (L2, the pending-page ledger owned by its session instead of the host, already landed with senpi#6925.)
+
+### Why an extension could not handle it
+
+- The brain-side page budget is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `html-render/hand-page-budget.ts` (`budgeted`, `overBudget`).
+
+## 2026-11-18 - show_html_page on a hand: the brain's page budget and prompt surface (senpi#6925)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/handed-pages.ts` (new): the session page-budget accounting (`reserveHandedPage` over a `PendingHandedPages` ledger) and the result text (`handedPageText`, `overSessionBudgetText`) move here from `tool.ts`, together with the per-page and per-session limits.
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts` (new): `withHandPageBudget` wraps a brain's ToolHost for a hand, with its own pending-page ledger. It applies the brain session's page budget to each page the hand hands back, and hands an over-budget page as written, consistently in its `tool_execution_end`, its message events and the returned message.
+- `packages/coding-agent/src/extensions/html-render/tool.ts`: reads the prompt surface from `ctx.promptSurface` (on a hand, the brain session's), and uses `handed-pages.ts` for the limits, the budget reservation and the result text.
+- `packages/coding-agent/src/extensions/html-render/index.ts`: imports `PendingHandedPages` from `handed-pages.ts`.
+
+### Why
+
+- senpi#6921. A hand cannot see the brain's transcript, so its pages skipped the session budget. Its result text came from the hand's own environment, so a desktop session heard "not displayed" for a page it rendered.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own code, and builtins are never forwarded between brain and hand.
+
+### Expected merge conflict zones
+
+- LOW: `html-render/tool.ts` (`hostRendersPage`, the end of `execute`); the two new files.
+
+## 2026-11-17 - show_html_page runs on a hand (senpi#6920)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: on a runtime without a session (a hand in a brain/hand split), `show_html_page` no longer reads loop-side context members. The page is held to `MAX_HANDED_PAGE_CHARACTERS` alone, because the transcript it joins is the brain's, and the prompt surface comes from the environment.
+
+### Why
+
+- senpi#6919. Every `show_html_page` call on a real `--hand` failed with "getSystemPromptOptions is loop-side and not bound". Once a hand reported its calls as model-issued, the call would also have failed on the missing `ctx.sessionManager`.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `hostRendersPage` and the `inTranscript` line of `execute` in `html-render/tool.ts`.
+
+## 2026-11-17 - show_html_page: images are read only from loading contexts, and only model-issued calls hold page budget (senpi#6917)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts` (new): `findLocalImages` moved here from `images.ts` and now tokenizes the page the way HTML does. `<!-->` and `<!--->` end a comment at once. A quote starts an attribute value only right after `=`. A tag the page never closes is dropped. A path counts as loaded only in `src`, `srcset`, `poster`, `href`/`xlink:href`, `data` and `background` attributes, in `url()` inside a `style` attribute or a `<style>` body, and as a quoted path in a `<script>` body or an `on*` handler. Other attributes, `<xmp>`/`<noscript>`/`<iframe>`/`<noembed>`/`<noframes>` bodies and CDATA sections only show a path.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: imports `findLocalImages` and `IMAGE_MIME_TYPES` from `image-references.ts` and keeps the reading and inlining.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the session's page budget is reserved and counted only when `ctx.issuedByModel` is true. That covers agent-loop calls and Cursor exec-frame calls. Calls from `ctx.executeTool()` and `pi.executeTool()` (`codemode-<uuid>`) no longer keep a reservation.
+- `image-references.ts` also reads only the first of a tag's repeated attribute names, as a browser does.
+
+### Why
+
+- senpi#6915 (review LOWs L4-L7 of senpi#6912), and the queue review of senpi#6917 (M1, L1, L2). A Cursor exec-frame call runs while its issuing message is still streaming, so a lookup in saved messages missed it, and the page skipped the session budget although its result joins the transcript. An empty comment hid the next image. An apostrophe in an unquoted value swallowed the rest of the page. A path only shown in `alt`, `title`, `<xmp>`, `<noscript>` or CDATA refused the whole page. Calls from `pi.executeTool()` held budget until the session shut down.
+
+### Why an extension could not handle it
+
+- `show_html_page` and its image inliner are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `html-render/image-references.ts` (new), the imports of `html-render/images.ts`, and `issuedByModel`/`execute` in `html-render/tool.ts`.
+
+## 2026-10-30 - Remove unconditional host HTML registration (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` no longer imports or registers `html-render`.
+- Its file-producing implementation now belongs to the standalone host's `src/extensions/html-render/`; the single-tool registration wrapper was removed.
+
+### Why
+
+- Host tools attach through the SDK rather than being unconditional engine builtins.
+
+### Why an extension could not handle it
+
+- Removing the unconditional catalog entry requires changing the builtin composition root.
+
+### Expected merge conflict zones
+
+- Import and registration entries in `packages/coding-agent/src/core/extensions/builtin/index.ts`.
+
+## 2026-11-17 - createShowHtmlPageTool requires its pending ledger (senpi#6930)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: `createShowHtmlPageTool(pending)` no longer defaults `pending` to a new map; every caller passes its ledger.
+
+### Why
+
+- The default was used only by tests. A caller that omitted it would get a ledger nothing clears on `agent_end` or `session_shutdown` (senpi#6927).
+
+### Why an extension could not handle it
+
+- This is the builtin's own tool factory.
+
+### Expected merge conflict zones
+
+- LOW: the `createShowHtmlPageTool` signature in `html-render/tool.ts`.
+
+## 2026-11-17 - show_html_page keeps its pending handed-page ledger per session and clears it when a run ends (senpi#6926)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the module-level `handedNotYetRecorded` map is gone. `createShowHtmlPageTool(pending)` replaces the module-level `showHtmlPageTool` and takes the ledger of handed but not yet recorded pages, keyed by tool call id. `forgetHandedPages` (senpi#6912) is removed with the map; calls another tool makes through `ctx.executeTool()` still neither spend nor hold the budget.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/index.ts`: each extension load creates its own ledger, registers the tool with it, and clears it on `agent_end` and `session_shutdown`.
+
+### Why
+
+- The module-level map never dropped a session's key, and a pending entry was pruned only by that session's next `show_html_page` call, so a long-lived multi-session host kept one small map per session until exit (senpi#6924).
+
+### Why an extension could not handle it
+
+- This is the builtin's own tool and its own lifecycle handlers.
+
+### Expected merge conflict zones
+
+- LOW: `inlinedPageCharacters` and the `createShowHtmlPageTool` wrapper in `html-render/tool.ts`; `html-render/index.ts`.
+
+## 2026-11-17 - show_html_page: nested calls hold no page budget, and images a script loads are inlined again (senpi#6912)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: a call made through `ctx.executeTool()` (id `<parent>/<n>`) is held to `MAX_HANDED_PAGE_CHARACTERS` only. It neither reads nor reserves the session's `MAX_HANDED_PAGES_CHARACTERS` budget, because nested results never enter the transcript. A session's reservation map is dropped once its last reservation is recorded, and `forgetHandedPages` drops it on shutdown. The comment now states that only image-inlined pages count toward the session budget.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/index.ts`: calls `forgetHandedPages` on `session_shutdown`.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: `findLocalImages` takes a quoted path or `url()` as loaded when it sits inside a tag or a `<script>`/`<style>` body (`loadingSpans`). This replaces the attribute-name rule, so script data such as `{ src: "/abs/x.png" }` or a path array is inlined again. Text, `<code>`/`<pre>` samples, escaped tags, `<title>`/`<textarea>` bodies and comments are never read.
+
+### Why
+
+- senpi#6910. Nested calls kept a reservation for the rest of the process and starved the session's later pages. The rule from senpi#6908 left images a script loads uninlined and unreported, so they broke silently for a viewer on another machine.
+
+### Why an extension could not handle it
+
+- `show_html_page` and its image inliner are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `execute` and the reservation helpers in `html-render/tool.ts`; `findLocalImages` in `html-render/images.ts`.
+
+## 2026-11-17 - show_html_page bounds a session's handed pages and inlines only loaded images (senpi#6908)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: a page's images are inlined into `details.html` only while the session's inlined pages together, counted from `ctx.sessionManager.getEntries()` plus concurrent calls not yet recorded, stay within `MAX_HANDED_PAGES_CHARACTERS` (6 Mi), besides the per-page `MAX_HANDED_PAGE_CHARACTERS`. Past it the page is handed as written with `imagesInlined: false`, and the result says so.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: `inlineLocalImages` only finds paths the page loads (an unquoted `url()`, or a quoted value after `src=`, `srcset=`, `poster=`, `href=` or `url(`); a path only mentioned in text or code is never read and stays as written.
+
+### Why
+
+- `get_messages`, `get_tree` and `agent_end` carry every handed page in one RPC record, so about eight image-heavy pages could pass `MAX_RPC_LINE_CHARACTERS` and drop the attach connection (senpi#6907). A mentioned-only path was replaced with a base64 blob, and a mentioned file over 10 MiB refused the whole page.
+
+### Why an extension could not handle it
+
+- `show_html_page` and its image inliner are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: the handed-page constants and `execute` in `html-render/tool.ts`; `findLocalImages` and the end of `inlineLocalImages` in `html-render/images.ts`.
+
+## 2026-11-17 - show_html_page hands the host a page with its local images inlined (senpi#6899)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: `details.html` is the page with its absolute-path local images (`<img src>` and CSS `url()`) inlined as `data:` URIs by `inlineLocalImages`, not the page as written, while that page fits `MAX_HANDED_PAGE_CHARACTERS` (2 Mi characters, well under the 16 Mi RPC line limit with room for JSON escaping and the other fields). A larger page is handed as written, `details.imagesInlined` is false, and the result says a viewer on another machine will not see its images. A page loading a local image that cannot be read is refused with `HtmlRenderImagesNotFoundError` and nothing is written; the `missingImages` details field is removed.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: `missing` lists only paths the page loads as images (an unquoted `url()`, or a quoted value after `src=`, `srcset=`, `poster=`, `href=` or `url(`); a path only named in text or code stays as written and is no error. The doc comment now says unreadable paths are returned, not thrown.
+
+### Why
+
+- A host publishes `details.html`. For a session on another machine the viewer got raw paths on the producing machine, which it cannot read and the page sandbox blocks, so those images stayed blank. A page with a broken image was also reported as shown although the desktop refuses to publish it.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its result details are defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `execute` body and `ShowHtmlPageDetails` in `html-render/tool.ts`; `findLocalImages` and the end of `inlineLocalImages` in `html-render/images.ts`.
+
+## 2026-11-16 - `credential-proxy` builtin (senpi#6828)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/credential-proxy/index.ts`: activates the proxy at `session_start` from the global `credentialProxy` setting, reports problems as warnings and a start failure as an error (credentials stay withheld), and releases it at `session_shutdown`.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers it right after `kill-guard`, before any tool-registering builtin.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/command-runner.ts`: hook commands take their passthrough values from `withCredentialProxy(process.env)`, so a hook that passes a declared variable through gets the placeholder and can use its `baseUrlEnv` route (review L2). A hook that exits without reading its JSON input no longer raises an unhandled `EPIPE` from the stdin write; any other stdin write error is appended to the hook's stderr.
+
+### Why
+
+- senpi#6820.
+
+### Why an extension could not handle it
+
+- It is an extension; the registration line is the only edit to a shared file.
+
+### Expected merge conflict zones
+
+- LOW: one import and one array entry next to `kill-guard`.
+
+## 2026-11-15 - A held Stop with no leaf keys its stop state by the session captured at turn end (senpi#6794)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-adapter.ts`: `createStopTurnTracker().turnKey(ctx, sessionId)` falls back to the given session id when there is no leaf; `StopTurn`'s doc says when each part is read.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts`: `dispatchStop` passes the session id the Stop captured at `agent_end`.
+
+### Why
+
+- #6795 review L1: on a hand the no-leaf fallback read the session id after the loop-hook call ended, where it throws, so the stop state was lost.
+
+### Why an extension could not handle it
+
+- The Stop lifecycle is the hooks builtin's own state.
+
+### Expected merge conflict zones
+
+- LOW: `createStopTurnTracker` and the `applyStopHookResult` call in `dispatchStop`.
+
+## 2026-11-15 - A held Stop reads its turn key when it dispatches again (senpi#6794)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts`: `dispatchStop` reads the turn key (`turnTracker.turnKey(ctx)`) after the hook ran, as before #6751; a held Stop keeps only the session id it read at `agent_end` (`PendingStop.sessionId`, which replaces `turn`).
+
+### Why
+
+- senpi#6794: #6751 read the key at `agent_end`, so a Stop held for background work in a local session keyed its stop state and reentry count to the turn's end instead of the leaf when it dispatched. On a hand the held Stop dispatches in its call's own async context, where the carried leaf stays readable, so it still works there.
+
+### Why an extension could not handle it
+
+- The Stop lifecycle is the hooks builtin's own state.
+
+### Expected merge conflict zones
+
+- LOW: `PendingStop`, `dispatchStop` and the `agent_end` handler in `stop-lifecycle.ts`.
+
+## 2026-11-15 - A Stop held for background work reports its own turn, from its own context (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts`: an `agent_end` reads the ended turn (`StopTurn`: session id and turn key) and an `AsyncLocalStorage.snapshot()` when it builds the Stop. A held Stop runs inside that snapshot, so its writes go where the turn's own would, and with no signal: the drain dispatches only when the session is quiet, where a local session's `ctx.signal` is undefined.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-adapter.ts`: `applyStopHookResult` takes the `StopTurn` instead of a turn key, so it no longer reads the session id when the result arrives. The output-record and unsupported-field diagnostics moved unchanged to `packages/coding-agent/src/core/extensions/builtin/hooks/stop-output.ts` (the file was over the size ceiling).
+
+### Why
+
+- On a hand (senpi#5898) a held Stop runs after the loop-hook call that held it has ended: the drain fires from whatever work cleared the wake source, and the call's identity and signal are gone by then. Locally nothing changes: the turn key and session id are the same values read earlier, and an idle session's signal is undefined.
+
+### Why an extension could not handle it
+
+- The Stop lifecycle is the hooks builtin's own state.
+
+### Expected merge conflict zones
+
+- LOW: `PendingStop`, `dispatchStop` and the `agent_end` handler in `stop-lifecycle.ts`; the `applyStopHookResult` signature.
+
+## 2026-11-10 - show_html_page says what the host did with the page (senpi#6273)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the result text depends on the session's prompt surface (`ctx.getSystemPromptOptions().surface`, else `SENPI_PROMPT_SURFACE`). On `app`, the surface the OmO desktop opens every session it renders with, it says the page was shown to the reader inline above the reply and where the copy is saved. On every other surface (terminal, chat, none named) it says the page was written to the path and not displayed in this interface. The "Open it in the desktop to see it rendered with your theme" sentence is gone. The description says the same: inline in the OmO desktop thread, elsewhere only saved to a file, and the result says which.
+
+### Why
+
+- In a desktop thread the page renders inline, but the result told the model to open the file in the desktop, so the model reported that the page was not shown. The result stays in the thread, so later turns sometimes refused to call the tool at all (senpi#6273).
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its result text is defined here. The host signal is the existing `promptSurface`, no new capability.
+
+### Expected merge conflict zones
+
+- LOW: the result `text` and the end of the description in `html-render/tool.ts`.
+
+## 2026-11-10 - Recommended Fable slot is Fable 5.2 (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable slot of `RECOMMENDED_DEFAULT_MODELS` is `claude-fable-5-2` at `xhigh` on the same Claude lanes. The launch-flag lookup is removed.
+
+### Why
+
+- Fable 5.2 is the released Fable model.
+
+### Why an extension could not handle it
+
+- This is the builtin's own shipped list.
+
+### Expected merge conflict zones
+
+- LOW: the Fable row of `RECOMMENDED_DEFAULT_MODELS`.
+
+## 2026-11-09 - vertex-garden per-model thinking toggles (senpi#6270)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/models.ts`: each garden model declares `thinkingFormat: "chat-template"` with its own flag (GLM 5.2 `enable_thinking`, DeepSeek V4.1 Flash `thinking`), a two-level `thinkingLevelMap` (off, medium), and its live-verified Vertex default (GLM `medium`, DeepSeek `off`).
+
+### Why
+
+- Live probes against the global OpenAPI endpoint (2026-11-09) showed the endpoint toggles thinking per model through `chat_template_kwargs` and silently ignores a wrong flag name, so the previous "accepts no thinking parameters" registration hid a control both models support and risked sending one model's flag to the other.
+
+### Why an extension could not handle it
+
+- It is the extension's own model registration; only the default-level declaration needed the `types.ts` companion entry above.
+
+### Expected merge conflict zones
+
+- LOW: the `garden()` helper and the two model entries; the `NO_THINKING_CONTROLS` block is replaced outright.
+
+## 2026-11-08 - terminal_background_age event (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `TERMINAL_BACKGROUND_AGE_EVENT` (`terminal_background_age`) and its payload `TerminalBackgroundAgeEvent` (`kind` running|reaped|reap_failed, `id`, `description`, `command?`, `startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes`, `reason?`, `stop`).
+
+### Why
+
+- RPC drivers need a typed event they can act on when a background session runs long (senpi#6201).
+
+### Why an extension could not handle it
+
+- The event name and payload are the shared cross-extension seam, like the other terminal events in this file.
+
+### Expected merge conflict zones
+
+- LOW: the constant block at the top of `monitor-state-event.ts`.
+
+## 2026-11-08 - ask-user refuses escape residue in question text once (oh-my-openagent#12797)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/escape-residue.ts` (new): `findEscapeResidue` finds `\uXXXX` escapes left in question, header and option text, both literal ones and ones whose backslash was dropped (`ub0b4`), with guards against hex-like ids and quoted code (fenced blocks, double-backtick and single-backtick spans are blanked before the check); `AskUserEscapeResidueError` is the typed tool error. `EscapeResidueRetry` with `refuseEscapeResidue` and `endEscapeResidueTurn` scopes the one refusal to assistant turns.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: before a card opens, a call whose text holds escape residue is refused with `AskUserEscapeResidueError`, which asks the model to re-call with raw UTF-8 text. Every residue call in one turn is refused, since parallel calls of one assistant message run in that turn; residue calls in a later turn open as written and the user gets a warning notice. Any call made while the retry is open uses it up, so after a clean re-call the next residue set is refused once again. `AskUserState.escapeResidue` carries the bound.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts`, `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: the new state starts fresh and resets on `session_start` and `agent_end`; `turn_end` closes a refusal turn and opens the retry.
+
+### Why
+
+- Models sometimes write non-ASCII tool-call text as `\uXXXX` escapes and drop the backslash, so a Korean card showed `ub0b4 Tailscale 쓰기` for `내 Tailscale 쓰기` (oh-my-openagent#12797). The JSON is valid, so parsing cannot catch it; only the text can.
+- A per-call flag let one of two parallel residue calls open unrefused and then refused its re-call; a turn-scoped bound refuses each set once and never refuses a re-call.
+
+### Why an extension could not handle it
+
+- The check belongs to the ask-user builtin's own argument handling; it is a fork-only builtin, not an upstream path.
+
+### Expected merge conflict zones
+
+- LOW: `AskUserState` and the `execute` path just before `startQuestion` in `tool.ts`; the `turn_end` and `agent_end` handlers in `extension.ts`.
+
+## 2026-10-30 - ChatGPT account route and plan states (part of senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: renders registration route, disabled plan permission and signed-out states, with a ChatGPT Settings > Usage link.
+
+### Why
+
+- The account command must explain when ChatGPT plan usage is unavailable.
+
+### Why an extension could not handle it
+
+- This is the existing account extension.
+
+### Expected merge conflict zones
+
+- The account-list renderer.
+
+## 2026-11-03 - Dangling ask-user questions restore on startup opens (senpi#5700, fixes #4764)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: `resumeDanglingQuestion` now also runs when the `session_start` reason is `startup`. A restarted CLI opening an existing session file arrives with that reason (the initial runtime passes no explicit event), so the dangling question is restored exactly like on the `switch_session` resume path. Diagnostic sizes-only startup still restores nothing.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: a `startup` restore runs only when `ctx.hasUI` is true. A headless startup (print mode, `-p` / `--mode json`) has no question UI, so restoring there would settle the question as `orphaned-after-restart`, start an unasked model turn, and write the `ask-user:resumed` marker so a later interactive open could never re-ask it; headless startup now restores nothing and writes no marker. The sizes-only early return also holds on `resume`. CLI `--fork <file>` also arrives as `startup` with copied branch entries, so a fork re-presents the source's dangling question, unlike runtime `/fork` (reason `fork`, excluded); the event carries no signal telling a forked startup from a plain restart, so this divergence is documented, not filtered.
+- `packages/coding-agent/test/suite/ask-user-resume.test.ts` (new cases): a dangling question is re-presented once on `startup` (and not twice on a second start); sizes-only startup and sizes-only resume restore nothing; headless (no-UI) startup restores nothing and writes no marker.
+
+### Why
+
+- After a crash, the path a user most often takes is a restarted CLI with `--session <file>`, but only the running-client `switch_session` path restored the dangling question; the restarted CLI left the call unanswered until the next request gave it the interrupted-call placeholder. A fresh session has no branch entries, so including `startup` restores nothing there.
+
+### Why an extension could not handle it
+
+- The reason filter lives in the builtin ask-user extension itself; an external extension cannot change which `session_start` reasons the builtin restores on.
+
+### Expected merge conflict zones
+
+- LOW: the reason and `hasUI` guards in `resumeDanglingQuestion` and the ask-user resume test cases.
+
+## 2026-10-30 - Keep SIWC ID-token hints out of account notices (senpi#5046)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` removes ID-token hints from printable authorization URLs while sending the original hinted URL to the TUI browser launcher.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` sends notices to terminal and RPC consumers that may retain their text.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` is the shared account-login relay used by those extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`: auth_url relay.
+
+## 2026-11-02 - Shell tool hooks refuse calls on a runtime without a session (senpi#5483)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: on a runtime without a session, the `tool_call` handler refuses the call when any PreToolUse or PostToolUse hook is configured and passes it through when none is; the `tool_result` handler does nothing there. Sessions are unchanged.
+
+### Why
+
+- Tool hooks get the session's ID in their input, which a hand does not have; running the tool past configured hooks would skip them. Forwarding them to the session's process is the two-sided forwarding change.
+
+### Why an extension could not handle it
+
+- This is the builtin hooks extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `tool_call` and `tool_result` handlers.
+
+## 2026-10-27 - look_at authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/look-at/runner.ts`: `getApiKeyAndHeaders` receives the session id.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call.
+
+## 2026-11-01 - service-tier shares the -fast pairing rule with the fallback controller (senpi#5312)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: `findBaseModel` / `findFastModel` and the compatibility check move to `core/fast-model-pair.ts` and are imported; behavior is unchanged.
+
+### Why
+
+- The fallback controller needs the same pairing to let a `-fast`-keyed chain govern the base model the extension swapped in; one definition keeps the two from drifting.
+
+### Why an extension could not handle it
+
+- The controller is core; the rule had to live in a module both sides import.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the removed helper block near the top of `service-tier.ts`.
+
+## 2026-10-30 - Fallback display comment follows first-party bare expansion (senpi#5050)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/model-fallback/settings.ts`: the `displayLookup` comment now says a bare default expands across the vendor's first-party providers. No behavior change.
+
+### Why
+
+- The comment described the removed every-provider expansion.
+
+### Why an extension could not handle it
+
+- Comment-only edit to an existing builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the `displayLookup` doc comment.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`.
+- The built-in OAuth interaction maps typed secret prompts to guarded input only on capable host contexts, preserving legacy calls on older hosts.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-29 - Job widgets: review follow-ups to P1, P3 and P4
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/tui-widget.ts`: a new `JobWidgetArea` treats a job already `done` in the first state it receives as expired, so a reload (or a `config-reload`), whose re-bound registry re-sends every finished job it still holds, no longer flashes those widgets back for 10 s; a job that finishes later still lingers. The `+N more` row is cut to the inner width like the job lines (`cutPlain`, now exported from `tui-line.ts`), so no row is wider than a narrow terminal.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/line-reader.ts`, `runtime.ts`: the reader exposes `progress`, the newest CR segment of the line still in progress (sanitized; a trailing token-shaped run of 16+ characters is held back until the segment completes, since a redactor cannot recognize a token cut mid-write). The pending, fallback and live views use it, redacted by a fresh source redactor (the incomplete line never enters the source's stateful one), as the stage ahead of the last complete line, so a CR progress bar shows its current step instead of the previous one. Rules still match complete lines only.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/format.ts`: a compacted value picks its decimals after rounding and moves to the next suffix when it rounds to 1000: `99_960` prints `100k` (was `100.0k`), `999_999` prints `1.0M` (was `1000k`), `999_950_000` prints `1.0G`.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/matcher.ts`: `scanPattern` skips `\Q…\E` quoted text (literal in RE2, up to `\E` or the end), so the groups it names, and the lookaround and backreference checks, agree with RE2: `\Q(?<x>a)\E(?<y>\d)` names only `y`, and a spec reading field `x` is rejected. The RegExp test engine refuses patterns JS reads differently from RE2 (a class opening with `]`, `\Q…\E`), and the leading-`]` class reading is pinned for the scanner and RE2.
+- `NOTICE.md`: an oh-my-pi `9df0457b31` entry for the job-widgets port with the MIT block, like the TTSR and todo ports.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/session-host.ts`, `registry.ts`, `request-controller.ts`: a re-bind after a reload applies the re-read `authorAfterMs` and obfuscation (`configure`; the registry hands jobs and its publisher a redactor that calls the current one, so every state sent, author request and new runtime uses it; a reader already running keeps its stateful source redactor so a key block is never split). `onJobWidgetSessionChange` tells hosts when a session's widgets start or stop (a re-bind is neither), and `resendJobWidgetState` re-sends a session's state when some job is shown.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/key-block-redact.ts`: private-key body lines that carry a per-line prefix (`docker logs -t`, `kubectl logs --timestamps`, a `[pod] ` tag) are held and redacted like bare ones, also when the window cut off the BEGIN line or only the END line carries a marker. A line is read as a prefix plus the base64 token ending it; a run holds consecutive lines whose prefixes have the same shape (digit runs collapsed). A bare run starts on 16+ base64 characters with both cases, so hex hashes are no longer held (or redacted at a window cut); a prefixed run starts only on a full-width (60+) body line, so an ordinary line ending in a token still reaches the view.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/request-controller.ts`, `request-policy.ts`: when the author has no model, the call gives back the job's request and its hourly slot, and the session asks again after `noModelRetryMs` (30 s) instead of stopping the job for good, so widgets start once a model is selected.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/tui-line.ts`: the narrow-width order is documented as it runs: the chart goes before the headline label, and once the label is gone the chart comes back if it fits; a table pins the order for a wide headline label.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/view-build.ts`: a meter's unit that restates the total (`/60`, `/ 60`, `of 60 steps`, `60`, as authors copy a job's `step 24/60`) loses that leading total, so the count shows it once (`24/60`, `24/60 steps`) instead of `24/60 /60`; a real unit stays. Found in a real authored widget for `step i/60` output.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/extension.ts`: on `senpi:extension-rpc-subscribed` the session's current `job_widget_state` is sent once more, so an RPC client that starts receiving extension events sees the widgets (a frozen `done` one included) without waiting for a change. `model_select` copies the context's property descriptors instead of spreading it, so its guarded getters stay lazy.
+
+### Why
+
+- Review follow-ups on senpi#4681, senpi#4685, senpi#4686 and senpi#4691 (prefixed key bodies reaching the author and view, a model-less session spending its caps and stopping jobs for good, and a narrow-width doc that disagreed with the code): a quiet widget area across reloads, narrow terminals under `PI_TUI_STRICT_RENDER=1`, CR progress bars one step late, `1000k`, settings ignored until a new session, and late RPC clients seeing nothing.
+
+### Why an extension could not handle it
+
+- It is the job-widgets builtin's own code; the only shared piece is the subscribe signal recorded in `core/extensions/changes.md`.
+
+### Expected merge conflict zones
+
+- LOW: `openJobWidgetSession` / `closeJobWidgetSession` in `job-widgets/session-host.ts`, the `session_start` and `model_select` handlers in `job-widgets/extension.ts`.
+
+## 2026-10-29 - Job widgets: live widget lines in the TUI (job widgets P4)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/tui-line.ts` (new): `formatJobWidgetLine` draws one job as one line no wider than the width it gets: id, title, the primary block's label, a spark as 8-level block glyphs (or a meter as `[██████░░░░] 120/250`), then the headline and the spark's last value; a pending job shows `reading output · N lines`, a fallback its latest line, a skipped job nothing. Too wide, it gives way so the numbers go last: it drops the block label, shortens the title to 8 columns, drops the chart (a meter's `120/250` count stays with the numbers), drops the headline's label, then shortens the title further or drops it, narrows the gaps to one space, and only then cuts the line. Colors come from the theme tokens `accent`, `success`, `error` and `muted`; a non-empty `NO_COLOR` draws none (`jobWidgetLineStyle`).
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/tui-widget.ts` (new): `JobWidgetArea`, the widget above the editor (`setWidget("job-widgets")`). It shows while some job is live or pending, or a finished one lingers: at most 3 lines, newest first, then `+N more`; a job stays 10 s after it is first seen done, then leaves, and the area goes away with the last line. It redraws only when what it shows changed (the same component, one `requestRender`), and its only timer is the next linger expiry.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/extension.ts`: in the TUI (`ctx.mode === "tui"` with a UI), the session's `job_widget_state` events on `pi.events` feed a `JobWidgetArea`, subscribed before the session opens so a re-bound session's state reaches it; shutdown unsubscribes and clears the area.
+
+### Why
+
+- Live widgets reached RPC clients only; the terminal UI, where most long jobs are started, showed nothing.
+
+### Why an extension could not handle it
+
+- It is a builtin extension, drawn through the public `ctx.ui.setWidget` and `pi.events` APIs; nothing outside `job-widgets/` changes for the widget area.
+
+### Expected merge conflict zones
+
+- LOW: the `session_start` and `session_shutdown` handlers in `job-widgets/extension.ts`.
+
+## 2026-10-28 - Job widgets: live widgets for background sessions and the job_widget_state event (P3)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/`: the engine is wired to sessions. `registry-job.ts` holds one job (its text sources, its derivation runtime, replaced by a fresh one when a spec is installed, and where its spec request stands); a job joins the state once its first spec request starts. `registry.ts` (`JobWidgetRegistry`) holds one session's jobs and request controller: new output schedules a refresh at most every 250 ms, a 1 s unref'd ticker runs only while some job is open, and on exit a job settles to `done` with its last view frozen. `state-publisher.ts` sends the session's state at most once a second and only when what a client draws changed (`updatedAtMs` alone does not count). `session-host.ts` keeps the registries by session id, so a reload parks a session's registry and the next generation re-binds it; it holds the public host API `registerJobWidgetSource`, `getJobWidgetState` and `setJobWidgetAuthorResolver`. `session-author.ts` resolves the author model from `jobWidgets.model`, then the host route, then the session's current model, and sends the request through the session's model runtime with reasoning off. `extension.ts` is the new `job-widgets` builtin: on `session_start` it opens the session's widgets unless `jobWidgets.enabled` is false, and it sends `job_widget_state` through `pi.events` and `pi.rpc` (a stale-generation error alone is dropped). `public.ts` is the public barrel.
+- Views carry no secrets: `runtime.ts` takes a `redactSource` option and every source's lines go through one stateful redactor per source (`SourceLineReader` feeds it each complete line in order, marks text the tap dropped unread as a cut, ends it when the source closes, and cuts lines at 4,096 characters only after redaction): the built-in private-key rule, the session's secret obfuscation, then `redactSecrets`, before lines are matched or kept, so a key that spans lines, refreshes or a dropped gap never reaches a view, and `registry-job.ts` redacts the label and stage it derives from, so no view text is ever cut through a token. `view-redact.ts` (`redactJobWidgetState`) then redacts every string of every view (only `kind` and `tone` pass through) at the publisher boundary, for each sent state and for `getJobWidgetState`; clients persist the state.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `job-widgets` right after `terminal`.
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: adds `JOB_WIDGET_STATE_EVENT = "job_widget_state"`.
+
+### Why
+
+- Long background jobs print numbers nobody reads until they end; this turns their output into a small live chart that every client (TUI, RPC, desktop) receives the same way.
+
+### Why an extension could not handle it
+
+- It is a builtin extension; outside its own directory it only adds a registry entry and an event-name constant beside the existing ones.
+
+### Expected merge conflict zones
+
+- LOW: the `terminal` neighborhood of `builtinExtensions` in `builtin/index.ts`, and the constants at the top of `monitor-state-event.ts`.
+
+## 2026-10-28 - Job widgets: spec author, redacted samples and request controller (P2)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/`: new pure modules, still not registered in `builtin/index.ts` and not wired to any session. `author-types.ts` defines the `JobWidgetAuthor` port (`(request, signal) => Promise<unknown>`, `undefined` meaning no model) and its request (job id, brief, source samples, the spec being replaced, the rejected answer). `author-system-prompt.ts` and `author-user-prompt.ts` hold the respond-tool prompts as plain template code. `author-samples.ts` builds the sample: per source the first and newest lines, at most 3 lines of one shape, lines cut at 300 characters, fence lines left out, 12 KB in total with a fair share per source and two thirds of each share for the newest lines. `author-redact.ts` redacts every brief field, source label, sample line and retry text statefully per source (one redactor fed a source's lines, or a text's lines, in order, never a fresh one per line): first the built-in private-key rule of `key-block-redact.ts` (on whatever the session's secret setting; everything from a `BEGIN … PRIVATE KEY` armor line through its END line, or the end of the source, becomes one `[REDACTED private key]` line, and a base64 body run that an END line follows, or that a sample cut leaves open, is redacted with it, since a sample window can start inside a key), then the optional session obfuscator (a per-source `SecretOutputRedactor` factory), then `redactSecrets` (which runs `redactSensitiveOutput` first). Sample budgeting and line cuts run on the redacted request. `model-author.ts` adds `createModelJobWidgetAuthor({ resolveModel, complete })`: one request with the `respond` tool, `tool_choice` forced by name where the wire supports it (the `todotools` precedent), no reasoning, 3,000 output tokens, and the answer read from the tool call or from JSON text. It also adds `jobWidgetModelResolver` (explicit setting, then a host resolver, then the session's model). `request-policy.ts` and `request-controller.ts` decide and run requests: first request after 15 s and 3 lines, validation plus dry run, one retry carrying the errors, drift re-author after 200 unmatched lines with the newest match over 90 s old, at most 3 author calls per job, 2 jobs in flight and 30 calls per hour per session, a `skip` that ends a bash job's requests and a task job's until its watch hint changes, and no more requests once the author has no model.
+- Ported and adapted from oh-my-pi commit 9df0457b31 (`packages/coding-agent/src/job-widgets/{author,registry}.ts`, `src/prompts/system/job-widget-{system,user}.md`), MIT-licensed, Copyright Can Boluk et al. ([`oh-my-pi`](https://github.com/can1357/oh-my-pi)). Adaptations: redaction moved to the port boundary so injected authors never see raw text, the model and completion function are injected, the prompts no longer name oh-my-pi internals, and the caps follow the senpi plan (calls per job include retries; an hourly session cap is new).
+
+### Why
+
+- This is the author half of the job-widgets plan: a cheap model writes a widget spec once per job, inside fixed cost bounds, without seeing secrets.
+
+### Why an extension could not handle it
+
+- It is part of a new builtin extension directory; nothing outside it changes.
+
+### Expected merge conflict zones
+
+- None: every path is new and fork-only.
+
+## 2026-10-28 - Job widgets: RE2 line matcher (P1b)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/re2-matcher.ts`: new `Re2LineMatcher`, the production `LineMatcher` backed by `re2js`. It compiles every pattern with no flags (never `RE2JS.LOOKBEHINDS`), maps re2js syntax errors to `MatcherCompileError` with the pattern index, and reports each named group's span in UTF-16 units (`undefined` for a group that took no part). `defaultLineMatcher` is a shared instance, exported through the job-widgets barrel for later wiring; it is still not registered in `builtin/index.ts`.
+- `packages/coding-agent/test/job-widgets/`: the P1 table tests run once per engine (re2 and the RegExp fake) through `describeEachMatcher`; `re2-matcher.test.ts` adds span, compile-rejection (lookaround, numbered and named backreferences, syntax errors) and linear-time (`^(a+)+$` on 50k vs 250k `a…ab` lines, both above re2js's BitState cutoff so both run on its NFA/DFA path) coverage.
+
+### Why
+
+- Widget patterns are model-written, so a backtracking engine could stall on one line (ReDoS). RE2 semantics match in time linear in the line.
+
+### Why an extension could not handle it
+
+- It is a new file in the job-widgets builtin directory; nothing outside it changes.
+
+### Expected merge conflict zones
+
+- None: every path is new and fork-only.
+
+## 2026-10-28 - Job widgets: spec, validator and local derivation (P1)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/`: new pure modules, not registered in `builtin/index.ts` and not wired to any session yet. They hold the declarative widget spec (`spec-types.ts`), the respond-tool JSON schema (`spec-schema.ts`), structural parsing with local repairs (`spec-parse*.ts`, `spec-repair.ts`), the validator and its dry run against sample lines (`spec-validate.ts`, `spec-dry-run.ts`), a `LineMatcher` port with `MatcherCompileError` (`matcher.ts`), and the deterministic derivation runtime: the source line reader (partial lines, CR and CRLF, ANSI strip, 4,096-char cut, torn-gap skip), bounded per-field and keyed series with the ten aggregations, and view building into the `job_widget_state` v1 contract (`line-reader.ts`, `field-state.ts`, `rule-match.ts`, `view-build.ts`, `runtime.ts`, `view-types.ts`).
+- Every field keeps at most 256 keys (oldest first-seen dropped; keys the spec names are pinned), so a grid keyed per test or per path stays bounded for the life of a job.
+- The validator rejects lookaround, every backreference/recursion/conditional spelling (`\\1`, `\\k<n>`, `\\k{n}`, `\\g…`, `(?P=n)`, `(?P>n)`, `(?R)`, `(?1)`, `(?&n)`, `(?(1)…)`, `(*VERB)`), patterns over 400 characters, more than 12 rules and more than 4 blocks before any engine sees a pattern, and hands the engine `(?<name>…)` for both `(?P<name>…)` and `(?<name>…)`. No production matcher ships here: the linear-time engine adapter comes in a follow-up once its dependency is approved.
+- Ported and adapted from oh-my-pi commit 9df0457b31 (`packages/coding-agent/src/job-widgets/{spec,runtime,format,types,text-tap}.ts`), MIT-licensed, Copyright Can Boluk et al. ([`oh-my-pi`](https://github.com/can1357/oh-my-pi)). Adaptations: the native matcher became a port, the view follows the senpi v1 contract (states pending, live, done, skipped, fallback; seven tones; bars and grid cells keyed by display key), the missing-value text is `-`, and a missing `agg` on bars or meter blocks defaults to `last` instead of costing a retry.
+
+### Why
+
+- Long background jobs print numbers nobody reads until they end. This is the engine half of the job-widgets plan: once a spec exists, every update is computed locally from new output, with no model call.
+
+### Why an extension could not handle it
+
+- It is a new builtin extension directory; nothing outside it changes.
+
+### Expected merge conflict zones
+
+- None: every path is new and fork-only.
+
+## 2026-10-27 - Kimi recommendations and the look-at chain move to K3.1 Pro (senpi#4443)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Kimi rung of `RECOMMENDED_DEFAULT_MODELS` is `kimi-k3.1-pro` at `max` (was `kimi-k3`); `canonicalModelId` maps Kimi Code's bare `k3.1-pro` to `kimi-k3.1-pro` as it maps `k3` to `kimi-k3`.
+- `packages/coding-agent/src/core/extensions/builtin/look-at/model-selector.ts`: `DEFAULT_LOOK_AT_CHAIN` ends at `kimi-k3.1-pro` (was `kimi-k3`).
+
+### Why
+
+- Kimi K3.1 Pro replaces K3 as Moonshot's flagship (senpi#4441); implicit Kimi picks should land on it.
+
+### Why an extension could not handle it
+
+- These are the builtin extensions' own shipped defaults.
+
+### Expected merge conflict zones
+
+- LOW: the `RECOMMENDED_DEFAULT_MODELS` table and `DEFAULT_LOOK_AT_CHAIN`.
+
+## 2026-10-26 - vertex-garden ambient auth carries a resolved project (senpi#4339)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: the ambient resolver resolves the target project (process env, then the sibling google-vertex stored profile env) and returns it in the ambient `AuthResult.env`; availability still tracks the ADC chain alone (no return of the reverted env-only gate, 9a497be00).
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: with a plain ADC login, no env vars and no quota project, the first garden request threw "Vertex AI requires a project ID" while google-vertex worked off the same login.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: needs the new `storedProviderEnv` input plus `AuthResult.env` flow through `ambientApiKeyAuth` — both core-owned.
+
+### Expected merge conflict zones
+
+- LOW: `resolveVertexModelGardenAmbient` body.
+
+## 2026-10-23 - show_html_page points at the visualize skill again (senpi#2869)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the `show_html_page` description gains one sentence, "Load the visualize skill before building the page." The guidelines are unchanged, so the pointer appears once.
+
+### Why
+
+- The 2026-10-06 entry removed the pointer until the skill shipped. The `visualize` skill now ships in released omo (oh-my-openagent#9702), so the description names it without restating its content.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its description is defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `description` string of `showHtmlPageTool` in `html-render/tool.ts`.
+
+## 2026-10-21 - The TPS notice uses the shared generation-window rule (senpi#3879)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: `reasonedBeforeFirstDelta` and `STREAMED_DELTA_TYPES` now come from `@earendil-works/pi-agent-core` (`packages/agent/src/response-timing.ts`); the local copies are gone. Behavior is unchanged.
+
+### Why
+
+- The persisted response timing (senpi#3879) and the TPS notice must measure the same window; one shared rule keeps them from drifting (review of senpi#3884).
+
+### Why an extension could not handle it
+
+- It is an extension already; the change only removes a duplicated helper.
+
+### Expected merge conflict zones
+
+- LOW: the imports and helper block at the top of `tps.ts`.
+
+## 2026-10-21 - Handoff estimates do not use cumulative context (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: the first-reply size estimate prefers an explicit request context measurement, skips an unknown one, and retains the prompt-only calculation for legacy usage.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: cumulative billing must not inflate the estimated fresh-session size. The request snapshot's input preserves the prompt-only estimate without subtracting cumulative output.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: this is the builtin's own usage reader.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`, `promptTokensOfFirstReply`.
+
+## 2026-10-21 - Deliver a resumed question's answer as a user message (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` passes `deliver: "user-message"` for a question resumed after a restart, as it already did for an async question; only a live blocking question passes `tool-result`.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: a resumed question's answer is delivered by `deliverAnswer`, whose question-input release reports it as human input. The RPC adapter reports `tool-result` answers itself, so the option must say which path delivers the answer or one answer counts twice.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the builtin owns answer delivery for every surface, while lifecycle accounting belongs to the engine.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the `deliver` member of the question dialog options in `startQuestion`.
+
+## 2026-10-21 - Declare lifecycle wake-source obligation kinds (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `WakeSourceStateEvent` accepts an optional `children` or `background` kind. Publishers without it retain background semantics.
+
+### Why
+
+Child work must remain distinct from monitors and background jobs in lifecycle accounting.
+
+### Why an extension could not handle it
+
+The shared cross-package event contract is engine-owned.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `WakeSourceStateEvent`.
+
+## 2026-10-21 - Distinguish human question answers from automatic timeouts (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: Routes actual answered/comment-submitted outcomes through the engine-owned question-input capability; automatic outcomes keep sendUserMessage and remain held.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: A question timeout must not release an unattended hold, while a real answer must.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: The builtin owns the canonical outcome and sends the answer for every surface; generic extensions cannot assert a human origin.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: deliverAnswer; the rest of question persistence and formatting is unchanged.
+
+## 2026-10-21 - Optional launch-gated Fable recommendation (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable recommendation uses the launch id only when both `FABLE55_LAUNCH.released` and `promoteDefaults` are true. Both are false in this draft, so today's list is unchanged. Effort remains xhigh, provider ranking remains unchanged, and Opus 5.5 remains the first recommendation.
+- This change and its four-case flag-matrix test are their own commit (82547134f3), which no later commit touches, so it reverts cleanly. Launch-day support can land without this commit; keeping it still requires an explicit promotion flip in the central launch block.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: release readiness and the decision to recommend a new Fable release are independent. No unreleased model should become a default.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the recommendation list belongs to this builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: import and Fable slot in `RECOMMENDED_DEFAULT_MODELS`.
+
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/` (new): after a human-started turn settles, arms a timer for the prompt cache's expiry (last request, warm pings included, plus the model's TTL). When it fires on an idle session at or above `handoffHint.minContextTokens`, below the compaction trigger, with no active goal, and a fresh session would save at least `handoffHint.minSavingUsd` on the next reply (priced from the model's cost card), it sets one `handoff-hint` widget line with two choices: `/handoff` (opens a linked new session whose first entry is a deterministic brief: goal, open todos, last request and answer, touched files, old session path; no model call, no turn) and `/handoff keep` (hides it for the session, persisted as a `handoff-hint` custom entry). Once per threshold crossing; never for `worker` sessions, print/JSON mode, or extension-started turns. Emits `handoff_hint` on the event bus for shown, accepted and dismissed.
+- `handoff-hint/` (review follow-up): a session opened with history arms from its last assistant reply's timestamp, so a resumed session whose cache already expired gets the hint before its first reply; `accepted` is emitted only after `newSession` returns not cancelled (a cancelled switch keeps the hint); `/handoff <other>` notifies instead of starting a session; the brief lists at most 20 open todos, each capped at 200 characters.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `handoff-hint` after `cache-keepalive`.
+
+### Why
+
+Measured over 7 days of real sessions, the first reply after the cache expired cost a median $2.33 at 400k-600k tokens against $0.46 for a fresh session, and 82% of returns after a 5-60 minute break were cold. Nothing told the user (senpi#3230).
+
+### Why an extension could not handle it
+
+It is an extension; this records the new builtin.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/index.ts` import block and the `builtinExtensions` entry after `cache-keepalive`.
+
+## 2026-10-17 - /files lists the whole active path after a reopen (senpi#3519)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/files.ts`: `/files` reads `ctx.sessionManager.getFullBranch()` instead of `getBranch()`.
+
+### Why
+
+- A reopened compacted session keeps only its latest compaction window in memory (#3519), so `getBranch()` covers only that window; `/files` promises the files of the whole session.
+
+### Why an extension could not handle it
+
+- This is the builtin extension itself; the fix is the call it makes.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/files.ts`, the branch read at the top of the handler.
+
+## 2026-10-15 - TPS is timed from the first streamed token to the last (senpi#3393)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the rate divides the output of assistant messages that actually streamed by their first-to-last delta time (`text_delta`, `thinking_delta`, `toolcall_delta` from `message_update`). No tok/s is shown when nothing streamed or the streamed time is under 0.5 s. The rest of the notice (cache hit, elapsed message time) is unchanged. A message that reasoned before its first delta (its usage reports reasoning tokens, or it carries a thinking block, redacted included, whose text never streamed: Bedrock and omitted-display thinking report no reasoning count) is timed from its own start instead; thinking that streamed as `thinking_delta` keeps the first-to-last-delta window: reasoning can be hidden, or only summarised after it finished, so the first delta comes after most of it was generated. Aborted, errored and zero-output messages add nothing to the rate.
+
+### Why
+
+- Timing from `message_start` to `message_end` made a non-streamed reply read thousands of tok/s (`12853.9 tok/s ... 0.0s` on 5.1.30), and counted time-to-first-token for streamed ones. Regression: `test/suite/tps-extension.test.ts` (#3393 cases).
+
+### Why an extension could not handle it
+
+- This is the extension.
+
+### Expected merge conflict zones
+
+- LOW: the `message_update` handler and the rate line in `agent_end`.
+## 2026-10-14 - vertex-model-garden provider extension
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers the new `vertex-model-garden` builtin after `cursor-cli-oauth`.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/transport.ts`: keeps the URL builder private; the SDK-wire test owns the global endpoint contract without a duplicate helper test or test-only export.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/` (fork-only): registers only `vertex-garden` for Model Garden open models through `.../locations/global/endpoints/openapi` (`openai-completions`). It wraps the builtin API stream, injects an ADC bearer token plus `x-goog-user-project`, and is gated on the ADC credential chain through `ambientAuth` (`auth.ts`, composed by `provider-composer.ts`), so the lane is available while ADC is present without counting as a configured provider and never takes the automatic default over one the user configured (senpi#2327). The target project comes from `GOOGLE_CLOUD_PROJECT`/`GCLOUD_PROJECT`, else the ADC quota project, else `getProjectId()`; the API-key slot is never read, so a stored secret cannot reach the request URL. The starter catalog is exactly `deepseek-ai/deepseek-v4.1-flash-maas` (1,000,000-token context from the existing `deepseek-v4-1-flash` catalog data) and `zai-org/glm-5.2-maas`, priced at the model card's published MaaS list prices — DeepSeek V4.1 Flash $0.30/$1.20 per 1M tokens with a $0.03 cache hit, GLM 5.2 $1.40/$4.40 with a $0.14 cached input rate (https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing, "Deepseek's models" and "GLM's models"; DeepSeek V4.1 Flash is listed at no charge through 2026-10-16). Both models declare reasoning with every thinking level marked unsupported, so no level is offered that these endpoints cannot steer. Claude registration, catalog, rawPredict transport and tests are removed.
+
+### Why
+
+- Vertex Model Garden open models previously needed a hand-written models.json and a token script.
+- Marketplace partner models, including Claude and Grok, are excluded because they are card-billed and promotional credits do not apply.
+
+### Why an extension could not handle it
+
+- It is an extension; only the one-line registration in `builtin/index.ts` sits outside it.
+
+### Expected merge conflict zones
+
+- LOW: one import and one `builtinExtensions` entry.
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired mode from recommendation policy and update the shared async-answer ownership comment. Existing mode behavior and model provenance checks stay intact.
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-13 - tps: per-run stats notify is TUI-only (senpi#3236)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the `agent_end` handler returns early when `ctx.mode !== "tui"`, so the TPS/cache-hit notice is sent only to the TUI footer. Message text, timing accumulation, and the `output > 0`/`elapsedMs > 0` guards are unchanged.
+- `packages/coding-agent/test/suite/tps-extension.test.ts`: the ctx mock carries `mode: "tui"`, matching `ExtensionContext`.
+- `packages/coding-agent/test/suite/regressions/3236-tps-notify-tui-only.test.ts` (new): a TUI ctx still receives exactly one unchanged notice; rpc/app-server/json/print ctxs receive none.
+
+### Why
+
+In RPC mode `ctx.ui.notify` becomes an `extension_ui_request`, and the desktop rendered each one as an info warning row ("Work Log") once per agent run. The notice is a TUI footer nicety and has no RPC-mode consumer; the desktop now drops the string server-side (omo-desktop-app #2327), and this change stops the engine from emitting it outside the TUI in the first place.
+
+### Why an extension could not handle it
+
+It is an extension — the guard lives inside the existing `tps` builtin, whose notify call site is the only emitter of this string.
+
+### Expected merge conflict zones
+
+- LOW in `tps.ts` around the `agent_end` early-return block; LOW in `tps-extension.test.ts` around the ctx mock shape.
+
+## 2026-10-11 - Restore shipped defaults and cache-preserving search policy (senpi#3125 delta)
+
+### What changed
+
+- `server-search-fallback.ts` separates fallback from disabled metadata and preserves the original hook on cache-retaining summaries.
+- Anthropic and OpenAI native injectors restore main's direct API/Claude OAuth and OpenAI/Azure defaults. Both consult failure memory using the request model, not the selected session model.
+- Server-tool exclusion preserves client search declarations and omits empty tools arrays.
+
+### Why
+
+- New opt-in routes must not remove shipped defaults or invalidate the main-turn cache prefix.
+
+### Why an extension could not handle it
+
+- These are corrections to the existing built-in injection and fallback extensions.
+
+### Expected merge conflict zones
+
+- Capability predicates, payload filters and request-model failure lookup.
+
+## 2026-10-11 - Preserve search fallback schemas and keepalive prefixes (senpi#3122 review)
+
+### What changed
+
+- `server-search-fallback.ts`: session/model failure memory is shared by native injectors and standalone search; suppression markers are request-local and never serialized.
+- `cache-keepalive/index.ts`: explicitly requests the main-turn server-search prefix rather than using the search-disabled auxiliary default.
+- Native search extensions preserve provider-built function declarations after a failure and require opt-in on unverified routes.
+
+### Why
+
+- Schema normalization and a stable cache prefix must survive native-search fallback without adding duplicate tools or another failed request per prompt.
+
+### Why an extension could not handle it
+
+- These are coordinated changes to existing built-in extensions.
+
+### Expected merge conflict zones
+
+- Fallback metadata, native injector hooks, and keepalive request preparation.
+
+## 2026-10-11 - Classify the Moonshot server-search echo tool (senpi#3122)
+
+### What changed
+
+- `moved-path-guard/tool-classes.ts` classifies `$web_search` as `none`: it echoes server-generated arguments and performs no filesystem access.
+
+### Why
+
+- The native-first search extension registers this additional tool; the full-load regression requires every built-in tool to carry an explicit moved-path class.
+
+### Why an extension could not handle it
+
+- The moved-path guard owns the built-in tool classification table.
+
+### Expected merge conflict zones
+
+- `moved-path-guard/tool-classes.ts`: the path-free search tool entries.
+
+## 2026-10-08 - moved-path-guard: folder check follows only a legacy-root symlink (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts`, `resolve.ts`, `resolve-async.ts`, `breadcrumb-trust.ts`: the breadcrumb folder step follows a symlink (`stat`) only when the folder is, by text, a legacy data root directly under a home spelling; anywhere else it uses `lstat`, so a symlinked folder is untrusted.
+
+### Why
+
+The seventh-review delta check reproduced a race on the `stat` fix: another local user could repoint a symlink of theirs between the breadcrumb read (through a shared folder) and the folder check (now naming a folder the user owns), so a planted breadcrumb was trusted. A link inside the user's own home cannot be repointed by anyone else, so following only there keeps the LOW-B fix for a symlinked `~/.t3`.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: seventh review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/resolve.ts`, `resolve-async.ts`, `breadcrumb-trust.ts`: the breadcrumb folder check uses `stat` (follows a symlinked old root) instead of `lstat`.
+- `known-moves.ts`, `walk.ts`: an old root's called spelling is registered only when it is, by text, a legacy data root (`.t3`, `.omo-app`) directly under one of the user's home spellings (`isLegacyRoot`).
+
+### Why
+
+Seventh review of PR #2900: with `~/.t3` a symlink and the path's canonicalization failing, `lstat` saw the symlink and the first call failed open; a same-named symlink elsewhere (`~/code/worktrees -> ~/.t3/worktrees`) registered `~/code` as an old-root spelling and refused live paths there on a step timeout.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: sixth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/known-moves.ts`, `walk.ts`, `path-match.ts`: a trusted old root is also registered as the walk's caller spelled it (the called path minus the segments the canonical path has below the root), and every registered spelling is re-spelled under each home spelling; all spellings key their decisions by the realpath'd root. The walk documents that a remembered "re-used" answer does not expire by itself (accepted).
+- `breadcrumb-trust.ts`, `walk.ts`, `resolve.ts`, `resolve-async.ts`: the fifth review's `nlink === 1` rule is removed; once a breadcrumb lists the path, the walk `lstat`s its folder and, on POSIX, trusts it only when this user owns the folder and nobody else can write it.
+- `resolve.ts`: the `.git` step uses `accessSync`, `false` only for ENOENT/ENOTDIR and unknown otherwise, as the async probe does. `resolve-async.ts` reads the error code without `instanceof Error`.
+
+### Why
+
+Sixth review of PR #2900: a symlinked `~/.t3` still made the text fallback and ranking fail open; the nlink rule let a second hard link (another user, or a `cp -al`/`rsync --link-dest` backup) turn the guard off for its owner; the sync resolver still overwrote a remembered "re-used" on EACCES/ELOOP.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: fifth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/known-moves.ts`: `knownMove` skips a listed prefix whose last `.git` answer in this process was "re-used"; a trusted old root is registered under every spelling of the user's home the walk resolved (`os.homedir()` and its realpath).
+- `walk.ts`: passes the home spellings to `rememberTrustedBreadcrumb`.
+- `breadcrumb-trust.ts`: on POSIX a trust file must have exactly one link (`nlink === 1`).
+- `resolve-async.ts`: `pathExists` returns `false` only for ENOENT/ENOTDIR and `undefined` (unknown) for any other `access` error.
+
+### Why
+
+Fifth review of PR #2900: a timed-out breadcrumb read sent a re-used worktree to a text fallback that ignored the remembered re-used decision; with a symlinked `$HOME` the text fallback and the probe ranking compared `~` spellings against the realpath'd old root and allowed moved targets; a hard link of the user's breadcrumb passed the uid/mode checks; an unreadable `.git` overwrote a remembered "re-used".
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: fourth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts`: trust files are opened with `O_NONBLOCK` (and `O_NOFOLLOW`), so a FIFO named as a breadcrumb opens at once and `fstat` rejects it; without `O_NONBLOCK` (Windows) an `lstat` refuses non-regular files first. `movedTo` may lie under `os.homedir()` or its realpath.
+- `walk.ts`, `resolve.ts`, `resolve-async.ts`: the home's realpath is one more yielded step (sync `realpathSync`, async memoized `realpath`); a `.git` check that cannot answer uses this process's last answer for the prefix, else "not re-used".
+- `known-moves.ts`: remembers `.git` answers by `prefixKey`.
+- `index.ts`: after any step timeout every target gets the text check; targets are probed in three tiers (known listed prefix, legacy root only, rest).
+
+### Why
+
+Fourth review of PR #2900: a planted FIFO hung the synchronous resolver and pinned threadpool threads; a symlinked home silently disabled the guard; timed-out breadcrumb and `.git` steps decided the opposite of the text fallback; unlisted legacy paths could push a re-used worktree into the text fallback.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: third review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts`: a path whose canonicalization fails or times out is walked by its own spelling, so a moved prefix is still refused and an unrelated path still is not; the re-used (`.git`) decision is recorded before the breadcrumb is remembered, and a breadcrumb whose `movedTo` lies outside the user's home is ignored before that folder is touched.
+- `resolve-async.ts`, `known-moves.ts`, `index.ts`: the probe records step timeouts (logged as `call_bound_reached {bound: "step"}`), clears every target under a re-used prefix (keyed by breadcrumb content, so every spelling of a root shares it), never text-refuses a cleared target, and stops all filesystem work at the call deadline.
+- `breadcrumb-trust.ts`: trust is decided from `fstat` of an `O_NOFOLLOW` descriptor, and at most that size is read from the same descriptor.
+- `guard-log.ts`: rotates once at 1 MiB, dedupes on the reason (not the count), and computes its path inside the write chain.
+- `resolve.ts`: documents the synchronous bound.
+
+### Why
+
+Third review of PR #2900: the step deadline failed open silently; the text fallback refused re-used worktrees; trust was decided on a different open than the read; the log was unbounded; the probe kept working past the deadline; the sync open path could touch any `movedTo`.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: re-review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts` (new): the one decision both resolvers drive; every filesystem step is yielded, and a failed or timed-out step answers "not moved". The listed-prefix match runs before the marker at `movedTo` is read. `resolve.ts` and `resolve-async.ts` only answer the steps.
+- `breadcrumb-trust.ts`: a breadcrumb or marker counts only as a regular file (lstat, never followed) of at most 64 KiB, owned by the current uid and not group/world-writable on POSIX. `home-marker.ts`: a newer marker schema is untrusted and logged at warn level.
+- `guard-log.ts` (new): asynchronous, ordered JSON-line log at `<agentDir>/logs/moved-path-guard.log`; no synchronous write on the tool-call path.
+- `known-moves.ts` (new), `index.ts`: legacy-root and known-prefix targets are probed first; at most 64 paths get filesystem work within 2 s (500 ms per step); paths past either bound are refused by text against breadcrumbs trusted earlier in this process, and reaching a bound is logged.
+- `command-paths.ts`: clustered short flags (`-xf/path`) and `@/path` are scanned; the mention-in-text over-block is documented.
+
+### Why
+
+Re-review of PR #2900: realpath errors escaped into tool calls and failed ordinary commands; a planted shared-folder breadcrumb was trusted; the call bounds failed open.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/breadcrumb.ts`, `home-marker.ts` (new), `breadcrumb-trust.ts` (new), `resolve.ts`: a breadcrumb is trusted only when `movedTo` is absolute and normalized on the host's path rules, lies outside the breadcrumb's folder, and holds the desktop's ownership marker `omo-desktop-home.json` with the breadcrumb's `homeId`. Ignored breadcrumbs go to the debug log, not the terminal.
+- `resolve-async.ts` (new), `index.ts`: tool calls are checked with an async probe that canonicalizes through `canonicalizeFilesystemPath`; at most `MAX_PATHS_PER_CALL` (64) paths and `CALL_DEADLINE_MS` (2 s) per call. A tool missing from the class table has every string argument scanned.
+- `command-paths.ts`: anchored paths are found anywhere in the text (inline code, glued flags, quote-split words); relative words resolve against the latest `cd` in the same text.
+- `tool-classes.ts`: `eval` (its `code`) and `tool_search` are classified.
+
+### Why
+
+Review of PR #2900: an untrusted breadcrumb could redirect writes, embedded or `cd`-relative paths bypassed the command guard, an unclassified tool was allowed, and the per-call check did unbounded synchronous I/O on the session loop.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: guard and resolve paths the OmO desktop moved (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/` (new): `breadcrumb.ts` vendors the `omo-desktop-moved.json` contract (writer: omo-desktop-app `packages/shared/src/appHomePrepare.ts`; a higher `schemaVersion` is ignored and logged); `path-match.ts` matches prefixes on a segment boundary, case-folded on darwin and win32, `/`/`\` equal and `\\?\` stripped on win32; `resolve.ts` exports `findMovedPath`/`resolveMovedPath` (realpath of the deepest existing ancestor, ancestor walk to `$HOME`'s parent or the root, up to three moves, a listed `worktrees/...` prefix that holds its own `.git` is not moved); `tool-classes.ts` classifies every builtin tool; `command-paths.ts` extracts path tokens from shell text; `index.ts` registers a filesystem policy (deny writes into a moved prefix; deny a read/enumerate of a moved path that is gone, with the new location) and a blocking `tool_call` handler for `apply_patch`, the shell tools and path-field tools.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `moved-path-guard` right after `loop-guard`, ahead of hooks and the permission system.
+
+### Why
+
+After the OmO desktop moves its data home (omo-desktop-app#1829), session history still names absolute paths under the old root; `write` creates parents and `bash` can `mkdir -p`, so an agent reusing one silently re-creates the old worktree and writes outside the real one.
+
+### Why an extension could not handle it
+
+It is an extension; it is builtin so the guard runs in every session, CLI and desktop alike, without configuration.
+
+### Expected merge conflict zones
+
+- Fork-only directory. The `builtinExtensions` order in `index.ts`.
+
+## 2026-10-06 — html-render writes its offline policy first in every page (#2846)
+
+**What:** `html-render/bootstrap.ts` starts every written page with a UTF-8 byte order mark, `<!doctype html>` and the policy meta, and drops a page's own leading doctype only when it is printable ASCII. Tests: comment forms `<!-->`, `<!--->`, `--!>` and plain comments ahead of a doctype, and an ISO-2022-JP escape inside a doctype.
+
+**Why:** the old placement skipped comments before a doctype, but browsers end a comment at `<!-->`, `<!--->` and `--!>`, so a page could run a script ahead of the policy and push the meta into `<body>`. Skipping a doctype that holds an ISO-2022-JP escape let a later `<meta charset>` decode the policy as text. The BOM fixes the encoding as UTF-8 for a file opened from disk.
+
+**Must not break:** nothing the page wrote may precede the preamble; mirrors desktop `packages/shared/src/htmlRenderBootstrap.ts`.
+
+## 2026-10-06 — show_html_page hands the page to the host in its details
+
+**What:** `html-render/tool.ts` caps `html` at 512,000 characters (the desktop html_render input limit) and returns the page as written in `details.html`. The model-visible `content` is unchanged and never carries it. Tests: the page is in details and absent from content; a 512,001-character page fails the schema; inlined images past 25 MiB throw the cap error and write nothing.
+
+**Why:** the desktop publishes a completed `show_html_page` call into the thread itself (omo-desktop-app#1724). OmO sessions do not get the desktop's MCP `html_render`, so this is the OmO path to an inline page.
+
+**Must not break:** `details.html` stays out of `content`; the desktop re-applies its own caps and snapshot policy before publishing.
+
+## 2026-10-06 — show_html_page points at nothing unshipped
+
+**What:** the `show_html_page` description and guidelines drop the "load the bundled visualize skill" pointer.
+
+**Why:** that skill ships in a later PR; until then the line points the agent at something that does not exist.
+
+**Must not break:** the PR that ships the visualize skill adds the pointer back in the same change.
+
+## 2026-10-06 — html-render pages are offline snapshots
+
+**What:** `html-render/bootstrap.ts` puts a Content-Security-Policy meta at the start of every page `show_html_page` writes (after a doctype, ahead of everything the page wrote): `default-src 'none'`, inline and data:/blob: scripts, styles, images, fonts and media only, `connect-src`/`frame-src`/`form-action`/`base-uri` `'none'`. Mirrors the desktop's `packages/shared/src/htmlRenderBootstrap.ts` (omo-desktop-app#1724).
+
+**Why:** the tool tells the agent the viewer blocks network access; this makes it true wherever the written file is opened, so a page cannot reach the reader's local network or call home.
+
+**Must not break:** the policy stays the document's first element; a page's own policy can only narrow it.
+
+The `show_html_page` description and guideline now say it plainly ("No network: inline every script, style and image (data: URIs)"), so an agent does not ship a CDN `<script src>` that leaves the page blank, and no longer point at a `preview_html_page` tool that senpi does not register.
+
+## 2026-10-06 - HTML page rendering for standalone senpi (omo-desktop-app#1724)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/`: new builtin extension registering `show_html_page`. `bootstrap.ts` injects the theme bootstrap (theme variables + base stylesheet) at the start of the document head, mirroring the desktop's `packages/shared/src/htmlRender.ts`; `images.ts` inlines absolute-path local images as data URIs only after a magic-byte/SVG-root check (a renamed secret is refused) and enforces the 10 MiB-per-image / 25 MiB-per-page caps, mirroring the desktop's `HtmlRender.ts`; `tool.ts` writes the prepared page to `.senpi/html-pages/` and returns the path with an open-in-desktop hint. Registered as `html-render` in `builtin/index.ts`. A desktop thread reaches the same capability through the desktop's MCP `html_render` instead; this tool is the standalone (TUI/local) path, where there is no inline frame, so the artifact is the file.
+
+### Why
+
+Q's port of upstream t3code #15968: an agent builds a self-contained HTML page and the reader sees it. The desktop thread shows it inline (PR omo-desktop-app#1733); a standalone senpi agent needs the same page-preparation rules so a TUI-written page is the same shape the desktop would store.
+
+### Why an extension could not handle it
+
+This is a builtin extension by design; the prepare logic (bootstrap injection, image byte check, size caps) must mirror the desktop port exactly.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: the import block and `builtinExtensions` array.
+
+## 2026-10-01 - The compaction log no longer writes synchronously (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/log.ts`: lines are queued per log file and appended in order by one asynchronous writer; rotation is decided per line against the size cap, as before. Whatever is still queued or in flight at process exit is written synchronously then. Logging stays best-effort: `flushCompactionLogs()` resolves once every line logged so far was appended or its write failed (the first failure is reported once on stderr).
+
+### Why
+
+Every log line did a synchronous mkdir, stat, open, write and close on the UI thread; under disk load one write took 486 ms while background events were arriving, which froze typing.
+
+### Why an extension could not handle it
+
+The compaction extension's own logger.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/log.ts`: `writeLine`, `needsRotate`.
+
+## 2026-10-01 - Builtin command argument audit (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/import-repro.ts`: explicitly require arguments.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`, `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-command.ts`, `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`, `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/account-command.ts`, `packages/coding-agent/src/core/extensions/builtin/look-at/commands.ts`, `packages/coding-agent/src/core/extensions/builtin/loop/command-registration.ts`, `packages/coding-agent/src/core/extensions/builtin/model-fallback/index.ts`, `packages/coding-agent/src/core/extensions/builtin/reasoning/index.ts` and `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: explicitly allow bare invocation.
+
+### Why
+
+Account lists, menus, toggles and bare loop invocation must run on the first picker Enter, while account/provider and import-reference input must wait.
+
+### Why an extension could not handle it
+
+These are metadata changes inside the existing builtin command registrations.
+
+### Expected merge conflict zones
+
+Command registration objects in the paths listed above.
+
+## 2026-09-30 - Ultrafast reaches only OpenAI and ChatGPT Subscription (senpi#2410)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the `before_provider_request` hook passes the resolved tier through `serviceTierForProvider`, removes a pre-populated `service_tier` when Ultrafast is disallowed, and emits the advisory for settings and models.json aliases as well as decorators.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the hook added the tier for any model on the Responses APIs, so gateways serving GPT-6 Astra received `service_tier: "ultrafast"`. codex and oh-my-pi never send it there.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: this is the existing service-tier builtin; the change stays inside its request hook.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the import block and the final `addServiceTierToPayload` call in `before_provider_request`.
+
+## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: preserve Ultrafast model pins at session start, model switch, request composition, and /fast on/off.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: Priority memory and the existing Fast toggle must not override a selected Ultrafast tier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: this is implemented within the existing service-tier builtin, using its current host capabilities.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: applyFastMode and session_start/model_select/before_provider_request handlers.
+
+## 2026-09-30 - Unrestorable resumed ask-user calls settle without pending UI (omo#9268)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: a dangling ask-user call whose recorded arguments no longer parse into a valid question set is marked resumed and settled as `orphaned-after-restart` immediately (settlement entry plus the framed answer to the model), instead of being turned into a pending request with `questions: []`.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: `deliverAnswer` is exported so the resume path delivers that settlement through the same steer/follow-up and notification path as every other outcome.
+
+### Why
+
+- omo#9268: resume converted a parse failure into an empty request and registered it as pending; the widget showed "0 unanswered" and expanding it dereferenced a missing question and crashed the TUI. An unrestorable call cannot be answered after a restart, so it takes the existing orphan settlement instead of entering the UI.
+
+### Why an extension could not handle it
+
+- The ask-user feature is this builtin. Its resume hook owns dangling-call recovery, settlement records, and delivery to the model.
+
+### Expected merge conflict zones
+
+- LOW: `requestFromCall` and `settleUnrestorable` in `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`; the `deliverAnswer` export in `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`.
+
+## 2026-09-30 - Hook trust reads no longer create the project config folder (senpi#2386)
+
+### What changed
+
+- `hooks/trust-storage.ts` `FileHookStateStorage.read()`: when no parseable snapshot exists and the state file's directory does not exist, it returns the empty trust state instead of creating that directory to take the writer lock. With a directory present, the locked re-read that closes the legacy-writer ABA (f9200fc1ab) is unchanged.
+
+### Why
+
+- senpi#2386: every session read the project scope, so every project gained an empty `<cwd>/.omo/` (or `.senpi/`) holding only a transient `hooks-state.json.lock`. With no directory there is no writer to exclude: writers create it before they lock.
+
+### Why an extension could not handle it
+
+- The fix is inside the builtin hooks extension's own storage.
+
+### Expected merge conflict zones
+
+- LOW: `read()` in `hooks/trust-storage.ts` between the snapshot fast path and the lock acquisition.
+
 ## 2026-09-24 - Pin the refreshed pi-* extension releases (senpi#2079)
 
 ### What changed
@@ -141,7 +1553,6 @@ The provider id is resolved inside the package before any extension loads, and t
 
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/render.ts`: renderer exports.
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: attachment options.
-
 
 ## 2026-09-20 - Recover unsettled async questions after restart (#1857 I3)
 
@@ -1125,3 +2536,21 @@ The provider id is resolved inside the package before any extension loads, and t
 - `utils/changes.md`: corrected the stale `shortenPath()` note that claimed it backed the `/sessions` HUD picker; `shortenPath()` itself stays (other consumers remain).
 - Neo (the Go TUI) shipped a native port of the same HUD; it was removed in lockstep to satisfy the repo-wide "no /sessions HUD source" contract: `internal/ui/builtinext/{observer,observer_overlay,observer_viewer,observer_test,transcript,transcript_decode,transcript_render}.go`, the `ResolveSessionsCommandOutcome` resolver and its tests, the `app.sessions.observe` keybinding definition/scope/migration/registry-test entries, the qaharness `observer` scenario, the welcome-menu entry that advertised it, the `/sessions` command in the bridge `get_commands` testdata, and the `task-14-session-observer-tail` visual-claims manifest entry plus its triplet.
 - Why: user-requested cleanup. The HUD duplicated `/resume`'s session-picking surface and the `ctrl+s` chord collided with the more useful `app.session.toggleSort` / `app.models.save` chords that already bind `ctrl+s` in other scopes.
+
+## 2026-10-17 - /account marks a slot of the other login kind as unused (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: `statusOf` shows `unused (other login kind; switch with /login)` for an account summarized as unused.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: the list showed a never-used API key slot under an OAuth login as available (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts` is the built-in `/account` command.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: `statusOf`.

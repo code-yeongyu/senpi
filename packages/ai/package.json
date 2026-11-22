@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-ai",
-	"version": "2026.9.28-7",
+	"version": "2026.11.22-2",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -14,6 +14,10 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./models": {
+			"types": "./dist/models.d.ts",
+			"import": "./dist/models.js"
 		},
 		"./compat": {
 			"types": "./dist/compat.d.ts",
@@ -65,6 +69,7 @@
 	},
 	"files": [
 		"dist",
+		"!dist/**/*.map",
 		"README.md"
 	],
 	"scripts": {
@@ -72,21 +77,22 @@
 		"generate-models": "tsx scripts/generate-models.ts --strict",
 		"hydrate-model-data": "tsx scripts/generate-models.ts --strict --data-only",
 		"generate-model-catalog": "tsx scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
-		"generate-image-models": "tsx scripts/generate-image-models.ts --strict",
 		"check:model-data": "tsx scripts/check-model-data.ts",
 		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
 		"build:offline": "npm run check:model-data && tsc -p tsconfig.build.json && shx chmod +x dist/cli.js && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
-		"test": "vitest --run",
-		"prepublishOnly": "shx rm -rf dist && tsx scripts/generate-models.ts && tsx scripts/generate-image-models.ts && tsc -p tsconfig.build.json && shx chmod +x dist/cli.js",
+		"test": "node ../../scripts/run-tests.mjs vitest --run",
+		"prepublishOnly": "shx rm -rf dist && tsx scripts/generate-models.ts && tsc -p tsconfig.build.json && shx chmod +x dist/cli.js",
 		"dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
 		"dev:tsc": "tsc -p tsconfig.build.json --watch --preserveWatchOutput"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.127.0",
 		"@aws-sdk/client-bedrock-runtime": "3.1136.0",
-		"@earendil-works/pi-telemetry": "^2026.9.28-7",
+		"@earendil-works/pi-realm-registry": "^2026.11.22-2",
+		"@earendil-works/pi-telemetry": "^2026.11.22-2",
 		"@google/genai": "2.23.0",
 		"@smithy/node-http-handler": "4.12.1",
+		"google-auth-library": "10.6.2",
 		"http-proxy-agent": "9.1.0",
 		"https-proxy-agent": "9.1.0",
 		"openai": "6.26.0",

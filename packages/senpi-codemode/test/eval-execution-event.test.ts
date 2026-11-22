@@ -1,4 +1,4 @@
-import type { AgentToolResult, ExtensionContext } from "@code-yeongyu/senpi";
+import type { AgentToolResult, ExtensionToolContext } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
@@ -62,7 +62,7 @@ function createTool(
 	});
 }
 
-function interactiveContext(): ExtensionContext {
+function interactiveContext(): ExtensionToolContext {
 	return { ...fakeExtensionContext(), mode: "tui" };
 }
 

@@ -1,3 +1,57 @@
+## 2026-10-27 - /btw authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`: `getApiKeyAndHeaders` receives the session id.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call.
+
+## 2026-10-27 - /btw side queries split the system prompt like the turn (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`, `packages/coding-agent/src/core/extensions/builtin/btw/side-query.ts`: the side query passes `ctx.getSystemPromptStablePrefix()` as `systemPromptStablePrefix`; the side-query instruction stays behind it.
+
+### Why
+
+- The side query reuses the turn's cached prefix only when its system blocks and breakpoint match the turn's.
+
+### Why an extension could not handle it
+
+- This is the btw builtin's own request builder.
+
+### Expected merge conflict zones
+
+- LOW: `buildSideQueryContext` in `side-query.ts` and the call in `index.ts`.
+
+## 2026-10-05 - /btw renders its answer as Markdown
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/panel.ts`: the panel body is split into a header `Text` (the question), a `Markdown` component for the answer using `getMarkdownTheme()` (the theme assistant messages use), and a footer `Text` (status line). The header and footer strings are unchanged apart from dropping the leading newline that used to separate them inside one `Text`.
+
+### Why
+
+- The answer was concatenated into a single `Text`, so headings, bold, inline code, lists, and code fences showed as raw `##`, `**`, and backticks while the same reply in the main transcript renders formatted.
+
+### Why an extension could not handle it
+
+- The widget is private to this builtin command.
+
+### Expected merge conflict zones
+
+- LOW: `panel.ts` constructor children and `repaint()`.
+
 ## 2026-09-28 - /btw uses the credential's own API host (senpi#2309)
 
 ### What changed

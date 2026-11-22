@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeServerHandle, BridgeServerOptions } from "../src/bridge/http-server.ts";
@@ -338,7 +339,8 @@ async function createManager(
 ): Promise<CodemodeSessionManager> {
 	const manager = await createCodemodeSessionManager({
 		sessionId: "session",
-		cwd: "/tmp",
+		// The manager checks that its session directory exists; /tmp is not guaranteed on Windows.
+		cwd: tmpdir(),
 		settings: defaultCodemodeSettings,
 		availability,
 		executeTool: async () => ({ content: [{ type: "text", text: "" }], details: {} }),

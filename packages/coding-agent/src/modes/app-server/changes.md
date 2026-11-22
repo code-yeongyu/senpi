@@ -1,3 +1,116 @@
+## 2026-10-12 - Archive retired app-server history (senpi#3167)
+
+### What changed
+
+The executable app-server runtime, protocol and dedicated tests have been removed. Only this historical change record remains in this directory.
+
+### Why
+
+Retiring the runtime must not erase its audit trail.
+
+### Why an extension could not handle it
+
+This is repository history, not runtime behavior.
+
+### Expected merge conflict zones
+
+Preserve the records below without restoring the retired runtime.
+
+## 2026-10-09 - Stale goal display projects paused status (senpi#3026)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/threads/goal-wire.ts`: uses the builtin goal's display-status projection so a stale-stopped goal reports `ThreadGoal.status: "paused"` while retaining its committed tokens/time. Other statuses and the generated protocol shape are unchanged.
+
+### Why
+
+The app-server wire shape has no separate stale-stop status. Reporting active while goal accounting and continuation are stopped misleads desktop clients.
+
+### Why an extension could not handle it
+
+The thread-goal adapter owns the app-server response and notification projection outside the extension renderer.
+
+### Expected merge conflict zones
+
+`threads/goal-wire.ts` status mapping. Keep this projection read-only; the stored active-plus-marker state still governs accepted-input/resume behavior.
+
+## 2026-10-09 - Explicit UTC process identity probes (senpi#3045)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/daemon/process.ts`: `readProcessIdentity` accepts an opt-in UTC timezone, pins `TZ=UTC` and the C locale for that OS query, and marks POSIX timestamps as UTC. Existing daemon callers keep their local-time format; Windows identities remain FILETIME.
+
+### Why
+
+RPC owner records cross launch environments. A supervisor that drops its caller's TZ must not read the same live process as a different start time.
+
+### Why an extension could not handle it
+
+The OS process-identity query is shared engine infrastructure outside extension callbacks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/app-server/daemon/process.ts`: `readProcessIdentity` parameters, query environment and timestamp projection.
+
+## 2026-10-08 - Shared start-time identity parser and tolerance (senpi#2951)
+
+### What changed
+
+- `daemon/process.ts` parses Windows FILETIME and ps/ISO process identities into milliseconds using a named FILETIME epoch, and owns the shared 3 s comparison tolerance. RPC family checks and terminal leases reuse this existing supervisor leaf.
+- The same parser recognizes persisted Korean year/month/day lstart and Japanese weekday/month-day lstart in the local timezone. Calendar rollover is rejected. Unrecognized formats remain unknown instead of becoming ownership proof.
+
+### Why
+
+- Failed process snapshots need reliable per-pid identity recovery; an unknown start cannot establish daemon ownership. Shared parsing prevents the lease and daemon identity formats from drifting.
+
+### Why an extension could not handle it
+
+- Host admission and lease ownership run outside extension callbacks.
+
+### Expected merge conflict zones
+
+- `daemon/process.ts` identity helpers; no supervisor import graph change.
+
+## 2026-10-08 - Daemon launches do not replay a Node eval caller (senpi#2599)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/daemon/spawn.ts`: filters Node runtime options before the daemon entry. The existing Bun-to-Node launch path stays unchanged.
+
+### Why
+
+Node eval and print flags belong to the embedding caller, not to the daemon script entry.
+
+### Why an extension could not handle it
+
+Daemon argument construction precedes server startup and extension loading.
+
+### Expected merge conflict zones
+
+- LOW: imports and the child argument array in `daemon/spawn.ts`.
+
+## 2026-09-29 - turn/start refuses an unknown command with structured data (senpi#2348)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/threads/turns.ts`: when the prompt is refused as an unknown command before the turn is announced, `startTurn` discards the turn (no `turn/started`, no user item, no turn-log entry) and rejects with `unknownCommandTurnError`. A preflight failure now completes the turn from the prompt's settle path instead of the preflight callback, so the refusal can be recognized first. `params.unknownCommandAsText` is forwarded to `session.prompt`.
+- `packages/coding-agent/src/modes/app-server/threads/unknown-command-refusal.ts` (new): JSON-RPC `-32602` with `data: { errorCode: "unknown_command", command, suggestions, reason }`.
+- `packages/coding-agent/src/modes/app-server/threads/turn-log.ts`: `discardTurn`.
+- `packages/coding-agent/src/modes/app-server/threads/turn-runtime.ts`: `TurnEngineSession.prompt` options gain `unknownCommandAsText`.
+- `packages/coding-agent/src/modes/app-server/turn-adapter.ts`, `protocol/turn.ts`: `turn/start` accepts the senpi extension field `unknownCommandAsText`.
+
+### Why
+
+- App-server clients got a generic `-32603`, a started-then-failed turn, and no way to confirm the text.
+
+### Why an extension could not handle it
+
+- Turn lifecycle and the JSON-RPC error envelope are owned by the app-server turn engine.
+
+### Expected merge conflict zones
+
+- None expected: app-server is fork-only.
+
 ## 2026-09-28 - app-server loads `--extension` sources into every thread (omo#9117)
 
 ### What changed

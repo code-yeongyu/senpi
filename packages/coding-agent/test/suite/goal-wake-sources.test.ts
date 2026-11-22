@@ -13,11 +13,6 @@ import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import {
-	cleanupRoots,
-	createHarness as createAppServerHarness,
-	threadIdFromResponse,
-} from "./app-server-thread-handlers-harness.ts";
-import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
 	createSentMessageHarness,
@@ -83,7 +78,7 @@ function emitted(events: TestEventBus, channel: string): Record<string, unknown>
 describe("goal wake sources", () => {
 	afterEach(async () => {
 		vi.useRealTimers();
-		await Promise.all([cleanupGoalMonitorTempDirs(), cleanupRoots()]);
+		await cleanupGoalMonitorTempDirs();
 	});
 
 	it("defers an active goal while a background bash session is registered", async () => {
@@ -160,7 +155,7 @@ describe("goal wake sources", () => {
 		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS * 3);
 		expect(harness.sent).toHaveLength(0);
 		// The parked timer is still armed: no backstop fire consumed it on the way.
-		expect(emitted(harness.events, GOAL_CONTINUATION_TIMER_STATE_EVENT).at(-1)).toEqual({
+		expect(emitted(harness.events, GOAL_CONTINUATION_TIMER_STATE_EVENT).at(-1)).toMatchObject({
 			armed: true,
 			kind: "monitor",
 		});
@@ -207,6 +202,7 @@ describe("goal wake sources", () => {
 
 	it("fires after the micro-grace when a background session exits without a notification", async () => {
 		vi.useFakeTimers();
+		vi.setSystemTime(0);
 		const ctx = await makeGoalContext([], "thread-background-drain");
 		const harness = createMonitorHarness();
 		const goal = activeGoal("goal-background-drain");
@@ -233,34 +229,12 @@ describe("goal wake sources", () => {
 		await Promise.all([delivered, resumed]);
 		expect(emitted(harness.events, GOAL_CONTINUATION_RESUMED_EVENT)[0]).toMatchObject({
 			iteration: 1,
+			wakeCause: "sources-drained",
+			dueAtMs: 270_000,
+			waitedMs: 1_000,
 			activeMonitorCount: 0,
 			wakeSources: { "terminal-background-sessions": 0 },
 		});
-	});
-
-	it("queues a continuation when thread/goal/set activates an idle session", async () => {
-		const { connection, registry, root, threads } = await createAppServerHarness();
-		const threadId = threadIdFromResponse(
-			await registry.dispatch(connection, { id: 1, method: "thread/start", params: { cwd: root } }),
-		);
-		const session = threads.getLoadedThread(threadId).session as unknown as {
-			onExtensionEvent?: (channel: string, handler: (data: unknown) => void) => () => void;
-		};
-		expect(session.onExtensionEvent).toBeTypeOf("function");
-		const scheduled = Promise.withResolvers<unknown>();
-		const unsubscribe = session.onExtensionEvent?.(GOAL_CONTINUATION_SCHEDULED_EVENT, scheduled.resolve);
-
-		await registry.dispatch(connection, {
-			id: 2,
-			method: "thread/goal/set",
-			params: { threadId, objective: "Resume from RPC" },
-		});
-
-		await expect(Promise.race([scheduled.promise, timeoutAfter(2_000)])).resolves.toMatchObject({
-			goalId: expect.any(String),
-			reason: "goal_store_changed",
-		});
-		unsubscribe?.();
 	});
 
 	it("sums a terminal monitor with a background session and keeps waiting when only one drains", async () => {
@@ -295,9 +269,3 @@ describe("goal wake sources", () => {
 		});
 	});
 });
-
-function timeoutAfter(ms: number): Promise<never> {
-	return new Promise((_, reject) => {
-		setTimeout(() => reject(new Error("Timed out waiting for goal continuation scheduling")), ms);
-	});
-}

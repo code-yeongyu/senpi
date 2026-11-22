@@ -64,13 +64,7 @@ function createLoopbackServiceTransport(provider: RemoteServiceProvider): Remote
 }
 
 function publishReplacement<T extends object>(state: MutableReplicatedState<T>, value: T): void {
-	const target = state.state as unknown as Record<string, unknown>;
-	const replacement = value as unknown as Record<string, unknown>;
-	for (const key of Object.keys(target)) {
-		if (!Object.hasOwn(replacement, key)) delete target[key];
-	}
-	Object.assign(target, replacement);
-	state.publish(BACKGROUND_CONTEXT);
+	state.replace(BACKGROUND_CONTEXT, value);
 }
 
 function laneSnapshot(): LaneSnapshot {
@@ -126,30 +120,33 @@ describe("experimental client TUI", () => {
 			});
 			const create = vi.fn(async () => {
 				const created = session("two", 2);
-				directoryState.state.revision = 2;
-				directoryState.state.sessions.push(created);
-				directoryState.publish(BACKGROUND_CONTEXT);
+				directoryState.change(BACKGROUND_CONTEXT, (draft) => {
+					draft.revision = 2;
+					draft.sessions.push(created);
+				});
 				return created;
 			});
 			const select = vi.fn(async (model: { provider: string; modelId: string }) => {
-				modelsState.state.configuration.model = model;
-				modelsState.publish(BACKGROUND_CONTEXT);
+				modelsState.change(BACKGROUND_CONTEXT, (draft) => {
+					draft.configuration.model = model;
+				});
 			});
 			const selectThinking = vi.fn(async (thinkingLevel: "off" | "high") => {
-				modelsState.state.configuration.thinkingLevel = thinkingLevel;
-				modelsState.publish(BACKGROUND_CONTEXT);
+				modelsState.change(BACKGROUND_CONTEXT, (draft) => {
+					draft.configuration.thinkingLevel = thinkingLevel;
+				});
 			});
 			const transcriptState = replicatedState<TranscriptState>({
 				snapshot: laneSnapshot() as LaneTranscriptSnapshot,
 				event: null,
 			});
 			const emitTranscriptEvent = (event: LaneWatchEvent): void => {
-				const snapshot = transcriptState.state.snapshot as LaneSnapshot;
-				if (reduceLaneSnapshot(snapshot, event) === "rebase") {
-					throw new Error("Test transcript event unexpectedly requires a rebase");
-				}
-				transcriptState.state.event = event;
-				transcriptState.publish(BACKGROUND_CONTEXT);
+				transcriptState.change(BACKGROUND_CONTEXT, (draft) => {
+					if (reduceLaneSnapshot(draft.snapshot as unknown as LaneSnapshot, event) === "rebase") {
+						throw new Error("Test transcript event unexpectedly requires a rebase");
+					}
+					draft.event = event;
+				});
 			};
 			let finishPrompt!: () => void;
 			const promptFinished = new Promise<void>((resolve) => {
@@ -430,12 +427,14 @@ describe("experimental client TUI", () => {
 
 				await component.close();
 				const rendersAfterClose = requestRender.mock.calls.length;
-				directoryState.state.revision = 3;
-				directoryState.state.sessions = [];
-				directoryState.publish(BACKGROUND_CONTEXT);
+				directoryState.change(BACKGROUND_CONTEXT, (draft) => {
+					draft.revision = 3;
+					draft.sessions = [];
+				});
 				publishReplacement(attachment, { status: "detached" });
-				modelsState.state.refresh = { status: "refreshing" };
-				modelsState.publish(BACKGROUND_CONTEXT);
+				modelsState.change(BACKGROUND_CONTEXT, (draft) => {
+					draft.refresh = { status: "refreshing" };
+				});
 				expect(requestRender).toHaveBeenCalledTimes(rendersAfterClose);
 			} finally {
 				await component.close();

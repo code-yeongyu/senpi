@@ -1,12 +1,14 @@
 // Chord is deliberately absent: the fork does not modify it semantically, so it keeps upstream's
-// own release identity and its declared edges resolve to upstream's published version. See
-// bundledWorkspaceRegistryContract() in publish-registry-dependencies.test.mjs.
+// own release identity and its declared edges resolve to upstream's published version (checked by
+// publish-registry-dependencies.test.mjs). Machine-ops is absent too: it is never published, and
+// senpi ships its build vendored (prepare-senpi-bundled-workspaces.mjs, senpi#5784).
 export const registryPackageNames = new Map([
 	["@earendil-works/pi-ai", "@code-yeongyu/senpi-ai"],
 	["@earendil-works/pi-agent-core", "@code-yeongyu/senpi-agent-core"],
 	["@earendil-works/pi-tui", "@code-yeongyu/senpi-tui"],
 	["@earendil-works/pi-pty", "@code-yeongyu/senpi-pty"],
 	["@earendil-works/pi-telemetry", "@code-yeongyu/senpi-telemetry"],
+	["@earendil-works/pi-realm-registry", "@code-yeongyu/senpi-realm-registry"],
 	["@code-yeongyu/senpi-codemode", "@code-yeongyu/senpi-codemode"],
 	["@code-yeongyu/senpi", "@code-yeongyu/senpi"],
 ]);
@@ -15,9 +17,8 @@ export const registrySourcePackageNames = new Set(registryPackageNames.keys());
 
 const publishedRegistryNames = new Set(registryPackageNames.values());
 
-// A fork-scope package outside the publish set is never on the registry. bun resolves every declared
-// dependency from the registry even when it is bundled, so such a package must never be declared by the
-// published tarball (senpi#2141).
+// A fork-scope package outside the publish set is never on the registry, so no published manifest may
+// declare it: every declared dependency is resolved from the registry at install time (senpi#2141).
 export function isUnpublishedForkPackage(packageName) {
 	return packageName.startsWith("@code-yeongyu/") && !publishedRegistryNames.has(packageName);
 }

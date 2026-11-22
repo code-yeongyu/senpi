@@ -5,7 +5,7 @@
  * prove that a `blocked` goal produces the restart resume prompt, that accepting
  * reactivates it and queues a continuation, and that declining leaves it blocked.
  *
- * Run: npx vitest run test/manual-qa/goal-blocked-resume-restart.test.ts
+ * Run: SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/goal-blocked-resume-restart.test.ts
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +13,12 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import { readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionToolContext,
+	ToolDefinition,
+} from "../../src/core/extensions/types.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../src/core/messages.ts";
 
 type AnyTool = ToolDefinition<any, any, any>;
@@ -81,10 +86,22 @@ it("prompts to resume a blocked goal after a process restart", async () => {
 	const a = makeSession(dir, () => undefined);
 	await a.tools
 		.get("create_goal")
-		?.execute("c1", { objective: "Finish the release checklist" }, undefined, undefined, a.ctx);
+		?.execute(
+			"c1",
+			{ objective: "Finish the release checklist" },
+			undefined,
+			undefined,
+			a.ctx as ExtensionToolContext,
+		);
 	await a.tools
 		.get("update_goal")
-		?.execute("u1", { status: "blocked", reason: "user interrupted the turn" }, undefined, undefined, a.ctx);
+		?.execute(
+			"u1",
+			{ status: "blocked", reason: "user interrupted the turn" },
+			undefined,
+			undefined,
+			a.ctx as ExtensionToolContext,
+		);
 	await a.fire("session_shutdown", { type: "session_shutdown" });
 	const afterA = await readGoal(storeRef);
 	say(`[session A] persisted status after shutdown: ${afterA?.status} (reason: ${afterA?.blockedReason})`);
@@ -112,7 +129,13 @@ it("prompts to resume a blocked goal after a process restart", async () => {
 	// Session C: blocked again, resumed, declined -> stays blocked.
 	await b.tools
 		.get("update_goal")
-		?.execute("u2", { status: "blocked", reason: "user interrupted the turn" }, undefined, undefined, b.ctx);
+		?.execute(
+			"u2",
+			{ status: "blocked", reason: "user interrupted the turn" },
+			undefined,
+			undefined,
+			b.ctx as ExtensionToolContext,
+		);
 	const c = makeSession(dir, (options) => options[1]);
 	await c.fire("session_start", { type: "session_start", reason: "resume" });
 	const afterC = await readGoal(storeRef);

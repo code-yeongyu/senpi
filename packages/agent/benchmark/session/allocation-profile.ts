@@ -20,15 +20,16 @@ interface AllocationProfileResult {
 const execFileAsync = promisify(execFile);
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const workerPath = fileURLToPath(new URL("./allocation-profile-worker.ts", import.meta.url));
-const tsconfigPath = fileURLToPath(new URL("../tsconfig.json", import.meta.url));
+// Resolve workspace packages to their sources, matching the root tsconfig paths.
+const sourceResolverUrl = new URL("../../../coding-agent/src/experimental/source-resolver.ts", import.meta.url).href;
 const results: AllocationProfileResult[] = [];
 
 for (const target of storageBenchmarkTargets) {
 	for (const dataset of STORAGE_BENCHMARK_DATASETS) {
 		const { stdout } = await execFileAsync(
 			process.execPath,
-			["--import", "tsx", workerPath, target.name, dataset.name],
-			{ cwd: packageRoot, env: { ...process.env, TSX_TSCONFIG_PATH: tsconfigPath } },
+			["--import", sourceResolverUrl, workerPath, target.name, dataset.name],
+			{ cwd: packageRoot },
 		);
 		results.push(JSON.parse(stdout) as AllocationProfileResult);
 	}

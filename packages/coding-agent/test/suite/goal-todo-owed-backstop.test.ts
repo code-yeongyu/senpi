@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -8,13 +8,17 @@ import { afterEach, describe, expect, it } from "vitest";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import {
 	buildTodoOwedReminder,
+	buildTodoOwedStopNotice,
+	collectOnDutySources,
 	firstTodoOwedSuppression,
+	TODO_OWED_CHAIN_LIMIT,
 	TODO_OWED_CUSTOM_TYPE,
 	TODO_OWED_REMINDER_EVENT,
 	type TodoOwedInput,
 	type TodoOwedReminderEvent,
 } from "../../src/core/extensions/builtin/goal/todo-owed-backstop.ts";
 import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
+import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
 import type { ExtensionAPI, ExtensionContext, ExtensionMode } from "../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
@@ -33,6 +37,8 @@ type BackstopHarness = {
 	harness: Harness;
 	notices: Notice[];
 	events: TodoOwedReminderEvent[];
+	statuses: Array<{ key: string; text: string | undefined }>;
+	publishWakeSource: (source: string, activeCount: number) => void;
 };
 
 const ANCHORS = { ask: "build the parser", now: "Write the parser (Build)", next: "Wire the parser (Build)" };
@@ -46,11 +52,21 @@ const askUserTool: AgentTool = {
 };
 
 async function createBackstopHarness(
-	options: { mode?: ExtensionMode; turnEndBackstop?: boolean } = {},
+	options: {
+		mode?: ExtensionMode;
+		turnEndBackstop?: boolean;
+		onReminder?: (event: TodoOwedReminderEvent, pi: ExtensionAPI) => void;
+	} = {},
 ): Promise<BackstopHarness> {
 	const events: TodoOwedReminderEvent[] = [];
+	let extensionApi: ExtensionAPI;
 	const probe = (pi: ExtensionAPI): void => {
-		pi.events.on(TODO_OWED_REMINDER_EVENT, (data) => events.push(data as TodoOwedReminderEvent));
+		extensionApi = pi;
+		pi.events.on(TODO_OWED_REMINDER_EVENT, (data) => {
+			const event = data as TodoOwedReminderEvent;
+			events.push(event);
+			options.onReminder?.(event, pi);
+		});
 	};
 	const harness = await createHarness({
 		extensionFactories: [todotoolsExtension, goalExtension, probe],
@@ -65,12 +81,28 @@ async function createBackstopHarness(
 	});
 	harnesses.push(harness);
 	const notices: Notice[] = [];
+	const statuses: BackstopHarness["statuses"] = [];
 	const runner = harness.getExtensionRunner();
 	runner.setUIContext(
-		{ ...runner.getUIContext(), notify: (message, type) => notices.push({ message, type }) },
+		{
+			...runner.getUIContext(),
+			notify: (message, type) => notices.push({ message, type }),
+			setStatus: (key, text) => statuses.push({ key, text }),
+		},
 		options.mode ?? "tui",
 	);
-	return { harness, notices, events };
+	return {
+		harness,
+		notices,
+		events,
+		statuses,
+		publishWakeSource: (source, activeCount) =>
+			extensionApi.events.emit(WAKE_SOURCE_STATE_EVENT, {
+				source,
+				activeCount,
+				items: activeCount > 0 ? [{ id: "child-1", description: "Build parser" }] : [],
+			}),
+	};
 }
 
 const OPEN_TODO = fauxToolCall("todo", {
@@ -157,7 +189,20 @@ describe("firstTodoOwedSuppression", () => {
 		const suppression = firstTodoOwedSuppression(input);
 
 		// then
-		expect(suppression).toBe("active-goal");
+		expect(suppression).toBe("waiting");
+		expect(collectOnDutySources(input)).toEqual(["active-goal"]);
+	});
+
+	it("suppresses while a wake source (a background child, monitor, eval cell or open question) will wake the turn (#10026)", () => {
+		// given
+		const input = predicateInput({ hasActiveWakeSources: true });
+
+		// when
+		const suppression = firstTodoOwedSuppression(input);
+
+		// then: #3163 folds wake sources into the named "waiting" suppression.
+		expect(suppression).toBe("waiting");
+		expect(collectOnDutySources(input)).toEqual(["wake-source"]);
 	});
 
 	it.each(["subagent", "non-interactive", "pending-messages", "continuation-pending"] as const)(
@@ -178,12 +223,141 @@ describe("firstTodoOwedSuppression", () => {
 			const suppression = firstTodoOwedSuppression(input);
 
 			// then
-			expect(suppression).toBe(clause);
+			expect(suppression).toBe(
+				clause === "pending-messages" || clause === "continuation-pending" ? "waiting" : clause,
+			);
 		},
 	);
 });
 
+describe("collectOnDutySources", () => {
+	it("names all on-duty owners without duplicates", () => {
+		expect(
+			collectOnDutySources(
+				predicateInput({
+					hasActiveWakeSources: true,
+					wakeSourceNames: ["eval", "senpi-task", "eval"],
+					goal: goalFixture("active"),
+					continuationPending: true,
+					ctx: withPendingMessages(),
+				}),
+			),
+		).toEqual(["eval", "senpi-task", "active-goal", "continuation-pending", "pending-messages"]);
+	});
+
+	it("does not count a goal whose continuation stopped as on duty", () => {
+		// given
+		const input = predicateInput({ goal: { ...goalFixture("active"), continuationStoppedAt: 5 } });
+
+		// when / then
+		expect(collectOnDutySources(input)).toEqual([]);
+		expect(firstTodoOwedSuppression(input)).toBe("goal-stopped");
+	});
+
+	it("ignores inactive wake sources and stopped goals", () => {
+		expect(
+			collectOnDutySources(predicateInput({ wakeSourceNames: ["senpi-task"], goal: goalFixture("blocked") })),
+		).toEqual([]);
+	});
+});
+
 describe("todo-owed backstop through the real AgentSession", () => {
+	// senpi#3163: on-duty work must show a quiet wait, including after the nudge cap.
+	it("reports waiting for a named wake source without nudges or notices", async () => {
+		const { harness, notices, events, statuses, publishWakeSource } = await createBackstopHarness();
+		publishWakeSource("senpi-task", 1);
+		harness.setResponses(openTodoThen(fauxAssistantMessage("Parser work is running.")));
+
+		await harness.session.prompt("build the parser");
+
+		expect(owedContents(harness)).toEqual([]);
+		expect(notices).toEqual([]);
+		expect(statuses).toContainEqual({ key: "todo-waiting", text: "waiting: senpi-task" });
+		expect(events).toEqual([
+			expect.objectContaining({ reason: "waiting", sources: ["senpi-task"], chainCount: 0, openTasks: 2 }),
+		]);
+		expect(firstTodoOwedSuppression(predicateInput({ hasActiveWakeSources: true }))).toBe("waiting");
+		const log = readFileSync(join(harness.tempDir, "agent", "logs", "session.log"), "utf8");
+		expect(
+			log
+				.split("\n")
+				.filter(Boolean)
+				.map((line) => JSON.parse(line)),
+		).toContainEqual(
+			expect.objectContaining({
+				level: "debug",
+				event: "todo_owed_backstop_suppressed",
+				reason: "waiting",
+				source: "senpi-task",
+			}),
+		);
+	}, 20_000);
+
+	it("keeps the capped turn quiet when a wake source takes duty after the second nudge", async () => {
+		const { harness, notices, events, statuses } = await createBackstopHarness({
+			onReminder: (event, pi) => {
+				if (event.reason === "delivered" && event.chainCount === 2) {
+					pi.events.emit(WAKE_SOURCE_STATE_EVENT, { source: "senpi-task", activeCount: 1 });
+				}
+			},
+		});
+		harness.setResponses(
+			openTodoThen(
+				fauxAssistantMessage("Parser plan is ready."),
+				fauxAssistantMessage("Starting the background work."),
+				fauxAssistantMessage("Parser work is running."),
+			),
+		);
+
+		await harness.session.prompt("build the parser");
+
+		expect(owedContents(harness)).toEqual([
+			buildTodoOwedReminder(ANCHORS, false),
+			buildTodoOwedReminder(ANCHORS, true),
+		]);
+		expect(notices).toEqual([]);
+		expect(events.at(-1)).toMatchObject({ reason: "waiting", chainCount: 2, sources: ["senpi-task"] });
+		expect(statuses).toContainEqual({ key: "todo-waiting", text: "waiting: senpi-task" });
+	}, 20_000);
+
+	it("clears the waiting footer on the next agent_start", async () => {
+		const { harness, statuses, publishWakeSource } = await createBackstopHarness();
+		publishWakeSource("senpi-task", 1);
+		harness.setResponses(openTodoThen(fauxAssistantMessage("Parser work is running.")));
+		await harness.session.prompt("build the parser");
+		expect(statuses).toContainEqual({ key: "todo-waiting", text: "waiting: senpi-task" });
+
+		await harness.getExtensionRunner().emit({ type: "agent_start" });
+
+		expect(statuses.filter(({ key }) => key === "todo-waiting").at(-1)).toEqual({
+			key: "todo-waiting",
+			text: undefined,
+		});
+	}, 20_000);
+
+	it("names only live sources and resumes nudges after the sources drain", async () => {
+		const { harness, notices, events, statuses, publishWakeSource } = await createBackstopHarness();
+		publishWakeSource("senpi-task", 1);
+		publishWakeSource("eval", 2);
+		publishWakeSource("finished", 0);
+		harness.setResponses(openTodoThen(fauxAssistantMessage("Parser work is running.")));
+		await harness.session.prompt("build the parser");
+		expect(statuses).toContainEqual({ key: "todo-waiting", text: "waiting: eval, senpi-task" });
+		expect(events.at(-1)).toMatchObject({ reason: "waiting", sources: ["eval", "senpi-task"] });
+
+		publishWakeSource("eval", 0);
+		publishWakeSource("senpi-task", 0);
+		harness.setResponses([
+			fauxAssistantMessage("Continue parser work."),
+			fauxAssistantMessage("What input should the parser accept?"),
+		]);
+		await harness.session.prompt("continue");
+
+		expect(owedContents(harness)).toHaveLength(1);
+		expect(events.at(-1)?.reason).toBe("delivered");
+		expect(notices).toEqual([]);
+	}, 20_000);
+
 	it("queues one hidden followUp that runs a second turn after a text-only end with open todos", async () => {
 		// given
 		const { harness, events } = await createBackstopHarness();
@@ -292,7 +466,13 @@ describe("todo-owed backstop through the real AgentSession", () => {
 
 		// then
 		expect(owedContents(harness)).toEqual([]);
-		expect(events).toEqual([]);
+		expect(events).toEqual([
+			expect.objectContaining({
+				reason: "waiting",
+				sources: ["active-goal", "continuation-pending"],
+				openTasks: 2,
+			}),
+		]);
 	}, 20_000);
 
 	it("prefixes the second reminder, then notifies once instead of a third", async () => {
@@ -316,11 +496,69 @@ describe("todo-owed backstop through the real AgentSession", () => {
 		]);
 		expect(harness.faux.state.callCount).toBe(4);
 		expect(notices.map((notice) => notice.type)).toEqual(["warning"]);
+		expect(notices[0]?.message).toBe(buildTodoOwedStopNotice(2, "Write the parser (Build)", TODO_OWED_CHAIN_LIMIT));
 		expect(events.map((event) => [event.reason, event.chainCount, event.openTasks, event.now])).toEqual([
 			["delivered", 1, 2, "Write the parser (Build)"],
 			["delivered", 2, 2, "Write the parser (Build)"],
 			["capped", 2, 2, "Write the parser (Build)"],
 		]);
+	}, 20_000);
+
+	it("restarts the count after a nudged turn closes a task, so an agent making progress is continued again (#10026)", async () => {
+		// given - three open tasks; each nudged turn closes one, then the agent stops again.
+		const { harness, notices, events } = await createBackstopHarness();
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall("todo", {
+						op: "init",
+						list: [{ phase: "Build", items: ["Write the parser", "Wire the parser", "Test the parser"] }],
+					}),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("Parser plan is ready."),
+			fauxAssistantMessage([fauxToolCall("todo", { op: "done", task: "Write the parser" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Parser written."),
+			fauxAssistantMessage([fauxToolCall("todo", { op: "done", task: "Wire the parser" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Parser wired."),
+			fauxAssistantMessage("Still on the tests."),
+			fauxAssistantMessage("Tests unchanged."),
+		]);
+
+		// when
+		await harness.session.prompt("build the parser");
+
+		// then - every stop after progress gets a fresh continuation; only the final stall notifies.
+		expect(events.map((event) => [event.reason, event.chainCount, event.openTasks])).toEqual([
+			["delivered", 1, 3],
+			["delivered", 1, 2],
+			["delivered", 1, 1],
+			["delivered", 2, 1],
+			["capped", 2, 1],
+		]);
+		expect(notices.map((notice) => notice.message)).toEqual([
+			buildTodoOwedStopNotice(1, "Test the parser (Build)", TODO_OWED_CHAIN_LIMIT),
+		]);
+	}, 20_000);
+
+	it("stays silent through the real session while a wake source is live (#10026)", async () => {
+		// given - a background child registered as a wake source when the turn ends.
+		const { harness, notices, events } = await createBackstopHarness();
+		harness.getExtensionRunner().emitBusEvent("wake_source_state", { source: "senpi-task", activeCount: 1 });
+		harness.setResponses(openTodoThen(fauxAssistantMessage("Waiting for the review child.")));
+
+		// when
+		await harness.session.prompt("build the parser");
+
+		// then: no nudge or notice; #3163 reports the quiet wait as a "waiting" event.
+		expect(events).toEqual([expect.objectContaining({ reason: "waiting", sources: ["senpi-task"] })]);
+		expect(notices).toEqual([]);
+		expect(owedContents(harness)).toEqual([]);
 	}, 20_000);
 
 	it("starts a new chain after a new user message", async () => {

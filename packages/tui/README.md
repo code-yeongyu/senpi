@@ -760,6 +760,44 @@ const lines = wrapTextWithAnsi("This is a long line that needs wrapping", 20);
 // ["This is a long line", "that needs wrapping"]
 ```
 
+### Colors and terminal styles
+
+Colors are values that can be converted or mixed before terminal rendering:
+
+```typescript
+import {
+  colorToRgb,
+  foregroundAnsi,
+  getTerminalColorMode,
+  mixColors,
+  parseColor,
+  rgbColor,
+  styleText,
+} from "@earendil-works/pi-tui";
+
+const accent = parseColor("oklch(70% 0.12 220)");
+const background = parseColor("#20242a");
+const foreground = mixColors(accent, background, 0.2);
+
+const text = styleText(
+  "Ready",
+  { fg: foreground, bg: background, bold: true },
+  getTerminalColorMode(),
+);
+```
+
+`Color` is an indexed ANSI color, an sRGB color, or an OKLCH color. Every color converts to sRGB, so color math such as `mixColors()` always works. Indices 0-15 follow the user's terminal palette, so their sRGB values are approximations. `styleText()` converts colors to truecolor or 256-color output based on the requested terminal mode.
+
+`parseColor()` also accepts OKHSL, as in `okhsl(250 60% 55%)`; `okhslColor()` builds it in code and `colorToOkhsl()` reads any color's OKHSL channels. OKHSL saturation is relative to the most the sRGB gamut allows at that hue and lightness, so every value is in gamut. OKHSL colors are converted to sRGB when created.
+
+Conversions are not cached, and OKLCH colors outside the sRGB gamut are the most expensive to convert. For colors used on every render, convert once and reuse the result:
+
+```typescript
+const { r, g, b } = colorToRgb(mixColors(accent, background, 0.2));
+const foreground = rgbColor(r, g, b); // cheap to render repeatedly
+const foregroundCode = foregroundAnsi(foreground, getTerminalColorMode());
+```
+
 ## Creating Custom Components
 
 When creating custom components, **each line returned by `render()` must not exceed the `width` parameter**. The TUI will error if any line is wider than the terminal.

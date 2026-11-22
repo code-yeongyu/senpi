@@ -1,8 +1,13 @@
-import { type AgentToolResult, type ExtensionContext, kernelToolsStorage } from "@code-yeongyu/senpi";
+import {
+	type AgentToolResult,
+	type ExtensionContext,
+	type ExtensionToolContext,
+	kernelToolsStorage,
+} from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
-import type { KernelToolsCapability } from "../src/kernels/js/kernel-tools-types.ts";
+import type { KernelToolsDescribeResult } from "../src/kernels/js/kernel-tools-types.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
 import type {
 	EvalKernel,
@@ -15,6 +20,14 @@ import { fakeExtensionContext } from "./eval/fakes.ts";
 
 type ProbeArgs = { readonly path: string };
 
+function isProbeArgs(value: unknown): value is ProbeArgs {
+	return typeof value === "object" && value !== null && "path" in value && typeof value.path === "string";
+}
+
+function isKernelToolsDescribeResult(value: unknown): value is KernelToolsDescribeResult {
+	return typeof value === "object" && value !== null && "results" in value && Array.isArray(value.results);
+}
+
 type DeniedRecord = { readonly code?: string; readonly details?: unknown };
 
 type HostObservation = {
@@ -24,7 +37,7 @@ type HostObservation = {
 };
 
 /** The read the shipped host performs: `ExtensionContext.kernelTools` is a live `kernelToolsStorage.getStore()`. */
-function hostContext(): ExtensionContext {
+function hostContext(): ExtensionToolContext {
 	return {
 		...fakeExtensionContext(),
 		get kernelTools() {
@@ -86,10 +99,12 @@ function scopedProbeTool(ctx: ExtensionContext, observations: HostObservation[],
 		hostCalls.push(toolName);
 		if (toolName === "read") return textResult("file-body");
 		if (toolName === "write") return textResult("host-write-happened");
-		const probe = params as ProbeArgs;
-		const kernelTools = ctx.kernelTools as KernelToolsCapability | undefined;
-		if (!kernelTools) throw new Error("kernel tools unavailable at the host dispatch point");
+		if (!isProbeArgs(params)) throw new Error(`probe expected { path: string }, got ${JSON.stringify(params)}`);
+		const probe = params;
+		const kernelTools = ctx.kernelTools;
+		if (kernelTools === undefined) throw new Error("kernel tools unavailable at the host dispatch point");
 		const described = await kernelTools.describe(["guarded_fs", "strict_fs"]);
+		if (!isKernelToolsDescribeResult(described)) throw new Error("describe returned an unexpected shape");
 		const guardedEntry = described.results[0];
 		const strictEntry = described.results[1];
 		if (guardedEntry?.ok !== true || strictEntry?.ok !== true) throw new Error("kernel tool descriptors missing");

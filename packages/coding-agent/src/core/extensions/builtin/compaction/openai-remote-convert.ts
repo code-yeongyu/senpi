@@ -183,6 +183,7 @@ function convertLlmMessage(message: Message, messageIndex: number, model: Model<
 		case "toolResult":
 			return convertToolResultMessage(message, model);
 		case "configurationUpdate":
+		case "system":
 			return [];
 	}
 }

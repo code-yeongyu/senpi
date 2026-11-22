@@ -1,4 +1,4 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import permissionSystemExtension from "../../src/core/extensions/builtin/permission-system/index.ts";
@@ -50,7 +50,7 @@ async function sessionWith(
 
 async function call(harness: Harness, toolName: string, args: Record<string, unknown>): Promise<{ isError: boolean }> {
 	harness.setResponses([
-		fauxAssistantMessage(fauxToolCall(toolName, args), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall(toolName, args as JsonObject), { stopReason: "toolUse" }),
 		(context: { readonly messages: readonly { readonly role: string }[] }) => {
 			const toolResult = [...context.messages].reverse().find((message) => message.role === "toolResult");
 			return fauxAssistantMessage(toolResult === undefined ? "missing tool result" : getMessageText(toolResult));

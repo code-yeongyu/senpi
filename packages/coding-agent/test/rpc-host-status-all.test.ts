@@ -4,15 +4,16 @@
  * on disk and over the socket. The shard naming contract and the per-session host identity have their
  * own suites (`rpc-host-shard-naming`, `rpc-host-session-identity`).
  */
-import { realpathSync } from "node:fs";
+import { realpathSync, watch } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHostDaemonPaths, daemonDirectoryName } from "../src/modes/rpc/host-daemon-paths.ts";
+import { createHostDaemonPaths, daemonDirectoryName, generationPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { listHostEndpoints } from "../src/modes/rpc/host-endpoints.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
+import { LOOP_LAG_ERROR_MS_ENV, LOOP_LAG_WARN_MS_ENV } from "../src/modes/rpc/loop-lag-watchdog.ts";
 import { HeldAnthropicModel, JsonlPeer, openedSessionId } from "./helpers/rpc-generation-support.ts";
 import {
 	canonicalSocket,
@@ -30,7 +31,58 @@ import {
 	trackSupervisor,
 } from "./helpers/rpc-host-endpoint-scratch.ts";
 import { daemonTreeDigest, killEndpointUnclean } from "./helpers/rpc-host-endpoints.ts";
-import { waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+import { processAlive, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+
+// A host's loop-lag watchdog writes into its own daemon directory while it runs: a heartbeat every fifth of
+// the error threshold, and warnings and stall evidence when its loop lags (senpi#2932). A case that proves a
+// reader wrote nothing raises both thresholds so the live host writes its first heartbeat at start and then
+// nothing for minutes, and the whole tree can be compared with no exclusion.
+const QUIET_HOST_MS = String(30 * 60_000);
+const QUIET_HOST_ENV = { [LOOP_LAG_WARN_MS_ENV]: QUIET_HOST_MS, [LOOP_LAG_ERROR_MS_ENV]: QUIET_HOST_MS };
+
+/** Subscribe before reading, so a state reached during the first read cannot be missed. */
+async function fileStateWritten(file: string, ready: (text: string) => boolean): Promise<void> {
+	const watcher = watch(dirname(file));
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await new Promise<void>((resolve, reject) => {
+			timeout = setTimeout(() => reject(new Error(`state not written: ${file}`)), 20_000);
+			const check = async () => {
+				const text = await readFile(file, "utf8").catch((cause: NodeJS.ErrnoException) => {
+					if (cause.code === "ENOENT") return undefined;
+					throw cause;
+				});
+				if (text !== undefined && ready(text)) resolve();
+			};
+			watcher.on("change", () => void check().catch(reject));
+			watcher.once("error", reject);
+			void check().catch(reject);
+		});
+	} finally {
+		clearTimeout(timeout);
+		watcher.close();
+	}
+}
+
+/** Socket readiness precedes the supervisor's final startup writes; quiet the whole tree before comparing it. */
+async function startWritesFinished(socket: string, agentDir: string): Promise<void> {
+	const paths = createHostDaemonPaths({ socket, agentDir });
+	const pointer = JSON.parse(await readFile(paths.pointerFile, "utf8")) as { instance_id?: unknown };
+	const generation = generationPaths(paths, String(pointer.instance_id));
+	// recordChildPid runs independently of startup and first writes a null start identity.
+	await fileStateWritten(generation.childPidFile, (text) => {
+		const record = JSON.parse(text) as { processStartTime?: unknown };
+		return typeof record.processStartTime === "string";
+	});
+	const { pid } = JSON.parse(await readFile(generation.childPidFile, "utf8")) as { pid?: unknown };
+	expect({ hostChild: pid, alive: typeof pid === "number" && processAlive(pid) }).toEqual({
+		hostChild: pid,
+		alive: true,
+	});
+	await fileStateWritten(generation.aliveFile, () => true);
+	// writeHostReady is synchronous and follows drain-watch.json's atomic publication.
+	await fileStateWritten(paths.stderrLog, (text) => text.includes(`senpi rpc host ready on unix://${socket} `));
+}
 
 afterEach(sweepEndpointScratches, 180_000);
 
@@ -69,13 +121,20 @@ describe("endpoint enumeration from disk", () => {
 			socket: byGeneration,
 			dir: join(flat, daemonDirectoryName(byGeneration)),
 			identity: "generation-settings",
+			endpoint_kind: "rpc_host",
 		});
 		expect(endpoints).toContainEqual({
 			socket: bySettings,
 			dir: join(flat, daemonDirectoryName(bySettings)),
 			identity: "settings",
+			endpoint_kind: "rpc_host",
 		});
-		expect(endpoints).toContainEqual({ socket: null, dir: join(flat, "0123456789abcdef"), identity: "unknown" });
+		expect(endpoints).toContainEqual({
+			socket: null,
+			dir: join(flat, "0123456789abcdef"),
+			identity: "unknown",
+			endpoint_kind: "rpc_host",
+		});
 		const all = await statusAll(qa);
 		expect(all.exitCode).toBe(3);
 		expect(all.endpoints).toHaveLength(3);
@@ -106,11 +165,23 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 			identity: "endpoint",
 			shard: { kind: "p", key: SHARD_KEY },
 			crashes: 0,
+			endpoint_kind: "rpc_host",
+			alive: true,
+			reason: null,
 		});
-		expect(endpointRow(endpoints, qa.legacy)).toMatchObject({ reachable: true, identity: "endpoint", shard: null });
+		expect(endpointRow(endpoints, qa.legacy)).toMatchObject({
+			reachable: true,
+			identity: "endpoint",
+			shard: null,
+			endpoint_kind: "rpc_host",
+			alive: true,
+			reason: null,
+		});
 		const identityFile = createHostDaemonPaths({ socket: qa.shard, agentDir: qa.agentDir }).endpointFile;
 		expect(JSON.parse(await readFile(identityFile, "utf8"))).toEqual({
 			layout: 2,
+			registry_version: 1,
+			endpoint_kind: "rpc_host",
 			socket: qa.shard,
 			created_at: expect.any(String),
 		});
@@ -142,10 +213,11 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 
 	it("reports an unclean death's stale registration without touching a byte, while one status prunes it", async () => {
 		const qa = endpointScratch("stale");
-		await Promise.all([realHost(qa, qa.shard), realHost(qa, qa.legacy)]);
+		await Promise.all([realHost(qa, qa.shard), realHost(qa, qa.legacy, { env: QUIET_HOST_ENV })]);
 		const death = await killEndpointUnclean(qa.shard, qa.agentDir);
 		tracked.internalDirs.push(...death.internalDirs);
 		const daemonRoot = join(qa.agentDir, "rpc-host-daemon");
+		await startWritesFinished(qa.legacy, qa.agentDir);
 		const before = await daemonTreeDigest(daemonRoot);
 
 		const { exitCode, endpoints } = await statusAll(qa);
@@ -205,8 +277,12 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 				id: sessionId,
 				kind: "worker",
 				session_path: sessionPath,
+				cwd: qa.cwd,
+				name: null,
 				attachments: 1,
 				context: { tree_key: "tree-7", host_socket: canonicalSocket(qa.legacy), host_instance: instanceId },
+				// senpi#1960: the host publishes its live heap split; the main heap moves, the kernel split is exact.
+				memory: { main_heap_mb: expect.any(Number), kernel_heap_mb: 0, kernel_count: 0 },
 			},
 		]);
 		expect(listed.claims_live).toBe(1);

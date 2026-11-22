@@ -16,8 +16,9 @@ export default defineFacet({
 			},
 		});
 		env.onActivate(() => {
-			workerActivations.state.count += 1;
-			workerActivations.publish(BACKGROUND_CONTEXT);
+			workerActivations.change(BACKGROUND_CONTEXT, (draft) => {
+				draft.count += 1;
+			});
 		});
 	},
 });

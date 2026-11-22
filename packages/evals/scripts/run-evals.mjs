@@ -105,7 +105,7 @@ if (provider && model) {
 }
 const result = spawnSync(
 	process.execPath,
-	[vitestCliPath, "run", "--config", "vitest.config.ts", ...vitestArgs],
+	[vitestCliPath, "run", "--config", "vitest.evals.config.ts", "--project", "host", ...vitestArgs],
 	{
 		cwd: packageRoot,
 		stdio: "inherit",

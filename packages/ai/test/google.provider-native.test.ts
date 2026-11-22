@@ -4,6 +4,7 @@ import { streamGoogle } from "../src/providers/google.ts";
 import { convertMessages } from "../src/providers/google-shared.ts";
 import { streamGoogleVertex } from "../src/providers/google-vertex.ts";
 import type { AssistantMessage, Context, ProviderNativeContent } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const googleGenAiMock = vi.hoisted(() => ({
 	streamChunks: [] as Array<Record<string, unknown>>,
@@ -105,14 +106,18 @@ function setProviderNativeStreamChunks(): void {
 describe("Google provider-native content blocks", () => {
 	it("surfaces executableCode/codeExecutionResult parts and candidate metadata once for google + vertex", async () => {
 		setProviderNativeStreamChunks();
-		const googleMessage = await streamGoogle(getModel("google", "gemini-2.5-flash"), context, {
+		const googleMessage = await streamGoogle(getModel("google", "gemini-2.5-flash"), normalizeContext(context), {
 			apiKey: "x",
 		}).result();
 
 		setProviderNativeStreamChunks();
-		const vertexMessage = await streamGoogleVertex(getModel("google-vertex", "gemini-3-flash-preview"), context, {
-			apiKey: "x",
-		}).result();
+		const vertexMessage = await streamGoogleVertex(
+			getModel("google-vertex", "gemini-3-flash-preview"),
+			normalizeContext(context),
+			{
+				apiKey: "x",
+			},
+		).result();
 
 		for (const message of [googleMessage, vertexMessage]) {
 			const providerNativeBlocks = message.content.filter(
@@ -176,9 +181,10 @@ describe("Google provider-native content blocks", () => {
 			timestamp: now,
 		};
 
-		const replay = convertMessages(getModel("google", "gemini-2.5-flash"), {
-			messages: [{ role: "user", content: "hello", timestamp: now }, assistantMessage],
-		});
+		const replay = convertMessages(
+			getModel("google", "gemini-2.5-flash"),
+			normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: now }, assistantMessage] }),
+		);
 
 		const assistantReplay = replay.find((item) => item.role === "model");
 		expect(assistantReplay).toBeTruthy();

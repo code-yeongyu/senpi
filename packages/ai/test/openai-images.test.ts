@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openaiImagesApi } from "../src/api/openai-images.lazy.ts";
 import { generateImages, type OpenAIImagesOptions } from "../src/api/openai-images.ts";
-import type { ImagesContext, ImagesModel } from "../src/types.ts";
+import type { ImageModel, ImagesContext } from "../src/types.ts";
 
 const PNG_B64 = "iVBORw0KGgo=";
 const WEBP_B64 = "UklGRgAAAABXRUJQ";
@@ -52,7 +52,8 @@ function setResponse(data: ImageFixture[] | null = [{ b64_json: PNG_B64 }], usag
 	mockState.responses[0] = { created: 1, ...(data === null ? {} : { data }), ...(usage ? { usage } : {}) };
 }
 
-const model: ImagesModel<"openai-images"> = {
+const model: ImageModel<"openai-images"> = {
+	type: "image",
 	id: "gpt-image-2",
 	name: "GPT Image 2",
 	api: "openai-images",

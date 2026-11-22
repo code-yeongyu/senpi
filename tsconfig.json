@@ -23,6 +23,9 @@
 			"@earendil-works/chord/node": [
 				"./packages/chord/src/node.ts"
 			],
+			"@earendil-works/pi-realm-registry": [
+				"./packages/realm-registry/src/index.ts"
+			],
 			"@earendil-works/pi-telemetry": [
 				"./packages/telemetry/src/index.ts"
 			],
@@ -53,6 +56,9 @@
 			],
 			"@earendil-works/pi-agent-core/harness/session/testing": [
 				"./packages/agent/src/harness/session/testing/index.ts"
+			],
+			"@earendil-works/pi-agent-core/experimental/pico3": [
+				"./packages/agent/src/harness/pico3/index.ts"
 			],
 			"@earendil-works/pi-agent-core/*": [
 				"./packages/agent/src/*.ts",
@@ -119,6 +125,15 @@
 			"@earendil-works/pi-pty/*": [
 				"./packages/pty/src/*"
 			],
+			"@code-yeongyu/senpi-machine-ops": [
+				"./packages/machine-ops/src/index.ts"
+			],
+			"@code-yeongyu/senpi-machine-ops/in-process-holder": [
+				"./packages/machine-ops/src/process/in-process-holder.ts"
+			],
+			"@code-yeongyu/senpi-machine-ops/conformance": [
+				"./packages/machine-ops/test/conformance/index.ts"
+			],
 			"@earendil-works/pi-agent-old": [
 				"./packages/agent-old/src/index.ts"
 			],
@@ -137,6 +152,8 @@
 		}
 	},
 	"include": [
+		"scripts/model-catalog-protocol.ts",
+		"scripts/model-catalog-protocol.test.ts",
 		"packages/*/src/**/*",
 		"packages/*/test/**/*",
 		"packages/session-backends/*/src/**/*",

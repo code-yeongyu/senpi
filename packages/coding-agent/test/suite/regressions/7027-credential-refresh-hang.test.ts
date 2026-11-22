@@ -82,7 +82,11 @@ describe("issues #7027 and #7113 credential refresh hang", () => {
 		).resolves.toEqual({ type: "api_key", key: "secret" });
 
 		expect(runtime.getAvailableSnapshot().map((model) => model.id)).toContain(dynamicModel.id);
-		expect(await credentials.read(provider.id)).toEqual({ type: "api_key", key: "secret" });
+		expect(await credentials.read(provider.id)).toEqual({
+			type: "api_key",
+			key: "secret",
+			loginId: expect.any(String),
+		});
 		await expect(stalledRefresh).resolves.toMatchObject({ aborted: false });
 	});
 
@@ -189,10 +193,12 @@ describe("post-login model discovery", () => {
 		expect(defaultModelPerProvider.radius).toBe("balanced");
 		const login = await startLogin();
 		await login.discover(models);
-		// The fork's AgentSession.setModel(model) persists by default (`_setModel(model, true)`, one
-		// parameter) where upstream passes an explicit `{ persist: true }`: same persisted selection,
-		// different signature, so the call carries the model alone.
-		expect(login.setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: "radius", id: selected }));
+		// The fork's AgentSession.setModel(model, origin) persists by default where upstream passes an
+		// explicit `{ persist: true }`: same persisted selection; the call names the model and that the
+		// provider login made it (#2870).
+		expect(login.setModel).toHaveBeenCalledWith(expect.objectContaining({ provider: "radius", id: selected }), {
+			source: "provider-login",
+		});
 		expect(login.showError).not.toHaveBeenCalled();
 	});
 

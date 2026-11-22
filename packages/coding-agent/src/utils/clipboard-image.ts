@@ -7,6 +7,7 @@ import { join } from "path";
 import { runClipboardCommand } from "./clipboard-command.ts";
 import { detectSupportedImageMimeType } from "./mime.ts";
 import { loadPhoton } from "./photon.ts";
+import { isWSL } from "./wsl.ts";
 
 export type ClipboardImage = {
 	bytes: Uint8Array;
@@ -109,19 +110,6 @@ async function readClipboardImageViaWlPaste(): Promise<ClipboardImage | null | u
 	return { bytes: data, mimeType: baseMimeType(selectedType) };
 }
 
-function isWSL(env: NodeJS.ProcessEnv = process.env): boolean {
-	if (env.WSL_DISTRO_NAME || env.WSLENV) {
-		return true;
-	}
-
-	try {
-		const release = readFileSync("/proc/version", "utf-8");
-		return /microsoft|wsl/i.test(release);
-	} catch {
-		return false;
-	}
-}
-
 /**
  * On WSL, the Linux clipboard (Wayland/X11) does not receive image data from
  * Windows screenshots (Win+Shift+S). PowerShell can access the Windows clipboard
@@ -186,27 +174,20 @@ async function readClipboardImageViaXclip(): Promise<ClipboardImage | null | und
 		timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
 	});
 
-	let candidateTypes: string[] = [];
-	if (targets !== undefined) {
-		candidateTypes = targets
-			.toString("utf-8")
-			.split(/\r?\n/)
-			.map((t) => t.trim())
-			.filter(Boolean);
-	}
+	if (targets === undefined) return undefined;
 
+	const candidateTypes = targets
+		.toString("utf-8")
+		.split(/\r?\n/)
+		.map((t) => t.trim())
+		.filter(Boolean);
 	const preferred = selectPreferredImageMimeType(candidateTypes);
-	if (targets !== undefined && !preferred) return null;
-	const tryTypes = new Set(preferred ? [preferred, ...SUPPORTED_IMAGE_MIME_TYPES] : SUPPORTED_IMAGE_MIME_TYPES);
+	if (!preferred) return null;
 
-	for (const mimeType of tryTypes) {
-		const data = await runClipboardCommand("xclip", ["-selection", "clipboard", "-t", mimeType, "-o"]);
-		if (data !== undefined && data.length > 0) {
-			return { bytes: data, mimeType: baseMimeType(mimeType) };
-		}
-	}
-
-	return undefined;
+	const data = await runClipboardCommand("xclip", ["-selection", "clipboard", "-t", preferred, "-o"]);
+	if (data === undefined) return undefined;
+	if (data.length === 0) return null;
+	return { bytes: data, mimeType: baseMimeType(preferred) };
 }
 
 async function readClipboardImageViaNativeClipboard(): Promise<ClipboardImage | null | undefined> {

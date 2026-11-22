@@ -6,22 +6,26 @@ import type {
 	OpenAICompletionsCompat,
 	ProviderEnv,
 } from "../types.ts";
+import { classifyOpenAIPromptCacheLane, type OpenAIPromptCacheLane } from "./openai-prompt-cache-lane.ts";
 import { getProviderEnvValue } from "./provider-env.ts";
 
 export const PROMPT_CACHE_TTL_SHORT_SECONDS = 300;
 export const PROMPT_CACHE_TTL_LONG_SECONDS = 3600;
 /**
- * OpenAI GPT-5.6 and later: `prompt_cache_options.ttl` accepts only `"30m"`, and the cache stays
- * eligible at least 30 minutes after the latest write or reuse.
+ * OpenAI GPT-5.6 and later: the default `prompt_cache_options.ttl: "30m"` keeps the cache eligible at least
+ * 30 minutes after the latest write or reuse.
  */
 export const PROMPT_CACHE_TTL_OPENAI_EXTENDED_SECONDS = 1800;
+/** OpenAI GPT-5.6 and later on the Responses API: `prompt_cache_options.ttl: "12h"`, a 12-hour minimum lifetime. */
+export const PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS = 43_200;
 
 /**
  * How long a provider promises to keep a prompt prefix cached.
  *
  * - `ttl`: an explicit expiry contract; `ttlSeconds` is the conservative lifetime after the last write or reuse.
- * - `best-effort`: the provider caches automatically but promises no expiry (direct DeepSeek clears unused entries
- *   after hours to days), so nothing needs to wake or ping solely to preserve the cache.
+ * - `best-effort`: the provider caches automatically with no expiry senpi can schedule around (direct DeepSeek
+ *   clears unused entries after hours to days; signed-in ChatGPT keeps its cache with no expiry), so nothing needs
+ *   to wake or ping solely to preserve the cache.
  * - `none`: caching is disabled or the lane has no known cache contract.
  */
 export type PromptCacheLifetime =
@@ -35,6 +39,13 @@ const BEST_EFFORT_PROMPT_CACHE: PromptCacheLifetime = { kind: "best-effort" };
 function ttl(ttlSeconds: number): PromptCacheLifetime {
 	return { kind: "ttl", ttlSeconds };
 }
+
+const OPENAI_LANE_PROMPT_CACHE_LIFETIME: Readonly<Record<OpenAIPromptCacheLane, PromptCacheLifetime>> = {
+	"chatgpt-subscription": BEST_EFFORT_PROMPT_CACHE,
+	"api-long": ttl(PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS),
+	"api-extended": ttl(PROMPT_CACHE_TTL_OPENAI_EXTENDED_SECONDS),
+	"api-short": ttl(PROMPT_CACHE_TTL_SHORT_SECONDS),
+};
 
 function hostnameOf(baseUrl: string): string | undefined {
 	try {
@@ -54,14 +65,17 @@ export function isAnthropicApiBaseUrl(baseUrl: string): boolean {
 
 /**
  * Families that reject forced tool use (`tool_choice` `any` / `tool` return 400): every Fable and
- * Mythos release, and Claude Opus 5.5 (`claude-opus-5-5`; gateways may spell it `claude-opus-5.5`).
+ * Mythos release, Claude Opus 5.5 and Claude Sonnet 5.5 (`claude-opus-5-5`, `claude-sonnet-5-5`;
+ * gateways may spell them with a dot).
  */
-const FORCED_TOOL_CHOICE_REJECTING_MODEL_ID = /^claude-(?:(?:fable|mythos)(?:-|$)|opus-5[.-]5(?:[.-]|$))/i;
+const FORCED_TOOL_CHOICE_REJECTING_MODEL_ID = /^claude-(?:(?:fable|mythos)(?:-|$)|(?:opus|sonnet)-5[.-]5(?:[.-]|$))/i;
 
 /**
  * Default for `supportsToolReferences`: first-party Anthropic models except
  * Haiku (rejects client-side tool_reference blocks) and models that predate
- * tool search (Claude 3.x, Opus/Sonnet 4.0, Opus 4.1).
+ * tool search (Claude 3.x, Opus/Sonnet 4.0, Opus 4.1). Haiku 5.5 is listed in
+ * Anthropic's tool-search table, as Haiku 4.5 is, but stays off until a live
+ * probe confirms it (senpi#2914).
  */
 function defaultSupportsToolReferences(model: Model<"anthropic-messages">): boolean {
 	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;
@@ -70,6 +84,24 @@ function defaultSupportsToolReferences(model: Model<"anthropic-messages">): bool
 	const major = Number(version[1]);
 	const minor = version[2] && version[2].length < 8 ? Number(version[2]) : 0;
 	return major > 4 || (major === 4 && minor >= 5);
+}
+
+export function allowsAnthropicLongCacheRetention(model: Model<"anthropic-messages">): boolean {
+	return (
+		model.compat?.supportsLongCacheRetention ??
+		(isAnthropicApiBaseUrl(model.baseUrl) && getAnthropicCompat(model).supportsLongCacheRetention)
+	);
+}
+
+/**
+ * Whether this Anthropic-messages host applies `cache_control` at all, and therefore whether warming its
+ * prompt cache can achieve anything. The native host always does. A proxy does only when its model entry
+ * asserts cache support with `compat.supportsLongCacheRetention: true` — the documented assertion for a
+ * gateway that honours `cache_control` — because an unset or `false` flag cannot tell a host that caches
+ * for five minutes without the one-hour option apart from one that ignores `cache_control`.
+ */
+export function supportsAnthropicCacheWarming(model: Model<"anthropic-messages">): boolean {
+	return isAnthropicApiBaseUrl(model.baseUrl) || model.compat?.supportsLongCacheRetention === true;
 }
 
 export function getAnthropicCompat(
@@ -103,6 +135,8 @@ export function getAnthropicCompat(
 			model.compat?.unsignedThinkingReplay ?? (model.compat?.allowEmptySignature ? "empty-signature" : "text"),
 		allowedFallbackModels: model.compat?.allowedFallbackModels ?? [],
 		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
+		supportsMidConvoToolChanges: model.compat?.supportsMidConvoToolChanges ?? false,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
 		// Default: first-party Anthropic only. Anthropic-compatible providers
 		// (kimi-coding, fireworks, copilot, gateways) may execute the server-side
@@ -110,6 +144,7 @@ export function getAnthropicCompat(
 		// blocks on the next request (kimi-coding 400s with `tool_call_id is not
 		// found`).
 		supportsWebSearch: model.compat?.supportsWebSearch ?? isAnthropicApiBaseUrl(model.baseUrl),
+		supportsGzipRequestBody: model.compat?.supportsGzipRequestBody ?? isAnthropicApiBaseUrl(model.baseUrl),
 	};
 }
 
@@ -126,7 +161,11 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	| "thinkingTokenBudgetField"
 	| "veniceParameters"
 	| "supportsForcedToolChoice"
+	| "supportsWebSearch"
+	| "mixedStrictTools"
 > & {
+	mixedStrictTools?: OpenAICompletionsCompat["mixedStrictTools"];
+	supportsWebSearch?: OpenAICompletionsCompat["supportsWebSearch"];
 	/** Declared forced tool_choice support; absent means supported. */
 	supportsForcedToolChoice?: OpenAICompletionsCompat["supportsForcedToolChoice"];
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
@@ -165,12 +204,12 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
+	const isCerebras = provider === "cerebras" || baseUrl.includes("cerebras.ai");
 	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
 
 	const isNonStandard =
 		isNvidia ||
-		provider === "cerebras" ||
-		baseUrl.includes("cerebras.ai") ||
+		isCerebras ||
 		provider === "xai" ||
 		baseUrl.includes("api.x.ai") ||
 		isTogether ||
@@ -231,11 +270,15 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 		vercelGatewayRouting: {},
 		chatTemplateKwargs: {},
 		zaiToolStream: false,
-		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+		// OpenAI compatibility alone does not imply strict JSON-schema tool support.
+		supportsStrictMode: false,
+		mixedStrictTools: true,
 		toolSchemaFlavor: isMoonshot ? "moonshot-mfjs" : undefined,
 		supportsDisabledThinking: true,
 		toolCallFormat: undefined,
 		supportsOpenAIGrammarTools: false,
+		supportsMidConvoSystemMessages: false,
+		supportsMidConvoToolAdditions: false,
 		cacheControlFormat,
 		sendSessionAffinityHeaders: isOpenRouter,
 		deferredToolsMode: undefined,
@@ -261,6 +304,7 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 	if (!model.compat) return detected;
 
 	return {
+		supportsWebSearch: model.compat.supportsWebSearch,
 		supportsStore: model.compat.supportsStore ?? detected.supportsStore,
 		supportsDeveloperRole: model.compat.supportsDeveloperRole ?? detected.supportsDeveloperRole,
 		supportsReasoningEffort: model.compat.supportsReasoningEffort ?? detected.supportsReasoningEffort,
@@ -284,9 +328,14 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 		supportsThinkingTokenBudget: model.compat.supportsThinkingTokenBudget ?? detected.supportsThinkingTokenBudget,
 		thinkingTokenBudgetField: model.compat.thinkingTokenBudgetField ?? detected.thinkingTokenBudgetField,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
+		mixedStrictTools: model.compat.mixedStrictTools ?? detected.mixedStrictTools,
 		toolSchemaFlavor: model.compat.toolSchemaFlavor ?? detected.toolSchemaFlavor,
 		toolCallFormat: model.compat.toolCallFormat ?? detected.toolCallFormat,
 		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,
+		supportsMidConvoSystemMessages:
+			model.compat.supportsMidConvoSystemMessages ?? detected.supportsMidConvoSystemMessages,
+		supportsMidConvoToolAdditions:
+			model.compat.supportsMidConvoToolAdditions ?? detected.supportsMidConvoToolAdditions,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
 		deferredToolsMode: model.compat.deferredToolsMode ?? detected.deferredToolsMode,
@@ -399,21 +448,35 @@ function isDirectDeepSeekModel(model: Model<"openai-completions">): boolean {
 	return model.provider === "deepseek" || hostnameOf(model.baseUrl) === "api.deepseek.com";
 }
 
-/** GPT-5.6 and later (`gpt-5.6-*`, `gpt-5.10`, `gpt-6-*`, `gpt-7`, ...). */
-const OPENAI_EXTENDED_CACHE_MODEL_ID = /^gpt-(?:5\.(?:[6-9]|\d{2,})|(?:[6-9]|\d{2,})(?:\.\d+)?)(?:-|$)/i;
+/** Env that puts Claude Code on API-key, gateway or cloud billing, where it caches the main conversation for 5 minutes. */
+const CLAUDE_CODE_API_BILLING_ENV = [
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+	"ANTHROPIC_BASE_URL",
+	"CLAUDE_CODE_USE_BEDROCK",
+	"CLAUDE_CODE_USE_VERTEX",
+	"CLAUDE_CODE_USE_FOUNDRY",
+] as const;
+
+function isEnabledFlag(value: string | undefined): boolean {
+	return value !== undefined && !/^(?:|0|false|no|off)$/i.test(value.trim());
+}
 
 /**
- * The OpenAI-operated Responses lanes (OpenAI API, Azure OpenAI, ChatGPT subscription) serving a GPT-5.6+
- * model, where OpenAI documents a cache lifetime of at least 30 minutes. Gateways that merely proxy the same
- * model ids keep the conservative short lifetime because their routing does not carry that contract.
+ * The Claude SDK lane's cache TTL is chosen by Claude Code, not senpi: `CLAUDE_CODE_PROMPT_CACHE_TTL`
+ * (`5m` | `1h`) wins, then `FORCE_PROMPT_CACHING_5M` and `ENABLE_PROMPT_CACHING_1H`; otherwise a Claude
+ * subscription gets 1 hour and API-key, gateway or cloud billing gets 5 minutes. A subscription past its
+ * usage limits also drops to 5 minutes, which nothing here can observe.
  */
-function hasOpenAIExtendedPromptCache(model: Model<Api>): boolean {
-	if (model.api === "openai-responses") {
-		const responsesModel = model as Model<"openai-responses">;
-		if (responsesModel.compat?.supportsExplicitPromptCacheMode === true) return true;
-		if (responsesModel.provider !== "openai" && hostnameOf(responsesModel.baseUrl) !== "api.openai.com") return false;
-	}
-	return OPENAI_EXTENDED_CACHE_MODEL_ID.test(model.id);
+function claudeCodePromptCacheTtlSeconds(env: ProviderEnv | undefined): number {
+	const explicit = getProviderEnvValue("CLAUDE_CODE_PROMPT_CACHE_TTL", env)?.trim().toLowerCase();
+	if (explicit === "5m") return PROMPT_CACHE_TTL_SHORT_SECONDS;
+	if (explicit === "1h") return PROMPT_CACHE_TTL_LONG_SECONDS;
+	if (isEnabledFlag(getProviderEnvValue("FORCE_PROMPT_CACHING_5M", env))) return PROMPT_CACHE_TTL_SHORT_SECONDS;
+	if (isEnabledFlag(getProviderEnvValue("ENABLE_PROMPT_CACHING_1H", env))) return PROMPT_CACHE_TTL_LONG_SECONDS;
+	return CLAUDE_CODE_API_BILLING_ENV.some((name) => getProviderEnvValue(name, env) !== undefined)
+		? PROMPT_CACHE_TTL_SHORT_SECONDS
+		: PROMPT_CACHE_TTL_LONG_SECONDS;
 }
 
 /**
@@ -423,15 +486,12 @@ function hasOpenAIExtendedPromptCache(model: Model<Api>): boolean {
 export function resolvePromptCacheLifetime(model: Model<Api>, env?: ProviderEnv): PromptCacheLifetime {
 	switch (model.api) {
 		case "claude-sdk-oauth":
-			// The Claude SDK owns prompt caching for this lane and uses Anthropic's default 5m TTL.
-			return ttl(PROMPT_CACHE_TTL_SHORT_SECONDS);
+			return ttl(claudeCodePromptCacheTtlSeconds(env));
 		case "anthropic-messages": {
 			const anthropicModel = model as Model<"anthropic-messages">;
 			const retention = resolveAnthropicCacheRetention(anthropicModel.cacheRetention, env, "short");
 			if (retention === "none") return NO_PROMPT_CACHE;
-			return retention === "long" &&
-				isAnthropicApiBaseUrl(anthropicModel.baseUrl) &&
-				getAnthropicCompat(anthropicModel).supportsLongCacheRetention
+			return retention === "long" && allowsAnthropicLongCacheRetention(anthropicModel)
 				? ttl(PROMPT_CACHE_TTL_LONG_SECONDS)
 				: ttl(PROMPT_CACHE_TTL_SHORT_SECONDS);
 		}
@@ -461,9 +521,7 @@ export function resolvePromptCacheLifetime(model: Model<Api>, env?: ProviderEnv)
 		case "azure-openai-responses": {
 			const retention = resolveOpenAIResponsesCacheRetention(model.cacheRetention, env);
 			if (retention === "none") return NO_PROMPT_CACHE;
-			return hasOpenAIExtendedPromptCache(model)
-				? ttl(PROMPT_CACHE_TTL_OPENAI_EXTENDED_SECONDS)
-				: ttl(PROMPT_CACHE_TTL_SHORT_SECONDS);
+			return OPENAI_LANE_PROMPT_CACHE_LIFETIME[classifyOpenAIPromptCacheLane(model, retention)];
 		}
 		default:
 			return NO_PROMPT_CACHE;

@@ -55,7 +55,7 @@ export function createFixtureServer(options: FixtureOptions): Server {
 		incrementCounterFile(options.pingCounterFile);
 		return {};
 	});
-	registerListTools(server, options.listToolsGate, tools);
+	registerListTools(server, options.listToolsGate, tools, options.nullNextCursor);
 	server.setRequestHandler(CallToolRequestSchema, async (request, extra): Promise<CallToolResult> => {
 		calls++;
 		incrementCounterFile(options.callCounterFile);

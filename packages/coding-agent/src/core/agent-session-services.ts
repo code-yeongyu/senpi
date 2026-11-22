@@ -31,6 +31,8 @@ import { joinStartupBranches } from "./startup-branch-join.ts";
 export interface AgentSessionRuntimeDiagnostic {
 	type: "info" | "warning" | "error";
 	message: string;
+	/** Machine-readable cause, for callers that act on one specific failure (senpi#2906). */
+	code?: "model_unresolved";
 }
 
 /**
@@ -60,11 +62,17 @@ export interface CreateAgentSessionServicesOptions {
  */
 export interface CreateAgentSessionFromServicesOptions {
 	services: AgentSessionServices;
+	/** The session's execution-pipeline receipt sink (see `CreateAgentSessionOptions.executionPipelineWitness`). */
+	executionPipelineWitness?: CreateAgentSessionOptions["executionPipelineWitness"];
+	/** The hosted step commit (see `CreateAgentSessionOptions.commitStep`); unset outside hosted custody. */
+	commitStep?: CreateAgentSessionOptions["commitStep"];
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	model?: Model<any>;
+	initialModelProvenance?: CreateAgentSessionOptions["initialModelProvenance"];
 	thinkingLevel?: ThinkingLevel;
 	thinkingSelection?: ThinkingSelection;
+	serviceTier?: ServiceTier;
 	scopedModels?: Array<{
 		model: Model<any>;
 		thinkingLevel?: ThinkingLevel;
@@ -82,6 +90,10 @@ export interface CreateAgentSessionFromServicesOptions {
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
 	autoTitleSessions?: boolean;
+	promptSurface?: CreateAgentSessionOptions["promptSurface"];
+	browserEngine?: CreateAgentSessionOptions["browserEngine"];
+	sessionEnv?: CreateAgentSessionOptions["sessionEnv"];
+	toolRuntime?: CreateAgentSessionOptions["toolRuntime"];
 }
 
 /**
@@ -161,7 +173,9 @@ export async function createAgentSessionServices(
 ): Promise<AgentSessionServices> {
 	const cwd = resolvePath(options.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
-	const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+	// A shared runtime's providers register into its own store: read that one, as a session that
+	// builds its runtime does (senpi#3434).
+	const authStorage = options.modelRuntime?.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
 	const runtimePromise =
 		options.modelRuntime !== undefined
 			? Promise.resolve(options.modelRuntime)
@@ -195,10 +209,16 @@ export async function createAgentSessionServices(
 	for (const registration of drainPendingProviderRegistrations(extensionsResult.runtime)) {
 		try {
 			if (registration.kind === "config") {
-				void modelRuntime.registerProvider(registration.name, registration.config, { refresh: false });
+				void modelRuntime.registerProvider(registration.name, registration.config, {
+					refresh: false,
+					extensionPath: registration.extensionPath,
+				});
 				registeredProviders.add(registration.name);
 			} else {
-				void modelRuntime.registerNativeProvider(registration.provider, { refresh: false });
+				void modelRuntime.registerNativeProvider(registration.provider, {
+					refresh: false,
+					extensionPath: registration.extensionPath,
+				});
 				registeredProviders.add(registration.provider.id);
 			}
 		} catch (error) {
@@ -219,6 +239,18 @@ export async function createAgentSessionServices(
 	} else if (registeredProviders.size > 0) {
 		await modelRuntime.refresh({ allowNetwork: false, providers: [...registeredProviders] });
 	}
+	for (const { definition, extensionPath } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+		try {
+			modelRuntime.registerVirtualModel(definition);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			diagnostics.push({
+				type: "error",
+				message: `Extension "${extensionPath}" error: ${message}`,
+			});
+		}
+	}
+	extensionsResult.runtime.pendingVirtualModelRegistrations = [];
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 
 	return {
@@ -244,6 +276,7 @@ export async function createAgentSessionFromServices(
 	options: CreateAgentSessionFromServicesOptions,
 ): Promise<CreateAgentSessionResult> {
 	return createAgentSession({
+		...(options.commitStep ? { commitStep: options.commitStep } : {}),
 		cwd: options.services.cwd,
 		agentDir: options.services.agentDir,
 		modelRuntime: options.services.modelRuntime,
@@ -253,8 +286,10 @@ export async function createAgentSessionFromServices(
 		resourceLoader: options.services.resourceLoader,
 		sessionManager: options.sessionManager,
 		model: options.model,
+		initialModelProvenance: options.initialModelProvenance,
 		thinkingLevel: options.thinkingLevel,
 		thinkingSelection: options.thinkingSelection,
+		serviceTier: options.serviceTier,
 		scopedModels: options.scopedModels,
 		favoriteModels: options.favoriteModels,
 		tools: options.tools,
@@ -263,5 +298,10 @@ export async function createAgentSessionFromServices(
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
+		promptSurface: options.promptSurface,
+		browserEngine: options.browserEngine,
+		sessionEnv: options.sessionEnv,
+		executionPipelineWitness: options.executionPipelineWitness,
+		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});
 }

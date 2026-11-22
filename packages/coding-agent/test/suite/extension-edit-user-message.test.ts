@@ -4,7 +4,6 @@ import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.t
 import { AssistantEditError, SessionStreamingError } from "../../src/core/edited-assistant-message.ts";
 import { UserEditError, type UserEditReason } from "../../src/core/edited-user-message.ts";
 import type { ExtensionCommandContext } from "../../src/core/extensions/types.ts";
-import { createRemoteSessionProxy } from "../../src/modes/interactive/interactive-host-runtime.ts";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 import { runPrintMode } from "../../src/modes/print-mode.ts";
@@ -49,6 +48,7 @@ async function fixture(mode: Mode, metadata = false) {
 		editor: { getText: () => "", setText: vi.fn() },
 		renderInitialMessages: vi.fn(),
 		showStatus: vi.fn(),
+		setExtensionStatus: vi.fn(),
 		flushCompactionQueue: vi.fn(async () => {}),
 		setupAutocompleteProvider: vi.fn(),
 		setupExtensionShortcuts: vi.fn(),
@@ -259,52 +259,4 @@ describe("RpcClient user edits and navigation", () => {
 			RpcCommandError,
 		);
 	});
-});
-
-describe("interactive host proxy user edits", () => {
-	async function remote() {
-		const host = await fixture("rpc", true);
-		const shadow = await createHarness();
-		harnesses.push(shadow);
-		const client = host.client!;
-		const state = await client.getState();
-		const proxy = createRemoteSessionProxy(shadow.session, shadow.tempDir, client, {
-			...state,
-			steering: [],
-			followUp: [],
-			ordered: [],
-		});
-		return { ...host, client, proxy, shadow };
-	}
-
-	it("edits on the host, returns entry.id rather than leafId, and refreshes history", async () => {
-		const { proxy, client, shadow, user, leaf } = await remote();
-		const localEdit = vi.spyOn(shadow.session, "editUserMessage");
-		const call = vi.spyOn(client, "editUserMessage");
-		const getMessages = vi.spyOn(client, "getMessages");
-		const options = { expectedLeafId: leaf, summarize: false, customInstructions: "keep decisions" };
-		const result = await proxy.session.editUserMessage(user, "remote revised", options);
-		expect(call).toHaveBeenCalledExactlyOnceWith(user, "remote revised", options);
-		expect(localEdit).not.toHaveBeenCalled();
-		const wire = await call.mock.results[0].value;
-		if (wire.outcome !== "edited") throw new Error("expected edit");
-		expect(result.entryId).toBe(wire.entry.id);
-		expect(result.entryId).not.toBe(wire.leafId);
-		expect(getMessages).toHaveBeenCalledOnce();
-		expect(shadow.session.messages.some((message) => getMessageText(message) === "remote revised")).toBe(true);
-	});
-
-	it.each(["not-found", "not-user", "empty", "stale-leaf", "streaming"] as const)(
-		"surfaces a typed %s refusal instead of editing the shadow",
-		async (reason) => {
-			const { proxy, client, user } = await remote();
-			vi.spyOn(client, "editUserMessage").mockRejectedValueOnce(
-				new RpcCommandError("refused", reason.replaceAll("-", "_"), { leafId: "moved" }),
-			);
-			const failure = await proxy.session.editUserMessage(user, "revised").catch((error: unknown) => error);
-			expect(failure).toBeInstanceOf(reason === "streaming" ? SessionStreamingError : UserEditError);
-			expect(failure).toMatchObject({ code: reason.replaceAll("-", "_") });
-			if (reason !== "streaming") expect(failure).toMatchObject({ reason, message: "refused" });
-		},
-	);
 });

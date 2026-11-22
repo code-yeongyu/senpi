@@ -7,7 +7,8 @@ import {
 	registerFauxProvider,
 } from "../../src/providers/faux.ts";
 import { complete, stream } from "../../src/stream.ts";
-import type { Context, Model, Tool } from "../../src/types.ts";
+import type { Context, Model, Tool, TranscriptContext } from "../../src/types.ts";
+import { getCurrentSystemPrompt, getCurrentTools } from "../../src/utils/transcript.ts";
 
 const weatherTool: Tool = {
 	name: "get_weather",
@@ -104,7 +105,8 @@ describe("Hermes E2E round-trip", () => {
 		});
 
 		// Capture the transformed context in the second call
-		let capturedContext: Context | null = null;
+		// Faux factories receive the provider-boundary TranscriptContext (A2 C-AI-2): prompt and tools live in system messages.
+		let capturedContext: TranscriptContext | null = null;
 		const secondResponseFactory: FauxResponseFactory = (ctx) => {
 			capturedContext = ctx;
 			return fauxAssistantMessage([fauxText("The weather in Seoul is sunny and 25 degrees Celsius.")]);
@@ -133,10 +135,10 @@ describe("Hermes E2E round-trip", () => {
 		}
 
 		// Tools should be stripped from transformed context
-		expect(capturedContext!.tools).toBeUndefined();
+		expect(getCurrentTools(messages)).toEqual([]);
 
 		// System prompt should contain tool definitions
-		expect(capturedContext!.systemPrompt).toContain("<tools>");
+		expect(getCurrentSystemPrompt(messages)).toContain("<tools>");
 	});
 
 	it("emits toolcall events when streaming", async () => {
@@ -226,7 +228,7 @@ describe("MorphXml E2E round-trip", () => {
 			timestamp: Date.now(),
 		});
 
-		let capturedContext: Context | null = null;
+		let capturedContext: TranscriptContext | null = null;
 		const secondResponseFactory: FauxResponseFactory = (ctx) => {
 			capturedContext = ctx;
 			return fauxAssistantMessage([fauxText("Seoul is sunny at 25C.")]);
@@ -252,8 +254,8 @@ describe("MorphXml E2E round-trip", () => {
 			expect(content).toContain("Sunny, 25C");
 		}
 
-		expect(capturedContext!.tools).toBeUndefined();
-		expect(capturedContext!.systemPrompt).toContain("<tools>");
+		expect(getCurrentTools(messages)).toEqual([]);
+		expect(getCurrentSystemPrompt(messages)).toContain("<tools>");
 	});
 });
 
@@ -307,7 +309,7 @@ describe("Gemma4 E2E round-trip", () => {
 			timestamp: Date.now(),
 		});
 
-		let capturedContext: Context | null = null;
+		let capturedContext: TranscriptContext | null = null;
 		const secondResponseFactory: FauxResponseFactory = (ctx) => {
 			capturedContext = ctx;
 			return fauxAssistantMessage([fauxText("Seoul has sunny weather at 25C.")]);
@@ -342,7 +344,7 @@ describe("Gemma4 E2E round-trip", () => {
 			expect(combinedText).toContain("get_weather");
 		}
 
-		expect(capturedContext!.tools).toBeUndefined();
+		expect(getCurrentTools(messages)).toEqual([]);
 	});
 });
 

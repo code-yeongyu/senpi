@@ -33,15 +33,20 @@ task in phase order that is not Now.
 
 ## FIRST-TURN PLAN OPENER
 
-`first-turn.ts` arms on a session's first work request (not a preview, not a `?`/`!`
-question, no user message yet on the branch, no tasks, `todo` active, not `print`/`json`,
-`todo.firstTurnPlan` not `off`). `before_agent_start` then adds the hidden
+`first-turn.ts` arms on a session's first work request, whether it is a typed prompt or an
+admitted `session_control_delivery` (not a preview, not a `?`/`!` question, not an ask-user
+answer frame, no earlier prompt or delivery request on the branch (answer frames do not count,
+senpi#2419), `todo` active, not `print`/`json`, not another extension-triggered turn,
+`todo.firstTurnPlan` not `off`; unset, it is `off` under a GPT prompt preset or `deepseek-v4-1-flash` and `force` elsewhere,
+`presetFirstTurnPlanDefault` in `../prompt-preset/contract.ts`, senpi#7101, senpi#7100). `before_agent_start` then adds the hidden
 `senpi.todo-first-turn` reminder; under `force`, `before_provider_request` names `todo` in
 `tool_choice` on that run's requests until the first assistant `message_end` (or
 `agent_end` / abort / session change), only where the resolved compat allows a forced
 choice and the model has not refused one earlier in the process (senpi#2218), the payload declares `todo` with no `tool_choice` of its own, and Anthropic thinking
 is off. The decomposition mandate's single home is `TASK_MANAGEMENT_SECTION`; do not restate
-it in `TODO_TOOL_DESCRIPTION`, the tool guidelines, or a preset.
+it in `TODO_TOOL_DESCRIPTION` or the tool guidelines. A preset whose core states the todo rules itself
+is listed in `presetOwnsTodoRules` (`../prompt-preset/contract.ts`, today `gpt-6.2` and `deepseek-v4-1-flash`), and `index.ts` appends
+no `Task_Management` block after it: the rule keeps one home either way.
 
 ## CONVENTIONS
 
@@ -60,6 +65,7 @@ it in `TODO_TOOL_DESCRIPTION`, the tool guidelines, or a preset.
 `test/suite/todo-*.test.ts` (faux harness from `test/suite/harness.ts` or a captured
 `registerTodoTool` / `registerTodoCommand` with a fake `pi`): `todo-ask-now-next.test.ts`
 covers the Ask/Now/Next contract and `todo-first-turn.test.ts` the first-turn gate and
-tool_choice injection (handlers driven through a faux `pi`). `test/compaction/todo-*.test.ts`
+tool_choice injection (handlers driven through the faux `pi` in `todo-first-turn-harness.ts`, shared
+with `regressions/2419-first-turn-answer-frame.test.ts`). `test/compaction/todo-*.test.ts`
 covers the snapshot bridge, and `test/suite/fixtures/task-management-section.txt` is the
 golden copy of `TASK_MANAGEMENT_SECTION`. No real providers.

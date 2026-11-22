@@ -8,6 +8,7 @@
  * read from the JWT itself because the response carries no expires_in.
  */
 
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import type { OAuthCredential } from "../types.ts";
 
 export const DEVIN_TOKEN_URL = "https://api.devin.ai/auth/cli/token";
@@ -96,7 +97,10 @@ export async function exchangeDevinAuthorizationCode(
 
 	if (!response.ok) {
 		const detail = errorDetail(body);
-		throw new Error(`Devin OAuth token exchange failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+		throw new OAuthTokenEndpointError(
+			`Devin OAuth token exchange failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
+			response.status,
+		);
 	}
 
 	if (typeof body.token !== "string" || body.token.length === 0) {

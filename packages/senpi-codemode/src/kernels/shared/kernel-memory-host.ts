@@ -1,4 +1,4 @@
-import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
+import type { KernelMemoryReport, KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalLanguage } from "../../tool/types.ts";
 import { KernelMemoryPolicy } from "./kernel-memory.ts";
@@ -10,8 +10,9 @@ export type FootprintReader = (pid: number) => { readonly bytes: number } | unde
 
 export interface KernelMemoryHostOptions {
 	/**
-	 * Host-measured kernel (rb, jl): the kernel reports no memory itself, so the host reads the
-	 * interpreter's footprint after each result. Such a kernel gets the ceiling only - no notice, no globals.
+	 * Host-measured kernel (rb, jl): the host reads the interpreter's footprint after each result and
+	 * replaces the runner's live reading with it; the runner names its largest globals on demand, so the
+	 * notice and the ceiling both apply, with every reading counting (no collection precedes it).
 	 */
 	readonly readFootprint?: FootprintReader;
 }
@@ -31,13 +32,39 @@ export class KernelMemoryHost {
 		this.#policy =
 			this.#readFootprint === undefined
 				? new KernelMemoryPolicy(language, thresholds)
-				: new KernelMemoryPolicy(language, { ...thresholds, noticeBytes: 0 }, { collects: false });
+				: new KernelMemoryPolicy(language, thresholds, { collects: false });
 	}
 
 	annotate(result: ResultMessage, pid?: number): ResultMessage {
-		const report =
-			this.#readFootprint === undefined ? result.memory : this.#footprintReport(this.#readFootprint, pid);
-		return report === undefined ? result : { ...result, memory: this.#policy.annotate(report) };
+		return this.annotateReport(result, this.readReport(result, pid));
+	}
+
+	readReport(result: ResultMessage, pid?: number): KernelMemoryReport | undefined {
+		const runnerReport = result.memory;
+		return this.#readFootprint === undefined
+			? runnerReport
+			: this.#footprintReport(this.#readFootprint, pid, runnerReport);
+	}
+
+	needsGlobals(report: KernelMemoryReport): boolean {
+		const { noticeBytes, ceilingBytes } = this.#policy.thresholds;
+		// Collect at or above the host-read notice threshold or ceiling, regardless of notice hysteresis;
+		// never collect below both thresholds. Zero disables a threshold, not the lazy diagnostic gate.
+		return (
+			(noticeBytes > 0 && report.liveBytes >= noticeBytes) || (ceilingBytes > 0 && report.liveBytes >= ceilingBytes)
+		);
+	}
+
+	annotateReport(result: ResultMessage, report: KernelMemoryReport | undefined): ResultMessage {
+		if (report === undefined) return result;
+		const memory = this.#policy.annotate(report);
+		// Safety accounting still observes every cell, but ordinary host-measured results carry no payload.
+		// A recycle announcement remains visible even when the replacement process is below threshold.
+		if (this.#readFootprint !== undefined && !this.needsGlobals(report) && memory.notice === undefined) {
+			const { memory: _memory, ...ordinary } = result;
+			return ordinary;
+		}
+		return { ...result, memory };
 	}
 
 	/**
@@ -54,10 +81,14 @@ export class KernelMemoryHost {
 		this.#policy.kernelRetired();
 	}
 
-	#footprintReport(read: FootprintReader, pid: number | undefined) {
+	#footprintReport(read: FootprintReader, pid: number | undefined, runnerReport: ResultMessage["memory"]) {
 		if (pid === undefined) return undefined;
 		const footprint = read(pid);
 		if (footprint === undefined) return undefined;
-		return { liveBytes: Math.round(footprint.bytes), measure: "footprint" as const };
+		return {
+			liveBytes: Math.round(footprint.bytes),
+			measure: "footprint" as const,
+			...(runnerReport?.globals === undefined ? {} : { globals: runnerReport.globals }),
+		};
 	}
 }

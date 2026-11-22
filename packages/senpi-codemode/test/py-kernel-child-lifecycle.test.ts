@@ -3,11 +3,28 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { hasPython3, liveKernel, runCell } from "./py-kernel/fixtures.ts";
 
 const kernelModulePath = fileURLToPath(new URL("../src/kernels/py/kernel.ts", import.meta.url));
 const detectorModulePath = fileURLToPath(new URL("../src/interpreters/detect.ts", import.meta.url));
+const spawnedPids = new Set<number>();
+
+function track(...pids: number[]): void {
+	for (const pid of pids) if (pid > 0) spawnedPids.add(pid);
+}
+
+function killAll(pids: readonly number[]): void {
+	for (const pid of pids) {
+		if (pid > 0) {
+			try {
+				process.kill(pid, "SIGKILL");
+			} catch {
+				/* already gone */
+			}
+		}
+	}
+}
 
 function isRunning(pid: number): boolean {
 	try {
@@ -64,7 +81,39 @@ function hostLossDriverSource(pidFile: string): string {
 		"const detected = await createInterpreterDetector().detect('py');",
 		"if (!detected.ok) process.exit(3);",
 		"const kernel = await PythonKernel.start({ interpreterPath: detected.path, sessionId: 'host-loss', cwd: process.cwd(), connection: { port: 1, token: 'unused' } });",
+		// EOF on stdin means whoever started this driver is gone, however it ended: never outlive it.
+		"process.stdin.on('end', () => {",
+		// A close that hangs must not keep the driver alive either: exit by a deadline regardless.
+		"  setTimeout(() => process.exit(1), 5_000).unref();",
+		"  void kernel.close().finally(() => process.exit(0));",
+		"});",
+		"process.stdin.resume();",
 		`void kernel.run({ cellId: 'blocking-child', code: ${JSON.stringify(cell)}, timeoutMs: 60_000 });`,
+		"await new Promise(() => {});",
+	].join("\n");
+}
+
+async function readPid(path: string, timeoutMs: number): Promise<number | null> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		try {
+			const text = (await readFile(path, "utf8")).trim();
+			if (/^\d+$/.test(text)) return Number(text);
+		} catch {
+			/* not written yet */
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	return null;
+}
+
+// Stands in for the test runner: holds the driver's stdin and is killed without any teardown.
+function runnerSource(driverPath: string, driverPidFile: string): string {
+	return [
+		'import { spawn } from "node:child_process";',
+		'import { writeFileSync } from "node:fs";',
+		`const driver = spawn("bun", [${JSON.stringify(driverPath)}], { stdio: ["pipe", "ignore", "ignore"] });`,
+		`writeFileSync(${JSON.stringify(driverPidFile)}, String(driver.pid));`,
 		"await new Promise(() => {});",
 	].join("\n");
 }
@@ -107,7 +156,7 @@ describe.skipIf(!(await hasPython3()))("PythonKernel retires cell subprocesses o
 			const driverPath = join(root, "driver.ts");
 			const pidFile = join(root, "pids.txt");
 			await writeFile(driverPath, hostLossDriverSource(pidFile), "utf8");
-			const driver = spawn("bun", [driverPath], { cwd: root, stdio: "ignore" });
+			const driver = spawn("bun", [driverPath], { cwd: root, stdio: ["pipe", "ignore", "ignore"] });
 			driverPid = driver.pid ?? 0;
 			expect(driverPid).toBeGreaterThan(0);
 
@@ -115,6 +164,7 @@ describe.skipIf(!(await hasPython3()))("PythonKernel retires cell subprocesses o
 			expect(pids).not.toBeNull();
 			if (!pids) throw new Error("kernel did not report its pids");
 			[kernelPid, childPid] = pids;
+			track(driverPid, kernelPid, childPid);
 			expect(isRunning(kernelPid)).toBe(true);
 			expect(isRunning(childPid)).toBe(true);
 
@@ -123,16 +173,50 @@ describe.skipIf(!(await hasPython3()))("PythonKernel retires cell subprocesses o
 			expect(await pollGone(kernelPid, 6_000)).toBe(true);
 			expect(await pollGone(childPid, 6_000)).toBe(true);
 		} finally {
-			for (const pid of [childPid, kernelPid, driverPid]) {
-				if (pid > 0) {
-					try {
-						process.kill(pid, "SIGKILL");
-					} catch {
-						/* already gone */
-					}
-				}
-			}
+			killAll([childPid, kernelPid, driverPid]);
 			await rm(root, { recursive: true, force: true });
 		}
+	});
+
+	// #2562: a driver that only the test's teardown could kill was orphaned for hours when a run ended abnormally.
+	it("leaves no driver, kernel or child behind when the process that started the driver dies", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-py-runner-loss-"));
+		let runnerPid = 0;
+		let driverPid = 0;
+		let kernelPid = 0;
+		let childPid = 0;
+		try {
+			const driverPath = join(root, "driver.ts");
+			const pidFile = join(root, "pids.txt");
+			const driverPidFile = join(root, "driver-pid.txt");
+			const runnerPath = join(root, "runner.ts");
+			await writeFile(driverPath, hostLossDriverSource(pidFile), "utf8");
+			await writeFile(runnerPath, runnerSource(driverPath, driverPidFile), "utf8");
+			const runner = spawn("bun", [runnerPath], { cwd: root, stdio: "ignore" });
+			runnerPid = runner.pid ?? 0;
+			track(runnerPid);
+
+			driverPid = (await readPid(driverPidFile, 15_000)) ?? 0;
+			const pids = await readPids(pidFile, 15_000);
+			if (!pids || driverPid === 0) throw new Error("driver or kernel did not report its pids");
+			[kernelPid, childPid] = pids;
+			track(driverPid, kernelPid, childPid);
+			expect([driverPid, kernelPid, childPid].map(isRunning)).toEqual([true, true, true]);
+
+			process.kill(runnerPid, "SIGKILL");
+
+			expect(await pollGone(driverPid, 10_000)).toBe(true);
+			expect(await pollGone(kernelPid, 6_000)).toBe(true);
+			expect(await pollGone(childPid, 6_000)).toBe(true);
+		} finally {
+			killAll([childPid, kernelPid, driverPid, runnerPid]);
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	afterAll(async () => {
+		const survivors: number[] = [];
+		for (const pid of spawnedPids) if (!(await pollGone(pid, 2_000))) survivors.push(pid);
+		expect(survivors).toEqual([]);
 	});
 });

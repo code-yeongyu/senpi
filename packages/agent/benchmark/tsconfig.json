@@ -1,11 +1,10 @@
 {
 	"extends": "../../../tsconfig.base.json",
 	"compilerOptions": {
-		"baseUrl": "../../..",
 		"noEmit": true,
 		"paths": {
-			"@earendil-works/pi-ai": ["packages/ai/src/index.ts"],
-			"@earendil-works/pi-ai/*": ["packages/ai/src/*"]
+			"@earendil-works/pi-ai": ["../../ai/src/index.ts"],
+			"@earendil-works/pi-ai/*": ["../../ai/src/*"]
 		}
 	},
 	"include": ["./**/*.ts", "../src/**/*.ts"]

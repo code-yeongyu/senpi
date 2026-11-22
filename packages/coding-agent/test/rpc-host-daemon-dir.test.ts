@@ -1,10 +1,10 @@
 import { chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { processMatchesPidFile, readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
 import { HostEnsureRefusedError } from "../src/modes/rpc/host-decision.ts";
 import { ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { stopHost } from "../src/modes/rpc/host-stop.ts";
+import { processMatchesPidFile, readProcessStartTime } from "../src/utils/process-identity.ts";
 import {
 	ensureFixtureHost,
 	fixturePath,
@@ -55,13 +55,20 @@ describe("daemon state directory v2", () => {
 		const identity = join(qa.daemonDir, "endpoint.json");
 		const written = await readFile(identity, "utf8");
 
-		expect(JSON.parse(written)).toEqual({ layout: 2, socket: qa.socket, created_at: expect.any(String) });
+		expect(JSON.parse(written)).toEqual({
+			layout: 2,
+			registry_version: 1,
+			endpoint_kind: "rpc_host",
+			socket: qa.socket,
+			created_at: expect.any(String),
+		});
 		expect(await permissions(identity)).toBe(0o600);
 		const stopped = await stopHost({ socket: qa.socket, agentDir: qa.agentDir, force: true });
 		expect(stopped.action).toBe("stopped");
 		if (stopped.action === "stopped") expect(await waitForPidGone(stopped.pid, 10_000)).toBe(true);
 
-		await expect(stat(join(qa.daemonDir, "host.pid"))).rejects.toMatchObject({ code: "ENOENT" });
+		// This fixture is not a supervisor: stop leaves its pointer until a later ensure prunes it.
+		await stat(join(qa.daemonDir, "host.pid"));
 		expect(await readFile(identity, "utf8")).toBe(written);
 		// A later ensure re-asserts the identity without rewriting it.
 		await ensureFixtureHost(qa);
@@ -95,7 +102,7 @@ describe("daemon state directory v2", () => {
 		expect(await permissions(join(qa.daemonDir, pointer.generation_dir as string, "host.pid"))).toBe(0o600);
 	}, 20_000);
 
-	it("clears the pointer and the generation directory when the host is stopped", async () => {
+	it("leaves ownership and the stop intent for the supervisor to release after child exit", async () => {
 		const qa = await sandbox("stop");
 		const running = await registerManagedHost(qa);
 
@@ -103,8 +110,14 @@ describe("daemon state directory v2", () => {
 
 		expect(result).toEqual({ action: "stopped", pid: running.pid });
 		expect(await waitForPidGone(running.pid, 10_000)).toBe(true);
-		expect(await readdir(join(qa.daemonDir, "generations"))).toEqual([]);
-		await expect(stat(join(qa.daemonDir, "host.pid"))).rejects.toMatchObject({ code: "ENOENT" });
+		await stat(join(qa.daemonDir, "host.pid"));
+		// senpi#2566: the generation directory is the stopped supervisor's to release, after it has recorded its
+		// child's end from this intent; this fixture host is no supervisor, so gc reaps the directory instead.
+		expect(await readJson(join(qa.daemonDir, "generations", running.instanceId, "stop-intent.json"))).toMatchObject({
+			reason: "operator_stop",
+			sender: { kind: "stop", pid: process.pid },
+			targetPid: running.pid,
+		});
 	}, 20_000);
 
 	it("fails with the daemon directory in the error when it cannot be created", async () => {

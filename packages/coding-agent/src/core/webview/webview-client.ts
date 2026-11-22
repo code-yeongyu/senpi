@@ -10,11 +10,15 @@ import {
 } from "./webview-wire.ts";
 
 export interface WebViewClientHost {
-	/** Launches a view; `adopt` runs in the launch's own turn and returns false once the client is released. */
+	/**
+	 * Launches a view; `adopt` runs in the launch's own turn and returns false once the client is released,
+	 * and `wanted` tells a launch about to be retried whether anyone still waits for it.
+	 */
 	createView(
 		options: Readonly<Record<string, unknown>>,
 		onConsole: ((...args: unknown[]) => void) | undefined,
 		adopt: (view: NativeWebView) => boolean,
+		wanted: () => boolean,
 	): Promise<NativeWebView>;
 	onClientClosed(client: WebViewServiceClient): void;
 }
@@ -120,7 +124,12 @@ export class WebViewServiceClient {
 		const onConsole = captureConsole
 			? (...args: unknown[]) => this.#emit(viewId, { type: "console", args })
 			: undefined;
-		const launch = this.#host.createView(options, onConsole, (view) => this.#adopt(viewId, view));
+		const launch = this.#host.createView(
+			options,
+			onConsole,
+			(view) => this.#adopt(viewId, view),
+			() => !this.#released,
+		);
 		this.#launches.add(launch);
 		try {
 			return await launch;

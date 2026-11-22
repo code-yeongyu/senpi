@@ -11,6 +11,7 @@ import { FileError, getOrThrow, type ShellExecOptions, type ShellOutputView } fr
 import { applyShellOutputUpdate } from "../../src/harness/utils/output-capture.ts";
 import { executeShellWithCapture } from "../../src/harness/utils/shell-output.ts";
 import { createTempDir } from "./session-test-utils.ts";
+import { windowsTreeKillArgs } from "../../../../scripts/windows-process-tree.mjs";
 
 const chmodRestorePaths: string[] = [];
 
@@ -76,7 +77,8 @@ function cleanupDetachedChild(pidFile: string): void {
 	const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
 	if (!Number.isFinite(pid) || pid <= 0) return;
 	try {
-		execFileSync("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
+		const args = windowsTreeKillArgs(pid);
+		if (args.length > 0) execFileSync("taskkill", args, { stdio: "ignore", windowsHide: true });
 	} catch {}
 }
 
@@ -89,6 +91,19 @@ class FailingSpillExecutionEnv extends NodeExecutionEnv {
 			return { ok: true as const, value: join(this.cwd, "missing", "spill.log") };
 		}
 		return super.createTempFile(options, context);
+	}
+}
+
+class SpillRecordingExecutionEnv extends NodeExecutionEnv {
+	readonly spillFiles: string[] = [];
+
+	override async createTempFile(
+		options: Parameters<NodeExecutionEnv["createTempFile"]>[0],
+		context: Parameters<NodeExecutionEnv["createTempFile"]>[1],
+	) {
+		const created = await super.createTempFile(options, context);
+		if (created.ok && options?.prefix === "pi-output-") this.spillFiles.push(created.value);
+		return created;
 	}
 }
 
@@ -723,6 +738,69 @@ describe("NodeExecutionEnv", () => {
 		);
 		expect(result.spillPath).toBeDefined();
 		expect(getOrThrow(await env.readTextFile(result.spillPath!, BACKGROUND_CONTEXT))).toHaveLength(size);
+	});
+
+	it("keeps the full-output path when a command times out after its output spilled", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const size = 5000;
+		const result = await env.exec(
+			`head -c ${size} /dev/zero | tr '\\0' x; exec sleep 30`,
+			{
+				timeout: 3,
+				capture: { limits: { maxBytes: 10, maxLines: 10, retain: "tail" }, spill: true },
+				onUpdate: () => {},
+			},
+			BACKGROUND_CONTEXT,
+		);
+		expect(result).toMatchObject({ ok: false, error: { code: "timeout" } });
+		if (result.ok) return;
+		expect(result.error.spillPath).toBeDefined();
+		expect(getOrThrow(await env.readTextFile(result.error.spillPath!, BACKGROUND_CONTEXT))).toBe("x".repeat(size));
+	});
+
+	it("keeps the full-output path when a command is aborted after its output spilled", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const size = 5000;
+		const controller = new AbortController();
+		let view: ShellOutputView | undefined;
+		const result = await env.exec(
+			`head -c ${size} /dev/zero | tr '\\0' x; exec sleep 30`,
+			{
+				capture: { limits: { maxBytes: 10, maxLines: 10, retain: "tail" }, spill: true },
+				onUpdate: (update) => {
+					view = applyShellOutputUpdate(view, update);
+					// Abort only once every byte has been observed and the spill exists, so the outcome
+					// depends on event order rather than on timing.
+					if (view.spillPath !== undefined && view.truncation.totalBytes === size) controller.abort();
+				},
+			},
+			withAbortSignal(controller.signal, BACKGROUND_CONTEXT),
+		);
+		expect(result).toMatchObject({ ok: false, error: { code: "aborted" } });
+		if (result.ok) return;
+		expect(result.error.spillPath).toBe(view?.spillPath);
+		expect(getOrThrow(await env.readTextFile(result.error.spillPath!, BACKGROUND_CONTEXT))).toBe("x".repeat(size));
+	});
+
+	it("creates no spill file when a command is aborted before any output", async () => {
+		const root = createTempDir();
+		const env = new SpillRecordingExecutionEnv({ cwd: root });
+		const controller = new AbortController();
+		const promise = env.exec(
+			"exec sleep 30",
+			{
+				capture: { limits: { maxBytes: 10, maxLines: 10, retain: "tail" }, spill: true },
+				onUpdate: () => {},
+			},
+			withAbortSignal(controller.signal, BACKGROUND_CONTEXT),
+		);
+		controller.abort();
+		const result = await promise;
+		expect(result).toMatchObject({ ok: false, error: { code: "aborted" } });
+		if (!result.ok) expect(result.error.spillPath).toBeUndefined();
+		expect(env.spillFiles).toEqual([]);
 	});
 
 	it("captures large shell output to a full output file through the execution env", async () => {

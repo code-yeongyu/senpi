@@ -45,6 +45,8 @@ describe("websearch /websearch status provider labels", () => {
 		let statusCommand: CommandHandler | undefined;
 		websearchExtension({
 			registerTool: vi.fn(),
+			getActiveTools: () => ["web_search"],
+			setActiveTools: vi.fn(),
 			registerCommand(_name: string, definition: { handler: CommandHandler }) {
 				statusCommand = definition.handler;
 			},

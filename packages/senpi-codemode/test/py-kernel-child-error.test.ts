@@ -37,7 +37,11 @@ describe("PythonKernel child error lifecycle", () => {
 		const result = await started;
 
 		expect(result.status).toBe("rejected");
-		if (result.status === "rejected") expect(result.reason).toMatchObject({ message: "python spawn channel failed" });
+		if (result.status === "rejected")
+			expect(result.reason).toMatchObject({
+				stage: "interpreter-launch",
+				cause: { message: "python spawn channel failed" },
+			});
 		expect(settlements).toBe(1);
 		expect(child.killSignals).toEqual(["SIGKILL"]);
 		expect(child.listeners.get("error") ?? []).toHaveLength(0);
@@ -105,7 +109,10 @@ describe("PythonKernel child error lifecycle", () => {
 
 		expect(resetResult.status).toBe("rejected");
 		if (resetResult.status === "rejected") {
-			expect(resetResult.reason).toMatchObject({ message: "replacement startup channel failed" });
+			expect(resetResult.reason).toMatchObject({
+				stage: "interpreter-launch",
+				cause: { message: "replacement startup channel failed" },
+			});
 		}
 		await expect(kernel.run({ cellId: "blocked", code: "1", timeoutMs: 1_000 })).rejects.toMatchObject({
 			name: "PythonKernelRetirementError",

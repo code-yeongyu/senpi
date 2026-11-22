@@ -22,7 +22,7 @@ function probes(platform: NodeJS.Platform, evidence: Evidence | undefined, alive
 		platform,
 		isProcessAlive: vi.fn((_pid: number) => alive),
 		readProcessEvidence: vi.fn(async (_pid: number) => evidence),
-		bootAtMs: () => RUNTIME.bootAtMs + 30_000,
+		bootAtMs: async () => RUNTIME.bootAtMs + 30_000,
 		kill: vi.fn((_pid: number, _signal: NodeJS.Signals) => {}),
 		wait: async (_ms: number) => {},
 	};
@@ -106,7 +106,7 @@ describe("orphan reaper", () => {
 	it("(d) boot mismatch -> dead without probing the recycled pid", async () => {
 		const p = {
 			...probes("linux", { startedAtMs: RUNTIME.startedAtMs, environ: `SENPI_MONITOR_ID=${MONITOR_ID}\0` }),
-			bootAtMs: () => RUNTIME.bootAtMs + 600_000,
+			bootAtMs: async () => RUNTIME.bootAtMs + 600_000,
 		};
 		await expect(confirmOwner(RUNTIME, MONITOR_ID, p)).resolves.toBe("dead");
 		await expect(reapBeforeRespawn(RUNTIME, MONITOR_ID, p)).resolves.toEqual({ action: "none" });
@@ -158,23 +158,30 @@ describe("orphan reaper", () => {
 		});
 
 		it.runIf(process.platform !== "win32")("confirms the real watcher and kills its tree", async () => {
-			const spawned = spawn("sh", ["-c", "exec sleep 60"], {
+			// The shell blocks reading its open stdin pipe until the test kills its group.
+			const script = "echo ready && read _";
+			const spawned = spawn("sh", ["-c", script], {
 				detached: true,
-				stdio: "ignore",
+				stdio: ["pipe", "pipe", "ignore"],
 				env: { ...process.env, SENPI_MONITOR_ID: MONITOR_ID },
 			});
 			child = spawned;
 			const pid = spawned.pid;
 			if (pid === undefined) throw new Error("spawn produced no pid");
-			// After `exec` the process image is `sleep 60`, which is what ps and /proc/<pid>/cmdline report.
 			const runtime: ChildProcessIdentity = {
 				pid,
 				processGroupId: pid,
 				startedAtMs: Date.now(),
-				bootAtMs: processBootAtMs(),
-				argv: ["sleep", "60"],
+				bootAtMs: await processBootAtMs(),
+				argv: ["sh", "-c", script],
 			};
-			await new Promise<void>((resolve) => spawned.once("spawn", () => resolve()));
+			// "spawn" fires once execve passes its point of no return, before the kernel has installed the new
+			// image's argv and environment: probing then reads an empty /proc/<pid>/environ (senpi#3423). A line
+			// the child prints itself proves its image is complete.
+			await new Promise<void>((resolve, reject) => {
+				spawned.once("error", reject);
+				spawned.stdout?.once("data", () => resolve());
+			});
 
 			await expect(confirmOwner(runtime, MONITOR_ID)).resolves.toBe("confirmed");
 			await expect(confirmOwner(runtime, "mon_OTHER")).resolves.toBe(

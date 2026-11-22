@@ -30,9 +30,10 @@ export interface ReadRenderState {
 const COMPACT_RESOURCE_FILE_NAMES = new Set(["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
 export type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
 function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
-	if (args?.offset === undefined && args?.limit === undefined) return "";
+	// Strict tool schemas make models send null for omitted optional fields.
+	if (args?.offset == null && args?.limit == null) return "";
 	const startLine = args.offset ?? 1;
-	const endLine = args.limit !== undefined ? startLine + args.limit - 1 : "";
+	const endLine = args.limit != null ? startLine + args.limit - 1 : "";
 	return theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
 }
 function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, cwd: string): string {

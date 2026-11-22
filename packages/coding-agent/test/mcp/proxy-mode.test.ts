@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultSettings } from "../../src/core/extensions/builtin/mcp/config-schema.ts";
 import { computeMcpExposurePolicy } from "../../src/core/extensions/builtin/mcp/expose/policy.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	attach,
 	awaitMcpTool,
@@ -53,7 +54,7 @@ describe("tier-C proxy mode", () => {
 			{ op: "search", query: "generated fixture tool 2" },
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 		expect(textContent(search)).toContain("tool_2");
 
@@ -62,7 +63,7 @@ describe("tier-C proxy mode", () => {
 			{ op: "describe", tool: "tool_2" },
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 		expect(textContent(describe)).toContain("Input schema");
 
@@ -71,7 +72,7 @@ describe("tier-C proxy mode", () => {
 			{ args: '{"value":"via-proxy"}', op: "call", tool: "tool_2" },
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 		expect(textContent(call)).toBe("fixture tool_2 value=via-proxy mode=alpha");
 
@@ -80,7 +81,7 @@ describe("tier-C proxy mode", () => {
 			{ args: "{not json", op: "call", tool: "tool_2" },
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 		expect(textContent(badArgs)).toContain("JSON object STRING");
 
@@ -89,7 +90,7 @@ describe("tier-C proxy mode", () => {
 			{ op: "call", tool: "tool_99x" },
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 		expect(textContent(unknown)).toContain("Unknown tool");
 		expect(textContent(unknown)).toContain("Nearest matches");

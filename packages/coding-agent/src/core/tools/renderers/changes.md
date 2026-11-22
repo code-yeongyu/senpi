@@ -1,5 +1,43 @@
 # core/tools/renderers changes
 
+## 2026-11-15 - Renderers follow the moved bash throttle and edit preview (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/renderers/bash.ts`: `BASH_UPDATE_THROTTLE_MS` moves to `shell-output.ts`, which owns the throttled updates.
+- `packages/coding-agent/src/core/tools/renderers/edit.ts`: imports `computeEditsDiff` from `edit-preview.ts`.
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- The renderers are part of the built-in tool definitions.
+
+### Expected merge conflict zones
+
+- LOW: the constant line in `renderers/bash.ts` and the imports of `renderers/edit.ts`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tools and shell utilities
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/renderers/bash.ts`: `core/tools/renderers/bash.ts`: collapsed-preview cache holds the hint line together with the preview lines (`cachedSkipped` removed). `bash.ts`: eval-only marker `exposure: "eval"` on `createBashToolDefinition`; timeout validation; stream-callback error propagation; spill cleanup and `AggregateError` finalization; detached-group tracking (`noteDetachedChildExited`/`pruneTrackedDetachedChildren`, senpi#1697); PI_SESSION_CWD/PI_GOAL_STORE_FILE env; successful results keep the fork model-only truncation notice (`modelOnlyText`) as a separate content part.
+- `packages/coding-agent/src/core/tools/renderers/read.ts`: `core/tools/renderers/read.ts` (silent merge, reviewed): null `offset`/`limit` render as omitted (strict schemas send null). `read.ts`: structural folder options, local:// guard, filesystem policy checker, model-only continuation notices.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; tools and shell utils adopt upstream bash/read fixes and keep fork output shapes and hooks (plan D-15).
+
+### Why an extension could not handle it
+
+Built-in tool execution and shell handling are core tool implementations that extensions call, not replace.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## Name a file inside a skill directory by its skill, senpi#2082 (2026-09-24)
 
 ### What changed
@@ -75,3 +113,39 @@ Built-in renderers own these detail-derived lines and run independently of exten
 Read, grep, and bash result formatting; ordinary collapse hints remain.
 
 - Covered production paths: `packages/coding-agent/src/core/tools/renderers/read.ts`, `packages/coding-agent/src/core/tools/renderers/grep.ts`, `packages/coding-agent/src/core/tools/renderers/bash.ts`.
+
+## 2026-10-03 — Edit card header shows the aggregate change count (senpi#2653)
+
+### What changed
+
+`packages/coding-agent/src/core/tools/renderers/edit.ts`: the edit card header now appends a `(+a/-d)` count next to the path, derived from the preview diff via the new `countDiffChanges` in `../diff-render.ts`.
+
+### Why
+
+The edit card showed the path but no aggregate change size at a glance.
+
+### Why an extension could not handle it
+
+The edit card header is produced inside the built-in edit renderer, below the extension API.
+
+### Expected merge conflict zones
+
+- Covered production paths: `packages/coding-agent/src/core/tools/renderers/edit.ts`.
+
+## 2026-10-14 - glob reuses the find renderers (#3330)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/renderers/index.ts`: `createAllToolRenderers` maps the new eval-only `glob` tool to `findRenderers`.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/renderers/index.ts`: `Record<ToolName, ToolRenderers>` must cover every builtin, and `glob` runs the find search, so its calls and results render the same way (senpi#3330).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/renderers/index.ts`: the builtin renderer map is keyed by the core `ToolName` union.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/renderers/index.ts`: the `createAllToolRenderers` object literal at the next upstream sync.

@@ -8,6 +8,11 @@ import { ModelRegistry } from "../../../src/core/model-registry.ts";
 import { getModelNarrowingPatterns, resolveModelScope } from "../../../src/core/model-resolver.ts";
 import { createAgentSession } from "../../../src/core/sdk.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
+import { builtinChatModelId } from "../../support/catalog-ids.ts";
+
+// A built-in OpenAI model the catalog ships today: an override target a regen cannot remove (senpi#1955).
+const OPENAI_TARGET = builtinChatModelId("openai", (model) => model.id.startsWith("gpt-"));
+const ANTHROPIC_FAVORITE = builtinChatModelId("anthropic", (model) => model.id.startsWith("claude-"));
 
 function registerOpenAiModels(registry: ModelRegistry, ids: string[]): void {
 	registry.registerProvider("openai", {
@@ -98,6 +103,90 @@ describe("model configuration controls", () => {
 		]);
 	});
 
+	// senpi#2720: hideFreeModels removes zero-cost models per provider, including ids without a "-free" suffix.
+	describe("hideFreeModels", () => {
+		const rates = (input: number, output: number) => ({ input, output, cacheRead: 0, cacheWrite: 0 });
+		const customProvider = (hideFreeModels: boolean | undefined, extra: Record<string, unknown> = {}) => ({
+			baseUrl: "https://example.test/v1",
+			api: "openai-completions",
+			apiKey: "test-key",
+			...(hideFreeModels === undefined ? {} : { hideFreeModels }),
+			models: [
+				{ id: "paid", cost: rates(1, 2) },
+				{ id: "promo-free", cost: rates(0, 0) },
+				{ id: "big-pickle", cost: rates(0, 0) },
+				{ id: "free-input-only", cost: rates(0, 3) },
+			],
+			...extra,
+		});
+		const idsOf = (registry: ModelRegistry, provider: string) =>
+			registry
+				.getAll()
+				.filter((model) => model.provider === provider)
+				.map((model) => model.id)
+				.sort();
+		const load = (providers: Record<string, unknown>): ModelRegistry => {
+			writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers }), "utf-8");
+			const registry = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "models.json"));
+			expect(registry.getError()).toBeUndefined();
+			return registry;
+		};
+
+		it("removes zero-cost models of the provider, including one without a -free suffix", () => {
+			const registry = load({ zen: customProvider(true) });
+
+			expect(idsOf(registry, "zen")).toEqual(["free-input-only", "paid"]);
+		});
+
+		it("keeps zero-cost models when the flag is false or absent", () => {
+			const all = ["big-pickle", "free-input-only", "paid", "promo-free"];
+
+			expect(idsOf(load({ zen: customProvider(false) }), "zen")).toEqual(all);
+			expect(idsOf(load({ zen: customProvider(undefined) }), "zen")).toEqual(all);
+		});
+
+		it("leaves another provider's zero-cost models untouched", () => {
+			const registry = load({ zen: customProvider(true), local: customProvider(undefined) });
+
+			expect(idsOf(registry, "zen")).toEqual(["free-input-only", "paid"]);
+			expect(idsOf(registry, "local")).toEqual(["big-pickle", "free-input-only", "paid", "promo-free"]);
+		});
+
+		it("keeps hidden models out of enabledModels pattern resolution", async () => {
+			const registry = load({ zen: customProvider(true) });
+
+			const scoped = await resolveModelScope(["zen/*"], registry);
+
+			expect(scoped.map((entry) => entry.model.id).sort()).toEqual(["free-input-only", "paid"]);
+		});
+
+		it("combines with blacklist", () => {
+			const registry = load({ zen: customProvider(true, { blacklist: ["paid"] }) });
+
+			expect(idsOf(registry, "zen")).toEqual(["free-input-only"]);
+		});
+
+		it("is a valid provider block on its own and strips free models from a built-in catalog", () => {
+			const builtin = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "missing.json")).getAll();
+			const opencode = builtin.filter((model) => model.provider === "opencode");
+			const freeIds = opencode
+				.filter((model) => model.cost.input === 0 && model.cost.output === 0)
+				.map((model) => model.id);
+			expect(freeIds.length).toBeGreaterThan(0);
+
+			const registry = load({ opencode: { hideFreeModels: true } });
+			const remaining = idsOf(registry, "opencode");
+
+			expect(remaining).toEqual(
+				opencode
+					.map((model) => model.id)
+					.filter((id) => !freeIds.includes(id))
+					.sort(),
+			);
+			expect(remaining.length).toBeGreaterThan(0);
+		});
+	});
+
 	it("preserves Anthropic native web search compatibility from models.json", () => {
 		writeFileSync(
 			join(agentDir, "models.json"),
@@ -121,6 +210,26 @@ describe("model configuration controls", () => {
 		expect(compat?.supportsWebSearch).toBe(true);
 	});
 
+	it.each(["google-generative-ai", "google-vertex"])("preserves Google search opt-in for %s models", (api) => {
+		writeFileSync(
+			join(agentDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					custom: {
+						api,
+						baseUrl: "https://google.example.test",
+						compat: { supportsWebSearch: true },
+						models: [{ id: "gemini-2.5-pro" }],
+					},
+				},
+			}),
+			"utf-8",
+		);
+		const registry = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "models.json"));
+		expect(registry.getError()).toBeUndefined();
+		expect(registry.find("custom", "gemini-2.5-pro")?.compat).toMatchObject({ supportsWebSearch: true });
+	});
+
 	it("replaces configured thinking variants instead of merging them", () => {
 		writeFileSync(
 			join(agentDir, "models.json"),
@@ -129,7 +238,7 @@ describe("model configuration controls", () => {
 					providers: {
 						openai: {
 							modelOverrides: {
-								"gpt-5.4": {
+								[OPENAI_TARGET]: {
 									reasoning: true,
 									thinkingLevelMapMode: "replace",
 									thinkingLevelMap: {
@@ -153,7 +262,7 @@ describe("model configuration controls", () => {
 		);
 
 		const registry = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "models.json"));
-		const model = registry.find("openai", "gpt-5.4");
+		const model = registry.find("openai", OPENAI_TARGET);
 
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["low"]);
@@ -199,7 +308,7 @@ describe("model configuration controls", () => {
 					providers: {
 						openai: {
 							modelOverrides: {
-								"gpt-5.4": {
+								[OPENAI_TARGET]: {
 									promptPreset: "kimi-k2-6",
 								},
 							},
@@ -213,7 +322,7 @@ describe("model configuration controls", () => {
 		);
 
 		const registry = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "models.json"));
-		const model = registry.find("openai", "gpt-5.4");
+		const model = registry.find("openai", OPENAI_TARGET);
 
 		expect(model).toBeDefined();
 		expect((model as { promptPreset?: string }).promptPreset).toBe("kimi-k2-6");
@@ -226,7 +335,7 @@ describe("model configuration controls", () => {
 		});
 		const modelRegistry = ModelRegistry.inMemory(authStorage);
 		const settingsManager = SettingsManager.inMemory({
-			favoriteModels: ["anthropic/claude-sonnet-4-5", "openai/gpt-5.4"],
+			favoriteModels: [`anthropic/${ANTHROPIC_FAVORITE}`, `openai/${OPENAI_TARGET}`],
 		});
 		const { session } = await createAgentSession({
 			cwd: tempDir,
@@ -237,24 +346,24 @@ describe("model configuration controls", () => {
 
 		expect(session.scopedModels).toEqual([]);
 		expect(session.favoriteModels.map((favorite) => `${favorite.model.provider}/${favorite.model.id}`)).toEqual([
-			"anthropic/claude-sonnet-4-5",
-			"openai/gpt-5.4",
+			`anthropic/${ANTHROPIC_FAVORITE}`,
+			`openai/${OPENAI_TARGET}`,
 		]);
 
 		const firstCycle = await session.cycleModel();
 		expect(firstCycle?.model.provider).toBe("anthropic");
-		expect(firstCycle?.model.id).toBe("claude-sonnet-4-5");
+		expect(firstCycle?.model.id).toBe(ANTHROPIC_FAVORITE);
 		const secondCycle = await session.cycleModel();
 		expect(secondCycle?.model.provider).toBe("openai");
-		expect(secondCycle?.model.id).toBe("gpt-5.4");
+		expect(secondCycle?.model.id).toBe(OPENAI_TARGET);
 
-		settingsManager.setFavoriteModels(["anthropic/claude-sonnet-4-5"]);
+		settingsManager.setFavoriteModels([`anthropic/${ANTHROPIC_FAVORITE}`]);
 		await settingsManager.flush();
 		await session.reload();
 
 		expect(session.scopedModels).toEqual([]);
 		expect(session.favoriteModels.map((favorite) => `${favorite.model.provider}/${favorite.model.id}`)).toEqual([
-			"anthropic/claude-sonnet-4-5",
+			`anthropic/${ANTHROPIC_FAVORITE}`,
 		]);
 		expect(await session.cycleModel()).toBeUndefined();
 	});

@@ -1,10 +1,14 @@
 import type { AccountLoginReceipt, Credential } from "@earendil-works/pi-ai";
-import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { accountDisplayNameCommand, promptAccountDisplayName } from "../account-display-name.ts";
 import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "../oauth-login-interaction.ts";
-import { emitProviderAccountsChanged } from "./account-events.ts";
-import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, pinProviderAccount, removeProviderAccount } from "./account-management.ts";
+import {
+	ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+	pinProviderAccount,
+	removeProviderAccount,
+	unblockProviderAccount,
+} from "./account-management.ts";
+import { formatClaudeAccountList } from "./account-list.ts";
 import { type AccountSlot, type AnthropicSubscriptionCredential, emptyCredential, listAccounts } from "./accounts.ts";
 import { selectAccount } from "./affinity.ts";
 import {
@@ -27,14 +31,6 @@ const ANTHROPIC_SUBSCRIPTION_PROVIDER_LABEL = "Anthropic Subscription";
 
 function asCredential(value: Credential | undefined): AnthropicSubscriptionCredential | undefined {
 	return value?.type === "oauth" ? (value as AnthropicSubscriptionCredential) : undefined;
-}
-
-function slotStatus(slot: AccountSlot): string {
-	if (slot.blockReason === "auth_error") return "blocked until re-login";
-	if (slot.blockedUntil !== undefined && slot.blockedUntil > Date.now()) {
-		return `blocked until ${new Date(slot.blockedUntil).toISOString()}`;
-	}
-	return "available";
 }
 
 function readAccounts(
@@ -91,7 +87,9 @@ export function registerClaudeAccountCommand(pi: ExtensionAPI, deps: ClaudeAccou
 	});
 	pi.registerCommand("claude-account", {
 		description: "List and manage Anthropic Subscription accounts.",
-		argumentHint: "[add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
+		argumentHint:
+			"[add | remove <id> | pin <id> | unpin | unblock <id> | rename <id> <display name...> | clear-name <id>]",
+		requiresArguments: false,
 		handler: async (rawArgs, ctx) => {
 			if (await accountDisplayNameCommand(ctx, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, rawArgs)) return;
 			const args = parseArgs(rawArgs);
@@ -116,8 +114,12 @@ export function registerClaudeAccountCommand(pi: ExtensionAPI, deps: ClaudeAccou
 				await unpinAccount(ctx);
 				return;
 			}
+			if (action === "unblock") {
+				await unblockNamedAccount(ctx, args[1], environment);
+				return;
+			}
 			ctx.ui.notify(
-				"Usage: /claude-account [add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
+				"Usage: /claude-account [add | remove <id> | pin <id> | unpin | unblock <id> | rename <id> <display name...> | clear-name <id>]",
 				"error",
 			);
 		},
@@ -140,25 +142,19 @@ function showAccounts(
 			affinityPick = selectAccount(accounts, {
 				sessionId: ctx.sessionManager.getSessionId(),
 				pinnedAccount: pinned,
+				...(pinned === undefined ? {} : { pinSource: pinSource === "CLI" ? ("cli" as const) : pinSource }),
+				accountFallback: settings.accountFallback,
+				accountStrategy: settings.accountStrategy,
+				...(credential?.order === undefined ? {} : { accountOrder: credential.order }),
 			}).name;
 		} catch (error) {
 			affinityError = error instanceof Error ? error.message : String(error);
 		}
 	}
-	const lines = ["Anthropic Subscription accounts:"];
-	if (accounts.length === 0) lines.push("  (none)");
-	for (const account of accounts) {
-		const states = [accountLabel(account), account.source, slotStatus(account)];
-		if (account.name === pinned) states.push("pinned");
-		if (account.name === affinityPick) states.push("affinity pick");
-		lines.push(`  ${states.join(" | ")}`);
-	}
-	const labelFor = (name: string) => accountLabel(accounts.find((account) => account.name === name) ?? { name });
-	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${labelFor(pinned)} (${pinSource.toLowerCase()})`}`);
-	lines.push(
-		`Affinity pick: ${affinityPick === undefined ? (affinityError ? `unavailable - ${affinityError}` : "none") : labelFor(affinityPick)}`,
+	ctx.ui.notify(
+		formatClaudeAccountList({ accounts, pinned, pinSource, affinityPick, affinityError, now: Date.now() }),
+		"info",
 	);
-	ctx.ui.notify(lines.join("\n"), "info");
 }
 
 async function addAccount(ctx: ExtensionCommandContext, deps: ClaudeAccountCommandDeps): Promise<void> {
@@ -177,7 +173,9 @@ async function addAccount(ctx: ExtensionCommandContext, deps: ClaudeAccountComma
 				receipt = committed;
 			},
 		});
-		emitProviderAccountsChanged(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+		// senpi#5116: ModelRuntime.login already emits accounts_changed (with
+		// the "login" remedy); a second emit here sent RPC clients a duplicate
+		// auth_accounts_changed event.
 		ctx.ui.notify("Anthropic Subscription account added.", "info");
 		await promptAccountDisplayName(ctx, receipt);
 	} catch (error) {
@@ -208,8 +206,12 @@ async function removeNamedAccount(
 		return;
 	}
 	try {
-		await removeProviderAccount(ctx.modelRegistry.authStorage, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, name);
-		ctx.ui.notify(`Removed Anthropic Subscription account: ${name}.`, "info");
+		const { notice } = await removeProviderAccount(
+			ctx.modelRegistry.authStorage,
+			ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+			name,
+		);
+		ctx.ui.notify(notice ?? `Removed Anthropic Subscription account: ${name}.`, notice ? "warning" : "info");
 	} catch (error) {
 		ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 	}
@@ -230,6 +232,37 @@ async function pinNamedAccount(
 	try {
 		await pinProviderAccount(ctx.modelRegistry.authStorage, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, name);
 		ctx.ui.notify(`Pinned Anthropic Subscription account: ${name}.`, "info");
+	} catch (error) {
+		ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+	}
+}
+
+async function unblockNamedAccount(
+	ctx: ExtensionCommandContext,
+	name: string | undefined,
+	environment: CommandEnvironment,
+): Promise<void> {
+	if (!name) {
+		ctx.ui.notify("Usage: /claude-account unblock <name>", "error");
+		return;
+	}
+	if (!readAccounts(ctx, environment).accounts.some((account) => account.name === name)) {
+		return accountError(ctx, name);
+	}
+	try {
+		const env: NodeJS.ProcessEnv = new Proxy({}, { get: (_target, key) => environment(String(key)) });
+		const lifted = await unblockProviderAccount(
+			ctx.modelRegistry.authStorage,
+			ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+			name,
+			env,
+		);
+		ctx.ui.notify(
+			lifted
+				? `Unblocked Anthropic Subscription account: ${name}. The next turn may use it.`
+				: `Anthropic Subscription account '${name}' has no usage block to lift.`,
+			"info",
+		);
 	} catch (error) {
 		ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 	}

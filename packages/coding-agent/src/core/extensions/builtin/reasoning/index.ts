@@ -126,6 +126,7 @@ export default function reasoningExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("reasoning", {
 		description: "Show or toggle reasoning for the current model",
 		argumentHint: "[on|off]",
+		requiresArguments: false,
 		getArgumentCompletions: (prefix) => toCompletions(REASONING_ARGUMENTS, prefix),
 		handler: async (args, ctx) => {
 			const model = ctx.model;
@@ -192,7 +193,6 @@ export default function reasoningExtension(pi: ExtensionAPI): void {
 			pi.setSessionThinkingLevel(target);
 			const settingsManager = createSettingsManager(ctx);
 			settingsManager.setModelThinkingLevel(model.provider, model.id, target, { preserveLastOn: true });
-			settingsManager.setDefaultThinkingLevel(target);
 			await settingsManager.flush();
 			ctx.ui.notify(reasoningStatus(pi.getThinkingLevel()), "info");
 		},
@@ -201,6 +201,7 @@ export default function reasoningExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("efforts", {
 		description: "Show or set the reasoning effort for the current model",
 		argumentHint: "[minimal|low|medium|high|xhigh|max]",
+		requiresArguments: false,
 		getArgumentCompletions: (prefix) => {
 			// Only a graded model has an effort ladder worth completing.
 			const capability = currentModel ? classifyReasoningCapability(currentModel) : undefined;

@@ -1,4 +1,4 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import toolSearchExtension from "../../src/core/extensions/builtin/tool-search/index.ts";
@@ -55,17 +55,17 @@ describe("registered shared tool_search", () => {
 		const providerTools: string[][] = [];
 		harness.setResponses([
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "hourly rain forecast" }), {
 					stopReason: "toolUse",
 				});
 			},
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage(fauxToolCall("weather_forecast", { city: "Seoul" }), { stopReason: "toolUse" });
 			},
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage("done");
 			},
 		]);
@@ -93,15 +93,15 @@ describe("registered shared tool_search", () => {
 		const snapshots: string[][] = [];
 		harness.setResponses([
 			(context) => {
-				snapshots.push((context.tools ?? []).map((tool) => tool.name));
+				snapshots.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage(fauxToolCall("weather_forecast", {}), { stopReason: "toolUse" });
 			},
 			(context) => {
-				snapshots.push((context.tools ?? []).map((tool) => tool.name));
+				snapshots.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage(fauxToolCall("calendar_create", {}), { stopReason: "toolUse" });
 			},
 			(context) => {
-				snapshots.push((context.tools ?? []).map((tool) => tool.name));
+				snapshots.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage("done");
 			},
 		]);
@@ -122,13 +122,13 @@ describe("registered shared tool_search", () => {
 		const providerTools: string[][] = [];
 		harness.setResponses([
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "teleportation quantum xyzzy" }), {
 					stopReason: "toolUse",
 				});
 			},
 			(context) => {
-				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				providerTools.push(getCurrentTools(context.messages).map((tool) => tool.name));
 				return fauxAssistantMessage("nothing");
 			},
 		]);

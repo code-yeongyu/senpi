@@ -21,6 +21,8 @@ function isSupportedModel(model: AnthropicToolSearchModel): boolean {
  * request would carry a search tool with nothing to find. Anthropic's table
  * lists tool search on Opus/Sonnet 4.5+ and the Fable/Mythos line; Opus 4.1 and
  * earlier reject the server tool and Haiku rejects `tool_reference` blocks.
+ * Haiku 5.5 is listed too but stays off until a live probe confirms it
+ * (senpi#2914).
  */
 function defaultSupportsToolSearch(model: AnthropicToolSearchModel): boolean {
 	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;

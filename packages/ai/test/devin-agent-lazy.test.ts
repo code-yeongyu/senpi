@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createFauxCore } from "../src/providers/faux.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 beforeEach(() => vi.resetModules());
 
 describe("Devin module override", () => {
@@ -35,7 +37,7 @@ describe("Devin module override", () => {
 		lazy.setDevinAgentProviderModule(previous);
 		lazy.setDevinAgentProviderModule(current);
 		// When
-		await api.streamSimple(current.getModel(), { messages: [] }).result();
+		await api.streamSimple(current.getModel(), normalizeContext({ messages: [] })).result();
 		// Then
 		expect(previous.getCallLog()).toHaveLength(0);
 		expect(current.getCallLog()).toHaveLength(1);

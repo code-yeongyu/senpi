@@ -37,12 +37,26 @@ describe("Mermaid rendering", () => {
 		expect(rendered).toContain("After");
 	});
 
-	it("leaves unsupported and oversized diagrams unchanged", () => {
-		const unsupported = '```mermaid\npie\n  title Pets\n  "Dogs" : 4\n```';
-		const oversized = "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```";
+	// senpi#5695: a no-op builtin must retain authored bytes for source selection.
+	it.each(["\n", "\r\n", "\r"])("leaves ordinary Markdown unchanged with separator %j", (separator) => {
+		const markdown =
+			"Before\n\n---\n\nAfter\n\n**Bold** and *italic*.\n\nPlain text control: alpha beta gamma.\n\nUnselected".replaceAll(
+				"\n",
+				separator,
+			);
 
-		expect(transformMermaid(unsupported)).toBe(unsupported);
-		expect(transformMermaid(oversized, { maxWidth: 10 })).toBe(oversized);
+		expect(transformMermaid(markdown)).toBe(markdown);
+	});
+
+	it.each(
+		["\n", "\r\n", "\r"].flatMap((separator) => [
+			{ name: "unsupported", separator, code: 'pie\n  title Pets\n  "Dogs" : 4', maxWidth: 100 },
+			{ name: "oversized", separator, code: "flowchart LR\n  A[Start] --> B[Done]", maxWidth: 10 },
+		]),
+	)("leaves $name diagrams unchanged with separator $separator", ({ separator, code, maxWidth }) => {
+		const markdown = `\`\`\`mermaid\n${code}\n\`\`\``.replaceAll("\n", separator);
+
+		expect(transformMermaid(markdown, { maxWidth })).toBe(markdown);
 	});
 
 	it("maps semantic spans through the Pi theme", () => {

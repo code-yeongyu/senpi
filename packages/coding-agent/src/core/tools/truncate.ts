@@ -8,6 +8,8 @@
  * Never returns partial lines (except bash tail truncation edge case).
  */
 
+import { decodeUtf8, encodeUtf8, utf8ByteLength } from "./encoding.ts";
+
 export const DEFAULT_MAX_LINES = 2000;
 export const DEFAULT_MAX_BYTES = 50 * 1024; // 50KB
 export const GREP_MAX_LINE_LENGTH = 500; // Max chars per grep match line
@@ -79,7 +81,7 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 	const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
 	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 
-	const totalBytes = Buffer.byteLength(content, "utf-8");
+	const totalBytes = utf8ByteLength(content);
 	const lines = splitLinesForCounting(content);
 	const totalLines = lines.length;
 
@@ -101,7 +103,7 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 	}
 
 	// Check if first line alone exceeds byte limit
-	const firstLineBytes = Buffer.byteLength(lines[0], "utf-8");
+	const firstLineBytes = utf8ByteLength(lines[0]);
 	if (firstLineBytes > maxBytes) {
 		return {
 			content: "",
@@ -125,7 +127,7 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 
 	for (let i = 0; i < lines.length && i < maxLines; i++) {
 		const line = lines[i];
-		const lineBytes = Buffer.byteLength(line, "utf-8") + (i > 0 ? 1 : 0); // +1 for newline
+		const lineBytes = utf8ByteLength(line) + (i > 0 ? 1 : 0); // +1 for newline
 
 		if (outputBytesCount + lineBytes > maxBytes) {
 			truncatedBy = "bytes";
@@ -142,7 +144,7 @@ export function truncateHead(content: string, options: TruncationOptions = {}): 
 	}
 
 	const outputContent = outputLinesArr.join("\n");
-	const finalOutputBytes = Buffer.byteLength(outputContent, "utf-8");
+	const finalOutputBytes = utf8ByteLength(outputContent);
 
 	return {
 		content: outputContent,
@@ -169,7 +171,7 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 	const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
 	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 
-	const totalBytes = Buffer.byteLength(content, "utf-8");
+	const totalBytes = utf8ByteLength(content);
 	const lines = splitLinesForCounting(content);
 	const totalLines = lines.length;
 
@@ -198,7 +200,7 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 
 	for (let i = lines.length - 1; i >= 0 && outputLinesArr.length < maxLines; i--) {
 		const line = lines[i];
-		const lineBytes = Buffer.byteLength(line, "utf-8") + (outputLinesArr.length > 0 ? 1 : 0); // +1 for newline
+		const lineBytes = utf8ByteLength(line) + (outputLinesArr.length > 0 ? 1 : 0); // +1 for newline
 
 		if (outputBytesCount + lineBytes > maxBytes) {
 			truncatedBy = "bytes";
@@ -207,7 +209,7 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 			if (outputLinesArr.length === 0) {
 				const truncatedLine = truncateStringToBytesFromEnd(line, maxBytes);
 				outputLinesArr.unshift(truncatedLine);
-				outputBytesCount = Buffer.byteLength(truncatedLine, "utf-8");
+				outputBytesCount = utf8ByteLength(truncatedLine);
 				lastLinePartial = true;
 			}
 			break;
@@ -223,7 +225,7 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
 	}
 
 	const outputContent = outputLinesArr.join("\n");
-	const finalOutputBytes = Buffer.byteLength(outputContent, "utf-8");
+	const finalOutputBytes = utf8ByteLength(outputContent);
 
 	return {
 		content: outputContent,
@@ -245,7 +247,7 @@ export function truncateTail(content: string, options: TruncationOptions = {}): 
  * Handles multi-byte UTF-8 characters correctly.
  */
 function truncateStringToBytesFromEnd(str: string, maxBytes: number): string {
-	const buf = Buffer.from(str, "utf-8");
+	const buf = encodeUtf8(str);
 	if (buf.length <= maxBytes) {
 		return str;
 	}
@@ -258,7 +260,7 @@ function truncateStringToBytesFromEnd(str: string, maxBytes: number): string {
 		start++;
 	}
 
-	return buf.slice(start).toString("utf-8");
+	return decodeUtf8(buf.slice(start));
 }
 
 /**
@@ -273,4 +275,42 @@ export function truncateLine(
 		return { text: line, wasTruncated: false };
 	}
 	return { text: `${line.slice(0, maxChars)}... [truncated]`, wasTruncated: true };
+}
+
+export interface MiddleTruncationResult {
+	/** The start and end of the content with a `…N chars truncated…` marker between them. */
+	content: string;
+	truncated: boolean;
+	/** Characters left out. */
+	removedChars: number;
+	totalBytes: number;
+	totalLines: number;
+}
+
+/**
+ * Keep the start and the end of `content`, half of `maxBytes` each, and replace the middle with a
+ * `…N chars truncated…` marker, like Codex does for tool output. Cuts only at character boundaries.
+ */
+export function truncateMiddle(content: string, maxBytes: number): MiddleTruncationResult {
+	const buf = encodeUtf8(content);
+	const totalLines = splitLinesForCounting(content).length;
+	if (buf.length <= maxBytes) {
+		return { content, truncated: false, removedChars: 0, totalBytes: buf.length, totalLines };
+	}
+	// Continuation bytes (10xxxxxx) are not character starts.
+	const isBoundary = (index: number) => index >= buf.length || (buf[index] & 0xc0) !== 0x80;
+	let headEnd = Math.floor(maxBytes / 2);
+	while (headEnd > 0 && !isBoundary(headEnd)) headEnd--;
+	let tailStart = buf.length - (maxBytes - Math.floor(maxBytes / 2));
+	while (tailStart < buf.length && !isBoundary(tailStart)) tailStart++;
+	const head = decodeUtf8(buf.subarray(0, headEnd));
+	const tail = decodeUtf8(buf.subarray(tailStart));
+	const removedChars = Array.from(decodeUtf8(buf.subarray(headEnd, tailStart))).length;
+	return {
+		content: `${head}…${removedChars} chars truncated…${tail}`,
+		truncated: true,
+		removedChars,
+		totalBytes: buf.length,
+		totalLines,
+	};
 }

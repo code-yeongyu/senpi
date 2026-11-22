@@ -12,6 +12,7 @@ import {
 	resetAuthLaneBoundary,
 } from "../../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts";
 import type {
+	Options,
 	SDKMessage,
 	SDKUserMessage,
 	SdkQuery,
@@ -25,6 +26,7 @@ import {
 	overrideSessionRegistryBoundary,
 	resetSessionRegistryBoundary,
 } from "../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
+import { cliLaneEnv, cliSlot } from "../support/claude-cli-test-slots.ts";
 
 export const SCRIPTED_PROVIDER = "anthropic-subscription";
 
@@ -44,7 +46,11 @@ export class ScriptedResidentQuery implements SdkQueryHandle, AsyncIterator<SDKM
 	private readonly queued: SDKMessage[] = [];
 	private readonly readers: Array<(value: IteratorResult<SDKMessage>) => void> = [];
 
-	constructor(prompt: AsyncIterable<SDKUserMessage>, script: TurnScript) {
+	/** The query options this resident process was spawned with (settings, env, resume, ...). */
+	readonly options: Options | undefined;
+
+	constructor(prompt: AsyncIterable<SDKUserMessage>, script: TurnScript, options?: Options) {
+		this.options = options;
 		void this.consume(prompt, script);
 	}
 
@@ -84,9 +90,9 @@ export class ScriptedResidentQuery implements SdkQueryHandle, AsyncIterator<SDKM
 
 export function installScriptedSdk(script: TurnScript): ScriptedResidentQuery[] {
 	const queries: ScriptedResidentQuery[] = [];
-	const query: SdkQuery = ({ prompt }) => {
+	const query: SdkQuery = ({ prompt, options }) => {
 		if (typeof prompt === "string") throw new Error("Expected streaming input");
-		const handle = new ScriptedResidentQuery(prompt, script);
+		const handle = new ScriptedResidentQuery(prompt, script, options);
 		queries.push(handle);
 		return handle;
 	};
@@ -99,15 +105,9 @@ const originalAgentDir = process.env.SENPI_CODING_AGENT_DIR;
 const originalExecutable = process.env.CLAUDE_CODE_EXECUTABLE;
 const temporaryDirectories: string[] = [];
 
-/** One pinned oauth-slots account whose settings file selects the managed lane. */
+/** One pinned claude CLI account, the managed lane every stored account runs on (senpi#4436). */
 export async function installSingleAccountLane(): Promise<void> {
-	const slot: AccountSlot = {
-		name: "primary",
-		access: "access-primary",
-		refresh: "r",
-		expires: Date.now() + 3_600_000,
-		source: "login",
-	};
+	const slot: AccountSlot = cliSlot("primary");
 	const store = new InMemoryCredentialStore();
 	await store.modify(
 		SCRIPTED_PROVIDER,
@@ -124,7 +124,24 @@ export async function installSingleAccountLane(): Promise<void> {
 	);
 	overrideAuthLaneBoundary({
 		createStore: () => store,
-		env: () => ({ PATH: "/usr/bin" }),
+		env: () => cliLaneEnv(),
+		getAgentDir: () => agentDir,
+	});
+}
+
+/** No managed accounts and an explicit ambient opt-in: the host Claude CLI lane, with `hostEnvironment` as its environment. */
+export function installAmbientLane(hostEnvironment: Record<string, string>): void {
+	const agentDir = mkdtempSync(join(tmpdir(), "senpi-claude-sdk-oauth-ambient-"));
+	temporaryDirectories.push(agentDir);
+	process.env.SENPI_CODING_AGENT_DIR = agentDir;
+	process.env.CLAUDE_CODE_EXECUTABLE = "/bin/true";
+	writeFileSync(
+		join(agentDir, "settings.json"),
+		JSON.stringify({ claudeSdkOauthProvider: { tokenInjection: "ambient" } }),
+	);
+	overrideAuthLaneBoundary({
+		createStore: () => new InMemoryCredentialStore(),
+		env: () => ({ ...hostEnvironment }),
 		getAgentDir: () => agentDir,
 	});
 }

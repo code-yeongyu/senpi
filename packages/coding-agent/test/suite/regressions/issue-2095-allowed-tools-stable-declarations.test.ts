@@ -1,4 +1,10 @@
-import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	fauxToolCall,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/index.ts";
@@ -12,11 +18,12 @@ interface ProviderRequest {
 
 const TOOL_ORDER = ["keep_read", "ask_like", "keep_write"];
 
-function recordRequest(requests: ProviderRequest[], context: Context): void {
+// Faux factories receive a TranscriptContext (A2 C-AI-2): prompt and declared tools live in system messages.
+function recordRequest(requests: ProviderRequest[], context: TranscriptContext): void {
 	requests.push({
-		tools: (context.tools ?? []).map((tool) => tool.name),
+		tools: getCurrentTools(context.messages).map((tool) => tool.name),
 		activeToolNames: context.activeToolNames,
-		systemPrompt: context.systemPrompt ?? "",
+		systemPrompt: getCurrentSystemPrompt(context.messages),
 	});
 }
 
@@ -37,6 +44,8 @@ function askLikeExtension(counter: { askLikeRuns: number }): ExtensionFactory {
 			label: "ask_like",
 			description: "Removes itself from the active tools when it runs",
 			promptSnippet: "Snippet for ask_like",
+			// Described tools get no snippet line (senpi#5335); this sentinel shows whether the prompt carries ask_like.
+			promptGuidelines: ["ASK_LIKE_GUIDELINE_SENTINEL"],
 			parameters: Type.Object({}),
 			execute: async () => {
 				counter.askLikeRuns++;
@@ -47,12 +56,15 @@ function askLikeExtension(counter: { askLikeRuns: number }): ExtensionFactory {
 	};
 }
 
-async function runRemovalAndRestore(options: { supportsAllowedTools: boolean }) {
+async function runRemovalAndRestore(options: { supportsAllowedTools: boolean; baseUrl?: string }) {
 	const counter = { askLikeRuns: 0 };
 	const harness = await createHarness({ extensionFactories: [askLikeExtension(counter)] });
 	try {
 		if (options.supportsAllowedTools) {
-			Object.assign(harness.agent.state.model, { compat: { supportsAllowedTools: true } });
+			Object.assign(harness.agent.state.model, {
+				baseUrl: options.baseUrl ?? "https://api.openai.com/v1",
+				compat: { supportsAllowedTools: true },
+			});
 		}
 		harness.session.setActiveToolsByName(TOOL_ORDER);
 		const requests: ProviderRequest[] = [];
@@ -109,7 +121,7 @@ describe("allowed-tools stable tool declarations", () => {
 			expect(request.tools).toEqual(declared);
 			expect(request.systemPrompt).toBe(requests[0]?.systemPrompt);
 		}
-		expect(requests[0]?.systemPrompt).toContain("ask_like: Snippet for ask_like");
+		expect(requests[0]?.systemPrompt).toContain("ASK_LIKE_GUIDELINE_SENTINEL");
 		expect(requests[0]?.activeToolNames).toEqual(declared.length === TOOL_ORDER.length ? undefined : TOOL_ORDER);
 		expect(requests[1]?.activeToolNames).toEqual(["keep_read", "keep_write"]);
 		expect(requests[2]?.activeToolNames).toEqual(["keep_read", "keep_write"]);
@@ -121,8 +133,13 @@ describe("allowed-tools stable tool declarations", () => {
 		expect(toolResults[1]?.text).toContain("Tool ask_like not found");
 	});
 
-	it("sends only the active tools and rebuilds the prompt on a model without the flag", async () => {
-		const { requests, toolResults, askLikeRuns } = await runRemovalAndRestore({ supportsAllowedTools: false });
+	it.each([
+		["a model without the flag", { supportsAllowedTools: false }],
+		// senpi#3080: Responses-compatible gateways reject allowed_tools, so a flagged model behind one
+		// gets only its active tools.
+		["a flagged model behind a gateway", { supportsAllowedTools: true, baseUrl: "https://gateway.example.com/v1" }],
+	])("sends only the active tools and rebuilds the prompt on %s", async (_label, options) => {
+		const { requests, toolResults, askLikeRuns } = await runRemovalAndRestore(options);
 
 		expect(requests).toHaveLength(4);
 		expect(requests.map((request) => request.tools)).toEqual([
@@ -132,8 +149,8 @@ describe("allowed-tools stable tool declarations", () => {
 			["keep_read", "keep_write", "ask_like"],
 		]);
 		expect(requests.every((request) => request.activeToolNames === undefined)).toBe(true);
-		expect(requests[0]?.systemPrompt).toContain("ask_like: Snippet for ask_like");
-		expect(requests[1]?.systemPrompt).not.toContain("ask_like: Snippet for ask_like");
+		expect(requests[0]?.systemPrompt).toContain("ASK_LIKE_GUIDELINE_SENTINEL");
+		expect(requests[1]?.systemPrompt).not.toContain("ASK_LIKE_GUIDELINE_SENTINEL");
 
 		expect(askLikeRuns).toBe(1);
 		expect(toolResults[1]?.isError).toBe(true);

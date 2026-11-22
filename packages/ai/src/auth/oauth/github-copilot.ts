@@ -9,6 +9,7 @@ import {
 	resolveGitHubCopilotBaseUrl,
 } from "../../api/github-copilot-endpoint.ts";
 import { GITHUB_COPILOT_REJECTED_TOKEN_STATUSES } from "../../api/github-copilot-headers.ts";
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { sleep } from "../../utils/sleep.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
@@ -130,7 +131,10 @@ async function fetchGitHubCopilotModels(
 		retryPolicy,
 	);
 	if (!response.ok) {
-		throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+		throw new OAuthTokenEndpointError(
+			`${response.status} ${response.statusText}: ${await response.text()}`,
+			response.status,
+		);
 	}
 	return parseGitHubCopilotModelCatalog(await response.json(), allowPolicyFallback);
 }
@@ -139,7 +143,7 @@ async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
 	const response = await fetch(url, init);
 	if (!response.ok) {
 		const text = await response.text();
-		throw new Error(`${response.status} ${response.statusText}: ${text}`);
+		throw new OAuthTokenEndpointError(`${response.status} ${response.statusText}: ${text}`, response.status);
 	}
 	return response.json();
 }

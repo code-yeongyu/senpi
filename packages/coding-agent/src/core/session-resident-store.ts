@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Buffer } from "buffer";
+import { transformJson } from "./session-resident-json.ts";
+import { ResidentSizeAccounting, type ResidentStoreSize } from "./session-resident-store-size.ts";
 
 const RESIDENT_STRING_MIN_BYTES = 32 * 1024;
 const DEFAULT_RESIDENT_STRING_BUDGET_BYTES = 64 * 1024 * 1024;
 export const RESIDENT_STRING_PREFIX = "\u0000senpi-resident-string:v1:";
-const OMIT_JSON_VALUE = Symbol("omit-json-value");
 
 export interface ResidentStoreStats {
 	blobCount: number;
@@ -24,13 +24,12 @@ export interface ResidentStringStoreOptions {
 }
 
 export class ResidentStringStore {
+	private readonly tokenFree = new WeakSet<object>();
 	// Keyed by content hash: the id IS the reverse index, so the same text always
 	// resolves to the same token and the same blob file, across store instances
 	// sharing a backing directory and across eviction/spill cycles.
 	private strings = new Map<string, string>();
-	private bytes = 0;
-	private evictedCount = 0;
-	private evictedBytes = 0;
+	private readonly accounting = new ResidentSizeAccounting();
 	private readonly maxBytes: number;
 	private blobsDir?: () => string | undefined;
 
@@ -45,9 +44,7 @@ export class ResidentStringStore {
 
 	clear(): void {
 		this.strings.clear();
-		this.bytes = 0;
-		this.evictedCount = 0;
-		this.evictedBytes = 0;
+		this.accounting.reset();
 		const dir = this.blobsDir?.();
 		if (dir) {
 			try {
@@ -70,26 +67,52 @@ export class ResidentStringStore {
 		for (const [id, text] of this.strings) {
 			if (this._writeBlob(id, text)) {
 				this.strings.delete(id);
-				this.bytes -= Buffer.byteLength(text, "utf8");
+				this.accounting.removed(text);
 			}
 		}
 	}
 
 	stats(): ResidentStoreStats {
-		return {
-			blobCount: this.strings.size,
-			blobBytes: this.bytes,
-			evictedCount: this.evictedCount,
-			evictedBytes: this.evictedBytes,
-		};
+		return { blobCount: this.strings.size, ...this.accounting.stats() };
+	}
+
+	/** Strings held in memory and their summed UTF-8 length, kept as strings come and go (no serialization). */
+	size(): ResidentStoreSize {
+		return { entries: this.strings.size, approxBytes: this.accounting.residentBytes };
 	}
 
 	externalize<T>(value: T): T {
-		return transformJson(value, (text) => this.externalizeString(text));
+		let tokenized = false;
+		const externalized = transformJson(value, (text) => {
+			const stored = this.externalizeString(text);
+			if (stored.startsWith(RESIDENT_STRING_PREFIX)) tokenized = true;
+			return stored;
+		});
+		if (!tokenized && typeof externalized === "object" && externalized !== null) this.tokenFree.add(externalized);
+		return externalized;
 	}
 
+	/**
+	 * An externalized value without resident tokens is already the store's own JSON-normalized copy,
+	 * so it is returned as is; copying every entry on every read made each context build copy the
+	 * whole session. Readers must not mutate what they get, as `getEntries()` already documents.
+	 */
 	materialize<T>(value: T, onMissing?: (id: string) => string | undefined): T {
+		if (typeof value === "object" && value !== null && this.tokenFree.has(value)) return value;
 		return transformJson(value, (text) => this.materializeString(text, onMissing));
+	}
+
+	/**
+	 * Whether `externalize` returned this value without any resident token: it is then the store's
+	 * JSON-normalized copy and `materialize` returns it as is.
+	 */
+	isTokenFree(value: object): boolean {
+		return this.tokenFree.has(value);
+	}
+
+	/** Records `value` as token-free, so `materialize` returns it as is (senpi#2537). */
+	adoptTokenFree(value: object): void {
+		this.tokenFree.add(value);
 	}
 
 	resolvedBlobsDir(): string | undefined {
@@ -118,7 +141,10 @@ export class ResidentStringStore {
 		for (const key of Object.keys(record)) {
 			const current = record[key];
 			if (typeof current === "string") {
-				record[key] = mutate(current);
+				const next = mutate(current);
+				// Skip the write when nothing changes: a read-only walk must stay safe on
+				// frozen or shared message objects (senpi#2525).
+				if (next !== current) record[key] = next;
 			} else if (typeof current === "object" && current !== null) {
 				this._mutateStringsInPlace(current, seen, mutate);
 			}
@@ -140,7 +166,7 @@ export class ResidentStringStore {
 		}
 
 		this.strings.set(id, text);
-		this.bytes += Buffer.byteLength(text, "utf8");
+		this.accounting.added(text);
 		this._enforceBudget();
 		return token;
 	}
@@ -169,13 +195,13 @@ export class ResidentStringStore {
 	}
 
 	private _enforceBudget(): void {
-		while (this.bytes > this.maxBytes && this.strings.size > 0) {
+		while (this.accounting.residentBytes > this.maxBytes && this.strings.size > 0) {
 			const [oldestId, oldest] = this.strings.entries().next().value as [string, string];
 			if (!this._writeBlob(oldestId, oldest)) {
 				return;
 			}
 			this.strings.delete(oldestId);
-			this.bytes -= Buffer.byteLength(oldest, "utf8");
+			this.accounting.removed(oldest);
 		}
 	}
 
@@ -203,8 +229,7 @@ export class ResidentStringStore {
 			} catch {}
 			return false;
 		}
-		this.evictedCount++;
-		this.evictedBytes += Buffer.byteLength(text, "utf8");
+		this.accounting.evicted(text);
 		return true;
 	}
 
@@ -227,82 +252,4 @@ export class ResidentStringStore {
 		} catch {}
 		return undefined;
 	}
-}
-
-function transformJson<T>(value: T, transformString: (text: string) => string): T {
-	const transformed = transformJsonValue(value, transformString, "", new WeakSet());
-	if (transformed === OMIT_JSON_VALUE) {
-		const serialized = JSON.stringify(value);
-		if (serialized === undefined) {
-			throw new SyntaxError("JSON-compatible value expected");
-		}
-		return JSON.parse(serialized) as T;
-	}
-	return transformed as T;
-}
-
-function transformJsonValue(
-	value: unknown,
-	transformString: (text: string) => string,
-	key: string,
-	seen: WeakSet<object>,
-): unknown | typeof OMIT_JSON_VALUE {
-	if (typeof value === "string") {
-		return transformString(value);
-	}
-	if (typeof value === "number") {
-		return Number.isFinite(value) ? value : null;
-	}
-	if (value === null || typeof value === "boolean") {
-		return value;
-	}
-	if (typeof value === "bigint") {
-		// JSON.stringify semantics: a BigInt is not serializable, and the store's
-		// contract is to fail exactly like it does.
-		throw new TypeError("Do not know how to serialize a BigInt");
-	}
-	if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") {
-		return OMIT_JSON_VALUE;
-	}
-
-	if (seen.has(value)) {
-		throw new TypeError("Converting circular structure to JSON");
-	}
-	seen.add(value);
-
-	const jsonValue = hasJsonSerializer(value) ? value.toJSON(key) : value;
-	if (jsonValue !== value) {
-		const transformed = transformJsonValue(jsonValue, transformString, key, seen);
-		seen.delete(value);
-		return transformed;
-	}
-
-	if (Array.isArray(value)) {
-		const transformed = Array.from({ length: value.length }, (_item, index) => {
-			const item = value[index];
-			const transformedItem = transformJsonValue(item, transformString, String(index), seen);
-			return transformedItem === OMIT_JSON_VALUE ? null : transformedItem;
-		});
-		seen.delete(value);
-		return transformed;
-	}
-
-	const transformed: Record<string, unknown> = {};
-	for (const [key, item] of Object.entries(value)) {
-		const transformedItem = transformJsonValue(item, transformString, String(key), seen);
-		if (transformedItem !== OMIT_JSON_VALUE) {
-			Object.defineProperty(transformed, key, {
-				configurable: true,
-				enumerable: true,
-				value: transformedItem,
-				writable: true,
-			});
-		}
-	}
-	seen.delete(value);
-	return transformed;
-}
-
-function hasJsonSerializer(value: object): value is { toJSON: (key: string) => unknown } {
-	return "toJSON" in value && typeof value.toJSON === "function";
 }

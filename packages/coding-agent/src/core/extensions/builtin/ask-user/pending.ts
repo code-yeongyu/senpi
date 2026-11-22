@@ -36,6 +36,7 @@ export type QuestionResponseStatus =
 
 export type QuestionResponse = {
 	status: QuestionResponseStatus;
+	resolvedBy?: "local_ui" | "rpc_connection" | "control_endpoint";
 	answers: QuestionAnswers;
 	comment?: string;
 	unanswered: string[];
@@ -67,7 +68,11 @@ export type PendingQuestionState = "pending" | QuestionResponseStatus;
 
 export type PendingQuestion = {
 	touch(draft?: QuestionDraft): void;
-	submit(answers: QuestionAnswers, comment?: string): QuestionResponse | false;
+	submit(
+		answers: QuestionAnswers,
+		comment?: string,
+		resolvedBy?: QuestionResponse["resolvedBy"],
+	): QuestionResponse | false;
 	cancel(reason?: CancelReason): QuestionResponse;
 	timeout(): QuestionResponse;
 	readonly state: PendingQuestionState;
@@ -111,9 +116,11 @@ function buildResponse(
 	answers: QuestionAnswers,
 	comment: string | undefined,
 	autoResolvedAfterMs?: number,
+	resolvedBy?: QuestionResponse["resolvedBy"],
 ): QuestionResponse {
 	return {
 		status,
+		...(resolvedBy !== undefined ? { resolvedBy } : {}),
 		answers: copyAnswers(answers),
 		...(isCommentPresent(comment) ? { comment } : {}),
 		unanswered: unansweredIds(request, answers),
@@ -180,16 +187,19 @@ export function createPendingQuestion(options: PendingQuestionOptions): PendingQ
 			deadlineAtMs = Math.min(options.now() + options.idleTimeoutMs, hardDeadlineAtMs);
 			arm();
 		},
-		submit(answers, comment) {
+		submit(answers, comment, resolvedBy) {
 			if (terminal !== undefined) return terminal;
 			if (isCommentPresent(comment)) {
-				return settle(buildResponse("comment-submitted", options.request, answers, comment), false);
+				return settle(
+					buildResponse("comment-submitted", options.request, answers, comment, undefined, resolvedBy),
+					false,
+				);
 			}
 			if (unansweredIds(options.request, answers).length === 0) {
-				return settle(buildResponse("answered", options.request, answers, comment), false);
+				return settle(buildResponse("answered", options.request, answers, comment, undefined, resolvedBy), false);
 			}
 			if (Object.keys(answers).length > 0) {
-				return settle(buildResponse("answered", options.request, answers, comment), false);
+				return settle(buildResponse("answered", options.request, answers, comment, undefined, resolvedBy), false);
 			}
 			return false;
 		},

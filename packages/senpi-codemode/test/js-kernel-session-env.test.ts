@@ -135,6 +135,36 @@ describe("JavaScriptKernel session environment", () => {
 		}
 	});
 
+	it("shows each kernel only its own browser engine, and none to a session that chose nothing, even when the host process has one", async () => {
+		const previous = process.env.OMO_BROWSER_ENGINE;
+		process.env.OMO_BROWSER_ENGINE = "connected";
+		const engineCell = "return process.env.OMO_BROWSER_ENGINE ?? null";
+		const childCell = [
+			"const cp = process.getBuiltinModule('node:child_process');",
+			"return cp.execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.env.OMO_BROWSER_ENGINE ?? \"none-set\"))'], { encoding: 'utf8' });",
+		].join("\n");
+		try {
+			await withJavaScriptKernel(
+				async (builtin) => {
+					await withJavaScriptKernel(
+						async (unchosen) => {
+							expect(await cellValue(builtin, engineCell)).toBe("builtin");
+							expect(await cellValue(builtin, childCell)).toBe("builtin");
+							expect(await cellValue(unchosen, engineCell)).toBeNull();
+							expect(await cellValue(unchosen, childCell)).toBe("none-set");
+							expect(await cellValue(builtin, engineCell)).toBe("builtin");
+						},
+						{ sessionEnv: { PI_SESSION_ID: "js-no-engine" } },
+					);
+				},
+				{ sessionEnv: { PI_SESSION_ID: "js-builtin", OMO_BROWSER_ENGINE: "builtin" } },
+			);
+		} finally {
+			if (previous === undefined) delete process.env.OMO_BROWSER_ENGINE;
+			else process.env.OMO_BROWSER_ENGINE = previous;
+		}
+	});
+
 	it("follows the active session when a new kernel starts for another session", async () => {
 		await withJavaScriptKernel(
 			async (kernel) => {

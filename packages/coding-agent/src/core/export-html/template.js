@@ -379,6 +379,9 @@
           case 'thinking_level_change':
             parts.push('thinking', entry.thinkingLevel);
             break;
+          case 'context_edit':
+            parts.push('context edit', entry.replacement === null ? 'omit' : 'replace', entry.targetId);
+            break;
         }
 
         return parts.join(' ').toLowerCase();
@@ -407,7 +410,7 @@
           }
 
           // Apply filter mode
-          const isSettingsEntry = ['label', 'custom', 'model_change', 'thinking_level_change'].includes(entry.type);
+          const isSettingsEntry = ['label', 'custom', 'context_edit', 'model_change', 'thinking_level_change'].includes(entry.type);
           let passesFilter = true;
 
           switch (filterMode) {
@@ -719,6 +722,8 @@
             return labelHtml + `<span class="tree-muted">[model: ${escapeHtml(entry.modelId)}]</span>`;
           case 'thinking_level_change':
             return labelHtml + `<span class="tree-muted">[thinking: ${escapeHtml(entry.thinkingLevel)}]</span>`;
+          case 'context_edit':
+            return labelHtml + `<span class="tree-muted">[context ${entry.replacement === null ? 'omit' : 'replace'}: ${escapeHtml(entry.targetId)}]</span>`;
           default:
             return labelHtml + `<span class="tree-muted">[${escapeHtml(entry.type)}]</span>`;
         }
@@ -969,6 +974,21 @@
             '</div>';
         };
 
+        // Calls this tool made to other tools (for example from a codemode script), recorded without results.
+        const renderNestedCalls = () => {
+          const nested = result?.nestedCalls;
+          if (!nested || !Array.isArray(nested.calls) || nested.calls.length === 0) return '';
+          const icons = { ok: '✓', error: '✗', unfinished: '…' };
+          const lines = nested.calls.map(c => {
+            const args = c.arguments ? JSON.stringify(c.arguments) : `[arguments omitted, ${c.argumentsBytes} bytes]`;
+            const duration = c.durationMs !== undefined ? ` ${c.durationMs}ms` : '';
+            const error = c.error ? `\n    ${c.error.split('\n').join('\n    ')}` : '';
+            return `${icons[c.status] || '?'} ${c.name} ${args}${duration}${error}`;
+          });
+          const title = `Nested calls: ${nested.calls.length}${nested.complete ? '' : ' (incomplete record)'}`;
+          return formatExpandableOutput([title, ...lines].join('\n'), 1);
+        };
+
         const toolDomId = `tool-call-${escapeHtml(call.id)}`;
         let html = `<div class="tool-execution ${statusClass}" id="${toolDomId}">`;
         const args = call.arguments || {};
@@ -1102,6 +1122,7 @@
           }
         }
 
+        html += renderNestedCalls();
         html += '</div>';
         return html;
       }
@@ -1172,7 +1193,7 @@
             await navigator.clipboard.writeText(text);
             success = true;
           }
-        } catch (err) {
+        } catch {
           // Clipboard API failed, try fallback
         }
 
@@ -1356,9 +1377,10 @@
           </div>`;
         }
 
-        if (entry.type === 'custom_message' && entry.display) {
-          return `<div class="hook-message" id="${entryDomId}">${tsHtml}
-            <div class="hook-type">[${escapeHtml(entry.customType)}]</div>
+        if (entry.type === 'custom_message') {
+          const hidden = entry.display === false;
+          return `<div class="hook-message${hidden ? ' hook-message-hidden' : ''}" id="${entryDomId}">${tsHtml}
+            <div class="hook-type">[${escapeHtml(entry.customType)}]${hidden ? ' · Hidden in terminal' : ''}</div>
             <div class="markdown-content">${safeMarkedParse(typeof entry.content === 'string' ? entry.content : JSON.stringify(entry.content))}</div>
           </div>`;
         }
@@ -1434,10 +1456,11 @@
           <div class="header">
             <h1>Session: ${escapeHtml(header?.id || 'unknown')}</h1>
             <div class="help-bar">
-              <span class="help-hint">T toggle thinking · O toggle tools</span>
+              <span class="help-hint">T toggle thinking · O toggle tools · H toggle hidden messages</span>
               <div class="help-actions">
-                <button type="button" class="header-toggle-btn" data-action="toggle-thinking" title="Toggle thinking (T)">Toggle thinking</button>
-                <button type="button" class="header-toggle-btn" data-action="toggle-tools" title="Toggle tools (O)">Toggle tools</button>
+                <button type="button" class="header-toggle-btn" data-action="toggle-thinking" aria-pressed="${thinkingExpanded}" title="Toggle thinking (T)">Toggle thinking</button>
+                <button type="button" class="header-toggle-btn" data-action="toggle-tools" aria-pressed="${toolOutputsExpanded}" title="Toggle tools (O)">Toggle tools</button>
+                <button type="button" class="header-toggle-btn" data-action="toggle-hidden-messages" aria-pressed="${showHiddenMessages}" title="Show custom messages marked as hidden in the terminal (H).">${showHiddenMessages ? 'Hide hidden messages' : 'Show hidden messages'}</button>
                 <button type="button" class="download-json-btn" onclick="downloadSessionJson()" title="Download session as JSONL">↓ JSONL</button>
               </div>
             </div>
@@ -1545,6 +1568,10 @@
       function navigateTo(targetId, scrollMode = 'target', scrollToEntryId = null) {
         currentLeafId = targetId;
         currentTargetId = scrollToEntryId || targetId;
+        const targetEntry = byId.get(currentTargetId);
+        if (scrollMode === 'target' && targetEntry?.type === 'custom_message' && targetEntry.display === false) {
+          setHiddenMessagesVisible(true);
+        }
         const path = getPath(targetId);
 
         renderTree();
@@ -1565,6 +1592,10 @@
 
         messagesEl.innerHTML = '';
         messagesEl.appendChild(fragment);
+
+        // Cached nodes contain their initial presentation; reapply the viewer's toggle states.
+        setThinkingExpanded(thinkingExpanded);
+        setToolOutputsExpanded(toolOutputsExpanded);
 
         // Attach click handlers for copy-link buttons
         messagesEl.querySelectorAll('.copy-link-btn').forEach(btn => {
@@ -1838,19 +1869,32 @@
       // Toggle states
       let thinkingExpanded = true;
       let toolOutputsExpanded = false;
+      let showHiddenMessages = false;
 
-      const toggleThinking = () => {
-        thinkingExpanded = !thinkingExpanded;
+      function setHiddenMessagesVisible(visible) {
+        showHiddenMessages = visible;
+        document.body.classList.toggle('show-hidden-messages', visible);
+        const button = document.querySelector('[data-action="toggle-hidden-messages"]');
+        if (button) {
+          button.setAttribute('aria-pressed', String(visible));
+          button.textContent = visible ? 'Hide hidden messages' : 'Show hidden messages';
+        }
+      }
+
+      function setThinkingExpanded(expanded) {
+        thinkingExpanded = expanded;
+        document.querySelector('[data-action="toggle-thinking"]')?.setAttribute('aria-pressed', String(expanded));
         document.querySelectorAll('.thinking-text').forEach(el => {
           el.style.display = thinkingExpanded ? '' : 'none';
         });
         document.querySelectorAll('.thinking-collapsed').forEach(el => {
           el.style.display = thinkingExpanded ? 'none' : 'block';
         });
-      };
+      }
 
-      const toggleToolOutputs = () => {
-        toolOutputsExpanded = !toolOutputsExpanded;
+      function setToolOutputsExpanded(expanded) {
+        toolOutputsExpanded = expanded;
+        document.querySelector('[data-action="toggle-tools"]')?.setAttribute('aria-pressed', String(expanded));
         document.querySelectorAll('.tool-output.expandable').forEach(el => {
           el.classList.toggle('expanded', toolOutputsExpanded);
         });
@@ -1860,11 +1904,18 @@
         document.querySelectorAll('.skill-invocation').forEach(el => {
           el.classList.toggle('expanded', toolOutputsExpanded);
         });
-      };
+      }
 
       const attachHeaderHandlers = () => {
-        document.querySelector('[data-action="toggle-thinking"]')?.addEventListener('click', toggleThinking);
-        document.querySelector('[data-action="toggle-tools"]')?.addEventListener('click', toggleToolOutputs);
+        document.querySelector('[data-action="toggle-thinking"]')?.addEventListener('click', () => {
+          setThinkingExpanded(!thinkingExpanded);
+        });
+        document.querySelector('[data-action="toggle-tools"]')?.addEventListener('click', () => {
+          setToolOutputsExpanded(!toolOutputsExpanded);
+        });
+        document.querySelector('[data-action="toggle-hidden-messages"]')?.addEventListener('click', () => {
+          setHiddenMessagesVisible(!showHiddenMessages);
+        });
       };
 
       const isEditableTarget = (element) => {
@@ -1884,17 +1935,20 @@
           navigateTo(leafId, 'bottom');
         }
 
-        if (isEditableTarget(document.activeElement)) {
+        if (e.ctrlKey || e.metaKey || e.altKey || isEditableTarget(document.activeElement)) {
           return;
         }
 
         const key = e.key.toLowerCase();
         if (key === 't') {
           e.preventDefault();
-          toggleThinking();
+          setThinkingExpanded(!thinkingExpanded);
         } else if (key === 'o') {
           e.preventDefault();
-          toggleToolOutputs();
+          setToolOutputsExpanded(!toolOutputsExpanded);
+        } else if (key === 'h') {
+          e.preventDefault();
+          setHiddenMessagesVisible(!showHiddenMessages);
         }
       });
 

@@ -1,0 +1,272 @@
+/**
+ * The terminal control endpoint's command surface. It answers who it is, which one session it holds
+ * and that session's state and messages, renames it, streams its feed, wakes its inbox drain, relays
+ * an answer to a question the session itself asked, and applies the pane's own session controls (a
+ * model, a thinking level, an interrupt - `session-control-session-commands.ts`), and serves the host's
+ * observe-and-drive set over its one session (`session-control-rpc-commands.ts`, senpi#3229, senpi#4267). Input
+ * goes through the session's admission and only there. Every other command is answered `unsupported` as data;
+ * `get_protocol_info` lists the accepted ones in `commands`.
+ */
+import { VERSION } from "../../config.ts";
+import type { AgentSession } from "../../core/agent-session.ts";
+import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import { isSessionArchived, setSessionArchived } from "../../core/session-archived.ts";
+import {
+	parseSessionSettled,
+	readSessionSettled,
+	setSessionSettled,
+	settledFields,
+} from "../../core/session-settled.ts";
+import type { QuestionRequest, QuestionResponse, SessionControlDrainResult } from "../../core/extensions/types.ts";
+import {
+	ENTRIES_TAIL_CAPABILITY,
+	OBSERVE_READS_CAPABILITY,
+	SESSION_STATUS_CAPABILITY,
+	TUI_OBSERVER_CAPABILITY,
+	UNLOAD_GRACEFUL_CAPABILITY,
+} from "../rpc/custom-capability.ts";
+import { answerGetEntries } from "../rpc/get-entries-command.ts";
+import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
+import { describeRpcMethodClasses } from "../rpc/method-classes.ts";
+import { RPC_ERROR_INVALID_ARGUMENT } from "../rpc/rpc-error-types.ts";
+import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
+import { sessionUiAnswerLedger } from "../rpc/ui-answer-ledger.ts";
+import type { ControlAttachments } from "./session-control-attach.ts";
+import { closeTerminalGracefully } from "./session-control-close.ts";
+import type { ControlFeed } from "./session-control-feed.ts";
+import { runTuiRpcCommand, TUI_RPC_COMMANDS } from "./session-control-rpc-commands.ts";
+import { type ControlCommand, type ControlConnection, failure, success } from "./session-control-server.ts";
+import {
+	runSessionControlCommand,
+	SESSION_CONTROL_COMMANDS,
+	type TuiSessionControls,
+} from "./session-control-session-commands.ts";
+
+export interface TuiControlSurface extends TuiSessionControls {
+	/** Input the user submitted that the runtime has not taken yet: it holds admission, so no delivery overtakes it. */
+	submissionInFlight(): boolean;
+	/** Text or attachments in the composer: reported to clients, never a hold on a delivery (senpi#7043). */
+	hasDraft(): boolean;
+	blockingQuestion(): boolean;
+	pendingQuestionIds(): readonly string[];
+	pendingQuestion(requestId: string): Pick<QuestionRequest, "questions"> | undefined;
+	answerQuestion(requestId: string, response: QuestionResponse): boolean;
+	notice(line: string): void;
+	/** A graceful close ended the session (oh-my-openagent#14313): the terminal exits as a person's quit would. */
+	closeSession(): void;
+}
+
+export interface ControlCommandContext {
+	readonly instanceId: string;
+	readonly session: AgentSession;
+	readonly surface: TuiControlSurface;
+	readonly feed: ControlFeed;
+	readonly wake: (deliveryIds?: readonly string[]) => Promise<SessionControlDrainResult>;
+	readonly attachments: ControlAttachments;
+}
+
+export const TUI_CONTROL_CAPABILITY = "tui_control";
+
+const TUI_CONTROL_COMMANDS = [
+	"get_protocol_info",
+	"list_sessions",
+	"get_state",
+	"get_messages",
+	"get_entries",
+	"set_session_name",
+	"set_session_archived",
+	"set_session_settled",
+	"subscribe",
+	"wake",
+	"extension_ui_response",
+	"unload_session",
+	...SESSION_CONTROL_COMMANDS,
+	...TUI_RPC_COMMANDS,
+];
+
+export async function runControlCommand(
+	context: ControlCommandContext,
+	connection: ControlConnection,
+	command: ControlCommand,
+): Promise<object | null> {
+	const { id, type } = command;
+	const { session } = context;
+	switch (type) {
+		case "get_protocol_info": {
+			const build = engineBuildIdentity();
+			return success(id, type, {
+				protocolVersion: 1,
+				serverVersion: VERSION,
+				capabilities: [
+					TUI_CONTROL_CAPABILITY,
+					SESSION_STATUS_CAPABILITY,
+					TUI_OBSERVER_CAPABILITY,
+					OBSERVE_READS_CAPABILITY,
+					ENTRIES_TAIL_CAPABILITY,
+					"snapshot_cursor",
+					"ui_answer_ledger",
+					UNLOAD_GRACEFUL_CAPABILITY,
+				],
+				mode: "tui",
+				endpoint_kind: "tui",
+				instanceId: context.instanceId,
+				generation: 0,
+				engineVersion: build.text,
+				engineOrdinal: build.ordinal,
+				commands: TUI_CONTROL_COMMANDS,
+				method_classes: describeRpcMethodClasses(),
+			});
+		}
+		case "list_sessions":
+			return success(id, type, { sessions: [sessionRow(session)] });
+		case "get_state":
+			return success(id, type, {
+				...buildRpcSessionState(session),
+				turn_epoch: session.externalAdmission.turnEpoch,
+				blocking_question: context.surface.blockingQuestion(),
+				compacting: session.isCompacting,
+				editor_has_draft: context.surface.submissionInFlight() || context.surface.hasDraft(),
+				state_version: context.feed.stateVersion,
+			});
+		case "get_messages":
+			return success(id, type, { messages: session.messages });
+		case "get_entries":
+			return answerGetEntries(session, command as unknown as Parameters<typeof answerGetEntries>[1]);
+		case "set_session_name": {
+			const name = typeof command.name === "string" ? command.name.trim() : "";
+			if (name === "") return failure(id, type, "Session name cannot be empty");
+			session.setSessionName(name);
+			return success(id, type);
+		}
+		case "set_session_archived": {
+			if (typeof command.archived !== "boolean") return failure(id, type, "archived must be a boolean");
+			const { attachments } = context;
+			setSessionArchived(session.sessionManager, command.archived);
+			const change = { type: "session_archived_changed", archived: command.archived };
+			attachments.run(connection, () => attachments.writer.enqueue(attachments.handle, change));
+			return success(id, type);
+		}
+		case "set_session_settled": {
+			const parsed = parseSessionSettled({ settled: command.settled, by: command.by });
+			if (!parsed.ok) return { ...failure(id, type, parsed.error), errorCode: RPC_ERROR_INVALID_ARGUMENT };
+			const { attachments } = context;
+			setSessionSettled(session.sessionManager, parsed.value);
+			const change = { type: "session_settled_changed", ...settledFields(parsed.value) };
+			attachments.run(connection, () => attachments.writer.enqueue(attachments.handle, change));
+			return success(id, type);
+		}
+		case "subscribe": {
+			const cursor = typeof command.cursor === "number" ? command.cursor : undefined;
+			return success(id, type, { cursor: context.feed.subscribe(connection.id, cursor, connection.send) });
+		}
+		case "wake": {
+			const ids = Array.isArray(command.delivery_ids)
+				? command.delivery_ids.filter((entry): entry is string => typeof entry === "string")
+				: undefined;
+			const result = await context.wake(ids);
+			return success(id, type, { admitted: result.admitted ?? [] });
+		}
+		case "extension_ui_response":
+			return answerQuestion(context, command);
+		case "unload_session":
+			return closeTerminalGracefully(context, connection, command);
+		default: {
+			const rpc = await runTuiRpcCommand(context, connection, command);
+			if (rpc !== undefined) return rpc;
+			return (await runSessionControlCommand(session, context.surface, command)) ?? failure(id, type, "unsupported");
+		}
+	}
+}
+
+function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
+	const manager = session.sessionManager;
+	const created = manager.getHeader()?.timestamp ?? null;
+	const last = manager.getEntries().at(-1);
+	return {
+		sessionId: session.sessionId,
+		sessionPath: session.sessionFile ?? null,
+		session_file: session.sessionFile ?? null,
+		kind: "interactive",
+		surface: "tui",
+		cwd: manager.getCwd(),
+		name: session.sessionName ?? null,
+		created_at: created,
+		updated_at: last?.timestamp ?? created,
+		attachments: 1,
+		// A release here never ends the terminal's own session.
+		retain_on_disconnect: true,
+		archived: isSessionArchived(manager),
+		...settledFields(readSessionSettled(manager)),
+		activity: session.isStreaming ? "running" : "idle",
+		...(session.model !== undefined ? { model: { provider: session.model.provider, id: session.model.id } } : {}),
+	};
+}
+
+/**
+ * Only a question this session asked, and is still waiting on, can be answered. `uiRequestId` names
+ * it (the short form: `id`); the reply always carries the frame's `id`, as on a host. The answer
+ * settles by the host's rule (`settledQuestionStatus`), so the same frame reaches the model as the same
+ * message on either surface.
+ */
+function answerQuestion(context: ControlCommandContext, command: ControlCommand): object {
+	if (command.secret === true) return failure(command.id, "extension_ui_response", "invalid_secret_response");
+	const { surface, session } = context;
+	const ledger = sessionUiAnswerLedger(session);
+	const answerId = command.answerId;
+	if (answerId !== undefined && (typeof answerId !== "string" || answerId.length < 1 || answerId.length > 256))
+		return failure(command.id, "extension_ui_response", "invalid_answer_id");
+	const frameId = command.id;
+	const requestId = answeredUiRequestId(command);
+	const receipt = requestId === undefined || answerId === undefined ? undefined : ledger.lookup(requestId, answerId);
+	if (receipt === "replay") return { ...success(frameId, "extension_ui_response"), disposition: receipt };
+	if (receipt === "already_answered")
+		return { ...failure(frameId, "extension_ui_response", "already_answered"), disposition: receipt };
+	const request = requestId === undefined ? undefined : surface.pendingQuestion(requestId);
+	if (requestId === undefined || request === undefined) {
+		return {
+			...failure(
+				frameId,
+				"extension_ui_response",
+				answerId === undefined ? "unknown_request" : "unknown_extension_ui_request",
+			),
+			disposition: "unknown",
+		};
+	}
+	const response = questionResponse(command, request.questions);
+	if (response === "question_incomplete") return failure(frameId, "extension_ui_response", response);
+	if (response === undefined || !surface.answerQuestion(requestId, response)) {
+		return failure(frameId, "extension_ui_response", "invalid_response");
+	}
+	ledger.record(requestId, answerId);
+	return { ...success(frameId, "extension_ui_response"), disposition: "applied" };
+}
+
+function questionResponse(
+	command: ControlCommand,
+	questions: QuestionRequest["questions"],
+): QuestionResponse | "question_incomplete" | undefined {
+	// Another client's cancel (the desktop's Remove) is the user's; the builtin settles it from its own draft.
+	if (command.cancelled === true) return { status: "cancelled", cancelOrigin: "user", answers: {}, unanswered: [] };
+	const answers = command.answers;
+	if (typeof answers !== "object" || answers === null || Array.isArray(answers)) return undefined;
+	const parsed: QuestionResponse["answers"] = {};
+	for (const [question, value] of Object.entries(answers)) {
+		if (typeof value !== "object" || value === null || !("selected" in value) || !Array.isArray(value.selected)) {
+			return undefined;
+		}
+		const selected = value.selected.filter((entry: unknown): entry is string => typeof entry === "string");
+		const text = "text" in value && typeof value.text === "string" ? value.text : undefined;
+		parsed[question] = text === undefined ? { selected } : { selected, text };
+	}
+	const comment = typeof command.comment === "string" ? command.comment : undefined;
+	const status = settledQuestionStatus(parsed, comment);
+	if (status === undefined) return "question_incomplete";
+	const unanswered = unansweredQuestionIds(questions, parsed);
+	return {
+		status,
+		resolvedBy: "control_endpoint",
+		answers: parsed,
+		unanswered,
+		...(comment === undefined ? {} : { comment }),
+	};
+}

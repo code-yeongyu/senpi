@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { goalFilePath } from "../../src/core/extensions/builtin/goal/persistence.ts";
 import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { createBashTool, createBashToolDefinition } from "../../src/core/tools/bash.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
@@ -46,7 +47,7 @@ describe("core bash session environment (#1663)", () => {
 		const result = await tool.execute("no-goal", { command }, undefined, undefined, {
 			...ctx,
 			goalStoreFile: undefined,
-		});
+		} as ExtensionToolContext);
 		expect(getMessageText(result)).toBe(`${harness.tempDir}|unset`);
 	});
 });

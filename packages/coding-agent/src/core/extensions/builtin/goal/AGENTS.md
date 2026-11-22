@@ -16,7 +16,8 @@ goal per thread, re-engages the agent via hidden continuation prompts. 34 `.ts` 
 - **Continuation**: `monitor-continuation.ts` (603 LOC — timers, wake sources, direct-input
   holds, cache-warm scheduling, admission, recovery, disposal) plus `continuation.ts`,
   `lifecycle-helpers.ts`, `direct-input-lifecycle.ts`, `agent-end-continuation.ts`,
-  `continuation-recovery.ts`, `reload-reengagement.ts`.
+  `continuation-recovery.ts`, `reload-reengagement.ts`, `session-start-continuation.ts`
+  (trailing-continuation read plus the wake a goal gets when its session opens).
 - **Prompt/format**: `prompt.ts` (untrusted-objective + completion audit), `format.ts`,
   `todo-gate.ts`, `todo-owed-backstop.ts` (no-goal turn-end backstop), `last-assistant-message.ts`,
   `terminal-provider-error.ts`.
@@ -26,7 +27,7 @@ goal per thread, re-engages the agent via hidden continuation prompts. 34 `.ts` 
 ## NO BUDGET-DRIVEN BEHAVIOR
 
 The deliberate divergence from `pi-goal` / codex `ext/goal`. `Goal` may persist an optional
-`tokenBudget` **only** as inert app-server wire-compatibility metadata; the tools neither
+`tokenBudget` **only** as inert legacy metadata; the tools neither
 create nor interpret it. No `budgetLimited`/`usageLimited` status, no budget-limit continuation,
 no budget-driven transition. `tokensUsed`/`timeUsedSeconds` are display-only. Status is
 `active | paused | blocked | complete`; `blocked` carries `blockedReason`/`blockedAt` and
@@ -35,7 +36,9 @@ suppresses continuations.
 ## CONTINUATION POLICY
 
 Admission guards: consecutive-continuation cap of 8 (persisted), stale-signature check on
-immediate re-entry, single-flight latch. From the 3rd consecutive toolless turn the prompt
+immediate re-entry, single-flight latch, and the no-progress guard (60 counted continuations
+without a new successful tool effect (a call/result fingerprint unlike the last 256; results mask timestamps/durations/ids, non-mutating calls mask argument numbers), a todo change, or human input — typed or from a `human_input`
+monitor; persisted, monitor-delayed exempt). There is no fixed total cap (omo#10280). From the 3rd consecutive toolless turn the prompt
 gains a `<goal_stall_check>` prefix — monitor-flavored bullets while monitors are active,
 generic recovery bullets otherwise. Accepted direct input disarms a pending continuation; a
 clean accepted user turn arms a visible 10-second grace countdown before the Goal resumes.
@@ -46,15 +49,36 @@ A terminal (`willRetry` false, not system-owned) provider error keeps the Goal a
 queues one guarded `providerRecovery` continuation after `agent_settled`, except a terminal
 401/403 (`terminalProviderAuthFailure`, #2293) or policy rejection (#1520): those block on the
 first hit. The auth block is mechanical (a new user message resumes after the user fixes the
-login); the policy block is not. A terminal
-*system* error preserves the active Goal: schedule the live monitor wait, or queue a guarded
-hidden `systemRecovery` continuation after `agent_settled` (staging preserves late user
+login); the policy block is not. `fallbackExhausted` replaces recovery only after limit-shaped
+ladder exhaustion (senpi#3709): one `providerRetry` at the soonest future reset, plus 1 s
+(no 6 h cap). Outage-only exhaustion retains immediate recovery and provider backoff.
+
+A refusal for a usage or rate limit (`isLimitRefusal`: a `rate_limit`/`quota` diagnostic or a
+status-only 429) and every limit-exhausted ladder is a **limit wait** (senpi#4085). The refused
+turn ran no model work, so its wake neither counts toward nor is denied by the consecutive cap
+and the no-progress guard. Each re-check waits for the stated reset (a lane refusal's wake is
+capped at 6 h, an exhausted ladder's is not) but never less than the provider backoff, 15 s
+doubling to 30 min; a ladder that named no reset waits the backoff alone and no longer parks
+until input. After `GOAL_LIMIT_WAIT_WAKE_LIMIT` (48) re-checks in a row the goal stays `active`
+but parks (`goal_limit_wait_parked`) until a sign-in, an account block reset or input.
+`accounts_changed` with a `login`/`reset` remedy fires an armed or parked limit wait at once.
+
+A terminal *system* error preserves the active Goal: schedule the live monitor wait, or queue a
+guarded hidden `systemRecovery` continuation after `agent_settled` (staging preserves late user
 cancellation; canceling releases the single-flight latch for `/goal resume`). Intentional
 blocks — user interrupt or a model-declared `update_goal` block — stay non-recoverable.
-Resuming with 8+ trailing continuation entries suppresses session-start auto-resume. On
+Resuming with 8+ trailing continuation entries whose turn ran suppresses session-start
+auto-resume (startup, resume and reload alike). A continuation the provider refused for a limit
+is not one of them, and a session opened in the middle of a limit wait re-checks that limit with
+a wake that spends no continuation budget (`session-start-continuation.ts`, senpi#4085). On
 `session_start` reason `resume`, an idle TUI session with a stopped-but-unfinished goal
 (`paused`/`blocked`) prompts first (`isResumeOfStoppedGoal`); accepting flips to `active` as
-a `"user"` mutation. `active`/`complete` never prompt.
+a `"user"` mutation. `active`/`complete` never prompt, except an `active` goal reopened over an
+interrupted run (its process died mid-turn): it is first stopped as interrupted, as a quit
+would have, so it prompts too, on `resume` and on a `startup` that opens it (`--continue`,
+`--session`) alike (senpi#5755). RPC binds a UI context, so the same stop applies there, but
+RPC never prompts: the goal stays `blocked` (resuming the interrupted run answers one turn, no
+continuation) until the client resumes the goal explicitly.
 
 ## CONVENTIONS
 
@@ -67,7 +91,8 @@ a `"user"` mutation. `active`/`complete` never prompt.
   `executePreparedToolCall`). A returned `isError` property is silently ignored.
 - **Persistence**: `GoalFile{version:1, goal}` at `<sessionDir>/extensions/goal/<threadId>.json`,
   falling back to `getAgentDir()/extensions/goal/no-session/<sha256(cwd)[:24]>/` when the
-  session has no file. Writes are atomic, mutations serialize per goal path via promise tails,
+  session has no file. Writes are atomic, mutations serialize per goal path via the in-process promise tail
+  plus a cross-process proper-lockfile lock (`goal-file-lock.ts`, senpi#2499),
   and legacy `pi-goal` stores/status spellings migrate on read. Objectives trim and cap at
   4,000 code points with a truncation marker plus full-text sidecar.
 - **Continuation is opt-in by state**: hidden prompts queue only while the goal is `active`,

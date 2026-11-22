@@ -1,3 +1,4 @@
+import { isKeyRelease } from "./keys.ts";
 import {
 	isMouseSequence,
 	MOUSE_TRACKING,
@@ -10,6 +11,7 @@ import {
 	type Component,
 	Container,
 	dispatchMouseEvent,
+	isTerminalReport,
 	retargetMouseEvent,
 	TuiBase,
 	type TuiMouseDispatchResult,
@@ -31,18 +33,37 @@ export interface TuiMainScreenRenderState {
 export class TuiMainScreen extends TuiBase {
 	readonly mode = "regular" as const;
 	private trackingEnabled = false;
+	/**
+	 * The app cannot scroll the terminal's scrollback, so the first wheel report while armed hands the
+	 * mouse back to the terminal; the next key press arms it again (senpi#3604).
+	 */
+	private yielded = false;
 	private readonly clicks = new MouseClickSynthesizer();
-	private mousePress?: { target: TuiMouseDispatchTarget; epoch: number; revision: number; x: number; y: number };
-	private layoutRevision = 0;
-	private committedMouseLines: string[] = [];
-	private committedMouseComponents: Component[] = [];
+	/**
+	 * A press stays clickable only while the committed frame and component tree it hit are unchanged.
+	 * Both are captured at press time and compared at release, so ordinary frames pay nothing for it.
+	 */
+	private mousePress?: {
+		target: TuiMouseDispatchTarget;
+		epoch: number;
+		frame: readonly string[];
+		components: readonly Component[];
+		x: number;
+		y: number;
+	};
 
 	constructor(...args: ConstructorParameters<typeof TuiBase>) {
 		super(...args);
 		this.addInputListener((data) => this.handleMouseInput(data));
 	}
 
+	override mouseCaptureState(): "off" | "armed" | "yielded" {
+		if (this.yielded) return "yielded";
+		return this.trackingEnabled ? "armed" : "off";
+	}
+
 	protected override applyMouseTracking(enabled: boolean): void {
+		this.yielded = false;
 		const supported =
 			Boolean(process.stdout.isTTY) &&
 			!process.env.TERMUX_VERSION &&
@@ -58,6 +79,7 @@ export class TuiMainScreen extends TuiBase {
 	protected override beforeTerminalStop(): void {
 		this.terminal.write(MOUSE_TRACKING.disable);
 		this.trackingEnabled = false;
+		this.yielded = false;
 		this.clicks.cancel();
 		this.mousePress = undefined;
 	}
@@ -81,23 +103,30 @@ export class TuiMainScreen extends TuiBase {
 		}
 		super.doRender();
 		this.noteCommittedMouseFrame();
+		this.calibrateMouseAnchor();
+	}
+
+	private collectMouseComponents(): Component[] {
 		const components: Component[] = [];
 		const visit = (component: Component): void => {
 			components.push(component);
 			if (component instanceof Container) for (const child of component.children) visit(child);
 		};
 		for (const root of this.getMouseLayoutRoots()) visit(root);
-		if (
-			this.previousLines.length !== this.committedMouseLines.length ||
-			this.previousLines.some((line, index) => line !== this.committedMouseLines[index]) ||
-			components.length !== this.committedMouseComponents.length ||
-			components.some((component, index) => component !== this.committedMouseComponents[index])
-		) {
-			this.layoutRevision++;
+		return components;
+	}
+
+	private pressLayoutUnchanged(press: { frame: readonly string[]; components: readonly Component[] }): boolean {
+		const lines = this.previousLines;
+		if (press.frame !== lines) {
+			if (press.frame.length !== lines.length) return false;
+			for (let index = 0; index < lines.length; index++) if (press.frame[index] !== lines[index]) return false;
 		}
-		this.committedMouseLines = [...this.previousLines];
-		this.committedMouseComponents = components;
-		this.calibrateMouseAnchor();
+		const components = this.collectMouseComponents();
+		return (
+			components.length === press.components.length &&
+			components.every((component, index) => component === press.components[index])
+		);
 	}
 
 	private applyMouseResult(result: TuiMouseDispatchResult | undefined): void {
@@ -107,8 +136,15 @@ export class TuiMainScreen extends TuiBase {
 	}
 
 	private handleMouseInput(data: string): { consume: boolean } {
-		if (!isMouseSequence(data)) return { consume: false };
+		if (!isMouseSequence(data)) {
+			if (this.yielded && !isTerminalReport(data) && !isKeyRelease(data)) this.rearmAfterYield();
+			return { consume: false };
+		}
 		const raw = parseSgrMouseEvent(data);
+		if (this.trackingEnabled && raw && (raw.button & 64) !== 0) {
+			this.yieldToTerminal();
+			return { consume: true };
+		}
 		if (!this.trackingEnabled || !raw || raw.button !== 0) {
 			this.clicks.cancel();
 			this.mousePress = undefined;
@@ -134,7 +170,8 @@ export class TuiMainScreen extends TuiBase {
 				this.mousePress = {
 					target: result.target,
 					epoch: this.placementEpoch,
-					revision: this.layoutRevision,
+					frame: this.previousLines,
+					components: this.collectMouseComponents(),
 					x: raw.x,
 					y: raw.y,
 				};
@@ -147,7 +184,7 @@ export class TuiMainScreen extends TuiBase {
 			if (
 				!press ||
 				press.epoch !== this.placementEpoch ||
-				press.revision !== this.layoutRevision ||
+				!this.pressLayoutUnchanged(press) ||
 				press.x !== raw.x ||
 				press.y !== raw.y
 			) {
@@ -166,6 +203,24 @@ export class TuiMainScreen extends TuiBase {
 			}
 		}
 		return { consume: true };
+	}
+
+	private yieldToTerminal(): void {
+		this.terminal.write(MOUSE_TRACKING.disable);
+		this.trackingEnabled = false;
+		this.yielded = true;
+		this.clicks.cancel();
+		this.mousePress = undefined;
+		this.requestRender();
+	}
+
+	private rearmAfterYield(): void {
+		if (!this.mouseCaptureEnabled) {
+			this.yielded = false;
+			return;
+		}
+		this.applyMouseTracking(true);
+		this.requestRender();
 	}
 
 	captureRenderState(): TuiMainScreenRenderState {

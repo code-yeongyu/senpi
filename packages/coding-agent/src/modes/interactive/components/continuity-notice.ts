@@ -1,4 +1,5 @@
 import type { AssistantMessage, AssistantMessageDiagnostic } from "@earendil-works/pi-ai";
+import { LONG_CONTEXT_FALLBACK_DIAGNOSTIC, LONG_CONTEXT_FALLBACK_NOTICE } from "../../../core/provider-notices.ts";
 import { theme } from "../theme/theme.ts";
 
 export const CONTINUITY_DIAGNOSTIC_TYPE = "claude_sdk_oauth_session_continuity";
@@ -19,6 +20,13 @@ type ContinuityDetails = {
 	reason?: string;
 	payloadBytes?: number;
 	collapsedDirectives?: number;
+	settingSource?: string;
+};
+
+const SETTING_SOURCE_LABELS: Readonly<Record<string, string>> = {
+	env: "SENPI_CLAUDE_SDK_OAUTH_RESUME",
+	project: "project settings",
+	global: "global settings",
 };
 
 function continuityDetails(diagnostic: AssistantMessageDiagnostic): ContinuityDetails | undefined {
@@ -30,6 +38,7 @@ function continuityDetails(diagnostic: AssistantMessageDiagnostic): ContinuityDe
 		...(typeof details.reason === "string" ? { reason: details.reason } : {}),
 		...(typeof details.payloadBytes === "number" ? { payloadBytes: details.payloadBytes } : {}),
 		...(typeof details.collapsedDirectives === "number" ? { collapsedDirectives: details.collapsedDirectives } : {}),
+		...(typeof details.settingSource === "string" ? { settingSource: details.settingSource } : {}),
 	};
 }
 
@@ -73,19 +82,39 @@ export class ContinuityNoticeTracker {
 	}
 
 	noticeFor(message: AssistantMessage): string | undefined {
+		const notices: string[] = [];
 		for (const diagnostic of message.diagnostics ?? []) {
-			if (diagnostic.type === RESUME_FALLBACK_DIAGNOSTIC_TYPE) return this.format(RESUME_FALLBACK_LABEL);
+			if (diagnostic.type === RESUME_FALLBACK_DIAGNOSTIC_TYPE) {
+				notices.push(this.format(RESUME_FALLBACK_LABEL));
+				continue;
+			}
+			if (diagnostic.type === LONG_CONTEXT_FALLBACK_DIAGNOSTIC) {
+				notices.push(this.format(LONG_CONTEXT_FALLBACK_NOTICE));
+				continue;
+			}
 			const details = continuityDetails(diagnostic);
 			if (!details || !DEGRADATION_KINDS.has(details.kind)) continue;
 			if (details.kind === "disabled") {
+				// Only the resumeMode setting disables resume; a request with no session (registry_miss) is not a degradation.
+				if (details.reason !== undefined && details.reason !== "resume_mode_off") continue;
 				if (this.renderedDisabled) continue;
 				this.renderedDisabled = true;
+				const where =
+					details.settingSource === undefined ? undefined : SETTING_SOURCE_LABELS[details.settingSource];
+				if (where !== undefined) {
+					notices.push(
+						this.format(
+							`Session continuity disabled (resumeMode: off, set by ${where}) - resending the conversation each turn${payloadSuffix(details)}`,
+						),
+					);
+					continue;
+				}
 			}
 			const label = KIND_LABELS[details.kind] ?? "Session continuity degraded";
 			const base = details.reason ? `${label} (${details.reason})` : label;
-			return this.format(`${base}${payloadSuffix(details)}`);
+			notices.push(this.format(`${base}${payloadSuffix(details)}`));
 		}
-		return undefined;
+		return notices.length > 0 ? notices.join("\n") : undefined;
 	}
 
 	private format(text: string): string {

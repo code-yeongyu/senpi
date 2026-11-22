@@ -18,7 +18,11 @@ export function resolveToolMetadata(metadata, params) {
 	if (typeof description !== "string") {
 		throw kernelToolError("invalid_tool_definition", "tool() description must be a string");
 	}
-	if (metadata.schema === undefined) return { description, input_schema: defaultInputSchema(params) };
+	if (metadata.name !== undefined && typeof metadata.name !== "string") {
+		throw kernelToolError("invalid_tool_definition", "tool() name must be a string");
+	}
+	const named = metadata.name === undefined ? {} : { name: metadata.name };
+	if (metadata.schema === undefined) return { ...named, description, input_schema: defaultInputSchema(params) };
 	const schema = metadata.schema;
 	if (!isPlainJsonObject(schema) || schema.type !== "object" || !isPlainJsonObject(schema.properties)) {
 		throw kernelToolError("invalid_tool_definition", "tool() metadata schema must be a JSON object schema");
@@ -27,7 +31,7 @@ export function resolveToolMetadata(metadata, params) {
 	if (propertyKeys.length !== params.length || params.some((name) => !Object.hasOwn(schema.properties, name))) {
 		throw kernelToolError("invalid_tool_definition", "tool() metadata schema properties must match parameters");
 	}
-	return { description, input_schema: schema };
+	return { ...named, description, input_schema: schema };
 }
 
 export function validateInvokeArgs(schema, args) {

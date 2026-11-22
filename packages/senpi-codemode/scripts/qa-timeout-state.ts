@@ -38,7 +38,7 @@ try {
 		const ctx = { mode: "print" } as unknown as ExtensionContext;
 
 		// Cooperative interrupt: the runner answers SIGINT, so state must survive and
-		// the timeout message must say the kernel remains running.
+		// the timeout message must say the kernel was not restarted.
 		const cooperative = await tool
 			.execute("qa-coop", { language: "py", code: "x=42\nimport time\ntime.sleep(30)", on_timeout: "error", timeout: 1, summary: "Sleep 30s with 1s timeout to test cooperative interrupt and state preservation" }, undefined, undefined, ctx)
 			.then(() => "UNEXPECTED-SUCCESS", (error: Error) => `${error.name}: ${error.message}`);
@@ -50,7 +50,7 @@ try {
 		console.log(`STATE_READBACK: ${JSON.stringify(readback)}`);
 
 		if (!cooperative.includes("TimeoutError")) throw new QaScenarioError(`expected TimeoutError: ${cooperative}`);
-		if (!/remains running|preserved/i.test(cooperative))
+		if (!/not restarted; variables from earlier cells are kept/i.test(cooperative))
 			throw new QaScenarioError(`timeout message did not name preserved state: ${cooperative}`);
 		if (!readback.ok || readback.valueRepr !== "42")
 			throw new QaScenarioError(`python state did not survive timeout: ${JSON.stringify(readback)}`);

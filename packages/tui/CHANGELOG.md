@@ -12,6 +12,1317 @@
 
 ### Removed
 
+## [2026.11.22-2] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.22] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21-2] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.20] - 2026-11-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-5] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-4] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-3] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-2] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-3] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-2] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.17-2] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.17] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.15-4] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.15-3] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.15-2] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.15] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.13] - 2026-11-13
+
+### Breaking Changes
+
+### Added
+
+- Fullscreen Markdown selections copy original syntax and line breaks, including horizontal rules, reference links, autolinks and TeX formulas. Rules, reference-link URL suffixes and converted formulas select their whole source construct; changed display transforms copy rendered text. Source maps are generated on copy and kept in bounded caches.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.12] - 2026-11-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.11] - 2026-11-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-3] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-2] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-1] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.9-2] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.9] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-3] - 2026-11-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Alt+letter, digit and symbol keys sent in the legacy ESC-prefixed form are recognized while the Kitty keyboard protocol is negotiated, so Alt+Q (restore queued messages) works again on WSL in Windows Terminal 1.25+ ([#6058](https://github.com/code-yeongyu/senpi/issues/6058)).
+
+### Removed
+
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- An Enter written right after the text it submits is no longer swallowed as part of that paste: a CR that follows a paste with LF or CRLF line breaks submits the request, while an unbracketed paste whose own line breaks are bare CR keeps its trailing CR in the paste ([#3076](https://github.com/code-yeongyu/senpi/issues/3076), [#6102](https://github.com/code-yeongyu/senpi/pull/6102)).
+
+### Removed
+
+## [2026.11.5-1] - 2026-11-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-1] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Appending an inline Kitty image below a full terminal screen no longer clears the screen and scrollback and replays the whole transcript; the image scrolls into place like appended text. Thanks to @copycatcode for the report ([#4583](https://github.com/code-yeongyu/senpi/issues/4583))
+- Complete BEL-terminated OSC52 clipboard writes reach the terminal while the TUI stdout guard is active, preserving the validated bytes, writer completion and backpressure ([#5680](https://github.com/code-yeongyu/senpi/pull/5680))
+
+### Removed
+
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- `encodeProgramStatus` builds a sanitized OSC 7501 Program Status report ([#5323](https://github.com/code-yeongyu/senpi/issues/5323))
+
+### Changed
+
+### Fixed
+
+- Shift+Enter inserts a newline instead of submitting in macOS Terminal.app ([#5647](https://github.com/code-yeongyu/senpi/pull/5647))
+
+### Removed
+
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Add masked single-line input with instance-local editing buffers and explicit disposal. ([#5120](https://github.com/code-yeongyu/senpi/pull/5120))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- `MarkdownTheme` gains optional `strong`, `emphasis`, and `deleted` hooks for inline `**strong**`, `*em*`, and `~~del~~` text, falling back to `bold`, `italic`, and `strikethrough`. A hook color takes precedence over the surrounding heading or `DefaultTextStyle` color; headings and blockquotes keep using the generic style functions ([#3195](https://github.com/code-yeongyu/senpi/pull/3195)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A Kitty key release no longer turns main-screen mouse capture back on after the wheel handed the mouse to the terminal; only a key press or paste does ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
+
+### Removed
+
+## [2026.10.21-3] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Aborting a path autocompletion whose `fd` failed to start no longer signals the caller's own process group on Node < 24.22 / 26.10 ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
+
+- Inside herdr panes, inline images render again when the outer terminal supports the Kitty graphics protocol: image support is settled by a bounded Kitty graphics probe at TUI start instead of environment detection alone, and the `[image: <mime>]` placeholder stays when the probe fails or times out ([#3698](https://github.com/code-yeongyu/senpi/issues/3698)).
+
+### Removed
+
+## [2026.10.19] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- In main-screen mode the mouse wheel scrolls the terminal's scrollback again while a component holds a mouse lease: the first wheel notch hands the mouse back to the terminal, and the next key press takes it back ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
+
+- On Windows, a WezTerm build older than 20250208-160106 (including the 20240203 stable release) now shows the image placeholder with a hint to update WezTerm instead of a blank gap: its bundled ConPTY drops Kitty graphics before they reach WezTerm. Newer WezTerm nightly builds keep inline images ([#3596](https://github.com/code-yeongyu/senpi/issues/3596)).
+- Rows inserted at or above the viewport top (a running tool's expanded output above a tall live area such as the /btw panel) are no longer dropped, and stale copies of the live area are no longer pushed into the scrollback on every frame ([#3649](https://github.com/code-yeongyu/senpi/issues/3649))
+
+- Alt+key chords split across reads merge into one key when the bytes arrive within the escape reassembly window; WSL sessions get the 100ms remote window (detected by env markers or `/proc/version`) and an over-window gap is now deterministically treated as a lone Escape. The plain default rises from 10ms to the standard 50ms, so a local lone-Escape press (interrupt) settles up to 40ms later than before; explicit `escapeTimeout` and `PI_TUI_ESC_TIMEOUT` settings are unchanged ([#3628](https://github.com/code-yeongyu/senpi/issues/3628)).
+
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.13] - 2026-10-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.12] - 2026-10-12
+
+### Breaking Changes
+
+### Added
+
+- `EditorTheme.keywordHighlight` (`EditorKeywordHighlight`) decorates keyword runs per character with the offset inside the run, so a gradient stays continuous across wrapped rows; a mention or the cursor grapheme takes precedence, and row widths never change ([#3160](https://github.com/code-yeongyu/senpi/issues/3160), requested by @code-yeongyu).
+
+### Changed
+
+### Fixed
+
+- `PI_TUI_DEBUG` render dumps honor the configured OS temporary directory instead of writing to a hard-coded `/tmp/tui` path ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).
+
+### Removed
+
+## [2026.10.11] - 2026-10-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-12] - 2026-10-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-11] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-10] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-9] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-8] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Inside tmux, screen or Zellij, a focus event or a pane width change no longer re-emits the whole transcript into the pane's history: a pane that loses focus repaints nothing, and one that regains focus or changes width repaints only its visible rows, so scrollback is not flooded with a copy of the transcript per event ([#1704](https://github.com/code-yeongyu/senpi/issues/1704)).
+
+### Removed
+
+## [2026.10.10-6] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-5] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-4] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.9] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Accepting an `@` path suggestion with Tab or Enter while the picker still showed a list computed for earlier text no longer splices the stale item into the prompt (`@~/Dev` became `@~/De@go/`); the editor re-queries for the current token and accepts its best match ([#2735](https://github.com/code-yeongyu/senpi/issues/2735); [#2736](https://github.com/code-yeongyu/senpi/pull/2736) by [@trac3r00](https://github.com/trac3r00)).
+
+### Removed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.7] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+- `PI_TUI_BURST_WINDOW_MS` sets how long a line break ending a read with text is held in case the rest of a paste follows, when the terminal sends no bracketed-paste markers. It defaults to `100` ms over SSH and `20` ms otherwise, and `0` never holds a line break ([#2622](https://github.com/code-yeongyu/senpi/issues/2622), reported by [@Bearmancer](https://github.com/Bearmancer)).
+
+### Changed
+
+### Fixed
+
+- A multiline paste that arrives without bracketed-paste markers no longer submits one prompt per line: newline-bearing stdin bursts coalesce into a single `paste` event, so the editor receives one block ([#2600](https://github.com/code-yeongyu/senpi/issues/2600), [#2606](https://github.com/code-yeongyu/senpi/pull/2606) by [@Bearmancer](https://github.com/Bearmancer)).
+- An Enter typed right after other input is no longer lost when the next stdin read is half of a multibyte character (an emoji over SSH): the held line break is released on time, and a read that arrives after the paste window releases it as Enter instead of joining it to a later paste ([#2621](https://github.com/code-yeongyu/senpi/issues/2621), reported by [@Bearmancer](https://github.com/Bearmancer)).
+
+### Removed
+
+## [2026.10.3] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+- Exported `isWarpWslSession()` so clipboard handling can reuse the hardened direct-local Warp-on-WSL predicate without duplicating terminal detection; existing Shift+Enter normalization remains unchanged ([#2538](https://github.com/code-yeongyu/senpi/pull/2538) by [@deopa0402](https://github.com/deopa0402)).
+
+### Changed
+
+### Fixed
+
+- Frames over long output no longer re-scan every line: a frame whose line count changed reuses the unchanged normalized prefix, image presence is measured once per frame, and the main-screen renderer no longer walks the whole component tree and copies every line on each frame. Components can report `getRenderRevision()`, a change signal that containers caching their children's output use to tell when a child must render again ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
+
+- Fixed inherited color bleeding past mouse selections and search highlights in fullscreen mode when a styled token ends at the highlight boundary ([#10169](https://github.com/earendil-works/pi/issues/10169)).
+
+- Fixed inherited memory retained per rendered message: `Markdown` holds its parsed tokens weakly, and `Markdown`, `Text`, and `Box` flatten their cached lines. A long assistant message keeps about a fifth of the heap it kept before.
+
+- Fixed inherited slash command autocompletion not triggering when the input starts with whitespace ([#10218](https://github.com/earendil-works/pi/pull/10218) by [@haoqixu](https://github.com/haoqixu)).
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+- Replaced the inherited `TUI.queryTerminalColorScheme()` and `TUI.queryTerminalBackgroundColor()` with `TUI.queryTerminalColors()`, which reads the default foreground, background and 16 ANSI colors (OSC 10, 11 and 4) in one round trip and returns `TerminalColors`. `parseOsc11BackgroundColor()` is removed.
+
+### Added
+
+- Added inherited color values and styling: the `Color` type (indexed ANSI, sRGB or OKLCH), `parseColor()` for `#rgb`, `#rrggbb`, `oklch()` and `okhsl()` values, `indexedColor()`, `rgbColor()`, `oklchColor()`, `okhslColor()`, `mixColors()`, `colorToHex()`, `colorToRgb()`, `colorToOklch()`, `colorToOkhsl()`, `styleText()` and `getTerminalColorMode()`.
+
+- Added inherited `"auto"` for `TuiAltScreenOptions.wheelScrollLines`, which speeds up fast wheel spins on terminals that send one event per notch, and `TuiAltScreen.setWheelScrollLines()` for runtime updates ([#9758](https://github.com/earendil-works/pi/issues/9758)).
+
+- Added the inherited bundled asynchronous native clipboard readers for macOS, Windows and X11 through `getNativeClipboard()` ([#9163](https://github.com/earendil-works/pi/pull/9163)), and `NativeClipboard.getFilePaths()`, which reads file URLs from the macOS clipboard ([#9999](https://github.com/earendil-works/pi/issues/9999), [#10136](https://github.com/earendil-works/pi/pull/10136) by [@christianklotz](https://github.com/christianklotz)).
+
+### Changed
+
+- Terminals with `TERM=*-direct` are detected as truecolor (inherited).
+
+- Reduced inherited fuzzy search latency for long texts by using native substring search ([#9267](https://github.com/earendil-works/pi/issues/9267)).
+
+### Fixed
+
+- Fixed optional-argument command picker rows requiring two Enter presses. A command that declares `requiresArguments: false` submits on the first Enter; a row with an argument hint and no explicit flag still completes and waits ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
+
+- Fixed inherited `/skill` autocomplete appearing empty when loaded skill names did not contain the letters in `skill` ([#9944](https://github.com/earendil-works/pi/issues/9944)), and skill slash-command autocomplete ranking the `skill:` prefix instead of the bare skill name ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)).
+
+- Fixed inherited path and `@` autocomplete not working after opening wrappers such as `(`, `[`, `{`, `<` or a backtick, and file autocomplete boundaries and path quoting around CJK punctuation ([#9746](https://github.com/earendil-works/pi/pull/9746) by [@haoqixu](https://github.com/haoqixu)).
+
+- Fixed inherited image stretching in terminals that use the Kitty graphics protocol ([#8938](https://github.com/earendil-works/pi/issues/8938), [#9957](https://github.com/earendil-works/pi/pull/9957) by [@rwachtler](https://github.com/rwachtler)), and fullscreen Kitty images being erased by later row clears in WezTerm ([#9169](https://github.com/earendil-works/pi/issues/9169)).
+
+- Fixed inherited keyboard input being lost after a component that forwarded a mouse event to a child, such as `SettingsList` with an open submenu, removed that child.
+
+- Fixed the inherited shell cursor staying hidden after exit when an extension closed an overlay during shutdown ([#10026](https://github.com/earendil-works/pi/issues/10026)).
+
+- Fixed inherited fullscreen clipboard failures hiding actionable backend error messages behind a generic notice, and extended failure notices to five seconds ([#9618](https://github.com/earendil-works/pi/issues/9618)).
+
+- Fixed inherited LaTeX legacy font switches falling back to raw source, centered `cases` layouts, and nested display scripts, ported into the fork's `components/latex.ts` ([#8827](https://github.com/earendil-works/pi/issues/8827), [#9564](https://github.com/earendil-works/pi/issues/9564), [#7929](https://github.com/earendil-works/pi/issues/7929)).
+
+- Improved inherited rendering performance for styled text: `visibleWidth()` measures ANSI-styled ASCII without grapheme segmentation, `Box` checks its render cache without re-padding every line, and `Markdown` reuses parsed tokens across theme and width changes.
+
+### Removed
+
+## [2026.9.30] - 2026-09-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+- `AutocompleteItem.awaitsArguments` marks a slash row whose command declares an argument hint; `getSlashCommandSuggestions` sets it from `argumentHint`. `EditorComponent.onSubmit` gains an optional `EditorSubmitDetails` argument whose `rawText` is the submission before trimming.
+
+### Changed
+
+- Enter on a slash-picker row that takes arguments (its command declares an argument hint) now completes `/name ` and waits for the arguments instead of submitting; a second Enter submits. Rows without a hint still submit in one press, and Tab is unchanged.
+
+### Fixed
+
+### Removed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.9.28-7] - 2026-09-28
 
 ### Breaking Changes

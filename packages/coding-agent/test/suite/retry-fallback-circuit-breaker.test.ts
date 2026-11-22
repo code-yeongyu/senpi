@@ -17,13 +17,24 @@ const silentLogger: FallbackLogger = { debug() {}, info() {}, warn() {} };
 const window = { cooldownMs: 1_000, maxCooldownMs: 3_000 };
 
 describe("FallbackCircuitBreaker", () => {
-	it("doubles the cooldown on each consecutive open up to the ceiling", () => {
+	it("doubles the cooldown on each failed half-open probe up to the ceiling", () => {
 		const breaker = new FallbackCircuitBreaker();
 
 		expect(breaker.open(head, { now: 0, ...window })).toBe(1_000);
-		expect(breaker.open(head, { now: 0, ...window })).toBe(2_000);
-		expect(breaker.open(head, { now: 0, ...window })).toBe(3_000);
-		expect(breaker.open(head, { now: 0, ...window })).toBe(3_000);
+		expect(breaker.open(head, { now: 1_000, ...window })).toBe(3_000);
+		expect(breaker.open(head, { now: 3_000, ...window })).toBe(6_000);
+		expect(breaker.open(head, { now: 6_000, ...window })).toBe(9_000);
+	});
+
+	it("takes one backoff step per open episode, however many sessions fail inside it (senpi#3467)", () => {
+		// given six sessions failing on the same entry one second apart, inside the first open
+		const breaker = new FallbackCircuitBreaker();
+		const defaults = { cooldownMs: 60_000, maxCooldownMs: 1_800_000 };
+		const ends = [0, 1, 2, 3, 4, 5].map((second) => breaker.open(head, { now: second * 1_000, ...defaults }));
+
+		// then the circuit stays open for the first 60 s only, and a failed probe after it doubles once
+		expect(ends).toEqual([60_000, 60_000, 60_000, 60_000, 60_000, 60_000]);
+		expect(breaker.open(head, { now: 60_000, ...defaults })).toBe(180_000);
 	});
 
 	it("resets the escalation when the circuit closes", () => {
@@ -39,18 +50,29 @@ describe("FallbackCircuitBreaker", () => {
 
 	it("keeps the circuit open until a provider Retry-After longer than the cooldown", () => {
 		const breaker = new FallbackCircuitBreaker();
+		const ceiling = { cooldownMs: 1_000, maxCooldownMs: 1_800_000 };
 
-		expect(breaker.open(head, { now: 100, ...window, retryAfterMs: 600_000 })).toBe(600_100);
+		expect(breaker.open(head, { now: 100, ...ceiling, retryAfterMs: 600_000 })).toBe(600_100);
 		expect(breaker.isOpen(head, 600_099, "a")).toBe(true);
 		expect(breaker.isOpen(head, 600_100, "a")).toBe(false);
 	});
 
 	it("keeps an outstanding Retry-After deadline when a later failure carries no hint", () => {
 		const breaker = new FallbackCircuitBreaker();
+		const ceiling = { cooldownMs: 1_000, maxCooldownMs: 1_800_000 };
 
-		expect(breaker.open(head, { now: 0, ...window, retryAfterMs: 600_000 })).toBe(600_000);
-		expect(breaker.open(head, { now: 1_000, ...window })).toBe(600_000);
+		expect(breaker.open(head, { now: 0, ...ceiling, retryAfterMs: 600_000 })).toBe(600_000);
+		expect(breaker.open(head, { now: 1_000, ...ceiling })).toBe(600_000);
 		expect(breaker.isOpen(head, 599_999, "a")).toBe(true);
+	});
+
+	it("bounds a Retry-After longer than the ceiling so one half-open probe is admitted at the ceiling", () => {
+		const breaker = new FallbackCircuitBreaker();
+
+		expect(breaker.open(head, { now: 100, ...window, retryAfterMs: 600_000 })).toBe(3_100);
+		expect(breaker.admit(head, 3_099, "a")).toEqual({ kind: "open" });
+		expect(breaker.admit(head, 3_100, "a").kind).toBe("probe");
+		expect(breaker.admit(head, 3_100, "b")).toEqual({ kind: "open" });
 	});
 
 	it("admits exactly one probe owner and keeps it exclusive until it settles", () => {
@@ -147,12 +169,12 @@ describe("resolveFallbackCircuitSettings", () => {
 });
 
 describe("createFallbackCircuitAccess", () => {
-	function access(cooldownMs: number, breaker = new FallbackCircuitBreaker()) {
+	function access(cooldownMs: number, breaker = new FallbackCircuitBreaker(), maxCooldownMs = cooldownMs) {
 		return createFallbackCircuitAccess({
 			breaker,
 			owner: () => "session-a",
 			now: () => 0,
-			settings: () => ({ cooldownMs, maxCooldownMs: cooldownMs }),
+			settings: () => ({ cooldownMs, maxCooldownMs }),
 			logger: silentLogger,
 		});
 	}
@@ -167,7 +189,7 @@ describe("createFallbackCircuitAccess", () => {
 
 	it("reads a Retry-After carried as the error-message marker", () => {
 		const breaker = new FallbackCircuitBreaker();
-		const circuits = access(1_000, breaker);
+		const circuits = access(1_000, breaker, 1_800_000);
 
 		circuits.noteFailure(head, { errorMessage: "503: Provider unavailable (retry-after-ms: 90000)" });
 

@@ -8,7 +8,10 @@ import type {
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
+import type { JsEnvironments } from "../environments/js-environments.ts";
+import type { PythonEnvironments } from "../environments/python-environments.ts";
 import type { EvalExecutionTracker } from "../extension/session-manager.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { EvalTimeoutFactory } from "./cell-execution.ts";
 import type { EvalDetachedCellManager } from "./detached-cell-manager.ts";
 import type { EvalExecutionEventPayload } from "./eval-execution-event.ts";
@@ -50,6 +53,8 @@ export interface CreateEvalToolOptions {
 	readonly imageResizer?: EvalImageResizer;
 	readonly executionTracker?: EvalExecutionTracker;
 	readonly cellManager?: EvalDetachedCellManager;
+	/** The session generation's handle registry (`wait()`, `handle()`, completion handles); absent before session_start. */
+	readonly handles?: HandleRegistry;
 	readonly onCellSettled?: (payload: EvalExecutionEventPayload) => void;
 	readonly timeoutFactory?: EvalTimeoutFactory;
 	readonly proxyExecutor?: (params: EvalToolInput, signal?: AbortSignal) => Promise<AgentToolResult<EvalToolDetails>>;
@@ -62,12 +67,18 @@ export interface CreateEvalToolOptions {
 	readonly hostLine?: string;
 	/** Display identity of each language's runtime, shown in headers and details; `js` also selects the prompt's runtime line. */
 	readonly runtimes?: EvalRuntimes;
-	/** Absolute path of the active bun-1-4 skill; the prompt names it as MUST READ on a bun kernel. */
+	/** Absolute path of the active bun skill; the prompt names it as MUST READ on a bun kernel. */
 	readonly bunSkillPath?: string;
 	/** Kernel globals of the tools active when a cell is submitted; read once per cell. */
 	readonly kernelPreludes?: () => readonly KernelPreludeContribution[];
+	/** The session's Python environments: `%pip` / `%environment` cells and the import root of every Python cell. */
+	readonly pythonEnvironments?: PythonEnvironments;
+	/** The session's managed JavaScript packages: `%bun add` / `%npm add` cells and the bare-import fallback root. */
+	readonly jsEnvironments?: JsEnvironments;
 	/** Contributions whose documentation lines the description lists; snapshot taken when the tool is (re)registered. */
 	readonly promptKernelPreludes?: readonly KernelPreludeContribution[];
+	/** Tools the session reaches only through eval; the description names them. Snapshot taken at (re)registration. */
+	readonly evalOnlyTools?: readonly string[];
 }
 
 export interface EvalCellInvocation {

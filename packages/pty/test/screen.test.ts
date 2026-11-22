@@ -218,6 +218,29 @@ describe("TerminalScreen", () => {
 		}
 	});
 
+	it("drops its scrollback on dispose even while something else still holds the xterm instance", async () => {
+		// Bun keeps the last fired timer's callback alive, and xterm parses writes in a timer whose closure
+		// holds the terminal; a disposed screen must not keep its scrollback through such a holder (senpi#3423).
+		const originalDispose = xterm.Terminal.prototype.dispose;
+		const held: XtermTerminalType[] = [];
+		xterm.Terminal.prototype.dispose = function holdingDispose(this: XtermTerminalType): void {
+			held.push(this);
+			originalDispose.call(this);
+		};
+		try {
+			const screen = new TerminalScreen({ cols: 40, rows: 5, scrollback: 10_000 });
+			await screen.feed(Array.from({ length: 2_000 }, (_, i) => `row ${i}\r\n`).join(""));
+			await screen.flush();
+
+			screen.dispose();
+
+			expect(held).toHaveLength(1);
+			expect(held[0]?.buffer.active.length).toBeLessThanOrEqual(5);
+		} finally {
+			xterm.Terminal.prototype.dispose = originalDispose;
+		}
+	});
+
 	it("bounds the queued write backlog by coalescing into a bounded replay", async () => {
 		const originalWrite = xterm.Terminal.prototype.write;
 		let writtenChars = 0;

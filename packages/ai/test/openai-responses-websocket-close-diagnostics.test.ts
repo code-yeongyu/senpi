@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type OpenAIResponsesOptions, streamOpenAIResponses } from "../src/providers/openai-responses.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 // senpi#1628: same runtime fact as the Codex adapter - an unclean disconnect
 // arrives as a message-less `error` event and the `close` that follows names
 // the code and reason.
@@ -85,7 +87,7 @@ const NO_CLOSE_BOUND_MS = 1_000;
 
 async function runStream(): Promise<{ stopReason: string; errorMessage?: string }> {
 	const options = { apiKey: "test-key", transport: "websocket" } satisfies OpenAIResponsesOptions;
-	const result = await streamOpenAIResponses(model, context, options).result();
+	const result = await streamOpenAIResponses(model, normalizeContext(context), options).result();
 	return { stopReason: result.stopReason, errorMessage: result.errorMessage };
 }
 
@@ -96,6 +98,36 @@ afterEach(() => {
 });
 
 describe("OpenAI Responses websocket close diagnostics", () => {
+	it.each([
+		{
+			name: "nested provider error",
+			event: {
+				type: "error",
+				error: { code: null, message: "Tool choice 'web_search' not found in 'tools' parameter." },
+				status: 400,
+			},
+			expected: "Error Code 400: Tool choice 'web_search' not found in 'tools' parameter.",
+		},
+		{
+			name: "top-level provider error",
+			event: { type: "error", code: "invalid_prompt", message: "Bad request" },
+			expected: "Error Code invalid_prompt: Bad request",
+		},
+	])("reports the $name", async ({ event, expected }) => {
+		vi.useFakeTimers();
+		installMockWebSocket((socket) => {
+			socket.dispatch("message", { data: JSON.stringify(event) });
+			socket.dispatch("close", { code: 1000, reason: "done" });
+		});
+
+		const resultPromise = runStream();
+		await vi.advanceTimersByTimeAsync(0);
+		const result = await resultPromise;
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe(expected);
+	});
+
 	it("reports the close code and reason when the error event carries no message", async () => {
 		vi.useFakeTimers();
 		installMockWebSocket((socket) => {

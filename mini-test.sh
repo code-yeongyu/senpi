@@ -23,7 +23,7 @@ for arg in "$@"; do
       cat <<'USAGE'
 Usage: ./mini-test.sh [--dist] [--fresh] [--stop] [mini args...]
 
-  --dist    run built output with plain node instead of tsx on sources
+  --dist    run built output instead of sources
   --fresh   stop the detached session server first, so it picks up your changes
   --stop    stop the detached session server and exit
 
@@ -43,4 +43,6 @@ if [[ "$USE_DIST" == "true" ]]; then
   exec node "$MINI_DIST" ${ARGS[@]+"${ARGS[@]}"}
 fi
 
-exec "$SCRIPT_DIR/node_modules/.bin/tsx" --tsconfig "$SCRIPT_DIR/tsconfig.json" "$MINI_SRC" ${ARGS[@]+"${ARGS[@]}"}
+# --import takes a module specifier, so pass the resolver as a file URL (raw paths break on #, ?, %).
+RESOLVER_URL="$(node -p 'require("node:url").pathToFileURL(process.argv[1]).href' "$SCRIPT_DIR/packages/coding-agent/src/experimental/source-resolver.ts")"
+exec node --import "$RESOLVER_URL" "$MINI_SRC" ${ARGS[@]+"${ARGS[@]}"}

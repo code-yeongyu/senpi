@@ -1,4 +1,3 @@
-mod abi;
 mod binary_and_prefix;
 mod cancel;
 mod context_and_columns;

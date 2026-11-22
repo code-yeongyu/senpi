@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionContext } from "@code-yeongyu/senpi";
+import type { ExtensionContext, ExtensionToolContext } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "../src/extension/wake-source-state.ts";
@@ -183,6 +183,7 @@ class WiringSessionManager implements CodemodeSessionManager {
 
 const artifactsRoot = join(tmpdir(), `senpi-codemode-channel-wiring-${process.pid}`);
 
+// oxlint-disable-next-line jest/no-duplicate-hooks -- a second top-level hook kept separate; merging them would change the hook order
 afterEach(async () => {
 	await rm(artifactsRoot, { recursive: true, force: true });
 });
@@ -198,7 +199,7 @@ async function sessionCwd(): Promise<string> {
 	return cwd;
 }
 
-function wiringContext(cwd: string, calls: StatusCall[]): ExtensionContext {
+function wiringContext(cwd: string, calls: StatusCall[]): ExtensionToolContext {
 	const base = fakeExtensionContext();
 	const theme = Object.create(null);
 	theme.fg = (_color: string, text: string): string => text;
@@ -217,7 +218,7 @@ function wiringContext(cwd: string, calls: StatusCall[]): ExtensionContext {
 async function detachOne(
 	pi: WiringPi,
 	kernel: FakeKernel,
-	ctx: ExtensionContext,
+	ctx: ExtensionToolContext,
 	cellId: string,
 	summary: string,
 ): Promise<void> {

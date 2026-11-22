@@ -20,10 +20,22 @@ function getState(env: ExecutionEnv): MutationQueueState {
 
 async function getMutationQueueKey(env: ExecutionEnv, path: string, context: Context): Promise<string> {
 	const absolutePath = getOrThrow(await env.absolutePath(path, context));
+	return canonicalKeyPath(env, absolutePath, context);
+}
+
+/**
+ * The canonical path; for a file that does not exist yet, its canonical parent joined with its name, so a write that
+ * creates a file and a later mutation of it share one key even when one of them goes through a symlinked directory.
+ */
+async function canonicalKeyPath(env: ExecutionEnv, absolutePath: string, context: Context): Promise<string> {
 	const canonicalPath = await env.canonicalPath(absolutePath, context);
 	if (canonicalPath.ok) return canonicalPath.value;
-	if (canonicalPath.error.code === "not_found" || canonicalPath.error.code === "not_supported") return absolutePath;
-	throw canonicalPath.error;
+	if (canonicalPath.error.code === "not_supported") return absolutePath;
+	if (canonicalPath.error.code !== "not_found") throw canonicalPath.error;
+	const parent = getOrThrow(await env.joinPath([absolutePath, ".."], context));
+	if (parent === absolutePath || !absolutePath.startsWith(parent)) return absolutePath;
+	const name = absolutePath.slice(parent.length + (/[/\\]$/.test(parent) ? 0 : 1));
+	return getOrThrow(await env.joinPath([await canonicalKeyPath(env, parent, context), name], context));
 }
 
 /** Serialize file mutations targeting the same environment and canonical path. */

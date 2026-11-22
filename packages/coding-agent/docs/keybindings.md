@@ -130,6 +130,16 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.clipboard.pasteImage` | `ctrl+v` (`alt+v` on Windows and WSL) | Paste image or text from clipboard |
 | `app.history.search` | `ctrl+r` | Search prompt history across sessions |
 
+Direct local Warp-on-WSL sessions accept both `ctrl+v` and `alt+v` for clipboard paste. Other Windows/WSL terminals keep `alt+v`; SSH and multiplexer sessions do not enable the Warp-specific default. Explicit user bindings replace the shortcut defaults, but do not disable terminal-native bracketed-paste events.
+
+When Warp sends an empty bracketed-paste event for a Windows clipboard image, the direct Warp-on-WSL composer reads the system clipboard through the same image/text paste handler. Non-empty bracketed text pastes and other terminal sessions keep their existing behavior.
+
+This compatibility handling is limited to direct Warp-on-WSL sessions. It does not add Ctrl+V image paste support to Windows Terminal, native Windows, other WSL terminals, SSH, or multiplexers.
+
+User-verified image attachment after Ctrl+V in Warp on WSL:
+
+![Warp-on-WSL composer with an attached clipboard image](images/warp-wsl-clipboard-paste.png)
+
 ### Sessions
 
 | Keybinding id | Default | Description |
@@ -153,7 +163,7 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.model.select` | `ctrl+l` | Open model selector |
 | `app.model.cycleForward` | `ctrl+p` | Cycle to next model |
 | `app.model.cycleBackward` | `shift+ctrl+p` (`alt+p` on Windows and WSL) | Cycle to previous model |
-| `app.models.save` | `ctrl+s` | Save the selected default model or scoped model configuration to settings |
+| `app.models.save` | `ctrl+s` | In the model picker, select the highlighted model and make it the default for new sessions; in the scoped models selector, save the configuration |
 | `app.thinking.cycle` | `shift+tab` | Cycle thinking level |
 | `app.thinking.save` | `ctrl+s` | Save current thinking level to settings |
 | `app.thinking.toggle` | `ctrl+t` | Collapse or expand thinking blocks |

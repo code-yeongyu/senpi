@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/google-shared.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 // Regression for #2114: Gemini expects user and model turns to alternate, so adjacent same-role turns are folded.
 
@@ -53,7 +54,7 @@ describe("google-shared role alternation (#2114)", () => {
 			],
 		};
 
-		const contents = convertMessages(model, context);
+		const contents = convertMessages(model, normalizeContext(context));
 
 		expect(contents).toEqual([
 			{
@@ -84,7 +85,7 @@ describe("google-shared role alternation (#2114)", () => {
 			],
 		};
 
-		const contents = convertMessages(model, context);
+		const contents = convertMessages(model, normalizeContext(context));
 
 		expect(contents.map((content) => content.role)).toEqual(["user", "model", "user"]);
 		const parts = contents[2].parts ?? [];
@@ -102,7 +103,7 @@ describe("google-shared role alternation (#2114)", () => {
 			],
 		};
 
-		const contents = convertMessages(model, context);
+		const contents = convertMessages(model, normalizeContext(context));
 
 		expect(contents).toEqual([
 			{ role: "user", parts: [{ text: "Hi" }] },

@@ -88,6 +88,28 @@ describe("output metadata", () => {
 		expect(warning).toBe("[Showing lines 1-2 and 9-10 of 10; 6 middle lines (1.0KB) elided]");
 	});
 
+	it("names the byte count when the elided middle sits inside one line", () => {
+		// Given
+		const meta = {
+			direction: "middle",
+			truncatedBy: "middle",
+			totalLines: 2,
+			totalBytes: 120_007,
+			outputLines: 3,
+			outputBytes: 71_703,
+			headRange: { start: 1, end: 1 },
+			tailRange: { start: 2, end: 2 },
+			elidedLines: 0,
+			elidedBytes: 48_327,
+		} satisfies TruncationMeta;
+
+		// When
+		const warning = formatTruncationWarning(meta);
+
+		// Then
+		expect(warning).toBe("[47.2KB elided from the middle of a line]");
+	});
+
 	it("strips the formatted warning from a completed output", () => {
 		// Given
 		const warning = formatTruncationWarning(tailMeta);

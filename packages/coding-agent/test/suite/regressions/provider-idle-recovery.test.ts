@@ -97,7 +97,11 @@ describe("provider idle recovery", () => {
 
 	it("does not re-enable disabled stream guards during a timeout retry", async () => {
 		const harness = await createHarness({
-			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } },
+			settings: {
+				turn_inactivity_ms: 0,
+				turn_max_runtime_ms: 0,
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			},
 		});
 		harnesses.push(harness);
 		harness.agent.timeoutMs = undefined;
@@ -215,7 +219,7 @@ describe("provider idle recovery", () => {
 				{
 					success: false,
 					attempt: 3,
-					finalError: expect.stringContaining("Provider retry continuation watchdog timed out"),
+					finalError: expect.stringContaining("The retried request never started streaming"),
 				},
 			]);
 			expect(harness.eventsOfType("auto_retry_end").at(-1)?.finalError).not.toContain("Request was aborted");
@@ -229,7 +233,11 @@ describe("provider idle recovery", () => {
 	it("expires a no-first-event retry at the reconciled continuation bound without shortening the provider guards", async () => {
 		vi.useFakeTimers();
 		const harness = await createHarness({
-			settings: { retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 } },
+			settings: {
+				turn_inactivity_ms: 0,
+				turn_max_runtime_ms: 0,
+				retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 },
+			},
 		});
 		harnesses.push(harness);
 		harness.agent.timeoutMs = DEFAULT_PROVIDER_IDLE_TIMEOUT_MS;
@@ -295,5 +303,114 @@ describe("provider idle recovery", () => {
 			if (harness.session.isStreaming) await harness.session.abort();
 			await prompt;
 		}
+	});
+
+	it("lets a retried request that started streaming run past the continuation bound (senpi#2804)", async () => {
+		vi.useFakeTimers();
+		const retryTimeoutMs = 1_000;
+		const harness = await createHarness({
+			settings: {
+				retry: {
+					enabled: true,
+					modelFallback: false,
+					maxRetries: 1,
+					baseDelayMs: 0,
+					provider: { streamRetryTimeoutMs: retryTimeoutMs },
+				},
+				turn_inactivity_ms: 0,
+				turn_max_runtime_ms: 0,
+			},
+		});
+		harnesses.push(harness);
+		harness.agent.timeoutMs = undefined;
+		harness.agent.streamStartTimeoutMs = undefined;
+		const retryStreaming = createDeferred();
+		let retryStream: EventStream<AssistantMessageEvent, AssistantMessage> | undefined;
+		let providerCalls = 0;
+		harness.agent.streamFunction = () => {
+			providerCalls++;
+			const stream = createAssistantStream();
+			if (providerCalls === 1) {
+				queueMicrotask(() => stream.push({ type: "error", reason: "error", error: genericTimeoutError() }));
+			} else {
+				retryStream = stream;
+				queueMicrotask(() => {
+					stream.push({ type: "start", partial: fauxAssistantMessage("") });
+					retryStreaming.resolve();
+				});
+			}
+			return stream;
+		};
+
+		const prompt = harness.session.prompt("first request");
+		try {
+			await vi.runOnlyPendingTimersAsync();
+			await retryStreaming.promise;
+			// The retry is streaming; it then works for three times the continuation bound.
+			await vi.advanceTimersByTimeAsync(retryTimeoutMs * 3);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(harness.session.isStreaming).toBe(true);
+
+			const answer = fauxAssistantMessage("finished after a long turn");
+			retryStream?.push({ type: "done", reason: "stop", message: answer });
+			await prompt;
+
+			expect(providerCalls).toBe(2);
+			expect(harness.session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop" });
+			expect(harness.eventsOfType("auto_retry_end")).toMatchObject([{ success: true }]);
+		} finally {
+			if (harness.session.isStreaming) await harness.session.abort();
+			await prompt;
+		}
+	});
+
+	it("still ends a streaming retry as the user's abort when the user aborts it (senpi#2804)", async () => {
+		vi.useFakeTimers();
+		const harness = await createHarness({
+			settings: {
+				retry: {
+					enabled: true,
+					modelFallback: false,
+					maxRetries: 1,
+					baseDelayMs: 0,
+					provider: { streamRetryTimeoutMs: 1_000 },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.agent.timeoutMs = undefined;
+		harness.agent.streamStartTimeoutMs = undefined;
+		const retryStreaming = createDeferred();
+		let providerCalls = 0;
+		harness.agent.streamFunction = (_model, _context, options) => {
+			providerCalls++;
+			const stream = createAssistantStream();
+			if (providerCalls === 1) {
+				queueMicrotask(() => stream.push({ type: "error", reason: "error", error: genericTimeoutError() }));
+			} else {
+				options?.signal?.addEventListener("abort", () =>
+					stream.push({
+						type: "error",
+						reason: "aborted",
+						error: fauxAssistantMessage("", { stopReason: "aborted" }),
+					}),
+				);
+				queueMicrotask(() => {
+					stream.push({ type: "start", partial: fauxAssistantMessage("") });
+					retryStreaming.resolve();
+				});
+			}
+			return stream;
+		};
+
+		const prompt = harness.session.prompt("first request");
+		await vi.runOnlyPendingTimersAsync();
+		await retryStreaming.promise;
+		await harness.session.abort();
+		await prompt;
+
+		const tail = harness.session.messages.at(-1);
+		expect(tail).toMatchObject({ stopReason: "aborted" });
+		expect(tail).not.toMatchObject({ abortSource: "provider" });
 	});
 });

@@ -2,9 +2,8 @@ import type { Op } from "../delta/index.ts";
 import type { Context } from "../types.ts";
 
 export interface ReplicatedStateInternals {
-	readonly sequence: number;
-	readonly value: unknown;
-	publish(context: Context): void;
+	/** Atomically capture the immutable value and its matching publication sequence. */
+	snapshot(): { readonly value: unknown; readonly sequence: number };
 	subscribe(listener: (ops: readonly Op[], sequence: number, context: Context) => void): () => void;
 }
 

@@ -20,6 +20,8 @@ import {
 } from "../src/api/devin-agent/wire.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const MODEL: Model<"devin-agent"> = {
 	id: "swe-1-6",
 	name: "SWE-1.6",
@@ -125,7 +127,12 @@ describe("devin-agent wire", () => {
 	});
 
 	it("frames a request as one gzipped Connect frame", async () => {
-		const request = buildDevinChatRequest({ model: MODEL, context: CONTEXT, apiKey: "abc", cascadeId: "c" });
+		const request = buildDevinChatRequest({
+			model: MODEL,
+			context: normalizeContext(CONTEXT),
+			apiKey: "abc",
+			cascadeId: "c",
+		});
 		const frame = encodeDevinRequestFrame(GetChatMessageRequestSchema, request);
 
 		expect(frame[0]).toBe(0x01);

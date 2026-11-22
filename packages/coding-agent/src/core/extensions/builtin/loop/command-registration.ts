@@ -15,6 +15,7 @@ export function registerLoopCommand(pi: ExtensionAPI, deps: LoopCommandDeps): vo
 	pi.registerCommand("loop", {
 		description: LOOP_COMMAND_DESCRIPTION,
 		argumentHint: LOOP_ARGUMENT_HINT,
+		requiresArguments: false,
 		getArgumentCompletions: completeLoopArguments,
 		handler: (rawArgs, ctx) => runLoopCommand(rawArgs, ctx, deps),
 	});

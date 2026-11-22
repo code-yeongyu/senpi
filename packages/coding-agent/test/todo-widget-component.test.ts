@@ -4,7 +4,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import todotoolsExtension from "../src/core/extensions/builtin/todotools/index.ts";
 import { TODO_STATE_ENTRY_TYPE, type TodoStateEntry } from "../src/core/extensions/builtin/todotools/state.ts";
 import type { TODO_PARAMS_SCHEMA } from "../src/core/extensions/builtin/todotools/tools/todo.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/core/extensions/types.ts";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionToolContext,
+	ToolDefinition,
+} from "../src/core/extensions/types.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import {
 	TODO_STRIKE_FRAME_INTERVAL_MS,
@@ -93,7 +98,7 @@ async function executeTodo(
 	params: TodoParams,
 ): Promise<void> {
 	if (!tool.execute) throw new Error("Expected the todo tool to execute");
-	await tool.execute("todo-test", params, new AbortController().signal, () => {}, ctx);
+	await tool.execute("todo-test", params, new AbortController().signal, () => {}, ctx as ExtensionToolContext);
 }
 
 afterEach(() => {

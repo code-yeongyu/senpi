@@ -3,16 +3,17 @@
 // `reservations/` was honored purely because its owner process still existed - so a superseded,
 // attachment-less generation could make a session file unopenable for as long as it lived.
 import { spawn } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths, type HostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { pruneDeadGenerations } from "../../../src/modes/rpc/host-generations.ts";
 import { createSessionPathReservations, reservationFile } from "../../../src/modes/rpc/host-reservations.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
+import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { waitForPidGone } from "../../helpers/spawned-host-reaper.ts";
 
 const roots: string[] = [];
@@ -88,12 +89,19 @@ describe("a session-path claim across generations", () => {
 });
 
 describe("the daemon directory", () => {
-	it("is pruned of dead generations, their pointer and their claims", async () => {
+	// senpi#1911: dropping the dead pointer used to leave the live, provable generation ownerless.
+	it("is pruned of dead generations and their claims, and points at the one live generation left", async () => {
 		const daemon = await daemonDirectory("prune");
 		const dead = await endedPid();
 		const alive = await stranger();
 		await writeGeneration(daemon.paths, { instanceId: "gone", pid: dead, generation: 0 });
-		await writeGeneration(daemon.paths, { instanceId: "live", pid: alive.pid, generation: 1 });
+		await writeGeneration(daemon.paths, {
+			instanceId: "live",
+			pid: alive.pid,
+			generation: 1,
+			processStartTime: alive.processStartTime,
+			socket: daemon.socket,
+		});
 		await writePointer(daemon.paths, "gone");
 		await writeClaim(daemon.paths, {
 			instanceId: "gone",
@@ -109,7 +117,14 @@ describe("the daemon directory", () => {
 		expect(pruned.claims).toEqual([join(daemon.root, "orphan.jsonl")]);
 		expect(await readdir(daemon.paths.generationsDir)).toEqual(["live"]);
 		expect(await claimFiles(daemon.paths.reservationsDir)).toEqual([]);
-		expect(existsSync(daemon.paths.pointerFile)).toBe(false);
+
+		// The read `host status` makes is the one that prunes in production; it re-points the directory.
+		const status = await readHostStatus({ socket: daemon.socket, agentDir: daemon.agentDir });
+
+		expect(status).toMatchObject({ pointer: { state: "elected", instanceId: "live", candidates: ["live"] } });
+		expect(JSON.parse(await readFile(daemon.paths.pointerFile, "utf8"))).toMatchObject({ instance_id: "live" });
+		expect((await readHostRegistration(daemon.paths))?.instanceId).toBe("live");
+		expect(status.generations).toMatchObject([{ instanceId: "live", current: true, alive: true }]);
 	});
 
 	it("is reported by host status as one row per alive generation", async () => {
@@ -212,7 +227,13 @@ async function readClaim(paths: HostDaemonPaths, sessionPath: string): Promise<R
 
 async function writeGeneration(
 	paths: HostDaemonPaths,
-	record: { instanceId: string; pid: number; generation: number },
+	record: {
+		instanceId: string;
+		pid: number;
+		generation: number;
+		processStartTime?: string | null;
+		socket?: string;
+	},
 ): Promise<void> {
 	const dir = join(paths.generationsDir, record.instanceId);
 	await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -220,10 +241,11 @@ async function writeGeneration(
 		join(dir, "host.pid"),
 		`${JSON.stringify({
 			pid: record.pid,
-			processStartTime: null,
+			processStartTime: record.processStartTime ?? null,
 			instance_id: record.instanceId,
 			generation: record.generation,
 			engineVersion: "test",
+			...(record.socket !== undefined && { socket: record.socket }),
 		})}\n`,
 		{ mode: 0o600 },
 	);

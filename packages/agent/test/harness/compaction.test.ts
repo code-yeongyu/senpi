@@ -158,6 +158,29 @@ describe("harness compaction", () => {
 		expect(calculateContextTokens(createMockUsage(0, 0, 0, 0))).toBe(0);
 	});
 
+	// oh-my-openagent#10792: compaction uses occupied context, not cumulative billing.
+	it("keeps cumulative SDK billing below the context threshold when the last request fits", () => {
+		const usage = Object.assign(createMockUsage(2_000, 300, 700_000), {
+			contextUsage: { input: 352_000, output: 200 },
+		});
+		const message = createAssistantMessage("done", usage);
+		const estimate = estimateContextTokens([message]);
+		expect(estimate.tokens).toBe(352_200);
+		expect(
+			shouldCompact(estimate.tokens, 1_000_000, {
+				enabled: true,
+				reserveTokens: 300_000,
+				keepRecentTokens: 20_000,
+			}),
+		).toBe(false);
+		expect(usage.totalTokens).toBe(702_300);
+	});
+
+	it("estimates content when no request-level context measurement exists", () => {
+		const usage = Object.assign(createMockUsage(700_000, 300), { contextUsage: null });
+		expect(estimateContextTokens([createAssistantMessage("done", usage)]).tokens).toBe(1);
+	});
+
 	it("checks compaction threshold", () => {
 		const settings: CompactionSettings = {
 			enabled: true,
@@ -607,7 +630,8 @@ describe("harness compaction", () => {
 		const { faux, model } = createFauxModel(false);
 		faux.setResponses([
 			(context) => {
-				const message = context.messages[0];
+				// The transcript leads with the summarization system prompt; the request is the first user message.
+				const message = context.messages.find((entry) => entry.role === "user");
 				const content = message?.role === "user" ? message.content : [];
 				promptText = Array.isArray(content) && content[0]?.type === "text" ? content[0].text : "";
 				return fauxAssistantMessage("## Goal\nTest summary");
@@ -698,6 +722,75 @@ describe("harness compaction", () => {
 			BACKGROUND_CONTEXT,
 		);
 		expect(abortedResult).toMatchObject({ ok: false, error: { code: "aborted", message: "stopped" } });
+	});
+
+	it.each([
+		["a truncated answer", { ...createAssistantMessage("## Goal\nHalf a summ"), stopReason: "length" as const }],
+		[
+			"a tool call",
+			{
+				...createAssistantMessage(""),
+				content: [{ type: "toolCall" as const, id: "call-1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse" as const,
+			},
+		],
+		["an empty answer", createAssistantMessage("  \n")],
+	])("fails instead of replacing history with %s", async (_name, response: AssistantMessage) => {
+		const { model } = createFauxModel(false);
+		const result = await generateSummary(
+			[createUserMessage("Summarize this.")],
+			createModelsWithSimpleResponses([response]),
+			model,
+			2000,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			BACKGROUND_CONTEXT,
+		);
+		expect(result).toMatchObject({ ok: false, error: { code: "summarization_failed" } });
+	});
+
+	it("fails a split-turn compaction whose turn-prefix summary is empty", async () => {
+		const messages: AgentMessage[] = [createUserMessage("large turn")];
+		const preparation: CompactionPreparation = {
+			messagesToSummarize: [createUserMessage("history")],
+			turnPrefixMessages: messages,
+			retainedTail: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+		const { model } = createFauxModel(false);
+		const responses = createModelsWithSimpleResponses([
+			createAssistantMessage("## Goal\nHistory summary"),
+			createAssistantMessage(""),
+		]);
+
+		expect(
+			await compact(preparation, responses, model, undefined, undefined, undefined, undefined, BACKGROUND_CONTEXT),
+		).toMatchObject({ ok: false, error: { code: "summarization_failed" } });
+	});
+
+	it("estimates a compacted path from content until a newer response reports usage", () => {
+		const question = createUserMessage("question");
+		const answer = createAssistantMessage("answer", createMockUsage(190_000, 1_000));
+		const u1 = createMessageEntry(question);
+		const a1 = createMessageEntry(answer, u1.id);
+		const compaction = createCompactionEntry("summary", a1.id, [question, answer]);
+		const next = createMessageEntry(createUserMessage("next prompt"), compaction.id);
+		const settings = { enabled: true, reserveTokens: 16_384, keepRecentTokens: 1 };
+
+		const stale = getOrThrow(prepareCompaction([u1, a1, compaction, next], settings));
+		expect(stale?.tokensBefore).toBeLessThan(1_000);
+		expect(shouldCompact(stale?.tokensBefore ?? 0, 200_000, settings)).toBe(false);
+
+		const fresh = createMessageEntry(createAssistantMessage("fresh", createMockUsage(195_000, 1_000)), next.id);
+		const measured = getOrThrow(prepareCompaction([u1, a1, compaction, next, fresh], settings));
+		expect(measured?.tokensBefore).toBe(196_000);
+		expect(shouldCompact(measured?.tokensBefore ?? 0, 200_000, settings)).toBe(true);
 	});
 
 	it("clamps compaction summary maxTokens to the model output cap", async () => {

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICodexResponses } from "../src/api/openai-codex-responses.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -77,7 +79,7 @@ describe("codex 429 retry-hint marker", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamOpenAICodexResponses(makeModel(), makeContext(), {
+		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(makeContext()), {
 			apiKey: token,
 			transport: "sse",
 			maxRetries: 0,
@@ -112,7 +114,7 @@ describe("codex 429 retry-hint marker", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamOpenAICodexResponses(makeModel(), makeContext(), {
+		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(makeContext()), {
 			apiKey: token,
 			transport: "sse",
 			maxRetries: 0,
@@ -147,7 +149,7 @@ describe("codex 429 retry-hint marker", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamOpenAICodexResponses(makeModel(), makeContext(), {
+		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(makeContext()), {
 			apiKey: token,
 			transport: "sse",
 			maxRetries: 0,
@@ -176,7 +178,7 @@ describe("codex 429 retry-hint marker", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamOpenAICodexResponses(makeModel(), makeContext(), {
+		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(makeContext()), {
 			apiKey: token,
 			transport: "sse",
 			maxRetries: 0,
@@ -205,7 +207,7 @@ describe("codex 429 retry-hint marker", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamOpenAICodexResponses(makeModel(), makeContext(), {
+		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(makeContext()), {
 			apiKey: token,
 			transport: "sse",
 			maxRetries: 0,

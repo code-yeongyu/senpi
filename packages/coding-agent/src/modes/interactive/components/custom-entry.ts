@@ -21,6 +21,11 @@ export class CustomEntryComponent extends Container {
 		this.rebuild();
 	}
 
+	/** Rendered entirely by children that this class rebuilds on every state change. */
+	override getRenderRevision(): number | undefined {
+		return this.childRenderRevision();
+	}
+
 	get customEntry(): CustomEntry<unknown> {
 		return this.entry;
 	}

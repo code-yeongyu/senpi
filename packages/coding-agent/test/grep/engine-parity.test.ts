@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import type { GrepEngineRequest, GrepEngineResult } from "../../src/core/tools/grep/engine.ts";
 import { getNativeGrepCandidatePaths } from "../../src/core/tools/grep/native-loader.ts";
 import { createRgEngine } from "../../src/core/tools/grep/rg-engine.ts";
@@ -70,7 +70,7 @@ if (hasAddon) {
 						normalizeTool(
 							await createGrepToolDefinition(fixture.root).execute("parity", input, undefined, undefined, {
 								cwd: fixture.root,
-							} as ExtensionContext),
+							} as ExtensionToolContext),
 						),
 					);
 				}

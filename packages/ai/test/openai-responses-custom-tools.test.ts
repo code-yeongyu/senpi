@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { convertResponsesMessages, convertResponsesTools } from "../src/providers/openai-responses-shared.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const applyPatchTool: Tool = {
 	name: "apply_patch",
 	description: "freeform",
@@ -91,7 +93,7 @@ describe("openai responses custom tool support", () => {
 			tools: [applyPatchTool],
 		};
 
-		expect(convertResponsesMessages(model, context, new Set(["openai"]))).toMatchObject([
+		expect(convertResponsesMessages(model, normalizeContext(context), new Set(["openai"]))).toMatchObject([
 			{
 				type: "custom_tool_call",
 				call_id: "call_1",
@@ -144,7 +146,7 @@ describe("openai responses custom tool support", () => {
 		};
 
 		const replayModel = { ...model, id: "gpt-5-replay" } as Model<"openai-responses">;
-		const items = convertResponsesMessages(replayModel, context, new Set(["openai"]));
+		const items = convertResponsesMessages(replayModel, normalizeContext(context), new Set(["openai"]));
 		expect(items).toEqual([
 			{
 				type: "custom_tool_call",
@@ -161,7 +163,7 @@ describe("openai responses custom tool support", () => {
 	it("gives an active grammar declaration precedence over sentinel freeform recovery", () => {
 		const items = convertResponsesMessages(
 			model,
-			{
+			normalizeContext({
 				messages: [
 					{
 						role: "assistant",
@@ -182,7 +184,7 @@ describe("openai responses custom tool support", () => {
 					},
 				],
 				tools: [],
-			},
+			}),
 			new Set(["openai"]),
 			{ grammarToolInputProperties: new Map([["apply_patch", "patch"]]) },
 		);
@@ -222,7 +224,7 @@ describe("openai responses custom tool support", () => {
 			tools: [],
 		};
 
-		expect(convertResponsesMessages(model, context, new Set(["openai"]))).toEqual([
+		expect(convertResponsesMessages(model, normalizeContext(context), new Set(["openai"]))).toEqual([
 			{
 				type: "function_call",
 				id: "fc_item_2",

@@ -8,7 +8,7 @@ Fork-introduced system-prompt assembler. Replaces upstream's static `buildSystem
 dynamic-prompt/
 ├── build.ts                # buildDynamicSystemPrompt() + BuildDynamicSystemPromptOptions (+ corePrompt override) — assembler, public entry
 ├── index.ts                # Public re-exports
-├── types.ts                # AvailableTool
+├── types.ts                # AvailableTool, PromptSurface
 ├── identity.ts             # buildIdentitySection() — senpi neutral identity
 ├── intent-gate.ts          # buildIntentGate() — routing line with declared stop condition + intent-family rules
 ├── working-task.ts         # buildWorkingTaskSection() — parallel waves, exploration stops, one-plan commitment
@@ -37,7 +37,7 @@ dynamic-prompt/
 ## SECTION ORDER (assembled in `build.ts`)
 
 1. **Identity** — senpi-neutral hero line
-2. **Intent gate** — forced `I read this as [intent] - [plan]. I'll stop when [...]` routing line + intent-family rules
+2. **Intent gate** — forced `I read this as [intent] - [plan]. I'll stop when [...]` routing line (terminal surface) + intent-family rules
 3. **Working the task** — parallel waves, read-before-claim, exploration stops, one-plan commitment
 4. **Verification** — V1/V2/V3 tiers + claim audit
 5. **Tool reference** — categorized snippets + guidelines from registered tools
@@ -52,7 +52,9 @@ The prompt carries no date or cwd: both reach the model as an append-only `envir
 
 ## CONVENTIONS
 
-- **Forced verbalization** (2026-04-30): every prompt mandates a `I read this as [intent] - [plan].` line. Do NOT silently revert to "internal-only" routing — the 2026-04-30 entry reversed that experiment.
+- **Forced verbalization** (2026-04-30): every terminal-surface prompt mandates a `I read this as [intent] - [plan].` line. Do NOT silently revert to "internal-only" routing there — the 2026-04-30 entry reversed that experiment.
+- **Prompt surface** (2026-09-29, senpi#2377): `surface` (`BuildDynamicSystemPromptOptions`, `DynamicPromptCoreContext`) comes from the session's launch profile (`open_session.promptSurface` on a shared RPC host) and otherwise from `SENPI_PROMPT_SURFACE=app` (`resolvePromptSurface`, read in `agent-session.ts`); anything else is `terminal`. On `app` (a host that renders replies as chat) every built-in prompt keeps its intent-family rules and stop-condition discipline, carries NO routing-line instruction or reference (replaced at the source, never contradicted by an appended rule), and its claim audit (the verification text, never the Intent Gate) covers a check that did not run with the evidence that did run and is the one home of the tool-and-hook-feedback guidance (`APP_UNRUN_CHECK_RULE`). Terminal renders stay byte-identical; `test/suite/prompt-presets-app-surface.test.ts` checks both surfaces for every preset.
+- **Chat surface** (2026-09-30, senpi#2398): `chat` (a chat bridge posting replies to people) takes every `app` rule through `terminalOrApp()` and differs only in having NO handoff block: `buildHandoffSection` returns `CHAT_REPLIES_SECTION`, and each core's final-message rule opens with `CHAT_FINAL_MESSAGE` instead of the Handoff block. A new wording table for app and terminal is keyed by `TerminalOrApp`; one that differs on chat is keyed by `PromptSurface`.
 - **Anti-leakage guard preserved**: the prompt forbids narrating "Step 0", "Thinking level", or XML tool-call examples in user-visible output. Keep this even if routing is verbalized.
 - **No coding-specific language in the default** (2026-04-11): identity is domain-agnostic. Coding-specific tuning belongs in a preset, not here.
 - **Section builders are pure functions** taking only the data they need from `BuildDynamicSystemPromptOptions` — easy to test in isolation and reuse from presets.
@@ -63,7 +65,7 @@ The prompt carries no date or cwd: both reach the model as an append-only `envir
 - Hardcoding model-specific instructions in `build.ts` — put them in a preset's `tuningSection` instead.
 - Reintroducing `lsp`/`ast` tool categories without re-adding their detection + tests.
 - Replacing the senpi identity with `"You are a helpful assistant."` — was tried, produced weak generic-bot output, reverted 2026-04-30.
-- Removing the intent-gate verbalization line — the README advertises it; code must match.
+- Removing the intent-gate verbalization line from the terminal surface — the README advertises it; code must match.
 
 ## NOTES
 

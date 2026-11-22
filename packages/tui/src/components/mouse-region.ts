@@ -22,6 +22,11 @@ export class MouseRegion implements Component {
 		return this.child.render(width);
 	}
 
+	/** Exact regions render their child unchanged; a subclass may add state and opts in itself. */
+	getRenderRevision(): number | undefined {
+		return Object.getPrototypeOf(this) === MouseRegion.prototype ? this.child.getRenderRevision?.() : undefined;
+	}
+
 	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | TuiMouseEventResult | undefined {
 		const childResult = dispatchMouseEvent(this.child, event);
 		return childResult ?? this.onMouse(event);

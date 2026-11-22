@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import {
@@ -39,7 +39,7 @@ async function scheduleHarness(): Promise<Harness> {
 
 async function callSchedule(harness: Harness, params: Record<string, unknown>) {
 	harness.setResponses([
-		fauxAssistantMessage([fauxToolCall(SCHEDULE_PROMPT_TOOL, params)], { stopReason: "toolUse" }),
+		fauxAssistantMessage([fauxToolCall(SCHEDULE_PROMPT_TOOL, params as JsonObject)], { stopReason: "toolUse" }),
 		fauxAssistantMessage("ok"),
 	]);
 	await harness.session.prompt("go");
@@ -67,7 +67,7 @@ describe("schedule extension", () => {
 		});
 
 		expect(result.isError).toBe(false);
-		const details = result.details as SchedulePromptDetails;
+		const details = result.details as unknown as SchedulePromptDetails;
 		const { jobs } = await listScheduledJobs(jobsDir(harness));
 		expect(jobs.map(({ state, job }) => ({ state, job }))).toEqual(details.jobs);
 		expect(jobs).toHaveLength(1);
@@ -102,10 +102,10 @@ describe("schedule extension", () => {
 			at: new Date(Date.now() + 3_600_000).toISOString(),
 			everySeconds: 86_400,
 		});
-		const ownId = (created.details as SchedulePromptDetails).jobs[0]?.job.id;
+		const ownId = (created.details as unknown as SchedulePromptDetails).jobs[0]?.job.id;
 
 		const listed = await callSchedule(harness, { action: "list" });
-		expect((listed.details as SchedulePromptDetails).jobs.map(({ job }) => job.id)).toEqual([ownId]);
+		expect((listed.details as unknown as SchedulePromptDetails).jobs.map(({ job }) => job.id)).toEqual([ownId]);
 
 		const refused = await callSchedule(harness, { action: "cancel", id: foreign.id });
 		expect(refused.isError).toBe(true);
@@ -160,7 +160,7 @@ describe("schedule extension", () => {
 		const overflow = await callSchedule(harness, { action: "create", prompt: "one too many", delaySeconds: 60 });
 
 		expect(last.isError).toBe(false);
-		expect((last.details as SchedulePromptDetails).jobs[0]?.job.dueAt).toBe(tomorrow);
+		expect((last.details as unknown as SchedulePromptDetails).jobs[0]?.job.dueAt).toBe(tomorrow);
 		expect(overflow.isError).toBe(true);
 		expect((await listScheduledJobs(dir)).jobs).toHaveLength(MAX_PENDING_JOBS_PER_SESSION);
 	});

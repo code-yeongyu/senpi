@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
-import { buildSystemPrompt } from "../src/core/system-prompt.ts";
+import { buildSystemPrompt, buildSystemPromptSections } from "../src/core/system-prompt.ts";
 
 const testSkill: Skill = {
 	name: "test-skill",
@@ -37,6 +37,47 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
+	describe("prompt structure", () => {
+		test("keeps the default and custom prompt prefixes exact", () => {
+			const defaultPrompt = buildSystemPrompt({ cwd: "/tmp", selectedTools: [], contextFiles: [], skills: [] });
+			const customOptions = {
+				customPrompt: "You are Exact.",
+				cwd: "/tmp",
+				selectedTools: [],
+				contextFiles: [],
+				skills: [],
+			};
+			const customPrompt = buildSystemPrompt(customOptions);
+			const customSections = buildSystemPromptSections(customOptions);
+
+			expect(defaultPrompt.startsWith("You are an expert coding assistant operating inside pi")).toBe(true);
+			expect(customPrompt.startsWith("You are Exact.\nCurrent working directory: /tmp")).toBe(true);
+			expect(customSections.preamble).toBe("You are Exact.");
+			expect(Object.keys(customSections)).toEqual(["preamble", "cwd"]);
+		});
+
+		test("preserves an exact forced prompt without sections", () => {
+			expect(buildSystemPrompt({ forceSystemPrompt: "exact", cwd: "/tmp" })).toBe("exact");
+		});
+
+		test("maps appended instructions and project context to stable sections", () => {
+			const sections = buildSystemPromptSections({
+				customPrompt: "You are Exact.",
+				appendSystemPrompt: "Additional instructions.",
+				contextFiles: [{ path: "/tmp/AGENTS.md", content: "Project instructions." }],
+				selectedTools: [],
+				skills: [],
+				cwd: "/tmp",
+			});
+
+			expect(sections.addendum).toBe("<addendum>\nAdditional instructions.\n</addendum>");
+			expect(sections.project_context).toContain(
+				'<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path="/tmp/AGENTS.md">',
+			);
+			expect(sections.cwd).toBe("<cwd>\n/tmp\n</cwd>");
+		});
+	});
+
 	describe("default tools", () => {
 		test("includes all default tools when snippets are provided", () => {
 			const prompt = buildSystemPrompt({
@@ -55,6 +96,33 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain("- bash:");
 			expect(prompt).toContain("- edit:");
 			expect(prompt).toContain("- write:");
+		});
+
+		test.each([
+			[["powershell"], "Use PowerShell for file operations"],
+			[["bash", "powershell"], "Use bash or PowerShell for file operations"],
+		] as const)("uses shell-specific guidance for %j", (selectedTools, expected) => {
+			const prompt = buildSystemPrompt({
+				selectedTools: [...selectedTools],
+				contextFiles: [],
+				skills: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain(expected);
+		});
+
+		test("instructs models to resolve pi docs and examples under absolute base paths", () => {
+			const prompt = buildSystemPrompt({
+				contextFiles: [],
+				skills: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain(
+				"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
+			);
+			expect(prompt).toContain("environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)");
 		});
 	});
 
@@ -125,6 +193,14 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt).toContain("<available_skills>");
+			expect(
+				buildSystemPromptSections({
+					customPrompt,
+					selectedTools: ["bash"],
+					skills: [testSkill],
+					cwd: process.cwd(),
+				}).skills,
+			).toMatch(/^<skills>\n/);
 			expect(prompt).toContain("<name>test-skill</name>");
 			expect(prompt).toContain("Use bash to load a skill's file");
 		});

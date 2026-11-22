@@ -42,16 +42,18 @@ describe("eval summary display", () => {
 		expect(summaryLines.join(" ")).toBe(LONG_SUMMARY);
 	});
 
-	it("bounds the summary inside the live cell frame too", () => {
+	it("bounds the summary to the live frame's one-line headline (senpi#2802)", () => {
 		// Given
 		const component = renderEvalCall(callArgs(LONG_SUMMARY), undefined, callContext({ spinnerFrame: 0 }));
 
 		// When
-		const summaryLines = summaryLinesOf(renderLines(component), "\u2502 ");
+		const [header, ...rest] = renderLines(component);
 
 		// Then
-		expect(summaryLines).toHaveLength(3);
-		expect(summaryLines.at(-1)?.endsWith(ELLIPSIS)).toBe(true);
+		expect(header?.length).toBeLessThanOrEqual(80);
+		expect(header).toContain(`${ELLIPSIS} · eval`);
+		expect(LONG_SUMMARY.startsWith(header?.split(" ").slice(2).join(" ").split(ELLIPSIS)[0] ?? "")).toBe(true);
+		expect(rest.join("\n")).not.toContain(LONG_SUMMARY.slice(0, 20));
 	});
 
 	it("renders a short summary unchanged on one line", () => {

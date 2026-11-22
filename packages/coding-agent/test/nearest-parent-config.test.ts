@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, resolveAgentDir } from "../src/config.ts";
@@ -87,7 +87,11 @@ describe("nearest parent config discovery", () => {
 	it("refuses symlinked project config directories", () => {
 		const root = createTempDir();
 		const home = join(root, "home");
-		const project = join(root, "project");
+		// The project sits inside the fake home, so the climb ends there and never reaches an agent
+		// directory above it: a decoy one at the temp root, or the real ~/.senpi when the temp dir is
+		// under the user's home (senpi#3482).
+		const project = join(home, "project");
+		createAgentDir(root);
 		const cwd = join(project, "src");
 		const linkedConfigSource = join(root, "linked-config");
 		const homeAgentDir = createAgentDir(home);
@@ -96,6 +100,15 @@ describe("nearest parent config discovery", () => {
 		symlinkSync(join(linkedConfigSource, CONFIG_DIR_NAME), join(project, CONFIG_DIR_NAME), "dir");
 
 		expect(resolveAgentDir(cwd, home)).toBe(homeAgentDir);
+	});
+
+	it("stops at the account home when HOME is redirected away from it", () => {
+		const fakeHome = createTempDir();
+		// Resolution starting inside the real account home with $HOME pointed elsewhere must
+		// not adopt the real account's config directory as project config (#6459). Using the
+		// account home itself as the starting cwd keeps the fixture inside tmpdir: nothing is
+		// ever created under the real home.
+		expect(resolveAgentDir(homedir(), fakeHome)).toBe(join(fakeHome, CONFIG_DIR_NAME, "agent"));
 	});
 
 	it("stops before exceeding the parent walk depth limit", () => {

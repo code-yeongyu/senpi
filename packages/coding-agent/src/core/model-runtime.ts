@@ -1,7 +1,9 @@
 import { dirname, join } from "node:path";
 import {
+	type AnyModel,
 	type Api,
 	type ApiStreamOptions,
+	type AssistantImages,
 	type AssistantMessage,
 	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
@@ -10,27 +12,49 @@ import {
 	type AuthOperationOptions,
 	type AuthResult,
 	type AuthType,
+	type ClassifierApi,
+	type ClassifierContext,
+	type ClassifierModel,
+	type ClassifierOptions,
+	type ClassifierResult,
 	type Context,
 	type Credential,
 	type CredentialInfo,
 	type CredentialStore,
+	clampThinkingLevel,
 	createModels,
 	type DeferredCancelOptions,
 	type DeferredFetchOptions,
 	type DeferredHandle,
+	getCurrentTools,
+	type ImageApi,
+	type ImageModel,
+	type ImagesContext,
+	type ImagesOptions,
+	isModelType,
+	type LoginOptions,
+	type LogoutOptions,
+	type OAuthRevocationResult,
 	lazyStream,
+	type Message,
 	type Model,
 	type Models,
 	type ModelsApiStreamOptions,
+	type ModelsClassifierOptions,
 	type ModelsDeferredCancelOptions,
 	type ModelsDeferredFetchOptions,
 	ModelsError,
+	type ModelsImagesOptions,
 	type ModelsRefreshOptions,
 	type ModelsRefreshResult,
 	type ModelsRequestTransforms,
 	type ModelsSimpleStreamOptions,
 	type ModelsStore,
+	type ModelThinkingLevel,
+	type ModelType,
+	type ModelTypeMap,
 	type MutableModels,
+	normalizeContext,
 	normalizeProviderId,
 	type Provider,
 	type ProviderHeaders,
@@ -39,18 +63,31 @@ import {
 	type SimpleStreamOptions,
 	type StreamOptions,
 	setWireIdentity,
+	type TranscriptContext,
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
+import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
+import { setOAuthPageBrand } from "@earendil-works/pi-ai/utils/oauth-page";
+import {
+	assertChatModel,
+	assertClassifierModel,
+	assertImageModel,
+	classifierErrorResult,
+	imageErrorResult,
+} from "@earendil-works/pi-ai/utils/model-operations";
 import { APP_NAME, BRAND, getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { envValue } from "./brand.ts";
+import { signOutClaudeCliSlotsForLogout } from "./credential-accounts-logout.lazy.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
+import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
 import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry.ts";
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
+import type { StoredProviderEnvReader } from "./provider-api-key-auth.ts";
 import {
 	type AuthStatus,
 	type CompatibilityRequestConfig,
@@ -63,13 +100,48 @@ import {
 	validateExtensionProvider,
 } from "./provider-composer.ts";
 import { createProviderSemaphores } from "./provider-concurrency.ts";
+import { configuredAuthIsHeaderOnly } from "./provider-request-auth.ts";
+import { type ProviderOrigin, providerOriginOf } from "./provider-origin.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
+import { ServedCredentials } from "./served-credentials.ts";
 import type { SettingsManager } from "./settings-manager.ts";
+import { limitAccountOf, subscriptionLimits, withLimitCapture } from "./subscription-limits/limit-store.ts";
+import {
+	createVirtualModel,
+	findLatestResponse,
+	isVirtualModel,
+	type ModelRoute,
+	type ModelRouteReason,
+	type VirtualModelDefinition,
+	withVirtualModels,
+} from "./virtual-models.ts";
+
+/** Sessions whose active ChatGPT account is remembered; older entries are dropped first. */
+const MAX_ACTIVE_CREDENTIAL_SESSIONS = 256;
 
 // The product's identity must ride outgoing requests. This lives here because the AI package
 // is already part of this module's graph; the CLI bootstrap deliberately does not import it.
 setWireIdentity(BRAND?.userAgent ?? APP_NAME);
+setOAuthPageBrand({ name: APP_NAME, ...(BRAND?.logo ? { logo: BRAND.logo } : {}) });
+
+/** Availability re-reads after a busy credential store: 250, 500, 1000, 2000, 4000 ms. */
+const BUSY_AVAILABILITY_RETRY_LIMIT = 5;
+const BUSY_AVAILABILITY_RETRY_BASE_MS = 250;
+
+interface RegisteredVirtualModel {
+	model: Model<Api>;
+	route: VirtualModelDefinition["route"];
+}
+
+/** A request resolved for one provider call (auth, headers, extraBody, env, upstream model id). */
+interface PreparedRequest<TModel extends AnyModel, TOptions> {
+	provider: Provider;
+	model: TModel;
+	options: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
+	rejectableAccess?: string;
+	rejectedTokenStatuses?: readonly number[];
+}
 
 interface ModelRuntimeSnapshot {
 	all: readonly Model<Api>[];
@@ -77,6 +149,12 @@ interface ModelRuntimeSnapshot {
 	configuredProviders: ReadonlySet<string>;
 	storedProviders: ReadonlySet<string>;
 	auth: ReadonlyMap<string, AuthCheck | undefined>;
+}
+
+export interface ProviderRegistrationOptions {
+	refresh?: boolean;
+	/** The registering extension, reported as the provider's origin (senpi#4328). */
+	extensionPath?: string | undefined;
 }
 
 export interface CreateModelRuntimeOptions {
@@ -122,10 +200,11 @@ function mightHoldCredentialPool(
 	providerId: string,
 	credential: Credential | undefined,
 	env: (name: string) => string | undefined,
-	policySlots?: Record<string, { env?: string; value?: string }>,
+	policySlots?: NonNullable<RotationSources["policy"]>["slots"],
 ): boolean {
 	if (credential) {
 		const accounts = Object.entries(credential).find(([key]) => key === "accounts")?.[1];
+		if (providerId === "chatgpt-subscription" && credential.type === "oauth") return true;
 		return (Array.isArray(accounts) && accounts.length > 1) || Object.keys(policySlots ?? {}).length > 0;
 	}
 	return discoverEnvSlots(providerId, env).length + Object.keys(policySlots ?? {}).length > 1;
@@ -209,6 +288,10 @@ export class ModelRuntime implements Models {
 	private readonly builtins = new Map<string, Provider>();
 	private readonly nativeExtensionProviders = new Map<string, Provider>();
 	private readonly extensionProviders = new Map<string, ProviderConfigInput>();
+	/** The extension behind each registration that named one (senpi#4328). */
+	private readonly providerExtensionPaths = new Map<string, string>();
+	/** Virtual models by provider id, then model id. */
+	private readonly virtualModels = new Map<string, Map<string, RegisteredVirtualModel>>();
 	private readonly compositionErrors = new Map<string, string>();
 	private readonly modelsPath: string | undefined;
 	private readonly modelNetworkEnabled: boolean;
@@ -225,15 +308,29 @@ export class ModelRuntime implements Models {
 	private availabilityRefreshSeq = 0;
 	private availabilityErrorSeq = 0;
 	private readonly providerAvailabilitySeq = new Map<string, number>();
+	private busyAvailabilityRetries = 0;
+	private busyAvailabilityRetryTimer: ReturnType<typeof setTimeout> | undefined;
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
+	private readonly servedCredentials = new ServedCredentials();
 	/**
-	 * The credential pool is loaded lazily and only for a provider that actually
-	 * has more than one slot. Importing it eagerly would pull the pool's schema
+	 * Actual stored-slot attempts, scoped to the session rather than a predicted list winner. Bounded by recency:
+	 * sessions are never released to the runtime, and an evicted session is re-recorded on its next request.
+	 */
+	private readonly activeCredentialAccounts = new Map<string, string>();
+
+	getActiveCredentialAccount(providerId: string, sessionId: string): string | undefined {
+		return this.activeCredentialAccounts.get(`${providerId}\0${sessionId}`);
+	}
+	/**
+	 * The credential pool is loaded lazily for pooled providers and ChatGPT
+	 * registrations whose health must be tracked even alone. Importing it eagerly would pull the pool's schema
 	 * validator - and its module-level global registry - into every consumer of
 	 * ModelRuntime, which the import-graph guard forbids.
 	 */
 	private readonly poolStatePath: string | undefined;
+	/** Providers whose stale generic-pool health was already retired in this process (senpi#2081). */
+	private readonly outerSlotStateRetired = new Set<string>();
 	private credentialPoolModules:
 		| Promise<{
 				rotation: typeof import("./credential-pool/rotation-stream.ts");
@@ -260,6 +357,16 @@ export class ModelRuntime implements Models {
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		this.models = createModels({ credentials, modelsStore });
 		this.rebuildProviders();
+	}
+
+	/**
+	 * The AuthStorage this runtime's providers register into, when it was built on one. A session
+	 * built on a shared runtime must read this same store, or extension OAuth providers are never
+	 * listed (senpi#3434).
+	 */
+	get authStorage(): DefaultAuthStorage | undefined {
+		const store = this.credentials.backingStore;
+		return store instanceof DefaultAuthStorage ? store : undefined;
 	}
 
 	static async create(options: CreateModelRuntimeOptions = {}): Promise<ModelRuntime> {
@@ -358,10 +465,12 @@ export class ModelRuntime implements Models {
 			...this.nativeExtensionProviders.keys(),
 			...this.config.getProviderIds(),
 			...this.extensionProviders.keys(),
+			...this.virtualModels.keys(),
 		]);
 	}
 
-	private recomposeProvider(rawProviderId: string): void {
+	/** Returns the provider without virtual models, or undefined when only virtual models define it. */
+	private recomposeProvider(rawProviderId: string): Provider | undefined {
 		// Read boundary (senpi#1989): compose under the canonical id so a legacy id
 		// reaching this path (an extension registration, a stored overlay key) lands
 		// on the same provider instead of composing a second, empty one.
@@ -369,28 +478,37 @@ export class ModelRuntime implements Models {
 		if (this.config.isProviderDisabled(providerId)) {
 			this.models.deleteProvider(providerId);
 			this.compositionErrors.delete(providerId);
-			return;
+			return undefined;
 		}
+		const provider = this.composeProvider(providerId);
+		const virtualModels = [...(this.virtualModels.get(providerId)?.values() ?? [])].map((entry) => entry.model);
+		if (virtualModels.length > 0) this.models.setProvider(withVirtualModels(providerId, provider, virtualModels));
+		else if (provider) this.models.setProvider(provider);
+		else this.models.deleteProvider(providerId);
+		return provider;
+	}
+
+	/** The provider without virtual models, or undefined when nothing defines it. */
+	private composeProvider(providerId: string): Provider | undefined {
 		const base = this.nativeExtensionProviders.get(providerId) ?? this.builtins.get(providerId);
 		const extension = this.extensionProviders.get(providerId);
-		if (!base && !this.config.getProvider(providerId) && !extension) {
-			this.models.deleteProvider(providerId);
-			this.compositionErrors.delete(providerId);
-			return;
-		}
-		if (base && !this.config.getProvider(providerId) && !extension) {
+		if (!this.config.getProvider(providerId) && !extension) {
 			// No overlays: use the builtin untouched so its auth/login/stream behavior is exact.
-			this.models.setProvider(base);
 			this.compositionErrors.delete(providerId);
-			return;
+			return base;
 		}
 		try {
-			this.models.setProvider(composeModelProvider(providerId, base, this.config, extension));
+			// The reader runs only inside ambient auth resolution; composition itself stays credential-free.
+			const storedProviderEnv: StoredProviderEnvReader = async (sourceId) => {
+				const credential = await this.credentials.read(sourceId);
+				return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
+			};
+			const provider = composeModelProvider(providerId, base, this.config, extension, { storedProviderEnv });
 			this.compositionErrors.delete(providerId);
+			return provider;
 		} catch (error) {
 			this.compositionErrors.set(providerId, error instanceof Error ? error.message : String(error));
-			if (base) this.models.setProvider(base);
-			else this.models.deleteProvider(providerId);
+			return base;
 		}
 	}
 
@@ -411,6 +529,7 @@ export class ModelRuntime implements Models {
 	}
 
 	private async runAvailabilityRefresh(seq: number, errorSeq: number, signal: AbortSignal): Promise<void> {
+		const busyReadsBefore = this.credentials.busyReadCount();
 		const providers = this.models.getProviders();
 		const [available, checks, credentials] = await Promise.all([
 			this.models.getAvailable(undefined, { signal }),
@@ -425,6 +544,7 @@ export class ModelRuntime implements Models {
 			this.credentials.list({ signal }),
 		]);
 		if (seq !== this.availabilityRefreshSeq) return;
+		if (this.answeredFromBusyStore(busyReadsBefore, errorSeq)) return;
 		const auth = new Map(checks);
 		const configuredProviders = new Set(
 			checks
@@ -439,6 +559,7 @@ export class ModelRuntime implements Models {
 			auth,
 		};
 		this.availabilityInitialized = true;
+		this.busyAvailabilityRetries = 0;
 		if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
 	}
 
@@ -463,6 +584,7 @@ export class ModelRuntime implements Models {
 		const providerSeq = (this.providerAvailabilitySeq.get(providerId) ?? 0) + 1;
 		this.providerAvailabilitySeq.set(providerId, providerSeq);
 		const errorSeq = ++this.availabilityErrorSeq;
+		const busyReadsBefore = this.credentials.busyReadCount();
 		try {
 			const [available, auth, credential] = await Promise.all([
 				this.models.getAvailable(providerId, { signal }),
@@ -471,6 +593,7 @@ export class ModelRuntime implements Models {
 			]);
 			signal.throwIfAborted();
 			if (this.providerAvailabilitySeq.get(providerId) !== providerSeq) return;
+			if (this.answeredFromBusyStore(busyReadsBefore, errorSeq)) return;
 			const configuredProviders = new Set(this.snapshot.configuredProviders);
 			const storedProviders = new Set(this.snapshot.storedProviders);
 			const authByProvider = new Map(this.snapshot.auth);
@@ -510,6 +633,40 @@ export class ModelRuntime implements Models {
 		}
 	}
 
+	/**
+	 * A pass whose credential reads hit a locked store saw the cached snapshot (empty in a
+	 * fresh process), not the store. Such a pass must not publish availability or mark it
+	 * initialized; it records the contention so the next refresh re-reads the store.
+	 */
+	private answeredFromBusyStore(busyReadsBefore: number, errorSeq: number): boolean {
+		if (this.credentials.busyReadCount() === busyReadsBefore) return false;
+		if (errorSeq === this.availabilityErrorSeq) {
+			this.availabilityError = "Credential store was busy; availability will be re-read on the next refresh";
+		}
+		this.scheduleBusyAvailabilityRetry();
+		return true;
+	}
+
+	/**
+	 * Re-read availability after a busy store, so a lock held during startup does not leave
+	 * every provider unconfigured until some later caller happens to refresh. Bounded: at most
+	 * {@link BUSY_AVAILABILITY_RETRY_LIMIT} attempts with doubling delays, reset by a published
+	 * pass; the timer never keeps the process alive.
+	 */
+	private scheduleBusyAvailabilityRetry(): void {
+		if (this.busyAvailabilityRetryTimer !== undefined) return;
+		if (this.busyAvailabilityRetries >= BUSY_AVAILABILITY_RETRY_LIMIT) return;
+		const delayMs = BUSY_AVAILABILITY_RETRY_BASE_MS * 2 ** this.busyAvailabilityRetries;
+		this.busyAvailabilityRetries += 1;
+		this.busyAvailabilityRetryTimer = setTimeout(() => {
+			this.busyAvailabilityRetryTimer = undefined;
+			this.queueAvailabilityRefresh().catch(() => {
+				// The pass records its own availability error; a later busy read schedules the next attempt.
+			});
+		}, delayMs);
+		this.busyAvailabilityRetryTimer.unref?.();
+	}
+
 	getProviders(): readonly Provider[] {
 		return this.models.getProviders();
 	}
@@ -521,6 +678,34 @@ export class ModelRuntime implements Models {
 	}
 	getModel(providerId: string, modelId: string): Model<Api> | undefined {
 		return this.models.getModel(providerId, modelId);
+	}
+
+	getModelsOfType<TType extends ModelType>(type: TType, providerId?: string): readonly ModelTypeMap[TType][] {
+		return this.models.getModelsOfType(type, providerId);
+	}
+
+	getModelOfType<TType extends ModelType>(
+		type: TType,
+		providerId: string,
+		modelId: string,
+	): ModelTypeMap[TType] | undefined {
+		return this.models.getModelOfType(type, providerId, modelId);
+	}
+
+	getAllModels(providerId?: string): readonly AnyModel[] {
+		return this.models.getAllModels(providerId);
+	}
+
+	getAvailableOfType<TType extends ModelType>(
+		type: TType,
+		providerId?: string,
+		options?: AuthOperationOptions,
+	): Promise<readonly ModelTypeMap[TType][]> {
+		return this.models.getAvailableOfType(type, providerId, options);
+	}
+
+	getAllAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly AnyModel[]> {
+		return this.models.getAllAvailable(providerId, options);
 	}
 
 	async checkAuth(providerId: string, options?: AuthOperationOptions): Promise<AuthCheck | undefined> {
@@ -586,6 +771,21 @@ export class ModelRuntime implements Models {
 		return this.nativeExtensionProviders.get(providerId);
 	}
 
+	getProviderOrigin(providerId: string): ProviderOrigin | undefined {
+		return providerOriginOf({
+			builtin: this.builtins.has(providerId),
+			nativeExtension: this.nativeExtensionProviders.has(providerId),
+			extension: this.extensionProviders.has(providerId) || this.virtualModels.has(providerId),
+			extensionPath: this.providerExtensionPaths.get(providerId),
+			modelsJsonPath: this.config.getProvider(providerId) === undefined ? undefined : this.modelsPath,
+		});
+	}
+
+	private noteExtensionPath(providerId: string, extensionPath: string | undefined): void {
+		if (extensionPath === undefined) this.providerExtensionPaths.delete(providerId);
+		else this.providerExtensionPaths.set(providerId, extensionPath);
+	}
+
 	/** @internal Compatibility fallback for ModelRegistry when provider auth is unconfigured. */
 	getCompatibilityRequestConfig(model: Model<Api>): CompatibilityRequestConfig {
 		return resolveCompatibilityRequestConfig(
@@ -637,9 +837,9 @@ export class ModelRuntime implements Models {
 	}
 
 	getAuth(providerId: string, overrides?: ModelRuntimeAuthOverrides): Promise<AuthResult | undefined>;
-	getAuth(model: Model<Api>, overrides?: ModelRuntimeAuthOverrides): Promise<AuthResult | undefined>;
+	getAuth(model: AnyModel, overrides?: ModelRuntimeAuthOverrides): Promise<AuthResult | undefined>;
 	async getAuth(
-		providerOrModel: string | Model<Api>,
+		providerOrModel: string | AnyModel,
 		overrides: ModelRuntimeAuthOverrides = {},
 	): Promise<AuthResult | undefined> {
 		if (typeof providerOrModel === "string") return this.models.getAuth(providerOrModel, overrides);
@@ -658,6 +858,67 @@ export class ModelRuntime implements Models {
 				headers: mergeHeaders(resolution.auth.headers, configuredHeaders),
 			},
 		};
+	}
+
+	/**
+	 * Auth for a request a session sends outside the rotation stream (compaction, /btw, look-at,
+	 * cache keepalive). The key must belong to the account the session's own turns use, so a pooled
+	 * provider resolves the slot the stream would pick for this session; without a pool, or when
+	 * the stream would not rotate either, it is `getAuth(model)`.
+	 */
+	async getSessionAuth(model: Model<Api>, sessionId: string): Promise<AuthResult | undefined> {
+		return this.getAuth(model, (await this.sessionSlotAuth(model, sessionId)) ?? {});
+	}
+
+	private async sessionSlotAuth(
+		model: Model<Api>,
+		sessionId: string,
+	): Promise<{ apiKey?: string; slotName?: string } | undefined> {
+		// The stream's own synchronous admission check, so a provider the stream would not rotate costs
+		// nothing beyond getAuth. Remote compaction's before_provider_request hook calls this on every
+		// request to such a model; there a pooled provider pays one extra credential read and two slot
+		// listings (each reads the pool's health state) before getAuth.
+		if (!this.couldRotateCredentials(model, undefined)) return undefined;
+		const sources = await this.credentialRotationSources(model, undefined);
+		if (!sources) return undefined;
+		const { rotation } = await this.loadCredentialPool();
+		const { rememberedHeadroomAccount, selectSessionSlot } = await import("./credential-pool/session-slot.ts");
+		const slots = await rotation.listRotationSlots(sources, {
+			acquireLeases: false,
+			modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
+		});
+		const pooled: PooledCredential | undefined = sources.credential;
+		const strategy = sources.policy?.accountStrategy;
+		const useAffinity = strategy !== undefined || sources.policy?.affinity !== false;
+		const now = Date.now();
+		// The stream prefers an account with headroom and remembers that move per session (omo#9234), and
+		// under round-robin holds this session's turn (omo#10146); reading the same limits, memory and turn
+		// keeps this the stream's own first pick.
+		const { roundRobinState } = await import("./credential-pool/round-robin-state.ts");
+		const roundRobin = strategy === "round-robin" ? roundRobinState.session(sources.providerId, sessionId) : undefined;
+		const remembered =
+			roundRobin?.account ??
+			(useAffinity ? rememberedHeadroomAccount(sources.repository, sources.providerId, sessionId) : undefined);
+		const slot = selectSessionSlot(
+			slots,
+			{
+				affinityKey: sessionId,
+				useAffinity,
+				hasher: rotation.sha256SlotHasher,
+				...(pooled?.order === undefined ? {} : { order: pooled.order }),
+				...(strategy === undefined ? {} : { strategy }),
+				...(roundRobin === undefined ? {} : { roundRobinOffset: roundRobin.offset }),
+				headroom: {
+					providerId: sources.providerId,
+					limits: subscriptionLimits.snapshot(),
+					now,
+					...(remembered === undefined ? {} : { remembered }),
+				},
+			},
+			now,
+		);
+		if (!slot) return undefined;
+		return slot.lane === "env" ? { apiKey: slot.envKey } : { slotName: slot.name };
 	}
 
 	private enqueueCredentialOperation<T>(providerId: string, signal: AbortSignal, task: () => Promise<T>): Promise<T> {
@@ -732,28 +993,56 @@ export class ModelRuntime implements Models {
 	}
 
 	getProviderAuthStatus(providerId: string): AuthStatus {
-		if (this.credentials.hasRuntimeApiKey(providerId)) return { configured: true, source: "runtime" };
-		if (this.snapshot.storedProviders.has(providerId)) return { configured: true, source: "stored" };
+		return this.resolveProviderAuth(providerId).status;
+	}
+
+	/** Whether the provider's only credential is a configured header: no configured key, and no key of its own. */
+	providerAuthIsHeaderOnly(providerId: string): boolean {
+		return configuredAuthIsHeaderOnly(
+			this.config.getProvider(providerId),
+			this.extensionProviders.get(providerId),
+			this.snapshot.auth.get(providerId),
+		);
+	}
+
+	/**
+	 * The provider's auth status plus whether it is a non-stored sign-in (#3537). `signIn` is set
+	 * only by the last branch, the provider's own check resolving `type: "oauth"`, so a runtime key,
+	 * a stored credential or a configured models.json/extension key always wins first.
+	 */
+	resolveProviderAuth(providerId: string): { status: AuthStatus; signIn: boolean } {
+		if (this.credentials.hasRuntimeApiKey(providerId)) {
+			return { status: { configured: true, source: "runtime" }, signIn: false };
+		}
+		if (this.snapshot.storedProviders.has(providerId)) {
+			return { status: { configured: true, source: "stored" }, signIn: false };
+		}
 		const configured = configuredRequestAuthStatus(
 			this.config.getProvider(providerId),
 			this.extensionProviders.get(providerId),
 		);
-		if (configured) return configured;
+		if (configured) return { status: configured, signIn: false };
 		const check = this.snapshot.auth.get(providerId);
-		return check ? { configured: true, source: "environment", label: check.source } : { configured: false };
+		if (!check) return { status: { configured: false }, signIn: false };
+		return {
+			status: {
+				configured: true,
+				source: "environment",
+				label: check.source,
+				...(check.ambient ? { ambient: true } : {}),
+			},
+			signIn: check.type === "oauth",
+		};
 	}
 
-	private async prepareRequest<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
-		model: Model<Api>,
+	private async prepareRequest<
+		TModel extends AnyModel,
+		TOptions extends ProviderRequestOptions<TModel> & ModelsRequestTransforms,
+	>(
+		model: TModel,
 		options: TOptions | undefined,
 		slotAuth?: { apiKey?: string; slotName?: string; rejectedAccess?: string },
-	): Promise<{
-		provider: Provider;
-		model: Model<Api>;
-		options: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions;
-		rejectableAccess?: string;
-		rejectedTokenStatuses?: readonly number[];
-	}> {
+	): Promise<PreparedRequest<TModel, TOptions>> {
 		const provider = this.models.getProvider(model.provider);
 		if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
 		const resolution = await this.getAuth(model, {
@@ -767,10 +1056,13 @@ export class ModelRuntime implements Models {
 
 		const { transformHeaders, ...rawProviderOptions } = options ?? {};
 		const providerOptions = rawProviderOptions as Omit<TOptions, "transformHeaders"> &
-			ProviderRequestOptions & { extraBody?: Record<string, unknown> };
+			ProviderRequestOptions<TModel> & { extraBody?: Record<string, unknown> };
 		let headers = mergeHeaders(resolution.auth.headers, providerOptions.headers);
 		if (transformHeaders) headers = await transformHeaders(headers ?? {});
-		const compatibility = this.getCompatibilityRequestConfig(model);
+		// Configured compatibility (extraBody, upstream model id) applies to chat models only.
+		const compatibility: Partial<CompatibilityRequestConfig> = isModelType(model, "chat")
+			? this.getCompatibilityRequestConfig(model)
+			: {};
 		const extraBody =
 			compatibility.extraBody || providerOptions.extraBody
 				? { ...compatibility.extraBody, ...providerOptions.extraBody }
@@ -780,12 +1072,16 @@ export class ModelRuntime implements Models {
 				? { ...(resolution.env ?? {}), ...(providerOptions.env ?? {}) }
 				: undefined;
 		const upstreamModelId = compatibility.upstreamModelId;
-		const requestModel =
-			resolution.auth.baseUrl || upstreamModelId
+		const requestModel: TModel =
+			resolution.auth.baseUrl || upstreamModelId || ((resolution.auth.api || resolution.auth.compat) && isModelType(model, "chat"))
 				? {
 						...model,
 						...(upstreamModelId ? { id: upstreamModelId } : {}),
 						...(resolution.auth.baseUrl ? { baseUrl: resolution.auth.baseUrl } : {}),
+						...(resolution.auth.api && isModelType(model, "chat") ? { api: resolution.auth.api } : {}),
+						...(resolution.auth.compat && isModelType(model, "chat")
+							? { compat: { ...model.compat, ...resolution.auth.compat } }
+							: {}),
 					}
 				: model;
 		const rejectedTokenStatuses = provider.auth.oauth?.rejectedTokenStatuses;
@@ -805,7 +1101,7 @@ export class ModelRuntime implements Models {
 				headers,
 				extraBody,
 				env,
-			} as Omit<TOptions, "transformHeaders"> & ProviderRequestOptions,
+			} as Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>,
 		};
 	}
 
@@ -839,10 +1135,34 @@ export class ModelRuntime implements Models {
 		if (options?.apiKey !== undefined) return false;
 		if (this.credentials.hasRuntimeApiKey(model.provider)) return false;
 		if (this.config.getProvider(model.provider)?.credentials?.rotation === false) return false;
+		// A provider whose lane picks its own accounts has one owner of account selection: that lane (senpi#2081).
+		if (this.ownsAccountSelection(model.provider)) return false;
 		const env = (name: string) => options?.env?.[name] ?? process.env[name];
 		if (this.snapshot.storedProviders.has(model.provider)) return true;
 		const policySlots = this.config.getProvider(model.provider)?.credentials?.slots;
 		return discoverEnvSlots(model.provider, env).length + Object.keys(policySlots ?? {}).length > 1;
+	}
+
+	private ownsAccountSelection(providerId: string): boolean {
+		return this.extensionProviders.get(providerId)?.ownsAccountSelection === true;
+	}
+
+	/**
+	 * Health the generic pool recorded for a provider before its lane became the only owner of account
+	 * selection is retired before that provider's first request in this process. Older builds pinned the
+	 * lane's verdicts on these slots and left them blocked; an upgrade must heal them with no re-login
+	 * (senpi#2081). A busy state file is retried on the next request.
+	 */
+	private async retireOuterSlotState(providerId: string): Promise<void> {
+		if (this.outerSlotStateRetired.has(providerId)) return;
+		const [{ repository }, { STORE_BUSY, writeHealthUnlessStoreBusy }] = await Promise.all([
+			this.loadCredentialPool(),
+			import("./credential-pool/health-write.ts"),
+		]);
+		const outcome = await writeHealthUnlessStoreBusy(`retire generic-pool health for ${providerId}`, () =>
+			repository.clearProvider(providerId),
+		);
+		if (outcome !== STORE_BUSY) this.outerSlotStateRetired.add(providerId);
 	}
 
 	private async credentialRotationSources(
@@ -864,7 +1184,9 @@ export class ModelRuntime implements Models {
 			policy,
 		};
 		const slots = await pool.rotation.listRotationSlots(sources, { acquireLeases: false });
-		return slots.length > 1 ? sources : undefined;
+		return slots.length > 1 || (model.provider === "chatgpt-subscription" && credential?.type === "oauth")
+			? sources
+			: undefined;
 	}
 
 	stream<TApi extends Api>(
@@ -872,8 +1194,11 @@ export class ModelRuntime implements Models {
 		context: Context,
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
+		const transcript = normalizeContext(context);
 		return lazyStream(model, async () => {
+			assertChatModel(model);
 			const streamOptions = options as CredentialRotationStreamOptions | undefined;
+			if (this.ownsAccountSelection(model.provider)) await this.retireOuterSlotState(model.provider);
 			const sources = this.couldRotateCredentials(model, streamOptions)
 				? await this.credentialRotationSources(model, streamOptions)
 				: undefined;
@@ -881,6 +1206,7 @@ export class ModelRuntime implements Models {
 				const { rotation } = await this.loadCredentialPool();
 				return rotation.streamWithCredentialRotation({
 					sources,
+					modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
 					...(streamOptions?.affinityKey !== undefined
 						? { affinityKey: streamOptions.affinityKey }
 						: streamOptions?.sessionId !== undefined
@@ -898,10 +1224,10 @@ export class ModelRuntime implements Models {
 							(prepared) =>
 								prepared.provider.stream(
 									prepared.model as Model<TApi>,
-									context,
+									transcript,
 									withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
 								),
-							context,
+							transcript,
 						),
 				});
 			}
@@ -912,10 +1238,10 @@ export class ModelRuntime implements Models {
 				(prepared) =>
 					prepared.provider.stream(
 						prepared.model as Model<TApi>,
-						context,
+						transcript,
 						withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
 					),
-				context,
+				transcript,
 			);
 		});
 	}
@@ -924,12 +1250,12 @@ export class ModelRuntime implements Models {
 	 * One provider request with the #2297 recovery: a stored OAuth token the provider
 	 * refuses before any output is re-exchanged once and the request re-sent.
 	 */
-	private attemptWithTokenRecovery<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
+	private attemptWithTokenRecovery<TOptions extends StreamOptions & ModelsRequestTransforms & { affinityKey?: string }>(
 		model: Model<Api>,
 		options: TOptions | undefined,
 		slotAuth: { apiKey?: string; slotName?: string } | undefined,
-		send: (prepared: Awaited<ReturnType<ModelRuntime["prepareRequest"]>>) => AssistantMessageEventStream,
-		context: Context,
+		send: (prepared: PreparedRequest<Model<Api>, TOptions>) => AssistantMessageEventStream,
+		transcript: TranscriptContext,
 	): Promise<AsyncIterable<AssistantMessageEvent>> {
 		return retryOnceOnRejectedToken(async (rejectedAccess) => {
 			const prepared = await this.prepareRequest(
@@ -937,11 +1263,34 @@ export class ModelRuntime implements Models {
 				options,
 				rejectedAccess === undefined ? slotAuth : { ...slotAuth, rejectedAccess },
 			);
+			const sessionId = options?.affinityKey ?? options?.sessionId;
+			if (model.provider === "chatgpt-subscription" && slotAuth?.slotName !== undefined && sessionId !== undefined) {
+				const key = `${model.provider}\0${sessionId}`;
+				if (this.activeCredentialAccounts.get(key) !== slotAuth.slotName) {
+					this.activeCredentialAccounts.delete(key);
+					this.activeCredentialAccounts.set(key, slotAuth.slotName);
+					for (const oldest of this.activeCredentialAccounts.keys()) {
+						if (this.activeCredentialAccounts.size <= MAX_ACTIVE_CREDENTIAL_SESSIONS) break;
+						this.activeCredentialAccounts.delete(oldest);
+					}
+					emitProviderAccountsChanged(model.provider);
+				}
+			}
+			const capturing = {
+				...prepared,
+				options: withLimitCapture(prepared.options, prepared.model.provider, limitAccountOf(slotAuth)),
+			};
 			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
-				send(prepared),
+				send(capturing),
 			);
+			const stream = wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages));
+			this.servedCredentials.observe(stream.result(), {
+				provider: prepared.model.provider,
+				baseUrl: prepared.model.baseUrl,
+				apiKey: prepared.options.apiKey,
+			});
 			return {
-				stream: wrapStreamWithModelRecovery(inner, model, context.tools ?? []),
+				stream,
 				...(prepared.rejectableAccess === undefined ? {} : { rejectableAccess: prepared.rejectableAccess }),
 				...(prepared.rejectedTokenStatuses === undefined
 					? {}
@@ -957,8 +1306,30 @@ export class ModelRuntime implements Models {
 		return this.stream(model, context, options).result();
 	}
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
+		const transcript = normalizeContext(context);
+		if (isVirtualModel(model)) {
+			// Requests outside the agent loop are routed here. Callers sized them before routing, so
+			// cap the output budget to the routed model.
+			return lazyStream(model, async () => {
+				const route = await this.resolveModel(model, transcript.messages, {
+					reason: "direct",
+					thinkingLevel: options?.reasoning ?? "off",
+					signal: options?.signal,
+				});
+				const { maxTokens: limit } = route.model;
+				const maxTokens = options?.maxTokens && limit > 0 ? Math.min(options.maxTokens, limit) : options?.maxTokens;
+				const reasoning = route.thinkingLevel === "off" ? undefined : route.thinkingLevel;
+				// Caller credentials were resolved for the virtual model's provider. Another provider
+				// resolves its own, so they are not sent to the wrong vendor.
+				const { apiKey, headers, env, ...rest } = options ?? {};
+				const auth = route.model.provider === model.provider ? { apiKey, headers, env } : {};
+				return this.streamSimple(route.model, context, { ...rest, ...auth, maxTokens, reasoning });
+			});
+		}
 		return lazyStream(model, async () => {
+			assertChatModel(model);
 			const streamOptions = options as CredentialRotationStreamOptions | undefined;
+			if (this.ownsAccountSelection(model.provider)) await this.retireOuterSlotState(model.provider);
 			const sources = this.couldRotateCredentials(model, streamOptions)
 				? await this.credentialRotationSources(model, streamOptions)
 				: undefined;
@@ -966,6 +1337,7 @@ export class ModelRuntime implements Models {
 				const { rotation } = await this.loadCredentialPool();
 				return rotation.streamWithCredentialRotation({
 					sources,
+					modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
 					...(streamOptions?.sessionId === undefined ? {} : { affinityKey: streamOptions.sessionId }),
 					runAttempt: (slot) =>
 						this.attemptWithTokenRecovery(
@@ -975,10 +1347,10 @@ export class ModelRuntime implements Models {
 							(prepared) =>
 								prepared.provider.streamSimple(
 									prepared.model,
-									context,
+									transcript,
 									withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
 								),
-							context,
+							transcript,
 						),
 				});
 			}
@@ -989,10 +1361,10 @@ export class ModelRuntime implements Models {
 				(prepared) =>
 					prepared.provider.streamSimple(
 						prepared.model,
-						context,
+						transcript,
 						withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
 					),
-				context,
+				transcript,
 			);
 		});
 	}
@@ -1022,6 +1394,7 @@ export class ModelRuntime implements Models {
 		options?: ModelsDeferredFetchOptions,
 	): AssistantMessageEventStream {
 		return lazyStream(model, async () => {
+			assertChatModel(model);
 			const prepared = await this.prepareRequest(model, options);
 			if (!prepared.provider.fetchDeferred) {
 				throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
@@ -1043,6 +1416,7 @@ export class ModelRuntime implements Models {
 		handle: DeferredHandle,
 		options?: ModelsDeferredCancelOptions,
 	): Promise<void> {
+		assertChatModel(model);
 		const prepared = await this.prepareRequest(model, options);
 		if (!prepared.provider.cancelDeferred) {
 			throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
@@ -1050,23 +1424,99 @@ export class ModelRuntime implements Models {
 		await prepared.provider.cancelDeferred(prepared.model, handle, prepared.options as DeferredCancelOptions);
 	}
 
-	login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential> {
+	async generateImages(
+		model: ImageModel<ImageApi>,
+		context: ImagesContext,
+		options?: ModelsImagesOptions,
+	): Promise<AssistantImages> {
+		try {
+			assertImageModel(model);
+			const prepared = await this.prepareRequest(model, options);
+			if (!prepared.provider.generateImages) {
+				throw new ModelsError("provider", `Provider ${model.provider} does not support image generation`);
+			}
+			return await prepared.provider.generateImages(prepared.model, context, prepared.options as ImagesOptions);
+		} catch (error) {
+			return imageErrorResult(model, error, options?.signal?.aborted);
+		}
+	}
+
+	async classify(
+		model: ClassifierModel<ClassifierApi>,
+		context: ClassifierContext,
+		options?: ModelsClassifierOptions,
+	): Promise<ClassifierResult> {
+		try {
+			assertClassifierModel(model);
+			const prepared = await this.prepareRequest(model, options);
+			if (!prepared.provider.classify) {
+				throw new ModelsError("provider", `Provider ${model.provider} does not support classification`);
+			}
+			return await prepared.provider.classify(prepared.model, context, prepared.options as ClassifierOptions);
+		} catch (error) {
+			return classifierErrorResult(model, error, options?.signal?.aborted);
+		}
+	}
+
+	login(
+		providerId: string,
+		type: AuthType,
+		interaction: AuthInteraction,
+		options?: LoginOptions,
+	): Promise<Credential> {
 		const signal = operationSignal(interaction.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
-			const credential = await this.models.login(providerId, type, {
-				...interaction,
-				signal,
-			});
+			const store = this.credentials.backingStore;
+			const before = await store.read(providerId, { signal });
+			const credential = await this.models.login(
+				providerId,
+				type,
+				{ ...interaction, signal },
+				{ ...options, appName: APP_NAME },
+			);
+			if (this.poolStatePath !== undefined) {
+				const { retireLoginSlotHealth } = await import("./credential-pool/login-health.ts");
+				await retireLoginSlotHealth(this.poolStatePath, providerId, before, await store.read(providerId, { signal }));
+			}
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
+			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
+			emitProviderAccountsChanged(providerId, "login");
+			for (const key of this.activeCredentialAccounts.keys()) {
+				if (key.startsWith(`${providerId}\0`)) this.activeCredentialAccounts.delete(key);
+			}
 			return credential;
 		});
 	}
 
-	logout(providerId: string, options: AuthOperationOptions = {}): Promise<void> {
+	async logout(providerId: string, options: LogoutOptions = {}): Promise<OAuthRevocationResult | void> {
+		return (await this.logoutProvider(providerId, options)).revocation;
+	}
+
+	/**
+	 * {@link logout}, answering what the user should know: an Anthropic Subscription `claude-cli` account is signed out
+	 * of the Claude CLI's own store before the credential is deleted (senpi#4436), and `notices` names any account that
+	 * could not be signed out cleanly. `revocation` reports a ChatGPT OAuth remote revocation; `slotId` signs out one
+	 * stored account and keeps its registration and signed-in siblings.
+	 */
+	logoutProvider(
+		providerId: string,
+		options: LogoutOptions = {},
+	): Promise<{ readonly notices: readonly string[]; readonly revocation?: OAuthRevocationResult }> {
 		const signal = operationSignal(options.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
-			await this.models.logout(providerId, { signal });
-			await this.synchronizeCredentialState(providerId, "logout", undefined, signal);
+			const storage = this.authStorage;
+			// With `slotId` only that account leaves the Claude CLI store; its signed-in siblings stay.
+			const notices =
+				storage === undefined
+					? []
+					: await signOutClaudeCliSlotsForLogout(storage, providerId, process.env, signal, options.slotId);
+			const result = await this.models.logout(providerId, { ...options, signal });
+			const surviving = await this.credentials.read(providerId, { signal });
+			await this.synchronizeCredentialState(providerId, "logout", surviving, signal);
+			for (const key of this.activeCredentialAccounts.keys()) {
+				if (key.startsWith(`${providerId}\0`)) this.activeCredentialAccounts.delete(key);
+			}
+			return result === undefined ? { notices } : { notices, revocation: result };
 		});
 	}
 
@@ -1142,26 +1592,55 @@ export class ModelRuntime implements Models {
 		}).finally(() => clearTimeout(timeout));
 	}
 
-	registerNativeProvider(provider: Provider, options?: { refresh?: boolean }): Promise<ModelsRefreshResult> {
+	registerNativeProvider(provider: Provider, options?: ProviderRegistrationOptions): Promise<ModelsRefreshResult> {
 		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
 		const alreadyFresh = this.shouldSkipRegistrationRefresh(provider.id);
 		this.extensionProviders.delete(provider.id);
 		this.nativeExtensionProviders.set(provider.id, provider);
+		this.noteExtensionPath(provider.id, options?.extensionPath);
 		this.recomposeProvider(provider.id);
 		const composedOAuth = this.models.getProvider(provider.id)?.auth.oauth;
 		if (composedOAuth) this.credentials.registerOAuthProvider(provider.id, composedOAuth);
 		else this.credentials.unregisterOAuthProvider(provider.id);
 		this.updateModelSnapshot();
+		this.markProvisionallyConfigured(
+			provider.id,
+			configuredRequestAuthStatus(this.config.getProvider(provider.id), undefined),
+			provider.auth.oauth && !provider.auth.apiKey ? "oauth" : "api_key",
+		);
 		if (alreadyFresh || options?.refresh === false) {
 			return Promise.resolve({ aborted: false, errors: new Map() });
 		}
 		return this.refreshAfterRegistration();
 	}
 
+	/**
+	 * Mark a newly registered provider as configured when it has a stored credential or a configured
+	 * API key. Availability checks run asynchronously, and callers such as initial model selection
+	 * read the snapshot before they finish. The next availability pass replaces this entry.
+	 */
+	private markProvisionallyConfigured(
+		providerId: string,
+		configuredStatus: AuthStatus | undefined,
+		type: AuthType,
+	): void {
+		if (!this.snapshot.storedProviders.has(providerId) && !configuredStatus?.configured) return;
+		const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
+		const auth = new Map(this.snapshot.auth);
+		// Never clobber a real check result.
+		if (!auth.get(providerId)) auth.set(providerId, { type, source: "configured provider" });
+		this.snapshot = {
+			...this.snapshot,
+			auth,
+			configuredProviders,
+			available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
+		};
+	}
+
 	registerProvider(
 		providerId: string,
 		config: ProviderConfigInput,
-		options?: { refresh?: boolean },
+		options?: ProviderRegistrationOptions,
 	): Promise<ModelsRefreshResult> {
 		// Validate the incoming registration on its own, like the legacy registry:
 		// a broken re-registration must throw without touching the stored config.
@@ -1176,31 +1655,17 @@ export class ModelRuntime implements Models {
 			if (value !== undefined) (effective as Record<string, unknown>)[key] = value;
 		}
 		this.extensionProviders.set(providerId, effective);
+		this.noteExtensionPath(providerId, options?.extensionPath);
 		this.recomposeProvider(providerId);
 		const composedOAuth = this.models.getProvider(providerId)?.auth.oauth;
 		if (composedOAuth) this.credentials.registerOAuthProvider(providerId, composedOAuth);
 		else this.credentials.unregisterOAuthProvider(providerId);
 		this.updateModelSnapshot();
-		if (
-			this.snapshot.storedProviders.has(providerId) ||
-			configuredRequestAuthStatus(this.config.getProvider(providerId), effective)?.configured
-		) {
-			const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
-			const auth = new Map(this.snapshot.auth);
-			// Provisional entry until the async refresh lands; never clobber a real check result.
-			if (!auth.get(providerId)) {
-				auth.set(providerId, {
-					type: effective.oauth && !effective.apiKey ? "oauth" : "api_key",
-					source: "configured provider",
-				});
-			}
-			this.snapshot = {
-				...this.snapshot,
-				auth,
-				configuredProviders,
-				available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
-			};
-		}
+		this.markProvisionallyConfigured(
+			providerId,
+			configuredRequestAuthStatus(this.config.getProvider(providerId), effective),
+			effective.oauth && !effective.apiKey ? "oauth" : "api_key",
+		);
 		if (alreadyFresh || options?.refresh === false) {
 			return Promise.resolve({ aborted: false, errors: new Map() });
 		}
@@ -1210,9 +1675,93 @@ export class ModelRuntime implements Models {
 	unregisterProvider(providerId: string): void {
 		this.extensionProviders.delete(providerId);
 		this.nativeExtensionProviders.delete(providerId);
+		this.providerExtensionPaths.delete(providerId);
 		this.recomposeProvider(providerId);
 		this.credentials.unregisterOAuthProvider(providerId);
 		this.updateModelSnapshot();
 		void this.refresh({ allowNetwork: false });
+	}
+
+	/**
+	 * Register a virtual model under `definition.provider`, which may also list physical models or
+	 * several virtual models. Re-registering the same provider and id replaces the virtual model.
+	 * Throws when the id belongs to a physical model of that provider.
+	 */
+	registerVirtualModel(definition: VirtualModelDefinition): void {
+		const { provider: providerId, id } = definition;
+		if (!providerId.trim() || !id.trim()) throw new Error("Virtual model provider and id must not be empty.");
+		const existing = this.models.getModel(providerId, id);
+		if (existing && !isVirtualModel(existing)) {
+			throw new Error(`Virtual model ${providerId}/${id} conflicts with a physical model.`);
+		}
+		const models = this.virtualModels.get(providerId) ?? new Map<string, RegisteredVirtualModel>();
+		models.set(id, { model: createVirtualModel(definition), route: (request) => definition.route(request) });
+		this.virtualModels.set(providerId, models);
+		if (!this.recomposeProvider(providerId) && !this.snapshot.configuredProviders.has(providerId)) {
+			// A provider of only virtual models needs no credentials. Mark it configured now: session
+			// restore checks auth before the refresh below lands.
+			const auth = new Map(this.snapshot.auth).set(providerId, { type: "api_key", source: "virtual" });
+			const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
+			this.snapshot = { ...this.snapshot, auth, configuredProviders };
+		}
+		this.updateModelSnapshot();
+		void this.refresh({ allowNetwork: false });
+	}
+
+	unregisterVirtualModel(providerId: string, id: string): void {
+		const models = this.virtualModels.get(providerId);
+		if (!models?.delete(id)) return;
+		if (models.size === 0) this.virtualModels.delete(providerId);
+		this.recomposeProvider(providerId);
+		this.updateModelSnapshot();
+		void this.refresh({ allowNetwork: false });
+	}
+
+	/**
+	 * Ask a virtual model's router for the model and thinking level of one request. The router must
+	 * return a physical catalog model whose provider has credentials; the thinking level is clamped
+	 * to that model. Throws when routing fails.
+	 *
+	 * `previous` reports the latest successful response in `messages`. A retry passes the failed
+	 * response as `options.failed`; `messages` no longer contains it. `options.state` is the router
+	 * state stored by the caller, which also stores the returned state.
+	 */
+	async resolveModel(
+		model: Model<Api>,
+		messages: readonly Message[],
+		options: {
+			reason: ModelRouteReason;
+			thinkingLevel: ModelThinkingLevel;
+			signal?: AbortSignal;
+			failed?: AssistantMessage;
+			state?: unknown;
+		},
+	): Promise<ModelRoute> {
+		const name = `Virtual model ${model.provider}/${model.id}`;
+		const virtual = this.virtualModels.get(model.provider)?.get(model.id);
+		if (!virtual) throw new Error(`${name} is not registered.`);
+		const { failed, ...request } = options;
+		const latest = findLatestResponse(messages);
+		const previousModel = latest && this.getPhysicalModel(latest.provider, latest.model);
+		// A failed routing attempt names the virtual model; there is no physical request to report.
+		const failedModel = failed && this.getPhysicalModel(failed.provider, failed.model);
+		const route = await virtual.route({
+			...request,
+			model,
+			previous: previousModel && { model: previousModel, thinkingLevel: latest?.thinkingLevel },
+			failed: failedModel && failed && { model: failedModel, thinkingLevel: failed.thinkingLevel, message: failed },
+			messages,
+		});
+		const target = this.getPhysicalModel(route.model.provider, route.model.id);
+		const routed = `${name} routed to ${route.model.provider}/${route.model.id}`;
+		if (!target) throw new Error(`${routed}, which is not a physical model.`);
+		if (!this.hasConfiguredAuth(target.provider)) throw new Error(`${routed}, which has no credentials.`);
+		return { model: target, thinkingLevel: clampThinkingLevel(target, route.thinkingLevel), state: route.state };
+	}
+
+	/** A catalog chat model that is not virtual. */
+	getPhysicalModel(providerId: string, modelId: string): Model<Api> | undefined {
+		const model = this.models.getModel(providerId, modelId);
+		return model && !isVirtualModel(model) ? model : undefined;
 	}
 }

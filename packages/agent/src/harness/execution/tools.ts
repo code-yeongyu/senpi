@@ -1,9 +1,11 @@
 import { type ToolResultMessage, validateToolArguments } from "@earendil-works/pi-ai";
+import { toStoreValue } from "../../execution/prepared/executor-freeze.ts";
 import type { AgentToolCall, AgentToolResult } from "../../types.ts";
 import { type Context, withAbortSignal } from "../context.ts";
 import type { JsonValue } from "../session/types.ts";
 import type { AgentHarnessTool, AgentHarnessToolInvocation, AgentHarnessToolUpdateCallback } from "../types.ts";
 import type { Gate } from "./effect-gate.ts";
+import { runOnPreparedToolHost, type WitnessSink } from "./tool-host-call.ts";
 
 /** A tool call whose tool exists and whose prepared arguments passed validation. */
 export interface PreparedToolCall<TContext extends object | undefined> {
@@ -62,6 +64,16 @@ function createErrorToolResult(message: string): AgentToolResult<unknown> {
 		content: [{ type: "text", text: message }],
 		details: undefined,
 	};
+}
+
+// Arguments the host cannot record as JSON (a BigInt, a cycle) settle as a tool error before the body (senpi#5861).
+function unrecordableArguments(args: unknown): string | undefined {
+	try {
+		toStoreValue(args);
+		return undefined;
+	} catch (error) {
+		return `Tool arguments are not JSON: ${error instanceof Error ? error.message : String(error)}`;
+	}
 }
 
 function immediateError(toolCall: AgentToolCall, message: string, terminate = false): ImmediateToolOutcome {
@@ -129,31 +141,47 @@ export function executeToolCall<TContext extends object | undefined>(
 	toolContext: TContext,
 	invocation: AgentHarnessToolInvocation,
 	context: Context,
+	recordWitness?: WitnessSink,
 ): Promise<ExecutedToolCall> {
 	let acceptingUpdates = true;
 	return gate.admit(async () => {
 		const admittedContext = withAbortSignal(gate.signal, context);
 		admittedContext.abortSignal?.throwIfAborted();
-		try {
-			const result = await call.tool.execute(
-				call.toolCall.id,
-				call.args,
-				(partial, options) => {
-					if (acceptingUpdates) onUpdate(partial, options);
-				},
-				toolContext,
-				invocation,
-				admittedContext,
-			);
-			return { result, isError: false };
-		} catch (error) {
-			return {
-				result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
-				isError: true,
-			};
-		} finally {
-			acceptingUpdates = false;
-		}
+		const unrecordable = unrecordableArguments(call.args);
+		if (unrecordable !== undefined) return { result: createErrorToolResult(unrecordable), isError: true };
+		// The harness already prepared, validated and hooked this call, so the host gets only its identity and cleared
+		// arguments: a stream flag such as `incomplete` would make the host refuse it before the body runs.
+		const toolCall: AgentToolCall = {
+			type: "toolCall",
+			id: call.toolCall.id,
+			name: call.toolCall.name,
+			arguments: call.args,
+		};
+		// The host records a JSON copy of the arguments; the body and after_tool share the cleared arguments object itself.
+		return runOnPreparedToolHost(toolCall, invocation.invocationId, recordWitness, async () => {
+			let executed: ExecutedToolCall;
+			try {
+				const result = await call.tool.execute(
+					call.toolCall.id,
+					call.args,
+					(partial, options) => {
+						if (acceptingUpdates) onUpdate(partial, options);
+					},
+					toolContext,
+					invocation,
+					admittedContext,
+				);
+				executed = { result, isError: false };
+			} catch (error) {
+				executed = {
+					result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+					isError: true,
+				};
+			} finally {
+				acceptingUpdates = false;
+			}
+			return { outcome: executed, result: executed.result };
+		});
 	});
 }
 
@@ -181,15 +209,11 @@ export function finalizeToolCall<TContext extends object | undefined>(
 }
 
 /** Reconstruct the canonical tool result represented by a staged transcript message. */
-export function toolResultFromMessage(
-	message: ToolResultMessage<unknown>,
-	terminate: boolean,
-): AgentToolResult<unknown> {
+export function toolResultFromMessage(message: ToolResultMessage, terminate: boolean): AgentToolResult {
 	return {
 		content: message.content,
 		details: message.details,
 		...(message.usage === undefined ? {} : { usage: message.usage }),
-		...(message.addedToolNames === undefined ? {} : { addedToolNames: message.addedToolNames }),
 		...(terminate ? { terminate: true } : {}),
 	};
 }
@@ -201,9 +225,8 @@ export function createToolResultMessage(call: FinalizedToolCall): ToolResultMess
 		toolCallId: call.toolCall.id,
 		toolName: call.toolCall.name,
 		content: call.result.content ?? [],
-		...(call.result.details === undefined ? {} : { details: call.result.details }),
+		...(call.result.details === undefined ? {} : { details: call.result.details as JsonValue }),
 		...(call.result.usage === undefined ? {} : { usage: call.result.usage }),
-		...(call.result.addedToolNames?.length ? { addedToolNames: call.result.addedToolNames } : {}),
 		isError: call.isError,
 		timestamp: Date.now(),
 	};

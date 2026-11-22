@@ -3,20 +3,17 @@ import type { AddressInfo } from "node:net";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
-import { getModel, getModels, streamSimple } from "../src/compat.ts";
+import { getModel, getModels, normalizeContext, streamSimple } from "../src/compat.ts";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
 import { getSupportedThinkingLevels } from "../src/models.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
-import { fireworksCompletionsModels, fireworksMessagesModels, firstModel, requireModels } from "./fireworks-catalog.ts";
+import { fireworksCompletionsModels, fireworksMessagesModels, requireModels } from "./fireworks-catalog.ts";
 
 const messagesModels = requireModels(fireworksMessagesModels(), 2);
 const completionsModels = requireModels(fireworksCompletionsModels(), 1);
 const adaptiveMessagesModels = requireModels(
 	messagesModels.filter((model) => model.compat?.forceAdaptiveThinking === true),
 	1,
-);
-const toggleOnlyMessagesModel = firstModel(
-	messagesModels.filter((model) => model.compat?.forceAdaptiveThinking === undefined),
 );
 const glmModels = requireModels(
 	completionsModels.filter((model) => model.id.includes("glm-5p2") || model.id.includes("glm-5p3")),
@@ -116,9 +113,11 @@ describe("Fireworks models", () => {
 		const compat = {
 			supportsStore: false,
 			supportsDeveloperRole: false,
+			supportsStrictMode: true,
 			requiresReasoningContentOnAssistantMessages: true,
 			thinkingFormat: "openai",
-			deferredToolsMode: "kimi",
+			supportsMidConvoSystemMessages: true,
+			supportsMidConvoToolAdditions: true,
 			sendSessionAffinityHeaders: true,
 			supportsLongCacheRetention: false,
 		};
@@ -197,26 +196,6 @@ describe("Fireworks models", () => {
 		expect(getSupportedThinkingLevels(model)).toEqual(levels);
 	});
 
-	it("keeps toggle-only Messages models without a verified fallback on budget-based thinking", async () => {
-		const model = toggleOnlyMessagesModel;
-		expect(model.compat?.forceAdaptiveThinking).toBeUndefined();
-		let payload: Record<string, unknown> | undefined;
-		await streamSimple(
-			model,
-			{ messages: [{ role: "user", content: "test", timestamp: 0 }] },
-			{
-				apiKey: "test-fireworks-key",
-				reasoning: "high",
-				onPayload: (value) => {
-					payload = value as Record<string, unknown>;
-					throw new Error("payload captured");
-				},
-			},
-		).result();
-		expect(payload?.thinking).toEqual({ type: "enabled", budget_tokens: 16384, display: "summarized" });
-		expect(payload?.output_config).toBeUndefined();
-	});
-
 	it("resolves FIREWORKS_API_KEY from the environment", () => {
 		process.env.FIREWORKS_API_KEY = "test-fireworks-key";
 
@@ -251,7 +230,6 @@ const tool: Tool = {
 };
 
 const FIREWORKS_ANTHROPIC_COMPAT = {
-	supportsToolReferences: true,
 	allowEmptySignature: true,
 	sendSessionAffinityHeaders: true,
 	supportsEagerToolInputStreaming: false,
@@ -343,7 +321,7 @@ async function captureAnthropicRequest(
 		// Override the model's baseUrl to point to the local test server
 		const localModel = { ...model, baseUrl: `http://127.0.0.1:${address.port}` };
 
-		const stream = streamAnthropic(localModel, context, {
+		const stream = streamAnthropic(localModel, normalizeContext(context), {
 			apiKey: "test-key",
 			cacheRetention: (options?.cacheRetention as "none" | "short" | "long") ?? "short",
 			sessionId: options?.sessionId,

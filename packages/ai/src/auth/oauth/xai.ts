@@ -2,6 +2,7 @@
  * xAI OAuth device-code flow.
  */
 
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 
@@ -75,7 +76,7 @@ async function postForm(url: string, fields: Record<string, string>, signal: Abo
 		});
 	} catch (error) {
 		if (signal.aborted) {
-			throw new Error("Login cancelled");
+			throw new Error("Login cancelled", { cause: signal.reason });
 		}
 		throw error;
 	}
@@ -86,9 +87,11 @@ async function postForm(url: string, fields: Record<string, string>, signal: Abo
 		body = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as JsonObject) : {};
 	} catch {
 		if (signal.aborted) {
-			throw new Error("Login cancelled");
+			throw new Error("Login cancelled", { cause: signal.reason });
 		}
-		throw new Error(`xAI OAuth returned invalid JSON (HTTP ${response.status})`);
+		const message = `xAI OAuth returned invalid JSON (HTTP ${response.status})`;
+		// An error page (an HTML 503 from a proxy, say) still carries the status the retry decision needs.
+		throw response.ok ? new Error(message) : new OAuthTokenEndpointError(message, response.status);
 	}
 	return {
 		ok: response.ok,
@@ -102,7 +105,10 @@ function requestFailure(action: string, response: OAuthHttpResponse): Error {
 	const description =
 		typeof response.body.error_description === "string" ? response.body.error_description : undefined;
 	const detail = [error, description].filter(Boolean).join(": ");
-	return new Error(`xAI OAuth ${action} failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+	return new OAuthTokenEndpointError(
+		`xAI OAuth ${action} failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
+		response.status,
+	);
 }
 
 function parseDeviceCode(body: JsonObject): XaiDeviceCode {

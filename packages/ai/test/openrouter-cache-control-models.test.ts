@@ -13,9 +13,12 @@ describe("OpenRouter cache control metadata", () => {
 		expect(getModel("openrouter", modelId).compat?.cacheControlFormat).toBe("anthropic");
 	});
 
-	it.each(["qwen/qwen3-235b-a22b", "google/gemini-2.5-pro"] as const)("enables cache control for %s", (modelId) => {
-		expect(getModel("openrouter", modelId).compat?.cacheControlFormat).toBe("anthropic");
-	});
+	it.each(["qwen/qwen3-235b-a22b-2507", "google/gemini-2.5-pro"] as const)(
+		"enables cache control for %s",
+		(modelId) => {
+			expect(getModel("openrouter", modelId).compat?.cacheControlFormat).toBe("anthropic");
+		},
+	);
 
 	it("does not enable cache control outside the prefix allowlist", () => {
 		expect(getModel("openrouter", "meta-llama/llama-3.3-70b-instruct").compat?.cacheControlFormat).toBeUndefined();

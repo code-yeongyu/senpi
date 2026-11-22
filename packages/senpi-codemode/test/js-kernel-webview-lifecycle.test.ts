@@ -152,6 +152,16 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView lifecycle across eval kernels
 			8_000,
 		);
 		expect(run.result.ok).toBe(false);
+		// The timeout keeps the worker (#2788): the cell's view closes with it, and Chrome stays warm for the next
+		// view exactly as after an explicit view.close(), until the kernel closes.
+		await vi.waitFor(() => expect(mainThreadWebViewService()?.viewCount ?? 0).toBe(0), {
+			timeout: 30_000,
+			interval: 100,
+		});
+		await expect(
+			cell(kernel, `return await view.evaluate("1").then(() => "open", (error) => String(error.message))`),
+		).resolves.toMatch(/view is closed/u);
+		await kernel.close();
 		await expectNoBunChrome();
 	});
 

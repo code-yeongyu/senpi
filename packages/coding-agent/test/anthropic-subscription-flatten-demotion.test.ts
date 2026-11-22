@@ -42,7 +42,7 @@ function decide(overrides: Record<string, unknown> = {}) {
 afterEach(() => forgetBinding("flatten-demotion"));
 
 describe("claude-sdk-oauth flatten demotion", () => {
-	it("never flattens a live session across every divergence class", () => {
+	it("preserves live continuity except when compaction replaces the transcript", () => {
 		const decisions = [
 			decide(),
 			decide({ accountName: "secondary" }),
@@ -54,7 +54,12 @@ describe("claude-sdk-oauth flatten demotion", () => {
 			decide({ currentHashes: ["h1", "changed", "h3"] }),
 		];
 
-		expect(decisions.map((decision) => decision.kind)).not.toContain("flatten");
+		expect(
+			decisions
+				.filter((decision) => !("reason" in decision) || decision.reason !== "tainted_compaction")
+				.map((decision) => decision.kind),
+		).not.toContain("flatten");
+		expect(decisions[4]).toEqual({ kind: "flatten", reason: "tainted_compaction" });
 	});
 
 	it("flattens only when no transcript remains to resume", () => {

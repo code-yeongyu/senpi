@@ -1,11 +1,14 @@
+// allow: SIZE_OK — subprocess protocol, FIFO ownership, retirement, and replacement form one serialized state machine.
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
-import type { KernelInterruptHandle } from "../../tool/types.ts";
+import type { KernelInterruptHandle, PendingCell } from "../../tool/types.ts";
 import type { KernelToolsInvokeOptions } from "../js/kernel-tools-types.ts";
 import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
 import { applySessionEnvironment } from "../session-env.ts";
+import { describeExit } from "./kernel-death.ts";
 import { KernelMemoryHost } from "./kernel-memory-host.ts";
 import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
+import { SubprocessMemoryGlobals } from "./subprocess-memory-globals.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
 import { SubprocessRunQueue } from "./subprocess-queue.ts";
 import {
@@ -19,8 +22,11 @@ import {
 	KernelRetirementError,
 	KernelStartupError,
 	type PendingRun,
+	settlePendingRun,
 	timeoutResult,
 } from "./subprocess-run.ts";
+import { attestKernelChild } from "./session-spawn-attestation.ts";
+import { SubprocessStartupWatchdog } from "./subprocess-startup.ts";
 
 export type {
 	KernelResult,
@@ -36,13 +42,16 @@ export class SubprocessKernel {
 	private readonly onMessage?: (message: KernelToHostMessage) => void;
 	private readonly runs = new SubprocessRunQueue();
 	private readonly memory: KernelMemoryHost | null;
+	private readonly globals = new SubprocessMemoryGlobals();
 	private process: SubprocessProcess | null = null;
 	private processReady = false;
+	private startup: SubprocessStartupWatchdog | null = null;
 	private retirementPromise: Promise<void> | null = null;
 	private retirementProcess: SubprocessProcess | null = null;
 	private retirementFailure: Error | null = null;
 	private failure: Error | null = null;
 	private closed = false;
+	private dead = false;
 
 	constructor(options: SubprocessKernelOptions) {
 		this.options = options;
@@ -52,8 +61,18 @@ export class SubprocessKernel {
 		this.spawnProcess();
 	}
 
+	isAlive(): boolean {
+		return !this.dead;
+	}
+
+	drainPending(): readonly PendingCell[] {
+		return this.runs.drain().map((run) => ({ input: run.input, settle: (result) => settlePendingRun(run, result) }));
+	}
+
 	run(input: KernelRunInput): Promise<KernelResult> {
 		if (this.closed) throw new KernelClosedError();
+		const refusal = this.permissionRefusal(input.cellId);
+		if (refusal) return Promise.resolve(refusal);
 		const run = this.runs.enqueue(input);
 		this.pumpRuns();
 		return run;
@@ -77,8 +96,10 @@ export class SubprocessKernel {
 			this.runs.settleAll(new CellInterruptedError(reason));
 			return { stateRetained: Promise.resolve(true) };
 		}
+		if (this.globals.completeWithoutGlobals()) return { stateRetained: Promise.resolve(true) };
 		const process = this.process;
 		process?.retire();
+		this.globals.reset();
 		this.runs.clearToolCalls();
 		const run = this.runs.active;
 		if (!run) return { stateRetained: Promise.resolve(true) };
@@ -113,6 +134,7 @@ export class SubprocessKernel {
 
 	async reset(): Promise<void> {
 		if (this.closed) throw new KernelClosedError();
+		this.globals.reset();
 		this.settleAll(new KernelResetError());
 		this.runs.clearToolCalls();
 		await this.restartProcess(this.process);
@@ -122,6 +144,8 @@ export class SubprocessKernel {
 	async close(): Promise<void> {
 		const wasClosed = this.closed;
 		this.closed = true;
+		this.globals.reset();
+		this.startup?.stop();
 		if (!wasClosed) {
 			this.settleAll(new KernelClosingError());
 			this.runs.clearToolCalls();
@@ -148,19 +172,48 @@ export class SubprocessKernel {
 		if (this.closed || this.runs.active || !process || process.isRetiring || !this.processReady) return;
 		const run = this.runs.startNext(performance.now());
 		if (!run) return;
+		const refusal = this.permissionRefusal(run.input.cellId);
+		if (refusal) {
+			this.runs.releaseActive(run);
+			this.runs.settle(run, refusal);
+			this.pumpRuns();
+			return;
+		}
 		const timeoutMs = run.input.timeoutMs;
 		if (timeoutMs !== undefined) run.timer = setTimeout(() => this.handleTimeout(run, timeoutMs), timeoutMs);
 		try {
-			process.send(encodeBridgeFrame({ type: "run", cellId: run.input.cellId, code: run.input.code, timeoutMs }));
+			const { cellId, code, bridgeCellToken } = run.input;
+			const token = bridgeCellToken === undefined ? {} : { bridgeCellToken };
+			process.send(encodeBridgeFrame({ type: "run", cellId, code, timeoutMs, ...token }));
 		} catch (error) {
 			this.failClosed(new KernelProcessError(error instanceof Error ? error.message : String(error)));
 		}
+	}
+
+	private permissionRefusal(cellId: string): KernelResult | undefined {
+		const state = this.options.permissions?.state();
+		if (!state?.active) return undefined;
+		const rule = state.rules[0];
+		return {
+			type: "result",
+			cellId,
+			ok: false,
+			durationMs: 0,
+			error: {
+				code: "cell_permission_denied",
+				message: rule
+					? `This kernel cannot enforce ${rule.permission} ${rule.pattern} (${rule.layer}); use Python or JavaScript`
+					: "Permission authority unavailable",
+				...(rule ? { permissionRule: rule } : {}),
+			},
+		};
 	}
 
 	private handleTimeout(run: PendingRun, timeoutMs: number): void {
 		if (this.runs.active !== run || run.settled) return;
 		const process = this.process;
 		process?.retire();
+		this.globals.reset();
 		this.runs.clearToolCalls();
 		this.runs.releaseActive(run);
 		this.runs.settle(run, timeoutResult(run, timeoutMs));
@@ -172,24 +225,43 @@ export class SubprocessKernel {
 			...this.options,
 			env:
 				this.options.env ??
-				(this.options.sessionEnv
-					? applySessionEnvironment(globalThis.process.env, this.options.sessionEnv)
+				(this.options.sessionEnv || this.options.inheritedEnv
+					? applySessionEnvironment(
+							this.options.inheritedEnv?.() ?? globalThis.process.env,
+							this.options.sessionEnv,
+						)
 					: undefined),
 		});
+		attestKernelChild(this.options.attestSpawn, child);
 		const process = new SubprocessProcess(child, {
 			onLine: (source, line) => this.handleLine(source, line),
 			onStderr: (source, data) => this.handleMessage(source, { type: "text", stream: "stderr", data }),
 			onExit: (source, code, signal) => this.handleExit(source, code, signal),
 			onError: (source, error) => {
-				if (this.accepts(source)) this.failClosed(new KernelProcessError(error.message));
+				if (!this.accepts(source)) return;
+				this.failClosed(
+					source.neverStarted ? new KernelStartupError(error.message) : new KernelProcessError(error.message),
+				);
 			},
 		});
 		this.process = process;
+		this.globals.reset();
 		this.processReady = false;
+		this.startup?.stop();
+		const startup = this.options.startup;
+		this.startup = startup
+			? new SubprocessStartupWatchdog(startup, child.pid, (message) => this.stalled(process, message))
+			: null;
 		this.memory?.processReplaced();
 		try {
+			const thresholds = this.options.memory?.thresholds;
 			process.send(
-				encodeBridgeFrame({ type: "init", sessionId: this.options.sessionId, connection: this.options.connection }),
+				encodeBridgeFrame({
+					type: "init",
+					sessionId: this.options.sessionId,
+					connection: this.options.connection,
+					...(thresholds === undefined ? {} : { memory: thresholds }),
+				}),
 			);
 		} catch (error) {
 			const failure = new KernelStartupError(error instanceof Error ? error.message : String(error));
@@ -210,7 +282,10 @@ export class SubprocessKernel {
 
 	private handleMessage(process: SubprocessProcess, message: KernelToHostMessage): void {
 		if (!this.accepts(process)) return;
+		if (!this.processReady) this.startup?.observe(message);
 		if (message.type === "ready") {
+			this.globals.reset(message.memoryGlobals === true);
+			this.startup?.stop();
 			this.processReady = true;
 			this.runs.handleMessage(message, this.onMessage);
 			this.pumpRuns();
@@ -221,9 +296,23 @@ export class SubprocessKernel {
 			this.failClosed(new KernelStartupError(message.error.message));
 			return;
 		}
-		const ownResult = message.type === "result" && this.runs.active?.input.cellId === message.cellId;
-		const settled = ownResult && this.memory ? this.memory.annotate(message, process.child.pid) : message;
-		if (!this.runs.handleMessage(settled, this.onMessage)) return;
+		const run = this.runs.active;
+		if (message.type === "memory-globals-result") {
+			if (this.memory) this.globals.reply({ process, run }, message, this.memory);
+			return;
+		}
+		if (message.type === "result" && run?.input.cellId === message.cellId && this.memory) {
+			this.globals.request({ process, run, result: message }, this.memory, (result) => {
+				if (!this.accepts(process) || this.runs.active !== run || run.settled) return;
+				this.settleMessage(result);
+			});
+			return;
+		}
+		this.settleMessage(message);
+	}
+
+	private settleMessage(message: KernelToHostMessage): void {
+		if (!this.runs.handleMessage(message, this.onMessage)) return;
 		this.pumpRuns();
 		this.recycleOverCeilingWhenIdle();
 	}
@@ -236,14 +325,50 @@ export class SubprocessKernel {
 
 	private handleExit(process: SubprocessProcess, code: number | null, signal: NodeJS.Signals | null): void {
 		if (this.process !== process) return;
+		this.startup?.stop();
 		if (process.isRetiring) {
 			this.process = null;
 			this.retirementFailure = null;
 			return;
 		}
 		this.process = null;
+		this.globals.reset();
 		this.processReady = false;
-		this.failClosed(new KernelExitedError(signal ?? code ?? "unknown"));
+		const error = new KernelExitedError(signal ?? code ?? "unknown");
+		if (this.options.onDeath) this.die(error, describeExit(code, signal), this.options.onDeath);
+		else this.failClosed(error);
+	}
+
+	/**
+	 * The interpreter exited on its own and is gone: the running cell fails once (its side effects may
+	 * already have happened), the cells that never started stay queued for `drainPending`, and the owner
+	 * replaces this instance. `run()` is never reached on it again.
+	 */
+	private die(error: Error, reason: string, onDeath: (reason: string) => void): void {
+		this.failure = error;
+		this.closed = true;
+		this.dead = true;
+		this.runs.clearToolCalls();
+		const active = this.runs.active;
+		if (active) {
+			this.runs.releaseActive(active);
+			this.runs.settle(active, failureResult(active, new Error(`${error.message}; every global is lost`)));
+		}
+		onDeath(reason);
+	}
+
+	/** A stalled start is a death: the owner replaces the kernel and the cells that never started run there. */
+	private stalled(process: SubprocessProcess, message: string): void {
+		if (!this.accepts(process)) return;
+		const error = new KernelStartupError(message);
+		const onDeath = this.options.onDeath;
+		if (!onDeath) {
+			this.failClosed(error);
+			return;
+		}
+		process.retire();
+		this.trackRetirement(process, this.terminateOwnedProcess(process));
+		this.die(error, message, onDeath);
 	}
 
 	private accepts(process: SubprocessProcess): boolean {
@@ -299,6 +424,8 @@ export class SubprocessKernel {
 	}
 
 	private failClosed(error: Error): void {
+		this.startup?.stop();
+		this.globals.reset();
 		const process = this.process;
 		this.failure = error;
 		this.closed = true;

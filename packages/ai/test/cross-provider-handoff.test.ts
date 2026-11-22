@@ -132,11 +132,13 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// Hugging Face
 	{ provider: "huggingface", model: "moonshotai/Kimi-K2.5", label: "huggingface-kimi-k2.5" },
 	// Together AI
-	{ provider: "together", model: "moonshotai/Kimi-K2.6", label: "together-kimi-k2.6" },
+	{ provider: "together", model: "moonshotai/Kimi-K3", label: "together-kimi-k3" },
 	// Baseten
 	{ provider: "baseten", model: "zai-org/GLM-5.2", label: "baseten-glm-5.2" },
 	// Kimi For Coding
 	{ provider: "kimi-coding", model: "kimi-for-coding", label: "kimi-for-coding" },
+	// Meta
+	{ provider: "meta", model: "muse-spark-1.3", label: "meta-muse-spark-1.3" },
 	// Mistral
 	{ provider: "mistral", model: "devstral-medium-latest", label: "mistral-devstral-medium" },
 	// MiniMax
@@ -157,10 +159,10 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "opencode-go", model: "kimi-k2.5", label: "go-kimi-k2.5" },
 	{ provider: "opencode-go", model: "minimax-m2.5", label: "go-minimax-m2.5" },
 	// Xiaomi MiMo
-	{ provider: "xiaomi", model: "mimo-v2.5-pro", label: "xiaomi-mimo-v2.5-pro" },
-	{ provider: "xiaomi-token-plan-cn", model: "mimo-v2.5-pro", label: "xiaomi-token-plan-cn-mimo-v2.5-pro" },
-	{ provider: "xiaomi-token-plan-ams", model: "mimo-v2.5-pro", label: "xiaomi-token-plan-ams-mimo-v2.5-pro" },
-	{ provider: "xiaomi-token-plan-sgp", model: "mimo-v2.5-pro", label: "xiaomi-token-plan-sgp-mimo-v2.5-pro" },
+	{ provider: "xiaomi", model: "mimo-v2.6-pro", label: "xiaomi-mimo-v2.6-pro" },
+	{ provider: "xiaomi-token-plan-cn", model: "mimo-v2.6-pro", label: "xiaomi-token-plan-cn-mimo-v2.6-pro" },
+	{ provider: "xiaomi-token-plan-ams", model: "mimo-v2.6-pro", label: "xiaomi-token-plan-ams-mimo-v2.6-pro" },
+	{ provider: "xiaomi-token-plan-sgp", model: "mimo-v2.6-pro", label: "xiaomi-token-plan-sgp-mimo-v2.6-pro" },
 	// Alibaba Token Plan (families currently served by the endpoint: Qwen, GLM, DeepSeek)
 	{ provider: "alibaba-token-plan", model: "qwen3.7-max", label: "alibaba-token-plan-qwen3.7-max" },
 	{ provider: "alibaba-token-plan", model: "glm-5.2", label: "alibaba-token-plan-glm-5.2" },

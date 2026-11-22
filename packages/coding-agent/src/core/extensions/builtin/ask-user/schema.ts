@@ -111,6 +111,9 @@ function parseQuestion(variant: AskUserVariant, raw: unknown, index: number): Qu
 export function toCanonical(variant: AskUserVariant, args: unknown, options?: ToCanonicalOptions): QuestionRequest {
 	if (!isRecord(args)) throw new AskUserSchemaError(WAIT_FLAG_STEER_TEXT);
 	const waitForAnswer = readWaitFlag(variant, args);
+	if (args.required !== undefined && typeof args.required !== "boolean") {
+		throw new AskUserSchemaError("required must be a boolean when present");
+	}
 	const limits = LIMITS[variant];
 	if (!Array.isArray(args.questions) || args.questions.length < 1 || args.questions.length > limits.maxQuestions) {
 		throw new AskUserSchemaError(`questions must contain 1 to ${limits.maxQuestions} items`);
@@ -120,5 +123,6 @@ export function toCanonical(variant: AskUserVariant, args: unknown, options?: To
 		questions: args.questions.map((question, index) => parseQuestion(variant, question, index)),
 		waitForAnswer,
 		timeoutMs: options?.timeoutMs ?? DEFAULT_ASK_USER_TIMEOUT_MS,
+		...(args.required === true ? { required: true } : {}),
 	};
 }

@@ -12,6 +12,7 @@ import type { RpcResponse } from "../../../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "../../helpers/fake-session-base.ts";
 
 // senpi#2207: the shared host has no resource caps. Memory is reported and idle sessions park
 // sooner under pressure, but no open is ever refused for memory: the RSS refuse watermark that
@@ -19,12 +20,13 @@ import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 
 const MEGABYTE = 1024 * 1024;
 
-function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): CreateAgentSessionRuntimeResult {
-	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+async function runtime(
+	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
+): Promise<CreateAgentSessionRuntimeResult> {
+	await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
-			sessionManager: options.sessionManager,
-			agentDir: options.agentDir,
+			...fakeSessionBase(options),
 			isFastModeActive: () => false,
 			agent: { state: {} },
 			getContextUsage: () => undefined,
@@ -32,7 +34,7 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 			scopedModels: [],
 			isBashRunning: false,
 			isStreaming: false,
-			extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+			extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 			abort: async () => {},
 			abortBash: () => {},
 			waitForIdle: async () => {},
@@ -133,6 +135,8 @@ describe("issue 2207: memory never refuses an open", () => {
 				footprintMb: rssMb,
 				measure: "phys_footprint",
 				sessions: 0,
+				main: { heapBytes: expect.any(Number) },
+				kernels: [],
 			});
 		} finally {
 			await host.router.dispose();

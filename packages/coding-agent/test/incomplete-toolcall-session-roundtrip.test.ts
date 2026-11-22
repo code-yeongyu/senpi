@@ -1,11 +1,3 @@
-/*
- * toolcall_end consumer audit (mechanical classification):
- * AUDIT: packages/coding-agent/src/modes/app-server/threads/projection.ts — RENDERS
- *
- * The projector creates history items from toolcall_end and completes their failed
- * state from tool_execution_end. It does not invoke or dispatch a tool.
- */
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";

@@ -1,4 +1,4 @@
-import type { Tool } from "../../../types.ts";
+import type { Tool, ToolCall } from "../../../types.ts";
 import { validateToolArguments } from "../../../utils/validation.ts";
 import type { ParserOptions, StreamParser, StreamParserEvent } from "../../types.ts";
 import { findNextInvokeMatch } from "./invoke-match.ts";
@@ -227,7 +227,7 @@ export function createInvokeStreamParser(
 							type: "toolCall",
 							id: `${config.protocol}-finish-recovery`,
 							name: tool.name,
-							arguments: coercedArguments,
+							arguments: coercedArguments as ToolCall["arguments"],
 						});
 					} catch {
 						recoveredArguments = null;

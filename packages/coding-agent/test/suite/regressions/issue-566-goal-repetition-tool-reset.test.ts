@@ -71,6 +71,7 @@ function createMonitorHarness(): {
 	const events = new TestEventBus();
 	const pi = {
 		sendMessage: (message: { readonly content: string }) => sent.push(message.content),
+		appendEntry: () => {},
 		events,
 	} as unknown as ExtensionAPI;
 	return { monitor: new MonitorAwareGoalContinuation(pi), sent, events };

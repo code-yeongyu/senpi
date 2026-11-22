@@ -1,6 +1,6 @@
 import type { Uploadable } from "openai";
 import type { ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
-import type { ImageContent, ImagesContext, ImagesModel, ImagesOptions } from "../types.ts";
+import type { ImageApi, ImageContent, ImageModel, ImagesContext, ImagesOptions } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 const MAX_PROMPT_CHARS = 32_000;
@@ -10,6 +10,8 @@ export type OpenAIImageSize = "auto" | "1024x1024" | "1536x1024" | "1024x1536" |
 export type OpenAIImageBackground = "auto" | "transparent" | "opaque";
 export type OpenAIImageOutputFormat = "png" | "jpeg" | "webp";
 export type OpenAIImageModeration = "auto" | "low";
+/** GPT Image 2.6 planning effort before rendering; the API defaults to `high`. */
+export type OpenAIImageComplexity = "low" | "medium" | "high";
 
 export interface OpenAIImagesOptions extends ImagesOptions {
 	size?: OpenAIImageSize;
@@ -22,6 +24,8 @@ export interface OpenAIImagesOptions extends ImagesOptions {
 	/** 0-100 compression for jpeg/webp output only. */
 	outputCompression?: number;
 	moderation?: OpenAIImageModeration;
+	/** GPT Image 2.6 only; older models reject the field, so omit it for them. */
+	complexity?: OpenAIImageComplexity;
 	/** Inpainting mask applied to the first input image; requires at least one image input. */
 	mask?: ImageContent;
 }
@@ -29,6 +33,7 @@ export interface OpenAIImagesOptions extends ImagesOptions {
 export type OpenAIImageParams = Omit<ImageGenerateParamsNonStreaming, "size" | "quality"> & {
 	size?: OpenAIImageSize;
 	quality?: OpenAIImageQuality;
+	complexity?: OpenAIImageComplexity;
 	image?: Uploadable[];
 	mask?: Uploadable;
 };
@@ -95,7 +100,7 @@ export function parseOpenAIImageOutputOptions(input: OpenAIImageOutputOptionsInp
 }
 
 export function buildParams(
-	model: ImagesModel<"openai-images">,
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: OpenAIImagesOptions,
 ): OpenAIImageParams {
@@ -132,6 +137,7 @@ export function buildParams(
 		...(options?.background === undefined ? {} : { background: options.background }),
 		...(options?.outputCompression === undefined ? {} : { output_compression: options.outputCompression }),
 		...(options?.moderation === undefined ? {} : { moderation: options.moderation }),
+		...(options?.complexity === undefined ? {} : { complexity: options.complexity }),
 	};
 }
 

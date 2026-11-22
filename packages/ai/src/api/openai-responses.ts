@@ -1,6 +1,5 @@
 import OpenAI from "openai";
 import type {
-	Tool as OpenAITool,
 	ResponseCreateParamsNonStreaming,
 	ResponseCreateParamsStreaming,
 	ResponseStreamEvent,
@@ -12,7 +11,12 @@ import {
 	supportsMax,
 	supportsXhigh,
 } from "../models.ts";
+import { supportsAllowedToolChoice } from "../openai-responses-compat.ts";
 import { readProviderDiagnostic } from "../provider-diagnostic.ts";
+import {
+	isSharedSubscriptionItemLimitMessage,
+	sharedSubscriptionItemLimitMessage,
+} from "./subscription-sharing-items.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -25,9 +29,9 @@ import type {
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
+	TranscriptContext,
 	Usage,
 } from "../types.ts";
-import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import {
@@ -40,22 +44,40 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import {
 	awaitProviderTransport,
 	openAICompatibleProviderDiagnosticFromError,
+	siwcProviderDiagnosticFromError,
 } from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { isSiwcMissingResponsesScope, SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE } from "../utils/siwc-errors.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
+import { getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
-import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import { deriveOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import {
+	applyAllowedToolsChoice,
+	hasRefusedAllowedToolsChoice,
+	isAllowedToolsChoiceRefusal,
+	rememberAllowedToolsChoiceRefusal,
+	restrictToAllowedTools,
+} from "./openai-responses-allowed-tools.ts";
 import {
 	findPromptCacheComparisonResponseId,
 	type OpenAIPromptCacheOptionsPayload,
+	supportsOpenAIResponsesExplicitPromptCacheMode,
 	withPromptCacheComparison,
 } from "./openai-responses-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+	resolveResponsesDeferredToolsMode,
+	resolveResponsesToolPlacement,
+	ULTRAFAST_DOCUMENTED_MODEL_IDS,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions, clampMaxForOpenAI, OPENAI_RESPONSES_RESERVED_BODY_KEYS } from "./simple-options.ts";
 import { startWebSocketLiveness } from "./websocket-liveness.ts";
 import { createWebSocketTransportFailure } from "./websocket-transport-failure.ts";
@@ -67,6 +89,7 @@ const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1000;
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
 const PROMPT_CACHE_PREWARM_TIMEOUT_MS = 30_000;
+const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
 
 type WebSocketEventType = "open" | "message" | "error" | "close" | "ping" | "pong";
 type WebSocketListener = (event: unknown) => void;
@@ -122,22 +145,25 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Required<OpenAIResponsesCompat> {
 	const isNativeEndpoint = isOpenAIResponsesNativeEndpoint(model, env);
 	return {
+		siwc: model.compat?.siwc ?? false,
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsWebSocket: model.compat?.supportsWebSocket ?? isNativeEndpoint,
 		supportsRemoteCompactionV2: model.compat?.supportsRemoteCompactionV2 ?? isNativeEndpoint,
 		supportsWebSearchPreview: model.compat?.supportsWebSearchPreview ?? isNativeEndpoint,
+		webSearchToolType: model.compat?.webSearchToolType ?? "web_search_preview",
 		supportsImageGeneration: model.compat?.supportsImageGeneration ?? isNativeEndpoint,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		supportsAdditionalTools: model.compat?.supportsAdditionalTools ?? false,
-		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
-		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
+		supportsToolSearch: !model.compat?.siwc && (model.compat?.supportsToolSearch ?? false),
+		supportsExplicitPromptCacheMode: supportsOpenAIResponsesExplicitPromptCacheMode(model),
 		supportsConfigurationUpdate: model.compat?.supportsConfigurationUpdate ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
 		supportsForcedToolChoice: model.compat?.supportsForcedToolChoice ?? true,
-		supportsAllowedTools: model.compat?.supportsAllowedTools ?? false,
+		supportsAllowedTools: supportsAllowedToolChoice(model),
 	};
 }
 
@@ -162,10 +188,10 @@ function getPromptCacheRetention(
 function getPromptCacheOptions(
 	compat: Required<OpenAIResponsesCompat>,
 	cacheRetention: CacheRetention,
-): { mode?: "explicit"; ttl?: "30m" } | undefined {
+): OpenAIPromptCacheOptionsPayload | undefined {
 	if (!compat.supportsExplicitPromptCacheMode) return undefined;
 	if (cacheRetention === "none") return { mode: "explicit" };
-	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "30m" };
+	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "12h" };
 	return undefined;
 }
 
@@ -174,7 +200,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isOpenAiWebSearchPreviewTool(value: unknown): boolean {
-	return isRecord(value) && (value.type === "web_search_preview" || value.type === "web_search_preview_2025_03_11");
+	return (
+		isRecord(value) &&
+		(value.type === "web_search" ||
+			value.type === "web_search_preview" ||
+			value.type === "web_search_preview_2025_03_11")
+	);
 }
 
 function sanitizeUnsupportedNativeTools(
@@ -223,65 +254,113 @@ function sanitizeUnsupportedNativeTools(
 	return sanitized ? (sanitized as ResponseCreateParamsStreaming) : params;
 }
 
-type AllowedToolReference = { [key: string]: unknown };
-
-function allowedReference(tool: OpenAITool): AllowedToolReference {
-	if (tool.type === "function" || tool.type === "custom") return { type: tool.type, name: tool.name };
-	if (tool.type === "mcp") return { type: "mcp", server_label: tool.server_label };
-	return { type: tool.type };
+function formatOpenAIResponsesError(error: unknown, provider: string, siwc = false): string {
+	let errorMessage = formatProviderError(
+		normalizeProviderError(error),
+		`${provider === "openai" ? "OpenAI" : provider} API error`,
+	);
+	if (isSharedSubscriptionItemLimitMessage(errorMessage)) {
+		errorMessage = sharedSubscriptionItemLimitMessage(provider, errorMessage);
+	}
+	if (siwc && error instanceof Error && Reflect.get(error, "code") === "subscription_sharing_unsupported_capability") {
+		const param = Reflect.get(error, "param");
+		if (typeof param === "string") errorMessage += `\nUnsupported parameter: ${param}`;
+	}
+	if (siwc && isSiwcMissingResponsesScope(errorMessage)) {
+		errorMessage += `\n${SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE}`;
+	}
+	// Sign in with ChatGPT shares the subscription's usage limit with other apps.
+	return errorMessage.includes("subscription_sharing_usage_limit_exceeded")
+		? `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`
+		: errorMessage;
 }
 
 /**
- * senpi#2095: `tools` carries every tool declared this session, so removing a tool never rewrites the
- * cached prefix; the callable subset rides `tool_choice: allowed_tools` instead. Hosted tools a payload
- * hook added stay callable, and deferred tools (declared by transcript items rather than `tools`) are
- * referenced by name. An empty subset forbids tool calls. An explicit `tool_choice` always wins.
+ * SIWC preview restrictions apply after hooks and sampling overrides too.
+ * https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations
  */
-function applyAllowedToolsChoice<TParams extends ResponseCreateParamsStreaming>(
-	params: TParams,
-	context: Context,
-	compat: Required<OpenAIResponsesCompat>,
-): TParams {
-	const activeToolNames = context.activeToolNames;
-	if (!compat.supportsAllowedTools || activeToolNames === undefined || params.tool_choice !== undefined) {
-		return params;
+function shapeSiwcRequest(params: MutableResponsesPayload): MutableResponsesPayload {
+	const body: MutableResponsesPayload & Record<string, unknown> = { ...params, store: false, stream: true };
+	for (const key of [
+		"background",
+		"conversation",
+		"max_output_tokens",
+		"max_tool_calls",
+		"metadata",
+		"moderation",
+		"multi_agent",
+		"prompt",
+		"prompt_cache_retention",
+		"safety_identifier",
+		"temperature",
+		"top_logprobs",
+		"top_p",
+		"truncation",
+		"user",
+		"previous_response_id",
+		"prompt_cache_options",
+	])
+		delete body[key];
+	body.input =
+		typeof body.input === "string"
+			? [{ role: "user", content: body.input }]
+			: body.input?.map((item) =>
+					"role" in item && item.role === "system" ? { ...item, role: "developer" as const } : item,
+				);
+	const tools = body.tools
+		?.filter(
+			(tool) =>
+				tool.type === "function" ||
+				tool.type === "custom" ||
+				tool.type === "namespace" ||
+				tool.type === "web_search",
+		)
+		.map((tool) =>
+			tool.type === "namespace"
+				? {
+						...tool,
+						tools: tool.tools.filter((nested) => nested.type === "function" || nested.type === "custom"),
+					}
+				: tool,
+		);
+	// SIWC accepts local tools in namespaces or additional_tools, not flat top-level definitions.
+	const eagerTools = tools?.filter((tool) => tool.type === "function" || tool.type === "custom") ?? [];
+	body.tools = tools?.filter((tool) => tool.type !== "function" && tool.type !== "custom");
+	if (eagerTools.length > 0) {
+		Reflect.set(body, "input", [
+			{ type: "additional_tools", role: "developer", tools: eagerTools },
+			...(body.input ?? []),
+		]);
 	}
-	const active = new Set(activeToolNames);
-	const declaredTools = context.tools ?? [];
-	if (declaredTools.every((tool) => active.has(tool.name))) return params;
-
-	const allowed: AllowedToolReference[] = [];
-	const namedInTools = new Set<string>();
-	for (const tool of params.tools ?? []) {
-		if (tool.type === "function" || tool.type === "custom") {
-			namedInTools.add(tool.name);
-			if (!active.has(tool.name)) continue;
+	const choice: unknown = body.tool_choice;
+	if (isRecord(choice)) {
+		if (choice.type === "allowed_tools" && Array.isArray(choice.tools)) {
+			const tools = choice.tools.filter(
+				(tool) =>
+					isRecord(tool) && (tool.type === "function" || tool.type === "custom" || tool.type === "web_search"),
+			);
+			Reflect.set(
+				body,
+				"tool_choice",
+				tools.length > 0
+					? {
+							...choice,
+							tools,
+						}
+					: "none",
+			);
+		} else if (choice.type !== "function" && choice.type !== "custom" && choice.type !== "web_search") {
+			delete body.tool_choice;
 		}
-		allowed.push(allowedReference(tool));
 	}
-	for (const tool of declaredTools) {
-		if (namedInTools.has(tool.name) || !active.has(tool.name)) continue;
-		const [converted] = convertResponsesTools([tool], {
-			supportsStrictMode: compat.supportsStrictMode,
-			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
-		});
-		if (converted) allowed.push(allowedReference(converted));
-	}
-
-	const toolChoice: ResponseCreateParamsStreaming["tool_choice"] =
-		allowed.length > 0 ? { type: "allowed_tools", mode: "auto", tools: allowed } : "none";
-	return { ...params, tool_choice: toolChoice };
-}
-
-function formatOpenAIResponsesError(error: unknown): string {
-	return formatProviderError(normalizeProviderError(error), "OpenAI API error");
+	return body;
 }
 
 // OpenAI Responses-specific options
 export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
-	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 }
 
@@ -290,10 +369,11 @@ export interface OpenAIResponsesOptions extends StreamOptions {
  */
 export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> = (
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options?: OpenAIResponsesOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
+	const normalizedContext = resolveTranscript(context, getCompat(model).supportsMidConvoSystemMessages);
 
 	// Start async processing
 	(async () => {
@@ -321,32 +401,40 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const compat = getCompat(model, options?.env);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				getDeclaredTools(normalizedContext.messages),
 				compat.supportsOpenAIGrammarTools,
 			);
 			const client = createClient(
 				model,
-				context,
+				normalizedContext,
 				clientAuth.apiKey,
 				clientAuth.headers,
 				options?.fetch,
 				cacheSessionId,
 				options?.env,
 			);
-			let params = buildParams(model, context, options, compat, grammarToolInputProperties);
+			let params = buildParams(model, normalizedContext, options, compat, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as MutableResponsesPayload;
 			}
 
 			params = sanitizeUnsupportedNativeTools(params, compat);
-			params = applyAllowedToolsChoice(params, context, compat);
-			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+			params = applyAllowedToolsChoice(params, normalizedContext, context.activeToolNames, compat);
+			if (hasRefusedAllowedToolsChoice(model)) params = restrictToAllowedTools(params);
+			const limitedTools = limitGitHubCopilotTools(
+				model.provider,
+				params.tools,
+				params.tool_choice,
+				getDeclaredTools(normalizedContext.messages).map((tool) => tool.name),
+			);
 			if (limitedTools.omittedCount > 0) {
 				params = { ...params, tools: limitedTools.tools };
 				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
 			}
-			const transport = options?.transport ?? "sse";
+			if (compat.siwc) params = shapeSiwcRequest(params);
+			const transport = compat.siwc ? "sse" : (options?.transport ?? "sse");
+			let refusedAllowedToolsOverWebSocket = false;
 			if (transport !== "sse" && compat.supportsWebSocket) {
 				let websocketStarted = false;
 				try {
@@ -355,7 +443,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 						params,
 						buildWebSocketHeaders(
 							model,
-							context,
+							normalizedContext,
 							clientAuth.apiKey,
 							clientAuth.headers,
 							cacheSessionId,
@@ -380,8 +468,16 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 					stream.end();
 					return;
 				} catch (error) {
-					if (transport === "websocket" || websocketStarted) {
+					const refusedAllowedTools =
+						output.content.length === 0 && isAllowedToolsChoiceRefusal(error, params, { beforeContent: true });
+					if (!refusedAllowedTools && (transport === "websocket" || websocketStarted)) {
 						throw error;
+					}
+					if (refusedAllowedTools) {
+						params = restrictToAllowedTools(params);
+						refusedAllowedToolsOverWebSocket = true;
+						output.stopReason = "pending";
+						delete output.errorMessage;
 					}
 				}
 			}
@@ -391,22 +487,37 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: 0,
 			};
-			const createRequest = async () => {
+			const sendOnce = async (body: MutableResponsesPayload) => {
 				const sent = await sendWithForcedToolChoiceFallback({
 					target: model,
-					params,
+					params: body,
 					acceptsForcedToolChoice: compat.supportsForcedToolChoice,
 					isForced: isForcedOpenAIResponsesToolChoice,
-					send: (body: MutableResponsesPayload) =>
-						model.provider === "github-copilot"
+					send: (request: MutableResponsesPayload) =>
+						model.provider === "github-copilot" || compat.siwc
 							? awaitProviderTransport(
-									() => client.responses.create(body, requestOptions).withResponse(),
-									openAICompatibleProviderDiagnosticFromError,
+									() => client.responses.create(request, requestOptions).withResponse(),
+									compat.siwc ? siwcProviderDiagnosticFromError : openAICompatibleProviderDiagnosticFromError,
 								)
-							: client.responses.create(body, requestOptions).withResponse(),
+							: client.responses.create(request, requestOptions).withResponse(),
 				});
 				params = sent.params;
 				return sent.result;
+			};
+			// senpi#3080: an endpoint that refuses `allowed_tools` gets the request restricted to the active
+			// tools; the model is remembered once that restricted request is accepted.
+			const createRequest = async () => {
+				try {
+					const result = await sendOnce(params);
+					if (refusedAllowedToolsOverWebSocket) rememberAllowedToolsChoiceRefusal(model);
+					return result;
+				} catch (error) {
+					if (!isAllowedToolsChoiceRefusal(error, params)) throw error;
+					params = restrictToAllowedTools(params);
+					const result = await sendOnce(params);
+					rememberAllowedToolsChoiceRefusal(model);
+					return result;
+				}
 			};
 			const { data: openaiStream, response } = await retryProviderRequest(() => createRequest(), {
 				maxRetries: options?.maxRetries,
@@ -414,9 +525,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				signal: options?.signal,
 			});
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-			stream.push({ type: "start", partial: output });
+			// A WebSocket attempt that fell through after its refusal already pushed `start`.
+			if (!refusedAllowedToolsOverWebSocket) stream.push({ type: "start", partial: output });
 
 			await processResponsesStream(openaiStream, output, stream, model, {
+				siwc: compat.siwc,
+				onProviderStreamEvent: options?.onProviderStreamEvent,
 				serviceTier: options?.serviceTier,
 				grammarToolInputProperties,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
@@ -444,12 +558,18 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			const providerDiagnostic =
-				model.provider === "github-copilot" && output.stopReason === "error"
-					? (readProviderDiagnostic(error) ?? openAICompatibleProviderDiagnosticFromError(error))
+				(model.provider === "github-copilot" || model.compat?.siwc) && output.stopReason === "error"
+					? (readProviderDiagnostic(error) ??
+						(model.compat?.siwc
+							? siwcProviderDiagnosticFromError(error)
+							: openAICompatibleProviderDiagnosticFromError(error)))
 					: undefined;
 			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			output.errorMessage = withGitHubCopilotFailureNote(
-				formatGitHubCopilotToolLimitError(output, formatOpenAIResponsesError(error)),
+				formatGitHubCopilotToolLimitError(
+					output,
+					formatOpenAIResponsesError(error, model.provider, model.compat?.siwc),
+				),
 				model.provider,
 				error,
 			);
@@ -463,7 +583,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 
 export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOptions> = (
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	resolveOpenAIClientAuth(model.provider, options?.apiKey, options?.headers);
@@ -472,7 +592,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 
 function resolveSimpleOptions(
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options: SimpleStreamOptions | undefined,
 ): OpenAIResponsesOptions {
 	const base = {
@@ -502,12 +622,16 @@ export async function warmOpenAIResponsesPromptCache(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): Promise<{ usage: Usage; usageRaw: unknown }> {
-	const prefix: Context = { ...context, messages: [] };
+	if (model.compat?.siwc) throw new Error("SIWC requires streaming inference; prompt-cache prewarm is unsupported");
+	const prefix = normalizeContext({ ...context, messages: [] });
 	const resolved = resolveSimpleOptions(model, prefix, options);
 	const clientAuth = resolveOpenAIClientAuth(model.provider, resolved.apiKey, resolved.headers);
 	const cacheRetention = resolveCacheRetention(resolved.cacheRetention, resolved.env);
 	const compat = getCompat(model, resolved.env);
-	const grammarToolInputProperties = createGrammarToolInputProperties(prefix.tools, compat.supportsOpenAIGrammarTools);
+	const grammarToolInputProperties = createGrammarToolInputProperties(
+		getDeclaredTools(prefix.messages),
+		compat.supportsOpenAIGrammarTools,
+	);
 	const client = createClient(
 		model,
 		prefix,
@@ -521,7 +645,12 @@ export async function warmOpenAIResponsesPromptCache(
 	const nextParams = await resolved.onPayload?.(params, model);
 	if (nextParams !== undefined) params = nextParams as MutableResponsesPayload;
 	params = sanitizeUnsupportedNativeTools(params, compat);
-	const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+	const limitedTools = limitGitHubCopilotTools(
+		model.provider,
+		params.tools,
+		params.tool_choice,
+		getDeclaredTools(prefix.messages).map((tool) => tool.name),
+	);
 	if (limitedTools.omittedCount > 0) params = { ...params, tools: limitedTools.tools };
 	const body = {
 		...params,
@@ -552,9 +681,19 @@ export async function warmOpenAIResponsesPromptCache(
 	return { usage, usageRaw };
 }
 
+/** The SDK discards nonstandard admission bodies when it selects errorResponse.error. */
+class SiwcOpenAI extends OpenAI {
+	protected override makeStatusError(status: number, body: object, message: string | undefined, headers: Headers) {
+		if (isRecord(body) && Object.hasOwn(body, "detail") && !Object.hasOwn(body, "error")) {
+			return new OpenAI.APIError(status, body, message, headers);
+		}
+		return super.makeStatusError(status, body, message, headers);
+	}
+}
+
 function createClient(
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	fetch?: typeof globalThis.fetch,
@@ -588,7 +727,8 @@ function createClient(
 		Object.assign(headers, optionsHeaders);
 	}
 
-	return new OpenAI({
+	const Client = compat.siwc ? SiwcOpenAI : OpenAI;
+	return new Client({
 		apiKey,
 		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model, env) : model.baseUrl,
 		dangerouslyAllowBrowser: true,
@@ -599,21 +739,30 @@ function createClient(
 
 function buildParams(
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options: OpenAIResponsesOptions | undefined,
 	compat: Required<OpenAIResponsesCompat> = getCompat(model, options?.env),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		getDeclaredTools(context.messages),
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const deferredToolsMode = compat.supportsAdditionalTools
-		? "additional-tools"
-		: compat.supportsToolSearch
-			? "tool-search"
+	const toolPlacement = resolveResponsesToolPlacement(
+		context.messages,
+		resolveResponsesDeferredToolsMode(compat) !== undefined,
+	);
+	// Sign in with ChatGPT rejects configuration_update items (senpi#6607), so the newest one, the level in
+	// force, becomes the request effort instead of the cache baseline the session sends, as upstream does.
+	const configuredEffort =
+		compat.siwc && compat.supportsConfigurationUpdate
+			? context.messages.findLast((message) => message.role === "configurationUpdate")?.effort
 			: undefined;
-	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
-	const requestedReasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
+	const requestedReasoningEffort =
+		configuredEffort === undefined
+			? (options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined))
+			: configuredEffort === "off"
+				? undefined
+				: (configuredEffort as NonNullable<OpenAIResponsesOptions["reasoningEffort"]>);
 	const thinkingLevelMap = inferOpenAIThinkingLevelMap(model);
 	const mappedReasoningEffort =
 		requestedReasoningEffort === undefined ? undefined : thinkingLevelMap?.[requestedReasoningEffort];
@@ -627,8 +776,9 @@ function buildParams(
 		// nor a previous prefix unless the system prompt carries an explicit breakpoint.
 		systemPromptCacheBreakpoint: compat.supportsExplicitPromptCacheMode && cacheRetention !== "none",
 		grammarToolInputProperties,
-		deferredTools: toolPlacement.deferred,
-		deferredToolsMode,
+		supportsMidConvoSystemMessages: compat.supportsMidConvoSystemMessages,
+		supportsAdditionalTools: compat.supportsAdditionalTools,
+		supportsToolSearch: compat.supportsToolSearch,
 		toolOptions: {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
@@ -645,11 +795,7 @@ function buildParams(
 		model: model.id,
 		input: messages,
 		stream: true,
-		prompt_cache_key:
-			cacheRetention === "none" ||
-			(isNativeEndpoint && (compat.supportsExplicitPromptCacheMode || model.cost.cacheWrite > 0))
-				? undefined
-				: clampOpenAIPromptCacheKey(options?.sessionId),
+		prompt_cache_key: cacheRetention === "none" ? undefined : deriveOpenAIPromptCacheKey(model.id, context),
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
 		prompt_cache_options: withPromptCacheComparison(
 			getPromptCacheOptions(compat, cacheRetention),
@@ -670,8 +816,8 @@ function buildParams(
 		params.service_tier = options.serviceTier as ResponseCreateParamsStreaming["service_tier"];
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		params.tools = convertResponsesTools(toolPlacement.immediate, {
+	if (toolPlacement.requestTools.length > 0) {
+		params.tools = convertResponsesTools(toolPlacement.requestTools, {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		});
@@ -698,10 +844,8 @@ function buildParams(
 
 	applyExtraBodyToResponsesParams(params, options?.extraBody);
 
-	// Last so custom keys override the named request fields.
-	if (options?.samplingParams) {
-		Object.assign(params, options.samplingParams);
-	}
+	// Last so custom keys override the named request fields. Per-request keys override model defaults.
+	Object.assign(params, model.samplingParams, options?.samplingParams);
 
 	return params;
 }
@@ -1016,6 +1160,7 @@ async function processWebSocketStream(
 		await options?.onResponse?.({ status: 101, headers: {} }, model);
 		stream.push({ type: "start", partial: output });
 		await processResponsesStream(parseWebSocket(socket, options?.signal), output, stream, model, {
+			siwc: model.compat?.siwc,
 			serviceTier: options?.serviceTier,
 			grammarToolInputProperties,
 			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
@@ -1040,7 +1185,7 @@ function resolveOpenAIResponsesWebSocketUrl(model: Model<"openai-responses">, en
 
 function buildWebSocketHeaders(
 	model: Model<"openai-responses">,
-	context: Context,
+	context: TranscriptContext,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	sessionId?: string,
@@ -1086,10 +1231,14 @@ function buildWebSocketHeaders(
 }
 
 function getServiceTierCostMultiplier(
-	model: Pick<Model<"openai-responses">, "id">,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	model: Pick<Model<"openai-responses">, "id" | "upstreamModelId">,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): number {
 	switch (serviceTier) {
+		case "ultrafast":
+			// OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at 6x Standard on every
+			// token class and context tier. Any other model keeps its base rate.
+			return ULTRAFAST_DOCUMENTED_MODEL_IDS.has(model.upstreamModelId ?? model.id) ? 6 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":
@@ -1102,8 +1251,8 @@ function getServiceTierCostMultiplier(
 
 function applyServiceTierPricing(
 	usage: Usage,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
-	model: Pick<Model<"openai-responses">, "id">,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
+	model: Pick<Model<"openai-responses">, "id" | "upstreamModelId">,
 ) {
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);
 	if (multiplier === 1) return;

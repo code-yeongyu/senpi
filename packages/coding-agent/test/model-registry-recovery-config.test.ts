@@ -6,6 +6,13 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { clearApiKeyCache } from "../src/core/model-registry.ts";
 import type { ProviderModelConfig } from "../src/index.ts";
 import { createModelRegistry } from "./model-runtime-test-utils.ts";
+import { builtinChatModelIdPair } from "./support/catalog-ids.ts";
+
+// Two openai-completions models the OpenRouter catalog ships today, so a catalog regen cannot remove them (senpi#1955).
+const [OPENROUTER_TARGET, OPENROUTER_SIBLING] = builtinChatModelIdPair(
+	"openrouter",
+	(model) => model.api === "openai-completions",
+);
 
 describe("ModelRegistry recovery configuration", () => {
 	let tempDir: string;
@@ -61,10 +68,8 @@ describe("ModelRegistry recovery configuration", () => {
 			},
 			openrouter: {
 				modelOverrides: {
-					"anthropic/claude-sonnet-4": { recoverTextToolCalls: false },
-					// The true direction needs a model the catalog still ships: bare
-					// `anthropic/claude-opus-4` was retired in favour of the 4.1+ line (senpi#1945).
-					"anthropic/claude-opus-4.1": { recoverTextToolCalls: true },
+					[OPENROUTER_TARGET]: { recoverTextToolCalls: false },
+					[OPENROUTER_SIBLING]: { recoverTextToolCalls: true },
 					"unknown/recovery-model": { recoverTextToolCalls: true },
 				},
 			},
@@ -105,8 +110,8 @@ describe("ModelRegistry recovery configuration", () => {
 		const registry = await createModelRegistry(authStorage, modelsJsonPath);
 		expect(registry.find("custom", "custom-recovery")?.recoverTextToolCalls).toBe(true);
 		expect(registry.find("custom", "custom-recovery-unset")?.recoverTextToolCalls).toBeUndefined();
-		expect(findCatalogModel(registry, "openrouter", "anthropic/claude-sonnet-4").recoverTextToolCalls).toBe(false);
-		expect(findCatalogModel(registry, "openrouter", "anthropic/claude-opus-4.1").recoverTextToolCalls).toBe(true);
+		expect(findCatalogModel(registry, "openrouter", OPENROUTER_TARGET).recoverTextToolCalls).toBe(false);
+		expect(findCatalogModel(registry, "openrouter", OPENROUTER_SIBLING).recoverTextToolCalls).toBe(true);
 		expect(registry.find("openrouter", "unknown/recovery-model")).toBeUndefined();
 
 		registry.registerProvider("extension-provider", {

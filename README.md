@@ -1,3 +1,5 @@
+[English](README.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Português (Brasil)](README.pt-br.md) | [Italiano](README.it.md)
+
 # senpi
 
 
@@ -343,12 +345,12 @@ We treat npm dependency changes as reviewed code changes.
 - Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
 - `.npmrc` sets `save-exact=true` and `min-release-age=2` to avoid same-day dependency releases during npm resolution.
 - `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
-- `bun run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent publish dependency manifest.
-- `packages/coding-agent/publish-deps.lock.json` is generated from the root lockfile for publish staging but is never shipped; publishing an `npm-shrinkwrap.json` beside bundled dependencies breaks npm installs.
+- `bun run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent install lock.
+- The published `@code-yeongyu/senpi` manifest is the source dependency list: fork workspaces resolve through their published `@code-yeongyu/senpi-*` aliases and nothing but the vendored client/protocol code ships inside the tarball. No `npm-shrinkwrap.json` is published.
 - Release smoke tests use `bun run release:local` to build, pack, and create isolated npm and Bun installs outside the repo before tagging a release.
 - Local release installs, documented npm installs, and `senpi update senpi` use `--ignore-scripts` where supported.
 - CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`. These npm internals are inventoried for a follow-up migration.
-- Shrinkwrap generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
+- Install-lock generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
 
 ## Contributing
 

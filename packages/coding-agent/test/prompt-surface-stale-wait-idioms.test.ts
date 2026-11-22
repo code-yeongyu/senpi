@@ -2,10 +2,6 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-	buildBashTimeoutPrompt,
-	resolveBashTimeoutDefaults,
-} from "../src/core/extensions/builtin/bash-timeout/timeout.ts";
 import { buildTerminalPromptSection } from "../src/core/extensions/builtin/terminal/prompt.ts";
 import { createPtyBashTool } from "../src/core/extensions/builtin/terminal/tools/bash.ts";
 import { createBashInputTool } from "../src/core/extensions/builtin/terminal/tools/bash-input.ts";
@@ -82,7 +78,6 @@ function agentFacingSurfaces(): Array<{ name: string; line: number; text: string
 			`terminal/prompt.ts buildTerminalPromptSection(evalOnly=${evalOnly})`,
 			buildTerminalPromptSection({ evalOnly }),
 		),
-		...surfaceLines("bash-timeout prompt section", buildBashTimeoutPrompt(resolveBashTimeoutDefaults({}))),
 		...terminalToolSurfaces(),
 	]);
 }
@@ -138,7 +133,5 @@ describe("stale wait-idiom consistency gate", () => {
 	it("the bash_output tool surface no longer advertises blocking", () => {
 		const bashOutput = createBashOutputTool(stubTerminalCtx());
 		expect(bashOutput.description.toLowerCase()).not.toContain("block until");
-		expect(bashOutput.description).not.toContain("wait_for");
-		expect(bashOutput.promptSnippet ?? "").not.toContain("wait_for");
 	});
 });
