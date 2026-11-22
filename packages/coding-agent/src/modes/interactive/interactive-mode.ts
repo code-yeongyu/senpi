@@ -303,7 +303,9 @@ import {
 	type ResourceScopeGroups,
 	type ScopedResource,
 } from "./loaded-resource-scopes.ts";
-import { describeLoginFailure, type LoginFailureNotice } from "./login-outcome.ts";
+import { getConfigValueEnvVarNames, isCommandConfigValue } from "../../core/resolve-config-value.ts";
+import { verifyApiKey } from "../../core/verify-api-key.ts";
+import { describeApiKeyVerification, describeLoginFailure, type LoginFailureNotice } from "./login-outcome.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import {
 	liveModelChangeNotice,
@@ -9642,6 +9644,7 @@ export class InteractiveMode {
 			await this.loginProvider(dialog, providerId, "api_key");
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
+			void this.reportApiKeyVerification(providerId, providerName);
 		} catch (error: unknown) {
 			restoreEditor();
 			this.showLoginFailure(describeLoginFailure(error, providerName, "api_key"));
@@ -9731,6 +9734,24 @@ export class InteractiveMode {
 		} else {
 			dialog.showProgress(event.message);
 		}
+	}
+
+	/**
+	 * Asks the provider whether the key `/login` just saved is accepted (senpi#2725) and says so. Only a literal key is
+	 * checked: a `!command` or `$ENV` reference names where the secret lives, and is resolved per request instead.
+	 */
+	private async reportApiKeyVerification(providerId: string, providerName: string): Promise<void> {
+		const credential = this.session.modelRegistry.authStorage.get(providerId);
+		if (credential?.type !== "api_key" || credential.key === undefined) return;
+		const key = credential.key;
+		if (isCommandConfigValue(key) || getConfigValueEnvVarNames(key).length > 0) return;
+		const verification = await verifyApiKey({
+			models: this.session.modelRegistry.getAll(),
+			provider: providerId,
+			key,
+			signal: AbortSignal.timeout(15_000),
+		});
+		this.showLoginFailure(describeApiKeyVerification(verification, providerName));
 	}
 
 	private async loginProvider(
