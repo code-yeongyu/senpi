@@ -6330,6 +6330,10 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/loop-hook-idle-hold.ts#holds": {
+			"class": "per-copy-safe",
+			"reason": "keyed by a loop-hook call's context object: written by this copy's runner and read by this copy's hooks builtin for the same context; a context this copy did not register has no hold and keeps its carried idle value"
+		},
 		"packages/coding-agent/src/core/extensions/runner.ts#QUEUED_LIFECYCLE_EVENTS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -9125,6 +9129,10 @@
 		"packages/coding-agent/src/modes/rpc/loop-hook-turn-events.ts#TURN_LOOP_HOOKS": {
 			"class": "constant",
 			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-turn-evidence.ts#TURN_EVIDENCE": {
+			"class": "constant",
+			"reason": "lookup table of pure classifiers; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts#HEARTBEAT_EARLY_TOLERANCE_MS": {
 			"class": "constant",

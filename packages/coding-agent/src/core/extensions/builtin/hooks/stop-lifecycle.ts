@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { holdIdle } from "../../loop-hook-idle-hold.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isStaleExtensionContextError } from "../goal/stale-context.ts";
 import { isWakeSourceStateEvent, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
@@ -53,7 +54,8 @@ export type StopLifecycle = {
 export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps): StopLifecycle {
 	const turnTracker = createStopTurnTracker();
 	const backgroundWork = new Map<string, number>();
-	let pending: PendingStop | undefined;
+	// A held Stop and the release of its hold on the session's idleness (a hand's loop-hook call; none locally).
+	let pending: (PendingStop & { readonly release: (() => void) | undefined }) | undefined;
 	let drainTimer: ReturnType<typeof setTimeout> | undefined;
 
 	async function dispatchStop({ ctx, input, sessionId }: PendingStop, signal: AbortSignal | undefined): Promise<void> {
@@ -77,6 +79,7 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 
 	function dropPending(): void {
 		clearDrainTimer();
+		pending?.release?.();
 		pending = undefined;
 	}
 
@@ -96,7 +99,8 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 					`Stop hook dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
 					"error",
 				);
-			});
+			})
+			.finally(() => stop.release?.());
 	}
 
 	pi.events.on(WAKE_SOURCE_STATE_EVENT, (data) => {
@@ -117,7 +121,8 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 			resume: AsyncLocalStorage.snapshot(),
 		};
 		if (backgroundWork.size > 0) {
-			pending = stop;
+			dropPending();
+			pending = { ...stop, release: holdIdle(ctx) };
 			return;
 		}
 		dropPending();

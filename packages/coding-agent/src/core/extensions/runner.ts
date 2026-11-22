@@ -63,6 +63,7 @@ import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailu
 import type { RuntimeUiBroker } from "../runtime/ui-broker.ts";
 import { isPresentationOnly } from "./ui-presentation.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
+import { bindIdleHold } from "./loop-hook-idle-hold.ts";
 import { QuitDeadline, type QuitHandlerBudget, type SessionShutdownBudget } from "./shutdown-quit-budget.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
@@ -190,6 +191,8 @@ export interface LoopHookCallFacts {
 	sendUserMessage(...args: Parameters<ExtensionRuntime["sendUserMessage"]>): void;
 	/** `ctx.hasPendingMessages()` during the call: whether this call has sent a user message the loop will deliver. */
 	hasPendingMessages(): boolean;
+	/** Keeps `isIdle` tracking the loop session after a turn-ending call until released (internal: `loop-hook-idle-hold.ts`). */
+	holdIdle(): () => void;
 }
 
 /**
@@ -2105,7 +2108,8 @@ export class ExtensionRunner {
 		if (this.sessionManager === undefined) {
 			withoutSession(context, this.sessionlessBoundMembers);
 			const call = this.loopHookCallFn?.();
-			if (call !== undefined)
+			if (call !== undefined) {
+				bindIdleHold(context, call.holdIdle);
 				Object.defineProperties(context, {
 					sessionManager: { configurable: true, enumerable: true, value: call.sessionManager },
 					signal: { configurable: true, enumerable: true, value: call.signal },
@@ -2113,6 +2117,7 @@ export class ExtensionRunner {
 					hasPendingMessages: { configurable: true, enumerable: true, value: call.hasPendingMessages },
 					ui: { configurable: true, enumerable: true, value: withLoopNotices(context.ui, call.notify) },
 				});
+			}
 		}
 		return context;
 	}

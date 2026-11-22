@@ -21,10 +21,11 @@ export interface LoopHookDispatch {
 
 /**
  * One forwarded event, parsed: the emit that runs its handlers and merges their result, and what its call binds beyond
- * the session's id and idle state (the session port's read half it carries, whether it ends the loop's turn).
+ * the session's id and idle state: the session port's read half it carries (what it proves about the loop's turn is
+ * `TURN_EVIDENCE`'s, in `loopless-loop-hooks.ts`).
  */
 export interface ParsedLoopHook {
-	readonly binding?: Pick<LoopHookCallBinding, "carried" | "endsTurn">;
+	readonly binding?: Pick<LoopHookCallBinding, "carried">;
 	readonly emit: (dispatch: LoopHookDispatch) => Promise<object | undefined>;
 }
 

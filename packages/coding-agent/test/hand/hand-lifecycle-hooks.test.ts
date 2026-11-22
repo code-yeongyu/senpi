@@ -1,11 +1,12 @@
 // senpi#5898: a hosted loop forwards its lifecycle events to the hand, so the user's SessionStart and Stop shell hooks
 // and their extensions' compaction-failure and shutdown handlers run on the user's machine as they do in a local
+// session, under the same handler budgets (brain/hand split, K5-K9; hooks builtin C8). A Stop held for background work
+// has its own file, hand-held-stop.test.ts.
 // session, under the same handler budgets (brain/hand split, K5-K9; hooks builtin C8).
 import { join } from "node:path";
 import { deliverHandWake } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type * as HookDispatcher from "../../src/core/extensions/builtin/hooks/dispatcher.ts";
+import { afterEach, describe, expect, it } from "vitest";
 import { STOP_STATE_CUSTOM_TYPE } from "../../src/core/extensions/builtin/hooks/stop-adapter.ts";
 import { STOP_DRAIN_GRACE_MS } from "../../src/core/extensions/builtin/hooks/stop-lifecycle.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";

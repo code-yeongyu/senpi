@@ -7,12 +7,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
-import { createLoopHookCall } from "../../src/modes/rpc/loop-hook-call.ts";
+import { createLoopHookCall, type LateLoopRoute } from "../../src/modes/rpc/loop-hook-call.ts";
 import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
 import { loopEventMachine, NOTIFICATIONS, noLateEffects } from "./loop-event-fixture.ts";
 import { cleanupHands } from "./remote-hand-fixture.ts";
+
+const noLateEffects: LateLoopRoute = () => {
+	throw new Error("this test's hooks have no work that outlives their call");
+};
 
 afterEach(cleanupHands);
 
