@@ -5003,9 +5003,13 @@
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/moved-path-guard/command-paths.ts#NETWORK_URL": {
+		"packages/coding-agent/src/core/extensions/builtin/moved-path-guard/command-paths.ts#LOCAL_ANCHOR": {
 			"class": "per-copy-safe",
-			"reason": "String.replace resets this global regex for each command; no cursor is shared between calls or copies"
+			"reason": "sticky regex; withoutNetworkUrls sets lastIndex before every test, synchronously, so no cursor is shared between calls or copies"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/moved-path-guard/command-paths.ts#NETWORK_URL_START": {
+			"class": "per-copy-safe",
+			"reason": "sticky regex; withoutNetworkUrls sets lastIndex before every test, synchronously, so no cursor is shared between calls or copies"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/moved-path-guard/command-paths.ts#QUOTED": {
 			"class": "per-copy-safe",

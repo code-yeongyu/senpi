@@ -29,7 +29,10 @@ interface OpenFreeResolution {
  * containment decision would approve one directory while the I/O reached another, so neither the
  * input nor a link target is normalized before traversal.
  */
-function* walkWithoutOpen(inputPath: string): Generator<string, OpenFreeResolution, string | undefined> {
+/** One filesystem request of the walk: lstat a component, or read a link the hop budget still allows. */
+type WalkRequest = { readonly op: "lstat" | "readlink"; readonly path: string };
+
+function* walkWithoutOpen(inputPath: string): Generator<WalkRequest, OpenFreeResolution, boolean | string> {
 	const absolutePath = isAbsolute(inputPath) ? inputPath : nodeResolvePath(inputPath);
 	const { root } = parse(absolutePath);
 	const pending = splitParts(absolutePath.slice(root.length));
@@ -45,15 +48,16 @@ function* walkWithoutOpen(inputPath: string): Generator<string, OpenFreeResoluti
 			continue;
 		}
 		const candidate = join(root, ...resolved, part);
-		let link: string | undefined;
+		let link: string;
 		try {
-			link = yield candidate;
-			if (link === undefined) {
+			if (!(yield { op: "lstat", path: candidate })) {
 				resolved.push(part);
 				continue;
 			}
+			// The budget is spent before the link is read, so the hop past it costs no further I/O.
 			hops += 1;
 			if (hops > MAX_SYMLINK_HOPS) return { path: join(candidate, ...pending), errorCode: "ELOOP" };
+			link = String(yield { op: "readlink", path: candidate });
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException)?.code ?? "UNKNOWN";
 			return { path: join(candidate, ...pending), errorCode: code };
@@ -72,9 +76,9 @@ function resolveWithoutOpen(inputPath: string): OpenFreeResolution {
 	const walk = walkWithoutOpen(inputPath);
 	let step = walk.next();
 	while (!step.done) {
-		const path = step.value;
+		const { op, path } = step.value;
 		try {
-			step = walk.next(lstatSync(path).isSymbolicLink() ? readlinkSync(path) : undefined);
+			step = walk.next(op === "lstat" ? lstatSync(path).isSymbolicLink() : readlinkSync(path));
 		} catch (error) {
 			step = walk.throw(error);
 		}
@@ -115,9 +119,9 @@ export async function realpathWithoutOpenStrictAsync(inputPath: string): Promise
 	const walk = walkWithoutOpen(inputPath);
 	let step = walk.next();
 	while (!step.done) {
-		const path = step.value;
+		const { op, path } = step.value;
 		try {
-			step = walk.next((await lstat(path)).isSymbolicLink() ? await readlink(path) : undefined);
+			step = walk.next(op === "lstat" ? (await lstat(path)).isSymbolicLink() : await readlink(path));
 		} catch (error) {
 			step = walk.throw(error);
 		}
