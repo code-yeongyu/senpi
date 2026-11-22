@@ -1,5 +1,5 @@
 import { TOOL_RESULT_PLACEHOLDER } from "@earendil-works/pi-ai";
-import type { StoreValue } from "../durable/store.ts";
+import { canonicalDigest } from "./canonical-digest.ts";
 import type {
 	BatchManifest,
 	BatchPlan,
@@ -10,8 +10,7 @@ import type {
 } from "./coordinator-types.ts";
 
 /**
- * Release dependencies exactly as today's scheduler assigns them (agent-loop.ts, executeToolCallsParallel): a
- * sequential call waits for the previous sequential call and every parallel call since; a parallel call waits for the
+ * Release dependencies exactly as the agent loop has always ordered a batch: a sequential call waits for the previous sequential call and every parallel call since; a parallel call waits for the
  * previous sequential call only.
  */
 export function batchDependencies(
@@ -33,20 +32,6 @@ export function batchDependencies(
 	return result;
 }
 
-function canonical(value: StoreValue): string {
-	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-	if (value !== null && typeof value === "object") {
-		const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-		return `{${entries.map(([key, inner]) => `${JSON.stringify(key)}:${canonical(inner)}`).join(",")}}`;
-	}
-	return JSON.stringify(value);
-}
-
-async function digest(value: StoreValue): Promise<string> {
-	const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical(value)));
-	return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 export async function buildBatchManifest(issuer: string, plan: BatchPlan): Promise<BatchManifest> {
 	const dependencies = batchDependencies(plan.calls);
 	const calls: ManifestCall[] = [];
@@ -57,11 +42,11 @@ export async function buildBatchManifest(issuer: string, plan: BatchPlan): Promi
 			sourceIndex,
 			dependsOn: placement.dependsOn,
 			wave: placement.wave,
-			requestDigest: await digest({ name: call.name, args: call.args }),
+			requestDigest: await canonicalDigest({ name: call.name, args: call.args }),
 		});
 	}
 	const { calls: _calls, ...header } = plan;
-	return { ...header, issuer, calls, manifestDigest: await digest({ ...header, issuer, calls }) };
+	return { ...header, issuer, calls, manifestDigest: await canonicalDigest({ ...header, issuer, calls }) };
 }
 
 /**

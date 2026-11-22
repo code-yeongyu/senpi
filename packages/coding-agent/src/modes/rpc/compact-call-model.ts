@@ -106,6 +106,26 @@ export interface CallScope {
 	readonly turnId: string | null;
 }
 
+/** The header fields a new call starts from before its creating record fills its own. */
+export const FRESH_CALL = {
+	owningMessageId: null,
+	contentIndex: null,
+	parentKey: null,
+	join: "pending",
+	startSequence: null,
+	startedAtMs: null,
+	requestedName: null,
+	resolvedName: null,
+	seed: null,
+	raw: null,
+	input: { announced: null, started: null, prepared: null },
+	correlation: null,
+	hook: null,
+	progress: null,
+	result: null,
+	outcome: null,
+} as const;
+
 export const TERMINAL_PHASE: CallPhase = "completed-awaiting-entry";
 
 /** Execution, hook and boundary records the lane folds into the calls component. */
@@ -132,10 +152,11 @@ export function runtimeItemKey(scope: CallScope, creationSequence: number, k: nu
 }
 
 /**
- * RULING-123 (#5346): the call a compact peer's copy of a live call record names. `runtimeItemKey` is the key
- * `runtimeItemKey` above minted when the outstanding call the record changed was created, the key that call's snapshot
- * `calls` entry and its settled projection carry: opaque, fixed for the call's lifetime, and never reused in the session
- * (it embeds the epoch and the creation sequence, so it alone is unique, even when providers reuse a `toolCallId`).
+ * RULING-123 (#5346): the call a compact peer's copy of a live call record names. `runtimeItemKey` is the key the
+ * outstanding call the record changed was created with, the key that call's snapshot `calls` entry, its settled
+ * projection and the session file carry: the producer's block or bridge key (`core/session-call-keys.ts`, RULING-127),
+ * or `runtimeItemKey` above for a call with no backing block. Opaque, fixed for the call's lifetime, and never reused in
+ * the session, so it alone is unique, even when providers reuse a `toolCallId`.
  * `callUnknown`: the host changed no call with this record, so it cannot vouch for one (RULING-122's fail-safe rule).
  * The snapshot rows of calls sharing a `toolCallId` inside their message carry it too (`OutstandingCall.callUnknown`).
  */

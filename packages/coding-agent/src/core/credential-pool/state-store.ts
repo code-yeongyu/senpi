@@ -23,6 +23,7 @@ const slotStateSchema = z.looseObject({
 	stateVersion: z.number().int().nonnegative(),
 	blockedUntil: z.number().int().positive().optional(),
 	blockReason: z.enum(["auth_error", "rate_limit", "account_disabled"]).optional(),
+	usageLimit: z.literal(true).optional(),
 	failureCount: z.number().int().nonnegative().optional(),
 	lastSuccessAt: z.number().int().positive().optional(),
 	credentialRevision: z.string().regex(HEX_256_BIT).optional(),
@@ -31,6 +32,9 @@ const slotStateSchema = z.looseObject({
 	// Absent in files written before; `blockedUntil` keeps meaning "account blocked".
 	modelBlocks: z.record(z.string().min(1), z.looseObject({ blockedUntil: z.number().int().positive() })).optional(),
 });
+
+/** Every slot field this engine owns; any other field on a slot was written by another engine version. */
+export const KNOWN_SLOT_STATE_FIELDS: ReadonlySet<string> = new Set(Object.keys(slotStateSchema.shape));
 
 /**
  * The slot fields this engine reads and writes. Declared, not inferred from the loose schema: an inferred
@@ -42,6 +46,8 @@ export type CredentialSlotState = Readonly<{
 	stateVersion: number;
 	blockedUntil?: number;
 	blockReason?: "auth_error" | "rate_limit" | "account_disabled";
+	/** SIWC usage-limit pause; it has no known reset time, so the cooldown is only a probe interval. */
+	usageLimit?: true;
 	failureCount?: number;
 	lastSuccessAt?: number;
 	credentialRevision?: string;
@@ -74,6 +80,9 @@ const documentSchema = z.looseObject({
 });
 
 export type CredentialPoolStateDocument = z.infer<typeof documentSchema>;
+
+/** The local block log (senpi#3216), kept beside the state file. */
+export const BLOCK_LOG_FILENAME = "credential-pool-blocks.jsonl";
 
 export function credentialPoolStatePath(agentDir: string = getAgentDir()): string {
 	return join(agentDir, CREDENTIAL_POOL_STATE_FILENAME);
@@ -176,6 +185,11 @@ export class CredentialSlotRepository {
 	constructor(path: string = credentialPoolStatePath(), options: { readonly lockWaitBudgetMs?: number } = {}) {
 		this.path = path;
 		this.lockWaitBudgetMs = options.lockWaitBudgetMs ?? FILE_STORAGE_LOCK_RETRY_BUDGET_MS;
+	}
+
+	/** The local block log sits beside the state file, so a test or alternate agent dir keeps both together. */
+	blockLogPath(): string {
+		return join(dirname(this.path), BLOCK_LOG_FILENAME);
 	}
 
 	/**
@@ -338,7 +352,7 @@ export type HalfOpenLease = { leaseId: string; expiresAt: number };
  * until the lease expires or the probe settles the block.
  */
 export async function acquireHalfOpenLease(
-	repository: CredentialSlotRepository,
+	repository: Pick<CredentialSlotRepository, "mutateSlotState">,
 	providerId: string,
 	laneId: string,
 	slotId: string,

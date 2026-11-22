@@ -60,7 +60,7 @@ headRefName:${JSON.stringify(wrongPr ? "unrelated-branch" : "automation/catalog"
 				if (wrongPr) {
 					assert.equal(run.status, 1, run.stderr);
 					assert.ok(!existsSync(join(cwd, "changes/unreleased/123.md")));
-					assert.ok(events.every(({ args }) => args[1] !== "ready" && args[1] !== "merge"));
+					assert.ok(events.every(({ args }) => !["ready", "merge", "edit"].includes(args[1])));
 					if (existing) assert.equal(git("rev-parse", "HEAD"), base);
 				} else {
 					assert.equal(run.status, 0, run.stderr);
@@ -77,7 +77,11 @@ headRefName:${JSON.stringify(wrongPr ? "unrelated-branch" : "automation/catalog"
 						assert.ok(ready.tree.includes("changes/unreleased/123.md"));
 					} else assert.equal(created, undefined);
 					assert.ok(events.some(({ args }) => args[0] === "auth" && args[1] === "setup-git"));
-					assert.ok(events.some(({ args }) => args[1] === "merge"));
+					const label = events.findIndex(({ args }) => args[1] === "edit" && args.includes("--add-label"));
+					const merge = events.findIndex(({ args }) => args[1] === "merge");
+					assert.equal(events[label]?.args.at(-1), "run-full-ci");
+					assert.ok(events[label].tree.includes("changes/unreleased/123.md"));
+					assert.ok(label < merge);
 				}
 			} finally {
 				rmSync(root, { recursive: true, force: true });

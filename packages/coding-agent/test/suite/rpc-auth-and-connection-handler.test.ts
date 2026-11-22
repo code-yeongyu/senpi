@@ -13,6 +13,9 @@ import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../src/core/extensions/bu
 import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
+import { ACCOUNT_RESET_CAPABILITY } from "../../src/modes/rpc/custom-capability.ts";
+import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
+import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { createHarness } from "./harness.ts";
 import { cliDirId, cliSlot } from "../support/claude-cli-test-slots.ts";
 import { makeHarness, makeSink } from "./rpc-connection-harness.ts";
@@ -607,6 +610,18 @@ describe("account_reset unblocks one account over RPC", () => {
 		await handler.handleInputLine(JSON.stringify({ id, ...command }));
 		return response;
 	}
+
+	// senpi#5698: clients gate the reset action on this capability, so every host kind that accepts the command lists it.
+	it("advertises account_reset in classic and multi-session get_protocol_info", async () => {
+		const classic = await send("probe", { type: "get_protocol_info" });
+		expect((classic.data as { capabilities: string[] }).capabilities).toContain(ACCOUNT_RESET_CAPABILITY);
+		const router = new SessionCommandRouter({ list: () => [] } as never, new SessionEventWriter(() => {}), {
+			cwd: dir,
+		});
+		const multi = await router.handle({ id: "probe", type: "get_protocol_info" });
+		expect((multi as { data: { capabilities: string[] } }).data.capabilities).toContain(ACCOUNT_RESET_CAPABILITY);
+		expect(ACCOUNT_RESET_CAPABILITY).toBe("account_reset");
+	});
 
 	async function seed(provider: string) {
 		const oauth = provider === "anthropic-subscription";

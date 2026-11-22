@@ -22,6 +22,7 @@ const WORKSPACE = {
 	"@earendil-works/chord": "packages/chord/src",
 	"@earendil-works/pi-ai": "packages/ai/src",
 	"@earendil-works/pi-agent-core": "packages/agent/src",
+	"@earendil-works/pi-realm-registry": "packages/realm-registry/src",
 	"@earendil-works/pi-telemetry": "packages/telemetry/src",
 	"@earendil-works/pi-tui": "packages/tui/src",
 };
@@ -50,7 +51,11 @@ const BUDGETS = {
 			// Both are browser-safe leaves without new runtime dependencies. Measured: 33 files.
 			// +1 (senpi#4099): auth/pool/login-id.ts, the one-function leaf that stamps a fresh loginId on a sign-in's
 			// credential so a re-login (never a token refresh) releases a billing-pinned fallback. Measured: 34 files.
-			maxFiles: 34,
+			// +3 (senpi#3975): api/lazy.ts keeps the diagnostic a credential pool attaches to its all-blocked refusal
+			// (a rate limit with the soonest unblock time), read through provider-diagnostic.ts, which validates it
+			// against utils/provider-diagnostic-vocabulary.ts from utils/provider-diagnostic-carrier.ts. All three are
+			// dependency-free leaves. Measured with senpi#4099 in the graph: 36 files.
+			maxFiles: 36,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
 		"./utils/*": {
@@ -65,6 +70,8 @@ const BUDGETS = {
 	},
 	"packages/agent": {
 		"./harness/runtime/reducer": { maxFiles: 1 },
+		// The read folder a Worker-bundled tool host imports: no agent loop, no AI package (tools-core in coding-agent).
+		"./read-folders": { maxFiles: 10, forbid: ["packages/ai/", "agent-loop.ts", "harness/runtime/", "harness/env/"] },
 		"./harness/context": { maxFiles: 6, forbid: ["harness/runtime/", "harness/execution/", "packages/ai/"] },
 		// 6: windows-process-tree.ts, the leaf that plans Windows tree kills by creation time (senpi#2999).
 		"./harness/env/nodejs": { maxFiles: 6, forbid: ["packages/ai/", "harness/runtime/"] },

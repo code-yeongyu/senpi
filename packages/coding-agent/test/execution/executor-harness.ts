@@ -1,13 +1,14 @@
 import type { AgentToolCall, AgentToolResult } from "@earendil-works/pi-agent-core";
+import { sessionPreparationSource } from "./preparation-source.ts";
 import { fauxAssistantMessage, type JsonObject } from "@earendil-works/pi-ai";
 import { createAdmissionLine } from "../../../agent/src/durable/store-admission.ts";
 import { createMemoryStoreMedium, openMemoryStore } from "../../../agent/src/durable/store-memory.ts";
 import { createExecutionLedger, type ExecutionLedger } from "../../../agent/src/execution/ledger.ts";
 import type { ExecutionEntry } from "../../../agent/src/execution/ledger-types.ts";
 import type { AgentSession } from "../../src/core/agent-session.ts";
-import { createPreparedExecutor } from "../../src/core/execution/executor.ts";
-import { agentPreparationPipeline } from "../../src/core/execution/executor-pipeline.ts";
-import type { PrepareReply, ReleaseReply } from "../../src/core/execution/executor-types.ts";
+import { createPreparedExecutor } from "../../../agent/src/execution/prepared/executor.ts";
+import { agentPreparationPipeline } from "../../../agent/src/execution/prepared/executor-pipeline.ts";
+import type { PrepareReply, ReleaseReply } from "../../../agent/src/execution/prepared/executor-types.ts";
 
 const ISSUER = "brain";
 const ADMITTED_AT = Date.now();
@@ -40,7 +41,7 @@ export async function sessionExecutor(
 				},
 			},
 			executor: "hand",
-			pipeline: agentPreparationPipeline(session.agent),
+			pipeline: agentPreparationPipeline(sessionPreparationSource(session.agent)),
 		});
 	let executor = build(open());
 	return {

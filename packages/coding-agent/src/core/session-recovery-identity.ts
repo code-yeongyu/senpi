@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { carryExecutionCallKey } from "./session-call-keys.ts";
 
 /**
  * The recovery identity of one session record. It is never a property on the record a session produces, so every
@@ -9,8 +10,9 @@ import { randomUUID } from "node:crypto";
  * settled `message-<terminalSequence>` and `join-<n>` rows across a reconnect or recovery cut. The ids are opaque,
  * stable for the message's lifetime and never reused in the session; nothing else carries them. The same copy of a live
  * call record (`toolcall_*` updates, `tool_execution_*`, `tool_hook_status`) carries the `runtimeItemKey` of the call
- * the host changed with it, or `callUnknown: true` when it changed none (RULING-123, senpi#5346): that key comes from
- * the calls component (`compact-call-model.ts`), not from this carrier. Calls that share one `toolCallId` inside one
+ * the host changed with it, or `callUnknown: true` when it changed none (RULING-123, senpi#5346): that key is the one
+ * the producer minted for the call's block or bridge-started start (`session-call-keys.ts`, RULING-127, senpi#5374),
+ * which the session file persists too, and only `carryRecovery` carries an execution key beside this carrier. Calls that share one `toolCallId` inside one
  * assistant message are told apart only by order, so their snapshot `calls` and settled rows carry `callUnknown: true`
  * too (senpi#5348): the calls table's own mark, never a confident attribution that can be swapped.
  */
@@ -37,6 +39,7 @@ export function recoveryCarrier(record: object): RecoveryCarrier | undefined {
 export function carryRecovery<T extends object>(from: object, to: T): T {
 	const carrier = carriers.get(from);
 	if (carrier !== undefined && from !== to) carriers.set(to, carrier);
+	carryExecutionCallKey(from, to);
 	return to;
 }
 

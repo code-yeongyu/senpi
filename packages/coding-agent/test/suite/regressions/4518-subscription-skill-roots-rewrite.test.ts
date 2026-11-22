@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -64,34 +64,67 @@ describe("regression senpi#4518: the subscription lane rewrites skill roots to C
 		{ shape: "one-line catalog", count: 101 },
 	];
 
-	it.each(cases)("$shape: global and project roots rewritten, unrelated roots untouched", ({ count }) => {
+	it.each(cases)(
+		"$shape: every root is carried, and one with no same-file Claude copy keeps its path",
+		({ count }) => {
+			const cwd = mkdtempSync(join(tmpdir(), "senpi-4518-"));
+			temporaryDirectories.push(cwd);
+			const globalRoot = join(getAgentDir(), "skills");
+			const projectRoot = join(cwd, CONFIG_DIR_NAME, "skills");
+			const skills = [
+				skill(globalRoot, "global-skill"),
+				skill(`${globalRoot}/team`, "nested-skill"),
+				skill(projectRoot, "project-skill"),
+				skill("/opt/plugin/skills", "plugin-skill"),
+				skill(`${globalRoot}-extra`, "sibling-skill"),
+				...Array.from({ length: Math.max(0, count - 5) }, (_, index) =>
+					skill("/opt/plugin/skills", `pad-${index}`),
+				),
+			];
+			const catalog = formatSkillsForPrompt(skills);
+			expect(catalog.includes("<description>")).toBe(count <= 100);
+
+			const append = appendFor(`before${catalog}\nafter`, cwd);
+
+			expect(roots(append)).toEqual([
+				`r0=${globalRoot}`,
+				`r1=${globalRoot}/team`,
+				`r2=${projectRoot}`,
+				"r3=/opt/plugin/skills",
+				`r4=${globalRoot}-extra`,
+			]);
+		},
+	);
+
+	it("uses the Claude-form root when it resolves to the same directory", () => {
 		const cwd = mkdtempSync(join(tmpdir(), "senpi-4518-"));
 		temporaryDirectories.push(cwd);
+		const home = mkdtempSync(join(tmpdir(), "senpi-4518-home-"));
+		temporaryDirectories.push(home);
 		const globalRoot = join(getAgentDir(), "skills");
-		const projectRoot = join(cwd, CONFIG_DIR_NAME, "skills");
-		const skills = [
-			skill(globalRoot, "global-skill"),
-			skill(`${globalRoot}/team`, "nested-skill"),
-			skill(projectRoot, "project-skill"),
-			skill("/opt/plugin/skills", "plugin-skill"),
-			skill(`${globalRoot}-extra`, "sibling-skill"),
-			...Array.from({ length: Math.max(0, count - 5) }, (_, index) => skill("/opt/plugin/skills", `pad-${index}`)),
-		];
-		const catalog = formatSkillsForPrompt(skills);
-		expect(catalog.includes("<description>")).toBe(count <= 100);
-
-		const append = appendFor(`before${catalog}\nafter`, cwd);
-
-		expect(roots(append)).toEqual([
-			"r0=~/.claude/skills",
-			"r1=~/.claude/skills/team",
-			"r2=.claude/skills",
-			"r3=/opt/plugin/skills",
-			`r4=${globalRoot}-extra`,
-		]);
+		mkdirSync(globalRoot, { recursive: true });
+		const catalog = formatSkillsForPrompt([skill(globalRoot, "same-skill")]);
+		mkdirSync(join(home, ".claude"), { recursive: true });
+		symlinkSync(globalRoot, join(home, ".claude", "skills"));
+		const previousHome = process.env.HOME;
+		process.env.HOME = home;
+		try {
+			expect(
+				roots(
+					appendFor(
+						`before${catalog}
+after`,
+						cwd,
+					),
+				),
+			).toEqual(["r0=~/.claude/skills"]);
+		} finally {
+			process.env.HOME = previousHome;
+			rmSync(globalRoot, { recursive: true, force: true });
+		}
 	});
 
-	it("legacy XML catalog with absolute locations: global and project locations rewritten", () => {
+	it("legacy XML catalog with absolute locations: a location keeps its real path when no same-file Claude copy exists", () => {
 		const cwd = mkdtempSync(join(tmpdir(), "senpi-4518-"));
 		temporaryDirectories.push(cwd);
 		const globalRoot = join(getAgentDir(), "skills");
@@ -108,8 +141,8 @@ describe("regression senpi#4518: the subscription lane rewrites skill roots to C
 		const locations = [...appendFor(catalog, cwd).matchAll(/<location>([^<]+)<\/location>/g)].map((m) => m[1]);
 
 		expect(locations).toEqual([
-			"~/.claude/skills/a/SKILL.md",
-			".claude/skills/b/SKILL.md",
+			`${globalRoot}/a/SKILL.md`,
+			`${projectRoot}/b/SKILL.md`,
 			"/opt/plugin/skills/c/SKILL.md",
 		]);
 	});

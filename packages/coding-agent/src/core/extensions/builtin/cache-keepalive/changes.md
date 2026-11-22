@@ -1,5 +1,23 @@
 # Cache Keep-Alive Extension Changes
 
+## 2026-11-06 - Keep-alive warms an opted-in Anthropic-compatible gateway (senpi#1248)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`: `isWarmSupportedModel` calls the shared `supportsAnthropicCacheWarming()` from `@earendil-works/pi-ai` instead of the local `isAnthropicApiBaseUrl(model.baseUrl)` check, and the import list drops `isAnthropicApiBaseUrl`.
+
+### Why
+
+- The hostname-only check kept every gateway seat cold, so a session on an Anthropic-compatible proxy whose model sets `compat.supportsLongCacheRetention: true` never got a refreshing ping even though its requests do carry `cache_control` (senpi#1248).
+
+### Why an extension could not handle it
+
+- The builtin is the caller.
+
+### Expected merge conflict zones
+
+- LOW: the `@earendil-works/pi-ai` import block and `isWarmSupportedModel`.
+
 ## 2026-10-27 - Keepalive authenticates as the session's account (senpi#3924)
 
 ### What changed

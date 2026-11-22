@@ -1,3 +1,130 @@
+## 2026-11-14 - Tracker move for senpi#6663's missing-scope pattern entry
+
+### What changed
+
+- `packages/ai/src/utils/siwc-errors.ts`: records here (its nearest tracker) the change senpi#6663 made, which its fragment filed under `packages/ai/src/api/changes.md`: `isSiwcMissingResponsesScope` matches `api.responses.write` anywhere in the rest of the `Missing scopes:` line.
+
+### Why
+
+- senpi#6663 review: the tracker entry belongs in the file's nearest `changes.md`.
+
+### Why an extension could not handle it
+
+- Tracker bookkeeping only; no behavior change.
+
+### Expected merge conflict zones
+
+- None.
+
+## 2026-11-09 - OpenAI prompt-cache lanes: ChatGPT subscription is best-effort, long retention is 12 hours (senpi#6292, closes #6290)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: the OpenAI Responses branch of `resolvePromptCacheLifetime()` maps `classifyOpenAIPromptCacheLane()` through a lane table: the ChatGPT subscription lane is `best-effort` (no TTL), GPT-5.6+ with `long` retention on a request that sends `prompt_cache_options.ttl: "12h"` is 43200 s (`PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS`, new export), other GPT-5.6+ OpenAI-operated rows stay 1800 s, the rest 300 s. The GPT-5.6+ id regex and the extended-cache predicate moved to `packages/ai/src/utils/openai-prompt-cache-lane.ts` (new), which detects the subscription by host: any `openai-codex-responses` model on `chatgpt.com` (whatever its provider id, closes #6296), and an `openai-responses` model on `api.openai.com` only with `compat.siwc`.
+
+### Why
+
+- OpenAI's 2026-10-20 change: the Responses API sells a 12-hour minimum lifetime (https://developers.openai.com/api/docs/guides/prompt-caching), and signed-in Codex / ChatGPT Work usage keeps its cache with no expiry. A fixed 30-minute TTL on the subscription lane made the handoff hint tell users their cache had expired and kept cache-keepalive pinging on plan usage.
+
+### Why an extension could not handle it
+
+- The lifetime resolver is the single source every cache consumer (handoff hint, keepalive, goal backstop, cache-aware timeouts) reads; an extension cannot change it.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `openai-responses` / `openai-codex-responses` / `azure-openai-responses` case of `resolvePromptCacheLifetime()` and the constants at the top of `prompt-cache-ttl.ts`.
+
+## 2026-11-09 - Tool arguments decode JSON-encoded arrays and objects before conversion (senpi#6265)
+
+### What changed
+
+- `packages/ai/src/utils/validation.ts`: `validateToolArguments()` runs a schema-directed `decodeJsonEncodedStructures()` pass before `Value.Convert`. Where a property's schema declares an array or object and does not accept a string, a string value whose JSON text parses to that declared array or object is replaced by the parsed value, recursing through object properties, `additionalProperties` and array items. Strings the schema accepts, unions with an untyped member, and text that does not parse to the declared structure are left as they were, so a bare single value still takes the existing `Value.Convert` wrap.
+
+### Why
+
+- In a turn of parallel `generate_image` calls, the later calls carried `reference_image_paths` as the array's JSON text. `Value.Convert` wrapped that text into a one-element array, which passed validation, so the tool resolved the JSON text as a path and failed with ENOENT before any request (senpi#6265). The same path decoded every array- or object-typed tool parameter the same way.
+
+### Why an extension could not handle it
+
+- Argument validation and conversion run in the shared core before any tool's `execute` sees the parameters; per-tool `prepareArguments` shims would have to repeat the fix for every array-typed parameter, including MCP tools whose schemas no extension owns.
+
+### Expected merge conflict zones
+
+- LOW: the new helpers inserted above `getValidator`, and the one added call between `normalizeOptionalNulls` and `Value.Convert` in `validateToolArguments`.
+
+## 2026-11-02 - Shared tri-state Anthropic long-cache retention decision (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: adds the exported `allowsAnthropicLongCacheRetention(model)` helper. An explicit `compat.supportsLongCacheRetention` of `true` or `false` wins on any host; only an unset flag falls back to `isAnthropicApiBaseUrl(model.baseUrl) && getAnthropicCompat(model).supportsLongCacheRetention` (which keeps the Fireworks carve-out). The `anthropic-messages` branch of `resolvePromptCacheLifetime()` uses it to pick the 3600 s vs 300 s TTL. `getAnthropicCompat` is unchanged.
+
+### Why
+
+- `compat.supportsLongCacheRetention` is a documented models.json field, but for `anthropic-messages` the one-hour TTL was additionally gated on the native hostname, so an explicit proxy opt-in did nothing. Only the `foreign host + true` case changes behavior.
+
+### Why an extension could not handle it
+
+- Extensions sit above the provider request and cache-accounting boundary; they cannot change the wire `cache_control.ttl` and the core `resolvePromptCacheLifetime()` result together.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `anthropic-messages` branch of `resolvePromptCacheLifetime()`, now a helper call instead of an inline conjunction.
+- LOW: the helper inserted just above `getAnthropicCompat`.
+
+## 2026-11-06 - Shared tri-state warming eligibility for Anthropic hosts (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: adds `supportsAnthropicCacheWarming(model)`. The native host always qualifies; a proxy qualifies only when its model entry asserts `compat.supportsLongCacheRetention: true`. It sits beside `allowsAnthropicLongCacheRetention` and neither reads the other's state.
+
+### Why
+
+- Warming a host that ignores `cache_control` sends a request for no benefit, while refusing a host that honours it leaves a real prompt cache cold (senpi#1248). An unset flag cannot tell a host that caches for five minutes without the one-hour option apart from one that ignores `cache_control`, so only an explicit assertion widens eligibility.
+
+### Why an extension could not handle it
+
+- Provider-host cache capability belongs to the shared cache matrix; extensions consume it.
+
+### Expected merge conflict zones
+
+- LOW: a helper inserted below `allowsAnthropicLongCacheRetention`.
+
+## 2026-10-30 - Typed OAuth reauthorization and client configuration errors (senpi#5003)
+
+### What changed
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` adds `OAuthReauthorizationRequiredError` with a closed refresh-code union and `OAuthClientConfigurationError`. Both extend the existing status-bearing token endpoint error and set its facts: the reauthorization error carries its code as `oauthError` with `credentialRefused: true`, and the configuration error carries `oauthError: "invalid_client"` (not a refused credential, so the credential pool never blocks the account for it).
+
+### Why
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` must preserve HTTP status and existing transient/permanent behavior while letting callers distinguish terminal recovery actions.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` defines the shared refresh error contract below provider extensions.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/oauth-refresh-error.ts`: declarations beside `OAuthTokenEndpointError`.
+
+## 2026-10-30 - Credential-pool-blocked diagnostic token (senpi#3975)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: `CREDENTIAL_POOL_BLOCKED_CODE` (`credential_pool_blocked`, category `rate_limit`) and `credentialPoolBlockedDiagnostic(resetsAt)`.
+
+### Why
+
+- senpi#3975: a pool whose every account is limited needs a structured rate limit with its reset, not an unclassified failure.
+
+### Why an extension could not handle it
+
+- The diagnostic vocabulary is a closed allowlist validated by `sanitizeProviderDiagnostic`.
+
+### Expected merge conflict zones
+
+- LOW: the head of the file and the `rate_limit` cases of `categoryForProviderCode` / `isProviderCodeStatusCompatible`.
+
 ## 2026-10-28 - Account-pool refusal tokens in the provider diagnostic vocabulary (#4676)
 
 ### What changed

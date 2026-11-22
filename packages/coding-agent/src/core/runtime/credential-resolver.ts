@@ -19,6 +19,7 @@ export interface ProviderCredential {
 export interface ProviderAuthStatus {
 	configured: boolean;
 	source?: string;
+	ambient?: boolean;
 }
 
 /**
@@ -32,12 +33,14 @@ export interface CredentialResolver<TModel extends CredentialModel = CredentialM
 	getApiKeyAndHeaders(model: TModel): Promise<CredentialAuthResult>;
 	getProviderAuth(provider: string): Promise<ProviderCredential | undefined>;
 	getProviderAuthStatus?(provider: string): ProviderAuthStatus;
+	/** Configuration names credential headers and no API key, so no key can be resolved for it. */
+	providerAuthIsHeaderOnly?(provider: string): boolean;
 }
 
 export function credentialResolverFromRegistry<TModel extends CredentialModel>(
 	registry: CredentialResolver<TModel>,
 ): CredentialResolver<TModel> {
-	const { getAvailable, getProviderAuthStatus } = registry;
+	const { getAvailable, getProviderAuthStatus, providerAuthIsHeaderOnly } = registry;
 	return {
 		authStorage: { get: (provider) => registry.authStorage.get(provider) },
 		getAll: () => registry.getAll(),
@@ -47,5 +50,8 @@ export function credentialResolverFromRegistry<TModel extends CredentialModel>(
 		...(getProviderAuthStatus === undefined
 			? {}
 			: { getProviderAuthStatus: (provider) => getProviderAuthStatus.call(registry, provider) }),
+		...(providerAuthIsHeaderOnly === undefined
+			? {}
+			: { providerAuthIsHeaderOnly: (provider) => providerAuthIsHeaderOnly.call(registry, provider) }),
 	};
 }

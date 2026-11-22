@@ -33,13 +33,14 @@ import {
 	sentMessageHashes,
 	sentMessages,
 } from "./session-sync.ts";
-import { createSessionTurnAttempt, waitForActiveTurn } from "./session-turn-attempt.ts";
+import { admitSettledTurn, createSessionTurnAttempt } from "./session-turn-attempt.ts";
 import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
 
 export type ResidentSessionStreamInput = {
 	model: Model<Api>;
 	context: Context;
 	streamOptions: SimpleStreamOptions;
+	recheckedAccounts?: Set<string>;
 	providerSettings: AnthropicSubscriptionProviderSettings;
 	pinnedAccount?: string;
 	buildOptions: Parameters<typeof queryWithAuthLane>[0]["buildOptions"];
@@ -96,12 +97,12 @@ async function createResidentAttempt(
 	const messages = sentMessages(input.context);
 	const hashes = sentMessageHashes(messages);
 	// Continuity and the delta are read from the settled previous turn, never from one still in flight.
-	const pending = getSession(sessionId);
-	if (pending) await waitForActiveTurn(pending, input.streamOptions.signal);
+	const { binding, transcriptAvailable } = await admitSettledTurn(sessionId, input.streamOptions.signal, () =>
+		admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane),
+	);
 	const existing = getSession(sessionId);
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
-	const { binding, transcriptAvailable } = await admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane);
 	const servedLineage = getBinding(sessionId);
 	const lineageSeat = existing?.accountName ?? servedLineage?.accountName ?? binding?.accountName;
 	const seat = {
@@ -281,6 +282,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		prompt: "",
 		query: getSdkBoundary().query,
 		providerSettings: input.providerSettings,
+		recheckedAccounts: input.recheckedAccounts,
 		env: input.streamOptions.env,
 		signal: input.streamOptions.signal,
 		sessionId: input.streamOptions.affinitySessionId ?? input.streamOptions.sessionId,

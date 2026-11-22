@@ -84,6 +84,17 @@ export class CompactCallTable {
 	}
 
 	/**
+	 * The oldest call of `turnId` started under `id` before any block joined it (a bridge-started call, RULING-127 (b)):
+	 * a block joins it and keeps its first key; oldest first, the order the producer assigns their keys to blocks.
+	 */
+	bridgeStarted(turnId: string | null, id: string | null): OutstandingCall | undefined {
+		if (turnId === null || id === null) return undefined;
+		const unowned = (call: OutstandingCall) =>
+			call.turnId === turnId && call.owningMessageId === null && call.parentKey === null;
+		return this.oldestById(id, turnId, unowned);
+	}
+
+	/**
 	 * RULING-123, C3.4: whether another call of `call`'s own message took the same toolCallId. An execution or hook
 	 * record names only the toolCallId, so it cannot say which of those calls it is about. The mark lasts while any call
 	 * of that message and id is live, so a later record is not attributed by elimination either.
@@ -120,7 +131,7 @@ export class CompactCallTable {
 		this.slotBytes += slot.bytes - (previous ? (this.slotBytesOf.get(previous) ?? 0) : 0);
 		this.slotBytesOf.set(slot.ref, slot.bytes);
 		if (previous) this.slotBytesOf.delete(previous);
-		this.put(next, creationOf(call));
+		this.reput(next);
 		this.store.adjust(slot.ref.owner, -1, 0);
 		return next;
 	}
@@ -134,7 +145,17 @@ export class CompactCallTable {
 	 * an id with another of its message republishes the others marked.
 	 */
 	put(input: OutstandingCall, creation: { readonly sequence: number; readonly k: number }): void {
-		const order = callOrder(creation.sequence, creation.k);
+		this.putAt(input, callOrder(creation.sequence, creation.k));
+	}
+
+	/** A changed call keeps the creation ordinal its key was put at (RULING-13 Q1), whatever minted that key. */
+	reput(input: OutstandingCall): void {
+		const entry = this.entries.get(input.runtimeItemKey);
+		if (!entry) throw new Error(`unknown call ${input.runtimeItemKey}`);
+		this.putAt(input, entry.order);
+	}
+
+	private putAt(input: OutstandingCall, order: string): void {
 		const call = marked(input, this.willShare(input));
 		// Measured before anything changes, so a header the engine cannot serialize leaves the table as it was.
 		const bytes = headerBytes(call);
@@ -147,7 +168,7 @@ export class CompactCallTable {
 		this.index(call);
 		if (call.callUnknown && call.owningMessageId !== null && call.toolCallId !== null)
 			for (const peer of this.inMessage(call.owningMessageId, call.toolCallId).map((key) => this.get(key)))
-				if (peer && !peer.callUnknown) this.put(peer, creationOf(peer));
+				if (peer && !peer.callUnknown) this.reput(peer);
 	}
 
 	/** Whether `call`, once put, shares its toolCallId inside its message: the mark is set, or another live call has it. */
@@ -266,11 +287,4 @@ function marked(call: OutstandingCall, ambiguous: boolean): OutstandingCall {
 
 function headerBytes(call: OutstandingCall): number {
 	return Buffer.byteLength(JSON.stringify(call));
-}
-
-/** The creation ordinal is fixed by the key (RULING-13 Q1): `epoch:creationSequence.k`. */
-export function creationOf(call: OutstandingCall): { readonly sequence: number; readonly k: number } {
-	const tail = call.runtimeItemKey.slice(call.runtimeItemKey.lastIndexOf(":") + 1);
-	const [sequence, k] = tail.split(".");
-	return { sequence: Number(sequence), k: Number(k) };
 }

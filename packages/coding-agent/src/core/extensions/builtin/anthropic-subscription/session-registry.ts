@@ -118,6 +118,8 @@ export interface AnthropicSubscriptionSessionEntry {
 	lastUsedAt: number;
 	/** Digest of the access token the resident subprocess was spawned with. */
 	credentialDigest?: string;
+	/** senpi#6411: the live `setModel` chain (`done` never rejects) and the model it selects, until it settles. */
+	pendingModelSwitch?: { done: Promise<void>; modelId: string };
 	/**
 	 * Close cause once the entry is idle, set when its session's run settled and it should not stay
 	 * resident (a finished child, senpi#5689). The entry then has a zero idle TTL instead of 30 minutes.
@@ -380,7 +382,7 @@ export function markTainted(senpiSessionId: string, reason: string): void {
 	annotateTainted(sessionRegistry, senpiSessionId, reason);
 }
 
-export async function switchSessionModel(senpiSessionId: string, modelId: string, sdkModel?: string): Promise<boolean> {
+export function switchSessionModel(senpiSessionId: string, modelId: string, sdkModel?: string): boolean {
 	return switchEntryModel(sessionRegistry, senpiSessionId, modelId, sdkModel);
 }
 

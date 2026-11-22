@@ -1,5 +1,6 @@
 import { fauxToolCall } from "@earendil-works/pi-ai";
 import { expect, it } from "vitest";
+import { blockCallKey } from "../../../src/core/session-call-keys.ts";
 import { callsRig } from "./4272-calls-support.ts";
 
 // Part of #4272, R3.C3.1-C3.3 (RULING-13): the outstanding-call phase machine on the S04 lane.
@@ -26,7 +27,7 @@ it("T3a C3.2 C3.3 phases only move forward and every cut holds the exact raw pre
 		rig.record({ type: "tool_execution_end", toolCallId: "call-a", toolName: "write", result: "ok", isError: false });
 		const completed = await rig.calls();
 
-		const key = `${streaming.root.sessionEpoch}:${started?.sequence}.0`;
+		const key = blockCallKey(owner.messageId, 0);
 		expect(streaming.calls).toHaveLength(1);
 		expect(streaming.calls[0]).toMatchObject({
 			runtimeItemKey: key,
@@ -78,7 +79,7 @@ it("C3.1 Q1 a provider id that changes after toolcall_start re-indexes the call 
 		rig.record({ type: "turn_start" });
 		const owner = rig.start();
 		const call = fauxToolCall("read", { path: "x" }, { id: "late-id" });
-		const started = rig.toolStart(owner, 0, { ...call, id: "" }, "read");
+		rig.toolStart(owner, 0, { ...call, id: "" }, "read");
 		rig.blockName(owner, 0, "read_file");
 		rig.toolEnd(owner, 0, call, "read");
 		rig.end(owner, [call]);
@@ -86,7 +87,7 @@ it("C3.1 Q1 a provider id that changes after toolcall_start re-indexes the call 
 		const view = await rig.calls();
 		expect(view.calls).toHaveLength(1);
 		expect(view.calls[0]).toMatchObject({
-			runtimeItemKey: `${view.root.sessionEpoch}:${started?.sequence}.0`,
+			runtimeItemKey: blockCallKey(owner.messageId, 0),
 			toolCallId: "late-id",
 			requestedName: "read",
 			phase: "executing",

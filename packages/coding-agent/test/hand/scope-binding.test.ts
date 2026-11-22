@@ -4,6 +4,7 @@
 import {
 	type AgentToolResult,
 	decodeRemoteMessage,
+	HAND_CONTROL_LANE,
 	encodeRemoteMessage,
 	type HandScope,
 	type RemoteHandMessage,
@@ -42,6 +43,7 @@ function rawSession(link: ReturnType<typeof openLink>) {
 	const replies: RemoteHandMessage[] = [];
 	const waiters: Array<{ readonly count: number; readonly resolve: () => void }> = [];
 	link.brain.onFrame((frame) => {
+		if (frame.lane === HAND_CONTROL_LANE) return;
 		replies.push(decodeRemoteMessage(frame.payload));
 		for (const waiter of waiters.splice(0)) {
 			if (replies.length >= waiter.count) waiter.resolve();

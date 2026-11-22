@@ -11,6 +11,7 @@ import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 function routerFor(state: "open" | "closing" = "open") {
 	const registry = {
 		list: () => [],
+		peek: (id: string) => (id === "known" ? { state, runtime: {} } : undefined),
 		getForCommand: (id: string) => {
 			if (id !== "known") throw Object.assign(new Error("unknown_session"), { code: "unknown_session" });
 			if (state === "closing") throw Object.assign(new Error("session_closing"), { code: "session_closing" });

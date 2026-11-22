@@ -1,3 +1,4 @@
+import { withReceipt } from "./command-authority.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import type { RpcSessionClosedEvent, RpcSessionClosedReason, RpcSessionParkedEvent } from "./rpc-types.ts";
 import { MAX_SHARED_STDIO_QUEUE_BYTES, MAX_SHARED_STDIO_QUEUE_RECORDS } from "./session-event-writer-lanes.ts";
@@ -130,7 +131,7 @@ export abstract class SessionEventWriterLifecycle extends SessionEventWriterPres
 		records = 2,
 	): { release: () => void; complete: (terminal: boolean, reason?: RpcSessionClosedReason) => void } | undefined {
 		const bytes =
-			Buffer.byteLength(serializeJsonLine({ ...response, sessionId })) +
+			Buffer.byteLength(serializeJsonLine({ ...withReceipt(response, this.currentConnection()), sessionId })) +
 			(records === 2
 				? Buffer.byteLength(serializeJsonLine({ type: "session_closed", sessionId, reason: "client_close" }))
 				: 0);
@@ -174,8 +175,12 @@ export abstract class SessionEventWriterLifecycle extends SessionEventWriterPres
 			complete: (terminal, reason) => {
 				if (!active) return;
 				release();
-				if (terminal && !this.sealedSessions.has(sessionId)) this.closeSession(sessionId, response, reason);
-				else this.appendClosedResponse(sessionId, response);
+				// The close command's own reply, written here rather than returned through dispatch, so it takes the
+				// command's receipt here (senpi#6280). Only this path: host-driven closes (eviction, shutdown, worker
+				// failure) may run inside an unrelated command and must not carry its receipt.
+				const reply = withReceipt(response, this.currentConnection());
+				if (terminal && !this.sealedSessions.has(sessionId)) this.closeSession(sessionId, reply, reason);
+				else this.appendClosedResponse(sessionId, reply);
 			},
 		};
 	}

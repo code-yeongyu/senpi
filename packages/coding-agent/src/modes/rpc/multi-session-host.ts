@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import { reportStartupMilestone } from "./host-startup-beacon.ts";
 import { createServer, type Server } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Duplex } from "node:stream";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
@@ -18,27 +18,39 @@ import {
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { startHostChildReaper } from "./child-reaper.ts";
+import { warmAtBootForPrivateFds } from "./host-boot-extensions.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
+import { CommandAuthority, commandAuthority, takeRelayExec } from "./command-authority.ts";
+import { answerDelegation, relayExecRefusal } from "./delegated-answer.ts";
+import type { LaunchProofSource } from "./delegated-connection.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
+import { bindRegisteredEndpoint } from "./host-bare-endpoint-registration.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
-import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { ENDPOINT_OWNER_FENCE_CAPABILITY, GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { HandoffAnnouncement } from "./host-handoff-announcement.ts";
 import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
+import { publishHostInstanceId } from "./host-identity-env.ts";
+import { listenForSuccessor } from "./predecessor-endpoint.ts";
+import { authRecord } from "./rpc-auth-proof.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { hostWatchdogBinding, internalHostTransport } from "./host-internal-transport.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
 import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
+import { isHostOccupancyWatch } from "./host-observe-request.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
+import { HostOccupancyWatch } from "./host-occupancy-watch.ts";
 import { closeHostConnections, type HostConnection } from "./host-shutdown-connections.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
-import { armHostWatchdog } from "./host-watchdog.ts";
+import { armHostWatchdog, type HostWatchdogConfig } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
+import { MachineOpHandler } from "./machine-op/handler.ts";
+import { withOpenRetention } from "./open-retention.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
@@ -51,23 +63,30 @@ import {
 	PUBLIC_SOCKET_IDENTITY_FILE,
 	readSocketIdentityFile,
 	type SocketFileIdentity,
-	shieldSocketDuringClose,
 	socketEntryReplaced,
-	unlinkOwnedSocket,
 	waitForSocketIdentityFile,
 } from "./socket-ownership.ts";
+import { closeShieldedEndpoint, unlinkOwnedEndpoint } from "./host-endpoint-owner.ts";
 import { formatSocketAddress, listen, resolveSocketPath } from "./host-socket-bind.ts";
 import { socketSink } from "./socket-sink.ts";
 import type { SocketClosingCode } from "./socket-closing.ts";
 import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./socket-transport.ts";
 import { WorkerSessionRegistry } from "./worker-session-registry.ts";
-import { McpPresenterControl } from "./mcp-presenter-control.ts";
+import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
 import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
+import type { AttachLedger } from "./attach-ledger.ts";
+import { startMcpPresenterControl } from "./mcp-presenter-control-start.ts";
+import type { HeadlessPresence } from "../headless/presence.ts";
+import type { HandSelection } from "../headless/hand-selection.ts";
+
+export { presenterPipePath } from "./mcp-presenter-control-start.ts";
 
 export interface MultiSessionHostOptions {
 	/** Host deployment policy; never derived from client capabilities or project settings. */
 	mcpPresenterEnforcement?: boolean;
 	presenterBootstrapFd?: number;
+	/** Injected by the distribution at host start (senpi#4249); never derived from RPC, arguments or environment. */
+	presenterAccountAuthority?: PresenterAccountAuthority;
 	agentDir: string;
 	createRuntime: CreateAgentSessionRuntimeFactory;
 	workerConfiguration?: CliRuntimeConfiguration;
@@ -88,6 +107,15 @@ export interface MultiSessionHostOptions {
 	 * an explicit `false` is honored) and never exits for being empty.
 	 */
 	sessionOwner?: "client" | "machine";
+	/**
+	 * The durable takeover ledger (R21; S37). Honored only with `sessionOwner: "machine"`: `attach_session { takeover,
+	 * holder }` then takes a session over and lets its other clients go quietly. Absent, a takeover is refused.
+	 */
+	sessionTakeover?: AttachLedger;
+	/** Set only by a headless host with a presence binding (`modes/headless`): rows and opens carry presence. */
+	sessionPresence?: HeadlessPresence;
+	/** Set only by a headless host with a hand directory (`modes/headless`): `list_hands` and `select_hand`. */
+	handSelection?: HandSelection;
 }
 
 export {
@@ -121,14 +149,6 @@ export async function runMultiSessionHost(options: MultiSessionHostOptions): Pro
 			? runStdioHost(options)
 			: runSocketHost(options, resolveSocketPath(options.listen, options.agentDir)),
 	);
-}
-
-/**
- * The Windows presenter control pipe. Its name comes from its own random value, never the host's public
- * protocol instanceId, so nothing can learn it before the host listens and squat it.
- */
-export function presenterPipePath(): string {
-	return `\\\\.\\pipe\\senpi-presenter-${randomUUID()}`;
 }
 
 export function createHostCore(
@@ -171,6 +191,7 @@ export function createHostCore(
 				...(hooks.onSessionCountChange ? { onSizeChange: hooks.onSessionCountChange } : {}),
 				pathReservations,
 			});
+	const machineOps = new MachineOpHandler({ agentDir: options.agentDir });
 	const router = new SessionCommandRouter(
 		registry,
 		writer,
@@ -181,7 +202,14 @@ export function createHostCore(
 			now: policy.now,
 			idleEvictionMs: policy.idleEvictionMs,
 			emptyExitMs: policy.emptyExitMs,
-			onEmptyExit: idle.onEmptyExit,
+			// Held in the same step as the exit decision: no machine op may start on a host that is ending (senpi#6752).
+			onEmptyExit:
+				idle.onEmptyExit === undefined
+					? undefined
+					: () => {
+							machineOps.hold();
+							idle.onEmptyExit?.();
+						},
 			onHandoffParked: idle.onHandoffParked,
 			...(endpointSocket === undefined
 				? {}
@@ -191,7 +219,8 @@ export function createHostCore(
 							agentDir: options.agentDir,
 						}).dir,
 					}),
-			canExitWhenEmpty: idle.canExitWhenEmpty,
+			// The host's own gate first, then machine work: an empty exit would end every relay-host terminal (senpi#6752).
+			canExitWhenEmpty: () => (idle.canExitWhenEmpty?.() ?? true) && !machineOps.busy(),
 		},
 	);
 	if (endpointSocket !== undefined)
@@ -213,19 +242,74 @@ export function createHostCore(
 				hostInstance: hostInstanceId(),
 				hostSocket: endpointSocket,
 				...(hooks.shouldReopenParked !== undefined ? { shouldReopen: hooks.shouldReopenParked } : {}),
+				onProgress: (state) => router.setInheritedHandover(state),
 			},
 		).catch((cause: unknown) => {
+			router.setInheritedHandover(undefined);
 			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
 		});
-	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);
+	const gate = new HostCoreGate(registry, (command) => router.handle(command), {
+		...hooks,
+		machineWork: machineOps,
+	});
 	const handle = async (line: string): Promise<void> => {
+		const connection = writer.currentConnection();
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(line);
 		} catch {
-			await writer.enqueueControl(parseError("Failed to parse command: invalid JSON"));
+			await writer.enqueueControl(
+				writer.delegations.unparsable(connection, "Failed to parse command: invalid JSON"),
+			);
 			return;
 		}
+		// omo-relay-daemon#307: a host-mode delegated line runs under one authority snapshot, its forwarder's `relayExec`
+		// taken out of the record before anything else reads it.
+		const delegation = writer.connectionContext.delegation;
+		if (delegation?.mode !== "host") return handleParsed(connection, parsed);
+		const exec = takeRelayExec(parsed);
+		if (exec === "malformed") {
+			await writer.enqueueControl(relayExecRefusal(parsed));
+			return;
+		}
+		return commandAuthority.run(new CommandAuthority(connection, delegation, exec), () =>
+			handleParsed(connection, parsed),
+		);
+	};
+	const handleParsed = async (connection: string | undefined, parsed: unknown): Promise<void> => {
+		if (connection?.startsWith("generation-route-") && !router.admitsRoutedRecord(connection, parsed)) {
+			const record = authRecord(parsed);
+			await writer.enqueueControl({
+				type: "response",
+				id: record?.id,
+				command: record?.type,
+				success: false,
+				error: "host_draining",
+			});
+			return;
+		}
+		// Before any await: a declaration takes effect for the very next line of its connection (senpi#5632).
+		const delegation = writer.delegations.inspect(connection, parsed);
+		if (delegation.kind === "machine_op") {
+			await writer.enqueueControl(await machineOps.answer(delegation.command, parsed, delegation.id));
+			return;
+		}
+		if (delegation.kind !== "pass") {
+			const declaration = authRecord(parsed);
+			if (
+				connection &&
+				declaration?.type === "declare_delegation" &&
+				delegation.kind === "reply" &&
+				delegation.response.success
+			)
+				await router.configureRoutes(connection, declaration);
+			await answerDelegation(writer, delegation, parsed);
+			return;
+		}
+		// A delegated connection ends with the viewer it forwards for, while the forwarder keeps serving what it opened to
+		// the next one: every open on it is retained, whatever it asks, so its end detaches and never closes (senpi#5808).
+		// Read at line receipt, so a connection that ends before the open is dispatched still counts as delegated.
+		const delegated = writer.delegations.isDelegated(connection);
 		if (writer.handleMcpForm(parsed)) return;
 		if (await gate.intercept(parsed, (answer) => writer.enqueueControl(answer))) return;
 		const shapeError = rpcCommandShapeError(parsed);
@@ -234,14 +318,32 @@ export function createHostCore(
 			return;
 		}
 		const command = parsed as RpcCommand;
-		const response = await gate.dispatch(
-			machineOwned && command.type === "open_session" && command.retain_on_disconnect === undefined
-				? { ...command, retain_on_disconnect: true }
-				: command,
-		);
+		const response = await gate.dispatch(withOpenRetention(command, delegated, machineOwned));
+		if (
+			connection &&
+			command.type === "set_client_info" &&
+			!command.sessionId &&
+			authRecord(response)?.success === true
+		)
+			await router.configureRoutes(connection, command);
 		if (response) await writer.enqueueControl(response);
+		writer.delegations.lineAnswered(connection);
 	};
-	return { router, handle, handover: gate.handover, handoverAnswered: () => gate.answered() };
+	return {
+		router,
+		handle,
+		/** senpi#6752: the host's `machine_op` handler; its terminals end at host shutdown. */
+		machineOps,
+		handover: gate.handover,
+		handoverAnswered: () => gate.answered(),
+		/** The in-process registry's `warm`; the worker registry has none. */
+		warm: "warm" in registry ? registry.warm : undefined,
+		/**
+		 * A session's live registry entry by its routing id. Only in-process test fixtures read it today, in place of
+		 * spying on the registry prototype (senpi#5802); the host itself never calls it.
+		 */
+		peekSession: (sessionId: string) => registry.peek(sessionId),
+	};
 }
 
 /** Plain-stdio host with no eagerly-created AgentSessionRuntime. */
@@ -253,7 +355,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 	// forever: exit through the normal shutdown path once the window elapses.
 	const runtimeBuildId = await startupRuntimeBuildId();
 	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
-	const { router, handle } = createHostCore(
+	const { router, handle, warm, machineOps } = createHostCore(
 		options,
 		writer,
 		undefined,
@@ -272,6 +374,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 		observers.stop();
 		detach();
 		await router.dispose();
+		await machineOps.dispose();
 		await writer.flush();
 		await flushRawStdout();
 		process.exit(exitCode);
@@ -290,11 +393,13 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 		process.stdin.off("end", onEnd);
 	};
 	registerShutdownSignals(shutdown);
+	warmAtBootForPrivateFds(warm, { cwd: options.cwd }, hostLog);
 	return new Promise(() => {});
 }
 
 async function runSocketHost(options: MultiSessionHostOptions, socketPath: string): Promise<never> {
 	await prepareSocketPath(socketPath);
+	publishHostInstanceId(hostInstanceId());
 	const writer = new SessionEventWriter(() => {});
 	const connections = new Map<string, HostConnection>();
 	// The supervisor's rule for which clients hold a host open (host-client-occupancy.ts): a
@@ -314,7 +419,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	}
 	const canHandOver = runtimeBuildId !== undefined && process.platform !== "win32";
 	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
-	const { router, handle, handover, handoverAnswered } = createHostCore(
+	const { router, handle, handover, handoverAnswered, warm, machineOps } = createHostCore(
 		options,
 		writer,
 		[
@@ -323,6 +428,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// generation instead of being killed. A host that does not advertise this is never
 			// signalled - SIGUSR1 would simply terminate it, sessions and all.
 			GENERATION_HANDOFF_CAPABILITY,
+			// Every rename/remove of its public entry runs under the endpoint fence (senpi#4602 Q1).
+			ENDPOINT_OWNER_FENCE_CAPABILITY,
 			// The host reports the runtime it loaded and can hand over at its next idle point.
 			...(canHandOver ? [RUNTIME_IDENTITY_HANDOVER_CAPABILITY] : []),
 		],
@@ -335,7 +442,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		// sessionless connection must not hold this host open.
 		{
 			onEmptyExit: () => void shutdown(0),
-			canExitWhenEmpty: () => draining || (occupancy.attachedCount === 0 && occupancy.unclassifiedCount === 0),
+			// A watching supervisor owns the idle exit: its observer link never ends this host from here.
+			canExitWhenEmpty: () =>
+				draining ||
+				(occupancy.attachedCount === 0 && occupancy.unclassifiedCount === 0 && !occupancyWatch.watching),
 			onHandoffParked: async (ids) => {
 				await Promise.all(
 					ids.map(async (id) => {
@@ -347,7 +457,11 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		},
 		hostContext,
 		{
-			onSessionCountChange: (size) => trim.observe(size),
+			onSessionCountChange: (size) => {
+				trim.observe(size);
+				// A session the host closed itself (eviction, park) has left its owners' records by now.
+				occupancyWatch.refresh();
+			},
 			// A draining predecessor parks its retained sessions for the successor and must not reopen
 			// them into its own registry (senpi#3282). Gate the reopen watch on not draining.
 			shouldReopenParked: () => !draining,
@@ -362,10 +476,12 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 						instanceId: hostInstanceId(),
 						generation: hostGeneration(process.env),
 						runtimeBuildId,
+						engine: engineBuildIdentity(),
 					}),
 					perform: async (request) =>
 						performIdleHandover({
-							presenterBootstrap: await presenterControl?.successorBootstrap(),
+							// Prepared only when the successor reaches its P7, never before it boots (senpi#4602).
+							presenterBootstrap: presenterControl?.successorBootstrapProvider(),
 							request,
 							socket: hostWatchdogBinding()?.publicSocket ?? socketPath,
 							agentDir: options.agentDir,
@@ -375,26 +491,28 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			}),
 		},
 	);
-	let presenterDir: string | undefined;
-	let presenterControl: McpPresenterControl | undefined;
-	if (options.presenterBootstrapFd !== undefined) {
-		const bootstrap = presenterBootstrapStream(options.presenterBootstrapFd);
-		try {
-			if (bootstrap && options.mcpPresenterEnforcement === true) {
-				if (process.platform !== "win32") presenterDir = await mkdtemp(join(tmpdir(), "senpi-presenter-"));
-				presenterControl = new McpPresenterControl(
-					writer,
-					presenterDir ? join(presenterDir, "control.sock") : presenterPipePath(),
-				);
-				await presenterControl.listen();
-				presenterControl.bootstrap(bootstrap);
-			} else bootstrap?.destroy();
-		} catch {
-			bootstrap?.destroy();
-			presenterControl?.dispose();
-			presenterControl = undefined;
-		}
-	}
+	const occupancyWatch = new HostOccupancyWatch({
+		connections: () => connections.keys(),
+		attached: (id) => {
+			const socket = connections.get(id)?.socket;
+			return socket !== undefined && occupancy.isAttached(socket);
+		},
+		holdsSessions: (id) => router.holdsSessions(id),
+		send: (id, record) =>
+			void writer
+				.enqueueControl(record, id)
+				.catch((cause) => hostLog(`host_occupancy to ${id} failed: ${errorMessage(cause)}`)),
+	});
+	const presenter = await startMcpPresenterControl(writer, {
+		enforcement: options.mcpPresenterEnforcement,
+		bootstrap:
+			options.presenterBootstrapFd === undefined
+				? undefined
+				: presenterBootstrapStream(options.presenterBootstrapFd),
+		account: options.presenterAccountAuthority,
+	});
+	const presenterControl = presenter?.control;
+	const presenterDir = presenter?.dir;
 	const observers = startHostObservers(router, writer, {
 		trim,
 		// The shape #1893 measured: gigabytes resident with `sessions.total 0`. Say it once, and when
@@ -408,6 +526,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	});
 	let nextConnection = 0;
 	let shuttingDown = false;
+	// omo-relay-daemon#307: a socket whose incarnations ran out is ended once its detach answer is flushed (engine_closed).
+	writer.endExhaustedConnections((id) => connections.get(id)?.sink);
 	const secret =
 		process.platform === "win32"
 			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))
@@ -437,65 +557,78 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			: undefined;
 	let boundIdentity: SocketFileIdentity | undefined;
 	let supervisorPublicIdentity: SocketFileIdentity | undefined;
-	const server = createServer((rawSocket) => {
-		const arrivedBeforeDrain = !draining && !shuttingDown;
-		const accept = (socket: Duplex = rawSocket): void => {
-			if (draining && !shuttingDown && handoff.deliverLate(socket, arrivedBeforeDrain)) return;
-			if (draining || shuttingDown) {
-				socket.destroy();
-				return;
-			}
-			const id = `socket-${++nextConnection}`;
-			const sink = socketSink(socket);
-			writer.registerConnection(id, sink);
-			occupancy.admit(socket);
-			const detachReader = attachJsonlLineReader(
-				socket,
-				(line) => {
-					// Do not serialize awaited commands: extension_ui_response and other
-					// re-entrant frames must be able to resolve a command already awaiting them.
+	const serve = (
+		socket: Duplex,
+		arrivedBeforeDrain: boolean,
+		launchProof?: LaunchProofSource,
+		routed = false,
+	): void => {
+		if (!routed && draining && !shuttingDown && handoff.deliverLate(socket, arrivedBeforeDrain)) return;
+		if ((!routed && draining) || shuttingDown) {
+			socket.destroy();
+			return;
+		}
+		const id = `${routed ? "generation-route" : "socket"}-${++nextConnection}`;
+		const sink = socketSink(socket);
+		writer.registerConnection(id, sink, launchProof === undefined ? {} : { launchProof });
+		occupancy.admit(socket);
+		const detachReader = attachJsonlLineReader(
+			socket,
+			(line) => {
+				if (isHostOccupancyWatch(line)) {
+					occupancyWatch.watch(id);
+					return;
+				}
+				// Do not serialize awaited commands: extension_ui_response and other
+				// re-entrant frames must be able to resolve a command already awaiting them.
+				occupancyWatch.begin(id);
+				void writer
+					.withConnection(id, () => handle(line))
+					.catch((cause) => {
+						process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`);
+					})
+					.finally(() => occupancyWatch.end(id));
+			},
+			{
+				maxLineLength: MAX_RPC_LINE_CHARACTERS,
+				onOversizedLine: () => {
 					void writer
-						.withConnection(id, () => handle(line))
-						.catch((cause) => {
-							process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`);
-						});
+						.withConnection(id, () => writer.enqueueControl(parseError(oversizedLineError())))
+						.catch((cause) =>
+							process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`),
+						);
 				},
-				{
-					maxLineLength: MAX_RPC_LINE_CHARACTERS,
-					onOversizedLine: () => {
-						void writer
-							.withConnection(id, () => writer.enqueueControl(parseError(oversizedLineError())))
-							.catch((cause) =>
-								process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`),
-							);
-					},
-				},
-			);
-			let detached = false;
-			const detach = () => {
-				if (detached) return;
-				detached = true;
-				detachReader();
-				writer.unregisterConnection(id);
-				connections.delete(id);
-				occupancy.release(socket);
-				// A socket that dies without close_session still owns its sessions' attachments
-				// and path reservations. Release them on the command chain so this runs after any
-				// in-flight command for this connection settles, otherwise the path stays pinned
-				// by a runtime whose client is gone and later resumes attach to that orphan.
-				void router.releaseConnection(id).catch((cause) => {
-					process.stderr.write(`senpi rpc connection ${id} release failed: ${errorMessage(cause)}\n`);
-				});
-			};
-			// An announced close half-closes so `socket_closing` is flushed first (SOCKET_CUT_GRACE_MS bounds it).
-			const close = (code: SocketClosingCode) =>
-				writer.closeConnection(id, code, (announced) => (announced ? sink.close?.() : socket.destroy()));
-			connections.set(id, { id, sink, socket, detach, close });
-			socket.once("close", detach);
-			socket.once("error", () => detach());
+			},
+		);
+		let detached = false;
+		const detach = () => {
+			if (detached) return;
+			detached = true;
+			detachReader();
+			writer.unregisterConnection(id);
+			connections.delete(id);
+			occupancy.release(socket);
+			occupancyWatch.forget(id);
+			// A socket that dies without close_session still owns its sessions' attachments
+			// and path reservations. Release them on the command chain so this runs after any
+			// in-flight command for this connection settles, otherwise the path stays pinned
+			// by a runtime whose client is gone and later resumes attach to that orphan.
+			void router.releaseConnection(id).catch((cause) => {
+				process.stderr.write(`senpi rpc connection ${id} release failed: ${errorMessage(cause)}\n`);
+			});
 		};
-		admit(rawSocket, accept);
+		// An announced close half-closes so `socket_closing` is flushed first (SOCKET_CUT_GRACE_MS bounds it).
+		const close = (code: SocketClosingCode) =>
+			writer.closeConnection(id, code, (announced) => (announced ? sink.close?.() : socket.destroy()));
+		connections.set(id, { id, sink, socket, detach, close });
+		socket.once("close", detach);
+		socket.once("error", () => detach());
+	};
+	const server = createServer((socket) => {
+		const arrivedBeforeDrain = !draining && !shuttingDown;
+		admit(socket, (stream = socket, proof) => serve(stream, arrivedBeforeDrain, proof));
 	});
+	let stopRoute: (() => Promise<void>) | undefined;
 	server.on("error", (cause) => {
 		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
 	});
@@ -525,12 +658,13 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			await (process.platform === "win32"
 				? Promise.race([router.dispose(), delay(WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS)])
 				: router.dispose());
+			await machineOps.dispose();
 			const open = [...connections.values()];
 			const cancelForce = await closeHostConnections(open, (id) => writer.flushConnection(id), startedAt, hostLog);
 			// libuv unlinks the bound NAME when the listening handle closes - which
 			// would delete a newer host's entry renamed over this path. Shield the
 			// current entry for the close, then let the ownership check decide.
-			await shieldSocketDuringClose(socketPath, () =>
+			await closeShieldedEndpoint(socketPath, () =>
 				process.platform === "win32"
 					? Promise.race([closeServer(server), delay(WINDOWS_SHUTDOWN_HARD_EXIT_MS)])
 					: closeServer(server),
@@ -539,12 +673,13 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// Ownership-checked: unlink only the entry THIS process bound. After a
 			// takeover renamed a newer host's socket over the same path, the
 			// identity no longer matches and the replacement stays published.
-			await unlinkOwnedSocket(socketPath, boundIdentity, hostLog);
+			await unlinkOwnedEndpoint(socketPath, boundIdentity, hostInstanceId(), hostLog);
 			if (supervisorPublicSocketPath) {
-				await unlinkOwnedSocket(supervisorPublicSocketPath, supervisorPublicIdentity, hostLog);
+				await unlinkOwnedEndpoint(supervisorPublicSocketPath, supervisorPublicIdentity, hostInstanceId(), hostLog);
 			}
 			if (watchdogCleanup) await watchdogCleanup;
 		} finally {
+			await stopRoute?.();
 			await transport.dispose();
 			// Explicitly terminate after every shutdown trigger. Windows named-pipe
 			// handles are not fully controllable from JS, and an unresolved cleanup
@@ -614,9 +749,20 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		void shutdown(0, cleanup);
 		setImmediate(killTrackedDetachedChildren);
 	});
-	boundIdentity = await listen(server, socketPath, secret);
+	// Everything the internal listener needs is initialized: the runtime milestone of a coordinated start (senpi#4602).
+	reportStartupMilestone("host_runtime");
+	const bind = () => listen(server, socketPath, secret);
+	// A host binding its own public socket keeps its registry record; a supervised one's ensure keeps it.
+	boundIdentity = await (hostWatchdogBinding() === undefined
+		? bindRegisteredEndpoint({ agentDir: options.agentDir, socket: socketPath, log: hostLog }, bind)
+		: bind());
 	// A key record that cannot be published safely ends this host: held connections are refused, never served keyless.
 	await transport.publish(() => shutdown(1));
+	const drainFile = hostChildDrainRequestFile();
+	if (watchdogConfig && drainFile && process.platform !== "win32")
+		stopRoute = await listenForSuccessor(options.agentDir, socketPath, dirname(drainFile), (stream) =>
+			serve(stream, false, "in_band", true),
+		);
 	if (supervisorPublicOwnerFile) {
 		// The supervisor publishes its public-socket token after this internal
 		// listener is ready, so a short bounded wait keeps the lifecycles in step
@@ -624,6 +770,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		supervisorPublicIdentity = await waitForSocketIdentityFile(supervisorPublicOwnerFile);
 	}
 	process.stderr.write(`senpi rpc listening on ${formatSocketAddress(socketPath)}\n`);
+	warmAtBootForPrivateFds(warm, { cwd: options.cwd, sessionContext: hostContext }, hostLog);
 
 	// Opt-in only: set by the lifecycle supervisor so this host can never outlive
 	// it, including when the supervisor is SIGKILLed and runs no handler at all.
@@ -670,10 +817,12 @@ function errorMessage(cause: unknown): string {
  * the instance is not. The FIRST generation runs this before its supervisor has created the socket's
  * directory, a successor after, so the directory is canonicalized through its deepest existing
  * ancestor: both then stamp the same spelling. `host_socket` is omitted where no public path exists
- * (abstract sockets, a supervised win32 host, whose supervisor publishes none).
+ * (abstract sockets, a supervised host whose supervisor passed none). Exported for tests.
  */
-function hostSessionContext(socketPath: string): SessionContext {
-	const supervised = hostWatchdogBinding();
+export function hostSessionContext(
+	socketPath: string,
+	supervised: HostWatchdogConfig | undefined = hostWatchdogBinding(),
+): SessionContext {
 	const endpoint = supervised === undefined ? socketPath : supervised.publicSocket;
 	if (endpoint === undefined || endpoint.startsWith("\0")) return { host_instance: hostInstanceId() };
 	const directory = canonicalSessionPath(dirname(endpoint));

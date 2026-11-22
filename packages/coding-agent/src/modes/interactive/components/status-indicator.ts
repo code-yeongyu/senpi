@@ -70,13 +70,15 @@ export class RetryStatusIndicator extends StatusIndicator {
 		delayMs: number,
 		indicator?: LoaderIndicatorOptions,
 		providerTrouble = false,
+		reason?: string,
 	) {
+		const cause = reason === undefined ? "" : ` (${reason})`;
 		const retryMessage = (seconds: number) =>
 			providerTrouble
-				? `The model provider may be having trouble. Retrying... (${attempt}/${maxAttempts}, ${seconds > 0 ? `in ${seconds}s` : "now"}; ${keyText("app.interrupt")} to cancel)`
+				? `The model provider may be having trouble${cause}. Retrying... (${attempt}/${maxAttempts}, ${seconds > 0 ? `in ${seconds}s` : "now"}; ${keyText("app.interrupt")} to cancel)`
 				: `Retrying (${attempt}/${maxAttempts}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`;
 		const compactMessage = (seconds: number) =>
-			`Retrying ${attempt}/${maxAttempts} ${seconds > 0 ? `in ${seconds}s` : "now"} (${keyText("app.interrupt")} cancel)`;
+			`Retrying ${attempt}/${maxAttempts} ${seconds > 0 ? `in ${seconds}s` : "now"} (${keyText("app.interrupt")} cancel)${reason === undefined ? "" : `: ${reason}`}`;
 		const retryIndicator =
 			indicator === undefined
 				? undefined

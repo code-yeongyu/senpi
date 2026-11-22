@@ -1,15 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { accessSync, constants } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import { isKernelToHostMessage, parseBridgeJsonLine, validateBridgeMessage } from "../../bridge/protocol.ts";
 import type { EvalRuntimeInfo } from "../../tool/types.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
+import { type AttestKernelSpawn, attestKernelChild } from "../shared/session-spawn-attestation.ts";
 import { type SubprocessLike, SubprocessProcess, spawnSubprocess } from "../shared/subprocess-process.ts";
 import type { WorkerLike } from "./inline-worker.ts";
+import { runtimeNameOf } from "./runtime-name.ts";
 import { JavaScriptWorkerExitedError } from "./worker-host.ts";
+
+export { runtimeNameOf } from "./runtime-name.ts";
 
 const PROCESS_CLOSE_GRACE_MS = 2_000;
 
@@ -42,6 +46,10 @@ export interface JavaScriptProcessWorkerOptions {
 	readonly searchPath?: string;
 	readonly execPath?: string;
 	readonly env?: NodeJS.ProcessEnv;
+	/** Attests the kernel process to the session it runs for (senpi#6972). */
+	readonly attestSpawn?: AttestKernelSpawn;
+	/** The host environment the child inherits, without the RPC host's supervisor hand-off (senpi#5635). */
+	readonly inheritedEnv?: () => Readonly<Record<string, string | undefined>>;
 	readonly spawn?: (
 		command: string,
 		args: readonly string[],
@@ -99,12 +107,6 @@ export function processRuntimeInfo(searchPath: string | undefined): EvalRuntimeI
 	return { name, version, path: command, isolation: "process" };
 }
 
-/** "bun" or "node" from an executable path; undefined for anything else (a compiled senpi binary, for one). */
-export function runtimeNameOf(command: string): "bun" | "node" | undefined {
-	const name = basename(command).replace(/\.(exe|cmd|bat)$/i, "");
-	return name === "bun" || name === "node" ? name : undefined;
-}
-
 function isExecutable(path: string): boolean {
 	try {
 		accessSync(path, constants.X_OK);
@@ -126,7 +128,7 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 	const isBun = runtimeNameOf(command) === "bun";
 	const args = isBun ? [fileURLToPath(url)] : ["--experimental-strip-types", fileURLToPath(url)];
 	const env: NodeJS.ProcessEnv = {
-		...process.env,
+		...(options.inheritedEnv?.() ?? process.env),
 		...options.env,
 		SENPI_CODEMODE_PROCESS_CWD: options.cwd,
 		SENPI_CODEMODE_PROCESS_POOL_WIDTH: String(options.parallelPoolWidth),
@@ -135,6 +137,7 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 		options.spawn === undefined
 			? spawnSubprocess(undefined, { command, args, cwd: options.cwd, env })
 			: options.spawn(command, args, { cwd: options.cwd, env });
+	attestKernelChild(options.attestSpawn, child);
 	const messageHandlers = new Set<(message: KernelToHostMessage) => void>();
 	const errorHandlers = new Set<(error: Error) => void>();
 	const frameToken = randomBytes(16).toString("hex");

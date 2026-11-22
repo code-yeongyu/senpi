@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { reservationPhase } from "../suite/rpc-worker-reservation-support.ts";
+import { reservationStep } from "../suite/rpc-worker-reservation-support.ts";
 import { OWNED_TURN_ENTRY, startHostRig } from "./headless-host-support.ts";
 
 describe("headless engine owns its sessions", () => {
@@ -12,7 +12,7 @@ describe("headless engine owns its sessions", () => {
 			const file = await rig.newSessionFile();
 			const sessionId = await rig.openSession("a", file);
 			const turn = rig.send("a", { type: "prompt", id: "turn", sessionId, message: "/owned-turn" });
-			await reservationPhase("headless-turn-started", rig.turnStarted);
+			await reservationStep("headless-turn-started", rig.turnStarted);
 
 			await rig.detach("a");
 			expect(await rig.listSessions("b")).toMatchObject([
@@ -20,7 +20,7 @@ describe("headless engine owns its sessions", () => {
 			]);
 
 			rig.releaseTurn();
-			await reservationPhase("headless-turn-finished", turn);
+			await reservationStep("headless-turn-finished", turn);
 			expect(SessionManager.open(file).getEntries()).toContainEqual(
 				expect.objectContaining({ type: "custom", customType: OWNED_TURN_ENTRY }),
 			);

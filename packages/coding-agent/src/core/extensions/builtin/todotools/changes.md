@@ -1,5 +1,104 @@
 # todotools Fork Tracker
 
+## 2026-11-20 - The first-turn plan default follows the prompt preset (#7110, senpi#7101)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: an unset `todo.firstTurnPlan` resolves through `presetFirstTurnPlanDefault` of the active preset (`off` under a GPT preset, `force` elsewhere); a value the user set still wins. `Task_Management` is not appended after a preset listed in `presetOwnsTodoRules` (`gpt-6.2`).
+- `packages/coding-agent/test/suite/todo-first-turn.test.ts`, `todo-first-turn-harness.ts`: the opener per model id and setting, and the system prompt after each preset.
+
+### Why
+
+- The opener made GPT sessions write a list before they had read anything: the first tool call was `todo` `init` in 9 of 9 measured sessions (senpi#7101). The 6.2 core now states the todo rules itself, so a second copy after it would be a second home for the same rule.
+
+### Why an extension could not handle it
+
+- The opener and the appended block live inside the todotools builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` handler in `index.ts`.
+
+## 2026-11-18 - The GPT cue labels derive from one constant (senpi#6982 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: the all-closed GPT cue builds its label list from `GPT_HANDOFF_LABELS` instead of a hardcoded copy (byte-identical output).
+- `packages/coding-agent/test/suite/todo-handoff-cue.test.ts`: the drift test splits the label constant and asserts every label appears in each rendered GPT-block preset prompt, so a label renamed on either side fails.
+
+### Why
+
+- The #6982 round-3 review noted the hardcoded copy and the underived test as proof-claim gaps; this folds both.
+
+### Why an extension could not handle it
+
+- The cue text and its tests live inside the todotools builtin itself.
+
+### Expected merge conflict zones
+
+- LOW: one template string in `todo-format.ts`; one test block.
+
+## 2026-11-18 - The handoff cue names the block the active preset defines (senpi#6977)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: `formatHandoffCue` takes the cue kind; new `GPT_HANDOFF_CUES` and `GPT_HANDOFF_BLOCK_LINE` quote the outcome-first block the GPT presets render, with `"none"` emitting no cue at all.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the todo tool resolves the kind through `resolveActivePresetName(ctx)` and `presetHandoffCueKind`, the same preset seam todotools already uses for shared sections.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/state.ts`: re-exports the new cue constants.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: `presetHandoffCueKind(name)` maps each preset - gpt-5.5 / gpt-5.6 / gpt-6-astra render the GPT block, the rewritten gpt-6.2 core renders none, everything else keeps the default Ask / For you cue.
+
+### Why
+
+- The cue told every non-chat session to "write the Ask / For you / Now / Next block", but under the GPT presets the system prompt defines the outcome-first block instead (and the rewritten 6.2 core defines no handoff block at all), so the tool result and the prompt handed the model two competing templates.
+
+### Why an extension could not handle it
+
+- The cue text is emitted inside the todotools builtin itself; only the todo tool can append it, and only the preset contract knows which block the active prompt renders.
+
+### Expected merge conflict zones
+
+- LOW: `HANDOFF_CUES` / `formatHandoffCue` in `todo-format.ts`; the cue emission block in `tools/todo.ts`; one function and two Sets in `contract.ts`.
+
+## 2026-11-03 - Full Todo Management section for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/prompt.ts`: `FULL_TASK_MANAGEMENT_SECTION`, the pre-#5342 section.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: appends it when `activeSharedSections(ctx)` is `full`.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the three pre-#5342 guidelines as `fullPromptGuidelines`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the before_agent_start section append and the tool definition's prompt fields.
+
+## 2026-11-03 - todo is loop-side on a split session (senpi#5646)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the `todo` tool declares `runs: "brain"` and reports each call it executes to `noteExecuted`.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: `session_start`, `session_tree`, `message_end`, `before_agent_start`, `before_provider_request`, `agent_end`, `session_abort` and `session_shutdown` register with `runs: "brain"`; `message_end` adopts a `todo` tool result of a call this instance did not execute (`tools/todo.ts` records each call it runs through the optional `noteExecuted` accessor) and re-renders the widget; a result of its own call, which arrives only after the whole batch, is never adopted, and results of other tools are ignored.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-storage.ts`: `getTodoStateFromToolResult()`, the tool-result parser `getLatestTodoStateFromBranchEntries` already used, now shared and exported from `state.ts`.
+
+### Why
+
+On a split session (brain/hand, S39) todo is a loop-side tool: its only effect is the session's list, Ask/Now/Next and widget. A hand's generation must not register handlers that read a session it does not own, and the loop must see a list that was built outside its process.
+
+### Why an extension could not handle it
+
+todotools is the builtin that owns the list; its own registrations are what declare the sides.
+
+### Expected merge conflict zones
+
+`index.ts` handler registrations; `todo-storage.ts` branch reader.
+
 ## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
 
 ### What changed

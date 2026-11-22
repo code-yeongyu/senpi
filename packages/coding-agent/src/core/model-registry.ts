@@ -53,6 +53,7 @@ export { clearApiKeyCache } from "./provider-composer.ts";
 export class ModelRegistry {
 	private readonly runtime: ModelRuntime;
 	readonly authStorage: AuthStorage;
+	private busyRetriedThisTurn = false;
 
 	constructor(runtime: ModelRuntime, authStorage: AuthStorage = AuthStorage.inMemory()) {
 		this.runtime = runtime;
@@ -129,7 +130,15 @@ export class ModelRegistry {
 	 * loaded is re-read the same way, so a repaired auth.json is seen without a restart (#4413).
 	 */
 	private retryBusyCredentialRead(): void {
-		if (this.authStorage.isCredentialStoreBusy() || this.authStorage.getLoadError()) this.authStorage.reload();
+		if (!this.authStorage.isCredentialStoreBusy() && !this.authStorage.getLoadError()) return;
+		// A re-read of a store another process holds blocks for the sync lock budget, and a provider list
+		// re-reads once per row in one synchronous pass: wait once per pass, not once per row (#6841).
+		if (this.busyRetriedThisTurn) return;
+		if (this.authStorage.reload() !== "busy") return;
+		this.busyRetriedThisTurn = true;
+		queueMicrotask(() => {
+			this.busyRetriedThisTurn = false;
+		});
 	}
 
 	getUpstreamModelId(model: Model<Api>): string | undefined {
@@ -186,6 +195,10 @@ export class ModelRegistry {
 
 	getProviderAuthStatus(provider: string): AuthStatus {
 		return this.resolveProviderAuth(provider).status;
+	}
+
+	providerAuthIsHeaderOnly(provider: string): boolean {
+		return this.runtime.providerAuthIsHeaderOnly(provider);
 	}
 
 	/** `getProviderAuthStatus` plus whether it is a non-stored sign-in, from one resolution (#3537). */
