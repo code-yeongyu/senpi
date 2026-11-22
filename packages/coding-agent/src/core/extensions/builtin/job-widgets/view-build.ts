@@ -23,6 +23,7 @@ const SPARK_POINTS = 48;
 const MAX_BAR_ITEMS = 16;
 const MAX_GRID_CELLS = 48;
 const MAX_TEXT_CHARS = 200;
+const TREND_SAMPLES = 3;
 
 /** Aggregations whose value a trend arrow can describe; counts, rates and derived numbers have none. */
 const TREND_AGGS: ReadonlySet<JobWidgetAgg> = new Set(["last", "min", "max"]);
@@ -44,9 +45,10 @@ function buildValue(ref: JobWidgetValueRef, ctx: BuildContext): BuiltValue {
 	const value = aggregateSeries(series, ref.agg, ctx.now, ctx.startTime);
 	const unit = ref.agg === "change" ? "%" : ref.unit;
 	const text = value === undefined ? MISSING_VALUE_TEXT : formatWidgetNumber(value, unit, ref.digits);
+	// A trend describes recent movement. The explicit `change` aggregation still measures the full run.
 	const trend =
 		ref.better && TREND_AGGS.has(ref.agg) && series.values >= 2
-			? formatWidgetTrend(series.first, series.last, ref.better, ref.unit)
+			? formatWidgetTrend(series.ring.at(-TREND_SAMPLES)?.v ?? series.first, series.last, ref.better, ref.unit)
 			: undefined;
 	return { text, value, ...(trend ? { trend } : {}) };
 }
