@@ -152,7 +152,7 @@ describe("classifySenpiAssistantFailure", () => {
 		expect(classifySenpiAssistantFailure(failure)).toEqual({ verdict: "terminal" });
 	});
 
-	describe("structured status consulted only when the regexes are unknown", () => {
+	describe("structured HTTP status", () => {
 		const opaqueFailure = (extra: Partial<RetryFailure>): RetryFailure => ({
 			origin: "senpi-assistant-test",
 			kind: "http-status",
@@ -173,6 +173,14 @@ describe("classifySenpiAssistantFailure", () => {
 			const failure = opaqueFailure({ statusCode: 429 });
 			expect(isRetryableErrorMessage(failure.message)).toBe(false);
 			expect(classifySenpiAssistantFailure(failure)).toEqual({ verdict: "rate-limited" });
+		});
+
+		it("does not treat a 400 quoting a 408 response as a timeout", () => {
+			const failure = opaqueFailure({
+				statusCode: 400,
+				message: "Expected a status other than HTTP 408 Request Timeout",
+			});
+			expect(classifySenpiAssistantFailure(failure)).toEqual({ verdict: "terminal" });
 		});
 
 		it("keeps 529 retryable for an opaque message", () => {

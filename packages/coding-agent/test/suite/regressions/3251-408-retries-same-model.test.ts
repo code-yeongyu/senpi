@@ -45,12 +45,14 @@ describe("a request timeout retries the same model before the fallback chain (se
 		expect(`${harness.session.model?.provider}/${harness.session.model?.id}`).toBe("faux/faux-1");
 	});
 
-	it("never retries an invalid request on the same model (control)", async () => {
+	it.each([
+		"400 Bad Request: invalid parameter `foo`",
+		"400 Bad Request: max_tokens must be <= 408",
+		"HTTP 400 Bad Request: invalid parameter at position 408",
+		"400 Bad Request: expected a status other than HTTP 408 Request Timeout",
+	])("falls back without retrying the invalid request: %s", async (errorMessage) => {
 		const harness = await sessionWithFallback();
-		harness.setResponses([
-			failure("400 Bad Request: invalid parameter `foo`"),
-			fauxAssistantMessage("fallback answer"),
-		]);
+		harness.setResponses([failure(errorMessage), fauxAssistantMessage("fallback answer")]);
 
 		await harness.session.prompt("hello");
 
