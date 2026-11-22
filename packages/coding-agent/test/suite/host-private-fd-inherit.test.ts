@@ -31,11 +31,27 @@ function native(failure?: string, handle: number | bigint = 123) {
 		if (failure === "builtin") throw new Error("FFI unavailable");
 		return ffi;
 	});
-	return { builtin, getHandle, setHandle };
+	return { builtin, dlopen: ffi.dlopen, getHandle, setHandle };
 }
 
 // #4859: protect the real receipt boundary without ever invoking the CRT on a closed descriptor.
 describe("private descriptor inherit clearing", () => {
+	// senpi#4873: a loader that fails once fails closed for the rest of the process without retrying the load.
+	it("a failed kernel library load is attempted once and every clear still returns false", async () => {
+		const runtime = native("kernel32.dll");
+		const { clearPrivateFdInherit } = await import("../../src/utils/private-fd-inherit.ts");
+		const fd = openSync(import.meta.filename, "r");
+		try {
+			const results = [clearPrivateFdInherit(fd), clearPrivateFdInherit(fd), clearPrivateFdInherit(fd)];
+			expect({ results, loads: runtime.dlopen.mock.calls.length }).toEqual({
+				results: [false, false, false],
+				loads: 2,
+			});
+		} finally {
+			closeSync(fd);
+		}
+	});
+
 	it("an unopened descriptor returns false without resolving FFI", async () => {
 		const runtime = native();
 		const { clearPrivateFdInherit } = await import("../../src/utils/private-fd-inherit.ts");
@@ -80,6 +96,13 @@ describe("private descriptor inherit clearing", () => {
 			handle: Number(process.arch === "ia32" || process.arch === "arm" ? 0xffff_ffffn : 0xffff_ffff_ffff_ffffn),
 		},
 		{ label: "number zero", handle: 0 },
+		// senpi#4873: _NO_CONSOLE_FILENO for descriptors 0-2 without a console.
+		{ label: "number minus two", handle: -2 },
+		{ label: "bigint minus two", handle: -2n },
+		{
+			label: "bigint pointer-width minus two",
+			handle: BigInt.asUintN(process.arch === "ia32" || process.arch === "arm" ? 32 : 64, -2n),
+		},
 		{ label: "bigint zero", handle: 0n },
 	])("invalid handle $label returns false without handle information", async ({ handle }) => {
 		const runtime = native(undefined, handle);
