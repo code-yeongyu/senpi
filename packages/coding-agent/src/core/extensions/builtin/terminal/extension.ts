@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
 import { resolveBashTimeoutDefaults } from "../bash-timeout/timeout.ts";
 import { isEvalOnlyRouting } from "../eval-only-routing.ts";
+import { activeSharedSections } from "../prompt-preset/active-preset.ts";
 import {
 	buildToolContext,
 	bundleSinks,
@@ -18,7 +19,7 @@ import { appendMonitorOverflow } from "./monitor-overflow-file.ts";
 import { terminalStateDir } from "./monitor-state-dir.ts";
 import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
 import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
-import { TerminalNotifier } from "./notify.ts";
+import { TerminalNotifier, type TerminalNotifierDeps } from "./notify.ts";
 import { buildTerminalPromptSection } from "./prompt.ts";
 import { createDigestSlot, registerRestoreDigestRenderer } from "./restore-digest.ts";
 import { detachPersistence, flushRestoreDigest, startPersistence, stopPersistence } from "./restore-session.ts";
@@ -91,6 +92,37 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
 	pi.setActiveTools([...active]);
 }
 
+/**
+ * The completion and monitor notifiers of one extension generation. A session replaces them on every `session_start`;
+ * a hand (H3) never gets one, so the generation's first pair notifies there: `pi.sendMessage` carries each notice to
+ * the loop as a wake, and the loop applies the guards a session applies here (its mode, its model).
+ */
+function bindNotifiers(pi: ExtensionAPI, state: TerminalExtensionState): void {
+	const sendMessage: TerminalNotifierDeps["sendMessage"] = (message, delivery) => pi.sendMessage(message, delivery);
+	const loopRemote = () => pi.isLoopRemote();
+	state.notifier = new TerminalNotifier({
+		sendMessage,
+		getContext: () => state.ctx,
+		getMode: () => state.settings.notify,
+		loopRemote,
+	});
+	state.monitorNotifier?.dispose();
+	const overflowWarned = new Set<string>();
+	state.monitorNotifier = new MonitorNotifier({
+		sendMessage,
+		getContext: () => state.ctx,
+		getMode: () => state.settings.notify,
+		loopRemote,
+		getSettings: () => state.settings.monitor,
+		pauseMonitors: (ids) => state.bundle?.monitors.pause(ids) ?? [],
+		wakesPerHour: (id) => {
+			const pacing = state.bundle?.monitors.wakePacing(id);
+			return pacing === undefined ? undefined : (pacing.wakesPerHour ?? state.settings.monitor.wakesPerHour);
+		},
+		spillOverflow: (id, lines) => spillMonitorOverflow(state, overflowWarned, id, lines),
+	});
+}
+
 export function registerTerminalExtension(pi: ExtensionAPI): void {
 	let reducedMotion = false;
 	let agentBusy = false;
@@ -127,6 +159,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		restoreInFlight: Promise.resolve(),
 		parked: false,
 	};
+	bindNotifiers(pi, state);
 	const toolCtx = buildToolContext(pi, state);
 
 	const onChild = <T extends object>(tool: T, kind: Parameters<typeof terminalChildJob>[1]) => ({
@@ -149,25 +182,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		state.shellPath = settingsManager.getShellPath();
 		reducedMotion = settingsManager.getReducedMotion();
 		agentBusy = false;
-		state.notifier = new TerminalNotifier({
-			sendMessage: (message, options) => pi.sendMessage(message, options),
-			getContext: () => state.ctx,
-			getMode: () => state.settings.notify,
-		});
-		state.monitorNotifier?.dispose();
-		const overflowWarned = new Set<string>();
-		state.monitorNotifier = new MonitorNotifier({
-			sendMessage: (message, options) => pi.sendMessage(message, options),
-			getContext: () => state.ctx,
-			getMode: () => state.settings.notify,
-			getSettings: () => state.settings.monitor,
-			pauseMonitors: (ids) => state.bundle?.monitors.pause(ids) ?? [],
-			wakesPerHour: (id) => {
-				const pacing = state.bundle?.monitors.wakePacing(id);
-				return pacing === undefined ? undefined : (pacing.wakesPerHour ?? state.settings.monitor.wakesPerHour);
-			},
-			spillOverflow: (id, lines) => spillMonitorOverflow(state, overflowWarned, id, lines),
-		});
+		bindNotifiers(pi, state);
 		const sessionKey = sessionKeyOf(ctx);
 		if (event.reason === "reload") {
 			const claimed = sessionKey === undefined ? undefined : claimParkedBundle(sessionKey);
@@ -241,11 +256,12 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 
 	pi.on(
 		"before_agent_start",
-		async (event) => {
+		async (event, ctx) => {
 			return {
 				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({
 					evalOnly: isEvalOnlyRouting(pi),
 					ptyBash: !state.steppedAside,
+					sharedSections: activeSharedSections(ctx),
 					foregroundWindowSeconds: resolveForegroundWindowSeconds(process.env),
 					defaultTimeoutSeconds: resolveBashTimeoutDefaults(process.env).defaultSeconds,
 				})}`,
@@ -272,7 +288,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const inheritedLease = state.lease === null;
-		if (sessionKey !== undefined) await stopPersistence(state, sessionKey);
+		if (sessionKey !== undefined) await stopPersistence(state, sessionKey, event.closed === true);
 		if (inheritedLease && sessionKey !== undefined) {
 			const dir = terminalStateDir(ctx) ?? terminalStateDir(state.ctx);
 			// A reload generation inherits the pre-reload lease without re-acquiring it;

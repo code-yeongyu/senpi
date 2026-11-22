@@ -1,10 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import {
-	type AgentToolResult,
-	type ExtensionContext,
-	kernelToolsStorage,
-	sanitizeTerminalLabel,
-} from "@code-yeongyu/senpi";
+import { type AgentToolResult, type ExtensionContext, kernelToolsStorage } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import { RESERVED_SCHEMA_TOOL } from "../bridge/reserved.ts";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
@@ -24,22 +19,17 @@ import {
 	MAX_CAPTURED_IDENTIFIER_CODE_POINTS,
 	recordToolCall,
 	type ToolCallCapture,
-	toolCallResultPreview,
 } from "./call-capture.ts";
 import { completionCallOptions, reservedDispatchContext } from "./cell-reserved-dispatch.ts";
 import { CellResultBuilder, type CellState } from "./cell-runtime.ts";
-import { type EvalImageResizer, marshalToolResult, toolResultIsError } from "./image.ts";
+import type { EvalImageResizer } from "./image.ts";
+import { type ResolvedToolReply, runNestedTool } from "./nested-tool-call.ts";
+import type { CellToolUpdateSink } from "./nested-tool-output.ts";
 import { upsertStatusEvent } from "./status-events.ts";
+import { isCoreWidgetName } from "./tool-widgets.ts";
 import type { EvalKernel, EvalStatusEvent, EvalToolDetails } from "./types.ts";
 
 export type { CellState } from "./cell-runtime.ts";
-
-type ResolvedToolReply = {
-	readonly value: unknown;
-	readonly toolCallOk: boolean;
-	readonly resultPreview?: string;
-	readonly errorText?: string;
-};
 
 export interface CellBridgeRuntime {
 	readonly executeTool: AgentExecuteTool;
@@ -140,6 +130,11 @@ export class CellHandler {
 		return this.#resultBuilder.liveResult();
 	}
 
+	/** Where the cell's bridge calls (py/rb/jl kernels) stream their nested tools' partial results. */
+	get toolUpdates(): CellToolUpdateSink {
+		return this.#resultBuilder;
+	}
+
 	async #handleToolCall(message: Extract<KernelToHostMessage, { type: "tool-call" }>): Promise<void> {
 		const startedAt = Date.now();
 		const metric = createToolCallMetric(message.toolName, startedAt);
@@ -197,31 +192,14 @@ export class CellHandler {
 		}
 		await this.#deliverToolReply(
 			message,
-			async () => {
-				const result = await this.#runtime.executeTool(message.toolName, message.args, {
-					signal: this.#state.signal,
-				});
-				const toolCallOk = !toolResultIsError(result);
-				if (toolCallOk) {
-					const resultPreview = toolCallResultPreview(result);
-					return {
-						value: marshalToolResult(result),
-						toolCallOk,
-						...(resultPreview === undefined ? {} : { resultPreview }),
-					};
-				}
-				let errorText: string | undefined;
-				for (const part of result.content) {
-					if (part.type !== "text") continue;
-					errorText = capCodePoints(sanitizeTerminalLabel(part.text), 512);
-					break;
-				}
-				return {
-					value: marshalToolResult(result),
-					toolCallOk,
-					...(errorText === undefined ? {} : { errorText }),
-				};
-			},
+			() =>
+				runNestedTool(
+					this.#runtime.executeTool,
+					message,
+					this.#state.signal,
+					this.#resultBuilder,
+					this.#drawsOwnRow(message.toolName),
+				),
 			capture,
 		);
 	}
@@ -234,7 +212,14 @@ export class CellHandler {
 		try {
 			const reply = await resolve();
 			if (!this.#state.active) return;
-			recordToolCall(this.#state.toolCalls, reply.toolCallOk, capture, reply.resultPreview, reply.errorText);
+			recordToolCall(
+				this.#state.toolCalls,
+				reply.toolCallOk,
+				capture,
+				reply.resultPreview,
+				reply.errorText,
+				reply.details,
+			);
 			this.#kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: true, value: reply.value });
 		} catch (error) {
 			if (!this.#state.active) return;
@@ -259,6 +244,13 @@ export class CellHandler {
 
 	#toolParameters(toolName: string): unknown {
 		return this.#runtime.listTools?.().find((tool) => tool.name === toolName)?.parameters;
+	}
+
+	/** True when the tool draws its own result row, so its nested call keeps the details that row is drawn from. */
+	#drawsOwnRow(toolName: string): boolean {
+		// The six core tools are drawn by codemode's own widgets, which never read the kept details.
+		if (isCoreWidgetName(toolName)) return false;
+		return this.#runtime.listTools?.().find((tool) => tool.name === toolName)?.renderResult !== undefined;
 	}
 
 	#recordStatus(event: EvalStatusEvent): void {

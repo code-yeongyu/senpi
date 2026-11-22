@@ -137,7 +137,7 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 120
 	});
 
 	it("a saved 'do not trust' still wins under full access", async () => {
-		new ProjectTrustStore(agentDir).set(cwd, false);
+		await new ProjectTrustStore(agentDir).set(cwd, false);
 		await open("full-access");
 		expect(loads()).toBe(0);
 	});
@@ -209,7 +209,7 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 120
 		const runtime = runtimeOf(await open("full-access"));
 		runtime.setPermissionPreset("ask");
 		await runtime.projectTrustChange;
-		new ProjectTrustStore(agentDir).set(cwd, false);
+		await new ProjectTrustStore(agentDir).set(cwd, false);
 
 		runtime.setPermissionPreset("full-access");
 		await runtime.projectTrustChange;
@@ -271,7 +271,7 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 120
 
 	it("a switch into another project checks that project's saved trust, not the retired one's", async () => {
 		// Project A is saved "trust"; project B has no decision, so B is trusted only through Full access.
-		new ProjectTrustStore(agentDir).set(cwd, true);
+		await new ProjectTrustStore(agentDir).set(cwd, true);
 		const other = join(home, "other");
 		await writeGate(other);
 		const runtime = runtimeOf(await open("full-access"));
@@ -351,7 +351,7 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 120
 		await writeGate(other);
 		const link = join(home, "other-link");
 		await symlink(other, link);
-		new ProjectTrustStore(agentDir).set(other, true);
+		await new ProjectTrustStore(agentDir).set(other, true);
 		const runtime = runtimeOf(await open("full-access"));
 
 		const gate = armGate();
@@ -367,7 +367,7 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 120
 	});
 
 	it("a symlinked project without its own decision does not inherit the project it was opened from", async () => {
-		new ProjectTrustStore(agentDir).set(cwd, true);
+		await new ProjectTrustStore(agentDir).set(cwd, true);
 		const other = join(home, "other");
 		await writeGate(other);
 		const link = join(home, "other-link");
@@ -388,7 +388,7 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 120
 	it("a trust the user saved during the session survives leaving Full access", async () => {
 		const runtime = runtimeOf(await open("full-access"));
 		expect(loads()).toBe(1);
-		new ProjectTrustStore(agentDir).set(cwd, true);
+		await new ProjectTrustStore(agentDir).set(cwd, true);
 
 		runtime.setPermissionPreset("ask");
 		await runtime.projectTrustChange;
@@ -446,7 +446,7 @@ describe(
 	{ timeout: 120_000 },
 	() => {
 		it("a main checkout saved as 'do not trust' keeps a full-access worktree untrusted", async () => {
-			new ProjectTrustStore(agentDir).set(await linkCwdAsWorktree(), false);
+			await new ProjectTrustStore(agentDir).set(await linkCwdAsWorktree(), false);
 
 			const runtime = runtimeOf(await open("full-access"));
 
@@ -455,7 +455,7 @@ describe(
 		});
 
 		it("leaving Full access keeps the trust a worktree inherits from a trusted main checkout", async () => {
-			new ProjectTrustStore(agentDir).set(await linkCwdAsWorktree(), true);
+			await new ProjectTrustStore(agentDir).set(await linkCwdAsWorktree(), true);
 			const runtime = runtimeOf(await open("full-access"));
 			expect(loads()).toBe(1);
 

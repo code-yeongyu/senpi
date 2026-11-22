@@ -8,6 +8,9 @@
 			],
 			"@code-yeongyu/senpi/*": [
 				"../../packages/coding-agent/src/*"
+			],
+			"@earendil-works/pi-realm-registry": [
+				"../../packages/realm-registry/src/index.ts"
 			]
 		}
 	},

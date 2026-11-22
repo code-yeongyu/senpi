@@ -18,14 +18,17 @@ import type {
 	ActiveFallbackState,
 	CircuitFailure,
 	FallbackReason,
+	FallbackRungRefusal,
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
+import { releaseOnCredentialChange, releaseOnLimitReset } from "./credential-recovery.ts";
+import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import { pinAfterSwitch } from "./pin.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
-import { UnusableEntries } from "./unusable.ts";
+import { type UsageLimitScopeProbe, UnusableEntries } from "./unusable.ts";
 import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
 
-export type { ActiveFallbackState, RetryFallbackControllerDeps } from "./controller-types.ts";
+export type { ActiveFallbackState, FallbackRungRefusal, RetryFallbackControllerDeps } from "./controller-types.ts";
 
 export class RetryFallbackController {
 	private readonly deps: RetryFallbackControllerDeps;
@@ -42,6 +45,8 @@ export class RetryFallbackController {
 	// Conservatively skip the refused provider for this turn: this synchronous scan cannot resolve
 	// asynchronously prepared request credentials, including per-model endpoints or keys (senpi#2491).
 	private readonly refusedProviders = new Set<string>();
+	// Rungs the switch refused during this turn's walks, so exhaustion can say why (senpi#3447).
+	private readonly refusals: FallbackRungRefusal[] = [];
 	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
@@ -67,6 +72,20 @@ export class RetryFallbackController {
 		return this.lastExhaustedChainKey;
 	}
 
+	/** The weekly-limit family hold on `model`, while it lasts (senpi#5596). */
+	heldFamily(model: Model<Api>): { readonly family: string; readonly errorMessage: string } | undefined {
+		return this.unusable.heldFamily(model);
+	}
+
+	/** The families a no-family limit was confirmed on before it held the whole provider (senpi#5596). */
+	widenedFamiliesOf(provider: string): readonly string[] | undefined {
+		return this.unusable.widenedFamiliesOf(provider);
+	}
+
+	get turnRefusals(): readonly FallbackRungRefusal[] {
+		return [...this.refusals];
+	}
+
 	isProviderSpent(provider: string): boolean {
 		return this.unusable.isProviderSpent(provider);
 	}
@@ -75,9 +94,26 @@ export class RetryFallbackController {
 		return this.unusable.accountError(provider);
 	}
 
+	accountResetAt(provider: string): number | undefined {
+		return this.unusable.accountResetAt(provider);
+	}
+
+	releaseGuessedAccountHold(provider: string): boolean {
+		return this.unusable.releaseGuessedAccountHold(provider);
+	}
+
+	releaseAccountHold(provider: string): boolean {
+		return this.unusable.releaseAccountHold(provider);
+	}
+
+	releaseAccountHoldShownServable(provider: string, usage: readonly AccountLimits[]): boolean {
+		return this.unusable.releaseAccountHoldShownServable(provider, usage);
+	}
+
 	resetTurn(): void {
 		this.triedSelectors.clear();
 		this.refusedProviders.clear();
+		this.refusals.length = 0;
 		this.lastExhaustedChainKey = undefined;
 	}
 
@@ -97,7 +133,10 @@ export class RetryFallbackController {
 		return canonical;
 	}
 
-	/** `refusedProvider`: the provider whose request-level refusal is being decided, before the walk records it. */
+	/**
+	 * `refusedProvider`: a provider the failure being decided rules out (a request-level refusal or
+	 * a spent account) before the walk records it.
+	 */
 	canTryFallback(refusedProvider?: string): boolean {
 		return this.nextCandidate(false, false, refusedProvider) !== undefined;
 	}
@@ -131,6 +170,8 @@ export class RetryFallbackController {
 	 * original is not is never where the session rests (senpi#2376). An original that is
 	 * itself still held (an account usage limit with the reset it named, which can outlast
 	 * the circuit's 30-minute ceiling) is not restored before that hold ends (senpi#3347).
+	 * At a turn boundary, a changed credential on the original's provider first releases
+	 * its billing pin and parks (senpi#4099).
 	 */
 	async maybeRestorePrimary(
 		revertPolicy: "cooldown-expiry" | "never",
@@ -140,11 +181,13 @@ export class RetryFallbackController {
 		if (boundary === "turn") this.heldForNetworkBlip = false;
 		const state = this.state;
 		const current = this.deps.getCurrentSelector();
-		if (!state || state.pinned || !current) return false;
+		if (!state || !current) return false;
 		const selector = parseFallbackSelector(state.originalSelector, this.deps.registry);
-		if (!selector || !this.deps.isAuthAvailable(selector.provider)) return false;
-		const model = this.deps.registry.find(selector.provider, selector.id);
+		const model = selector && this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
+		if (boundary === "turn") await releaseOnCredentialChange(state, model, this.deps, this.unusable);
+		releaseOnLimitReset(state, model, this.deps, this.unusable);
+		if (state.pinned || !this.deps.isAuthAvailable(model.provider)) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
 		if (
 			!stranded &&
@@ -245,6 +288,20 @@ export class RetryFallbackController {
 	noteServed(selector: string): void {
 		this.ownFailures.delete(selector);
 		this.probes.accept(selector);
+		const slash = selector.indexOf("/");
+		if (slash > 0)
+			this.emitScopeProbe(
+				this.unusable.noteServed({
+					provider: selector.slice(0, slash),
+					id: selector.slice(slash + 1).split(":")[0] ?? "",
+				}),
+			);
+	}
+
+	private emitScopeProbe(probe: UsageLimitScopeProbe | undefined): void {
+		if (probe === undefined) return;
+		this.deps.logger.info("usage_limit_scope_probe", { ...probe });
+		this.deps.emit({ type: "usage_limit_scope_probe", ...probe });
 	}
 
 	/**
@@ -253,7 +310,7 @@ export class RetryFallbackController {
 	 * half-open probe - independent of whether a fallback candidate remains.
 	 */
 	noteHealthFailure(model: Model<Api>, thinkingLevel: ThinkingLevel | undefined, failure: CircuitFailure): void {
-		this.unusable.note(model, failure);
+		this.emitScopeProbe(this.unusable.note(model, failure));
 		if (!this.managedChainKey({ model, thinkingLevel })) return;
 		// A pure network fault is the transport's, not the model's: it never opens the shared circuit (senpi#3306).
 		if (isPureNetworkTransient(failure.errorMessage)) return;
@@ -315,8 +372,17 @@ export class RetryFallbackController {
 		// noteHealthFailure) so the final chain entry opens too.
 		if (failureObserved && current && reason === "transient")
 			this.noteHealthFailure(current.model, current.thinkingLevel, failure);
-		const limit = usageLimitScope(failure.errorMessage);
-		if (failureObserved && current) this.unusable.note(current.model, failure);
+		if (failureObserved && current) this.emitScopeProbe(this.unusable.note(current.model, failure));
+		// A weekly limit that named no family held only the failing family (senpi#5596): report it as that model's
+		// limit, so the switch never claims the account's other models were skipped.
+		const scopeOfText = usageLimitScope(failure.errorMessage);
+		const limit =
+			scopeOfText === "account" &&
+			current &&
+			!this.unusable.isProviderSpent(current.model.provider) &&
+			this.unusable.heldFamily(current.model)
+				? "model"
+				: scopeOfText;
 		// A model-wide park (transient, billing) can rule out the current model's other rungs, so the
 		// walk re-scans after noting it; the first scan logs only when no re-scan follows.
 		const modelWidePark = !networkBlip && failureObserved && (reason === "transient" || reason === "billing");
@@ -357,6 +423,10 @@ export class RetryFallbackController {
 			} catch (error) {
 				if (!this.deps.isCandidateRefusal?.(error)) throw error;
 				this.triedSelectors.add(rungSelector(candidate.selector));
+				this.refusals.push({
+					model: formatSelector(candidate.model),
+					detail: error instanceof Error ? error.message : String(error),
+				});
 				this.skip(formatSelector(candidate.model), "refused");
 			}
 			candidate = this.nextCandidate(false, true);
@@ -377,29 +447,46 @@ export class RetryFallbackController {
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
 		const prior = this.state;
+		const recoveryRevision = prior
+			? prior.recoveryRevision
+			: await this.deps.recoveryRevision?.(current.model.provider);
+		const pin = pinAfterSwitch(prior, { from, fromProvider: current.model.provider, reason, limit });
+		// A new billing pin from a usage limit lasts until the reset the limit stated, when it named one (senpi#4085).
+		const pinnedUntil =
+			pin.pinnedByBilling && prior?.pinnedByBilling !== true
+				? (this.deps.cooldowns.statedResetAt(from) ?? this.unusable.accountResetAt(current.model.provider))
+				: prior?.pinnedUntil;
 		this.state = {
+			...(recoveryRevision === undefined ? {} : { recoveryRevision }),
 			chainKey: candidate.chainKey,
 			originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
 			lastAppliedThinkingLevel: thinking,
-			...pinAfterSwitch(prior, { from, fromProvider: current.model.provider, reason, limit }),
+			...pin,
+			...(pinnedUntil === undefined ? {} : { pinnedUntil }),
 		};
 		const scope = limit === undefined ? {} : { limit };
 		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason, ...scope });
 		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason, ...scope });
 	}
 
-	/** The chain governing `current`, when fallback is enabled; a model's own chain wins over an active one. */
+	/**
+	 * The chain governing `current`, when fallback is enabled. An active episode's chain wins over the
+	 * rung's own chain, so the walk continues down the chain it started on: Opus 5.5 -> Fable 5.2 -> Kimi
+	 * never detours through Fable's own chain, and a Fable session that reached Opus 5.5 never takes
+	 * Opus 5.5's chain off Anthropic (senpi#6699). Outside an episode the model's own chain governs.
+	 */
 	private managedChainKey(current: { model: Model<Api>; thinkingLevel?: ThinkingLevel }): string | undefined {
 		if (!this.deps.getSettings().modelFallback) return undefined;
 		const chains = this.canonicalChains();
-		const chainKey =
-			resolveChainKey(
-				current.model,
-				current.thinkingLevel,
-				chains,
-				fastSiblingOption(this.deps.registry, current.model),
-			) ?? this.state?.chainKey;
-		return chainKey && chains[chainKey] ? chainKey : undefined;
+		const active = this.state?.chainKey;
+		if (active && chains[active]) return active;
+		const own = resolveChainKey(
+			current.model,
+			current.thinkingLevel,
+			chains,
+			fastSiblingOption(this.deps.registry, current.model),
+		);
+		return own && chains[own] ? own : undefined;
 	}
 
 	private nextCandidate(

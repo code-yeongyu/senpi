@@ -26,6 +26,8 @@ class CutSignal extends Error {
 	}
 }
 
+export const isCutSignal = (error: unknown): boolean => error instanceof CutSignal;
+
 const samePoint = (a: StoreWritePoint, b: StoreWritePoint): boolean =>
 	a.op === b.op && a.at === b.at && (a.at !== "write" || (b.at === "write" && a.index === b.index));
 

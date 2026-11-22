@@ -1,15 +1,20 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
+import { createEventBus } from "../../src/core/event-bus.ts";
+import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
+import { SettingsManager } from "../../src/core/settings-manager.ts";
 import {
 	HTML_RENDER_CONTENT_SECURITY_POLICY,
 	injectHtmlRenderBootstrap,
-} from "../../src/core/extensions/builtin/html-render/bootstrap.ts";
-import { inlineLocalImages } from "../../src/core/extensions/builtin/html-render/images.ts";
-import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
-import { showHtmlPageTool } from "../../src/core/extensions/builtin/html-render/tool.ts";
-import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
+} from "../../src/extensions/html-render/bootstrap.ts";
+import { inlineLocalImages } from "../../src/extensions/html-render/images.ts";
+import { createShowHtmlPageTool, writeHtmlPage } from "../../src/extensions/html-render/tool.ts";
+import { builtInExtensions } from "../../src/extensions/index.ts";
+import { HOST_TOOL_ROUTE_CHANNEL, HOST_TOOL_ROUTE_UNAVAILABLE } from "../../src/host-tools.ts";
 import { createHarness } from "./harness.ts";
 
 const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 0)]);
@@ -21,19 +26,42 @@ const ctxFor = (cwd: string): ExtensionToolContext =>
 		ui: undefined,
 		tools: [],
 		executeTool: () => Promise.reject(new Error("not used")),
+		sessionManager: { getEntries: () => [], getSessionId: () => randomUUID() },
 	}) as unknown as ExtensionToolContext;
 
-describe("html-render builtin", () => {
+describe("host HTML attachment", () => {
 	let tempDir: string;
 	beforeEach(() => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-html-render-"));
 	});
 	afterEach(() => {
+		vi.restoreAllMocks();
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
+	// #5005: host presentation tools must not enter a bare engine through its builtin catalog.
+	it("does not register host HTML tools without a host attachment", async () => {
+		const loader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir: tempDir,
+			settingsManager: SettingsManager.inMemory({ disabledBuiltinExtensions: ["codemode"] }),
+			noExtensions: true,
+			noSkills: true,
+			noThemes: true,
+			noPromptTemplates: true,
+			noContextFiles: true,
+		});
+		await loader.reload();
+		const loaded = loader.getExtensions();
+		expect(loaded.errors).toEqual([]);
+		const names = loaded.extensions.flatMap((extension) => [...extension.tools.keys()]);
+		expect(names).not.toContain("show_html_page");
+		expect(names).not.toContain("html_render");
+		expect(names).not.toContain("html_preview");
+	});
+
 	it("registers show_html_page", async () => {
-		const harness = await createHarness({ extensionFactories: [htmlRenderExtension] });
+		const harness = await createHarness({ extensionFactories: builtInExtensions });
 		try {
 			const names = harness.session.getAllTools().map((tool) => tool.name);
 			expect(names).toContain("show_html_page");
@@ -42,8 +70,127 @@ describe("html-render builtin", () => {
 		}
 	});
 
+	it("the exported host writer preserves the pre-migration file bytes", async () => {
+		const result = await writeHtmlPage(
+			{
+				html: '<!doctype html><html><head><title>Host attachment</title></head><body><p id="host-page">TOOLS-MCP1</p></body></html>',
+				title: "Host attachment",
+				height: 300,
+			},
+			tempDir,
+		);
+		const bytes = readFileSync(result.details.path);
+		expect(result.content).toEqual([
+			{
+				type: "text",
+				text: `The page was shown to the reader inline above your reply. A copy is saved at ${result.details.path}. Local images were inlined.`,
+			},
+		]);
+		expect(bytes.length).toBe(2680);
+		expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+			"5263f097ae148714873275e07beef128f9fa2ff62ba0918245a202af36af1aa4",
+		);
+	});
+
+	// #5005: one show_html_page in every session; a host route serves only while it is confirmed.
+	it("keeps exactly one show_html_page and routes calls only while a host route is set", async () => {
+		const bus = createEventBus();
+		const loader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir: tempDir,
+			eventBus: bus,
+			settingsManager: SettingsManager.inMemory({ disabledBuiltinExtensions: ["codemode"] }),
+			extensionFactories: builtInExtensions,
+			noExtensions: true,
+			noSkills: true,
+			noThemes: true,
+			noPromptTemplates: true,
+			noContextFiles: true,
+		});
+		await loader.reload();
+		const registrations = loader
+			.getExtensions()
+			.extensions.flatMap((extension) => [...extension.tools.values()])
+			.filter((tool) => tool.definition.name === "show_html_page");
+		expect(registrations).toHaveLength(1);
+		const tool = registrations[0]?.definition;
+		if (tool === undefined) throw new Error("show_html_page is not registered");
+		const pages = () => readdirSync(join(tempDir, ".senpi/html-pages")).length;
+		const args = { html: "<p>routed</p>", title: "Routed" };
+		let callId = 0;
+		const call = (signal?: AbortSignal) =>
+			tool.execute("call", { ...args, title: `Routed ${++callId}` }, signal, undefined, ctxFor(tempDir));
+
+		await call();
+		expect(pages()).toBe(1);
+
+		const hostResult = { content: [{ type: "text" as const, text: "host" }], details: {} };
+		const route = vi.fn(async () => hostResult);
+		bus.emit(HOST_TOOL_ROUTE_CHANNEL, { name: "show_html_page", execute: route });
+		expect(await call()).toBe(hostResult);
+		expect(pages()).toBe(1);
+
+		route.mockRejectedValueOnce(Object.assign(new Error("grant lost"), { name: HOST_TOOL_ROUTE_UNAVAILABLE }));
+		expect((await call(new AbortController().signal)).details).toMatchObject({ html: args.html, prepared: true });
+		expect(pages()).toBe(2);
+		await call();
+		expect(route).toHaveBeenCalledTimes(2);
+		expect(pages()).toBe(3);
+
+		// #5005 / PR #5045: losing a host route must not write a cancelled page standalone.
+		const controller = new AbortController();
+		const unavailable = vi.fn(async () => {
+			controller.abort();
+			throw Object.assign(new Error("grant lost"), { name: HOST_TOOL_ROUTE_UNAVAILABLE });
+		});
+		bus.emit(HOST_TOOL_ROUTE_CHANNEL, { name: "show_html_page", execute: unavailable });
+		await expect(call(controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+		expect(pages()).toBe(3);
+		await call();
+		expect(unavailable).toHaveBeenCalledTimes(1);
+		expect(pages()).toBe(4);
+
+		const abort = Object.assign(new Error("host call cancelled"), { name: "AbortError" });
+		bus.emit(HOST_TOOL_ROUTE_CHANNEL, {
+			name: "show_html_page",
+			execute: () => Promise.reject(abort),
+		});
+		await expect(call()).rejects.toBe(abort);
+		expect(pages()).toBe(4);
+
+		bus.emit(HOST_TOOL_ROUTE_CHANNEL, {
+			name: "show_html_page",
+			execute: () => Promise.reject(new Error("tool failure")),
+		});
+		await expect(call()).rejects.toThrow("tool failure");
+		bus.emit(HOST_TOOL_ROUTE_CHANNEL, { name: "show_html_page" });
+		await call();
+		expect(pages()).toBe(5);
+	});
+
+	it.each([{ enabledBuiltinExtensions: ["goal"] }, { disabledBuiltinExtensions: ["html-render", "codemode"] }])(
+		"preserves the standalone host extension's settings opt-out %j",
+		async (settings) => {
+			const loader = new DefaultResourceLoader({
+				cwd: tempDir,
+				agentDir: tempDir,
+				settingsManager: SettingsManager.inMemory(settings),
+				extensionFactories: builtInExtensions,
+				noExtensions: true,
+				noSkills: true,
+				noThemes: true,
+				noPromptTemplates: true,
+				noContextFiles: true,
+			});
+			await loader.reload();
+			const loaded = loader.getExtensions();
+			expect(loaded.errors).toEqual([]);
+			expect(loaded.extensions.flatMap((extension) => [...extension.tools.keys()])).not.toContain("show_html_page");
+		},
+	);
+
 	it("writes a prepared page with the theme bootstrap injected ahead of the head content", async () => {
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-1",
 			{
 				html: "<!doctype html><html><head><title>t</title></head><body>hi</body></html>",
@@ -63,7 +210,7 @@ describe("html-render builtin", () => {
 	});
 
 	it("opens the written page with the offline snapshot policy ahead of anything the page wrote", async () => {
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-3",
 			{
 				html: '<!doctype html><script src="https://cdn.example/lib.js"></script><img src="http://127.0.0.1:1/x.png">',
@@ -104,7 +251,7 @@ describe("html-render builtin", () => {
 
 	it("hands the page to the host in details and never puts it in the content the model reads", async () => {
 		const html = '<!doctype html><div id="marker-7f3a">chart</div>';
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-4",
 			{ html, title: "Hidden", height: 300 },
 			undefined,
@@ -115,9 +262,54 @@ describe("html-render builtin", () => {
 		expect(JSON.stringify(result.content)).not.toContain("marker-7f3a");
 	});
 
+	it("hands the host a self-contained page: absolute-path images and CSS url() images arrive as data URIs", async () => {
+		// A viewer on another machine cannot read this machine's files, so the page in details
+		// must already carry the image bytes.
+		const imagePath = join(tempDir, "chart.png");
+		const backgroundPath = join(tempDir, "bg.png");
+		writeFileSync(imagePath, PNG_BYTES);
+		writeFileSync(backgroundPath, PNG_BYTES);
+		const html = `<!doctype html><style>body{background:url(${backgroundPath})}</style><img src="${imagePath}">`;
+
+		const result = await createShowHtmlPageTool(new Map()).execute(
+			"call-self-contained",
+			{ html, title: "Chart" },
+			undefined,
+			undefined,
+			ctxFor(tempDir),
+		);
+
+		const handed = (result.details as { html: string }).html;
+		const dataUri = `data:image/png;base64,${PNG_BYTES.toString("base64")}`;
+		expect(handed).toBe(`<!doctype html><style>body{background:url(${dataUri})}</style><img src="${dataUri}">`);
+		expect(handed).not.toContain(tempDir);
+		expect(handed).not.toContain('id="t3-theme"');
+	});
+
+	it("refuses a page naming an image that cannot be read, names the path, and writes nothing", async () => {
+		const present = join(tempDir, "present.png");
+		writeFileSync(present, PNG_BYTES);
+		const missing = join(tempDir, "missing.png");
+		const secret = join(tempDir, "secret.png");
+		writeFileSync(secret, "API_KEY=hunter2 not an image");
+
+		const refused = createShowHtmlPageTool(new Map()).execute(
+			"call-missing",
+			{ html: `<img src="${present}"><img src="${missing}"><img src="${secret}">`, title: "Broken" },
+			undefined,
+			undefined,
+			ctxFor(tempDir),
+		);
+
+		await expect(refused).rejects.toThrow(
+			`These local images could not be read: ${missing}, ${secret}. Use absolute paths to existing image files, or remove them.`,
+		);
+		expect(existsSync(join(tempDir, ".senpi/html-pages"))).toBe(false);
+	});
+
 	it("refuses a page over the input limit before preparing anything", async () => {
 		await expect(
-			showHtmlPageTool.execute(
+			createShowHtmlPageTool(new Map()).execute(
 				"call-max",
 				{ html: "x".repeat(512_001), title: "Big" },
 				undefined,
@@ -132,7 +324,7 @@ describe("html-render builtin", () => {
 		const screenshot = `<img src="data:image/png;base64,${"A".repeat(200_000)}">`;
 		const html = `<html><body><h1>Report</h1>${screenshot.repeat(3)}</body></html>`;
 
-		const refused = showHtmlPageTool.execute(
+		const refused = createShowHtmlPageTool(new Map()).execute(
 			"call-b64",
 			{ html, title: "Report" },
 			undefined,
@@ -153,7 +345,7 @@ describe("html-render builtin", () => {
 		});
 		const html = `<html><body>${paths.map((path) => `<img src="${path}">`).join("")}</body></html>`;
 
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-paths",
 			{ html, title: "Report" },
 			undefined,
@@ -175,13 +367,19 @@ describe("html-render builtin", () => {
 		});
 		const html = paths.map((path) => `<img src="${path}">`).join("");
 		await expect(
-			showHtmlPageTool.execute("call-5", { html, title: "Huge" }, undefined, undefined, ctxFor(tempDir)),
+			createShowHtmlPageTool(new Map()).execute(
+				"call-5",
+				{ html, title: "Huge" },
+				undefined,
+				undefined,
+				ctxFor(tempDir),
+			),
 		).rejects.toThrow(/limit is 25 MiB/);
 		expect(existsSync(join(tempDir, ".senpi/html-pages"))).toBe(false);
 	});
 
 	it("clamps the frame height to the 80-2000 range", async () => {
-		const result = await showHtmlPageTool.execute(
+		const result = await createShowHtmlPageTool(new Map()).execute(
 			"call-2",
 			{ html: "<p>x</p>", title: "Tall", height: 99999 },
 			undefined,

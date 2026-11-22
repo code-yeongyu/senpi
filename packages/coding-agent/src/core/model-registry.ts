@@ -53,6 +53,7 @@ export { clearApiKeyCache } from "./provider-composer.ts";
 export class ModelRegistry {
 	private readonly runtime: ModelRuntime;
 	readonly authStorage: AuthStorage;
+	private busyRetriedThisTurn = false;
 
 	constructor(runtime: ModelRuntime, authStorage: AuthStorage = AuthStorage.inMemory()) {
 		this.runtime = runtime;
@@ -125,10 +126,19 @@ export class ModelRegistry {
 	/**
 	 * The live auth check reads the in-memory credentials. When the last read found the store
 	 * locked they were never loaded, so re-read now (bounded by the sync lock budget) instead
-	 * of answering from the empty fallback for the rest of the process.
+	 * of answering from the empty fallback for the rest of the process. A store that could not be
+	 * loaded is re-read the same way, so a repaired auth.json is seen without a restart (#4413).
 	 */
 	private retryBusyCredentialRead(): void {
-		if (this.authStorage.isCredentialStoreBusy()) this.authStorage.reload();
+		if (!this.authStorage.isCredentialStoreBusy() && !this.authStorage.getLoadError()) return;
+		// A re-read of a store another process holds blocks for the sync lock budget, and a provider list
+		// re-reads once per row in one synchronous pass: wait once per pass, not once per row (#6841).
+		if (this.busyRetriedThisTurn) return;
+		if (this.authStorage.reload() !== "busy") return;
+		this.busyRetriedThisTurn = true;
+		queueMicrotask(() => {
+			this.busyRetriedThisTurn = false;
+		});
 	}
 
 	getUpstreamModelId(model: Model<Api>): string | undefined {
@@ -139,9 +149,17 @@ export class ModelRegistry {
 		return this.runtime.getCompatibilityRequestConfig(model).serviceTier;
 	}
 
-	async getApiKeyAndHeaders(model: Model<Api>): Promise<ResolvedRequestAuth> {
+	/**
+	 * Request auth for a direct provider call. A caller acting for a session passes its id so the
+	 * key belongs to the account that session's turns use; without it the stored credential is
+	 * resolved as for session-less callers.
+	 */
+	async getApiKeyAndHeaders(model: Model<Api>, options: { sessionId?: string } = {}): Promise<ResolvedRequestAuth> {
 		try {
-			const resolution = await this.runtime.getAuth(model);
+			const resolution =
+				options.sessionId === undefined
+					? await this.runtime.getAuth(model)
+					: await this.runtime.getSessionAuth(model, options.sessionId);
 			const compatibility = this.runtime.getCompatibilityRequestConfig(model);
 			if (!resolution) {
 				if (compatibility.authHeader) {
@@ -177,6 +195,10 @@ export class ModelRegistry {
 
 	getProviderAuthStatus(provider: string): AuthStatus {
 		return this.resolveProviderAuth(provider).status;
+	}
+
+	providerAuthIsHeaderOnly(provider: string): boolean {
+		return this.runtime.providerAuthIsHeaderOnly(provider);
 	}
 
 	/** `getProviderAuthStatus` plus whether it is a non-stored sign-in, from one resolution (#3537). */

@@ -1,6 +1,14 @@
 // Core session management
+export { attachHostTools, HOST_TOOL_ROUTE_CHANNEL, HOST_TOOL_ROUTE_UNAVAILABLE } from "./host-tools.ts";
+export { showHtmlPageTool, type ShowHtmlPageDetails, writeHtmlPage } from "./extensions/html-render/tool.ts";
 export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./core/extensions/secret-input.ts";
 export type { RpcSecretInputSettledEvent } from "./modes/rpc/rpc-types.ts";
+export type {
+	PresenterAccountAuthority,
+	PresenterAttestation,
+	PresenterAttestationRefusal,
+	PresenterAttestationResult,
+} from "./modes/rpc/mcp-presenter-account.ts";
 
 export { sanitizeTerminalLabel, visibleWidth } from "@earendil-works/pi-tui";
 export { type Args, parseArgs } from "./cli/args.ts";
@@ -28,7 +36,12 @@ export {
 	parseSkillBlock,
 	type SessionStats,
 } from "./core/agent-session.ts";
-export { type OAuthCredential, readStoredCredential } from "./core/auth-storage.ts";
+export { AuthStorage, type OAuthCredential, readStoredCredential } from "./core/auth-storage.ts";
+export {
+	type ConfigValueObservation,
+	type ConfigValueObserver,
+	resolveConfigValue,
+} from "./core/resolve-config-value.ts";
 export { REQUIRED_COMPACTION_ERROR_MESSAGE, RequiredCompactionError } from "./core/required-compaction-error.ts";
 // Compaction
 export {
@@ -85,6 +98,7 @@ export {
 	type KillGuardRuntime,
 	releaseKillGuardRuntime,
 } from "./core/kill-guard/runtime.ts";
+export { CREDENTIAL_PLACEHOLDER, withCredentialProxy } from "./core/credential-proxy/runtime.ts";
 // Job widgets: hosts register background jobs and their widget-author model route
 export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {
@@ -197,6 +211,7 @@ export type {
 	ModelSelectSource,
 	NormalizedBuildSystemPromptOptions,
 	PowerShellToolCallEvent,
+	ProgramStatus,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventDecision,
@@ -332,6 +347,14 @@ export {
 	readOwnFootprint,
 	readProcessFootprint,
 } from "./core/process-footprint.ts";
+// Which session spawned a process, attested by its spawner (senpi#6972)
+export {
+	attestSessionSpawn,
+	type PidSession,
+	resolvePidSession,
+	type SessionSpawnAttestation,
+	sessionSpawnsDir,
+} from "./core/session-spawn-attestation.ts";
 export {
 	findReservedKeywordRuns,
 	findReservedKeywordSpans,
@@ -442,6 +465,16 @@ export {
 } from "./core/skills.ts";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
+// The device a session's tools run on (registerDeviceMachine; OMO_TOOLS_VIA_DAEMON).
+export type {
+	ExecRequest as MachineExecRequest,
+	ExecResult as MachineExecResult,
+	MachineOps,
+	OpContext,
+} from "@code-yeongyu/senpi-machine-ops";
+export { DeviceMachineConflictError } from "./core/extensions/types.ts";
+export { DeviceUnavailableError } from "./core/tools/bash.ts";
+export { createToolMachine, type ToolMachine, type ToolPathPolicy } from "./core/tools/machine.ts";
 // Tools
 export {
 	type BashOperations,
@@ -498,6 +531,16 @@ export {
 	type ReadClassifier,
 	registerReadClassifier,
 } from "./core/tools/read-classifiers.ts";
+export {
+	registerRpcRemoteSource,
+	type RpcRemoteHandlers,
+	type RpcRemoteOpenOptions,
+	type RpcRemoteSettledTurn,
+	type RpcRemoteSource,
+	type RpcRemoteState,
+	type RpcRemoteSubscription,
+	type RpcRemoteTarget,
+} from "./core/extensions/builtin/terminal/rpc-remote-source.ts";
 export {
 	hasTrustRequiringProjectResources,
 	type ProjectTrustDecision,
@@ -672,6 +715,7 @@ export {
 // Exact-pid collection of children whose owning thread is gone (#1962)
 export { collectOrphanedChildren } from "./modes/rpc/child-reaper.ts";
 // Shell utilities
+export { childEnvironmentOf } from "./modes/rpc/host-identity-env.ts";
 export { withBundledBunCommands } from "./utils/bundled-bun.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";

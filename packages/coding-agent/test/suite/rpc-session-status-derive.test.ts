@@ -99,7 +99,28 @@ describe("deriveSessionStatus", () => {
 		});
 	});
 
+	// senpi#7025: a retry backoff is a typed wait on a running session, never on an ended one.
+	it("carries the runtime's retry wait on a running session and drops it once the session ended", () => {
+		const waiting = {
+			kind: "rate_limit",
+			attempt: 2,
+			maxAttempts: 5,
+			delayMs: 45_000,
+			until: "2026-11-19T03:00:45.000Z",
+			error: "429: slow down",
+		} as const;
+		expect(deriveSessionStatus(entry(), runtime({ isStreaming: true, waiting }), noQuestions)).toMatchObject({
+			status: "running",
+			waiting,
+		});
+		expect(deriveSessionStatus(entry(), runtime({ isStreaming: true }), noQuestions)).not.toHaveProperty("waiting");
+		const closed = terminalOfLifecycle({ type: "session_closed" });
+		expect(deriveSessionStatus(entry(), runtime({ waiting }), noQuestions, closed)).not.toHaveProperty("waiting");
+	});
+
 	it("maps the records that change a status, and only those", () => {
+		expect(causeOfRecord({ type: "auto_retry_start" })).toBe("retry");
+		expect(causeOfRecord({ type: "auto_retry_end" })).toBe("retry");
 		expect(causeOfRecord({ type: "agent_start" })).toBe("prompt");
 		expect(causeOfRecord({ type: "session_abort" })).toBe("abort");
 		expect(causeOfRecord({ type: "queue_update" })).toBe("queue");

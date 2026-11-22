@@ -5,10 +5,11 @@ export { redactCredentialShapes, redactSecrets };
 
 // A route that does not serve a configured model id: the OpenAI-compatible `model_not_found` code and OpenAI's
 // "The model `<id>` does not exist" prose, a gateway's "unknown provider for model", Anthropic's not_found_error whose
-// message names the model ("model: <id>"; any other not_found_error is not one), and Google's "models/<id> is not found".
+// message names the model ("model: <id>"; any other not_found_error is not one), Google's "models/<id> is not found",
+// and an OpenAI-compatible gateway's image allowlist reply "Model <id> is not supported on /v1/images/generations".
 // Every quantifier is bounded, so a long run never makes a match attempt expensive.
 const MODEL_CONFIG_ERROR =
-	/\bmodel_not_found\b|\bunknown provider for model\b|\bthe model\s{1,8}[`'"]?[\w.:/-]{1,256}[`'"]?\s{1,8}does not exist\b|\bnot_found_error\b[^}]{0,120}?\bmodel:\s{0,8}[\w.:/-]|\bmodels\/[\w.:-]{1,256} is not found\b/i;
+	/\bmodel_not_found\b|\bunknown provider for model\b|\bmodel\s{1,8}[\w.:/-]{1,256}\s{1,8}is not supported on \/v1\/images\b|\bthe model\s{1,8}[`'"]?[\w.:/-]{1,256}[`'"]?\s{1,8}does not exist\b|\bnot_found_error\b[^}]{0,120}?\bmodel:\s{0,8}[\w.:/-]|\bmodels\/[\w.:-]{1,256} is not found\b/i;
 
 /** True when provider text says the route does not serve the configured model id (senpi#4282). */
 export function isModelConfigError(errorMessage: string | undefined): boolean {

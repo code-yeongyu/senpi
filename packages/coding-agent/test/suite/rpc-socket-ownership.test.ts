@@ -106,7 +106,8 @@ async function startHost(supervised: boolean): Promise<{
 	const root = await mkdtemp(join(tmpdir(), "rpc-owner-"));
 	roots.push(root);
 	const agentDir = join(root, "agent");
-	await mkdir(agentDir);
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	await mkdir(agentDir, { mode: 0o700 });
 	const socketPath = join(root, "rpc.sock");
 	const args = supervised
 		? [join(packageRoot, "src/modes/rpc/host-lifecycle.ts"), "--socket", socketPath, "--agent-dir", agentDir]
