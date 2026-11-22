@@ -11630,7 +11630,7 @@
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
-		"packages/coding-agent/src/modes/rpc/predecessor-discovery.ts#GONE_CODES": {
+		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#ROUTE_GONE_CODES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
