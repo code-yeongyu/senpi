@@ -132,9 +132,11 @@ Handover parks with `completed`, `cancelled`, `error`, `failed`, `lost`, or
 `interrupted` are removed with a stderr diagnostic instead of being reopened.
 `open_session.context.approvals = "refuse"` declares that no client answers this session's prompts (an agent
 opened it and nobody attaches to it): a tool call the permission preset would ask about is refused at once with a
-reason the model reads, never raised as a dialog. The session records it (a `permission-approvals-refused` entry) on
-its first start, so every later open of its file refuses too, with or without the label. Any other value, or no
-value, on a session that never carried it keeps the prompt.
+reason the model reads, never raised as a dialog. The session records it (a `permission-approvals-refused` entry
+naming the session id) on its first start, written and synced to the session file before the session starts, so
+every later open of its file refuses too, with or without the label. A fork or clone copies the entry under a new
+session id, where it does not apply: the copy refuses only when its own open carries the label. Any other value, or
+no value, on a session that never carried it keeps the prompt.
 Other context keys remain opaque.
 
 Automatic turn admission is also bounded independently of the hold. On unattended resume,

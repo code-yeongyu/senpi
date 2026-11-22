@@ -12,12 +12,8 @@ import { prepareMcpDispatchApproval } from "./dispatch-metadata.ts";
 import { createDispatchAuthorizer } from "./dispatch-policy.ts";
 import { createEventEmitter } from "./events.ts";
 import { INTERNAL_PERMISSION_TOOLS } from "./internal-tools.ts";
-import {
-	handleNoUI,
-	REFUSE_APPROVALS_CONTEXT_KEY,
-	REFUSE_APPROVALS_CONTEXT_VALUE,
-	REFUSE_APPROVALS_ENTRY_TYPE,
-} from "./non-interactive.ts";
+import { handleNoUI, REFUSE_APPROVALS_CONTEXT_KEY, REFUSE_APPROVALS_CONTEXT_VALUE } from "./non-interactive.ts";
+import { openerRefuses } from "./opener-refusal.ts";
 import {
 	createBuiltinParserRegistry,
 	type ParserRegistry,
@@ -173,11 +169,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
 
 	pi.on("session_start", async (_event, ctx) => {
-		const recorded = ctx.sessionManager
-			.getEntries()
-			.some((entry) => entry.type === "custom" && entry.customType === REFUSE_APPROVALS_ENTRY_TYPE);
-		if (labelled && !recorded) pi.appendEntry(REFUSE_APPROVALS_ENTRY_TYPE, {});
-		refusedByOpener = labelled || recorded;
+		refusedByOpener = await openerRefuses(pi, ctx.sessionManager, labelled);
 		attachedContexts.add(contextKey(ctx));
 		attach(ctx);
 		applyToolDenials();

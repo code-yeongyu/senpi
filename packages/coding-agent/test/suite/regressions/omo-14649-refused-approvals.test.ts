@@ -8,13 +8,14 @@
  * loads as in a host-opened session; only the model is faked. The client never answers a dialog, as no client does in
  * such a session; without the label the turn waits on the prompt and the bounded wait for `agent_idle` fails.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../../src/cli/args.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
 import { createCliRuntimeFactory } from "../../../src/main.ts";
 import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../../../src/modes/rpc/session-command-router.ts";
@@ -28,11 +29,14 @@ afterEach(async () => {
 	for (const dispose of disposers.splice(0).reverse()) await dispose();
 });
 
-/** `reopen`: the session is first opened with the label, closed, then reopened by its file with `context` (a wake after its process died). */
+/**
+ * `from`: the session is first opened with the label, closed, then opened again with `context`: by its own file
+ * (`reopen`, a wake after its process died) or by a fork of it (`fork`, a new session id carrying the copied entries).
+ */
 async function readOnlyWriteTurn(
 	context: Record<string, string>,
 	until: "agent_idle" | "permission_prompt",
-	reopen = false,
+	from?: "reopen" | "fork",
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-omo-14649-"));
 	const cwd = join(scratch, "project");
@@ -43,7 +47,7 @@ async function readOnlyWriteTurn(
 	const faux = fauxProvider({ api: "fauxperm14649", provider: "fauxperm14649" });
 	const model = faux.getModel();
 	faux.setResponses([
-		...(reopen ? [fauxAssistantMessage("first turn")] : []),
+		...(from ? [fauxAssistantMessage("first turn")] : []),
 		fauxAssistantMessage(fauxToolCall("write", { path: marker, content: "probe" }, { id: "call-write" }), {
 			stopReason: "toolUse",
 		}),
@@ -95,7 +99,7 @@ async function readOnlyWriteTurn(
 	};
 
 	let reopenFrom: string | undefined;
-	if (reopen) {
+	if (from) {
 		const first = await send({
 			type: "open_session",
 			cwd,
@@ -112,6 +116,12 @@ async function readOnlyWriteTurn(
 		await firstIdle.promise;
 		await send({ type: "close_session", sessionId: data.sessionId });
 		reopenFrom = data.state.sessionFile;
+		if (from === "fork") {
+			const original = SessionManager.open(reopenFrom);
+			const leafId = original.getLeafId();
+			if (!leafId) throw new Error("first session has no entries to fork");
+			reopenFrom = original.createBranchedSession(leafId);
+		}
 	}
 	const opened = await send({
 		type: "open_session",
@@ -120,8 +130,30 @@ async function readOnlyWriteTurn(
 		...(reopenFrom === undefined ? {} : { sessionPath: reopenFrom }),
 		...(Object.keys(context).length === 0 ? {} : { context }),
 	});
-	const sessionId = (opened?.data as { sessionId?: string } | undefined)?.sessionId;
+	const openedData = opened?.data as { sessionId?: string; state?: { sessionFile?: string } } | undefined;
+	const sessionId = openedData?.sessionId;
 	if (!sessionId) throw new Error(`open_session failed: ${JSON.stringify(opened)}`);
+	// Read before the first prompt: the refusal must already be in the file, bound to the id its header names.
+	const fileAtOpen = openedData?.state?.sessionFile;
+	const linesAtOpen =
+		fileAtOpen !== undefined && existsSync(fileAtOpen)
+			? readFileSync(fileAtOpen, "utf8")
+					.split("\n")
+					.filter((line) => line.length > 0)
+					.map(
+						(line) =>
+							JSON.parse(line) as {
+								type?: string;
+								id?: string;
+								customType?: string;
+								data?: { sessionId?: string };
+							},
+					)
+			: [];
+	const headerId = linesAtOpen.find((entry) => entry.type === "session")?.id;
+	const recordedAtOpen = linesAtOpen.some(
+		(entry) => entry.customType === "permission-approvals-refused" && entry.data?.sessionId === headerId,
+	);
 	const prompted = Promise.withResolvers<"prompted">();
 	const idle = Promise.withResolvers<"idle">();
 	listeners.add((record) => {
@@ -140,22 +172,33 @@ async function readOnlyWriteTurn(
 	const outcome = await Promise.race([until === "agent_idle" ? idle.promise : prompted.promise, deadline]);
 	if (outcome === "idle") await registry.peek(sessionId)?.runtime?.session.waitForSettledSessionWork();
 	const ended = records.find((record) => record.sessionId === sessionId && record.type === "tool_execution_end");
-	return { outcome, ended, wrote: existsSync(marker) };
+	return { outcome, ended, wrote: existsSync(marker), recordedAtOpen };
 }
 
 describe("a session whose opener declared nobody answers its prompts refuses instead of asking (omo#14649)", () => {
 	it("read-only write with context approvals=refuse: refused with a readable reason, and the turn ends", async () => {
-		const { outcome, ended, wrote } = await readOnlyWriteTurn({ approvals: "refuse" }, "agent_idle");
+		const { outcome, ended, wrote, recordedAtOpen } = await readOnlyWriteTurn({ approvals: "refuse" }, "agent_idle");
+
+		expect({ outcome, isError: ended?.isError, wrote, recordedAtOpen }).toEqual({
+			outcome: "idle",
+			isError: true,
+			wrote: false,
+			recordedAtOpen: true,
+		});
+		expect(JSON.stringify(ended?.result)).toContain("nobody answers this session's prompts");
+	});
+
+	it("a labelled session reopened by its file without the label still refuses (a wake after its process died)", async () => {
+		const { outcome, ended, wrote } = await readOnlyWriteTurn({}, "agent_idle", "reopen");
 
 		expect({ outcome, isError: ended?.isError, wrote }).toEqual({ outcome: "idle", isError: true, wrote: false });
 		expect(JSON.stringify(ended?.result)).toContain("nobody answers this session's prompts");
 	});
 
-	it("a labelled session reopened by its file without the label still refuses (a wake after its process died)", async () => {
-		const { outcome, ended, wrote } = await readOnlyWriteTurn({}, "agent_idle", true);
+	it("a fork of a labelled session opened without the label asks (the record is bound to the session id)", async () => {
+		const { outcome, wrote } = await readOnlyWriteTurn({}, "permission_prompt", "fork");
 
-		expect({ outcome, isError: ended?.isError, wrote }).toEqual({ outcome: "idle", isError: true, wrote: false });
-		expect(JSON.stringify(ended?.result)).toContain("nobody answers this session's prompts");
+		expect({ outcome, wrote }).toEqual({ outcome: "prompted", wrote: false });
 	});
 
 	it("the same call without the label still asks (the label is what changes it)", async () => {
