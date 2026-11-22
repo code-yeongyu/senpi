@@ -79,3 +79,31 @@ it("#given an ignored folder without a SKILL.md #when loading #then no warning i
 
 	expect(diagnostics.filter((diagnostic) => diagnostic.category === "skill-ignored")).toEqual([]);
 });
+
+it("keeps the warning when the hidden declaration exceeds the metadata read budget", async () => {
+	const hidden = writeSkill(join(skillsRoot, "alias"), "declared");
+	writeFileSync(hidden, `---\n#${"x".repeat(9000)}\nname: declared\ndescription: test\n---\n`);
+	writeFileSync(join(skillsRoot, ".gitignore"), "/alias\n");
+	writeSkill(join(agentDir, "skills", "declared"), "declared");
+
+	const { diagnostics } = (await load()).getSkills();
+
+	expect(diagnostics.some((entry) => entry.category === "skill-ignored" && entry.path === hidden)).toBe(true);
+});
+
+it.each([
+	{ loadedName: "declared", shouldWarn: false },
+	{ loadedName: "folder-alias", shouldWarn: true },
+])(
+	"identifies the ignored skill by its declared name when $loadedName is already loaded",
+	async ({ loadedName, shouldWarn }) => {
+		const hidden = writeSkill(join(skillsRoot, "folder-alias"), "declared");
+		writeFileSync(join(skillsRoot, ".gitignore"), "/folder-alias\n");
+		writeSkill(join(agentDir, "skills", loadedName), loadedName);
+
+		const { skills, diagnostics } = (await load()).getSkills();
+
+		expect(skills.map((skill) => skill.name)).toContain(loadedName);
+		expect(diagnostics.some((entry) => entry.category === "skill-ignored" && entry.path === hidden)).toBe(shouldWarn);
+	},
+);
