@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -137,6 +137,25 @@ describe("binding a stop when the process start time is unreadable", () => {
 		expect(qa.signals()).toEqual([]);
 	});
 
+	it("does not move the Windows ownership cutoff when a successor publishes new metadata (#4071)", async () => {
+		probes.unreadable.mockReturnValue(true);
+		const qa = await fixture(null);
+		const file = generationPaths(createHostDaemonPaths({ socket: qa.socket, agentDir: root }), "confirmed").pidFile;
+		const first = await stat(file, { bigint: true });
+		await qa.register();
+		const promoted = await stat(file, { bigint: true });
+		expect([promoted.ino, promoted.birthtimeNs]).toEqual([first.ino, first.birthtimeNs]);
+		const birthMs = Number(first.birthtimeNs / 1_000_000n);
+		probes.liveStart = windowsFileTime(birthMs + 30_000);
+		const later = new Date(birthMs + 60_000);
+		await utimes(file, later, later);
+		expect(
+			await stopHost({ socket: qa.socket, agentDir: root, force: true, expectedGeneration: qa.expected(null) }),
+		).toEqual({ action: "refuse", reason: "unknown_owner" });
+		expect(qa.signals()).toEqual([]);
+		expect(await qa.intent()).toBeUndefined();
+	});
+
 	it("on Windows refuses when the answering host is another instance", async () => {
 		probes.unreadable.mockReturnValue(true);
 		probes.liveStart = windowsFileTime(Date.now() - 60_000);
@@ -146,6 +165,18 @@ describe("binding a stop when the process start time is unreadable", () => {
 			await stopHost({ socket: qa.socket, agentDir: root, force: true, expectedGeneration: qa.expected(null) }),
 		).toEqual({ action: "refuse", reason: "stale_generation" });
 		expect(qa.signals()).toEqual([]);
+	});
+
+	it("on Windows refuses an answering host that omits its instance id (#4071)", async () => {
+		probes.unreadable.mockReturnValue(true);
+		probes.liveStart = windowsFileTime(Date.now() - 60_000);
+		const qa = await fixture(null);
+		probes.protocol.mockResolvedValue({});
+		expect(
+			await stopHost({ socket: qa.socket, agentDir: root, force: true, expectedGeneration: qa.expected(null) }),
+		).toEqual({ action: "refuse", reason: "unknown_owner" });
+		expect(qa.signals()).toEqual([]);
+		expect(await qa.intent()).toBeUndefined();
 	});
 
 	it("off Windows refuses an unprovable identity as unknown_owner, not stale_generation", async () => {

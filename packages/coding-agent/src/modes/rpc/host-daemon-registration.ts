@@ -153,6 +153,8 @@ export async function writeGenerationRecord(
 	const writer: HostPidFileWriter = { pid: process.pid, startTime: await thisProcessStartTime() };
 	const { build } = registration;
 	await createGenerationDirectory(generation);
+	// Promotion updates the existing file in place. Do not replace it: a Windows generation-bound
+	// stop uses its original creation time, not the timestamp of this metadata update (#4071).
 	await writeStateFile(generation.pidFile, {
 		...registration.record,
 		instance_id: registration.instanceId,
