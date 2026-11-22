@@ -20,7 +20,8 @@ export interface TerminalSessionNativeOptions {
 	readonly command: string;
 	readonly args: readonly string[];
 	readonly cwd?: string;
-	readonly env?: Readonly<Record<string, string | undefined>>;
+	/** `null` removes an inherited variable: the addon drops `undefined`-valued keys before Rust sees them (senpi#2908). */
+	readonly env?: Readonly<Record<string, string | null>>;
 	readonly cols: number;
 	readonly rows: number;
 	readonly timeoutMs?: number;

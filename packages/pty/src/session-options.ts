@@ -24,7 +24,9 @@ export function toNativeOptions(options: TerminalSessionOptions): TerminalSessio
 		command: options.command ?? defaultCommand(),
 		args: [...(options.args ?? [])],
 		cwd: options.cwd,
-		env: options.env ? { ...options.env } : undefined,
+		env: options.env
+			? Object.fromEntries(Object.entries(options.env).map(([key, value]) => [key, value ?? null]))
+			: undefined,
 		cols: options.cols ?? DEFAULT_COLS,
 		rows: options.rows ?? DEFAULT_ROWS,
 		timeoutMs: options.timeoutMs,

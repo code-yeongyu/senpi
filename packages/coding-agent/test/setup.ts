@@ -14,13 +14,19 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { trackTempDir } from "../../../scripts/vitest-temp.ts";
 import { installHostScratchRemovalGuard } from "./support/host-scratch-removal-guard.ts";
-import { resolveQuarantineAgentDir, scrubAmbientAgentDirEnv, scrubHostLifecycleEnv } from "./support/quarantine.ts";
+import {
+	resolveQuarantineAgentDir,
+	scrubAmbientAgentDirEnv,
+	scrubHostLifecycleEnv,
+	scrubSessionEnv,
+} from "./support/quarantine.ts";
 
 installHostScratchRemovalGuard();
 
 // Run from inside a host generation (the normal agent case), the suite would otherwise inherit that
 // host's lifecycle and hand it to every host it spawns.
 scrubHostLifecycleEnv(process.env);
+scrubSessionEnv(process.env);
 
 for (const key of ["PI_RULES_DISABLED", "PI_RULES_MAX_RULE_CHARS", "PI_RULES_MAX_RESULT_CHARS"] as const) {
 	delete process.env[key];

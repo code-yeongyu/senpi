@@ -68,6 +68,25 @@ export function scrubHostLifecycleEnv(env: NodeJS.ProcessEnv = process.env): voi
 	delete env[ORIGIN_HOST_INSTANCE_ENV];
 }
 
+/** The per-session values a session exports to its shells (senpi#2908); see TRANSIENT_ENV_NAMES in host-daemon-env.ts. */
+const SESSION_ENV_NAMES = [
+	"PI_SESSION_ID",
+	"PI_SESSION_FILE",
+	"PI_SESSION_CWD",
+	"PI_GOAL_STORE_FILE",
+	"PI_PROVIDER",
+	"PI_MODEL",
+	"PI_REASONING_LEVEL",
+] as const;
+
+/**
+ * Remove the per-session `PI_*` values an agent shell exports, so a `vitest` run started from an agent session gives
+ * the same result as one started from a plain shell (senpi#2908). A test that needs one sets it explicitly.
+ */
+export function scrubSessionEnv(env: NodeJS.ProcessEnv = process.env): void {
+	for (const name of SESSION_ENV_NAMES) delete env[name];
+}
+
 /**
  * Resolve the agent directory the test suite should run against.
  *
