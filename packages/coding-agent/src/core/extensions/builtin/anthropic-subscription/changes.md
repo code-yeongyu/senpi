@@ -550,10 +550,6 @@
 - LOW: `errors.ts` `classifyErrorKind` (the SDK-code and exhaustion branches).
 - LOW: `long-context-retry.ts` `retryAtStandardWindowOnce`; `auth-lane.ts` `AuthenticatedQueryInput` and the two retry call sites; `stream.ts` the two message sources.
 
-## 2026-11-03 - Release settled children's resident processes (senpi#5689)
-
-A child identified by `spawnedBy` releases its resident process after settlement, once its active turn is idle. Ordinary sessions and forks retain their normal idle TTL. `SENPI_CLAUDE_SDK_OAUTH_MAX_IDLE_SESSIONS` caps idle residents (default 8); in-use entries do not count toward it. A settled child's saved binding uses the same pending-model-switch handling as the existing binding-preserving close path.
-
 ## 2026-11-03 - A thinking block bound to a different conversation is a typed invalid_request failure (senpi#5587)
 
 ### What changed
