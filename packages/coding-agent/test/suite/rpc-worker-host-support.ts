@@ -57,7 +57,10 @@ export async function startWorkerHost(
 		node?: boolean;
 		preload?: string;
 		sessionRuntime?: HostSessionRuntime;
-		/** Wait for the host's exact readiness reply before starting session-operation clocks. */
+		/**
+		 * Stdio hosts always answer `get_protocol_info` under the host-startup allowance before a test's request clock
+		 * starts (senpi#7075); true also gives `open_session` the worker-open allowance, false skips the exchange.
+		 */
 		waitForReady?: boolean;
 		/** Extra host environment, e.g. a rollout flag the host reads at startup. */
 		env?: Readonly<Record<string, string>>;
@@ -152,7 +155,7 @@ export async function startWorkerHost(
 		await rm(scratch, { recursive: true, force: true });
 		if (options.preload) process.stderr.write(`PRESSURE_REMOVED ${scratch}\n`);
 	};
-	if (options.socket || options.waitForReady) {
+	if (options.socket || options.waitForReady !== false) {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
 			if (options.socket) {
