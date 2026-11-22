@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
-import { lstat, open } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 /** What a scan compares between two moments; a rewrite changes at least one of these. */
 export interface FileSignature {
@@ -10,6 +12,17 @@ export interface FileSignature {
 	readonly ino: number;
 }
 
+/** The filesystem as the operating system resolves it: symlinks in a path's directories are followed. */
+export interface FsAccess {
+	/** The path with every symlink in it resolved; undefined when it does not resolve. */
+	realpath(path: string): Promise<string | undefined>;
+	/** The signature of a regular file, its last entry not followed; undefined for a symlink, anything else and a missing path. */
+	lstat(path: string): Promise<FileSignature | undefined>;
+	/** At most `limit` leading bytes of a file, its last entry not followed; undefined when it cannot be read. */
+	read(path: string, limit: number): Promise<Uint8Array | undefined>;
+}
+
+/** The workspace's files: a path whose real location, its directories resolved, lies outside the workspace is not one. */
 export interface ScanFs {
 	/** The signature of a regular file; undefined for anything else, a symlink and a missing path included. */
 	stat(path: string): Promise<FileSignature | undefined>;
@@ -31,8 +44,43 @@ export type RunGit = (
 
 const GIT_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
 
-export function createNodeScanFs(): ScanFs {
-	return { stat: statRegularFile, read: readLeadingBytes };
+/**
+ * Confines every stat and read to the real workspace: git names paths lexically, and a directory in one can be a
+ * symlink to anywhere. Each call resolves the path's directories and stats or reads that resolved path, and a read
+ * whose directories resolve elsewhere once it is done returns nothing, so a link swapped in meanwhile leaks no bytes.
+ */
+export function workspaceFs(root: string, access: FsAccess): ScanFs {
+	const locate = async (path: string): Promise<string | undefined> => {
+		const [realRoot, realDirectory] = await Promise.all([access.realpath(root), access.realpath(dirname(path))]);
+		if (realRoot === undefined || realDirectory === undefined) return undefined;
+		const inside = relative(realRoot, realDirectory);
+		if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return undefined;
+		return join(realDirectory, basename(path));
+	};
+	return {
+		stat: async (path) => {
+			const located = await locate(path);
+			return located === undefined ? undefined : await access.lstat(located);
+		},
+		read: async (path, limit) => {
+			const located = await locate(path);
+			if (located === undefined) return undefined;
+			const bytes = await access.read(located, limit);
+			return bytes !== undefined && (await locate(path)) === located ? bytes : undefined;
+		},
+	};
+}
+
+export function createNodeFsAccess(): FsAccess {
+	return { realpath: realLocation, lstat: statRegularFile, read: readLeadingBytes };
+}
+
+async function realLocation(path: string): Promise<string | undefined> {
+	try {
+		return await realpath(path);
+	} catch {
+		return undefined;
+	}
 }
 
 async function statRegularFile(path: string): Promise<FileSignature | undefined> {
@@ -48,7 +96,8 @@ async function statRegularFile(path: string): Promise<FileSignature | undefined>
 async function readLeadingBytes(path: string, limit: number): Promise<Uint8Array | undefined> {
 	let handle: Awaited<ReturnType<typeof open>> | undefined;
 	try {
-		handle = await open(path, "r");
+		// Refuses a symlink as the last entry; Windows has no such flag.
+		handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
 		const buffer = new Uint8Array(Math.min(limit, (await handle.stat()).size));
 		let filled = 0;
 		while (filled < buffer.length) {

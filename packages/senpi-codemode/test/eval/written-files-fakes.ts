@@ -1,6 +1,6 @@
-import { relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import type { ExtensionToolContext } from "@code-yeongyu/senpi";
-import type { FileSignature, GitOutcome, RunGit, ScanFs } from "../../src/written-files/scan-boundaries.ts";
+import type { FileSignature, FsAccess, GitOutcome, RunGit } from "../../src/written-files/scan-boundaries.ts";
 import { WrittenFiles } from "../../src/written-files/written-files.ts";
 import { fakeExtensionContext } from "./fakes.ts";
 
@@ -10,36 +10,88 @@ export type ReportedResult = Parameters<ReportToolResult>[0];
 /**
  * An in-memory repository behind the two boundaries the written-files check reads through: every write advances a
  * virtual clock, so signatures differ without real time, and `git status` lists what differs from the last commit.
+ * Directories can be symlinks, which the filesystem follows in every entry but the last, as the operating system does.
  */
 export class FakeWorkspace {
 	readonly cwd = sep === "/" ? "/work" : "C:\\work";
 	readonly gitCalls: string[][] = [];
+	/** Every path the filesystem read bytes from, as it resolved it. */
+	readonly reads: string[] = [];
 	/** When set, `git status` answers with it instead of the repository's state. */
 	statusOutcome: GitOutcome | undefined;
+	/** Keyed by the file's absolute real path. */
 	readonly #files = new Map<string, { readonly bytes: Uint8Array; readonly signature: FileSignature }>();
+	/** A symlinked directory's absolute path and the absolute directory it points to. */
+	readonly #links = new Map<string, string>();
 	readonly #committed = new Map<string, string>();
 	#clock = 0;
 
 	write(path: string, content: string | Uint8Array): void {
+		this.writeAt(this.absolute(path), content);
+	}
+
+	/** Writes a file at an absolute path, which may lie outside the workspace. */
+	writeAt(absolutePath: string, content: string | Uint8Array): void {
 		const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
 		this.#clock += 1;
-		const signature = { size: bytes.length, mtimeMs: this.#clock, ctimeMs: this.#clock, ino: 1 };
-		this.#files.set(path, { bytes, signature });
+		const signature = { size: bytes.length, mtimeMs: this.#clock, ctimeMs: this.#clock, ino: this.#clock };
+		this.#files.set(this.#resolve(absolutePath), { bytes, signature });
+	}
+
+	remove(path: string): void {
+		this.#files.delete(this.absolute(path));
+	}
+
+	/** Replaces the workspace directory `path` and everything in it with a symlink to the absolute `target`. */
+	link(path: string, target: string): void {
+		const directory = this.absolute(path);
+		for (const file of [...this.#files.keys()]) if (file.startsWith(directory + sep)) this.#files.delete(file);
+		this.#links.set(directory, target);
 	}
 
 	commit(): void {
 		this.#committed.clear();
-		for (const [path, file] of this.#files) this.#committed.set(path, new TextDecoder().decode(file.bytes));
+		for (const [path, file] of this.#workspaceFiles())
+			this.#committed.set(path, new TextDecoder().decode(file.bytes));
 	}
 
 	absolute(path: string): string {
 		return [this.cwd, ...path.split("/")].join(sep);
 	}
 
-	readonly fs: ScanFs = {
-		stat: async (path) => this.#files.get(this.#relative(path))?.signature,
-		read: async (path, limit) => this.#files.get(this.#relative(path))?.bytes.subarray(0, limit),
+	readonly fs: FsAccess = {
+		realpath: async (path) => this.#resolve(path),
+		lstat: async (path) => this.#files.get(this.#followParents(path))?.signature,
+		read: async (path, limit) => {
+			const resolved = this.#followParents(path);
+			this.reads.push(resolved);
+			return this.#files.get(resolved)?.bytes.subarray(0, limit);
+		},
 	};
+
+	/** The path with every symlinked directory in it replaced by its target. */
+	#resolve(path: string): string {
+		let resolved = path;
+		for (let hop = 0; hop < 40; hop++) {
+			const link = [...this.#links].find(([from]) => resolved === from || resolved.startsWith(from + sep));
+			if (link === undefined) return resolved;
+			resolved = link[1] + resolved.slice(link[0].length);
+		}
+		return resolved;
+	}
+
+	/** What lstat and an open of `path` reach: parents resolved, the last entry taken as named. */
+	#followParents(path: string): string {
+		return join(this.#resolve(dirname(path)), basename(path));
+	}
+
+	/** Workspace-relative POSIX paths of the regular files git sees: none below a symlinked directory. */
+	#workspaceFiles(): Array<[string, { readonly bytes: Uint8Array }]> {
+		return [...this.#files].flatMap(([path, file]) => {
+			const inside = relative(this.cwd, path);
+			return inside.startsWith("..") || this.#resolve(path) !== path ? [] : [[inside.split(sep).join("/"), file]];
+		});
+	}
 
 	readonly git: RunGit = async (args) => {
 		this.gitCalls.push([...args]);
@@ -47,18 +99,21 @@ export class FakeWorkspace {
 		if (args[0] !== "status") return { kind: "exit", code: 1 };
 		if (this.statusOutcome !== undefined) return this.statusOutcome;
 		const records = ["# branch.oid 1111111111111111111111111111111111111111", "# branch.head main"];
-		for (const [path, file] of this.#files) {
+		const present = new Map(this.#workspaceFiles());
+		for (const [path, file] of present) {
 			const committed = this.#committed.get(path);
 			if (committed === undefined) records.push(`? ${path}`);
 			else if (committed !== new TextDecoder().decode(file.bytes))
 				records.push(`1 .M N... 100644 100644 100644 aaaa bbbb ${path}`);
 		}
+		for (const path of this.#committed.keys())
+			if (!present.has(path)) records.push(`1 .D N... 100644 100644 000000 aaaa bbbb ${path}`);
+		for (const link of this.#links.keys()) {
+			const inside = relative(this.cwd, link);
+			if (!inside.startsWith("..")) records.push(`? ${inside.split(sep).join("/")}`);
+		}
 		return { kind: "ok", stdout: `${records.join("\0")}\0` };
 	};
-
-	#relative(path: string): string {
-		return relative(this.cwd, path).split(sep).join("/");
-	}
 }
 
 export interface WrittenFilesHarness {

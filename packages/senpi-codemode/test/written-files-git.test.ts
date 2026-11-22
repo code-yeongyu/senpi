@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createGitRunner, createNodeScanFs } from "../src/written-files/scan-boundaries.ts";
+import { createGitRunner, createNodeFsAccess } from "../src/written-files/scan-boundaries.ts";
 import { WrittenFiles } from "../src/written-files/written-files.ts";
 import { fakeExtensionContext } from "./eval/fakes.ts";
 
@@ -34,7 +34,7 @@ async function writtenBy(cwd: string, artifactsDir: string, work: () => void): P
 		cwd,
 		artifactsDir,
 		git: createGitRunner(() => process.env),
-		fs: createNodeScanFs(),
+		fs: createNodeFsAccess(),
 		timeoutMs: 120_000,
 	});
 	const cell = writtenFiles.open({
@@ -91,6 +91,28 @@ describe("written files against real git", () => {
 		});
 
 		expect(files).toEqual(["src/committed.ts"]);
+	});
+
+	it("does not list a tracked path whose directory the cell replaced with a link out of the workspace", async () => {
+		const root = tempRoot();
+		const repo = join(root, "repo");
+		mkdirSync(repo);
+		git(repo, "init", "--quiet");
+		put(repo, "lib/secret.ts", "export const tracked = 1;\n");
+		git(repo, "add", "--all");
+		git(repo, "commit", "--quiet", "--message", "init");
+		put(root, "outside/secret.ts", "export const outside = 1;\n");
+		// The workspace itself is reached through a link, as a temporary directory is on macOS.
+		const linked = join(root, "linked-repo");
+		symlinkSync(repo, linked, "dir");
+
+		const files = await writtenBy(linked, join(root, "artifacts"), () => {
+			rmSync(join(repo, "lib"), { recursive: true });
+			symlinkSync(join(root, "outside"), join(repo, "lib"), "dir");
+			put(repo, "src/inside.ts", "export const inside = 1;\n");
+		});
+
+		expect(files).toEqual(["src/inside.ts"]);
 	});
 
 	it("honours a workspace's own ignore file where there is no repository, and leaves out the session's artifacts", async () => {

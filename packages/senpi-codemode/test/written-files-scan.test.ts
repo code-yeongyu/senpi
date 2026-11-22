@@ -85,8 +85,23 @@ describe("workspace scan", () => {
 			diff: records("src/committed.ts"),
 		});
 
-		expect(paths(await subject.scan("1111"))).toEqual(["src/committed.ts"]);
+		expect(paths(await subject.scan({ head: "1111", files: new Map() }))).toEqual(["src/committed.ts"]);
 		expect(calls.at(-1)).toEqual(["diff", "--name-only", "-z", "--no-renames", "1111", "2222", "--", "."]);
+	});
+
+	// Review finding: a file written back to its HEAD content leaves `git status`, so it is checked again from here.
+	it("keeps the candidates of the scan it is compared with, within the same path limit", async () => {
+		const answers: Record<string, GitOutcome> = {
+			"rev-parse": { kind: "ok", stdout: AT_REPOSITORY_ROOT },
+			status: records("# branch.oid 1111", "? src/new.ts"),
+		};
+		const previous = (count: number) => ({
+			head: "1111",
+			files: new Map(Array.from({ length: count }, (_, index) => [`src/restored-${index}.ts`, SIGNATURE] as const)),
+		});
+
+		expect(paths(await scanner(answers).subject.scan(previous(1)))).toEqual(["src/new.ts", "src/restored-0.ts"]);
+		expect(paths(await scanner(answers).subject.scan(previous(5)))).toBe("over_budget");
 	});
 
 	it.each([

@@ -1,6 +1,6 @@
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { FileSignature, ScanFs } from "./scan-boundaries.ts";
-import type { ScanSkipReason, WorkspaceScan } from "./workspace-scan.ts";
+import type { PreviousScan, ScanSkipReason, WorkspaceScan } from "./workspace-scan.ts";
 
 export interface ChangedFile {
 	/** Workspace-relative POSIX path. */
@@ -25,13 +25,8 @@ export interface WrittenFilesWindow {
 
 export interface WrittenFilesTrackerOptions {
 	readonly cwd: string;
-	readonly scan: (previousHead?: string) => Promise<WorkspaceScan>;
+	readonly scan: (previous?: PreviousScan) => Promise<WorkspaceScan>;
 	readonly stat: ScanFs["stat"];
-}
-
-interface Baseline {
-	readonly files: Map<string, FileSignature>;
-	readonly head: string | undefined;
 }
 
 /**
@@ -56,7 +51,7 @@ export class WrittenFilesTracker {
 	readonly #stat: ScanFs["stat"];
 	readonly #hooked = new Map<string, FileSignature>();
 	#queue: Promise<void> = Promise.resolve();
-	#baseline: Baseline | undefined;
+	#baseline: PreviousScan | undefined;
 	#skipped: ScanSkipReason | undefined;
 	#skips = 0;
 	#live = 0;
@@ -119,7 +114,7 @@ export class WrittenFilesTracker {
 			if (!this.#disabled && this.#live > 1) await this.#recordBaseline();
 			return { kind: "unchecked", reason, disabled: this.#disabled };
 		}
-		const scan = await this.#safeScan(baseline.head);
+		const scan = await this.#safeScan(baseline);
 		if (scan.kind === "skipped") {
 			this.#baseline = undefined;
 			this.#skip(scan.reason);
@@ -158,9 +153,9 @@ export class WrittenFilesTracker {
 		if (reason === "git_unavailable" || this.#skips >= SKIPS_BEFORE_OFF) this.#disabled = true;
 	}
 
-	async #safeScan(previousHead: string | undefined): Promise<WorkspaceScan> {
+	async #safeScan(previous: PreviousScan | undefined): Promise<WorkspaceScan> {
 		try {
-			return await this.#scan(previousHead);
+			return await this.#scan(previous);
 		} catch {
 			return { kind: "skipped", reason: "scan_failed" };
 		}

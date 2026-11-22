@@ -24,6 +24,12 @@ export type WorkspaceScan =
 	| { readonly kind: "files"; readonly files: ReadonlyMap<string, FileSignature>; readonly head: string | undefined }
 	| { readonly kind: "skipped"; readonly reason: ScanSkipReason };
 
+/** The scan a new one is compared with. */
+export interface PreviousScan {
+	readonly files: ReadonlyMap<string, FileSignature>;
+	readonly head: string | undefined;
+}
+
 type ScanMode = { readonly kind: "repository"; readonly prefix: string } | { readonly kind: "plain" };
 
 export interface WorkspaceScannerOptions {
@@ -60,12 +66,15 @@ export class WorkspaceScanner {
 		this.#pathLimit = options.pathLimit ?? SCAN_PATH_LIMIT;
 	}
 
-	/** `previousHead` is the HEAD of the scan this one is compared with: files committed since then stay candidates. */
-	async scan(previousHead?: string): Promise<WorkspaceScan> {
+	/**
+	 * In a repository the candidates of `previous` stay candidates: a file written back to its HEAD content leaves
+	 * `git status`, and so do files committed since `previous`.
+	 */
+	async scan(previous?: PreviousScan): Promise<WorkspaceScan> {
 		const mode = this.#mode ?? (await this.#detectMode());
 		if (typeof mode === "string") return { kind: "skipped", reason: mode };
 		this.#mode = mode;
-		return mode.kind === "repository" ? this.#scanRepository(mode.prefix, previousHead) : this.#scanPlain();
+		return mode.kind === "repository" ? this.#scanRepository(mode.prefix, previous) : this.#scanPlain();
 	}
 
 	async #detectMode(): Promise<ScanMode | ScanSkipReason> {
@@ -80,7 +89,7 @@ export class WorkspaceScanner {
 		return ignored.kind === "ok" ? { kind: "plain" } : { kind: "repository", prefix };
 	}
 
-	async #scanRepository(prefix: string, previousHead: string | undefined): Promise<WorkspaceScan> {
+	async #scanRepository(prefix: string, previous: PreviousScan | undefined): Promise<WorkspaceScan> {
 		const status = await this.#git([
 			"status",
 			"--porcelain=v2",
@@ -94,6 +103,7 @@ export class WorkspaceScanner {
 		]);
 		if (status.kind !== "ok") return { kind: "skipped", reason: skipReason(status) };
 		const { head, paths } = parseStatus(status.stdout);
+		const previousHead = previous?.head;
 		if (previousHead !== undefined && head !== undefined && head !== previousHead && head !== INITIAL_HEAD) {
 			const since = previousHead === INITIAL_HEAD ? EMPTY_TREE : previousHead;
 			const committed = await this.#git(["diff", "--name-only", "-z", "--no-renames", since, head, "--", "."]);
@@ -102,7 +112,7 @@ export class WorkspaceScanner {
 		}
 		// Porcelain paths are relative to the repository root, the workspace may be a directory below it.
 		const relative = paths.flatMap((path) => (path.startsWith(prefix) ? [path.slice(prefix.length)] : []));
-		return this.#signatures(relative, head);
+		return this.#signatures([...relative, ...(previous?.files.keys() ?? [])], head);
 	}
 
 	async #scanPlain(): Promise<WorkspaceScan> {

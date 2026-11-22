@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import type { ExtensionToolContext } from "@code-yeongyu/senpi";
 import type { TimeoutPauseHandle } from "../timeouts/idle-timeout.ts";
 import type { CellWrittenFilesOutcome } from "./report.ts";
-import type { RunGit, ScanFs } from "./scan-boundaries.ts";
+import { type FsAccess, type RunGit, type ScanFs, workspaceFs } from "./scan-boundaries.ts";
 import { WrittenFilesTracker } from "./tracker.ts";
 import { WorkspaceScanner } from "./workspace-scan.ts";
 import { reportWrittenFiles } from "./write-hooks.ts";
@@ -37,7 +37,8 @@ export interface WrittenFilesOptions {
 	readonly cwd: string;
 	readonly artifactsDir: string;
 	readonly git: RunGit;
-	readonly fs: ScanFs;
+	/** Confined to `cwd` here, so nothing the check stats or reads lies outside the workspace. */
+	readonly fs: FsAccess;
 	readonly timeoutMs?: number;
 	readonly pathLimit?: number;
 	/**
@@ -64,20 +65,21 @@ export class WrittenFiles {
 
 	constructor(options: WrittenFilesOptions) {
 		this.#cwd = options.cwd;
-		this.#fs = options.fs;
+		const fs = workspaceFs(options.cwd, options.fs);
+		this.#fs = fs;
 		this.#hooksRunHere = options.hooksRunHere ?? (() => true);
 		const scanner = new WorkspaceScanner({
 			cwd: options.cwd,
 			artifactsDir: options.artifactsDir,
 			git: options.git,
-			fs: options.fs,
+			fs,
 			...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
 			...(options.pathLimit === undefined ? {} : { pathLimit: options.pathLimit }),
 		});
 		this.#tracker = new WrittenFilesTracker({
 			cwd: options.cwd,
-			scan: (previousHead) => scanner.scan(previousHead),
-			stat: (path) => options.fs.stat(path),
+			scan: (previous) => scanner.scan(previous),
+			stat: (path) => fs.stat(path),
 		});
 	}
 

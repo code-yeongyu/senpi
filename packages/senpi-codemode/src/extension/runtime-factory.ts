@@ -30,7 +30,7 @@ import { sessionEnvironmentFrom } from "../kernels/session-env.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
 import { toolResultIsError } from "../tool/tool-result-marshal.ts";
 import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
-import { createGitRunner, createNodeScanFs } from "../written-files/scan-boundaries.ts";
+import { createGitRunner, createNodeFsAccess } from "../written-files/scan-boundaries.ts";
 import { WrittenFiles } from "../written-files/written-files.ts";
 import { reachableToolNames } from "./reachable-tools.ts";
 import { jsRuntimeInfo, runtimesFromAvailability } from "./runtime-info.ts";
@@ -106,7 +106,7 @@ export async function createRuntime(
 		cwd: ctx.cwd,
 		artifactsDir: artifacts.dir,
 		git: createGitRunner(inheritedEnv),
-		fs: createNodeScanFs(),
+		fs: createNodeFsAccess(),
 		hooksRunHere: () => pi.isLoopRemote?.() !== true,
 	});
 	const executeTool = createExecuteTool(pi, activeTools, (toolName, params) =>
