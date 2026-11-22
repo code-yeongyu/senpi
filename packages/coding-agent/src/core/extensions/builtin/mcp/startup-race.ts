@@ -85,10 +85,6 @@ export class McpDeferredAttach {
 			timeoutMs,
 		);
 	}
-
-	clear(): void {
-		this.#pending.clear();
-	}
 }
 
 export async function raceMcpStartupConnect(options: RaceMcpStartupConnectOptions): Promise<void> {
@@ -106,7 +102,7 @@ export async function raceMcpStartupConnect(options: RaceMcpStartupConnectOption
 		releaseClaim,
 	);
 	const result = await waitForMcpStartupRace(connect, options.deadlineMs);
-	if (result === "settled" || options.pi === undefined) return;
+	if (result === "settled") return;
 	options.onDeferred(connect.then(() => refreshMcpToolsAfterStartupRace(options)));
 }
 

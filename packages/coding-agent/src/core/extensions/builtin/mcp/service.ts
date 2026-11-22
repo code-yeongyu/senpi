@@ -699,11 +699,12 @@ export class McpService {
 		this.#startupWindows.clear();
 		this.#wireStatusBySession.clear();
 		this.#latestWireStatus = { servers: [] };
-		this.#deferredAttach.clear();
 		const entries = [...this.#connections.values()];
 		this.#connections.clear();
 		this.#connectionKeysByName.clear();
 		await Promise.all(entries.map((entry) => disposeEntryConnection(entry, this.#registry, this)));
+		// Cancel transports first, then let their background continuations release any catalog locks.
+		await this.whenAttachSettled(resolveMcpDeferredDisposeTimeoutMs());
 		await cleanupMcpOutputArtifacts(this.#outputArtifacts);
 	}
 
