@@ -1510,7 +1510,6 @@ jobs:
               --workspace packages/client
               --workspace packages/machine-ops
               --workspace packages/protocol
-              --workspace packages/pty
               --workspace packages/realm-registry
               --workspace packages/server
               --workspace packages/telemetry
@@ -1752,6 +1751,7 @@ jobs:
         python-kernel-windows,
         bash-grandchild-console-windows,
         test-workspaces,
+        terminal-cross-os,
         test-scripts,
       ]
     if: always()

@@ -29,7 +29,6 @@ const NOT_IN_HOSTED_CI = {
 /** Extra runs of a suite in another job, kept on purpose; each must still exist, so a stale entry fails. */
 const EXTRA_RUNS = {
 	"packages/pty": {
-		"terminal-cross-os": "the cross-OS terminal suite runs the PTY tests on Windows too; its Linux leg repeats the matrix run",
 		"macos-combined": "the PTY tests on macOS",
 	},
 };
