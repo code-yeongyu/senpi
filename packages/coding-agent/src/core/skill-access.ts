@@ -126,11 +126,12 @@ export function authorizeSkillPath(
 	throw new BlockedSkillLinkError(path, canonical);
 }
 /** `authorizeSkillPath` without blocking the loop; `fs.promises.realpath` has `realpathSync.native` semantics. */
-async function authorizeSkillPathAsync(
+export async function authorizeSkillPathAsync(
 	path: string,
-	provenance: SkillProvenance,
-	allowed: SkillAllowedSet,
+	provenance?: SkillProvenance,
+	allowed: SkillAllowedSet = EMPTY_SKILL_ALLOWED_SET,
 ): Promise<string> {
+	if (provenance === undefined || provenance.kind === "user") return path;
 	let canonical: string;
 	try {
 		canonical = await realpath(path);

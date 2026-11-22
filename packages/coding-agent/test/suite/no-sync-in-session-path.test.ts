@@ -107,6 +107,11 @@ function unledgered(
 		.map(describeFinding);
 }
 
+it("the skill MCP declarations loaded by before_agent_start reach no synchronous file operations (#4048)", () => {
+	const reached = auditSessionPath({ packageRoot, roots: ["src/core/extensions/builtin/mcp/skills.ts"] });
+	expect(reached.map(describeFinding)).toEqual([]);
+});
+
 describe("no synchronous byte path from the recovery owner and the fanout (senpi#4272 S08a, RULING-50 (3))", () => {
 	it("reaches no synchronous call at all, while the pinned root's byte reader it must not reach is one the audit sees", () => {
 		// Given the call graph rooted only at the checkpoint owner and the fanout that produces its admissions

@@ -48,18 +48,23 @@ interface PolicyOwner {
 		| undefined;
 	readonly notice: (identity: string, names: readonly string[]) => void;
 }
-function currentRegistration(name: string, declaration: SkillServerRegistration): SkillServerRegistration {
+async function currentRegistration(
+	name: string,
+	declaration: SkillServerRegistration,
+): Promise<SkillServerRegistration> {
 	if (declaration.skillPath === undefined) return declaration;
-	const current = parseSkillMcpDeclarations([
-		{
-			name: declaration.skillName,
-			filePath: declaration.skillPath,
-			baseDir: dirname(declaration.skillPath),
-			provenance: declaration.provenance,
-			allowedSet: declaration.allowedSet,
-			sourceInfo: declaration.scope === undefined ? undefined : { scope: declaration.scope },
-		},
-	]).servers.get(name);
+	const current = (
+		await parseSkillMcpDeclarations([
+			{
+				name: declaration.skillName,
+				filePath: declaration.skillPath,
+				baseDir: dirname(declaration.skillPath),
+				provenance: declaration.provenance,
+				allowedSet: declaration.allowedSet,
+				sourceInfo: declaration.scope === undefined ? undefined : { scope: declaration.scope },
+			},
+		])
+	).servers.get(name);
 	if (current !== undefined) return current;
 	throw new ConnectError("Project MCP declaration is no longer available; reload its skills", {
 		serverName: name,
@@ -85,7 +90,7 @@ export async function prepareProjectSkillServer(
 ): Promise<ResolvedMcpServer> {
 	const storePath = resolveGrantsStorePath(owner.options.agentDir);
 	const trusted = owner.options.projectTrusted ?? owner.context.isProjectTrusted();
-	let declaration = currentRegistration(name, original);
+	let declaration = await currentRegistration(name, original);
 	let identity = identityFor(name, declaration, owner.context.cwd);
 	const previous = existing?.config === undefined ? undefined : policies.get(existing.config);
 	const provenanceDigest = declarationDigest({
@@ -132,7 +137,8 @@ export async function prepareProjectSkillServer(
 					signal,
 				);
 				if (!granted || signal?.aborted) return;
-				const latest = currentRegistration(name, current);
+				const latest = await currentRegistration(name, current);
+				if (signal?.aborted) return;
 				if (identityFor(name, latest, owner.context.cwd) !== digest) return;
 				try {
 					await addGrant(storePath, digest, { project, skill: current.skillName, server: name }, withheld);
@@ -157,7 +163,7 @@ export async function prepareProjectSkillServer(
 	};
 	for (;;) {
 		await decide(declaration, identity);
-		const latest = currentRegistration(name, declaration);
+		const latest = await currentRegistration(name, declaration);
 		const latestIdentity = identityFor(name, latest, owner.context.cwd);
 		declaration = latest;
 		if (latestIdentity === identity) break;
@@ -191,7 +197,8 @@ export async function prepareProjectSkillServer(
 		policyDigest: declarationDigest({ names, generation: snapshot.generation }),
 		resolve: async (signal, allowDecision = true) => {
 			signal.throwIfAborted();
-			const latest = currentRegistration(name, declaration);
+			const latest = await currentRegistration(name, declaration);
+			signal.throwIfAborted();
 			if (identityFor(name, latest, owner.context.cwd) !== identity) {
 				throw new ConnectError("Project MCP declaration changed; reload its skills", {
 					serverName: name,
@@ -206,7 +213,9 @@ export async function prepareProjectSkillServer(
 			signal.throwIfAborted();
 			const current = await read(storePath);
 			signal.throwIfAborted();
-			if (identityFor(name, currentRegistration(name, declaration), owner.context.cwd) !== identity) {
+			const rechecked = await currentRegistration(name, declaration);
+			signal.throwIfAborted();
+			if (identityFor(name, rechecked, owner.context.cwd) !== identity) {
 				throw new ConnectError("Project MCP declaration changed; reload its skills", {
 					serverName: name,
 					phase: "create",
