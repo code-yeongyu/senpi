@@ -34,13 +34,14 @@ export function clearMcpGrantPresentations(sessionId: string): void {
 	for (const entry of presentations.get(sessionId) ?? []) entry.abort.abort();
 	presentations.delete(sessionId);
 }
-/** Bound the decision even when an embedding's select ignores dialog options. */
-export async function selectMcpGrant(
+/** Bound the decision even when an embedding's select ignores dialog options; any failure is no answer. */
+export async function selectLocalGrant(
 	select: Select | undefined,
 	title: string,
+	choices: readonly [grant: string, decline: string],
 	signal?: AbortSignal,
-): Promise<boolean> {
-	if (select === undefined || signal?.aborted) return false;
+): Promise<string | undefined> {
+	if (select === undefined || signal?.aborted) return undefined;
 	const abort = new AbortController();
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	let cancel = () => {};
@@ -54,18 +55,24 @@ export async function selectMcpGrant(
 	});
 	try {
 		const answer = await Promise.race([
-			select(title, ["Grant and save permanently", "Start without them"], {
-				timeout: 120_000,
-				signal: abort.signal,
-			}),
+			select(title, [...choices], { timeout: 120_000, signal: abort.signal }),
 			stopped,
 		]);
-		return answer === "Grant and save permanently" && !abort.signal.aborted;
+		return abort.signal.aborted ? undefined : answer;
 	} catch {
-		return false; // A disconnected presentation is not a grant.
+		return undefined; // A disconnected presentation is not a grant.
 	} finally {
 		clearTimeout(timeout);
 		signal?.removeEventListener("abort", cancel);
 		abort.abort();
 	}
+}
+
+export async function selectMcpGrant(
+	select: Select | undefined,
+	title: string,
+	signal?: AbortSignal,
+): Promise<boolean> {
+	const grant = "Grant and save permanently";
+	return (await selectLocalGrant(select, title, [grant, "Start without them"], signal)) === grant;
 }

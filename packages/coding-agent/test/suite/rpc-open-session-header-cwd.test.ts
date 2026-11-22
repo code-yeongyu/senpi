@@ -157,6 +157,18 @@ describe.each<[string, { readonly workers?: boolean }]>([
 		expect((opened.data as Opened).state.cwd).toBe(a);
 	});
 
+	it("#given a session file whose header lies past the bounded scan #when open_session names it and no cwd #then it still works in the folder the header names", async () => {
+		const a = folder("project-long-first-line");
+		const file = sessionFile(join(host.scratch, "sessions", "long-first-line.jsonl"), a);
+		// A first line longer than the discovery scan: the header is found only by the full load, as the manager does.
+		writeFileSync(file, `${"x".repeat(1024 * 1024 + 64)}\n${readFileSync(file, "utf8")}`);
+
+		const opened = await peer.send({ type: "open_session", sessionPath: file });
+
+		expect(opened).toMatchObject({ success: true });
+		expect((opened.data as Opened).state.cwd).toBe(a);
+	});
+
 	it("#given a path that exists but cannot be read as a session file #when open_session names it and no cwd #then the open is refused instead of falling back to the host's folder", async () => {
 		const unreadable = join(host.scratch, "sessions", "unreadable.jsonl");
 		mkdirSync(unreadable, { recursive: true });

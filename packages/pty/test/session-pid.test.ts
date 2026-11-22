@@ -25,6 +25,9 @@ const nativeUnavailable: NativePtyLoadResult = {
 	},
 };
 
+// Above Linux pid_max (2^22): `start()` writes /proc/<pid>/oom_score_adj, which must never reach a real process.
+const STUB_PID = 2 ** 22 + 42;
+
 function psField(field: "pid" | "pgid", pid: number): number {
 	return Number(execFileSync("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf8" }).trim());
 }
@@ -151,15 +154,15 @@ describe("TerminalSession pid and processGroupId", () => {
 	it("reads numeric native getters and ignores non-numeric ones", async () => {
 		const withGetters = new TerminalSession(
 			{ command: "stub" },
-			{ nativeLoadResult: stubBinding({ ...stubHandle(), pid: 4242, processGroupId: 4243 }), env: {} },
+			{ nativeLoadResult: stubBinding({ ...stubHandle(), pid: STUB_PID, processGroupId: STUB_PID + 1 }), env: {} },
 		).start();
 		const withJunk = new TerminalSession(
 			{ command: "stub" },
-			{ nativeLoadResult: stubBinding({ ...stubHandle(), pid: "4242", processGroupId: null }), env: {} },
+			{ nativeLoadResult: stubBinding({ ...stubHandle(), pid: String(STUB_PID), processGroupId: null }), env: {} },
 		).start();
 
-		expect(withGetters.pid).toBe(4242);
-		expect(withGetters.processGroupId).toBe(4243);
+		expect(withGetters.pid).toBe(STUB_PID);
+		expect(withGetters.processGroupId).toBe(STUB_PID + 1);
 		expect(withJunk.pid).toBeUndefined();
 		expect(withJunk.processGroupId).toBeUndefined();
 		await Promise.all([withGetters.waitExit(), withJunk.waitExit()]);

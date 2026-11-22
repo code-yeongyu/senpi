@@ -67,14 +67,23 @@ function holdersDir(sessionFile: string, sessionId: string): string {
 	return join(dirname(resolveMovedPath(sessionFile)), HOLDERS_DIR, encodedSessionId(sessionId));
 }
 
-function identityRecord(cwd?: string, endpoint?: SessionHolderEndpoint): string {
-	return JSON.stringify({
+/** What a holder publishes for a session it has open: its identity and, for an RPC host, that host's endpoint. */
+export interface HolderRecord extends Partial<SessionHolderEndpoint> {
+	readonly pid: number;
+	readonly bootAtMs: number;
+	readonly processStartedAtMs: number;
+	readonly cwd?: string;
+}
+
+async function identityRecord(cwd?: string, endpoint?: SessionHolderEndpoint): Promise<string> {
+	const record: HolderRecord = {
 		pid: process.pid,
-		bootAtMs: processBootAtMs(),
+		bootAtMs: await processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 		...(cwd === undefined ? {} : { cwd }),
 		...endpoint,
-	});
+	};
+	return JSON.stringify(record);
 }
 
 function unlinkIfPresentSync(path: string): void {
@@ -146,7 +155,7 @@ function parsePid(raw: string): number | undefined {
  * while another process is moving the session, and `SessionMovedError` when a session that was read
  * from disk (`expectExisting`) is gone, so nothing is ever appended to a path the session left.
  */
-export function holdSessionFile(
+export async function holdSessionFile(
 	sessionFile: string,
 	sessionId: string,
 	options: {
@@ -154,12 +163,14 @@ export function holdSessionFile(
 		readonly expectExisting: boolean;
 		readonly holderEndpoint?: SessionHolderEndpoint;
 	},
-): SessionHold {
+): Promise<SessionHold> {
+	// Resolved before the reference count is read, so nothing yields between that check and the record it guards.
+	const identity = await identityRecord(options.cwd, options.holderEndpoint);
 	const dir = holdersDir(sessionFile, sessionId);
 	const record = join(dir, `${process.pid}.json`);
 	const shared = holderRecordRefCounts.get(record) ?? 0;
 	if (shared === 0) {
-		publishHolderRecord(dir, record, identityRecord(options.cwd, options.holderEndpoint));
+		publishHolderRecord(dir, record, identity);
 		installExitCleanup();
 	}
 	holderRecordRefCounts.set(record, shared + 1);
@@ -238,7 +249,7 @@ async function createLockDir(dir: string, tolerateEnoent: boolean): Promise<bool
 }
 
 async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): Promise<string> {
-	const mine = identityRecord();
+	const mine = await identityRecord();
 	const deadline = Date.now() + waitMs;
 	let lockDirVanished = false;
 	while (true) {

@@ -1,3 +1,40 @@
+## 2026-11-20 - Context budget notice removed (senpi#7113, senpi#3241)
+
+### What changed
+
+The context budget notice is gone: `token-budget-reminder.ts`, its `before_agent_start` delivery (`resolveBeforeAgentStartMessage`), the `context`-event injection (`injectTokenBudgetReminder`) and the `compaction.reminderEnabled` setting. `before_agent_start` now returns only the restoration directive. Sessions that already hold a persisted `compaction-token-budget` custom message keep it as history; nothing reads its `tokenBudgetReminderEpoch` any more.
+
+### Why
+
+Background compaction is meant to be silent to the model. The notice told the model to wrap up shortly before compaction, against the core prompts, and its text changed every turn inside its zone, which re-wrote the prompt cache near the threshold (senpi#3241).
+
+### Why an extension could not handle it
+
+This builtin owned the notice.
+
+### Expected merge conflict zones
+
+`onBeforeAgentStart` in `index.ts`, the head of `orchestration.ts`, and the outgoing step of `buildCompactionContext` in `context-pipeline.ts`.
+
+## 2026-11-18 - The hard-limit emergency prune leaves an append-only transcript untouched (senpi#6949)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: `buildCompactionContext` skips `hardLimitEmergencyPrune` when `appendOnlyTranscript === true`, as it already does when the lane owns compaction. The messages pass through unpruned, with `needsAggressiveCompaction: false`.
+- `packages/coding-agent/test/compaction/omo-14073-append-only-hard-limit-prune.test.ts`: an append-only transcript keeps its sent prefix past the hard limit, and a lane that isn't append-only is still pruned.
+
+### Why
+
+- senpi#6949 / oh-my-openagent#14073. The 2026-10-04 append-only entry exempted the per-turn context reduction but left the latched hard-limit prune running. Past 95% of the window, the prune dropped already-sent messages, so the resident anthropic-subscription lane diverged (`sent_stream_diverged`) and cold-seeded the whole history, and the compaction that followed re-sent it again (`tainted_compaction`). Measured on a scripted 40-turn fixture with 9 compactions: flattens fell from 18 to 9, re-sent cold-seed tokens from 650,593 to 217,357, and total payload by 39%.
+
+### Why an extension could not handle it
+
+- The context pipeline is the builtin compaction extension's own policy.
+
+### Expected merge conflict zones
+
+- LOW: the `emergency` assignment in `buildCompactionContext`.
+
 ## 2026-11-16 - The core route rejects a transient summary failure as `transient-failure` (senpi#6760)
 
 ### What changed

@@ -35,7 +35,7 @@ function probesFor(world: World, pid: number, host = "host-a"): WriterProbes {
 		host: () => host,
 		pidAlive: (candidate) => world.alive.has(candidate),
 		readProcessStartMs: async (candidate) => world.starts.get(candidate),
-		bootAtMs: () => world.boot,
+		bootAtMs: async () => world.boot,
 		self: () => ({ pid, processStartedAtMs: world.starts.get(pid) ?? 0 }),
 	};
 }
@@ -140,6 +140,22 @@ describe("session writer claims", () => {
 		await expect(acquireWriterClaim(dir, "/s.jsonl", probesFor(w, 200, "host-a"))).rejects.toBeInstanceOf(
 			SessionWriterBusyError,
 		);
+	});
+
+	it("keeps a live writer after a wall-clock step made this process's cached boot record stale", async () => {
+		const dir = claimsDir();
+		const w = world();
+		// A step of +300 s moved the kernel's recorded boot instant. The live writer started after it and recorded the moved
+		// instant; the contender cached the record before the step, and only a fresh read sees the moved instant.
+		const cachedBeforeStep = w.boot;
+		w.boot += 300_000;
+		await acquireWriterClaim(dir, "/s.jsonl", probesFor(w, 100));
+		const contender: WriterProbes = {
+			...probesFor(w, 200),
+			bootAtMs: async (options) => (options?.fresh === true ? w.boot : cachedBeforeStep),
+		};
+
+		await expect(acquireWriterClaim(dir, "/s.jsonl", contender)).rejects.toBeInstanceOf(SessionWriterBusyError);
 	});
 
 	it("refuses a chain with a missing generation instead of guessing", async () => {

@@ -49,7 +49,8 @@ async function rig(label: string): Promise<HandoverRig> {
 
 function foreignAgentDir(host: HandoverRig): string {
 	const dir = join(host.qa.root, "other-agent");
-	mkdirSync(dir, { recursive: true });
+	// The CLI checks this dir as a key root and refuses one writable by group or others (senpi#4541).
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	return dir;
 }
 
