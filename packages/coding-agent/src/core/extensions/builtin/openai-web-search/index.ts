@@ -263,9 +263,7 @@ function syncUi(ctx: ExtensionContext): void {
 export const OPENAI_WEB_SEARCH_SECTION = `
 ## Web Search
 
-Native web search is available in this session.
-Use web search when the user asks for current or online information.
-Prefer web search over guessing when freshness matters.
+Use native web search for current information. Domain filters belong in the tool configuration, not the search call; only standalone web_search accepts allowed_domains or blocked_domains as call arguments.
 `;
 
 export default function openaiWebSearchExtension(pi: ExtensionAPI): void {

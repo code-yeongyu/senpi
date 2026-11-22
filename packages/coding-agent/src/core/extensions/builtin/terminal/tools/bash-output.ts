@@ -99,11 +99,17 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 			}
 
 			const delta = runtime.readDelta();
-			const formatted = formatTerminalToolOutput(applyFilter(delta.text, input.filter));
+			const filtered = applyFilter(delta.text, input.filter);
+			const formatted = formatTerminalToolOutput(filtered);
+			const empty = !input.filter
+				? "(no new output)"
+				: delta.text.length === 0
+					? "(no unread output to filter; output shown at background start or on an earlier read is already consumed)"
+					: "(no new output lines matched the filter)";
 			const droppedNotice = delta.droppedChars > 0 ? `[${delta.droppedChars} earlier chars dropped]` : undefined;
 			const dropped = droppedNotice === undefined ? "" : `${droppedNotice}\n`;
 			return noticedResult(
-				`${prefix}${statusLine(runtime)}\n${dropped}${formatted.text || "(no new output)"}`,
+				`${prefix}${statusLine(runtime)}\n${dropped}${formatted.text || empty}`,
 				[droppedNotice, formatted.marker],
 				extra,
 			);
