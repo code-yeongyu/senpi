@@ -58,10 +58,12 @@ export function readTrailingGoalContinuations(entries: readonly SessionEntry[]):
 }
 
 function wasRefusedForLimit(turn: readonly AssistantAgentMessage[]): boolean {
+	// The branch is scanned backwards: the first error here ended the fallback ladder.
+	const lastAnswer = turn[0];
 	return (
-		turn.length > 0 &&
+		lastAnswer !== undefined &&
 		turn.every((message) => message.stopReason === "error") &&
-		turn.some((message) => isLimitRefusal([message]))
+		isLimitRefusal([lastAnswer])
 	);
 }
 

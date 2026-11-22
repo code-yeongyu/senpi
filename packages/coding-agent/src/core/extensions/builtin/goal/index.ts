@@ -282,7 +282,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		const goal = await readGoal(goalStoreRef(ctx));
 		if (goal?.status !== "active") return;
 		monitorContinuation.noteContinuationStarted();
-		await queueGoalContinuationForCurrentSession(pi, ctx, goal);
+		const trailing = readTrailingGoalContinuations(ctx.sessionManager.getBranch());
+		await queueGoalContinuationForCurrentSession(pi, ctx, goal, trailing.waitingOutLimit);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {

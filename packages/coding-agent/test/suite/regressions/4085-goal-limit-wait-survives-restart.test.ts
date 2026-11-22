@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { GOAL_CONTINUATION_CAP } from "../../../src/core/extensions/builtin/goal/continuation.ts";
-import { readGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
+import { readGoal, writeGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../../src/core/extensions/builtin/goal/store-ref.ts";
 import type { ExtensionContext, ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../src/core/messages.ts";
@@ -18,7 +18,7 @@ import {
 const REFUSED_WAKES = GOAL_CONTINUATION_CAP + 4;
 
 type Answer = "rate limit" | "status-only 429" | "outage" | "served";
-type Reopen = "startup" | "resume" | "reload";
+type Reopen = "startup" | "resume" | "reload" | "fork";
 
 const REFUSAL = {
 	"rate limit": { category: "rate_limit", evidence: "structured_code", code: "rate_limit_error", httpStatus: 429 },
@@ -80,6 +80,7 @@ async function reopenGoalSession(
 	trailing: SessionEntry[],
 	reason: Reopen = "startup",
 	engineTurnsHeld = false,
+	counters: { consecutiveContinuations?: number; noProgressContinuations?: number } = {},
 ) {
 	const harness = createGoalHarness();
 	const notices: string[] = [];
@@ -89,6 +90,10 @@ async function reopenGoalSession(
 	await harness.tools
 		.get("create_goal")
 		?.execute("create", { objective: "Keep working" }, undefined, undefined, ctx as ExtensionToolContext);
+	const ref = goalStoreRef(ctx.sessionManager, ctx.cwd);
+	const created = await readGoal(ref);
+	if (!created) throw new Error("fixture failed to create a goal");
+	if (Object.keys(counters).length > 0) await writeGoal(ref, { ...created, ...counters });
 	const reopened = {
 		...ctx,
 		sessionManager: { ...ctx.sessionManager, getBranch: () => [userEntry(), ...trailing] },
@@ -99,7 +104,17 @@ async function reopenGoalSession(
 	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason }, reopened);
 
 	const goal = await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd));
-	return { sent: harness.sent.map((sent) => sent.message.customType), notices, heldWakes, goal };
+	const release = async () => {
+		engineTurnsHeld = false;
+		await runGoalHandlers(
+			harness.handlers,
+			"held_wakes_released",
+			{ type: "held_wakes_released", sources: { goal: true } },
+			reopened,
+		);
+		return { sent: harness.sent.map((sent) => sent.message.customType), goal: await readGoal(ref) };
+	};
+	return { sent: harness.sent.map((sent) => sent.message.customType), notices, heldWakes, goal, release };
 }
 
 describe("a goal waiting out a limit resumes when its session is reopened (senpi#4085)", () => {
@@ -123,6 +138,48 @@ describe("a goal waiting out a limit resumes when its session is reopened (senpi
 			expect(goal?.consecutiveContinuations ?? 0).toBe(0);
 		},
 	);
+
+	it.each([{ consecutiveContinuations: 8 }, { noProgressContinuations: 60 }])(
+		"admits a refused wake despite stored counters %j (#6405)",
+		async (counters) => {
+			const { sent, goal } = await reopenGoalSession(
+				"thread-6405-counter",
+				wakes(2, "rate limit"),
+				"resume",
+				false,
+				counters,
+			);
+			expect(sent).toEqual([GOAL_CONTINUATION_MESSAGE_TYPE]);
+			expect(goal?.status).toBe("active");
+		},
+	);
+
+	it("counts an outage that ended a mixed limit/outage ladder (#6405)", async () => {
+		const { sent, notices } = await reopenGoalSession(
+			"thread-6405-outage",
+			wakes(REFUSED_WAKES, "rate limit", "outage"),
+		);
+		expect(sent).toEqual([]);
+		expect(notices).toHaveLength(1);
+	});
+
+	it("releases a held limit recheck without counting a new continuation (#6405)", async () => {
+		const held = await reopenGoalSession("thread-6405-release", wakes(2, "rate limit"), "resume", true, {
+			consecutiveContinuations: 8,
+		});
+		expect(held.sent).toEqual([]);
+		expect(held.heldWakes).toEqual(["goal"]);
+		const released = await held.release();
+		expect(released.sent).toEqual([GOAL_CONTINUATION_MESSAGE_TYPE]);
+		expect(released.goal?.status).toBe("active");
+		expect(released.goal?.consecutiveContinuations).toBe(8);
+	});
+
+	it("inherits a trailing limit wait in a fork without counting it (#6405)", async () => {
+		const { sent, goal } = await reopenGoalSession("thread-6405-fork", wakes(2, "rate limit"), "fork");
+		expect(sent).toEqual([GOAL_CONTINUATION_MESSAGE_TYPE]);
+		expect(goal?.consecutiveContinuations ?? 0).toBe(0);
+	});
 
 	it.each([
 		["a status-only 429", ["status-only 429"]],
