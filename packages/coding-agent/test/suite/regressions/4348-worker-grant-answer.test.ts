@@ -10,12 +10,18 @@ const grantId = "synthetic-grant-request";
 
 async function setup() {
 	const writer = new SessionEventWriter(() => {});
+	const replies: { connection: string; record: unknown }[] = [];
 	for (const [id, capabilities] of [
 		["question-only", ["question"]],
 		["grant-client", ["grant_select"]],
 		["grant-other", ["grant_select"]],
 	] as const) {
-		writer.registerConnection(id, { writeRaw: () => {}, waitForBackpressure: async () => {} });
+		writer.registerConnection(id, {
+			writeRaw: (line) => {
+				replies.push({ connection: id, record: JSON.parse(line) });
+			},
+			waitForBackpressure: async () => {},
+		});
 		writer.setConnectionCapabilities(id, [...capabilities]);
 		writer.attachConnectionToSession(id, sessionId);
 	}
@@ -44,13 +50,26 @@ async function setup() {
 		writer.withConnection(connection, () =>
 			binding.handle({ type: "extension_ui_response", value: "Grant and save permanently", ...frame }),
 		);
-	return { forwarded, answer };
+	return { forwarded, answer, replies, writer };
 }
 
 it("does not forward a long-form grant answer from a connection without grant_select", async () => {
-	const { forwarded, answer } = await setup();
+	const { forwarded, answer, replies, writer } = await setup();
 	await answer("question-only", { id: "synthetic-answer-a", uiRequestId: grantId });
+	await writer.flush();
 	expect(forwarded).toHaveLength(0);
+	expect(replies).toEqual([
+		{
+			connection: "question-only",
+			record: expect.objectContaining({
+				type: "response",
+				command: "extension_ui_response",
+				id: "synthetic-answer-a",
+				success: false,
+				error: "grant_answer_refused",
+			}),
+		},
+	]);
 	await answer("grant-client", { id: grantId });
 	expect(forwarded).toHaveLength(1);
 });

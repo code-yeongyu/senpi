@@ -232,8 +232,11 @@ export class SessionWorkerClient {
 					"type" in command && command.type === "extension_ui_response"
 						? answeredUiRequestId(command as RpcExtensionUIResponse)
 						: undefined;
-				if (answered !== undefined && writer.acceptWorkerGrantResponse(sessionId, answered, connection) === false)
+				if (answered !== undefined && writer.acceptWorkerGrantResponse(sessionId, answered, connection) === false) {
+					const response = command as RpcExtensionUIResponse;
+					writer.enqueue(sessionId, refusedExtensionUiResponse(response.id, "grant_answer_refused"));
 					return;
+				}
 				if (answered !== undefined && this.secrets.refuses(answered)) {
 					const response = command as RpcExtensionUIResponse;
 					writer.enqueue(sessionId, refusedExtensionUiResponse(response.id, "secret_answer_refused"));
