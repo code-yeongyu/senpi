@@ -120,6 +120,7 @@ export {
 	getProtocol,
 	getToolCallFormat,
 	hasKimiTextToolCallRecovery,
+	isToolCallRecoveryStreamFailure,
 	shouldRecoverTextToolCalls,
 	transformContext,
 	wrapStreamWithModelRecovery,
