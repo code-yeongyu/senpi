@@ -66,7 +66,7 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 			trustOptions: { platform: process.platform },
 			trustState: state.trust,
 		});
-		await applyStopHookResult(pi, ctx, result, { sessionId, turnKey: turnTracker.turnKey(ctx) });
+		await applyStopHookResult(pi, ctx, result, { sessionId, turnKey: turnTracker.turnKey(ctx, sessionId) });
 	}
 
 	function clearDrainTimer(): void {

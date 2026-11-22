@@ -17,15 +17,14 @@ export function printUsage() {
 		"                  instead of main's tip; later main merges stay out of the tag.",
 		"  --force-tests   Run the CI=1 npm test suite in this job instead of",
 		'                  reusing the release commit\'s green "Check and test" CI run.',
-		"  --tested-sha <sha>",
-		"                  Release the commit the forced-suite matrix jobs tested",
-		"                  (publish-npm.yml, force_tests). HEAD must be that commit:",
-		"                  --sha itself, or one catalog-only commit on top of it.",
-		"                  Skips the catalog regeneration and the suite. Needs --sha",
-		"                  and --shard-results.",
 		"  --shard-results <dir>",
-		"                  The matrix jobs' result files; every one must have passed",
-		"                  on --tested-sha.",
+		"                  Release --sha on the forced-suite matrix jobs' result files",
+		"                  (publish-npm.yml, force_tests): every one must have passed on",
+		"                  --sha, and HEAD must be --sha. Skips the suite and the CI wait.",
+		"  --ci-basis-receipt <id>",
+		"                  Skip the wait for the hosted \"Check and test\" run: the",
+		"                  release workflow accepted this CI-basis receipt for the",
+		"                  pinned --sha (publish-npm.yml, ci_basis_receipt). Needs --sha.",
 		"  --help, -h      Show this help and exit.",
 		"",
 		"Default flow: compute next version via scripts/calver.mjs, then release.",
@@ -45,10 +44,10 @@ export function parseArgs(argv) {
 		help: false,
 		forceTests: false,
 		sha: null,
-		testedSha: null,
 		shardResults: null,
+		ciBasisReceipt: null,
 	};
-	const valueOptions = { "--sha": "sha", "--version": "version", "--tested-sha": "testedSha", "--shard-results": "shardResults" };
+	const valueOptions = { "--sha": "sha", "--version": "version", "--shard-results": "shardResults", "--ci-basis-receipt": "ciBasisReceipt" };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--help" || arg === "-h") {
@@ -65,12 +64,19 @@ export function parseArgs(argv) {
 			fail(`unknown argument: ${arg}`);
 		}
 	}
-	if (args.testedSha !== null) {
-		if (args.sha === null) fail("--tested-sha needs --sha, the dispatched commit the tested one must descend from");
-		if (args.shardResults === null) fail("--tested-sha needs --shard-results, the forced-suite matrix jobs' result files");
-		if (args.forceTests) fail("--tested-sha and --force-tests exclude each other: the suite already ran in the matrix jobs");
-	} else if (args.shardResults !== null) {
-		fail("--shard-results is read only with --tested-sha");
+	if (args.shardResults !== null) {
+		if (args.sha === null) fail("--shard-results needs --sha, the commit the forced-suite matrix jobs tested");
+		if (args.forceTests) fail("--shard-results and --force-tests exclude each other: the suite already ran in the matrix jobs");
+	}
+	if (args.ciBasisReceipt !== null) {
+		// senpi#6859: the workflow accepted the receipt for one pinned commit; it waives only that commit's hosted CI wait.
+		if (args.ciBasisReceipt.trim() === "" || args.ciBasisReceipt !== args.ciBasisReceipt.trim()) {
+			fail("--ci-basis-receipt is blank or has leading or trailing whitespace");
+		}
+		if (args.sha === null) fail("--ci-basis-receipt needs --sha, the pinned commit the receipt covers");
+		if (args.forceTests || args.shardResults !== null) {
+			fail("--ci-basis-receipt waives the hosted CI wait, which --force-tests and --shard-results releases do not have");
+		}
 	}
 	return args;
 }

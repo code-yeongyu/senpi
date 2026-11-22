@@ -29,7 +29,7 @@ export function declareSocketClient(
 	);
 	if ("refusal" in origin) return error(command.id, command.type, origin.refusal);
 	const reason = selection
-		? selection.declare(command.capabilities, host.registry.supportsCompact?.() === true, role)
+		? selection.declare(command.capabilities, selection.selected || host.compactAvailable(), role)
 		: command.capabilities !== undefined && !role(command.capabilities)
 			? "connection_role_fixed"
 			: undefined;
