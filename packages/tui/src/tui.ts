@@ -2728,7 +2728,8 @@ export abstract class TuiBase extends Container {
 		this.#scrollbackStale = false;
 		let buffer = TUI.FRAME_BEGIN;
 		buffer += this.deleteKittyImages(this.previousKittyImageIds);
-		if (!this.shouldPreserveMuxScrollback()) {
+		// Same win32 skip as fullRender: on ConPTY ESC[3J makes the host re-emit the whole buffer (#3926).
+		if (!this.shouldPreserveMuxScrollback() && process.platform !== "win32") {
 			buffer += "\x1b[3J";
 		}
 

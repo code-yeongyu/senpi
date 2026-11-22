@@ -126,6 +126,27 @@ describe("scrollback replay hold during a streaming reply (#2836)", () => {
 		ui.stop();
 	});
 
+	// #3926: on Windows, ESC[3J makes ConPTY re-emit the whole buffer; fullRender already skips it there, and the
+	// key-press catch-up replay must skip it too (platform contract).
+	it("on win32 the key-press catch-up replay never clears the scrollback with ESC[3J", async () => {
+		const platform = Object.getOwnPropertyDescriptor(process, "platform");
+		Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+		try {
+			const { terminal, ui, stream } = setup();
+			ui.setScrollbackReplayHold(true);
+			for (let rows = 1; rows <= 30; rows++) stream(rows);
+			ui.setScrollbackReplayHold("until-input");
+			terminal.sendInput("a");
+			ui.renderNow();
+			await terminal.flush();
+			assert.strictEqual(terminal.scrollbackClears, 0);
+			assert.ok((await terminal.flushAndGetViewport()).join("\n").includes("v29"));
+			ui.stop();
+		} finally {
+			if (platform) Object.defineProperty(process, "platform", platform);
+		}
+	});
+
 	it("still replays immediately when idle (no hold), as before", async () => {
 		const { terminal, ui, stream } = setup();
 		for (let rows = 1; rows <= 30; rows++) stream(rows);
