@@ -3604,7 +3604,9 @@ registrant opens no socket and writes no registry directory.
   user's draft still holds it.
   - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status",
     "tui_observer", "observe_reads", "entries_tail"]` (`tui_observer`: the observe-and-drive set below), `generation: 0`, the endpoint's
-    `instanceId`, `commands`: every command this endpoint accepts, and `method_classes`: the same table and digest a
+    `instanceId`, `commands`: every command this endpoint accepts (the MCP presenter frames, `mcp_presenter_context`,
+    `mcp_form_presented`, `mcp_form_response`, `mcp_form_sync` and `mcp_presenter_secret_answer`, are listed only when
+    the terminal has a presenter surface, that is when MCP presenter enforcement is on), and `method_classes`: the same table and digest a
     host's answer carries (one builder serves both). A terminal from before the session controls below lists no
     `commands`; one from before senpi#6158 carries no `method_classes`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`, plus the same
