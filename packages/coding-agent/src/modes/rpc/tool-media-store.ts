@@ -201,6 +201,13 @@ export function removeToolMedia(scope: ToolMediaScope): void {
 	rmSync(root, { recursive: true, force: true });
 }
 
+/** Moving a directory out of the store invalidates its byte count. A refused move leaves both intact. */
+export function trashToolMedia(scope: ToolMediaScope, moveToTrash: (root: string) => void): void {
+	const root = toolMediaRoot(scope);
+	if (existsSync(root)) moveToTrash(root);
+	reserved.delete(root);
+}
+
 function makeTreeWritable(path: string): void {
 	let entries: import("node:fs").Dirent[];
 	try {

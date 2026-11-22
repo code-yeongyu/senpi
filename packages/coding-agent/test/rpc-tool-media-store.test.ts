@@ -6,6 +6,7 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -24,6 +25,7 @@ import {
 	type ToolMediaScope,
 	toolMediaPersister,
 	toolMediaScopeOfSessionFile,
+	trashToolMedia,
 } from "../src/modes/rpc/tool-media-store.ts";
 
 const SESSION_ID = "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0001";
@@ -56,6 +58,21 @@ const placeholders = (record: object): Placeholder[] =>
 	(record as { result: { content: Placeholder[] } }).result.content.filter((block) => block.type === "image_ref");
 
 describe("tool image persistence", () => {
+	it("releases the byte reservation only when the media directory leaves the store", () => {
+		const limits = { perImage: 64, perSession: 64 };
+		const put = (seed: number) =>
+			persistToolImage(scope, { toolCallId: `call_${seed}`, contentIndex: 0 }, png(seed).block, limits);
+		expect(put(1)).toHaveProperty("path");
+		expect(() =>
+			trashToolMedia(scope, () => {
+				throw new Error("refused");
+			}),
+		).toThrow("refused");
+		expect(put(2)).toEqual({ unavailableReason: "session_limit" });
+		trashToolMedia(scope, (root) => renameSync(root, join(sessionDir, "trashed-media")));
+		expect(put(3)).toHaveProperty("path");
+	});
+
 	it("stores the original bytes before the placeholder naming them exists", () => {
 		const { bytes, block } = png(7);
 		let existedWhenReported = false;
