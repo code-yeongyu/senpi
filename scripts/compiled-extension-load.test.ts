@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { compiledLoaderProbeSource, extensionSource } from "./compiled-extension-fixtures.ts";
 import { compiledExtensionPlatform } from "./compiled-extension-platform.ts";
+import { registerCompiledProviderCases } from "./compiled-provider-probe-cases.ts";
 import { bunReleaseExternalFlags } from "./bun-release-externals.mjs";
 import { renameSyncRetry } from "./rename-sync-retry.mjs";
 
@@ -68,6 +69,9 @@ afterAll(() => {
 	rmSync(probeEntry, { force: true });
 	rmSync(scratch, { recursive: true, force: true });
 });
+
+// #1946: the Windows job has already built pi.exe. Exercise its lazy Devin loader in both RPC isolates.
+if (process.platform === "win32") registerCompiledProviderCases(binary, scratch, [2]);
 
 test("excludes jiti implementation bytes when using the release entry graph and optimization flags", () => {
 	// Given
