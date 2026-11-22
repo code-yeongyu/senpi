@@ -17,6 +17,8 @@ import type { SupervisorLaunch } from "./host-lifecycle-launch.ts";
 import { relayHostStartupEvents, reportStartupMilestone, startupHandOff } from "./host-startup-beacon.ts";
 import { listen, prepareSocketPath, waitForListener } from "./host-lifecycle-proxy.ts";
 import { writeJsonAtomic } from "./host-state-json.ts";
+import { supervisorLog } from "./host-supervisor-log.ts";
+import { unlinkOwnedSocket } from "./socket-ownership.ts";
 import { withStartupPipe } from "../../private-fd-startup-fillers.ts";
 import {
 	ADOPTION_GRANT_FILE,
@@ -128,18 +130,25 @@ export async function publishSupervisorEndpoint(options: {
 		return;
 	}
 	await prepareSocketPath(bindSocket);
-	await listen(server, bindSocket, publicSecret);
-	const granted = await awaitPublicationGrant(options.generationDir);
-	await options.publicEndpoint?.publish();
-	options.state.publicSocketOwned = true;
-	await adoptEndpoint({
-		bindSocket,
-		publicSocket: launch.socket,
-		expected: launch.replaceIdentity,
-		expectedOwner: launch.replaceOwner,
-		token: token,
-		...(granted ? { granted } : {}),
-	});
+	const bound = await listen(server, bindSocket, publicSecret);
+	try {
+		const granted = await awaitPublicationGrant(options.generationDir);
+		await options.publicEndpoint?.publish();
+		options.state.publicSocketOwned = true;
+		await adoptEndpoint({
+			bindSocket,
+			publicSocket: launch.socket,
+			expected: launch.replaceIdentity,
+			expectedOwner: launch.replaceOwner,
+			token: token,
+			...(granted ? { granted } : {}),
+		});
+	} catch (cause) {
+		// The bind is published with link(2), so closing the server no longer unlinks `<socket>.next-<gen>` (#5319).
+		// A refused adoption removes it here - only while it is still the entry this generation bound.
+		await unlinkOwnedSocket(bindSocket, bound, supervisorLog);
+		throw cause;
+	}
 }
 
 /**

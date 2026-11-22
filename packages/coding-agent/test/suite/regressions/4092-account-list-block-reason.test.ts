@@ -84,7 +84,12 @@ describe("account lists say why an account is blocked and until when (senpi#4092
 
 	it("/gpt-account", async () => {
 		await seedOauthPool("chatgpt-subscription", HEALTH);
-		expectReasons(await listOutput(registerCommand("gpt-account", gptAccountExtension), ""));
+		const output = await listOutput(registerCommand("gpt-account", gptAccountExtension), "");
+		expectReasons(output);
+		// senpi#3216: a rejected sign-in names the command that signs that account in again in place.
+		expect(output).toContain(
+			`rejected | login | sign-in rejected; next check after ${RETRY}, or run /gpt-account reauthorize rejected`,
+		);
 	});
 
 	it("/claude-account", async () => {
@@ -106,6 +111,13 @@ describe("account lists say why an account is blocked and until when (senpi#4092
 		registerClaudeAccountCommand(pi, { loadSettings: () => ({}), environment: () => undefined });
 		const command = commands.get("claude-account");
 		if (!command) throw new Error("/claude-account was not registered");
-		expectReasons(await listOutput(command, ""));
+		// senpi#6288: the Claude list puts each account's status on its own row under the account name.
+		const lines = (await listOutput(command, "")).split("\n");
+		const status = (name: string) =>
+			lines[lines.findIndex((line) => line === name || line.startsWith(`${name}  [`)) + 1];
+		expect(status("limited")).toMatch(/^ {2}status +rate limited, retry in 1 h \(.+\)$/);
+		expect(status("rejected")).toMatch(/^ {2}status +sign-in rejected, next check in 1 h \(.+\)$/);
+		expect(status("disabled")).toMatch(/^ {2}status +account disabled; needs attention$/);
+		expect(status("healthy")).toMatch(/^ {2}status +available$/);
 	});
 });

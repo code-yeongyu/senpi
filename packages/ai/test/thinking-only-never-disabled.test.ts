@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getModel, getModels, getProviders, streamSimple } from "../src/compat.ts";
 import { clampThinkingLevel, getSupportedThinkingLevels, inferThinkingLevelMap } from "../src/models.ts";
-import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import type { AssistantMessage, Context, Model, SimpleStreamOptions } from "../src/types.ts";
 import { classifyErrorMessage, isRetryableAssistantError } from "../src/utils/retry.ts";
 
 // omo#12316: a thinking-only model (its level map vetoes `off`) must never receive
@@ -14,13 +14,17 @@ interface ThinkingPayload {
 
 const context: Context = { messages: [{ role: "user", content: "Hello", timestamp: 0 }] };
 
-async function thinkingOffPayload(model: Model<"anthropic-messages">): Promise<ThinkingPayload> {
+async function thinkingOffPayload(
+	model: Model<"anthropic-messages">,
+	reasoning?: SimpleStreamOptions["reasoning"],
+): Promise<ThinkingPayload> {
 	let captured: ThinkingPayload | undefined;
-	const result = streamSimple({ ...model, baseUrl: "http://127.0.0.1:9" }, context, {
+	const result = streamSimple(model, context, {
 		apiKey: "fake-key",
-		onPayload: (payload) => {
-			captured = payload as ThinkingPayload;
-			return payload;
+		reasoning,
+		fetch: async (input, init) => {
+			captured = (await new Request(input, init).json()) as ThinkingPayload;
+			return new Response("fixture complete", { status: 400 });
 		},
 	});
 	await result.result();
@@ -60,6 +64,26 @@ describe("thinking-off on a thinking-only model (omo#12316)", () => {
 		const { thinkingLevelMap: _map, compat: _compat, ...bare } = getModel("kimi-coding", "k3.1-pro");
 		const payload = await thinkingOffPayload({ ...bare, provider: "some-gateway" });
 		expect(payload.thinking?.type).not.toBe("disabled");
+	});
+
+	it.each(["k3.1-pro", "k3.1-pro-highspeed"] as const)(
+		"%s keeps the accepted wire shape after clamping",
+		async (id) => {
+			const model = getModel("kimi-coding", id);
+			const level = clampThinkingLevel(model, "off");
+			expect(level).toBe("low");
+			const payload = await thinkingOffPayload(model, level === "off" ? undefined : level);
+			expect(payload.thinking).toBeUndefined();
+			expect(payload.output_config).toEqual({ effort: "low" });
+		},
+	);
+
+	it.each(["k3", "k3-256k"] as const)("%s still accepts an explicit disabled wire request", async (id) => {
+		const model = getModel("kimi-coding", id);
+		expect(clampThinkingLevel(model, "off")).toBe("off");
+		const payload = await thinkingOffPayload(model);
+		expect(payload.thinking).toEqual({ type: "disabled" });
+		expect(payload.output_config).toBeUndefined();
 	});
 });
 

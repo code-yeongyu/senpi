@@ -436,8 +436,8 @@ it("names host_shutdown when the host process is SIGTERM'd", async () => {
 	}
 }, 120_000);
 
-it("does not park a retained session when the host is shutting down", async () => {
-	// Given: a retained session on a live host - the adversarial mix-up is host_shutdown vs park.
+it("parks a retained session instead of closing it when the host is shutting down (senpi#6190)", async () => {
+	// Given: a retained session on a live socket host - it outlives the process, so the stop must not read as its end.
 	vi.stubEnv("SENPI_RPC_TEST_BUN", process.execPath);
 	const host = await startInProcessHost();
 	try {
@@ -450,16 +450,22 @@ it("does not park a retained session when the host is shutting down", async () =
 			}),
 			0,
 		);
-		const closed = client.wait(
-			(record) => record.type === "session_closed" && record.sessionId === session.sessionId,
+		const parked = client.wait(
+			(record) => record.type === "session_parked" && record.sessionId === session.sessionId,
 		);
 
 		// When: the host is SIGTERM'd with that retained session still attached.
 		host.child.kill("SIGTERM");
 
-		// Then: the host going away is a close named host_shutdown, never a park the client would reopen here.
-		expect(await closed).toMatchObject({ type: "session_closed", reason: "host_shutdown" });
-		expect(client.records.some((record) => record.type === "session_parked")).toBe(false);
+		// Then: a park named host_shutdown (the next host on the endpoint reopens it), never a close.
+		expect(await parked).toMatchObject({
+			type: "session_parked",
+			reason: "host_shutdown",
+			sessionPath: session.state.sessionFile,
+		});
+		expect(
+			client.records.some((record) => record.type === "session_closed" && record.sessionId === session.sessionId),
+		).toBe(false);
 	} finally {
 		await host.dispose();
 	}

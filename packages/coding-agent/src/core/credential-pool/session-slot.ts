@@ -1,8 +1,8 @@
-import { applyAccountOrder, rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import { rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import { attemptCandidates, noSlotsError } from "./failover.ts";
 import type { RotationSlot, RotationSources } from "./rotation-slots.ts";
-import { preferHeadroom } from "./selection-order.ts";
+import { type AccountStrategy, orderAccounts, preferHeadroom } from "./selection-order.ts";
 
 /** Reported usage the pick prefers headroom from (omo#9234); a preference, never a block. */
 type SlotHeadroom = {
@@ -19,6 +19,10 @@ export type SlotPickPolicy = {
 	hasher: SlotHasher;
 	/** The pool's user account order, applied after the pin (senpi#3591). */
 	order?: readonly string[];
+	/** The configured account strategy (omo#10146); cache-affine when absent. */
+	strategy?: AccountStrategy;
+	/** This session's round-robin start, from roundRobinState. */
+	roundRobinOffset?: number;
 	headroom?: SlotHeadroom;
 };
 
@@ -45,13 +49,13 @@ export function rememberHeadroomAccount(
 	headroomAffinities.set(repository, sessions);
 }
 
-/** The affinity order with the user's order applied, before the pin and before any headroom preference. */
+/** The strategy's order with the user's order applied, before the pin and before any headroom preference. */
 export function orderRotationSlots<TSlot extends RotationSlot>(
 	candidates: readonly TSlot[],
 	policy: SlotPickPolicy,
 ): readonly TSlot[] {
 	const ranked = policy.useAffinity ? rendezvousOrder(policy.affinityKey, candidates, policy.hasher) : candidates;
-	return applyAccountOrder(policy.order, ranked);
+	return orderAccounts(candidates, ranked, policy.order, policy.strategy, policy.roundRobinOffset);
 }
 
 /**

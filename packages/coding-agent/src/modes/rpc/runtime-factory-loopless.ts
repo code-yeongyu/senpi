@@ -1,66 +1,36 @@
+import type { HandFileGuards } from "./hand-file-ops.ts";
 import { randomUUID } from "node:crypto";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
 import { type AgentSessionRuntimeDiagnostic, createAgentSessionServices } from "../../core/agent-session-services.ts";
+import { lateLoopRoute, loopWakeRoute } from "../../core/execution/hand-wake-route.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
-import { bootstrapRuntime, buildToolRegistry, type ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
+import { PresentationBroker } from "../../core/extensions/ui-presentation.ts";
+import { bootstrapRuntime, buildToolRegistry } from "../../core/runtime/bootstrap.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
-import { toolInfoOf } from "../../core/tool-info.ts";
+import {
+	armedEvalOnlyToolNames,
+	registeredEvalOnlyToolNames,
+	resolveEvalOnlyToolNames,
+} from "../../core/runtime/active-tools.ts";
+import { toolInfosOf } from "../../core/tool-info.ts";
 import { childModuleRoots } from "../../core/tool-dispatch/offload.ts";
 import { createToolChildRuntime } from "../../core/tool-dispatch/tool-child-runtime.ts";
 import { builtInExtensions } from "../../extensions/index.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
-import { looplessToolFilters, resolveCliPaths, resolveLooplessSettings } from "./loopless-runtime-settings.ts";
+import { looplessToolSelection, resolveCliPaths, resolveLooplessSettings } from "./loopless-runtime-settings.ts";
 import {
 	isLooplessExecuteGranted,
 	type LooplessExecuteGrant,
 	LooplessExecuteRefusedError,
 	looplessGrantRunsToolHandlers,
 } from "./loopless-execute-grant.ts";
+import { createBrainCalls } from "./loopless-brain-calls.ts";
+import { type LooplessRuntime, type LooplessRuntimeFactory, LooplessToolNotFoundError } from "./loopless-runtime.ts";
 import { runLooplessToolCall } from "./loopless-tool-call.ts";
-import { extensionToolHandlers } from "./loopless-tool-handlers.ts";
+import { createLoopHookCall } from "./loop-hook-call.ts";
+import { extensionLoopHooks } from "./loopless-loop-hooks.ts";
+import { withToolCatalog } from "./hand-tool-catalog.ts";
+import { extensionToolHandlers, type TwoSidedHome } from "./loopless-tool-handlers.ts";
 import { toolChildModuleRoots } from "./tool-child/session-child.ts";
-
-/**
- * A session worker's runtime with the agent loop removed (brain/hand split, senpi#5413): the same
- * built-in and extension tools a full session serves, executed one call at a time, with no agent loop,
- * no model binding and no transcript. Its extension runtime is never bound to a loop, so an extension
- * that tries to drive one (`pi.sendUserMessage`, `pi.setModel`, ...) is refused.
- */
-export interface LooplessRuntime {
-	readonly cwd: string;
-	/** Every tool this runtime serves: built-ins first, then extension tools, a later name replacing an earlier one. */
-	readonly definitions: ReadonlyMap<string, ToolDefinitionEntry>;
-	/** What building the runtime reported: settings, extension load and `project_trust` handler diagnostics. */
-	readonly diagnostics: readonly AgentSessionRuntimeDiagnostic[];
-	/**
-	 * Runs one tool call: argument preparation and schema validation as the loop does, then the tool. An unknown
-	 * name is refused before anything runs; invalid arguments and a failing tool come back as an `isError` result.
-	 *
-	 * A runtime refuses every call unless it was built with a grant from the closed allowlist in
-	 * `loopless-execute-grant.ts`. With the remote tool executor's grant every call runs this runtime's extensions'
-	 * `tool_call` handlers (permission checks among them; a block or a throw stops the call) and `tool_result`
-	 * handlers; the in-process test harness's grant runs the tool alone.
-	 */
-	execute(name: string, toolCallId: string, params: unknown, signal?: AbortSignal): Promise<AgentToolResult<unknown>>;
-	/** Marks its extension contexts stale, then closes the tool work and the tool child it still runs. */
-	dispose(): Promise<void>;
-}
-
-export interface LooplessRuntimeProfile {
-	cwd: string;
-	launchProfile?: Readonly<AgentSessionLaunchProfile>;
-}
-
-export type LooplessRuntimeFactory = (profile: LooplessRuntimeProfile) => Promise<LooplessRuntime>;
-
-export class LooplessToolNotFoundError extends Error {
-	readonly toolName: string;
-	constructor(toolName: string) {
-		super(`loopless_tool_not_found: ${toolName}`);
-		this.toolName = toolName;
-	}
-}
 
 /**
  * Builds loopless runtimes from the same launch configuration as `createCliRuntimeFactory`: the same
@@ -76,6 +46,8 @@ export function createLooplessRuntimeFactory(
 		startupSettingsManager?: SettingsManager;
 		/** Required for `execute`; see `loopless-execute-grant.ts`. */
 		executeGrant?: LooplessExecuteGrant;
+		/** Where two-sided extensions run whole; see `extensionToolHandlers`. Default: with the loop. */
+		twoSidedHome?: TwoSidedHome;
 	} = {},
 ): LooplessRuntimeFactory {
 	const { parsed, agentDir, toolRuntime } = configuration;
@@ -157,22 +129,59 @@ export function createLooplessRuntimeFactory(
 			modelRegistry: services.modelRegistry,
 			toolDispatcher: dispatcher,
 		});
+		const toolSelection = looplessToolSelection(parsed, services.settingsManager);
 		const registry = buildToolRegistry({
 			baseToolDefinitions: runtime.baseToolDefinitions,
 			runner: runtime.extensionRunner,
 			dispatcher,
-			...looplessToolFilters(parsed, services.settingsManager),
+			...toolSelection.filters,
 		});
 		toolNames = () => [...registry.toolRegistry.keys()];
 		const getLoadedHookSources = services.resourceLoader.getLoadedHookSources?.bind(services.resourceLoader);
+		const { wake } = profile;
+		const loopWake = wake === undefined ? undefined : loopWakeRoute(wake);
+		const loopHookCall = createLoopHookCall(
+			lateLoopRoute(wake, (error) =>
+				runtime.extensionRunner.emitError({ extensionPath: "<loop-hook-call>", event: "late_effect", error }),
+			),
+		);
+		const brainCalls = createBrainCalls();
 		runtime.extensionRunner.bindSessionlessFacts({
-			getAllTools: () => Array.from(registry.definitions.values(), toolInfoOf),
+			isModelIssuedToolCall: brainCalls.isModelIssuedToolCall,
+			promptSurfaceOf: brainCalls.promptSurfaceOf,
+			getAllTools: () =>
+				toolInfosOf(
+					registry.definitions,
+					registeredEvalOnlyToolNames(
+						armedEvalOnlyToolNames(
+							resolveEvalOnlyToolNames(registry.definitions, undefined),
+							registry.toolRegistry,
+						),
+						registry.toolRegistry,
+					),
+				),
+			loopHookCall: () => loopHookCall.current(),
+			loopHookSend: () => loopHookCall.sender(),
+			loopHookWrite: () => loopHookCall.writer(),
+			...(loopWake === undefined ? {} : { loopWake }),
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
+		// On a hand, a call's extension UI is presented by the loop that owns the call (S30); a notice made outside any
+		// call, or after its call ended, goes to the loop as a wake (H3).
+		const presentation = new PresentationBroker(
+			(error) =>
+				runtime.extensionRunner.emitError({
+					extensionPath: "<presentation-port>",
+					event: "ui_presentation",
+					error: `A presentation could not reach the attached client: ${error instanceof Error ? error.message : String(error)}`,
+				}),
+			loopWake?.notify,
+		);
+		runtime.extensionRunner.setUiBroker(presentation);
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
-			? extensionToolHandlers(runtime.extensionRunner)
+			? extensionToolHandlers(runtime.extensionRunner, local.twoSidedHome)
 			: undefined;
-		execute = (name, toolCallId, params, signal) => {
+		execute = (name, toolCallId, params, signal, nested, facts) => {
 			if (!isLooplessExecuteGranted(local.executeGrant))
 				return Promise.reject(
 					new LooplessExecuteRefusedError(
@@ -181,21 +190,50 @@ export function createLooplessRuntimeFactory(
 				);
 			const tool = registry.toolRegistry.get(name);
 			if (tool === undefined) return Promise.reject(new LooplessToolNotFoundError(name));
-			return runLooplessToolCall(
-				tool,
-				{
-					toolCallId,
-					params,
-					...(signal ? { signal } : {}),
-				},
-				toolHandlers,
+			return brainCalls.run(toolCallId, facts, () =>
+				presentation.present(nested, () =>
+					runLooplessToolCall(
+						tool,
+						{
+							toolCallId,
+							params,
+							...(signal ? { signal } : {}),
+							...(nested ? { nested } : {}),
+						},
+						toolHandlers,
+					),
+				),
 			);
 		};
+		const fileGuards: HandFileGuards | undefined =
+			toolHandlers !== undefined && isLooplessExecuteGranted(local.executeGrant)
+				? {
+						// A file operation's tool_call check presents its handlers' UI through the port with that operation's nested
+						// requester. It reaches the attached client only when the brain lets file operations host the presentation
+						// plane (`filePlanes`); by default it does not, so the UI stays on the hand and the refusal is reported.
+						beforeToolCall: (toolName, toolCallId, input, nested) =>
+							presentation.present(nested, () =>
+								toolHandlers.beforeToolCall({ toolName, toolCallId, input, ...(nested ? { nested } : {}) }),
+							),
+						filesystemPolicy: () => runtime.filesystemPolicy,
+					}
+				: undefined;
 		return {
 			cwd: services.cwd,
 			definitions: registry.definitions,
 			diagnostics,
-			execute: (name, toolCallId, params, signal) => execute(name, toolCallId, params, signal),
+			fileGuards,
+			execute: (name, toolCallId, params, signal, nested, facts) =>
+				execute(name, toolCallId, params, signal, nested, facts),
+			runLoopHooks: withToolCatalog(
+				extensionLoopHooks(runtime.extensionRunner, local.twoSidedHome ?? "loop", services.cwd, loopHookCall),
+				{
+					registry,
+					initialActiveToolNames: toolSelection.initialActiveToolNames,
+					allowedToolNames: toolSelection.filters.allowedToolNames,
+					resources: services.resourceLoader,
+				},
+			),
 			dispose: async () => {
 				// Stale first, as a session disposes: a close that fails must not leave the contexts usable.
 				runtime.extensionRunner.invalidate("This loopless runtime was disposed.");

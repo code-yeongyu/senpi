@@ -14,6 +14,11 @@ import { composedProvider } from "../../support/anthropic-subscription-provider.
 import { type Command, createAccountCommandContext } from "../account-command-harness.ts";
 
 const fresh = { type: "oauth" as const, access: "fake-access", refresh: "fake-refresh", expires: 4102444800000 };
+// The fake CLI's one-click URL (AUTOMATIC_URL in test/fixtures/claude-cli-auth/fake-claude.mjs).
+const AUTOMATIC_URL =
+	"https://claude.ai/oauth/authorize?code=true&client_id=fixture&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A54545%2Fcallback&state=fixture-state";
+// senpi#7002: records what the TUI auth_url path would otherwise hand to the real platform browser.
+const openedLoginUrls: string[] = [];
 const flow: OAuthAuth = {
 	name: "Fake",
 	login: async () => fresh,
@@ -38,7 +43,11 @@ function command(name: string): Command {
 		on: () => {},
 	} as unknown as ExtensionAPI;
 	gptAccountExtension(pi);
-	registerClaudeAccountCommand(pi, { loadSettings: () => ({}), environment: () => undefined });
+	registerClaudeAccountCommand(pi, {
+		loadSettings: () => ({}),
+		environment: () => undefined,
+		openBrowser: (url) => openedLoginUrls.push(url),
+	});
 	accountExtension(pi);
 	return commands.get(name)!;
 }
@@ -144,6 +153,7 @@ describe("chatgpt-subscription optional post-login naming", () => {
 // the receipt's origin keeps the lane at exactly one prompt.
 describe("claude-sdk-oauth post-login naming", () => {
 	it("asks for the account name exactly once per login and never offers a display name", async () => {
+		openedLoginUrls.length = 0;
 		const storage = AuthStorage.inMemory();
 		const models = createModels({ credentials: storage });
 		models.setProvider(
@@ -173,5 +183,7 @@ describe("claude-sdk-oauth post-login naming", () => {
 		for (const slot of listSlots(storage.get("anthropic-subscription"))) {
 			expect(slot).not.toHaveProperty("displayName");
 		}
+		// senpi#7002: both logins hand their one-click URL to the recorder, never to a browser.
+		expect(openedLoginUrls).toEqual([AUTOMATIC_URL, AUTOMATIC_URL]);
 	});
 });

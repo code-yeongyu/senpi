@@ -1,5 +1,42 @@
 # Herdr builtin reporter changes
 
+## 2026-11-07 - A pane idles after its turn while only a monitor or background session is live (senpi#6150)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts`: `selectHerdrReport` keeps `working` for a running turn and for bounded wake sources (subagents, DAG runs, detached eval cells, loop-guard recovery, unknown sources, and one-shot monitors with a deadline), and reports `idle` when only open-ended sources are live: monitors with no deadline (persistent watches, or watches without a timeout, counted by the new `openEndedMonitors` from the `terminal_monitor_state` per-watch `persistent`/`deadlineMs`) and background terminal sessions. The message names the live sources in both states. This partly reverses the 2026-09-24 entry in this tracker (senpi#2077), which folded every wake source into `working`: bounded sources keep that behaviour, open-ended ones no longer do.
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts`: passes the open-ended watch count with each monitor snapshot.
+
+### Why
+
+- A persistent monitor or a background server kept the pane `working` forever after the turn ended, so front ends drawing the OSC 7501 state showed a spinner on an idle agent.
+
+### Why an extension could not handle it
+
+- The builtin herdr reporter is the extension that owns this report; the change is inside it.
+
+### Expected merge conflict zones
+
+- LOW: the `selectHerdrReport` body, the `monitors` reducer event and `OPEN_ENDED_WAKE_SOURCES`; the monitor subscription in `index.ts`.
+
+## 2026-11-04 - Name the product command in an app pane token (omo#12395, senpi#5817)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` adds `tokens: { app: APP_COMMAND }` to its title metadata report. On quit it clears the token with `tokens: { app: null }` before `pane.release_agent`. Every lifecycle, session and release report still sends `agent: "pi"`.
+
+### Why
+
+- Tools built on herdr's API could not tell an OmO pane from a Pi pane. herdr 0.9.5 bases prompt delivery and restore on agent labels it knows. With an `omo` label, `agent prompt` and `agent send-keys` are refused with `agent_not_ready`, and the reported `resume_argv` is dropped when detection says `pi`. Pane tokens are display-only, and herdr's pane and agent APIs expose them. herdr keeps tokens after release and process exit, so quit clears the token.
+
+### Why an extension could not handle it
+
+- This is the builtin reporter that owns the pane's herdr metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `reportTitle` params and the `session_shutdown` quit branch in `index.ts`.
+
 ## 2026-11-01 - Program status binds in every TUI session (senpi#5323)
 
 ### What changed

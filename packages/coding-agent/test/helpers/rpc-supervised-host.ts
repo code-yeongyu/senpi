@@ -141,7 +141,12 @@ export function crashRecords(qa: SupervisedScratch): readonly HostCrashRecord[] 
 
 /** Terminal records: everything but the host child's own watchdog line. */
 export function terminalRecords(qa: SupervisedScratch, generation: string): readonly HostCrashRecord[] {
-	return crashRecords(qa).filter((record) => record.kind !== "rpc-host-watchdog" && record.generation === generation);
+	return crashRecords(qa).filter(
+		(record) =>
+			record.kind !== "rpc-host-watchdog" &&
+			record.kind !== "rpc-host-drain-overdue" &&
+			record.generation === generation,
+	);
 }
 
 export function watchdogRecords(qa: SupervisedScratch, generation: string): readonly HostCrashRecord[] {

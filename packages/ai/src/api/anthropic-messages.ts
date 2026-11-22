@@ -59,7 +59,7 @@ import { withGzipRequestBodies } from "../utils/gzip-request-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-import { getAnthropicCompat, isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
+import { allowsAnthropicLongCacheRetention, getAnthropicCompat } from "../utils/prompt-cache-ttl.ts";
 import { attachProviderDiagnostic } from "../utils/provider-diagnostic-carrier.ts";
 import {
 	anthropicProviderDiagnosticFromError,
@@ -162,12 +162,7 @@ function getCacheControl(
 	if (retention === "none") {
 		return { retention };
 	}
-	const ttl =
-		retention === "long" &&
-		isAnthropicApiBaseUrl(model.baseUrl) &&
-		getAnthropicCompat(model).supportsLongCacheRetention
-			? "1h"
-			: undefined;
+	const ttl = retention === "long" && allowsAnthropicLongCacheRetention(model) ? "1h" : undefined;
 	return {
 		retention,
 		cacheControl: { type: "ephemeral", ...(ttl && { ttl }) },
@@ -305,8 +300,6 @@ const DISABLED_THINKING_REJECTING_MODEL_MARKERS = [
 	"sonnet-5.5",
 	"haiku-5-5",
 	"haiku-5.5",
-	// Kimi K3.1 Pro (Kimi Code, verified live 400: "K3.1 Pro does not support disabled thinking mode"); K3 accepts it.
-	"k3.1-pro",
 ] as const;
 const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 	"opus-4-6",
@@ -1939,8 +1932,12 @@ function cannotDisableThinking(
 	model: Model<"anthropic-messages">,
 	compat: { supportsDisabledThinking: boolean },
 ): boolean {
-	if (!compat.supportsDisabledThinking) return true;
+	if (!compat.supportsDisabledThinking || isKimiK31Pro(model)) return true;
 	return matchesModelMarker(model, DISABLED_THINKING_REJECTING_MODEL_MARKERS);
+}
+
+function isKimiK31Pro(model: Model<"anthropic-messages">): boolean {
+	return /(?:^|\/)(?:kimi-)?k3\.1-pro(?:-highspeed)?$/i.test(model.id);
 }
 
 /**
@@ -2496,7 +2493,10 @@ function buildParams(
 			// Default to "summarized" so Opus 4.7 and Mythos Preview behave like
 			// older Claude 4 models (whose API default is also "summarized").
 			const display: AnthropicThinkingDisplay = options.thinkingDisplay ?? "summarized";
-			if (supportsAdaptiveThinking(model)) {
+			if (options.effort === "low" && isKimiK31Pro(model)) {
+				// The Pro floor is effort-only, including when the agent raised a carried-over off level.
+				params.output_config = { effort: "low" };
+			} else if (supportsAdaptiveThinking(model)) {
 				// Adaptive thinking: Claude decides when and how much to think.
 				params.thinking = { type: "adaptive", display } as MessageCreateParamsStreaming["thinking"];
 				if (options.effort) {

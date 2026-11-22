@@ -137,6 +137,13 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 
 const ACTIVATION_TIMEOUT_MS = 10_000;
 const ACTIVATION_RETRY_MS = 10;
+/**
+ * A server this activator started gets this long to become reachable while it is alive. The wait ends at once when the
+ * server accepts a connection, exits, fails to spawn, or the activation lock is lost; the bound only reports a server
+ * that is alive but never listens. A cold start under host load can take well over 10 s (senpi#6487), and the bound is
+ * measured on the monotonic clock, so a system clock step cannot end the wait early either.
+ */
+const ACTIVATION_STARTUP_HANG_MS = 120_000;
 
 export interface ActivatedServer {
 	readonly client: Client;
@@ -188,7 +195,7 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 			spawnError = error;
 		});
 		try {
-			const deadline = Date.now() + ACTIVATION_TIMEOUT_MS;
+			const deadline = performance.now() + ACTIVATION_STARTUP_HANG_MS;
 			while (true) {
 				activation.assertHeld();
 				const client = await connect(route);
@@ -197,7 +204,7 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 				if (child.exitCode !== null || child.signalCode !== null) {
 					throw new Error("Automatically activated server exited during startup");
 				}
-				if (Date.now() >= deadline) throw new Error("Timed out waiting for automatically activated server");
+				if (performance.now() >= deadline) throw new Error("Timed out waiting for automatically activated server");
 				await new Promise<void>((resolve) => setTimeout(resolve, ACTIVATION_RETRY_MS));
 			}
 		} catch (error) {

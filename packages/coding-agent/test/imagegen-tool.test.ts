@@ -84,8 +84,8 @@ async function createToolHarness(options: { gateway?: boolean } = {}): Promise<H
 		});
 	}
 	await harness.session.bindExtensions({});
-	// generate_image is search-exposed: these tests exercise the tool body directly, not the
-	// activation path, so they opt into the same active set the by-name call would have produced.
+	// generate_image is eval-exposed and this harness registers no eval tool, so it is a direct tool;
+	// these tests exercise the tool body and keep it in the active set explicitly.
 	harness.session.setActiveToolsByName([...harness.session.getActiveToolNames(), TOOL_NAME]);
 	return harness;
 }
@@ -132,7 +132,7 @@ describe("generate_image tool", () => {
 		expect(readFileSync(absolute).subarray(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 		expect(result.details.paths).toEqual(["art/fox.png"]);
 		expect(result.details.revisedPrompts).toEqual(["A richly detailed red fox"]);
-		expect(result.details.model).toBe("gpt-image-2.5-sunburst");
+		expect(result.details.model).toBe("gpt-image-2.6-sunburst");
 		expect(result.details.requested).toBe(1);
 		expect(result.details.generated).toBe(1);
 		expect(result.details.size).toBe("auto");
@@ -189,7 +189,7 @@ describe("generate_image tool", () => {
 		expect(call?.model.baseUrl).toBe("https://gateway.example/openai/v1");
 		expect(call?.model.provider).toBe("quotio-openai");
 		expect(call?.model.api).toBe("openai-images");
-		expect(call?.model.id).toBe("gpt-image-2.5-sunburst");
+		expect(call?.model.id).toBe("gpt-image-2.6-sunburst");
 		expect(call?.options?.apiKey).toBe("gateway-secret");
 		expect(call?.options?.size).toBe("1024x1536");
 		expect(call?.options?.quality).toBe("high");

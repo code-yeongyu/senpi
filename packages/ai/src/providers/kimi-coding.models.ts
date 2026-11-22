@@ -31,7 +31,6 @@ const values = {
 			},
 			"reasoning": true,
 			"thinkingLevelMap": {
-				"off": null,
 				"minimal": null,
 				"low": "low",
 				"medium": null,

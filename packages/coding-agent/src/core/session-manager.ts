@@ -24,7 +24,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
+import { appendFile, type FileHandle, mkdir, open, readdir, rm } from "fs/promises";
 import { basename, join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -37,6 +37,12 @@ import { SessionFileCallKeys } from "./session-file-call-keys.ts";
 import type { RecoveryCarrier } from "./session-recovery-identity.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
+import {
+	isSharedSessionStoreDir,
+	listSharedStoreSessions,
+	sharedSessionStoreDirs,
+	sharedStoreSummaryDir,
+} from "./shared-session-stores.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
 import {
 	ALL_SESSION_LIST_PUBLISH_INTERVAL,
@@ -60,6 +66,8 @@ import {
 	loadedContentFingerprints,
 	loadedFileIdentities,
 } from "./session-file-identity.ts";
+import { archivedFlagOf } from "./session-archived.ts";
+import { NOT_SETTLED, type SessionSettled, settledStateOf } from "./session-settled.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
 import type { SpawnedBy } from "./session-lifecycle-types.ts";
@@ -75,9 +83,17 @@ import {
 } from "./session-transcript-journal.ts";
 import { branchFlow, compactionFlow, contextEditFlow, ownedFlowMessage } from "./session-transcript-flows.ts";
 import { TranscriptFile } from "./session-transcript-file.ts";
+import type { SessionOwnership } from "./session-move/ownership.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 import { SessionWriteFence } from "./session-write-fence.ts";
+import {
+	DurableSessionBinding,
+	type DurableStoreBinding,
+	type ProjectionWarning,
+	storeKeyOf,
+} from "./session-store/durable-binding.ts";
+import type { StoredEntry } from "@earendil-works/pi-agent-core";
 import {
 	discardFailedFirstFlush,
 	discardFailedFirstFlushAsync,
@@ -978,7 +994,7 @@ export function buildSessionContext(
  * Compute the default session directory for a cwd.
  * Encodes cwd into a safe directory name under ~/.senpi/agent/sessions/.
  */
-function getDefaultSessionDirPath(cwd: string, agentDir: string = getDefaultAgentDir()): string {
+export function getDefaultSessionDirPath(cwd: string, agentDir: string = getDefaultAgentDir()): string {
 	const resolvedCwd = resolvePath(cwd);
 	const resolvedAgentDir = resolvePath(agentDir);
 	const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
@@ -1186,10 +1202,17 @@ export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
 	private sessionDir: string;
+	/** Set by `adoptHomeSessionDir` when the open session lives in another app's store. */
+	private homeSessionDir: string | undefined;
 	private cwd: string;
 	private persist: boolean;
 	private readonly writeGuard = new SessionWriteGuard();
 	private readonly writeFence = new SessionWriteFence();
+	// S20b: set by bindDurableStore; every write then commits to the store before its JSONL projection.
+	private durable: DurableSessionBinding | undefined;
+	private bindPending = false;
+	private bindRaced = false;
+	private readonly projectionWarningListeners = new Set<(warning: ProjectionWarning) => void>();
 	private flushed: boolean = false;
 	private headerWrite: Promise<void> | undefined;
 	// The file persistHeaderNow() created in this process; only it may be discarded on close (senpi#3263).
@@ -1270,6 +1293,11 @@ export class SessionManager {
 		source: FileEntry[];
 	} | null = null;
 	private sessionNameCache: string | undefined = undefined;
+	// The newest `session_archived` entry naming this session (senpi#6677), kept like the usage totals: a trimmed
+	// mirror cannot recompute it, so `_buildIndex` leaves it alone while the mirror is trimmed.
+	private archivedCache = false;
+	// The newest `session_settled` entry naming this session (the Done flag), kept exactly like `archivedCache`.
+	private settledCache: SessionSettled = NOT_SETTLED;
 	// Running usage totals over ALL entries (not branch-scoped), maintained
 	// incrementally on assistant-message append and rebuilt from scratch in
 	// _buildIndex()/newSession. Usage fields are numeric and unaffected by
@@ -1394,6 +1422,8 @@ export class SessionManager {
 	/** Points this manager at `sessionFile`; the path when it exists, undefined when a new session was started there. */
 	private _beginSessionFile(sessionFile: string, newSessionOptions?: NewSessionOptions): string | undefined {
 		const resolvedFile = resolvePath(sessionFile);
+		// A reload of the bound file keeps its binding; any other file ends it.
+		if (this.sessionFile !== resolvedFile) this.durable = undefined;
 		if (this.persist) {
 			reserveSessionWrite(resolvedFile);
 			this.writeFence.opened(resolvedFile);
@@ -1485,11 +1515,12 @@ export class SessionManager {
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
+		this.durable = undefined;
 		const timestamp = this._resetToNewSession(options);
 		this.ownedHeaderFile = undefined;
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			const path = join(this.moveToHomeSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
 			reserveSessionWrite(path);
 			this.sessionFile = path;
 		}
@@ -1537,6 +1568,8 @@ export class SessionManager {
 		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.sessionNameCache = undefined;
+		this.archivedCache = false;
+		this.settledCache = NOT_SETTLED;
 		this.usageTotals = {
 			input: 0,
 			output: 0,
@@ -1589,7 +1622,12 @@ export class SessionManager {
 		const history = this.fileEntries.filter((entry): entry is SessionEntry => entry.type !== "session");
 		this.usageTotals = emptyUsageTotals();
 		this.fullEntryCount = history.length;
-		for (const entry of history) this._accumulateUsage(entry);
+		this.archivedCache = false;
+		this.settledCache = NOT_SETTLED;
+		for (const entry of history) {
+			this._accumulateUsage(entry);
+			this._noteSessionFlags(entry);
+		}
 		for (const id of tail.trimmedIds) this.trimmedIds.add(id);
 		this.mirrorTrimmed = true;
 		this.fileEntries = tail.retained;
@@ -1607,7 +1645,11 @@ export class SessionManager {
 		this.leafId = null;
 		this.sessionNameCache = undefined;
 		// A trimmed mirror cannot replace the full-history totals, like the count below.
-		if (!this.mirrorTrimmed) this.usageTotals = emptyUsageTotals();
+		if (!this.mirrorTrimmed) {
+			this.usageTotals = emptyUsageTotals();
+			this.archivedCache = false;
+			this.settledCache = NOT_SETTLED;
+		}
 		let fullEntryCount = 0;
 		for (const [order, entry] of this.fileEntries.entries()) {
 			if (entry.type === "session") continue;
@@ -1615,7 +1657,10 @@ export class SessionManager {
 			this.byId.set(entry.id, entry);
 			this.entryOrdersById.set(entry.id, order);
 			this.leafId = entry.id;
-			if (!this.mirrorTrimmed) this._accumulateUsage(entry);
+			if (!this.mirrorTrimmed) {
+				this._accumulateUsage(entry);
+				this._noteSessionFlags(entry);
+			}
 			if (entry.type === "session_info") {
 				// Empty names explicitly clear the session title.
 				this.sessionNameCache = entry.name?.trim() || undefined;
@@ -1641,11 +1686,27 @@ export class SessionManager {
 		this.writeGuard.assertRewritable(this.fileEntries, this.sessionFile);
 		this.writeFence.assertOwned(this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
-		replaceFileAtomically(
-			this.sessionFile,
-			this._serializedFileEntries(),
-			this.capturesTranscriptBase ? (identity) => this._captureTranscriptBase(identity, this.fileEntries) : undefined,
-		);
+		const durable = this.durable;
+		if (this.bindPending) this.bindRaced = true;
+		if (durable) {
+			durable.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
+			if (durable.projectionStale()) {
+				durable.scheduleRepair(this.sessionFile);
+				return;
+			}
+		}
+		try {
+			replaceFileAtomically(
+				this.sessionFile,
+				this._serializedFileEntries(),
+				this.capturesTranscriptBase ? (identity) => this._captureTranscriptBase(identity, this.fileEntries) : undefined,
+			);
+		} catch (error) {
+			if (!durable) throw error;
+			durable.projectionFailed(this.sessionFile, error);
+			return;
+		}
+		durable?.recordWhole(this.sessionFile);
 	}
 
 	/** Wire the owning reader/writer's capture; until it lands snapshots use the bounded accepted tail. */
@@ -1732,6 +1793,20 @@ export class SessionManager {
 		return this.persist;
 	}
 
+	/** Give an unclaimed in-memory session its first file without rebuilding or changing its identity. */
+	async enablePersistence(): Promise<void> {
+		if (this.persist) return;
+		const dir = getDefaultSessionDirPath(this.cwd);
+		await mkdir(dir, { recursive: true });
+		const header = this.fileEntries[0] as SessionHeader;
+		const path = join(dir, `${header.timestamp.replace(/[:.]/g, "-")}_${this.sessionId}.jsonl`);
+		reserveSessionWrite(path);
+		this.sessionDir = dir;
+		this.sessionFile = path;
+		this.persist = true;
+		registerSessionWriter(this);
+	}
+
 	getCwd(): string {
 		return this.cwd;
 	}
@@ -1740,8 +1815,34 @@ export class SessionManager {
 		return this.sessionDir;
 	}
 
+	/**
+	 * Where this folder lists its sessions and creates new ones. A session opened from another app's
+	 * registered store keeps its per-session state beside its file (`getSessionDir()`), but listing and
+	 * new files stay in this folder's own session dir, never in that store (omo-desktop-app#8097).
+	 */
+	getHomeSessionDir(): string {
+		return this.homeSessionDir ?? this.sessionDir;
+	}
+
+	/**
+	 * Called right after opening a picked session (`/resume`, `--resume`): when its file lives in another
+	 * app's registered store, this folder's own session dir stays the home for listing and new sessions.
+	 */
+	async adoptHomeSessionDir(): Promise<void> {
+		if (!(await isSharedSessionStoreDir(this.sessionDir))) return;
+		const home = getDefaultSessionDirPath(this.cwd);
+		if (this.persist) await mkdir(home, { recursive: true });
+		this.homeSessionDir = home;
+	}
+
 	usesDefaultSessionDir(): boolean {
-		return this.sessionDir === getDefaultSessionDirPath(this.cwd);
+		return this.getHomeSessionDir() === getDefaultSessionDirPath(this.cwd);
+	}
+
+	private moveToHomeSessionDir(): string {
+		this.sessionDir = this.getHomeSessionDir();
+		this.homeSessionDir = undefined;
+		return this.sessionDir;
 	}
 
 	getSessionId(): string {
@@ -1750,6 +1851,14 @@ export class SessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.sessionFile;
+	}
+
+	/** Who may write this file now, from the same fold every persisted write is checked against. */
+	getOwnership(): SessionOwnership {
+		// A session that persists nothing never reaches the write guard (`_persist` returns first), so ownership must
+		// not refuse it either: admission and the write path answer the same (senpi#5922).
+		if (!this.persist || !this.sessionFile) return { writable: true };
+		return this.writeGuard.ownership(this.fileEntries);
 	}
 
 	/**
@@ -1774,7 +1883,24 @@ export class SessionManager {
 	persistHeaderNow(): Promise<void> {
 		if (!this.persist || !this.sessionFile || this.flushed) return this.headerWrite ?? this.transcriptFile.ready;
 		const sessionFile = this.sessionFile;
-		this.headerWrite ??= this._writeHeaderAsync(sessionFile).finally(() => {
+		const durable = this.durable;
+		if (this.bindPending) this.bindRaced = true;
+		if (durable && this.headerWrite === undefined) {
+			try {
+				durable.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
+			} catch (error) {
+				return Promise.reject(error);
+			}
+		}
+		// Bound: the store already took the header; a failed file write is a projection warning, never the caller's error.
+		this.headerWrite ??= (
+			durable
+				? this._writeHeaderAsync(sessionFile).then(
+						() => durable.recordWhole(sessionFile),
+						(error: unknown) => durable.projectionFailed(sessionFile, error),
+					)
+				: this._writeHeaderAsync(sessionFile)
+		).finally(() => {
 			this.headerWrite = undefined;
 		});
 		return this.headerWrite;
@@ -1895,21 +2021,40 @@ export class SessionManager {
 		this.writeGuard.assertWritable(this.fileEntries, entry, this.sessionFile);
 		this.writeFence.assertOwned(this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
+		// S20b: while bound, the store takes each entry first (a refusal throws here, nothing taken); today's file write
+		// below is then its projection, and a failure there is a projection warning, never the caller's error.
+		const durable = this.durable;
+		if (this.bindPending) this.bindRaced = true;
 
 		if (this.flushed) {
-			if (this.tailMayBeTorn) {
-				const recovery = truncateToLastCompleteLine(this.sessionFile, this.tornTailCause);
-				this.tailMayBeTorn = false;
-				if (recovery !== undefined) this._reportRecovery(recovery);
+			// Bound: the store takes the entry before any file work; a refusal throws here and nothing was taken.
+			const bound = durable ? this._commitBoundAppend(durable, entry) : undefined;
+			if (durable && bound && durable.projectionStale()) {
+				durable.scheduleRepair(this.sessionFile);
+				return bound.line;
 			}
-			const bytes = this._transcriptEntryBytes(entry);
+			if (this.tailMayBeTorn) {
+				try {
+					const recovery = truncateToLastCompleteLine(this.sessionFile, this.tornTailCause);
+					this.tailMayBeTorn = false;
+					if (recovery !== undefined) this._reportRecovery(recovery);
+				} catch (error) {
+					if (!durable || !bound) throw error;
+					durable.projectionFailed(this.sessionFile, error);
+					return bound.line;
+				}
+			}
+			const bytes = bound?.line ?? this._transcriptEntryBytes(entry);
 			try {
 				appendFileSync(this.sessionFile, `${bytes}\n`);
 			} catch (error) {
 				this.tailMayBeTorn = true;
 				this.tornTailCause = sessionRecoveryCause(error);
-				throw error;
+				if (!durable || !bound) throw error;
+				durable.projectionFailed(this.sessionFile, error);
+				return bytes;
 			}
+			if (durable && bound) durable.projected(this.sessionFile, bound);
 			return bytes;
 		}
 
@@ -1917,13 +2062,29 @@ export class SessionManager {
 		// written (#10000: the prompt reaches disk even if the first turn never completes).
 		const durableLifecycle = entry.type === "custom" && LIFECYCLE_ENTRY_TYPES.has(entry.customType);
 		if (!isConversationEntry(entry) && !durableLifecycle && !this._hasConversation()) return;
+		if (this.headerWrite && durableLifecycle) {
+			throw new Error("Lifecycle append requires the pending session header write to finish");
+		}
+		if (durable) {
+			durable.commitRewrite(this._headerLine(), this._storedEntries([...this.fileEntries, entry]));
+			if (durable.projectionStale()) {
+				this.flushed = true;
+				durable.scheduleRepair(this.sessionFile);
+				return this._transcriptEntryBytes(entry);
+			}
+		}
 
 		// An asynchronous header write owns the file until it finishes, and appends this entry.
-		if (this.headerWrite) {
-			if (durableLifecycle) throw new Error("Lifecycle append requires the pending session header write to finish");
-			return;
+		if (this.headerWrite) return;
+		let fd: number;
+		try {
+			fd = openSync(this.sessionFile, "wx");
+		} catch (error) {
+			if (!durable) throw error;
+			this.flushed = true;
+			durable.projectionFailed(this.sessionFile, error);
+			return this._transcriptEntryBytes(entry);
 		}
-		const fd = openSync(this.sessionFile, "wx");
 		let bytes: string | undefined;
 		try {
 			for (const e of [...this.fileEntries, entry]) {
@@ -1932,7 +2093,17 @@ export class SessionManager {
 				if (e === entry) bytes = serialized;
 			}
 		} catch (error) {
-			discardFailedFirstFlush(this.sessionFile, fd, error);
+			if (!durable) discardFailedFirstFlush(this.sessionFile, fd, error);
+			// Bound: the store holds every entry, so the half-written file is discarded and the failure is a warning.
+			let failure: unknown = error;
+			try {
+				discardFailedFirstFlush(this.sessionFile, fd, error);
+			} catch (discarded) {
+				failure = discarded;
+			}
+			this.flushed = true;
+			durable.projectionFailed(this.sessionFile, failure);
+			return this._transcriptEntryBytes(entry);
 		}
 		if (this.capturesTranscriptBase) this._captureTranscriptBase(captureAndCloseFileIdentity(fd, this.sessionFile));
 		else closeSync(fd);
@@ -1940,7 +2111,88 @@ export class SessionManager {
 		if (!this.capturesTranscriptBase) this.transcriptBytes = new WeakMap();
 		// Lifecycle bookkeeping created this file before any conversation, so an empty session can still discard it.
 		if (!isConversationEntry(entry) && !this._hasConversation()) this.ownedHeaderFile = this.sessionFile;
+		durable?.recordWhole(this.sessionFile);
 		return bytes;
+	}
+
+	private _commitBoundAppend(durable: DurableSessionBinding, entry: SessionEntry): StoredEntry {
+		const stored = { key: storeKeyOf(entry.id), line: this._transcriptEntryBytes(entry) };
+		durable.commitAppend([stored]);
+		return stored;
+	}
+
+	/**
+	 * S20b: binds this session to the durable store (opt-in; the Bun default is S21b). From here every write commits to
+	 * the store first and the JSONL is its projection. Ends when this manager switches to another session file.
+	 */
+	async bindDurableStore(binding: DurableStoreBinding): Promise<void> {
+		const sessionFile = this.sessionFile;
+		if (!this.persist || sessionFile === undefined) {
+			throw new Error("only a persisted session with a file path can be bound to the durable store");
+		}
+		this.bindPending = true;
+		this.bindRaced = false;
+		let opened: Awaited<ReturnType<typeof DurableSessionBinding.open>>;
+		try {
+			opened = await DurableSessionBinding.open(
+				binding,
+				sessionFile,
+				this.sessionId,
+				this._headerLine(),
+				(warning) => {
+					for (const listener of this.projectionWarningListeners) listener(warning);
+				},
+				{
+					beforeWrite: (path) => {
+						this.writeFence.assertOwned(path);
+						reserveSessionWrite(path);
+					},
+					afterReplace: (_path, identity) => {
+						if (this.capturesTranscriptBase) this._captureTranscriptBase(Promise.resolve(identity), this.fileEntries);
+					},
+				},
+			);
+		} finally {
+			this.bindPending = false;
+		}
+		if (this.sessionFile !== sessionFile) {
+			throw new Error(`the session moved to another file while it was being bound: ${sessionFile} was not bound`);
+		}
+		const { session, reprojected } = opened;
+		// Writes that landed while the bind was pending went to the file unbound: the store takes the session as this
+		// manager holds it, and a file the bind reprojected from the older store image is reprojected again from it.
+		if (this.bindRaced) {
+			session.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
+			if (reprojected) session.markProjectionStale(sessionFile);
+		} else if (reprojected) {
+			this.reloadFromDisk();
+		}
+		this.durable = session;
+	}
+
+	/** Resolves once the durable binding's deferred projection work (ledger records, reprojection) has run. */
+	settleDurableProjection(): Promise<void> {
+		return this.durable?.settled() ?? Promise.resolve();
+	}
+
+	/** Every projection write that failed after its store commit, one warning per failed write. */
+	onProjectionWarning(listener: (warning: ProjectionWarning) => void): () => void {
+		this.projectionWarningListeners.add(listener);
+		return () => {
+			this.projectionWarningListeners.delete(listener);
+		};
+	}
+
+	private _headerLine(): string {
+		const header = this.fileEntries.find((entry) => entry.type === "session");
+		if (header === undefined) throw new Error("the session has no header to bind");
+		return this._transcriptEntryBytes(header);
+	}
+
+	private _storedEntries(entries: readonly FileEntry[]): { key: string; line: string }[] {
+		return entries.flatMap((entry) =>
+			entry.type === "session" ? [] : [{ key: storeKeyOf(entry.id), line: this._transcriptEntryBytes(entry) }],
+		);
 	}
 
 	private _appendEntry(
@@ -1996,7 +2248,15 @@ export class SessionManager {
 		this.leafId = residentEntry.id;
 		this.fullEntryCount++;
 		this._accumulateUsage(residentEntry);
+		this._noteSessionFlags(residentEntry);
 		this.mutationCount++;
+	}
+
+	private _noteSessionFlags(entry: SessionEntry): void {
+		const archived = archivedFlagOf(entry, this.sessionId);
+		if (archived !== undefined) this.archivedCache = archived;
+		const settled = settledStateOf(entry, this.sessionId);
+		if (settled !== undefined) this.settledCache = settled;
 	}
 
 	/**
@@ -2373,6 +2633,19 @@ export class SessionManager {
 	 */
 	getSessionName(): string | undefined {
 		return this.sessionNameCache;
+	}
+
+	/**
+	 * Whether the newest `session_archived` entry naming this session archives it (senpi#6677). O(1): kept on append
+	 * and index rebuilds, so a listing never materializes the history of an idle trimmed session.
+	 */
+	isArchived(): boolean {
+		return this.archivedCache;
+	}
+
+	/** The newest `session_settled` entry naming this session (the Done flag); O(1) like `isArchived()`. */
+	getSettled(): SessionSettled {
+		return this.settledCache;
 	}
 
 	/**
@@ -3095,7 +3368,7 @@ export class SessionManager {
 		const newSessionId = createSessionId();
 		const timestamp = new Date().toISOString();
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-		const newSessionFile = join(this.getSessionDir(), `${fileTimestamp}_${newSessionId}.jsonl`);
+		const newSessionFile = join(this.getHomeSessionDir(), `${fileTimestamp}_${newSessionId}.jsonl`);
 
 		const header: SessionHeader = {
 			type: "session",
@@ -3146,7 +3419,10 @@ export class SessionManager {
 			}
 			this.mirrorTrimmed = false;
 			this.trimmedIds.clear();
+			// The branch is a new session: the original's binding never takes its writes (it is imported on a durable open).
+			this.durable = undefined;
 			this.sessionId = newSessionId;
+			this.moveToHomeSessionDir();
 			this.sessionFile = newSessionFile;
 			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 			this._buildIndex();
@@ -3261,12 +3537,18 @@ export class SessionManager {
 	 */
 	static continueRecent(cwd: string, sessionDir?: string): SessionManager {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
-		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
-		const mostRecent = findMostRecentSession(dir, filterCwd ? cwd : undefined);
+		const mostRecent = SessionManager.recentSessionFile(cwd, sessionDir);
 		if (mostRecent) {
 			return new SessionManager(cwd, dir, mostRecent, true);
 		}
 		return new SessionManager(cwd, dir, undefined, true);
+	}
+
+	/** The file `continueRecent` would open, found without loading it (loading can migrate and rewrite the file). */
+	static recentSessionFile(cwd: string, sessionDir?: string): string | null {
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
+		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		return findMostRecentSession(dir, filterCwd ? cwd : undefined);
 	}
 
 	/** Create an in-memory session (no file persistence), optionally from entries held outside the filesystem. */
@@ -3382,7 +3664,13 @@ export class SessionManager {
 			? (loaded, total, partialSessions) => onProgress(loaded, total, partialSessions?.filter(includeSession))
 			: undefined;
 		const sessions = (await listSessionsFromDir(dir, progress, signal)).filter(includeSession);
-		return sortSessionInfos(sessions);
+		if (filterCwd) return sortSessionInfos(sessions);
+		const listed = new Set(sessions.flatMap((session) => [session.path, session.id]));
+		const shared = await listSharedStoreSessions(
+			(session) => matchesCwd(session.cwd) && !listed.has(session.path) && !listed.has(session.id),
+			signal,
+		);
+		return sortSessionInfos([...sessions, ...shared]);
 	}
 
 	/**
@@ -3420,11 +3708,12 @@ export class SessionManager {
 		const sessionsDir = getSessionsDir();
 
 		try {
-			if (!existsSync(sessionsDir)) return [];
-			const entries = await readdir(sessionsDir, { withFileTypes: true });
-			const dirs = entries
+			const entries = existsSync(sessionsDir) ? await readdir(sessionsDir, { withFileTypes: true }) : [];
+			const projectDirs = entries
 				.filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
 				.map((entry) => join(sessionsDir, entry.name));
+			const storeDirs = new Set((await sharedSessionStoreDirs()).filter((dir) => !projectDirs.includes(dir)));
+			const dirs = [...projectDirs, ...storeDirs];
 
 			// Count total files first for accurate progress
 			let totalFiles = 0;
@@ -3449,8 +3738,17 @@ export class SessionManager {
 				progress?.(loaded, totalFiles, publish ? sortSessionInfos([...partialSessions]) : undefined);
 			};
 			const sessions: SessionInfo[] = [];
+			const ownIds = new Set<string>();
 			for (const [index, dir] of dirs.entries()) {
-				sessions.push(...(await listSessionFilesInDir(dir, dirFiles[index] ?? [], onLoaded, abortSignal)));
+				const fromStore = storeDirs.has(dir);
+				const summaryDir = fromStore ? sharedStoreSummaryDir(dir) : undefined;
+				const listed = await listSessionFilesInDir(dir, dirFiles[index] ?? [], onLoaded, abortSignal, summaryDir);
+				// A store's copy of one of this agent dir's own sessions (same header id) is listed once, as the original.
+				for (const session of listed) {
+					if (!fromStore) ownIds.add(session.id);
+					else if (ownIds.has(session.id)) continue;
+					sessions.push(session);
+				}
 			}
 
 			return sortSessionInfos(sessions);
