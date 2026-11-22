@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCheckpointedFileRestoreHandler } from "../../src/core/extensions/builtin/terminal/durable-file.ts";
 import { TerminalManager } from "../../src/core/extensions/builtin/terminal/manager.ts";
 import { type MonitorEvent, MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
+import { monitorElapsedSeconds } from "../../src/core/extensions/builtin/terminal/monitor-status.ts";
 import { restoreTerminalState } from "../../src/core/extensions/builtin/terminal/restore.ts";
 import {
 	DURABLE_MONITOR_EXPIRY_MS,
@@ -169,6 +170,24 @@ describe("checkpointed-file durability class", () => {
 			digest: sampleDigest("one"),
 			present: true,
 		});
+	});
+
+	// senpi#2968: restarting must not reset the age displayed in the footer.
+	it("counts a restored file watch's age from its first registration", async () => {
+		const initial = Date.now();
+		const clock = vi.spyOn(Date, "now").mockReturnValue(initial);
+		try {
+			await createPersistentWatch(join(root, "future.txt"), "create");
+			expect(monitorElapsedSeconds(lane.registry.snapshot(), initial)).toBe(0);
+			lane.restart();
+			const elapsedSeconds = 2 * 3600;
+			const restoredAt = initial + elapsedSeconds * 1000;
+			clock.mockReturnValue(restoredAt);
+			expect((await lane.restore()).restored).toBe(1);
+			expect(monitorElapsedSeconds(lane.registry.snapshot(), restoredAt)).toBe(elapsedSeconds);
+		} finally {
+			clock.mockRestore();
+		}
 	});
 
 	it("reports one created line when a watch on an absent path finds the file after a restart", async () => {

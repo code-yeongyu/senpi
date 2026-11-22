@@ -98,6 +98,7 @@ export function createCheckpointedFileRestoreHandler(deps: CheckpointedFileResto
 				description: monitor.description,
 				path: monitor.path,
 				monitorId: monitor.monitorId,
+				...(!ephemeral ? { startedAtMs: monitor.createdAt } : {}),
 				...lifetime,
 				event: monitor.event ?? "create",
 				cwd: monitor.cwd,
