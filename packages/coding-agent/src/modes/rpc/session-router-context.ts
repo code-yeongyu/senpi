@@ -24,7 +24,10 @@ import type { RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-rou
 import { registryStatusSource } from "./session-status-source.ts";
 import { HostParkLedger } from "./host-park-ledger.ts";
 import { closePark } from "./session-router-park.ts";
+import { PredecessorRoutes } from "./predecessor-routes.ts";
+import { hostGeneration } from "./protocol-identity.ts";
 export class RouterContext {
+	readonly routes = new PredecessorRoutes(this);
 	readonly parks = new HostParkLedger((opened) => closePark(this, opened));
 	readonly admissions = compactUpdatesEnabled()
 		? new CompactAdmissions(ADMISSION_LIMITS, (socketEpoch, admissionId) =>
@@ -63,7 +66,13 @@ export class RouterContext {
 		Partial<
 			Pick<
 				RpcSessionRegistry,
-				"supportsCompact" | "supportsParkClaim" | "claimPark" | "holderPids" | "attachSession" | "agentDir"
+				| "supportsCompact"
+				| "supportsParkClaim"
+				| "claimPark"
+				| "holderPids"
+				| "attachSession"
+				| "agentDir"
+				| "reserveHandle"
 			>
 		>;
 
@@ -124,6 +133,8 @@ export class RouterContext {
 
 	/** senpi#7020: what this host is still taking over from a predecessor; `list_sessions` reports it as `handover`. */
 	inheritedHandover: InheritedHandover | undefined = undefined;
+	/** A compact recovery token belongs to one physical acceptance lane. Negotiate legacy JSONL during overlap. */
+	awaitingPredecessorScan: boolean;
 
 	/** The release_session teardown; the router installs its own member here, so it owns the step. */
 	releaseTeardown = (sessionId: string, sessionPath: string): Promise<boolean> =>
@@ -151,7 +162,13 @@ export class RouterContext {
 			Partial<
 				Pick<
 					RpcSessionRegistry,
-					"supportsCompact" | "supportsParkClaim" | "claimPark" | "holderPids" | "attachSession" | "agentDir"
+					| "supportsCompact"
+					| "supportsParkClaim"
+					| "claimPark"
+					| "holderPids"
+					| "attachSession"
+					| "agentDir"
+					| "reserveHandle"
 				>
 			>,
 		writer: SessionEventWriter,
@@ -171,6 +188,7 @@ export class RouterContext {
 		// omo-relay-daemon#307: roles read each delegated socket's live record, the same object the writer keeps.
 		this.connectionRoles.useDelegations((connection) => writer.delegations.viewOf(connection));
 		this.defaults = defaults;
+		this.awaitingPredecessorScan = idle?.handoverParkedDir !== undefined && hostGeneration(process.env) > 0;
 		this.createBinding = createBinding;
 		this.connectionOptions = {
 			...connectionOptions,
@@ -213,5 +231,12 @@ export class RouterContext {
 			this.sweepTimer = setInterval(() => sweepIdleSessions(this), tickMs);
 			this.sweepTimer.unref?.();
 		}
+	}
+	compactAvailable(): boolean {
+		return (
+			!this.awaitingPredecessorScan &&
+			!this.inheritedHandover?.predecessorDraining &&
+			this.registry.supportsCompact?.() === true
+		);
 	}
 }

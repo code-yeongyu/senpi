@@ -1,3 +1,21 @@
+## 2026-11-20 - Context budget notice removed (senpi#7113, senpi#3241)
+
+### What changed
+
+The context budget notice is gone: `token-budget-reminder.ts`, its `before_agent_start` delivery (`resolveBeforeAgentStartMessage`), the `context`-event injection (`injectTokenBudgetReminder`) and the `compaction.reminderEnabled` setting. `before_agent_start` now returns only the restoration directive. Sessions that already hold a persisted `compaction-token-budget` custom message keep it as history; nothing reads its `tokenBudgetReminderEpoch` any more.
+
+### Why
+
+Background compaction is meant to be silent to the model. The notice told the model to wrap up shortly before compaction, against the core prompts, and its text changed every turn inside its zone, which re-wrote the prompt cache near the threshold (senpi#3241).
+
+### Why an extension could not handle it
+
+This builtin owned the notice.
+
+### Expected merge conflict zones
+
+`onBeforeAgentStart` in `index.ts`, the head of `orchestration.ts`, and the outgoing step of `buildCompactionContext` in `context-pipeline.ts`.
+
 ## 2026-11-18 - The hard-limit emergency prune leaves an append-only transcript untouched (senpi#6949)
 
 ### What changed

@@ -76,6 +76,7 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 		kind: entry.kind,
 		cwd: entry.cwd,
 		attachments: entry.attachments,
+		lastActivityAt: entry.lastCommandAt,
 		...(durableSessionId !== undefined ? { durableSessionId } : {}),
 		...(sessionPath !== undefined ? { sessionPath } : {}),
 		...(name !== undefined ? { name } : {}),

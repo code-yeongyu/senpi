@@ -12,6 +12,84 @@
 
 ### Removed
 
+## [2026.11.22-2] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.22] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.11.21-2] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`, `venice`, `vercel-ai-gateway`).
+
+### Fixed
+
+### Removed
+
+## [2026.11.20] - 2026-11-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Bedrock Claude models' on-demand routes carry their own price band (e.g. Haiku 5.5 $0.11/$0.55 per MTok) instead of the global inference band, in the bundled model catalog ([#7122](https://github.com/code-yeongyu/senpi/pull/7122))
+
+### Removed
+
+## [2026.11.19-5] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.19-4] - 2026-11-19
 
 ### Breaking Changes

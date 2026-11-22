@@ -32,12 +32,21 @@
  * and every outside client were gone (senpi#3272). A host treats a connection from its own generation
  * as DEPENDENT: it neither holds the host nor blocks its exit. This lives here, not in a module of its
  * own, because the supervisor's import graph is a budget (`supervisor-import-graph.test.ts`).
+ *
+ * An attached connection whose sessions on the host have ALL closed stops holding it (oh-my-openagent#14272), while
+ * one that never held a session (an ensure's attach hold, a client about to open) still counts, as does any open or
+ * command in flight. The supervisor proxies bytes and cannot see sessions, so its observer link sends
+ * `watch_host_occupancy` (an observing read) and the host answers on that connection with `host_occupancy` records
+ * carrying `holders`, the number of attached connections that still occupy it, now and on every change. A parent
+ * that keeps its shard connection after its last session closed then no longer keeps a 0-session host alive.
  */
 
 import { HOST_INSTANCE_ID_ENV, ORIGIN_HOST_INSTANCE_ENV, presentInstanceId } from "./host-identity-env.ts";
 import { RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 
 export const OBSERVE_REQUEST_FIELD = "observe";
+export const WATCH_HOST_OCCUPANCY = "watch_host_occupancy";
+export const HOST_OCCUPANCY_RECORD = "host_occupancy";
 export const ORIGIN_HOST_INSTANCE_FIELD = "origin_host_instance";
 const HOLD_HOST_FIELD = "hold_host";
 
@@ -52,6 +61,7 @@ const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
 	"get_subscription_limits",
 	"get_state",
 	"get_entries",
+	WATCH_HOST_OCCUPANCY,
 ]);
 
 export function isObservingRequest(line: string): boolean {
@@ -89,6 +99,32 @@ export function observingHoldChange(line: string): boolean | undefined {
 	if (record[OBSERVE_REQUEST_FIELD] !== true || !OBSERVING_COMMANDS.has(record.type)) return undefined;
 	const hold = record[HOLD_HOST_FIELD];
 	return typeof hold === "boolean" ? hold : undefined;
+}
+
+/** Whether a request line is the supervisor observer's `watch_host_occupancy`; a cheap scan first, most lines are not. */
+export function isHostOccupancyWatch(line: string): boolean {
+	if (!line.includes(WATCH_HOST_OCCUPANCY)) return false;
+	try {
+		const request: unknown = JSON.parse(line);
+		return typeof request === "object" && request !== null && Reflect.get(request, "type") === WATCH_HOST_OCCUPANCY;
+	} catch {
+		return false;
+	}
+}
+
+/** The `holders` of a `host_occupancy` record line; undefined for every other line. */
+export function hostOccupancyHolders(line: string): number | undefined {
+	if (!line.includes(HOST_OCCUPANCY_RECORD)) return undefined;
+	let record: unknown;
+	try {
+		record = JSON.parse(line);
+	} catch {
+		return undefined;
+	}
+	if (typeof record !== "object" || record === null || Reflect.get(record, "type") !== HOST_OCCUPANCY_RECORD)
+		return undefined;
+	const holders: unknown = Reflect.get(record, "holders");
+	return typeof holders === "number" && Number.isSafeInteger(holders) && holders >= 0 ? holders : undefined;
 }
 
 /** The host generation this process runs in, or undefined outside any host. */

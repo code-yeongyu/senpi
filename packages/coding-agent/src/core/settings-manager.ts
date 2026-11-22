@@ -1240,9 +1240,10 @@ export class SettingsManager {
 			: undefined;
 	}
 
-	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
+	/** The user's `todo.firstTurnPlan`, else `fallback`: the default the active prompt preset declares. */
+	getTodoFirstTurnPlan(fallback: TodoFirstTurnPlan = "force"): TodoFirstTurnPlan {
 		const configured = this.settings.todo?.firstTurnPlan;
-		return configured === "remind" || configured === "off" ? configured : "force";
+		return configured === "force" || configured === "remind" || configured === "off" ? configured : fallback;
 	}
 
 	getTodoTurnEndBackstop(): boolean {

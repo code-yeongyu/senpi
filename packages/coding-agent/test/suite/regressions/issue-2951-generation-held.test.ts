@@ -1,11 +1,11 @@
 import * as childProcess from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readProcessStartMs } from "../../../src/core/extensions/builtin/terminal/process-start-probe.ts";
 import { liveSessionHolders } from "../../../src/core/session-holders.ts";
-import { createSessionPathReservations } from "../../../src/modes/rpc/host-reservations.ts";
+import { createSessionPathReservations, reservationFile } from "../../../src/modes/rpc/host-reservations.ts";
 import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
@@ -54,6 +54,10 @@ it.each([
 		);
 		const old = createSessionPathReservations({ daemonDir: dir, instanceId: "old", pid: holder.pid });
 		await old.claim(await realpath(file), attached);
+		// The reclaim case models a generation from before the strict-transfer contract (#1893): its
+		// detached claim gives way. A claim published under that contract stands while its owner runs
+		// (senpi#7098, 7098-draining-owner-claim-stands.test.ts).
+		if (!attached) await dropStrictTransfer(join(dir, "reservations"), await realpath(file));
 		await writeFile(join(dir, "host.pid"), JSON.stringify({ instance_id: attached ? "old" : "new" }));
 		const current = createSessionPathReservations({ daemonDir: dir, instanceId: "new" });
 		const delivered: string[] = [];
@@ -90,6 +94,12 @@ it.each([
 		}
 	},
 );
+
+async function dropStrictTransfer(reservationsDir: string, sessionPath: string): Promise<void> {
+	const claimFile = reservationFile(reservationsDir, sessionPath);
+	const { strict_transfer: _, ...legacy } = JSON.parse(await readFile(claimFile, "utf8")) as Record<string, unknown>;
+	await writeFile(claimFile, `${JSON.stringify(legacy)}\n`, { mode: 0o600 });
+}
 
 it("rechecks after publishing the runtime holder and rolls back an open raced by a foreign holder", async () => {
 	await using rig = createInProcessRig(root);

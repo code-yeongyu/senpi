@@ -12,6 +12,80 @@
 
 ### Removed
 
+## [2026.11.22-2] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- JS eval reports the original line and column for malformed cells when the parser can locate the error ([#7201](https://github.com/code-yeongyu/senpi/pull/7201)).
+
+### Removed
+
+## [2026.11.22] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21-2] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.20] - 2026-11-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-5] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.19-4] - 2026-11-19
 
 ### Breaking Changes
