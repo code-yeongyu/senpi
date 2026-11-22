@@ -29,6 +29,7 @@ export interface WriteHookDeps {
 	readonly fs: Pick<ScanFs, "read">;
 	/** Absent on a host that cannot run `tool_result` handlers for work already done. */
 	readonly report: ReportToolResult | undefined;
+	/** The hooks for this file returned or failed: what they left on disk is the reporting cell's. */
 	readonly noteHooked: (absolutePath: string) => Promise<void>;
 	readonly signal: AbortSignal;
 }
@@ -78,9 +79,8 @@ export async function reportWrittenFiles(
 			}
 		} catch (error) {
 			fail(file.path, error instanceof Error ? error.message : String(error));
-			continue;
 		}
-		// A hook may rewrite the file (a formatter); that rewrite is not a later cell's write.
+		// A hook may rewrite the file (a formatter), even one that then failed; that rewrite is not a later cell's write.
 		await deps.noteHooked(file.absolutePath);
 	}
 	return { files: listed.map((file) => file.path), total: sources.length, hooked, hookOutputs, hookFailures };

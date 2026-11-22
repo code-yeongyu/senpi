@@ -84,11 +84,15 @@ describe("workspace scan", () => {
 			"rev-parse": { kind: "ok", stdout: AT_REPOSITORY_ROOT },
 			status: records("# branch.oid 2222"),
 			diff: records("M", "src/committed.ts", "D", "src/untracked-now.ts"),
+			"ls-files": records("src/committed.ts"),
 		});
 		const previous = { head: "1111", files: new Map(), tracked: new Set(["src/untracked-now.ts"]) };
 
 		expect(paths(await subject.scan(previous))).toEqual(["src/committed.ts"]);
-		expect(calls.at(-1)).toEqual(["diff", "--name-status", "-z", "--no-renames", "1111", "2222", "--", "."]);
+		expect(calls.slice(-2)).toEqual([
+			["diff", "--name-status", "-z", "--no-renames", "1111", "2222", "--", "."],
+			["--literal-pathspecs", "ls-files", "-z", "--cached", "--", "src/committed.ts"],
+		]);
 	});
 
 	// Review findings: a tracked file written back to its HEAD content leaves `git status`, so it is checked again from
@@ -97,6 +101,7 @@ describe("workspace scan", () => {
 		const answers: Record<string, GitOutcome> = {
 			"rev-parse": { kind: "ok", stdout: AT_REPOSITORY_ROOT },
 			status: records("# branch.oid 1111", "? src/new.ts"),
+			"ls-files": records(...Array.from({ length: 5 }, (_, index) => `src/restored-${index}.ts`)),
 		};
 		const previous = (count: number) => {
 			const tracked = Array.from({ length: count }, (_, index) => `src/restored-${index}.ts`);
@@ -106,6 +111,8 @@ describe("workspace scan", () => {
 
 		expect(paths(await scanner(answers).subject.scan(previous(1)))).toEqual(["src/new.ts", "src/restored-0.ts"]);
 		expect(paths(await scanner(answers).subject.scan(previous(5)))).toBe("over_budget");
+		const indexUnknown = { ...answers, "ls-files": { kind: "exit", code: 128 } } satisfies Record<string, GitOutcome>;
+		expect(paths(await scanner(indexUnknown).subject.scan(previous(1)))).toEqual(["src/new.ts"]);
 	});
 
 	it.each([

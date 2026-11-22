@@ -1,22 +1,8 @@
 import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type WrittenFilesHarness, writtenFilesHarness } from "./eval/written-files-fakes.ts";
+import { cellListing, reportedPaths, writtenFilesHarness } from "./eval/written-files-fakes.ts";
 
 const OUTSIDE = sep === "/" ? "/elsewhere" : "C:\\elsewhere";
-
-/** Runs `work` as one cell's writes and returns what the cell would list. */
-async function cellListing(harness: WrittenFilesHarness, work: () => void): Promise<readonly string[] | undefined> {
-	const cell = harness.writtenFiles.open(harness.ctx);
-	await cell.ready;
-	work();
-	const outcome = await cell.settle(new AbortController().signal);
-	cell.close();
-	return outcome?.kind === "written" ? outcome.report.files : undefined;
-}
-
-function reportedPaths(harness: WrittenFilesHarness): unknown[] {
-	return harness.reported.map((report) => report.input.path);
-}
 
 // senpi#7232 review findings: what git reports is checked against the filesystem before a file is listed or read.
 describe("written files at the edges of the workspace", () => {

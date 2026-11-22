@@ -12,14 +12,23 @@ export interface FileSignature {
 	readonly dev: number;
 }
 
+/**
+ * What a path names, every symlink followed. `absent` is confirmed absence (nothing there, or a parent is not a
+ * directory); `unknown` is any lookup that could not tell, a permission error or a link loop among them.
+ */
+export type PathIdentity =
+	| { readonly kind: "found"; readonly dev: number; readonly ino: number }
+	| { readonly kind: "absent" }
+	| { readonly kind: "unknown" };
+
 /** The filesystem as the operating system resolves it: symlinks in a path's directories are followed. */
 export interface FsAccess {
 	/** The path with every symlink in it resolved; undefined when it does not resolve. */
 	realpath(path: string): Promise<string | undefined>;
 	/** The signature of a regular file, its last entry not followed; undefined for a symlink, anything else and a missing path. */
 	lstat(path: string): Promise<FileSignature | undefined>;
-	/** The device and inode of whatever the path names, every symlink followed; undefined when it names nothing. */
-	identity(path: string): Promise<Pick<FileSignature, "dev" | "ino"> | undefined>;
+	/** The device and inode of whatever the path names, every symlink followed. */
+	identity(path: string): Promise<PathIdentity>;
 	/**
 	 * Opens the path, refusing a symlink as its last entry where the platform can, and reads at most `limit` leading
 	 * bytes only when the file it opened is a regular file `accept` takes, asked after the open and before any read;
@@ -50,12 +59,13 @@ export function createNodeFsAccess(): FsAccess {
 	return { realpath: realLocation, lstat: statRegularFile, identity: identityOf, read: readLeadingBytes };
 }
 
-async function identityOf(path: string): Promise<Pick<FileSignature, "dev" | "ino"> | undefined> {
+async function identityOf(path: string): Promise<PathIdentity> {
 	try {
 		const stats = await stat(path);
-		return { dev: stats.dev, ino: stats.ino };
-	} catch {
-		return undefined;
+		return { kind: "found", dev: stats.dev, ino: stats.ino };
+	} catch (error) {
+		const code = error instanceof Error && "code" in error ? error.code : undefined;
+		return code === "ENOENT" || code === "ENOTDIR" ? { kind: "absent" } : { kind: "unknown" };
 	}
 }
 

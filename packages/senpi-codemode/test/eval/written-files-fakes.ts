@@ -25,6 +25,8 @@ export class FakeWorkspace {
 	beforeOpen: ((path: string) => void) | undefined;
 	/** Set before the first write: whether the filesystem folds case, as macOS and Windows ones do by default. */
 	caseInsensitive = false;
+	/** Absolute paths whose identity lookup fails without telling whether anything is there (EACCES, EIO, ELOOP). */
+	readonly identityFailures = new Set<string>();
 	/** Keyed by the file's absolute real path. */
 	readonly #files = new Map<string, { readonly bytes: Uint8Array; readonly signature: FileSignature }>();
 	/** A symlinked directory's absolute path and the absolute directory it points to. */
@@ -35,6 +37,8 @@ export class FakeWorkspace {
 	readonly #committed = new Map<string, string>();
 	/** Committed paths `git rm --cached` took out of the index. */
 	readonly #removedFromIndex = new Set<string>();
+	/** Paths `git add` put in the index that the last commit does not have. */
+	readonly #staged = new Set<string>();
 	readonly #directoryInodes = new Map<string, number>();
 	#clock = 0;
 
@@ -62,9 +66,17 @@ export class FakeWorkspace {
 		this.#files.set(this.#key(target), file);
 	}
 
-	/** `git rm --cached`: the committed file `path` leaves the index and stays on disk, untracked. */
+	/**
+	 * `git rm --cached`: the file `path` leaves the index and stays on disk, untracked. A committed file leaves a
+	 * deletion record in `git status`; a file only staged since the last commit leaves none.
+	 */
 	untrack(path: string): void {
-		this.#removedFromIndex.add(path);
+		if (!this.#staged.delete(path)) this.#removedFromIndex.add(path);
+	}
+
+	/** `git add` of a file the last commit does not have. */
+	stage(path: string): void {
+		this.#staged.add(path);
 	}
 
 	/** Replaces the workspace directory `path` and everything in it with a symlink to the absolute `target`. */
@@ -88,6 +100,7 @@ export class FakeWorkspace {
 
 	commit(): void {
 		this.#committed.clear();
+		this.#staged.clear();
 		for (const [path, file] of this.#workspaceFiles())
 			this.#committed.set(path, new TextDecoder().decode(file.bytes));
 	}
@@ -104,13 +117,14 @@ export class FakeWorkspace {
 		},
 		lstat: async (path) => this.#files.get(this.#key(this.#followParents(path)))?.signature,
 		identity: async (path) => {
+			if (this.identityFailures.has(path)) return { kind: "unknown" };
 			const key = this.#key(this.#resolve(path));
 			const file = this.#files.get(key);
-			if (file !== undefined) return file.signature;
-			if (![...this.#files.keys()].some((stored) => stored.startsWith(key + sep))) return undefined;
+			if (file !== undefined) return { kind: "found", dev: file.signature.dev, ino: file.signature.ino };
+			if (![...this.#files.keys()].some((stored) => stored.startsWith(key + sep))) return { kind: "absent" };
 			const ino = this.#directoryInodes.get(key) ?? 1_000_000 + this.#directoryInodes.size;
 			this.#directoryInodes.set(key, ino);
-			return { dev: 1, ino };
+			return { kind: "found", dev: 1, ino };
 		},
 		read: async (path, limit, accept) => {
 			this.beforeOpen?.(path);
@@ -156,6 +170,13 @@ export class FakeWorkspace {
 	readonly git: RunGit = async (args) => {
 		this.gitCalls.push([...args]);
 		if (args[0] === "rev-parse") return { kind: "ok", stdout: `${this.cwd}\n\n` };
+		if (args[0] === "--literal-pathspecs" && args[1] === "ls-files") {
+			const named = args.slice(args.indexOf("--") + 1);
+			const indexed = named.filter(
+				(path) => this.#staged.has(path) || (this.#committed.has(path) && !this.#removedFromIndex.has(path)),
+			);
+			return { kind: "ok", stdout: indexed.map((path) => `${path}\0`).join("") };
+		}
 		if (args[0] !== "status") return { kind: "exit", code: 1 };
 		if (this.statusOutcome !== undefined) return this.statusOutcome;
 		const records = ["# branch.oid 1111111111111111111111111111111111111111", "# branch.head main"];
@@ -165,6 +186,8 @@ export class FakeWorkspace {
 			if (committed !== undefined && this.#removedFromIndex.has(path)) {
 				records.push(`1 D. N... 100644 000000 000000 aaaa 0000 ${path}`);
 				if (!this.#ignored.has(path)) records.push(`? ${path}`);
+			} else if (committed === undefined && this.#staged.has(path)) {
+				records.push(`1 A. N... 000000 100644 100644 0000 aaaa ${path}`);
 			} else if (committed === undefined) {
 				if (!this.#ignored.has(path)) records.push(`? ${path}`);
 			} else if (committed !== new TextDecoder().decode(file.bytes))
@@ -213,4 +236,21 @@ export function writtenFilesHarness(
 		...options,
 	});
 	return { workspace, writtenFiles, reported, ctx };
+}
+
+/** Runs `work` as one cell's writes and returns what the cell would list. */
+export async function cellListing(
+	harness: WrittenFilesHarness,
+	work: () => void,
+): Promise<readonly string[] | undefined> {
+	const cell = harness.writtenFiles.open(harness.ctx);
+	await cell.ready;
+	work();
+	const outcome = await cell.settle(new AbortController().signal);
+	cell.close();
+	return outcome?.kind === "written" ? outcome.report.files : undefined;
+}
+
+export function reportedPaths(harness: WrittenFilesHarness): unknown[] {
+	return harness.reported.map((report) => report.input.path);
 }

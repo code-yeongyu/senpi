@@ -123,11 +123,26 @@ export class WorkspaceScanner {
 		// Only tracked files are carried over: an untracked one leaves `git status` when it is deleted, committed (the
 		// diff above finds it) or ignored, and an ignored file is no candidate. A path deleted from the index, staged or
 		// committed, is untracked from then on, so neither its deletion nor an earlier scan carries it; a status record
-		// other than a deletion is the index as it is now and outranks both.
+		// other than a deletion is the index as it is now and outranks both. A path that left `git status` without a
+		// record (`git rm --cached` of a file HEAD does not have leaves none) is carried only once the index shows it.
 		const gone = new Set(inWorkspace(untrackedFromIndex));
-		const carried = [...inWorkspace(committed), ...(previous?.tracked ?? [])].filter((path) => !gone.has(path));
-		const trackedHere = [...inWorkspace(tracked), ...carried];
+		const listed = new Set(inWorkspace(tracked));
+		const unlisted = [...new Set([...inWorkspace(committed), ...(previous?.tracked ?? [])])].filter(
+			(path) => !gone.has(path) && !listed.has(path),
+		);
+		const indexed = await this.#indexed(unlisted);
+		if (indexed === "over_budget") return { kind: "skipped", reason: "over_budget" };
+		const trackedHere = [...listed, ...unlisted.filter((path) => indexed.has(path))];
 		return this.#signatures([...inWorkspace(untracked), ...trackedHere], head, new Set(trackedHere));
+	}
+
+	/** Which of the workspace-relative `paths` the index has, in one git process; none when git cannot say. */
+	async #indexed(paths: readonly string[]): Promise<ReadonlySet<string> | "over_budget"> {
+		if (paths.length === 0) return new Set();
+		if (paths.length > this.#pathLimit) return "over_budget";
+		const listed = await this.#git(["--literal-pathspecs", "ls-files", "-z", "--cached", "--", ...paths]);
+		if (listed.kind === "over_budget") return "over_budget";
+		return new Set(listed.kind === "ok" ? listed.stdout.split("\0").filter((path) => path !== "") : []);
 	}
 
 	async #scanPlain(): Promise<WorkspaceScan> {

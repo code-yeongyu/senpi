@@ -159,6 +159,29 @@ describe("written files against real git", () => {
 		expect(files).toEqual(["src/restored.ts"]);
 	});
 
+	it("drops a staged file HEAD does not have once the cell takes it out of the index and ignores it", async () => {
+		const root = tempRoot();
+		const repo = join(root, "repo");
+		mkdirSync(repo);
+		git(repo, "init", "--quiet");
+		const committed = "export const value = 1;\n";
+		put(repo, "src/restored.ts", committed);
+		git(repo, "add", "--all");
+		git(repo, "commit", "--quiet", "--message", "init");
+		put(repo, "src/restored.ts", "export const value = 2;\n");
+		put(repo, "src/new.ts", "export const staged = 1;\n");
+		git(repo, "add", "src/new.ts");
+
+		const files = await writtenBy(repo, join(root, "artifacts"), () => {
+			git(repo, "rm", "--cached", "--quiet", "src/new.ts");
+			appendFileSync(join(repo, ".git", "info", "exclude"), "src/new.ts\n");
+			put(repo, "src/new.ts", "export const rewritten: number = 'x';\n");
+			put(repo, "src/restored.ts", committed);
+		});
+
+		expect(files).toEqual(["src/restored.ts"]);
+	});
+
 	it("honours a workspace's own ignore file where there is no repository, and leaves out the session's artifacts", async () => {
 		const root = tempRoot();
 		const workspace = join(root, "plain");

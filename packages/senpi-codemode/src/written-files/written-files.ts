@@ -101,13 +101,15 @@ export class WrittenFiles {
 					const written = await reportWrittenFiles(change.files, {
 						fs: this.#fs,
 						report,
-						noteHooked: (path) => this.#tracker.noteHooked(path),
+						noteHooked: (path) => window.hooked(path),
 						signal,
 					});
 					if (written === undefined) return undefined;
 					return { kind: "written", report: written, hooksAvailable: report !== undefined };
 				} catch (error) {
 					return { kind: "failed", message: error instanceof Error ? error.message : String(error) };
+				} finally {
+					window.release();
 				}
 			},
 			close: () => window.close(),

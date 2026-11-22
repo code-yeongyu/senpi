@@ -24,7 +24,8 @@ export interface WorkspaceRoots {
  *
  * An excluded directory is found by what it is, not only by how it is spelled: a segment that differs from an
  * excluded name only in case is excluded when the filesystem resolves both spellings to the same directory, which a
- * case-insensitive one does and a case-sensitive one does not.
+ * case-insensitive one does and a case-sensitive one does not. Only confirmed absence of either spelling shows the
+ * two apart; a lookup that could not tell (permission, I/O, a link loop) excludes the segment.
  *
  * A read takes bytes only from the regular file the stat just saw (same device and inode), and only after the open
  * shows the path still names that file at the same real location, its last entry not a link: a platform that cannot
@@ -33,9 +34,11 @@ export interface WorkspaceRoots {
  * while it was inside; and a directory swapped away and back between two checks is not seen.
  */
 export function workspaceFs(roots: WorkspaceRoots, access: FsAccess): ScanFs {
-	const sameDirectory = async (spelled: string, named: string): Promise<boolean> => {
+	/** False only when the two spellings are shown to be distinct directories. */
+	const maybeSameDirectory = async (spelled: string, named: string): Promise<boolean> => {
 		const [left, right] = await Promise.all([access.identity(spelled), access.identity(named)]);
-		if (left === undefined || right === undefined) return false;
+		if (left.kind === "unknown" || right.kind === "unknown") return true;
+		if (left.kind === "absent" || right.kind === "absent") return false;
 		// Without an inode two existing directories cannot be told apart, so the spelled one counts as excluded.
 		return left.ino === 0 || right.ino === 0 || (left.dev === right.dev && left.ino === right.ino);
 	};
@@ -45,7 +48,7 @@ export function workspaceFs(roots: WorkspaceRoots, access: FsAccess): ScanFs {
 				.filter((name) => segment !== name && segment.toUpperCase() === name.toUpperCase())
 				.map((name) => {
 					const parent = join(root, ...segments.slice(0, index));
-					return sameDirectory(join(parent, segment), join(parent, name));
+					return maybeSameDirectory(join(parent, segment), join(parent, name));
 				}),
 		);
 		return (await Promise.all(checks)).includes(true);

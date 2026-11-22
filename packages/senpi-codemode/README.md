@@ -627,7 +627,8 @@ its completion notification.
   `node_modules` and the session's own artifacts directory (a path below a
   directory that links out of the workspace or into one of those is never
   listed, read or hooked; on a case-insensitive filesystem `NODE_MODULES` or
-  `.GIT` counts as the excluded directory when it resolves to the same one; a
+  `.GIT` counts as the excluded directory when it resolves to the same one, and
+  also when either lookup fails for any reason but the path being absent; a
   file is read only if the file opened is the regular file just checked and,
   after the open, the path still names it at the same real location with no
   link as its last entry, so a symlink swapped in as the last entry, even to the
@@ -639,13 +640,16 @@ its completion notification.
   differ from HEAD or are untracked, plus files committed while the cell ran,
   plus the earlier scan's tracked files, so a tracked file written back to its
   HEAD content counts as written; an untracked file the cell makes ignored does
-  not, nor does a file taken out of the index with `git rm --cached`);
+  not, nor does a file taken out of the index with `git rm --cached`: an
+  earlier tracked file that leaves `git status` is carried only when
+  `git ls-files` still finds it in the index, and not when git cannot say);
   elsewhere it lists the workspace through an empty repository kept in the
   session artifacts, so the workspace's own ignore files still apply. It needs
   `git`; without it the first cell says the check is off.
 - **Cost**: one scan before the first live cell starts and one at each
   settlement. A scan is one `git` process killed at 500 ms that may stat at most
-  5,000 changed or untracked paths. Three scans in a row that fail or run over
+  5,000 changed or untracked paths, plus one more under the same deadline when
+  HEAD moved and one when earlier tracked files left `git status`. Three scans in a row that fail or run over
   that budget turn the check off for the session, and the cell says so.
 - **Hooks**: only `tool_result` handlers run, with `toolName: "write"`,
   `input: { path, content }` (absolute path, the content on disk) and
@@ -654,7 +658,12 @@ its completion notification.
   fails is named in the block; the cell still succeeds.
 - **Once**: a file a `write` or `edit` call took through the hooks, from the cell
   or from the model while a detached cell was running, is not sent again unless
-  it was rewritten afterwards.
+  it was rewritten afterwards. A file a cell's settlement listed belongs to that
+  cell until its write hooks for it return, so a hook that rewrites it (a
+  formatter) is never charged to another cell that settles meanwhile; that other
+  cell leaves the file out, and a change it made to that file while the hook ran
+  is taken as the hook's. The host's `tool_result` handler deadline bounds how
+  long a hook can hold a file.
 - **Limits**: the first 20 files are listed and hooked and the rest are counted;
   hook output is capped at 2,000 code points per file and 12,000 per cell.
 
