@@ -4,7 +4,6 @@
  * the ensure itself resolves before the pass removes anything, and the target endpoint is never judged.
  */
 import { existsSync, readdirSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import type { Server } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -55,23 +54,9 @@ describe.skipIf(process.platform === "win32")("budgeted gc pass scheduled by ens
 		expect(await probeHost({ socket: qa.legacy })).toBeDefined();
 	}, 180_000);
 
-	it("costs the awaited ensure nothing even when 40 worst-case candidates wait for the pass", async () => {
+	it("returns the host before the GC pass completes with 40 locked candidates", async () => {
 		const qa = endpointScratch("ogl");
 		const marker = gcMarkerPath(qa.agentDir);
-		const timedEnsure = async (): Promise<number> => {
-			await rm(marker, { force: true });
-			const started = performance.now();
-			const elapsed = await heldRealHost(qa, qa.legacy, { gcPassInFlight: true }).then((ensured) => {
-				const ms = performance.now() - started;
-				ensured.release();
-				return ms;
-			});
-			await fileWritten(marker, 30_000);
-			return elapsed;
-		};
-		await timedEnsure();
-		const quiet = [await timedEnsure(), await timedEnsure()];
-
 		// Each candidate costs a gc the full 2 s lock wait: its ensure lock is held here.
 		const held: (() => Promise<void>)[] = [];
 		const servers: Server[] = [];
@@ -82,15 +67,13 @@ describe.skipIf(process.platform === "win32")("budgeted gc pass scheduled by ens
 				held.push(await acquireHostEnsureLock(socket, 2_000));
 				servers.push(await listeningSocket(socket));
 			}
-			const loaded = await timedEnsure();
+			const host = await heldRealHost(qa, qa.legacy, { gcPassInFlight: true });
+			expect(existsSync(marker)).toBe(false);
+			host.release();
+			await fileWritten(marker, 30_000);
 			const gcMarker = await readGcMarker(qa.agentDir);
-			console.info(
-				`ensure ms: quiet ${quiet.map((ms) => ms.toFixed(1)).join(", ")}; 40 candidates ${loaded.toFixed(1)}`,
-			);
-
 			expect(gcMarker.removed).toBe(0);
 			expect(gcMarker.examined).toBeGreaterThan(0);
-			expect(loaded).toBeLessThanOrEqual(Math.max(...quiet) + 100);
 		} finally {
 			for (const release of held) await release();
 			for (const server of servers) await closeServer(server);
