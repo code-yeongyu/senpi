@@ -263,6 +263,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 				return undefined;
 			}
 		}
+		if (event.message.stopReason === "aborted" || event.message.stopReason === "error") return undefined;
 		if (hasToolCall(event.message)) {
 			repetitiveTurns.noteToolWork();
 			return undefined;

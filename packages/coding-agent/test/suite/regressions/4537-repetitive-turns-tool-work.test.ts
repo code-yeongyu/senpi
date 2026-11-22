@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import ttsrExtension from "../../../src/core/extensions/builtin/ttsr/index.ts";
 import { ruleAlreadyCorrected } from "../../../src/core/extensions/builtin/ttsr/follow-up-limit.ts";
+import { readPersistedAssistantTexts } from "../../../src/core/extensions/builtin/ttsr/repetitive-turns-lane.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
@@ -207,6 +208,19 @@ describe("senpi#4537 the one-correction bound is scoped to one repetition episod
 		type: "message",
 		message: { role: "assistant", content: [{ type: "text", text: STATUS }] },
 	} as unknown as SessionEntry;
+
+	it.each(["aborted", "error"] as const)("does not count a %s partial tool call as progress", (stopReason) => {
+		const partial = {
+			type: "message",
+			id: "partial",
+			parentId: null,
+			timestamp: "2026-11-22T00:00:00Z",
+			message: fauxAssistantMessage([fauxToolCall("echo", { text: "incomplete" })], { stopReason }),
+		} as const;
+		const entries = [statusOnly, injection, partial];
+		expect(ruleAlreadyCorrected(entries, "repetitive-turns")).toBe(true);
+		expect(readPersistedAssistantTexts({ sessionManager: { getEntries: () => entries } })).toEqual([STATUS]);
+	});
 
 	it.each([
 		{ name: "a repeat right after the correction", entries: [user, injection, statusOnly], spent: true },

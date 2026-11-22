@@ -40,6 +40,8 @@ export function readPersistedAssistantTexts(ctx: SessionEntrySource): string[] {
 		const message: unknown = Reflect.get(entry, "message");
 		if (typeof message !== "object" || message === null) continue;
 		if (Reflect.get(message, "role") !== "assistant") continue;
+		const stopReason: unknown = Reflect.get(message, "stopReason");
+		if (stopReason === "aborted" || stopReason === "error") continue;
 		const content: unknown = Reflect.get(message, "content");
 		if (hasToolCall({ content })) {
 			texts = [];

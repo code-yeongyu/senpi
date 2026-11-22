@@ -1,5 +1,4 @@
 import type { SessionEntry } from "../../../session-manager.ts";
-import { hasToolCall } from "./repetitive-turns-lane.ts";
 import { TTSR_INJECTION_CUSTOM_TYPE } from "./types.ts";
 
 export const TTSR_LOOP_STOPPED_ENTRY_TYPE = "ttsr-loop-stopped";
@@ -26,7 +25,8 @@ export function ruleAlreadyCorrected(entries: readonly SessionEntry[], rule: str
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
 		if (entry.type === "message" && entry.message.role === "user") return false;
-		if (entry.type === "message" && entry.message.role === "assistant" && hasToolCall(entry.message)) return false;
+		// An interrupted stream can persist a partial toolCall that never ran. Its result proves dispatch.
+		if (entry.type === "message" && entry.message.role === "toolResult") return false;
 		if (nudgedRules(entry).includes(rule)) return true;
 	}
 	return false;
