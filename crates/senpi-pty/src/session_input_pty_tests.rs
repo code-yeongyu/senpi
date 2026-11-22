@@ -5,12 +5,12 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const PAYLOAD_LINES: usize = 16_384;
 const PAYLOAD_BYTES: usize = PAYLOAD_LINES * 64;
-const GATE_SCRIPT: &str = "stty -echo; printf GATED; read -r _ < \"$1\"; head -c \"$2\" | wc -c";
+const GATE_SCRIPT: &str = "stty -echo; echo GATED; read -r _ < \"$1\"; head -c \"$2\" | wc -c";
 
 struct Fifo(PathBuf);
 
