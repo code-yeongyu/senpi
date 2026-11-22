@@ -95,12 +95,17 @@ const compiler = (() => {
 	return undefined;
 })();
 
-const bunFfiAvailable = process.getBuiltinModule("bun:ffi") !== undefined;
+// The entry children run under Bun (bun:ffi), whichever runner hosts this file, so they also run under vitest.
+const bunBinary = process.versions.bun
+	? process.execPath
+	: spawnSync("bun", ["--version"]).status === 0
+		? "bun"
+		: undefined;
 const entrySkipReason =
 	process.platform === "win32"
 		? "the real kernel32 path is covered by windows-power-throttling.win32.test.ts"
-		: !bunFfiAvailable
-			? "bun:ffi unavailable"
+		: bunBinary === undefined
+			? "no Bun runtime for the entry child"
 			: compiler === undefined
 				? "no C compiler for the fake kernel32"
 				: undefined;
@@ -159,7 +164,7 @@ await import(${JSON.stringify(new URL("./core/hidden-stdout-log.ts", import.meta
 await new Promise((resolve) => setImmediate(resolve));
 // The parent asserts the log contents; the child only fails a start that must not touch the log at all.
 process.exit(!wantEntry && fs.existsSync(log) ? 6 : 0);`;
-	const child: ChildProcess = spawn(process.execPath, ["-e", childScript], {
+	const child: ChildProcess = spawn(bunBinary as string, ["-e", childScript], {
 		env: {
 			...process.env,
 			SENPI_CODING_AGENT_DIR: agentDir,
@@ -197,6 +202,42 @@ describe.skipIf(entrySkipReason !== undefined)(
 				expect(run.logText).toContain("windows power throttling opt-out failed");
 				expect(run.logText).toContain("step=SetProcessInformation");
 				expect(run.logText).toContain("win32Error=5");
+			} finally {
+				fs.rmSync(agentDir, { recursive: true, force: true });
+			}
+		});
+
+		// Review of #7331: a fast exit (--version, engine-free --help) leaves through exitAfterOutput right after startup;
+		// the failure entry is written before it exits, exactly once.
+		it("a failed opt-out followed by the fast exit still writes exactly one entry", async () => {
+			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "senpi-6132-fast-"));
+			try {
+				const failingKernel = compileFakeKernel32(path.join(agentDir, "failing-kernel32"), true);
+				const exitUrl = new URL("./cli/print-then-exit.ts", import.meta.url).href;
+				const script = [
+					"const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');",
+					"Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' });",
+					`await import(${JSON.stringify(moduleUrl)});`,
+					"Object.defineProperty(process, 'platform', descriptor);",
+					`const { exitAfterOutput } = await import(${JSON.stringify(exitUrl)});`,
+					"await exitAfterOutput('');",
+				].join("\n");
+				const child = spawnSync(bunBinary as string, ["-e", script], {
+					env: {
+						...process.env,
+						SENPI_CODING_AGENT_DIR: agentDir,
+						PI_CODING_AGENT_DIR: agentDir,
+						LD_LIBRARY_PATH: failingKernel,
+					},
+					encoding: "utf8",
+				});
+				expect(child.status, child.stderr).toBe(0);
+				const logs = fs
+					.readdirSync(agentDir, { recursive: true })
+					.map(String)
+					.filter((name) => name.endsWith(".log"));
+				const text = logs.map((name) => fs.readFileSync(path.join(agentDir, name), "utf8")).join("");
+				expect(text.split("windows power throttling opt-out failed").length - 1).toBe(1);
 			} finally {
 				fs.rmSync(agentDir, { recursive: true, force: true });
 			}
