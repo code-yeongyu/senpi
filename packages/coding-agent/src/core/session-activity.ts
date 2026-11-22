@@ -17,13 +17,13 @@
  * added later cannot be silently missed by one call site.
  */
 
-import { normalizeWaitItems, type WaitSourceItems, wakeSourceItems } from "./lifecycle-wait-items.ts";
-
 /** Live counts of extension-published wake sources, keyed by source name. */
 export class WakeSourceTracker {
+	// Counts and kinds only: named items reach readers through the lifecycle binding's own `wakeSourceItems`
+	// read (senpi#4335), so the tracker keeps no second copy that nothing reads.
 	private readonly counts = new Map<
 		string,
-		WaitSourceItems & { readonly activeCount: number; readonly kind: "children" | "background" }
+		{ readonly activeCount: number; readonly kind: "children" | "background" }
 	>();
 
 	/**
@@ -40,7 +40,6 @@ export class WakeSourceTracker {
 			this.counts.set(source, {
 				activeCount,
 				kind: "kind" in data && data.kind === "children" ? "children" : "background",
-				...normalizeWaitItems(wakeSourceItems(data)),
 			});
 		else this.counts.delete(source);
 	}

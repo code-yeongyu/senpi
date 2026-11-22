@@ -179,7 +179,7 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
   optional `retryAtMs`. `childSources` entries carry `source`, `activeCount`, optional `items`, and
   optional `omittedItems`. Each item is `{ id, label?, startedAt? }` (`startedAt` is ISO time), taken
   from the producer's `wake_source_state` snapshot: its `items`, or the legacy `monitors` list when
-  `items` is missing or null. Terminal monitors are named by their stable `mon_` id. Each list is a
+  `items` is missing or null. Terminal monitors are named by their stable `mon_` id, or by the runtime id for a snapshot without one. Each list is a
   snapshot: entries whose `id` is not a non-blank string are dropped, duplicates collapse to one entry
   per `id`, the list is sorted by `id`, and at most 32 entries are kept. `omittedItems` is the
   producer's own omitted count plus any valid items cut at 32; it is not `activeCount` minus the list
