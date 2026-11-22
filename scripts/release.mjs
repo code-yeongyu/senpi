@@ -12,14 +12,13 @@
  *   1. Pre-flight: branch must be `main`; working tree must be clean (--dry-run warns
  *      and continues so the preview is usable during development).
  *   2. Resolve version: `--version` override or `computeNextVersion()` from calver.mjs.
- *   3. Test evidence (senpi#2943): regenerate the AI model catalog and check the bundled
- *      provider defaults against it. If the catalog changed, commit it on the release only and
- *      require --force-tests, so this job tests that tree before anything reaches `main`. Then wait for that commit's
- *      green "Check and test" run, the fan-in of every CI shard and required job. A red run
+ *   3. Test evidence (senpi#2943): wait for the release commit's green "Check and test" run, the fan-in of every
+ *      CI shard and required job. The release ships the model catalog that commit carries and CI tested; it never
+ *      regenerates it (catalog changes land through the refresh workflows' pull requests, senpi#2287). A red run
  *      stops the release; a run superseded by a newer `main` push moves the release onto
  *      that commit. The suite is never re-run here unless `--force-tests` asks for it.
- *      With `--tested-sha` (senpi#6642) the forced-suite matrix jobs of publish-npm.yml already regenerated the
- *      catalog and ran the suite on HEAD: this step only verifies HEAD's lineage from `--sha` and their result files.
+ *      With `--shard-results` (senpi#6642) the forced-suite matrix jobs of publish-npm.yml already ran the suite on
+ *      `--sha`: this step only verifies HEAD is that commit and reads their result files.
  *   4. Write `version` into all release workspace package.json files directly (TAB indent,
  *      trailing newline). `npm version` is intentionally NOT used; the `-N` suffix on
  *      same-day re-releases looks like a prerelease tag to npm.
@@ -79,10 +78,9 @@ function preflight(dryRun) {
 		process.stderr.write(`[release] error: must be on main branch, currently on "${branch || "<detached>"}"\n`);
 		process.exit(1);
 	}
-	// The name alone proves nothing (`git checkout -B main` names any commit main): HEAD must be on origin/main, or the
-	// release-only catalog commit on top of a commit that is (senpi#6645).
-	const onMain = assertHeadOnOriginMain({ runCommand, capture: captureCommand, log });
-	log(onMain === "on-main" ? "on branch main, at a commit origin/main reaches" : "on branch main, at the release-only catalog commit on origin/main");
+	// The name alone proves nothing (`git checkout -B main` names any commit main): HEAD must be on origin/main (senpi#6645).
+	assertHeadOnOriginMain({ runCommand, capture: captureCommand, log });
+	log("on branch main, at a commit origin/main reaches");
 
 	const status = captureCommand("git", ["status", "--porcelain"]);
 	if (status.trim().length === 0) {
@@ -203,9 +201,9 @@ async function main() {
 	log("every publish-set package is known to the npm registry");
 
 	const capture = (bin, cmdArgs) => captureCommand(bin, cmdArgs);
-	if (args.testedSha !== null) {
-		// The forced-suite matrix jobs tested this commit and the release job checked it out (senpi#6642).
-		verifyTestedRelease({ sha: args.sha, testedSha: args.testedSha, shardResults: args.shardResults });
+	if (args.shardResults !== null) {
+		// The forced-suite matrix jobs tested --sha and the release job checked it out (senpi#6642).
+		verifyTestedRelease({ sha: args.sha, shardResults: args.shardResults });
 	} else if (args.sha !== null) {
 		const driftPaths = ["packages/ai/src/models.generated.ts", "package-lock.json"];
 		preparePinnedRelease({
@@ -230,8 +228,8 @@ async function main() {
 		dryRunLog("preview mode; no files, commits, tags, or npm state will be modified");
 	}
 
-	if (args.testedSha === null) {
-		secureCiEvidence(version, args.dryRun, args.forceTests, args.sha, args.ciBasisReceipt);
+	if (args.shardResults === null) {
+		secureCiEvidence(args.dryRun, args.forceTests, args.sha, args.ciBasisReceipt);
 		await runForcedTests(args.dryRun, args.forceTests);
 	}
 	// Every evidence path: macOS/Windows are tested only on main (senpi#6834), so a red leg there stops the cut.

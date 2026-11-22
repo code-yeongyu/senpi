@@ -1,3 +1,67 @@
+## 2026-11-21 - The release ships the committed model catalog and never regenerates it (senpi#2287)
+
+### What changed
+
+- `scripts/release.mjs`: the test-evidence step no longer regenerates the model catalog, re-checks the provider defaults or commits a release-only catalog commit; it waits for the release commit's green "Check and test" as before. `--tested-sha` is gone: `--sha <sha> --shard-results <dir>` releases the commit the forced-suite matrix jobs tested, which is now always the dispatched commit, and preflight requires HEAD reachable from origin/main with no catalog-child exception.
+- `scripts/local-release.mjs`: the local release smoke no longer regenerates the catalog or runs `check:provider-defaults` before its check; it builds and packs the committed catalog, as the release does.
+
+### Why
+
+- The regeneration was the single root cause of four release failure modes measured 2026-11-07..21: the refusal that asked for `force_tests` (runs 44873606382, 44755112301), the 25-28 min forced cuts it forced, the pinned merge-back conflict on `providers/data/.manifest.json` and `openrouter.json` (run 44870406986, senpi#6119), and models a test pins dropped by an untested regeneration (senpi#2287, senpi#4127). Catalog changes reach main through the refresh workflows' own PRs, whose CI tests them.
+
+### Why an extension could not handle it
+
+- This is release tooling. Extensions do not run in the release workflow.
+
+### Expected merge conflict zones
+
+- LOW: the module docblock, `preflight` and `main()` of `scripts/release.mjs`; the check/test block of `scripts/local-release.mjs`.
+
+## 2026-11-21 - Publish-only accepts a version already shipped by a concurrent run (senpi#1831)
+
+### What changed
+
+- `scripts/publish.mjs`: captures npm publish errors and uses the existing bounded registry retry to verify the exact `name@version` after a duplicate-version conflict. It continues only when the registry returns the requested version and never retries the publish.
+- `scripts/publish-command.mjs`: distinguishes duplicate-version conflicts from other failures and preserves the original publish error when registry verification cannot confirm the version.
+
+### Why
+
+- A pre-publish registry lookup can miss a concurrent publication. The next PUT then conflicts even though another run already shipped the version.
+
+### Why an extension could not handle it
+
+- The release workflow calls the repository's publish script directly; no extension runs on that path.
+
+### Expected merge conflict zones
+
+- LOW: the publish loop in `scripts/publish.mjs`.
+
+## 2026-11-16 - release-finalize.mjs joins the binary and npm halves of a release (senpi#6851)
+
+### What changed
+
+- `scripts/release-finalize.mjs` (new): reads the Build Binaries run's staging and smoke jobs and the publish run's `release` job, then does one of the following.
+  - If either half is still running, it does nothing (exit 0).
+  - Otherwise it publishes the draft (and does nothing more when the release is already public), or runs `release-smoke-failure-issue.mjs` when the smoke failed after npm, or runs `release-draft-cleanup.sh` when staging or npm failed. Each of these exits non-zero.
+- `scripts/release-draft-cleanup.sh`: a new `PUBLISH_RELEASE_RESULT` env carries the publish run's `release` job result. When it is set, it decides instead of the run status, because the run stays in progress while its finalize job runs.
+- `scripts/release-smoke-failure-issue.mjs`: opens no second issue when one with the same title exists.
+- `scripts/await-dispatched-run.sh` and its test: removed; nothing polls the publish run any more.
+- Tests:
+  - `scripts/release-finalize.test.mjs` (new) covers the state readers, the decision table and the script against fake `gh`/`npm`.
+  - `scripts/build-binaries-release-recovery.test.mjs`, `scripts/build-binaries-npm-dispatch.test.mjs`, `scripts/release-smoke-failure-issue.test.mjs` and `scripts/release-draft-cleanup.test.mjs` pin the new graph, the shared concurrency group and the new cases.
+
+### Why
+
+- A runner must not idle while the publish run works, and the release must still finish exactly as before.
+
+### Why an extension could not handle it
+
+- These are the repository's own release scripts.
+
+### Expected merge conflict zones
+
+- LOW: the publish-run branch of `scripts/release-draft-cleanup.sh`.
+
 ## 2026-11-16 - A dry run with a CI-basis receipt previews the refusal of a red hosted run (senpi#6859 follow-up)
 
 ### What changed

@@ -1,3 +1,22 @@
+## 2026-11-20 - Bedrock Haiku 5.5 on-demand route priced at its own band (senpi#7121)
+
+### What changed
+
+- `packages/ai/src/providers/data/amazon-bedrock.json` (+ `.manifest.json`): regenerated with a provider-scoped run (`generate-models.ts --strict --providers amazon-bedrock`). The on-demand id `anthropic.claude-haiku-5-5` now carries its own band ($0.11/$0.55 in/out, $0.011/$0.1375 cache, 5x long-context tier 0.55/2.75/0.055/0.6875) instead of the global profile's ($0.10/$0.50/$0.01/$0.125, tier 0.50/2.50/0.05/0.625). models.dev corrected the whole provider's standard-vs-global split in the same pass, so the sibling bare Anthropic ids (`claude-fable-5`, `-5-1`, `-5-2`, `claude-haiku-4-5`, `claude-opus-4-5/-4-7/-4-8`, `claude-sonnet-4-5/-5/-5-5`) move to their standard bands (uniformly x1.1) and Nova `cacheWrite` becomes 0 (AWS bills Nova prompt-cache writes at $0.00 in us-east-1 per the AmazonBedrock offer index; the previous values equaled input price and overestimated cache-write cost). Every Anthropic value was verified cent-exact against the AWS us-east-1 price list; the resulting file is canonically identical to the daily refresh branch's version (#6666). No other provider file changes.
+- `packages/ai/test/anthropic-haiku-5-5.test.ts`: the Bedrock row test asserts each route's cost object strictly (cache rates and tiers included); the shared-contract assertions are unchanged for both ids.
+
+### Why
+
+- AWS bills the two routes under different SKUs (us-east-1 price list) and models.dev carries the same per-id split. The stale row plus the shared assertion made every catalog refresh fail `ci / Test (workspaces ai)` (#6666 red since 2026-11-14, past the refresh workflow's MAX_STALE_DAYS), so catalog drift could not land for releases.
+
+### Why an extension could not handle it
+
+- The bundled catalog ships for every installation; a local extension cannot correct shipped cost metadata or the test that pins it.
+
+### Expected merge conflict zones
+
+- LOW: the Anthropic and Nova rows inside `packages/ai/src/providers/data/amazon-bedrock.json` and its manifest hash - regenerate rather than hand-merge; the daily catalog refresh rewrites this file.
+
 ## 2026-11-18 - GPT-6.2 Astra and GPT-6.2 Sol catalog rows (senpi#6948, senpi#6942)
 
 ### What changed

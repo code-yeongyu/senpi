@@ -1,3 +1,21 @@
+## 2026-11-14 - The terminal control endpoint refuses an `interrupt` `background` other than `"stop"`
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-session-commands.ts`: the control endpoint's `interrupt` refuses a `background` other than `"stop"` with the RPC host's reason, before it touches the turn.
+
+### Why
+
+- The endpoint passed any value through, so an invalid one interrupted the turn as a plain interrupt where the RPC host refused it.
+
+### Why an extension could not handle it
+
+- The control endpoint is interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: the `interrupt` case of `runSessionControlCommand`.
+
 ## 2026-11-19 - A terminal closes its own session gracefully on request (oh-my-openagent#14313, senpi#7046)
 
 ### What changed

@@ -128,7 +128,10 @@ export function normalizeSessionName(value: string): string | undefined {
 	return name.length > 0 ? name : undefined;
 }
 
-export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } = {}): Args {
+export function parseArgs(
+	args: string[],
+	options: { grokNeoEnabled?: boolean; booleanExtensionFlags?: ReadonlySet<string> } = {},
+): Args {
 	const grokNeoEnabled = options.grokNeoEnabled ?? isGrokNeoEnabled();
 	const result: Args = {
 		messages: [],
@@ -376,7 +379,12 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			} else {
 				const flagName = arg.slice(2);
 				const next = args[i + 1];
-				if (next !== undefined && !next.startsWith("-") && !next.startsWith("@")) {
+				if (
+					!options.booleanExtensionFlags?.has(flagName) &&
+					next !== undefined &&
+					!next.startsWith("-") &&
+					!next.startsWith("@")
+				) {
 					result.unknownFlags.set(flagName, next);
 					i++;
 				} else {

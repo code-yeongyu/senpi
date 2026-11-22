@@ -1397,6 +1397,8 @@ The record is exclusively created with `O_NOFOLLOW`, fsynced, and checked to be 
 regular file with mode 0600. Publication failure closes the endpoint with `key_publication_failed`.
 A group- or other-writable agent directory or `rpc` (for example one created under umask 002) is such a
 failure: the host exits, and its message names the directory and the fix, `chmod go-w <dir>`.
+A supervised generation also publishes one record for its generation-private route endpoint (its
+`endpoint` names that `route` socket), which a successor authenticates against (senpi#7098).
 Each launch generates a new UUID and a new 32-byte key in memory. Hosts delete only their own
 record; `senpi host gc` also collects records whose process is dead or whose PID has been reused.
 
@@ -1861,11 +1863,33 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    connection occupancy. Clients see `session_closed { reason: "handoff_parked", sessionPath }` before
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
-   A session with no attachment cannot be reached on the drained generation any more, so each drain pass
-   holds its automatic turns (goal continuation, monitor and codemode wakes), exactly as an unattended
-   reopen does: they wait as notices, its running turn is its last on this generation, and it parks once
-   that turn settles. A person's input or `resume_session` releases the hold after the reopen. A session a
-   client is still attached to keeps its automatic turns.
+   When both generations support routing, an `open_session { sessionPath }` on the successor attaches to
+   the predecessor's existing writer while its turn runs. Use the returned `sessionId` on that connection:
+   session commands and events follow the writer. After the park the same handle addresses the successor's
+   local session; the routed client does not receive the predecessor's terminal record. `list_sessions`
+   reports the writer's `generation` and `hostInstanceId` on the session row; a predecessor that does not answer
+   that listing within the socket handshake budget (it exited mid-request, or it stalled) contributes no routed rows,
+   and the listing still answers with the successor's own. A command sent on a routed handle while the session moves
+   onto the successor waits at most the close grace window, then answers the retryable `generation_switch_pending`;
+   if the move cannot finish (the successor began draining, the session file is gone) it answers that reason instead.
+   Every other call the successor makes to its predecessor is bounded the same way: an answer later than the host's
+   stall threshold (5 s) is followed by a liveness probe on that connection, and a predecessor that answers neither is
+   cut, so the routed command or `open_session` answers `predecessor_request_timeout`. A long command on a live
+   predecessor keeps waiting. A command already written to the predecessor is never replayed on the successor: when
+   its connection is lost, even one cut by another request's deadline, it answers
+   `predecessor_delivery_outcome_unknown`. A narrowing `set_client_info` or `declare_delegation` that a predecessor does not
+   install is still acknowledged: that copy is cut and its session moves to the successor.
+   An older predecessor without a route endpoint keeps its claim and the reopen returns the existing retryable
+   `session_path_in_use`.
+   While a predecessor still runs, new connections negotiate ordinary JSONL, not compact recovery:
+   a compact checkpoint and its tokens belong to the physical writer's acceptance lane. The successor
+   advertises compact recovery again once its predecessor scan finds no live predecessor.
+   Each drain pass holds the automatic turns (goal continuation, monitor and codemode wakes) of every
+   session, attached or not, exactly as an unattended reopen does: they wait as notices, its running turn is
+   its last on this generation, and it parks once that turn settles. A person's input or `resume_session`
+   releases the hold after the reopen. An attached client still steers or cancels the running turn and
+   reopens the session on the successor after the park, so a session that keeps working never pins a
+   superseded generation (senpi#7098).
    While the successor is still taking over (parks it has not reopened yet, or a predecessor that still runs),
    its `list_sessions` answer carries `handover: { pending, predecessor_draining }` beside `sessions`: the
    listing is not yet the endpoint's whole set, so a reader must not treat a missing session as gone. The field
@@ -2124,13 +2148,18 @@ JSONL file. Every generation records each open session path in
 parks. `attached` is republished whenever that session gains its first client or loses its last one, so the
 claim says whether anybody is still driving the file.
 
-A claim STANDS while one of two things is true: its owner is the generation the pointer names, or its owner
-still has a client attached to that session. Those are the cases where somebody is really writing the file.
-A claim from a SUPERSEDED generation that published `attached: false` is reclaimable - that generation has
-been asked to drain and parks the session as it settles - so the current generation takes the path over
-instead of refusing it forever. A claim whose owner is gone (a killed host, a reboot, a recycled pid with a
-different start time) is ignored, and a claim written before the field existed is honored, so a running older
-build is never reclaimed from.
+A claim a current host publishes carries `strict_transfer: true`: its owner removes it itself when the session
+parks or closes, so the claim STANDS for as long as its owner runs, attached or not (senpi#7098). A drain parks
+every idle session at once, so what a superseded generation still claims is a session it is still writing - a
+retained lane runs its turns with no client attached.
+
+A claim without `strict_transfer` (written by an older build) STANDS while one of two things is true: its owner
+is the generation the pointer names, or its owner still has a client attached to that session. Such a claim
+from a SUPERSEDED generation that published `attached: false` is reclaimable - that generation has been asked
+to drain and parks the session as it settles - so the current generation takes the path over instead of
+refusing it forever. A claim whose owner is gone (a killed host, a reboot, a recycled pid with a different start
+time) is ignored, and a claim written before the `attached` field existed is honored, so a running older build
+is never reclaimed from.
 
 An `open_session { sessionPath }` refused by a standing claim answers `session_path_in_use` with
 `errorData { owner, retry_after_ms: 2000 }`, where `owner` carries `{ instanceId, pid, processStartTime,
@@ -2180,7 +2209,10 @@ symmetry with other commands; the answer is always JSON (the one exception is `s
 which prints the bare socket path).
 
 - `ensure` prints `{ action, socket, pid, instanceId, generation, engineVersion, engineOrdinal,
-  capabilities, launchProfileId, runtimeBuildId, clientRuntimeBuildId, reused, upgradeable }`. `--policy upgrade` (the default) allows a
+  capabilities, launchProfileId, runtimeBuildId, clientRuntimeBuildId, reused, upgradeable, unit, lifetime_tied_to? }`. `unit` is
+  `{ cgroup, name, own }` for the host's supervisor on Linux (`null` elsewhere): `own: true` when it runs in its own
+  `senpi-host-<instanceId>.scope`; otherwise `lifetime_tied_to` names the unit (`name`) whose stop would end the host
+  (see "Supervisor unit" below). `host handoff` prints the same two fields for the successor. `--policy upgrade` (the default) allows a
   generation handoff, `never` only attaches or starts, and `fallback` answers exit 4 rather than attaching
   to a host this build disagrees with. `action` is `handoff` exactly when the socket was already served and
   the process behind it changed. An ensure invoked by an in-process session inside a multi-session host is
@@ -2207,8 +2239,9 @@ which prints the bare socket path).
   `RssAnon` on Linux): unlike RSS it keeps counting compressed and swapped pages, so a host whose RSS reads
   1.3 GB can hold 14 GB, and it is the number to watch when a host grows. All are `null` where the platform does not publish them
   (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
-  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive }`, newest
-  ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, and `sessions` counts the session files it
+  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive, unit }`, newest
+  ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, `unit`
+  the cgroup and unit its supervisor runs in (`{ cgroup, name, own }`, `null` off Linux or for an ended generation), and `sessions` counts the session files it
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
   never lists a dead pid.
@@ -2233,8 +2266,10 @@ which prints the bare socket path).
   - `crashes`: records in the endpoint's `crashes.jsonl` that are deaths - supervised host children that died
     rather than stopped, `engine_stop` and watchdog lines excluded; `0` when the file is absent. Each line of that
     file is `{ at, signal?, code?, uptimeMs, kind?, generation?, detection?, sender?, chain?, reason?, stopIntent?,
-    stall? }`: `kind: "rpc-host"` is a generation's TERMINAL record (at most one per generation) and
-    `kind: "rpc-host-watchdog"` the host child's own line when its supervisor vanished; `detection` is
+    stall?, drainingForMs? }`: `kind: "rpc-host"` is a generation's TERMINAL record (at most one per generation),
+    `kind: "rpc-host-watchdog"` the host child's own line when its supervisor vanished, and
+    `kind: "rpc-host-drain-overdue"` (not a death) a generation still draining once per handoff grace period, with
+    `drainingForMs` (senpi#7098); `detection` is
     `supervisor` (it crashed), `external` (a signal nobody announced) or `engine_stop` (an engine process stopped it on
     purpose, named by `sender`/`chain` and `reason`, e.g. `replace_unreachable -> signal:SIGTERM` or
     `readiness_timeout; supervisor_escalated` when the caller had to SIGKILL the supervisor). Every field after
@@ -3202,7 +3237,19 @@ connection neither holds the window open, nor blocks the owner-death grace, nor 
 this, a task tree whose children open their own children on the shard they run in (omo's `p` shards are keyed by the
 root session) keeps that shard alive through its own connections after the owner and every outside client are gone.
 Turns still count as activity, so a dependent session mid-turn keeps the host open until the turn ends. Hosts that
-predate the field ignore it. The supervisor learns about turns through
+predate the field ignore it.
+
+An attached connection whose sessions on the host have ALL closed stops keeping it open (oh-my-openagent#14272): a
+parent that keeps its task-shard connection after its last session there closed no longer keeps a 0-session host
+alive, and the window starts when that session closes. A connection that never held a session still counts as
+before (an ensure's attach hold, a client about to open), as does any connection with an open or a command in flight;
+attaching (the first non-observing line) restarts the window. The supervisor proxies bytes and cannot see sessions, so its observer
+connection sends `{"type": "watch_host_occupancy", "observe": true}` (an observing read with no response) and the
+host answers on that connection with `{"type": "host_occupancy", "holders": <n>}`, the number of attached
+connections that still occupy it, at once and again on every change; the supervisor counts at most that many attached
+clients, plus held observers. Until the host has answered, and while the observer connection is unhealthy, every
+attached client counts, as before. While a supervisor watches, the host's own empty exit stays with the supervisor.
+The owner-death quiescence check still counts every attached client. The supervisor learns about turns through
 its observer connection to the host; while that connection is unhealthy it cannot see turns, so it treats activity as
 unknown and keeps the host open as if a turn were running — but only for one idle window, during which it keeps
 reconnecting. An observer that stays unhealthy for longer than the window stops counting as busy, and the connection
@@ -3340,6 +3387,23 @@ invalid lengths and incomplete records at EOF close the hop. Complete-record tru
 JSONL lines span records with backpressure and retain the existing 16 Mi-character ceiling. Windows retains the
 secret-file/raw-handshake internal hop.
 
+#### Supervisor unit (Linux)
+
+A supervisor is detached into its own session, but on Linux a process stays in the cgroup of whoever started it. A
+supervisor started by `host ensure` or `host handoff` from a transient unit (a terminal's per-terminal service, an ssh
+session scope, a CI job) therefore used to die with that unit (senpi#7099). Where `systemctl --user is-system-running`
+answers for the spawn environment (`XDG_RUNTIME_DIR` set) and `systemd-run` is on its `PATH`, each generation's
+supervisor is started as `systemd-run --user --scope --unit=senpi-host-<instanceId>.scope --collect --quiet -- <supervisor
+argv>`: `systemd-run` moves itself into the new scope and then execs the supervisor in place, so the spawned pid is
+the supervisor and every inherited descriptor (owner pipe, presenter channel, startup pipe) is kept; the scope is
+unloaded when the generation exits. No running process is moved between cgroups. Before placing a generation the
+probe starts one throwaway scope (`systemd-run --user --scope --collect --quiet -- true`); a manager that answers but
+refuses transient scopes (no cgroup delegation in a container, bus or polkit policy) is treated like no manager.
+Without a reachable user manager that accepts scopes (containers, CI without systemd, macOS) the spawn is unchanged
+and never fails for it; `host ensure`, `host handoff` and `host status` then report the unit the host's lifetime is
+tied to. Only a manager that accepted the probe scope and then refuses the generation's own (a policy change in that
+instant) fails that start, as any spawn failure does.
+
 ### Supersession lifecycle: `host_superseded`
 
 Before parking for a generation handoff, the old host sends every connected client one unsolicited record:
@@ -3372,9 +3436,10 @@ without a known replacement. This record has no request id or session handle; ol
    draining supervised connection are refused with `host_stopping`; a bare (unsupervised) socket host
    still returns `host_draining`. Re-resolve the public endpoint rather than retrying the draining connection.
 4. The **supervisor** starts `SENPI_RPC_HANDOFF_GRACE_MS` at supersession (default **600000 ms / 10 minutes**).
-   This is a soft grace, not an abort deadline or a delay before parking. At expiry it reports outstanding work
-   and requests another drain pass. Sessions still mid-turn or handling requests remain alive even beyond grace;
-   no turn is cut short. Parkable sessions never wait for grace. A bare socket host has no supervisor grace timer,
+   This is a soft grace, not an abort deadline or a delay before parking. At every expiry while the generation
+   still drains it appends `{ kind: "rpc-host-drain-overdue", generation, drainingForMs }` to the endpoint's
+   `crashes.jsonl` (the alarm host monitors read; it is not a death) and requests another drain pass. Sessions
+   still mid-turn or handling requests remain alive even beyond grace; no turn is cut short. Parkable sessions never wait for grace. A bare socket host has no supervisor grace timer,
    but follows the same announce/park/settle sequence.
 5. Once every session has parked and its terminal records have drained, the generation exits even if an observer
    or client never voluntarily disconnects. Neither the normal idle timeout nor persistent-host mode can pin it.
@@ -4317,7 +4382,7 @@ codes or code prefixes in `error`:
   - **Mid-turn policy:** a turn admitted before the foreign holder appeared finishes and persists its results; subsequent writing RPCs are refused. Read/control requests, including abort, queue clearing, `extension_ui_response` and `extension_ui_progress`, remain available.
   - **Conservative admission:** `new_session`, `fork`, `clone`, and settings or account commands carrying this session's routing handle are also refused while its current file is held. Close the handle and open another session to leave a held file.
   - Holder records are admission evidence, not an exclusive filesystem lock. SessionManager's append API is synchronous and fresh process-identity checks are asynchronous; changing append to asynchronous admission would change the SDK contract and could discard results of already-executed tools.
-- `session_path_in_use` (path held by an opening or quarantined owner; a fully-open current owner is attached instead, an owner whose teardown is already in flight is waited out on the in-process runtime, and a path a live owner has superseded is released rather than held). A path held by ANOTHER GENERATION of the daemon carries `errorData { owner: { instanceId, pid, processStartTime, sessionPath, current }, retry_after_ms: 2000 }`: that generation is still writing the file and is parking it, so the open is a retry, not a failure. An open that arrives while ANOTHER open of the same path is still taking that cross-generation claim waits for it - bounded by the close grace window - and then attaches to the session that open is building; a claim that does not settle in that window answers `errorData { reason: "claim_in_progress", retry_after_ms: 2000 }`. When the claim it waited on is refused, the next waiting open takes the claim itself and later ones wait on that, so no racing open answers a bare refusal; a path still reserved by a session past its teardown grace answers `errorData { reason: "path_still_held", retry_after_ms: 2000 }` (senpi#3485). Only a claim whose owner serves the socket (`current: true`) or still has a client attached refuses an open at all - a superseded, attachment-less claim is reclaimed instead
+- `session_path_in_use` (path held by an opening or quarantined owner; a fully-open current owner is attached instead, an owner whose teardown is already in flight is waited out on the in-process runtime, and a detached path an older-build owner has superseded is released rather than held). A path held by ANOTHER GENERATION of the daemon carries `errorData { owner: { instanceId, pid, processStartTime, sessionPath, current, strict_transfer? }, retry_after_ms: 2000 }`: that generation is still writing the file and is parking it, so the open is a retry, not a failure. An open that arrives while ANOTHER open of the same path is still taking that cross-generation claim waits for it - bounded by the close grace window - and then attaches to the session that open is building; a claim that does not settle in that window answers `errorData { reason: "claim_in_progress", retry_after_ms: 2000 }`. When the claim it waited on is refused, the next waiting open takes the claim itself and later ones wait on that, so no racing open answers a bare refusal; a path still reserved by a session past its teardown grace answers `errorData { reason: "path_still_held", retry_after_ms: 2000 }` (senpi#3485). Only a claim whose owner serves the socket (`current: true`) or still has a client attached refuses an open at all - a superseded, attachment-less claim is reclaimed instead
   - On the worker runtime, an `open_session` naming a session whose worker is quarantined (it stopped answering, so the host is ending it) answers `session_path_in_use` with `errorData { reason: "session_quarantined", action: "retry", retry_after_ms: 2000 }`. The refusal releases nothing: the quarantined entry keeps its claim and reservations, because a worker stuck in a system call can still be writing the file. When the worker's thread exits, the host first removes its session claim, waiting at most the close grace window (it carries on when the window ends even if the removal has not settled), and only then drops the entry and its reservations. Until that drop, every open naming the session gets this same refusal, including one sent just after the thread exited. Retry after `retry_after_ms`: the first open after the drop is no longer refused for the quarantine and opens the session from its file in a new worker (senpi#6452).
 - `session_reservation_limit` (this worker already holds 64 live session paths; the open or session replacement was refused without disturbing the existing session)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
@@ -6308,7 +6373,9 @@ Every other command that takes a durable id works on a session the host still ha
 
 `open` says an engine of this host holds that session now, so a client knows whether its next step is an `open_session` or an attach. `ambiguous` is the answer when two session files carry one durable id (a caller-minted id reused while the first was parked); it names neither, and the client picks by another means. `unknown` is the answer when no session file of this host carries it.
 
-The command is a read: it opens, claims, unloads, seals and rewrites nothing, and touches no move record. It reads only this host's own session folder (`<agentDir>/sessions/<folder>/`), never a path from the request, which carries the durable id alone. Of each session file only the first line, its header, is read.
+The command is a read: it opens, claims, unloads, seals and rewrites nothing, and touches no move record. It reads only this host's own session folder (`<agentDir>/sessions/<folder>/` and files directly in `<agentDir>/sessions/`), never a path from the request, which carries the durable id alone. Of each session file only the first line, its header, is read.
+
+The files senpi names for the id (`<timestamp>_<durable id>.jsonl`) are read first, and the header decides: a file whose name carries the id but whose header names another id is not a candidate. Only when no such file carries the id is every other header read, so a session file under a caller-chosen name (`--session <path>`) is still found. When a senpi-named file carries the id, a file under another name carrying the same id is not read: two senpi-named files still answer `ambiguous`, a renamed copy beside a named file does not.
 
 It needs the standing a path-naming `open_session` needs, so on a delegated connection it needs `device_admin`. A caller without that standing is refused before the lookup runs, and the refusal is the same for an id this host knows and one it does not, so it learns nothing either way.
 

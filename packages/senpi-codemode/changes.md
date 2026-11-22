@@ -1,3 +1,21 @@
+## 2026-11-21 - JS eval locates syntax errors in the submitted cell (senpi#7200)
+
+### What changed
+
+- A failed JS cell compilation can report the original line, column and excerpt. A shell heredoc inside a template literal also gets a quoting hint.
+
+### Why
+
+- An unescaped backtick inside a multiline command produced only an engine error. Positions in the generated persistence wrapper do not identify the same column in the submitted cell.
+
+### Why an extension could not handle it
+
+- The codemode extension owns both the compilation step and the eval result; it can distinguish a parse failure from a running cell throwing `SyntaxError`.
+
+### Expected merge conflict zones
+
+- LOW: the JS worker's eval call and the ordinary-cell result path.
+
 ## 2026-11-19 - The eval description names eval-only tools first (senpi#7032)
 
 ### What changed

@@ -3378,6 +3378,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/dynamic-prompt/handoff.ts#REPLY_LANGUAGE_RULE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts#ROUTE_RULES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -5275,6 +5279,14 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#PLAN_AFTER_READING_PRESETS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#TODO_RULE_OWNER_PRESETS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#FULL_SHARED_SECTION_PRESETS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -5283,15 +5295,11 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts#CLAIM_REPORT": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash-rules.ts#DEEPSEEK_V41_FLASH_RULES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts#DEEPSEEK_V41_FLASH_RULES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts#INTENT_GATE_LEAD": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts#LIST_SECTIONS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -5367,19 +5375,23 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#APP_AND_CHAT": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#APP_AND_CHAT": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#GPT62_RULES": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#GPT62_RULES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#TERMINAL": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#TERMINAL_AND_APP": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#LIST_SECTIONS": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#TERMINAL": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -5606,6 +5618,10 @@
 		"packages/coding-agent/src/core/extensions/builtin/terminal/process-identity.ts#hostIdentity": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/terminal/process-identity.ts#kernelBootRecords": {
+			"class": "per-copy-safe",
+			"reason": "memoized kernel probe; each copy reads the same host boot record, and readers refresh before trusting a boot mismatch"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/terminal/pty.lazy.ts#loaded": {
 			"class": "per-copy-safe",
@@ -11609,6 +11625,26 @@
 		"packages/coding-agent/src/extensions/html-render/image-references.ts#URL_ATTRIBUTES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-discovery.ts#PREDECESSOR_DISCOVERY_TIMEOUT_MS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-discovery.ts#GONE_CODES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-routes.ts#ROUTE_GONE_ERRORS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-wire.ts#ROW_STATES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#PREDECESSOR_REQUEST_TIMEOUT_MS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
 		}
 	}
 }

@@ -6,7 +6,7 @@
   // session-of-pid is a senpi subcommand a test runs as `bun <cli> session-of-pid`, which knip reads as a binary.
   "ignoreBinaries": [
     "cc", "hdiutil", "julia", "mkfifo", "mount", "ollama", "openssl", "perl", "pgrep", "rg", "ruby", "script",
-    "senpi-deliberately-missing-probe-command", "session-of-pid", "taskkill.exe", "tasklist", "trash", "vmmap", "where",
+    "senpi-deliberately-missing-probe-command", "session-of-pid", "systemd-run", "taskkill.exe", "tasklist", "trash", "vmmap", "where",
     "xclip",
   ],
   // Findings marked "pre-existing at origin main aceb1cc1d9" were already present when this check was added. Each
@@ -1102,8 +1102,6 @@
       "packages/coding-agent/src/modes/provider-native-rendering.ts": ["stringifyProviderNative"],
       // pre-existing at origin main aceb1cc1d9: unused exports isHostMintedId
       "packages/coding-agent/src/modes/rpc/client-admission-record.ts": ["isHostMintedId"],
-      // pre-existing at origin main aceb1cc1d9: unused exports CONNECTION_ROLE_CAPABILITIES
-      "packages/coding-agent/src/modes/rpc/connection-roles.ts": ["CONNECTION_ROLE_CAPABILITIES"],
       // pre-existing at origin main aceb1cc1d9: unused exports UNLOAD_SESSION_CAPABILITY, SUBSCRIPTION_LIMITS_CAPABILITY, RESOLVE_PATH_CAPABILITY
       "packages/coding-agent/src/modes/rpc/host-capabilities.ts": ["RESOLVE_PATH_CAPABILITY", "SUBSCRIPTION_LIMITS_CAPABILITY", "UNLOAD_SESSION_CAPABILITY"],
       // pre-existing at origin main aceb1cc1d9: unused exports readHostHolder, publicEndpointAccepts
@@ -1146,8 +1144,6 @@
       "packages/coding-agent/src/modes/rpc/protocol-identity.ts": ["HOST_GENERATION_ENV", "HOST_INSTANCE_ID_ENV"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_SESSION_IDENTITY_MISMATCH, RPC_ERROR_SESSION_BUSY_LIFECYCLE, RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_SESSION_PATH_IN_USE, RPC_ERROR_SESSION_RESERVATION_LIMIT, RPC_ERROR_SESSION_NOT_HELD (+6 more)
       "packages/coding-agent/src/modes/rpc/rpc-error-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STREAMING"],
-      // pre-existing at origin main aceb1cc1d9: unused exports checkRpcKeyDirectory
-      "packages/coding-agent/src/modes/rpc/rpc-public-key.ts": ["checkRpcKeyDirectory"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_EMPTY_TEXT, RPC_ERROR_HOST_MEMORY_PRESSURE, RPC_ERROR_HOST_STOPPING, RPC_ERROR_INVALID_SESSION_ID, RPC_ERROR_SESSION_BUSY_LIFECYCLE (+6 more)
       "packages/coding-agent/src/modes/rpc/rpc-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STREAMING"],
       // pre-existing at origin main aceb1cc1d9: unused exports loadedRuntimeSource
@@ -1374,6 +1370,8 @@
       "scripts/check-pr-changelog-facts.mjs": ["CHANGELOG_PATTERN"],
       // pre-existing at origin main aceb1cc1d9: unused exports validateGitRevision, isRuntimeSourceChange, main (run-by-path entry, newly export-checked)
       "scripts/check-pr-changelog.mjs": ["isRuntimeSourceChange", "main", "validateGitRevision"],
+      // default export is the config the coding-agent CI test step loads by path (--config=), not an import (entry, export-checked)
+      "scripts/ci-coding-agent-vitest.config.mjs": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused export updateClaudeAgentSdkPlatformLock (run-by-path entry, newly export-checked)
       "scripts/generate-claude-agent-sdk-platform-lock.mjs": ["updateClaudeAgentSdkPlatformLock"],
       // pre-existing at origin main aceb1cc1d9: unused export RATCHET_RULES (run-by-path entry, newly export-checked)

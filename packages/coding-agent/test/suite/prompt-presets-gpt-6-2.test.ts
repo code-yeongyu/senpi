@@ -7,7 +7,7 @@ import {
 	GPT62_RULES,
 	GPT62_SECTIONS,
 	type Gpt62Rule,
-} from "../../src/core/extensions/builtin/prompt-preset/gpt-6.2.ts";
+} from "../../src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts";
 import { hasGpt62Signal } from "../../src/core/extensions/builtin/prompt-preset/matchers.ts";
 import { type PromptPresetSettings, resolvePreset } from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
 

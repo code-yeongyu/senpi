@@ -1,3 +1,79 @@
+## 2026-11-21 - Pilot exact npm tree caching for Linux coding-agent CI (senpi#7193)
+
+### What changed
+
+- `.github/workflows/ci.yml`: use blobless checkout in the coding-agent build and shard jobs, and share an exact npm tree cache seeded by the build before it writes outputs.
+- `.github/actions/install-ci-npm-tree/action.yml`: key the tree on the Linux runner image, architecture, Node, npm, Bun, npm configuration, and lock/workspace manifests. Run `npm ci --ignore-scripts` on a miss.
+
+### Why
+
+- The build and its shards independently materialize the same npm dependency tree. Measure whether the transfer and restore cost less than the install they replace.
+
+### Why an extension could not handle it
+
+- Dependency setup and checkout are controlled by the repository's hosted CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the checkout and dependency install steps in the coding-agent build and test jobs in `.github/workflows/ci.yml`.
+
+## 2026-11-21 - CI job timeouts use measured runner duration (senpi#7191)
+
+### What changed
+
+- `.github/workflows/ci.yml`: set eligible job timeouts to twice the runner-duration p95 measured on 2026-11-21 across 51 CI runs, rounded up to whole minutes with a five-minute floor. Shared matrix caps use the slowest leg. Cap longer steps in `fused-equivalence`, `test-workspaces`, `webview-kernel`, and `process-kernel` at their new job limits.
+- `.github/workflows/ci.yml`: `grep-native-contract`, `socket-secret-native-windows`, and `test-scripts` are held at 30 minutes: cold-build duration not measured. Hold `macos-combined` at 99 minutes (sum of suite caps plus 10 minutes for setup), with its suite caps unchanged pending #7192. The two coding-agent jobs remain out of scope.
+
+### Why
+
+- `.github/workflows/ci.yml`: slow or hung jobs should fail promptly without timing out short jobs on ordinary runner hiccups.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: GitHub Actions enforces the runner budget at the job level.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: job-level timeout declarations and the four step caps aligned to them, excluding `build-coding-agent` and `test-coding-agent`.
+
+## 2026-11-21 - Balance coding-agent CI shards using recorded file timings (senpi#7183)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the build job freezes a plan from Vitest discovery and the latest verified timing cache. The ten shard jobs use exact planned file identities, or the existing Vitest hash split without usable timings. `Check and test` verifies the finished file reports against discovery and saves new timings only after a green default-branch push.
+
+### Why
+
+- `.github/workflows/ci.yml` used file-count sharding, leaving the aggregate gate waiting for whichever shard drew the most expensive files. Planning against measured file cost reduces that imbalance without changing the shard count, runners, or test scope.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` schedules and verifies hosted CI jobs before any product extension runs.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: coding-agent build and test shard steps and the `Check and test` fan-in.
+
+## 2026-11-16 - Build Binaries no longer holds a runner while npm publishes (senpi#6851)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `publish-npm` job only dispatches `publish-npm.yml` (now with `-f build_run_id=<this run>`) and finds the run. The "Await publish-npm.yml completion" step is gone, and the timeout drops from 360 to 15 minutes. `report-smoke-failure-after-npm`, `publish-github-release` and `cleanup-draft-github-release` are replaced by one `finalize-release` job. It needs `build`, `smoke-test-binaries`, `stage-github-release` and `publish-npm`, runs `if: always()` unless it is a dry run or nothing was dispatched, uses the concurrency group `release-finalize-<tag>` (never cancelled), and runs `scripts/release-finalize.mjs`. It is now the only job with `issues: write`.
+- `.github/workflows/publish-npm.yml`: a new `build_run_id` input (default empty), and a new `finalize-github-release` job. The job needs `release` and runs only in a publish-only, non-dry run that names a Build Binaries run. It has job-level `actions: read`, `contents: write` and `issues: write` (so neither id-token nor the push token), shares the same concurrency group, and runs the same script.
+- `.github/agent/skills/release-publish/SKILL.md`: the publish watch, the recovery command and the post-release checklist describe the two finalize jobs.
+
+### Why
+
+- The awaiting job idled on a hosted runner for a median 12.9 min and up to 54.1 min per release (24 of Build Binaries' 26.7 Linux runner-minutes). Each half now finishes the release when it ends, so the ordering does not change: the GitHub Release is public only after the full smoke, staging and npm all succeeded. The failure handling does not change either: the smoke rollback issue and the draft cleanup still run.
+
+### Why an extension could not handle it
+
+- These are the repository's own release workflows.
+
+### Expected merge conflict zones
+
+- MEDIUM: the jobs after `stage-github-release` in `build-binaries.yml`. LOW: the `workflow_dispatch` inputs of `publish-npm.yml`.
+
 ## 2026-11-18 - CI installs APT packages from a .deb set cached per runner image (senpi#4552)
 
 ### What changed
