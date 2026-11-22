@@ -129,6 +129,24 @@ function countAgentStarts(fixture: Fixture): { readonly count: () => number } {
 }
 
 describe("stopping an interrupted turn's background jobs", () => {
+	it("retries only a failed stop, without double-stopping a job still settling (#6712)", async () => {
+		const jobs = new RunBackgroundJobs();
+		const first = Promise.withResolvers<void>();
+		const stop = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(undefined);
+		jobs.register("7", { kind: "bash", id: "retry", stop });
+		jobs.register("7", { kind: "bash", id: "done", stop: async () => {} });
+		const pending = jobs.stop("7");
+		expect(await jobs.stop("7")).toEqual({ stopped: [], failed: [] });
+		first.reject(new Error("still running"));
+		expect(await pending).toEqual({
+			stopped: [{ kind: "bash", id: "done" }],
+			failed: [{ kind: "bash", id: "retry", reason: "still running" }],
+		});
+		expect(await jobs.stop("7")).toEqual({ stopped: [{ kind: "bash", id: "retry" }], failed: [] });
+		expect(await jobs.stop("7")).toEqual({ stopped: [], failed: [] });
+		expect(stop).toHaveBeenCalledTimes(2);
+	});
+
 	it("stops every job at once, so jobs that ignore TERM cost one grace period, not one each", async () => {
 		vi.useFakeTimers();
 		cleanups.push(() => {

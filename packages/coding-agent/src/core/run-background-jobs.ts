@@ -34,32 +34,34 @@ function named(job: RunBackgroundJob): StoppedRunBackgroundJob {
 }
 
 export class RunBackgroundJobs {
-	readonly #byTurn = new Map<string, Set<RunBackgroundJob>>();
+	readonly #byTurn = new Map<string, Map<RunBackgroundJob, { stopping: boolean }>>();
 
 	/** Record `job` under `turnId`; the returned release drops it once it ended on its own. */
 	register(turnId: string, job: RunBackgroundJob): () => void {
 		let jobs = this.#byTurn.get(turnId);
 		if (jobs === undefined) {
-			jobs = new Set();
+			jobs = new Map();
 			this.#byTurn.set(turnId, jobs);
 		}
-		jobs.add(job);
+		if (!jobs.has(job)) jobs.set(job, { stopping: false });
 		return () => this.#drop(turnId, job);
 	}
 
 	/** Stops the turn's jobs all at once, so jobs that ignore TERM cost one grace period, not one each; lists keep start order. */
 	async stop(turnId: string): Promise<RunBackgroundStopOutcome> {
-		const jobs = [...(this.#byTurn.get(turnId) ?? [])];
-		this.#byTurn.delete(turnId);
-		const results = await Promise.allSettled(jobs.map(async (job) => job.stop(turnId)));
+		const jobs = [...(this.#byTurn.get(turnId) ?? [])].filter(([, entry]) => !entry.stopping);
+		for (const [, entry] of jobs) entry.stopping = true;
+		const results = await Promise.allSettled(jobs.map(async ([job]) => job.stop(turnId)));
 		const stopped: StoppedRunBackgroundJob[] = [];
 		const failed: FailedRunBackgroundJob[] = [];
-		jobs.forEach((job, index) => {
+		jobs.forEach(([job, entry], index) => {
 			const result = results[index];
 			if (result?.status === "fulfilled") {
+				if (this.#byTurn.get(turnId)?.get(job) === entry) this.#drop(turnId, job);
 				stopped.push(named(job));
 				return;
 			}
+			entry.stopping = false;
 			const error: unknown = result?.reason;
 			failed.push({ ...named(job), reason: error instanceof Error ? error.message : String(error) });
 		});
