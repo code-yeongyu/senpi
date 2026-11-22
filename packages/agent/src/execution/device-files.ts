@@ -25,7 +25,8 @@ export interface DeviceFiles {
 /**
  * Marks the local filesystem's {@link DeviceFiles} (a fused session, or a hand's own runtime), so extension code that
  * keeps its own local file path can tell it from a split session's file channel. A registry symbol, so a second copy
- * of this package marks the same objects.
+ * of this package marks the same objects. A wrapper that reroutes file operations must not spread the local
+ * `DeviceFiles`: object spread copies this enumerable symbol and would mark the wrapper as local too.
  */
 export const LOCAL_DEVICE_FILES: unique symbol = Symbol.for("senpi.device-files.local");
 
