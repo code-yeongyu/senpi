@@ -24,7 +24,9 @@
 // so agents wrote source files from eval cells. The routing rule's edits item now
 // names the session's own file-editing tools (`[[...]]` below, filled from
 // `resolveFileMutationRouting` and dropped when there is none), and a call fed by
-// an unseen result is routed once, to a direct call, in stay-direct.
+// an unseen result is routed once, to a direct call, in stay-direct. Stay-direct's
+// closed "only when" list then left no route for two predetermined edits, so it
+// opens with the same `[[...]]` span: the offered editing tools are direct calls.
 //
 // The wait-as-subscription stance lives in the eval tool description instead:
 // `monitor` is reachable only through an eval cell, so a rule gated on it being
@@ -58,13 +60,13 @@ export const EXECUTION_TOOLING_RULES = [
 		concern: "code-cell-routing",
 		directive: {
 			claude:
-				"Sort each multi-call step: independent reads/searches/symbol lookups/probes -> ONE `eval` cell via `parallel(thunks)`. Edits[[ (via {editTools}, not cell code)]], side effects, deploys, approvals -> one at a time, observe each before next.",
-			kimi: "Sort a multi-call step before you write it: put independent reads, searches, symbol lookups, and probes into one `eval` cell together with `parallel(thunks)`, and run edits[[ (with {editTools}, not cell code)]], side-effecting commands, deploys, and approvals one at a time, looking at each result before the next.",
+				"Sort each multi-call step: independent reads/searches/symbol lookups/probes -> ONE `eval` cell via `parallel(thunks)`. Edits[[ ({editTools}, not cell code)]], side effects, approvals -> one at a time, observe each.",
+			kimi: "Sort a multi-call step before you write it: put independent reads, searches, symbol lookups, and probes into one `eval` cell with `parallel(thunks)`, and run edits[[ ({editTools}, not cell code)]], side-effecting commands, deploys, and approvals one at a time, looking at each result before the next.",
 		},
 		fullDirective: {
 			claude:
-				"Sort a multi-call step before you write it: independent reads, searches, symbol lookups, and probes go into ONE `eval` cell together via `parallel(thunks)` - an extra read-only call in that wave is nearly free, a stale assumption costs the turn - while edits[[ (with {editTools}, not cell code)]], side-effecting commands, deploys, and approvals run one at a time, each observed before the next.",
-			kimi: "Sort a multi-call step before you write it: put independent reads, searches, symbol lookups, and probes into one `eval` cell together with `parallel(thunks)`, and run edits[[ (with {editTools}, not cell code)]], side-effecting commands, deploys, and approvals one at a time, looking at each result before the next.",
+				"Sort a multi-call step before you write it: independent reads, searches, symbol lookups, and probes go into ONE `eval` cell via `parallel(thunks)` - an extra read-only call in that wave is nearly free, a stale assumption costs the turn - while edits[[ ({editTools}, not cell code)]], side-effecting commands, deploys, and approvals run one at a time, each observed before the next.",
+			kimi: "Sort a multi-call step before you write it: put independent reads, searches, symbol lookups, and probes into one `eval` cell with `parallel(thunks)`, and run edits[[ ({editTools}, not cell code)]], side-effecting commands, deploys, and approvals one at a time, looking at each result before the next.",
 		},
 	},
 	{
@@ -100,13 +102,13 @@ export const EXECUTION_TOOLING_RULES = [
 		concern: "code-cell-routing",
 		directive: {
 			claude:
-				"Direct tool call only when: one call suffices, result decides next call, semantic judgment sits between calls, or action needs approval.",
-			kimi: "Use a direct tool call when one call is enough, when each result decides the next call, or when the action needs approval - then stop deliberating and make it.",
+				"Direct tool call only [[for {editTools} or ]]when one call suffices, result decides next call, semantic judgment sits between calls, or action needs approval.",
+			kimi: "Use a direct tool call [[for {editTools} or ]]when one call is enough, when each result decides the next call, or when the action needs approval - then stop deliberating and make it.",
 		},
 		fullDirective: {
 			claude:
-				"Call a tool directly only when one call is enough, the result decides the next call, semantic judgment sits between calls, or the action needs approval.",
-			kimi: "Use a direct tool call when one call is enough, when each result decides the next call, or when the action needs approval - then stop deliberating and make it.",
+				"Call a tool directly only [[for {editTools} or ]]when one call is enough, the result decides the next call, semantic judgment sits between calls, or the action needs approval.",
+			kimi: "Use a direct tool call [[for {editTools} or ]]when one call is enough, when each result decides the next call, or when the action needs approval - then stop deliberating and make it.",
 		},
 	},
 ] as const satisfies readonly ExecutionToolingRule[];

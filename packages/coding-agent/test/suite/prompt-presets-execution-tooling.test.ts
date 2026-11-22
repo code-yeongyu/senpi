@@ -171,10 +171,18 @@ describe("execution tooling directive", () => {
 	it.each(EDIT_TOOL_PROFILES)("names exactly the offered editing tools for %s", (_profile, toolNames, editTools) => {
 		for (const [dialect, sharedSections] of DIALECT_WORDINGS) {
 			// given
-			const tokens = backtickedTokens(buildExecutionToolingSection({ toolNames, dialect, sharedSections }));
+			const options = { toolNames, dialect, sharedSections };
+			const tokens = backtickedTokens(buildExecutionToolingSection(options));
+			const editToolsIn = (id: ExecutionToolingRuleId): string[] => {
+				const rule = EXECUTION_TOOLING_RULES.find((candidate) => candidate.id === id);
+				const ruleTokens = rule ? backtickedTokens(renderExecutionToolingDirective(rule, options)) : [];
+				return FILE_EDITING_TOOLS.filter((name) => ruleTokens.includes(name));
+			};
 
 			// then
 			const wording = `${dialect}/${sharedSections}`;
+			expect(editToolsIn("eval-routing-decision"), `${wording} routing`).toEqual(editTools);
+			expect(editToolsIn("eval-stay-direct"), `${wording} stay-direct`).toEqual(editTools);
 			expect(
 				FILE_EDITING_TOOLS.filter((name) => tokens.includes(name)),
 				wording,
