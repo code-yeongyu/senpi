@@ -3,6 +3,7 @@ import bashTimeoutExtension, {
 	BASH_DEFAULT_TIMEOUT_SECONDS,
 	type BashToolInputLike,
 } from "../../src/core/extensions/builtin/bash-timeout/index.ts";
+import { bashSchema } from "../../src/core/tools/bash-schema.ts";
 
 type Handler = (event: unknown, ctx?: unknown) => Promise<unknown> | unknown;
 
@@ -26,6 +27,15 @@ function makeApiMock(): ApiMock {
 }
 
 describe("bashTimeoutExtension factory wiring", () => {
+	it("reports the applied deadline when core bash has no terminal prompt (senpi#5345)", async () => {
+		const { api, handlers } = makeApiMock();
+		bashTimeoutExtension({ ...api, getAllTools: () => [{ name: "bash", parameters: bashSchema }] } as never);
+		const input: BashToolInputLike = { command: "true" };
+		await handlers.tool_call[0]({ toolName: "bash", input });
+		const result = await handlers.before_agent_start[0]({ systemPrompt: "system" }, { cwd: process.cwd() });
+		expect(result).toMatchObject({ systemPrompt: expect.stringContaining(`${input.timeout}s`) });
+	});
+
 	it("registers tool_call and the full-sections-only before_agent_start handler (senpi#5665)", () => {
 		const { api, handlers } = makeApiMock();
 

@@ -161,7 +161,10 @@ export default function (pi: ExtensionAPI): void {
 			const systemPrompt =
 				failed || full
 				? withoutSections
-				: withoutSections.replace(`- ${WEB_SEARCH_CITE_GUIDELINE}\n`, "");
+				: withoutSections
+						.split("\n")
+						.filter((line) => line.trim().replace(/^[-*+]\s+/, "") !== WEB_SEARCH_CITE_GUIDELINE)
+						.join("\n");
 			return {
 				systemPrompt: `${systemPrompt}\n## Web Search\n${
 					failed
