@@ -1043,6 +1043,14 @@ export class ModelRuntime implements Models {
 		options: TOptions | undefined,
 		slotAuth?: { apiKey?: string; slotName?: string; rejectedAccess?: string },
 	): Promise<PreparedRequest<TModel, TOptions>> {
+		// Disabled holds per request, whatever the registry still holds (senpi#3503).
+		const providerId = normalizeProviderId(model.provider);
+		if (this.config.isProviderDisabled(providerId)) {
+			throw new ModelsError(
+				"provider",
+				`Provider ${model.provider} is disabled in models.json (disabledProviders or providers.${providerId}.disabled); enable it there to use ${model.provider}/${model.id}.`,
+			);
+		}
 		const provider = this.models.getProvider(model.provider);
 		if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
 		const resolution = await this.getAuth(model, {
@@ -1525,9 +1533,18 @@ export class ModelRuntime implements Models {
 	}
 
 	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
-		this.config = await ModelConfig.load(this.modelsPath);
+		const previous = this.config;
+		const loaded = await ModelConfig.load(this.modelsPath);
+		this.config = loaded.getError() === undefined ? loaded : loaded.keepingDisabledProvidersOf(previous);
 		if (options.providers) {
-			for (const providerId of new Set(options.providers)) this.recomposeProvider(providerId);
+			// A partial refresh still applies every provider the new config disables or re-enables (senpi#3503).
+			const providerIds = new Set(options.providers);
+			for (const providerId of this.providerIds()) {
+				if (previous.isProviderDisabled(providerId) !== this.config.isProviderDisabled(providerId)) {
+					providerIds.add(providerId);
+				}
+			}
+			for (const providerId of providerIds) this.recomposeProvider(providerId);
 			this.updateModelSnapshot();
 		} else {
 			this.rebuildProviders();
