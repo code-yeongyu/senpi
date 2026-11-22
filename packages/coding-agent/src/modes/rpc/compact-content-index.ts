@@ -3,6 +3,7 @@ import type { CompactContentStore, LeafId } from "./compact-content-store.ts";
 import { CompactIndexTree, type IndexNode } from "./compact-index-tree.ts";
 import { CompactPagedTree, type PagedRoot } from "./compact-paged-tree.ts";
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
+import { CompactReadyKeys } from "./compact-ready-keys.ts";
 import { CompactValues, type ValueRef } from "./compact-values.ts";
 import { CompactIndexCompactor } from "./compact-index-compactor.ts";
 import { readIndexEntries, readIndexPage } from "./compact-index-traversal.ts";
@@ -49,7 +50,7 @@ export class CompactContentIndex<Row extends object> {
 	readonly pages = new Set<IndexPage>();
 	readonly pending: CompactCommitDependencies<string>;
 	/** Overlay keys with no pending reference: the compactor selects only from these, in key order. */
-	readonly ready = new Set<string>();
+	readonly ready = new CompactReadyKeys();
 	private readonly leavesOf: (row: Row) => readonly LeafId[];
 	private readonly compactor: CompactIndexCompactor;
 	private readonly cuts = new WeakMap<FrozenIndex, CompactReadLease>();
