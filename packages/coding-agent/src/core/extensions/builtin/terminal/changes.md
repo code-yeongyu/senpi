@@ -1,3 +1,24 @@
+## 2026-11-12 - The process boot instant comes from the kernel's boot record (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/process-identity.ts`: `processBootAtMs()` reads the kernel's recorded boot instant (`btime` in `/proc/stat` on Linux, `kern.boottime` from `/usr/sbin/sysctl`, by absolute path, on macOS) instead of rounding `now - os.uptime()`; elsewhere it still computes from uptime. The read is asynchronous (`fs.promises.readFile`, and an async `execFile` of `sysctl` on macOS) so a session never blocks the shared host on it, and it is cached once per process as a promise: every later call awaits that promise and does no I/O. A read that found no value is dropped, so the next call retries it, and the uptime fallback is never memoized. Callers keep their 120 s `sameBoot` tolerance.
+- The kernel's recorded boot instant moves with a wall-clock step, so a cached value can go stale. `sameBootAsOwn` (used by the lease, reclaim-lock, orphan-reaper and schedule-runner checks) re-reads the record fresh, uncached, once before a 'different boot' verdict stands, and the fresh read replaces the cache; the probes take an optional `{ fresh: true }` for this (`OwnBootReader`, default `ownBootAtMs`). A live peer that recorded the moved instant is no longer called stale.
+- `processBootAtMs()` is now async, and so are `holdSessionFile`, `currentResidentWriter` and the `bootAtMs` probe of `WriterProbes` and the orphan reaper. `AgentSessionRuntime`'s constructor no longer takes the session hold: `createAgentSessionRuntime` and the multi-session switch take it with the new `holdRuntimeSession` and pass it in, releasing it if construction throws. `TerminalRuntimeSession` takes the boot instant from its async creator. Each writer fence resolves the boot instant before its check-then-write, so nothing yields between the check and the write it guards.
+
+### Why
+
+- `os.uptime()` counts whole seconds, so two reads that straddled an uptime tick computed boot instants a second apart (senpi#3152, senpi#4301). Caching one read instead would break agreement between processes after a wall-clock step; the kernel's record moves for every reader alike.
+
+### Why an extension could not handle it
+
+- The boot instant is read by the builtin terminal and schedule lease code itself.
+
+### Expected merge conflict zones
+
+- LOW: `processBootAtMs` in `process-identity.ts`.
+- MEDIUM: callers of `holdSessionFile`, `processBootAtMs`, `currentResidentWriter`, and `new AgentSessionRuntime(...)` / `new TerminalRuntimeSession(...)` (both take one more argument).
+
 ## 2026-11-14 - An interrupt's stop names a session the manager no longer holds
 
 ### What changed

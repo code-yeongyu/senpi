@@ -1,3 +1,24 @@
+## 2026-11-12 - A runtime's session hold is taken before it is constructed, and the writer fence reads the boot instant first (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-holders.ts`: `holdSessionFile` is async (its holder record carries the async boot instant), and it resolves that record before it reads the reference count, so nothing yields between that check and the record it guards. The move lock's own record is awaited the same way.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the constructor takes the session hold as a seventh argument and no longer touches the holder file. `createAgentSessionRuntime` takes it with the new `holdRuntimeSession` before constructing and releases it if construction throws; `persistSession`, `apply` and `switchSession` await their holds.
+- `packages/coding-agent/src/core/session-holders.ts`: the holder record's shape is exported as `HolderRecord`.
+- `packages/coding-agent/src/core/session-writer-claims.ts`: `WriterProbes.bootAtMs` is an `OwnBootReader`; a claim from another boot on this host is checked against a fresh read before the check runs, so a writer that started after a wall-clock step is not displaced; `acquireWriterClaim` resolves it before its check and passes the value into `ownerGone`, so no await lands between proving the owner gone and publishing the next claim.
+
+### Why
+
+- The boot instant is read asynchronously so one session never blocks the shared host on it (the no-sync session-path audit), and a constructor cannot await, so the hold moved to the async creators.
+
+### Why an extension could not handle it
+
+- Session holds and writer claims are core session ownership.
+
+### Expected merge conflict zones
+
+- MEDIUM: callers of `holdSessionFile` and `new AgentSessionRuntime(...)`, which now await the hold or pass one in.
+
 ## 2026-11-20 - every announced queued-drain wait is closed (oh-my-openagent#14428)
 
 ### What changed
