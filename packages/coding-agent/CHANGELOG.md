@@ -10,8 +10,6 @@
 
 ### Fixed
 
-- RPC subscribers receive the current terminal monitor and wake-source snapshots even if they subscribe after startup ([#4669](https://github.com/code-yeongyu/senpi/issues/4669)).
-
 ### Removed
 
 ## [2026.11.22-2] - 2026-11-22
