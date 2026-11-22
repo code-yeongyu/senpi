@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { win32 } from "node:path";
-import { getShellConfig, withBundledBunCommands } from "@code-yeongyu/senpi";
+import { type ExtensionContext, getShellConfig, SettingsManager, withBundledBunCommands } from "@code-yeongyu/senpi";
 
 export interface KernelPathEnvOptions {
 	readonly platform?: NodeJS.Platform;
@@ -14,24 +14,36 @@ export interface KernelPathEnvOptions {
 }
 
 /**
- * PATH override for every kernel child, or an empty record when the inherited PATH is already right.
- * Carries the bundled `bun` directory the bash tool's PATH has (omo#9362), plus Git Bash first on win32.
+ * The `shellPath` the session's bash tool reads: this session's agent dir, and project settings only when the project
+ * is trusted, so eval and bash resolve the same shell.
  */
-export function kernelPathEntry(options: KernelPathEnvOptions = {}): Record<string, string> {
+export function sessionShellPath(
+	ctx: Pick<ExtensionContext, "cwd" | "agentDir" | "isProjectTrusted">,
+): string | undefined {
+	return SettingsManager.create(ctx.cwd, ctx.agentDir, { projectTrusted: ctx.isProjectTrusted() }).getShellPath();
+}
+
+/** Names the bash tool's shell to the Python kernel on win32, so `%%bash` and a bare `bash`/`sh` run exactly it. */
+export const KERNEL_BASH_ENV = "SENPI_KERNEL_BASH";
+
+/**
+ * Shell environment for every kernel child, or an empty record when the inherited one is already right.
+ * Carries the bundled `bun` directory the bash tool's PATH has (omo#9362). On win32 it also names the bash the
+ * bash tool runs (`KERNEL_BASH_ENV`) and puts that bash's Git `bin` directory first on PATH.
+ */
+export function kernelShellEnv(options: KernelPathEnvOptions = {}): Record<string, string> {
 	const base = options.env ?? process.env;
 	const withBun = (options.withBundledBun ?? withBundledBunCommands)(base);
-	const env =
-		(options.platform ?? process.platform) === "win32"
-			? withGitBashFirst(
-					withBun,
-					(options.resolveBash ?? resolveBashFromShellConfig)(options.shellPath),
-					options.isFile ?? existsSync,
-				)
-			: withBun;
-	if (env === base) return {};
+	const win32 = (options.platform ?? process.platform) === "win32";
+	const resolved = win32 ? (options.resolveBash ?? resolveBashFromShellConfig)(options.shellPath) : undefined;
+	const bash = resolved === undefined || isWslLauncher(resolved) ? undefined : resolved;
+	const env = win32 ? withGitBashFirst(withBun, bash, options.isFile ?? existsSync) : withBun;
 	const pathKey = pathKeyOf(env);
 	const value = env[pathKey];
-	return value === undefined ? {} : { [pathKey]: value };
+	return {
+		...(env === base || value === undefined ? {} : { [pathKey]: value }),
+		...(bash === undefined ? {} : { [KERNEL_BASH_ENV]: bash }),
+	};
 }
 
 // A bare `bash` in a cell resolves through the kernel's PATH, where a default Git for Windows install
@@ -44,7 +56,7 @@ function withGitBashFirst(
 	bash: string | undefined,
 	isFile: (path: string) => boolean,
 ): NodeJS.ProcessEnv {
-	if (bash === undefined || isWslLauncher(bash)) return env;
+	if (bash === undefined) return env;
 	const dir = win32.dirname(bash);
 	if (!isGitBashBinDir(dir, isFile)) return env;
 	const pathKey = pathKeyOf(env);

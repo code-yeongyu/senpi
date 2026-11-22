@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { kernelPathEntry } from "../src/extension/kernel-path-env.ts";
+import { CONFIG_DIR_NAME } from "@code-yeongyu/senpi";
+import { KERNEL_BASH_ENV, kernelShellEnv, sessionShellPath } from "../src/extension/kernel-path-env.ts";
 
 // Bare-name lookup as libuv (Bun/Node spawn) and `where` do it on Windows: `;` PATH, first directory wins, PATHEXT `.exe`.
 function windowsWhich(name: string, path: string): string | undefined {
@@ -22,7 +23,7 @@ function fakeExe(dir: string, name: string): string {
 
 const unchangedEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => env;
 
-describe("kernelPathEntry (omo#10894)", () => {
+describe("kernelShellEnv (omo#10894)", () => {
 	let root: string;
 	let system32: string;
 	let gitCmd: string;
@@ -49,7 +50,7 @@ describe("kernelPathEntry (omo#10894)", () => {
 	it("puts the Git Bash directory first on win32 so a bare bash resolves to Git Bash, not the WSL launcher", () => {
 		expect(windowsWhich("bash", inheritedPath)).toBe(join(system32, "bash.exe"));
 
-		const entry = kernelPathEntry({
+		const entry = kernelShellEnv({
 			platform: "win32",
 			env: { Path: inheritedPath },
 			resolveBash: () => gitBash,
@@ -60,10 +61,11 @@ describe("kernelPathEntry (omo#10894)", () => {
 		expect(windowsWhich("bash", entry.Path ?? "")).toBe(gitBash);
 		expect(windowsWhich("sh", entry.Path ?? "")).toBe(join(gitBin, "sh.exe"));
 		expect(entry.Path?.split(";").slice(1)).toEqual([system32, gitCmd]);
+		expect(entry[KERNEL_BASH_ENV]).toBe(gitBash);
 	});
 
 	it("keeps the Git Bash directory once when PATH already lists it later", () => {
-		const entry = kernelPathEntry({
+		const entry = kernelShellEnv({
 			platform: "win32",
 			env: { PATH: [system32, gitBin.toUpperCase(), gitCmd].join(";") },
 			resolveBash: () => gitBash,
@@ -74,7 +76,7 @@ describe("kernelPathEntry (omo#10894)", () => {
 	});
 
 	it("leaves PATH unchanged on win32 when no Git Bash is found", () => {
-		const entry = kernelPathEntry({
+		const entry = kernelShellEnv({
 			platform: "win32",
 			env: { Path: inheritedPath },
 			resolveBash: () => undefined,
@@ -85,7 +87,7 @@ describe("kernelPathEntry (omo#10894)", () => {
 	});
 
 	it("never prepends the WSL launcher the bash tool falls back to from PATH", () => {
-		const entry = kernelPathEntry({
+		const entry = kernelShellEnv({
 			platform: "win32",
 			env: { Path: inheritedPath },
 			resolveBash: () => "C:\\Windows\\System32\\bash.exe",
@@ -100,7 +102,7 @@ describe("kernelPathEntry (omo#10894)", () => {
 		const portableBash = fakeExe(portableBin, "bash");
 		fakeExe(portableBin, "sh");
 
-		const entry = kernelPathEntry({
+		const entry = kernelShellEnv({
 			platform: "win32",
 			env: { Path: inheritedPath },
 			shellPath: portableBash,
@@ -109,40 +111,41 @@ describe("kernelPathEntry (omo#10894)", () => {
 
 		expect(entry.Path?.split(";")).toEqual([portableBin, system32, gitCmd]);
 		expect(windowsWhich("bash", entry.Path ?? "")).toBe(portableBash);
+		expect(entry[KERNEL_BASH_ENV]).toBe(portableBash);
 	});
 
-	it("leaves PATH unchanged when the bash lives in a usr\\bin with coreutils that would shadow System32", () => {
+	it("leaves PATH unchanged but still names the bash tool's bash when it lives in a usr\\bin with coreutils", () => {
 		const usrBin = join(root, "msys64", "usr", "bin");
 		const usrBash = fakeExe(usrBin, "bash");
 		fakeExe(usrBin, "sh");
 		fakeExe(usrBin, "find");
 		fakeExe(usrBin, "sort");
 
-		const entry = kernelPathEntry({
+		const entry = kernelShellEnv({
 			platform: "win32",
 			env: { Path: inheritedPath },
 			resolveBash: () => usrBash,
 			withBundledBun: unchangedEnv,
 		});
 
-		expect(entry).toEqual({});
+		expect(entry).toEqual({ [KERNEL_BASH_ENV]: usrBash });
 	});
 
-	it("leaves PATH unchanged when the bash directory has no sh.exe beside it", () => {
+	it("leaves PATH unchanged but still names the bash tool's bash when no sh.exe sits beside it", () => {
 		const lone = fakeExe(join(root, "tools"), "bash");
 
-		const entry = kernelPathEntry({
+		const entry = kernelShellEnv({
 			platform: "win32",
 			env: { Path: inheritedPath },
 			resolveBash: () => lone,
 			withBundledBun: unchangedEnv,
 		});
 
-		expect(entry).toEqual({});
+		expect(entry).toEqual({ [KERNEL_BASH_ENV]: lone });
 	});
 
 	it.each(["darwin", "linux"] as const)("leaves PATH unchanged on %s", (platform) => {
-		const entry = kernelPathEntry({
+		const entry = kernelShellEnv({
 			platform,
 			env: { PATH: "/usr/bin:/bin" },
 			resolveBash: () => gitBash,
@@ -154,7 +157,7 @@ describe("kernelPathEntry (omo#10894)", () => {
 
 	it("composes with the bundled bun PATH entry", () => {
 		const bunDir = join(root, "senpi-bin");
-		const entry = kernelPathEntry({
+		const entry = kernelShellEnv({
 			platform: "win32",
 			env: { Path: inheritedPath },
 			resolveBash: () => gitBash,
@@ -162,5 +165,36 @@ describe("kernelPathEntry (omo#10894)", () => {
 		});
 
 		expect(entry.Path?.split(";")).toEqual([gitBin, bunDir, system32, gitCmd]);
+	});
+});
+
+describe("sessionShellPath (omo#10894)", () => {
+	let root: string;
+	let agentDir: string;
+	let project: string;
+
+	beforeEach(() => {
+		root = mkdtempSync(join(tmpdir(), "session-shell-path-"));
+		agentDir = join(root, "agent");
+		project = join(root, "project");
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(join(project, CONFIG_DIR_NAME), { recursive: true });
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ shellPath: "C:\\global\\bash.exe" }));
+		writeFileSync(
+			join(project, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ shellPath: "C:\\project\\bash.exe" }),
+		);
+	});
+
+	afterEach(() => {
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("reads the session's agent dir and, for a trusted project, its project setting, as the bash tool does", () => {
+		expect(sessionShellPath({ cwd: project, agentDir, isProjectTrusted: () => true })).toBe("C:\\project\\bash.exe");
+	});
+
+	it("ignores an untrusted project's shellPath and keeps the session's agent-dir setting", () => {
+		expect(sessionShellPath({ cwd: project, agentDir, isProjectTrusted: () => false })).toBe("C:\\global\\bash.exe");
 	});
 });

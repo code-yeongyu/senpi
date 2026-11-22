@@ -23,7 +23,6 @@ import locale
 import math
 import os
 import re
-import shutil
 import signal
 import subprocess
 import time
@@ -1691,9 +1690,8 @@ def _magic_cell(name: str, args: str, body: str) -> Any:
         command = "\n".join(part for part in (args, body) if part)
         if os.name != "nt":
             return _shell(command)
-        shell_path = _windows_bare_shell_path(name)
-        # Without a non-WSL bash, keep the cmd.exe shell rather than booting WSL.
-        return _shell(command) if shell_path is None else _shell(command, [shell_path, "-c", command])
+        # The bash tool's launch: its bash with `-c`. Without one, keep the cmd.exe shell rather than booting WSL.
+        return _shell(command) if _kernel_bash is None else _shell(command, [_kernel_bash, "-c", command])
     raise PreludeRuntimeError(f"Unsupported cell magic: %%{name}")
 
 
@@ -1803,29 +1801,20 @@ class ShellResult(list[str]):
 
 
 _BARE_SHELL_NAMES = frozenset({"bash", "sh", "bash.exe", "sh.exe"})
+# The bash the session's bash tool runs, named by the host on Windows (omo#10894); None runs no differently.
+_kernel_bash: str | None = None
 
 
-def _windows_bare_shell_path(
-    name: str,
-    which: Callable[[str], str | None] = shutil.which,
-    system_root: str | None = None,
-) -> str | None:
-    """The PATH-first non-WSL match for a bare `bash`/`sh` on Windows, else None (omo#10894).
+def _windows_bare_shell_path(name: str, bash: str | None) -> str | None:
+    """The bash tool's bash for a bare `bash`/`sh` on Windows, else None (omo#10894).
 
     CreateProcess searches System32 before PATH, so a bare `bash` reaches the WSL launcher even
     though the host put the Git Bash directory first on this kernel's PATH.
     """
-    if name.lower() not in _BARE_SHELL_NAMES:
-        return None
-    resolved = which(name)
-    if resolved is None:
-        return None
-    root = (system_root or os.environ.get("SystemRoot") or "C:\\Windows").replace("/", "\\").rstrip("\\").lower()
-    launchers = {f"{root}\\system32\\bash.exe", f"{root}\\sysnative\\bash.exe"}
-    return None if resolved.replace("/", "\\").lower() in launchers else resolved
+    return bash if bash and name.lower() in _BARE_SHELL_NAMES else None
 
 
-def _with_windows_bare_shell(args: Any, resolve: Callable[[str], str | None] = _windows_bare_shell_path) -> Any:
+def _with_windows_bare_shell(args: Any, resolve: Callable[[str], str | None]) -> Any:
     if isinstance(args, (list, tuple)) and args and isinstance(args[0], str):
         shell_path = resolve(args[0])
         return args if shell_path is None else [shell_path, *args[1:]]
@@ -1836,7 +1825,7 @@ def _with_windows_bare_shell(args: Any, resolve: Callable[[str], str | None] = _
     return args
 
 
-def _bare_shell_popen(base: type, resolve: Callable[[str], str | None] = _windows_bare_shell_path) -> type:
+def _bare_shell_popen(base: type, resolve: Callable[[str], str | None]) -> type:
     class BareShellPopen(base):
         def __init__(self, args: Any, *rest: Any, **kwargs: Any) -> None:
             if not rest and not kwargs.get("shell") and kwargs.get("executable") is None:
@@ -1847,13 +1836,21 @@ def _bare_shell_popen(base: type, resolve: Callable[[str], str | None] = _window
 
 
 def _install_windows_bare_shell_resolution() -> None:
-    if os.name != "nt":
+    global _kernel_bash
+    # Read once and removed, so the name reaches neither cells' environment nor their children.
+    bash = os.environ.pop("SENPI_KERNEL_BASH", None)
+    if os.name != "nt" or not bash:
         return
-    subprocess.Popen = _bare_shell_popen(subprocess.Popen)
+    _kernel_bash = bash
+
+    def resolve(name: str) -> str | None:
+        return _windows_bare_shell_path(name, bash)
+
+    subprocess.Popen = _bare_shell_popen(subprocess.Popen, resolve)
     # asyncio's Windows transport spawns through its own Popen subclass, looked up at call time.
     from asyncio import windows_utils
 
-    windows_utils.Popen = _bare_shell_popen(windows_utils.Popen)
+    windows_utils.Popen = _bare_shell_popen(windows_utils.Popen, resolve)
 
 
 def _shell(command: str, argv: list[str] | None = None) -> ShellResult:

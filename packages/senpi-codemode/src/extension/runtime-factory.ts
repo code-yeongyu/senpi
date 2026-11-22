@@ -3,7 +3,6 @@ import {
 	childEnvironmentOf,
 	type ExtensionContext,
 	readKillGuardSetting,
-	SettingsManager,
 	withCredentialProxy,
 } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
@@ -29,7 +28,7 @@ import { processRuntimeInfo } from "../kernels/js/process-worker.ts";
 import { sessionEnvironmentFrom } from "../kernels/session-env.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
 import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
-import { kernelPathEntry } from "./kernel-path-env.ts";
+import { kernelShellEnv, sessionShellPath } from "./kernel-path-env.ts";
 import { reachableToolNames } from "./reachable-tools.ts";
 import { jsRuntimeInfo, runtimesFromAvailability } from "./runtime-info.ts";
 import {
@@ -100,11 +99,11 @@ export async function createRuntime(
 	const sessionId = sessionIdFrom(event);
 	const killGuard = readKillGuardSetting(ctx.cwd, ctx.agentDir) === "on";
 	// The bundled bun directory, and on win32 the bash tool's Git Bash ahead of System32's WSL launcher (omo#10894).
-	const pathEntry = kernelPathEntry({ shellPath: SettingsManager.create(ctx.cwd).getShellPath() });
+	const shellEnv = kernelShellEnv({ shellPath: sessionShellPath(ctx) });
 	// The kill guard's runtime layer (senpi#5349): kernels and their children get the shims first on PATH and
 	// bash's BASH_ENV wrapper, as the bash tool does.
-	const killGuardEnv = killGuard ? activeKillGuardEnvironment({ ...process.env, ...pathEntry }) : {};
-	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...pathEntry, ...killGuardEnv, ...withheldCredentialEntries() };
+	const killGuardEnv = killGuard ? activeKillGuardEnvironment({ ...process.env, ...shellEnv }) : {};
+	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...shellEnv, ...killGuardEnv, ...withheldCredentialEntries() };
 	// Kernels and their children never see the RPC host's supervisor hand-off (senpi#5635).
 	const inheritedEnv = () => childEnvironmentOf(process.env);
 	const configuredPoolWidth = settings.parallelPoolWidth;
