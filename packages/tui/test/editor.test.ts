@@ -2407,7 +2407,7 @@ describe("Editor component", () => {
 				const requested: string[] = [];
 				editor.setAutocompleteProvider({
 					getSuggestions: async (lines, cursorLine, cursorCol) => {
-						const text = lines[cursorLine]!.slice(0, cursorCol);
+						const text = (lines[cursorLine] ?? "").slice(0, cursorCol);
 						requested.push(text);
 						if (text.endsWith(" ")) return { prefix: "", items: [{ value: "cwd-entry/", label: "cwd-entry/" }] };
 						return {
@@ -2444,7 +2444,7 @@ describe("Editor component", () => {
 			const requested: string[] = [];
 			editor.setAutocompleteProvider({
 				getSuggestions: async (lines, cursorLine, cursorCol) => {
-					const text = lines[cursorLine]!.slice(0, cursorCol);
+					const text = (lines[cursorLine] ?? "").slice(0, cursorCol);
 					requested.push(text);
 					return { prefix: text, items: [{ value: '@"My Docs/"', label: "My Docs/" }] };
 				},
