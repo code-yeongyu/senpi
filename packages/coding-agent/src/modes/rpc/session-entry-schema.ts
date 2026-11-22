@@ -10,7 +10,8 @@ import {
 } from "./agent-message-schema.ts";
 
 // The hand's parse of the loop's session entries (senpi#5898): every entry type, each with the fields its readers rely
-// on. Objects are loose, so a field this schema does not name reaches handlers untouched.
+// on. Objects are deliberately loose, for the reason transcript messages are (agent-message-schema.ts): entries are the
+// loop's session record, and a newer loop's optional entry fields reach handlers untouched.
 
 export const INPUT_SOURCES = ["interactive", "rpc", "extension"] as const satisfies readonly InputSource[];
 

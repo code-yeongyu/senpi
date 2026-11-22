@@ -10,6 +10,18 @@ import type { JsonValue } from "@earendil-works/pi-ai";
  * takes an unacknowledged `started` with it, the loop host never learns the call began and sends it again to the
  * replacement, so a hook that had run runs a second time. At-most-once dispatch therefore holds only on a hand whose
  * endpoint is the machine's long-lived link endpoint, not one owned by the hand process.
+ *
+ * Ordering is per SESSION, not per lane: a lane may carry many sessions (a hand serves every scope's sessions on one
+ * lane), and the hand names each call's session (`serveLoopHooks`'s `sessionOf`). It runs one session's calls one at a
+ * time, in the order they arrived; calls of different sessions run side by side, so one session's stuck call holds no
+ * other. A call's hooks start once its session's previous call has settled, a cancelled call's included. How long a
+ * running call takes is bounded only where its runner bounds its handlers (on a senpi hand: lifecycle and compaction
+ * handlers have a session's per-handler cap unless it is turned off, while `input`, `before_agent_start` and
+ * `before_provider_request` handlers have none, as in a local session). The wait for a turn is always bounded: a call
+ * still waiting after `queueWaitMs` answers `hook.failed` with reason `queue_timeout` (the loop host raises
+ * `LoopHookQueueTimeoutError`) without starting its hooks. The hand reads the lane meanwhile, so `hook.cancel` reaches
+ * the call it names: a running call's signal aborts, and a waiting call answers `hook.failed` with reason `cancelled`
+ * without starting its hooks.
  */
 export type LoopHookMessage =
 	| LoopHookCall
@@ -56,11 +68,19 @@ export interface LoopHookReply {
 	readonly result: JsonValue;
 }
 
-/** The hooks ran and failed; the message is the hook's own. */
+/** Why a call ended without running its hooks: cancelled while it waited its turn, or waited past the cap. */
+export type LoopHookRefusal = "cancelled" | "queue_timeout";
+const REFUSALS: readonly LoopHookRefusal[] = ["cancelled", "queue_timeout"];
+
+/**
+ * The hooks ran and failed, and the message is the hook's own; or, with `reason`, the call ended without running them
+ * (no `hook.started` was sent for it).
+ */
 export interface LoopHookFailed {
 	readonly kind: "hook.failed";
 	readonly callId: string;
 	readonly error: string;
+	readonly reason?: LoopHookRefusal;
 }
 
 const KINDS: readonly LoopHookMessage["kind"][] = [
@@ -107,9 +127,15 @@ export function decodeLoopHookMessage(payload: Uint8Array): LoopHookMessage | un
 			return isId(value.callId) && "result" in value
 				? { kind: "hook.reply", callId: value.callId, result: value.result as JsonValue }
 				: undefined;
-		default:
-			return isId(value.callId) && typeof value.error === "string"
-				? { kind: "hook.failed", callId: value.callId, error: value.error }
-				: undefined;
+		default: {
+			if (!isId(value.callId) || typeof value.error !== "string") return undefined;
+			const reason = REFUSALS.find((refusal) => refusal === value.reason);
+			return {
+				kind: "hook.failed",
+				callId: value.callId,
+				error: value.error,
+				...(reason === undefined ? {} : { reason }),
+			};
+		}
 	}
 }

@@ -5,8 +5,9 @@ import { count } from "./agent-message-schema.ts";
 const flag = z.boolean().optional();
 const ratio = z.number().min(0).max(1);
 
-// Every field of the settings a compaction preparation carries, with its bounds: the hand refuses a value a session's own
-// settings resolver would never produce, rather than handing it to the user's compaction handlers.
+// Every field of the settings a compaction preparation carries, with its bounds, and no other (strict): the hand refuses a
+// value a session's own settings resolver would never produce, or a field it does not know, rather than handing it to the
+// user's compaction handlers.
 const SHAPE = {
 	enabled: z.boolean(),
 	reserveTokens: count,
@@ -28,7 +29,7 @@ const SHAPE = {
 	model: z.string().optional(),
 } satisfies { [K in keyof Required<CompactionSettings>]: z.ZodType };
 
-const compactionSettingsSchema = z.looseObject(SHAPE);
+const compactionSettingsSchema = z.strictObject(SHAPE);
 
 export const isCompactionSettings = (value: unknown): value is CompactionSettings =>
 	compactionSettingsSchema.safeParse(value).success;

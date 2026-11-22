@@ -63,8 +63,13 @@ const CANCELLABLE_COMPACTION_EXTENSION = `export default (pi) => {
 	}));
 };`;
 
-/** The reviewer's probes plus the file-set shape: each makes one field of the payload malformed. */
-const MALFORMED: readonly [string, ReturnType<typeof beforeCompact>][] = [
+/** A user extension that reports a transcript message field this version's schema does not name. */
+const UNKNOWN_FIELD_EXTENSION = `export default (pi) => {
+	pi.on("session_before_compact", (event) => ({ compaction: { summary: \`injected \${event.preparation.messagesToSummarize[0].injected}\`, firstKeptEntryId: "entry-2", tokensBefore: 0 } }));
+};`;
+
+/** The reviewers' probes: each makes one field of the payload malformed, or adds a field a strict part does not name. */
+const MALFORMED: readonly [string, Record<string, unknown>][] = [
 	[
 		"a settings field of the wrong type",
 		beforeCompact({
@@ -88,6 +93,16 @@ const MALFORMED: readonly [string, ReturnType<typeof beforeCompact>][] = [
 		"file sets that are not arrays",
 		beforeCompact({ preparation: { ...preparation, fileOps: { read: {}, written: [], edited: [] } } }),
 	],
+	[
+		"an unknown compaction settings field",
+		beforeCompact({ preparation: { ...preparation, settings: { ...preparation.settings, bogus: true } } }),
+	],
+	["an unknown preparation field", beforeCompact({ preparation: { ...preparation, bogus: true } })],
+	[
+		"an unknown file-set field",
+		beforeCompact({ preparation: { ...preparation, fileOps: { ...preparation.fileOps, bogus: [] } } }),
+	],
+	["an unknown envelope field", { ...beforeCompact(), injected: true }],
 ];
 
 describe("a hosted loop's compaction hooks run on the user's machine (senpi#5898)", () => {
@@ -146,6 +161,20 @@ describe("a hosted loop's compaction hooks run on the user's machine (senpi#5898
 		await expect(user.machine.loopHooks("session_before_compact", { ...user.base, ...payload })).rejects.toThrow(
 			"malformed session_before_compact payload",
 		);
+	});
+
+	// Transcript messages and session entries stay open to fields a newer loop adds: they reach handlers untouched.
+	it("a transcript message field this version does not name reaches the handlers untouched", async () => {
+		const user = await userMachine({ extension: UNKNOWN_FIELD_EXTENSION });
+		const message = { ...fauxAssistantMessage("old work"), injected: "kept" };
+
+		const reply = (await user.machine.loopHooks("session_before_compact", {
+			...user.base,
+			...beforeCompact({ preparation: { ...preparation, messagesToSummarize: [message] } }),
+		})) as LifecycleReply;
+
+		expect(reply.errors).toBeUndefined();
+		expect(reply.compaction?.summary).toBe("injected kept");
 	});
 
 	it("the loop cancelling the call aborts the handlers' signal while they run", async () => {
