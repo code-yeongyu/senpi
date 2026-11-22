@@ -1637,8 +1637,6 @@
 
 ### Fixed
 
-- Goal waits now have an independent deadline wakeup and recover when a busy session settles instead of losing their continuation. At the idle TUI prompt, Escape stops a parked monitor wait and blocks the goal (or pauses it under a Stop hold); `/goal resume` continues it. Dialogs, autocomplete, questions and bash keep their Escape controls, and new user input still interrupts the wait immediately. A successful turn also discards an obsolete provider-retry wait ([#4050](https://github.com/code-yeongyu/senpi/issues/4050)).
-
 - A shared RPC host whose previous generation died is no longer left without an owner: `host status` gives the endpoint back to the one generation it can prove still serves the socket, so `host stop` and `host handoff` no longer refuse `unknown_owner` for a healthy host, and a host that registered while a status read was pruning keeps its registration. `host status --json` reports which generation the pointer names (`pointer.state`: `current`, `elected` or `missing` with the candidates it saw) ([#1911](https://github.com/code-yeongyu/senpi/issues/1911)).
 - On macOS Terminal.app the question hint now says `cmd+r` (toggle mouse reporting) to select text, since Terminal has no drag modifier that bypasses an app's mouse reporting ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 - An accepted request to continue a session on another computer now tells the agent once if it is cancelled because the app disconnected, the user aborted, or the app withdrew its offer. After an abort, the notice is saved before the next prompt, even if the session closes immediately. The session stays on this computer, and the notice does not start another turn ([#4078](https://github.com/code-yeongyu/senpi/issues/4078)).
