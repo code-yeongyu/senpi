@@ -25,3 +25,10 @@ export class WebfetchAbortError extends Error {
 		this.name = "WebfetchAbortError";
 	}
 }
+
+export class WebfetchSourceDeniedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "WebfetchSourceDeniedError";
+	}
+}
