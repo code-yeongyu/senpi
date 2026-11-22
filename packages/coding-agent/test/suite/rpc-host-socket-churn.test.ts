@@ -22,7 +22,7 @@ import { writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
  * selects for both processes. The deterministic proof of the fix is `rpc-accepted-socket-release.test.ts`.
  */
 const PEERS = 50;
-const RELEASE_DEADLINE_MS = 20_000;
+const RELEASE_DEADLINE_MS = 10_000;
 const bun = process.env.SENPI_TEST_HOST_RUNTIME === "bun";
 
 function unixSockets(pid: number): number {
@@ -111,5 +111,5 @@ describe.skipIf(process.platform === "win32")("host socket churn while the host 
 			await reapProcessesUnder(qa.root);
 			await rm(qa.root, { recursive: true, force: true });
 		}
-	}, 120_000);
+	});
 });
