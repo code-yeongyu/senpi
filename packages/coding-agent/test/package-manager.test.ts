@@ -174,6 +174,30 @@ Content`,
 			expect(result.skills.some((r) => r.path === skillFile && r.enabled)).toBe(true);
 		});
 
+		it("should emit each selected skill root once regardless of skill count", async () => {
+			// senpi#4215: resolve() reports one provenance tuple per selected root, not one per skill,
+			// so consumers that walk skillRoots cannot reintroduce per-skill re-walks.
+			const skillsRoot = join(agentDir, "skills");
+			for (const name of ["alpha", "beta", "gamma"]) {
+				const skillDir = join(skillsRoot, name);
+				mkdirSync(skillDir, { recursive: true });
+				writeFileSync(
+					join(skillDir, "SKILL.md"),
+					`---
+name: ${name}
+description: A test skill
+---
+Content`,
+				);
+			}
+
+			settingsManager.setSkillPaths(["skills"]);
+
+			const result = await packageManager.resolve();
+			expect(result.skills.filter((r) => r.path.startsWith(skillsRoot))).toHaveLength(3);
+			expect(result.skillRoots.filter((p) => p.selectedRoot === skillsRoot)).toHaveLength(1);
+		});
+
 		it("should auto-discover root markdown skills from .pi skill dirs", async () => {
 			const skillFile = join(agentDir, "skills", "single-file.md");
 			mkdirSync(join(agentDir, "skills"), { recursive: true });

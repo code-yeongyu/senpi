@@ -2667,10 +2667,20 @@ export class DefaultPackageManager implements PackageManager {
 			});
 		};
 
+		// Every enabled skill under a root carries the same provenance tuple; emit each
+		// (kind, selectedRoot, projectRoot) once so no consumer re-walks a root per skill (senpi#4215).
+		const seenSkillRoots = new Set<string>();
+		const skillRoots = [...accumulator.skills.values()].flatMap((entry) => {
+			const provenance = entry.metadata.skillProvenance;
+			if (!entry.enabled || provenance === undefined) return [];
+			const key = `${provenance.kind}\0${provenance.selectedRoot}\0${provenance.projectRoot ?? ""}`;
+			if (seenSkillRoots.has(key)) return [];
+			seenSkillRoots.add(key);
+			return [provenance];
+		});
+
 		return {
-			skillRoots: [...accumulator.skills.values()]
-				.filter((entry) => entry.enabled)
-				.flatMap((entry) => (entry.metadata.skillProvenance === undefined ? [] : [entry.metadata.skillProvenance])),
+			skillRoots,
 			extensions: mapToResolved(accumulator.extensions),
 			skills: mapToResolved(accumulator.skills),
 			prompts: mapToResolved(accumulator.prompts),
