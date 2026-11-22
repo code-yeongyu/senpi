@@ -5,7 +5,12 @@ import { SessionPendingInputJournal } from "./pending-input-journal.ts";
 import type { PendingInputProjection } from "./pending-input-projection.ts";
 import { createSessionQueuedInputPort } from "./pending-input-session-port.ts";
 import { PENDING_INPUT_TRANSITION, type PendingInputJournal, PendingInputStore } from "./pending-input-store.ts";
-import type { OperationOutcome, PendingInputMode, PendingInputOperationResult } from "./pending-input-types.ts";
+import type {
+	OperationOutcome,
+	PendingInputEvent,
+	PendingInputMode,
+	PendingInputOperationResult,
+} from "./pending-input-types.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionManager } from "./session-manager.ts";
 
@@ -204,6 +209,23 @@ export class SessionPendingInputs {
 					event: { type: "cancel", cause: "stop", consumerFenced: true },
 				})),
 			);
+		});
+	}
+
+	/** Reject before dispatch, recording the failure before removing the native copies under the same gate. */
+	async rejectBeforeDispatch(
+		clientMessageIds: readonly string[],
+		failure: Extract<PendingInputEvent, { type: "reject_before_dispatch" }>,
+		removeNative: () => void,
+	): Promise<void> {
+		if (this.storeOpening === undefined || clientMessageIds.length === 0) {
+			removeNative();
+			return;
+		}
+		const store = await this.storeOpening;
+		await store.transaction(async (tx) => {
+			await tx.applyAll(clientMessageIds.map((clientMessageId) => ({ clientMessageId, event: failure })));
+			removeNative();
 		});
 	}
 

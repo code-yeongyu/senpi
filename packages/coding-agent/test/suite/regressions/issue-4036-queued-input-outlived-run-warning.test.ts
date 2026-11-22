@@ -77,13 +77,12 @@ describe("#4036 a queued input that outlives a completed turn is reported, and o
 		expect(warnings[0]?.ageMs).toEqual(expect.any(Number));
 	});
 
-	it("#given a follow-up queued while idle #when the next turn fails #then nothing is reported and the turn after delivers it once", async () => {
+	it("#given a follow-up queued while idle #when the next turn fails #then its own turn delivers it once without a warning (#6868)", async () => {
 		// given
 		const harness = await createHarness();
 		harnesses.push(harness);
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: HARD_ERROR }),
-			fauxAssistantMessage("handled the turn after"),
 			fauxAssistantMessage("handled the follow-up"),
 			fauxAssistantMessage("unexpected extra turn"),
 		]);
@@ -91,9 +90,9 @@ describe("#4036 a queued input that outlives a completed turn is reported, and o
 
 		// when
 		await runTurn(harness, "a turn that fails");
-		await runTurn(harness, "the turn after");
 
 		// then
+		expect(harness.faux.getCallLog()).toHaveLength(2);
 		expect(getUserTexts(harness).filter((text) => text === "follow-up queued while idle")).toHaveLength(1);
 		expect(outlivedWarnings(harness)).toEqual([]);
 	});
@@ -152,7 +151,7 @@ describe("#4036 a queued input that outlives a completed turn is reported, and o
 		expect(outlivedWarnings(harness)).toEqual([]);
 	});
 
-	it("#given a follow-up queued during a turn #when that turn retries a transient error and then fails #then nothing is reported and the next turn delivers it once", async () => {
+	it("#given a follow-up queued during a turn #when a retry ends in an error #then the follow-up starts its own turn without a warning (#6868)", async () => {
 		// given
 		const harness = await createHarness({ settings: { retry: { enabled: true, baseDelayMs: 1 } } });
 		harnesses.push(harness);
@@ -163,7 +162,6 @@ describe("#4036 a queued input that outlives a completed turn is reported, and o
 				return fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" });
 			},
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: HARD_ERROR }),
-			fauxAssistantMessage("handled the next turn"),
 			fauxAssistantMessage("handled the follow-up"),
 			fauxAssistantMessage("unexpected extra turn"),
 		]);
@@ -171,9 +169,9 @@ describe("#4036 a queued input that outlives a completed turn is reported, and o
 		// when
 		await runTurn(harness, "a turn that retries and fails");
 		await followUpQueued;
-		await runTurn(harness, "the next turn");
 
 		// then
+		expect(harness.faux.getCallLog()).toHaveLength(3);
 		expect(getUserTexts(harness).filter((text) => text === "follow-up queued during the turn")).toHaveLength(1);
 		expect(outlivedWarnings(harness)).toEqual([]);
 	});

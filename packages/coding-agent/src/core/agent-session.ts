@@ -424,6 +424,7 @@ import {
 	describeUsageLimitMessage,
 	usageLimitScope,
 } from "./retry-fallback/usage-limit.ts";
+import { queuedUsageHold } from "./retry-fallback/queued-usage-hold.ts";
 import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { limitResetAt } from "./retry-fallback/limit-reset.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
@@ -4104,7 +4105,10 @@ export class AgentSession {
 		if (lastAssistant?.role !== "assistant") {
 			return false;
 		}
-		if (lastAssistant.stopReason === "aborted" || lastAssistant.stopReason === "error") {
+		if (
+			lastAssistant.stopReason === "aborted" ||
+			(lastAssistant.stopReason === "error" && this._isLocalFailure(lastAssistant))
+		) {
 			return false;
 		}
 		if (this._getRequiredAutoCompactionReason(lastAssistant)) {
@@ -4406,6 +4410,8 @@ export class AgentSession {
 		let retryableFailureAwaitingDrain: AssistantMessage | undefined;
 		let allowsPostCompactionUsageExemptContinuation = false;
 		let releasedExemptionAllowsQueuedContinuation = false;
+		let endedInProviderError = false;
+		const abortGeneration = this._userAbortGeneration;
 		const userAbortSuppressedQueuedContinuation =
 			event.type === "agent_end" && this._suppressQueuedContinuationAfterUserAbort;
 		if (userAbortSuppressedQueuedContinuation) {
@@ -4418,6 +4424,7 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
+			endedInProviderError = msg.stopReason === "error" && !this._isLocalFailure(msg);
 			if (msg.stopReason !== "error") this._queuedDrainBackoffAttempt = 0;
 			if (msg.stopReason === "error") {
 				const resetAt = limitResetAt(msg, this._fallbackWallNow());
@@ -4540,9 +4547,8 @@ export class AgentSession {
 				retryOwnedDeferredQueue &&
 				retryOutcome === "not-handled" &&
 				(msg.stopReason === "error" || msg.stopReason === "aborted");
-			// A provider that is only rate limited or overloaded answers again later: the input queued behind this run
-			// waits that out instead of parking until unrelated input arrives (omo#14428). A provider timeout keeps its
-			// own policy: input stays parked until that provider proves responsive.
+			// A transient rate limit or overload can back off further for peer deliveries (omo#14428).
+			// A provider timeout does not use that extra wait after the retry owner has settled (#6868).
 			if (
 				!userAbortSuppressedQueuedContinuation &&
 				retryOutcome === "not-handled" &&
@@ -4595,10 +4601,11 @@ export class AgentSession {
 						// compaction owns the continuation now.
 						this._requiredCompactionAdmissionError = undefined;
 					}
-					// A failed first response consumes the exemption but must not continue the run: input queued behind it
-					// waits for the next prompt, exactly as after a failed response without a compaction (#4036).
+					// The exemption does not extend a failed run. Released input starts its own turn or is refused
+					// under a usage hold, just like ordinary queued input (#4036, superseded by #6868).
 					allowsPostCompactionUsageExemptContinuation =
-						this._postCompactionUsageExemptAssistants.has(msg) && msg.stopReason !== "error" && msg.stopReason !== "aborted";
+						this._postCompactionUsageExemptAssistants.has(msg) &&
+						this._agentEndAllowsQueuedContinuation(event.messages);
 					if (allowsPostCompactionUsageExemptContinuation) {
 						this._flushPostCompactionDeferredMessages();
 					}
@@ -4623,7 +4630,7 @@ export class AgentSession {
 			// The exemption covers only the first response after a compaction. A run that ends on that response
 			// without consuming it (a blocked or exhausted retry, a user abort) has still spent it: the input parked
 			// while that run started rejoins the ordinary queues, whose rules then decide when it runs, exactly as
-			// for input queued in a run without a compaction (#4036).
+			// for input queued in a run without a compaction (#4036, #6868). A user abort leaves it waiting.
 			if (this._releaseSpentPostCompactionExemption(msg)) {
 				releasedExemptionAllowsQueuedContinuation =
 					!userAbortSuppressedQueuedContinuation && this._agentEndAllowsQueuedContinuation(event.messages);
@@ -4634,9 +4641,33 @@ export class AgentSession {
 			this._flushPendingBashMessages();
 			// Before the continuation decision, so input sent while the title is pending still continues this run.
 			await this._settleSessionTitle();
+			const userAborted = userAbortSuppressedQueuedContinuation || abortGeneration !== this._userAbortGeneration;
+			if (userAborted) this._suppressQueuedContinuationAfterUserAbort = false;
+			if (
+				endedInProviderError &&
+				!launchedContinuation &&
+				!userAborted &&
+				this.agent.hasQueuedMessages()
+			) {
+				const hold = queuedUsageHold(this._retryFallback, this._pendingModelSwitch?.model ?? this.model);
+				if (hold) {
+					await this._rejectQueuedInputsForUsageHold(hold);
+					retryContinuationBlocked = true;
+				} else if (
+					!retryContinuationBlocked &&
+					retryableFailureAwaitingDrain &&
+					this.agent.peekQueuedMessages({ all: true }).some((queued) => deliveryIdOf(queued) !== undefined)
+				) {
+					// Keep omo#14428's backoff for peer deliveries when the provider is not under a #3131 hold.
+					const drain = await this._drainQueueAfterProviderBackoff(retryableFailureAwaitingDrain);
+					launchedContinuation = drain === "continued";
+					retryContinuationBlocked ||= drain === "cancelled";
+				}
+			}
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
+				!userAborted &&
 				(allowsQueuedContinuation ||
 					allowsPostCompactionUsageExemptContinuation ||
 					releasedExemptionAllowsQueuedContinuation ||
@@ -4649,26 +4680,12 @@ export class AgentSession {
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
 			}
-			// Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again.
-			// A queue of a person's own input alone waits for their next prompt (#4036); in a queue that holds both, the
-			// drained run takes the person's input too, in queue order.
-			if (
-				!launchedContinuation &&
-				!retryContinuationBlocked &&
-				retryableFailureAwaitingDrain &&
-				this.agent.peekQueuedMessages({ all: true }).some((queued) => deliveryIdOf(queued) !== undefined)
-			) {
-				const drain = await this._drainQueueAfterProviderBackoff(retryableFailureAwaitingDrain);
-				launchedContinuation = drain === "continued";
-				// A cancelled wait settles the run, as a retry cancelled during its backoff does.
-				retryContinuationBlocked ||= drain === "cancelled";
-			}
 			// agent_before_settle (D-15): handlers may append entries or ask for one more request before
 			// the run settles. A user abort or a blocked retry settles without it.
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
-				!userAbortSuppressedQueuedContinuation &&
+				!userAborted &&
 				this._extensionRunner.hasHandlers("agent_before_settle") &&
 				(await this._runBeforeSettleBoundary(this.agent.hasQueuedMessages()))
 			) {
@@ -7808,10 +7825,10 @@ export class AgentSession {
 	}
 
 	/** A removed itemized message is never written: every send waiting on it settles now (senpi#4106). */
-	private _settleRemovedCarriers(removed: readonly AgentMessage[]): void {
+	private _settleRemovedCarriers(removed: readonly AgentMessage[], failure?: AccountUsageLimitError): void {
 		for (const message of removed) {
 			const watcher = this._takePersistWatcher(message);
-			watcher?.failed(new QueuedDeliveryCleared(watcher.itemIds));
+			watcher?.failed(failure ?? new QueuedDeliveryCleared(watcher.itemIds));
 		}
 	}
 
@@ -9217,6 +9234,10 @@ export class AgentSession {
 	 * session; its sender redelivers it (oh-my-openagent#14169).
 	 */
 	takeQueuedDeliveries(): void {
+		this._takeQueuedDeliveries();
+	}
+
+	private _takeQueuedDeliveries(failure?: AccountUsageLimitError): void {
 		const removed = this.agent.peekQueuedMessages({ all: true }).filter((queued) => deliveryIdOf(queued) !== undefined);
 		for (const message of removed) this.agent.removeQueuedMessage(message);
 		const tickets = removed.flatMap((message) => {
@@ -9224,9 +9245,28 @@ export class AgentSession {
 			return ticket === undefined ? [] : [ticket];
 		});
 		this._releaseQueuedDeliveries(tickets, "cleared");
-		this._settleRemovedCarriers(removed);
+		this._settleRemovedCarriers(removed, failure);
+		if (failure) for (const message of removed) this.externalAdmission.observeRefused(message, failure.message);
 		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
+	}
+
+	private async _rejectQueuedInputsForUsageHold(error: AccountUsageLimitError): Promise<void> {
+		const rejected = new Set<string>();
+		for (;;) {
+			const queued = this.getQueuedInputs().filter((input) => !rejected.has(input.queuedId));
+			if (queued.length === 0) break;
+			for (const input of queued) rejected.add(input.queuedId);
+			await this._pendingInputs.rejectBeforeDispatch(
+				queued.flatMap((input) => (input.clientMessageId === undefined ? [] : [input.clientMessageId])),
+				{ type: "reject_before_dispatch", reason: error.message, code: error.code },
+				() => {
+					for (const input of queued) this._changeQueuedInput(input.queuedId, undefined, undefined);
+				},
+			);
+		}
+		this._takeQueuedDeliveries(error);
+		this._emit({ type: "continuation_error", errorMessage: error.message });
 	}
 
 	/**
