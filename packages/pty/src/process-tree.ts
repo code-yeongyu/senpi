@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import process from "node:process";
-import { windowsTreeKillArgsAsync } from "../runtime/windows-process-tree.mjs";
+import { windowsProcessCreatedAtAsync, windowsTreeKillArgsAsync } from "../runtime/windows-process-tree.mjs";
 import type { TerminalSessionHandle, TerminalSessionSignal } from "./session-types.ts";
 
 /** How often a stop path re-checks whether a process group still has members; no event reports it. */
@@ -42,21 +42,36 @@ export function terminateChildTree(
  * pipe open — so 'close' never fires and waitExit() hangs teardown. Enumerate asynchronously and
  * select by creation time: a recycled parent PID alone does not establish descent.
  */
-export function terminateWindowsTree(child: ChildProcess, pid: number, signal: NodeJS.Signals): string {
-	const alive = () => child.exitCode === null && child.signalCode === null;
+/** The root's creation time, kept only when the handle was still open when it was read (so the PID was not reused). */
+export function recordWindowsRootIdentity(
+	child: Pick<ChildProcess, "exitCode" | "signalCode">,
+	pid: number,
+): Promise<bigint | undefined> {
+	return windowsProcessCreatedAtAsync(pid).then(
+		(createdAt) => (child.exitCode === null && child.signalCode === null ? createdAt : undefined),
+		() => undefined,
+	);
+}
+
+export function terminateWindowsTree(
+	child: Pick<ChildProcess, "exitCode" | "signalCode" | "kill">,
+	pid: number,
+	signal: NodeJS.Signals,
+	rootIdentity: Promise<bigint | undefined>,
+): string {
 	const direct = () => {
-		if (alive()) child.kill(signal);
+		if (child.exitCode === null && child.signalCode === null) child.kill(signal);
 	};
-	void windowsTreeKillArgsAsync(pid)
-		.then((args) => {
-			if (!alive() || args.length === 0) return;
-			if (args.length === 3) {
-				// Only the root is known safe. Prefer the owned child handle over a new PID lookup.
-				direct();
-				return;
+	void rootIdentity
+		.then(async (createdAt) => {
+			// Descendants only when the root's identity was recorded; the root itself only through the owned handle,
+			// because its PID can be reused once that handle closes.
+			if (createdAt !== undefined) {
+				const args = await windowsTreeKillArgsAsync(pid, undefined, undefined, createdAt);
+				if (args.length > 0)
+					spawn("taskkill.exe", args, { stdio: "ignore", windowsHide: true }).once("error", () => {});
 			}
-			const killer = spawn("taskkill.exe", args, { stdio: "ignore", windowsHide: true });
-			killer.once("error", direct);
+			direct();
 		})
 		.catch(direct);
 	return `Requested termination of child_process pipe fallback process tree (pid ${pid}).`;

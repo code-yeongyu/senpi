@@ -1,1 +1,1 @@
-export { windowsTreeKillArgs, windowsTreeKillArgsAsync } from "../packages/pty/runtime/windows-process-tree.mjs";
+export { windowsProcessCreatedAtAsync, windowsTreeKillArgs, windowsTreeKillArgsAsync } from "../packages/pty/runtime/windows-process-tree.mjs";

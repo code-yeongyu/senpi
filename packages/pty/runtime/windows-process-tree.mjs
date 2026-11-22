@@ -18,8 +18,31 @@ const PROTECTED_IMAGES = new Set([
 	"svchost.exe",
 ]);
 
+/**
+ * The creation time (UTC FILETIME) of one process, or undefined when it cannot be read. Read it while the caller
+ * still holds the process handle: Windows does not reuse a PID while a handle to it is open.
+ */
+export async function windowsProcessCreatedAtAsync(pid, run = execFile) {
+	if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+	const query = `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CreationDate.ToFileTimeUtc()`;
+	const stdout = await new Promise((resolve) => {
+		try {
+			run(
+				"powershell.exe",
+				["-NoProfile", "-NonInteractive", "-Command", query],
+				{ encoding: "utf8", windowsHide: true, timeout: 5_000 },
+				(error, out) => resolve(error ? "" : String(out)),
+			);
+		} catch {
+			resolve("");
+		}
+	});
+	const text = stdout.trim();
+	return /^\d+$/u.test(text) && BigInt(text) > 0n ? BigInt(text) : undefined;
+}
+
 /** Signal handlers must not block the event loop while CIM enumerates processes. */
-export async function windowsTreeKillArgsAsync(rootPid, run = execFile, selfPid = process.pid) {
+export async function windowsTreeKillArgsAsync(rootPid, run = execFile, selfPid = process.pid, rootCreatedAt) {
 	if (!Number.isSafeInteger(rootPid) || rootPid <= 0 || rootPid === selfPid) return [];
 	let result;
 	try {
@@ -39,7 +62,7 @@ export async function windowsTreeKillArgsAsync(rootPid, run = execFile, selfPid 
 	} catch (error) {
 		result = { error, status: 1 };
 	}
-	return windowsTreeKillArgs(rootPid, () => result, selfPid);
+	return windowsTreeKillArgs(rootPid, () => result, selfPid, rootCreatedAt);
 }
 
 function parseRows(stdout) {
@@ -53,8 +76,15 @@ function parseRows(stdout) {
 	});
 }
 
-/** Explicit PID arguments only; a failed listing permits the owned root, never an unchecked tree. */
-export function windowsTreeKillArgs(rootPid, run = spawnSync, selfPid = process.pid) {
+/**
+ * Explicit PID arguments only; a failed listing permits the owned root, never an unchecked tree.
+ *
+ * With `rootCreatedAt` (the root's creation time, read while its handle was held) the root is the caller's own
+ * handle and is never listed: descendants are anchored on that creation time, so they are still found after the
+ * root exits, and a stranger that later took the root's PID, with everything created after it, is skipped.
+ */
+export function windowsTreeKillArgs(rootPid, run = spawnSync, selfPid = process.pid, rootCreatedAt) {
+	const identified = typeof rootCreatedAt === "bigint";
 	if (!Number.isSafeInteger(rootPid) || rootPid <= 0 || rootPid === selfPid) return [];
 	const result = run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", PROCESS_ROWS], {
 		encoding: "utf8",
@@ -63,20 +93,25 @@ export function windowsTreeKillArgs(rootPid, run = spawnSync, selfPid = process.
 		maxBuffer: 16 * 1024 * 1024,
 	});
 	if (result.error || result.status !== 0 || typeof result.stdout !== "string") {
-		return ["/F", "/PID", String(rootPid)];
+		return identified ? [] : ["/F", "/PID", String(rootPid)];
 	}
 	const rows = parseRows(result.stdout);
-	if (rows.length === 0) return ["/F", "/PID", String(rootPid)];
+	if (rows.length === 0) return identified ? [] : ["/F", "/PID", String(rootPid)];
 	const byPid = new Map(rows.map((row) => [row.pid, row]));
-	if (!byPid.has(rootPid)) return [];
+	const rootRow = byPid.get(rootPid);
+	if (!identified && !rootRow) return [];
+	const strangerCreatedAt = identified && rootRow && rootRow.createdAt !== rootCreatedAt ? rootRow.createdAt : undefined;
+	const createdAtOf = (pid) => (identified && pid === rootPid ? rootCreatedAt : byPid.get(pid)?.createdAt);
 	const tree = new Set([rootPid]);
 	let grew = true;
 	while (grew) {
 		grew = false;
 		for (const row of rows) {
 			if (tree.has(row.pid) || !tree.has(row.parentPid)) continue;
-			const parent = byPid.get(row.parentPid);
-			if (!parent || parent.createdAt === 0n || row.createdAt === 0n || row.createdAt < parent.createdAt) continue;
+			const parentCreatedAt = createdAtOf(row.parentPid);
+			if (parentCreatedAt === undefined || parentCreatedAt === 0n || row.createdAt === 0n || row.createdAt < parentCreatedAt)
+				continue;
+			if (row.parentPid === rootPid && strangerCreatedAt !== undefined && row.createdAt >= strangerCreatedAt) continue;
 			tree.add(row.pid);
 			grew = true;
 		}
@@ -91,6 +126,10 @@ export function windowsTreeKillArgs(rootPid, run = spawnSync, selfPid = process.
 	const refused = [...tree].filter(
 		(pid) => ancestors.has(pid) || PROTECTED_IMAGES.has(byPid.get(pid)?.name.toLowerCase()),
 	);
+	if (identified) {
+		const descendants = [...tree].filter((pid) => pid !== rootPid);
+		return refused.length > 0 || descendants.length === 0 ? [] : ["/F", ...descendants.flatMap((pid) => ["/PID", String(pid)])];
+	}
 	const pids = refused.length === 0 ? [...tree] : refused.includes(rootPid) ? [] : [rootPid];
 	return pids.length === 0 ? [] : ["/F", ...pids.flatMap((pid) => ["/PID", String(pid)])];
 }

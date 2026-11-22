@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { windowsTreeKillArgs } from "./windows-process-tree.mjs";
+import { windowsProcessCreatedAtAsync, windowsTreeKillArgs } from "./windows-process-tree.mjs";
 
 const argsFor = (rows, selfPid = 900) => windowsTreeKillArgs(100, () => ({ status: 0, stdout: rows }), selfPid);
 
@@ -38,4 +38,26 @@ test("invalid or own root PIDs never execute a process probe", () => {
 	for (const pid of [0, -1, Number.NaN, process.pid]) {
 		assert.deepEqual(windowsTreeKillArgs(pid, () => assert.fail("unexpected probe")), []);
 	}
+});
+
+const identified = (rows) => windowsTreeKillArgs(100, () => ({ status: 0, stdout: rows }), 900, 200n);
+
+test("with a recorded root identity the root is never listed and its descendants survive its exit", () => {
+	const ours = "100 1 200 bun.exe\n101 100 210 node.exe\n104 101 220 child.exe";
+	assert.deepEqual(identified(ours), ["/F", "/PID", "101", "/PID", "104"]);
+	assert.deepEqual(identified("101 100 210 node.exe\n104 101 220 child.exe"), ["/F", "/PID", "101", "/PID", "104"]);
+});
+
+test("with a recorded root identity a stranger on the reused PID and its children are skipped", () => {
+	const reused = "100 1 300 stranger.exe\n105 100 310 stranger-child.exe\n101 100 210 node.exe";
+	assert.deepEqual(identified(reused), ["/F", "/PID", "101"]);
+	assert.deepEqual(windowsTreeKillArgs(100, () => ({ error: new Error("no listing") }), 900, 200n), []);
+});
+
+test("the creation-time reader accepts only a positive FILETIME", async () => {
+	const reading = (out, error = null) => windowsProcessCreatedAtAsync(100, (_file, _args, _options, cb) => cb(error, out));
+	assert.equal(await reading("133000000000000000\r\n"), 133000000000000000n);
+	assert.equal(await reading(""), undefined);
+	assert.equal(await reading("0"), undefined);
+	assert.equal(await reading("x", new Error("denied")), undefined);
 });
