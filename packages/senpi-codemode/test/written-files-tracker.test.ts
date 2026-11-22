@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FileSignature } from "../src/written-files/scan-boundaries.ts";
 import { type ChangedFile, WrittenFilesTracker } from "../src/written-files/tracker.ts";
@@ -23,7 +23,7 @@ function workspace() {
 			await afterSnapshot.shift()?.();
 			return { kind: "files", files, head: undefined, tracked: new Set() };
 		},
-		stat: async (path) => dirty.get(path.slice(CWD.length + 1).replaceAll("\\", "/")),
+		stat: async (path) => dirty.get(relative(CWD, path).split(sep).join("/")),
 	});
 	return {
 		tracker,
@@ -119,6 +119,19 @@ describe("written-files tracker", () => {
 
 		expect(await settled(after)).toBe("off");
 		expect(scans()).toBe(scansWhenOff);
+	});
+
+	// Sixth review: only the parent segment leaves the workspace; a name that begins with two dots does not.
+	it("records a hooked file named ..draft.ts at the root and below it, and ignores a hooked ../outside.ts", async () => {
+		const { tracker, write } = workspace();
+		const cell = tracker.open();
+		await cell.ready;
+		for (const path of ["..draft.ts", "src/..draft.ts", "../outside.ts"]) {
+			write(path);
+			await tracker.noteHooked(join(CWD, ...path.split("/")));
+		}
+
+		expect(await settled(cell)).toEqual(["../outside.ts"]);
 	});
 
 	it("turns itself off at once when git is not available", async () => {

@@ -31,6 +31,8 @@ export interface WriteHookDeps {
 	readonly report: ReportToolResult | undefined;
 	/** The hooks for this file returned or failed: what they left on disk is the reporting cell's. */
 	readonly noteHooked: (absolutePath: string) => Promise<void>;
+	/** The hooks for this listed file start now: false when the cell may no longer start them (it closed). */
+	readonly start: (absolutePath: string) => boolean;
 	/** The hooks for this listed file will not start: the cell lets go of it. */
 	readonly skipped: (absolutePath: string) => void;
 	readonly signal: AbortSignal;
@@ -78,6 +80,11 @@ export async function reportWrittenFiles(
 		}
 		if (bytes === undefined || bytes.length > SOURCE_FILE_MAX_BYTES) {
 			fail(file.path, "the file could not be read back for the hooks");
+			deps.skipped(file.absolutePath);
+			continue;
+		}
+		// The one dispatch point: from here the file stays this cell's until its hooks return, even if the cell closes.
+		if (!deps.start(file.absolutePath)) {
 			deps.skipped(file.absolutePath);
 			continue;
 		}

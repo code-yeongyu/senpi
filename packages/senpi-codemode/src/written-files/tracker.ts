@@ -1,6 +1,6 @@
-import { isAbsolute, join, relative, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import type { FileSignature } from "./scan-boundaries.ts";
-import type { ScanFs } from "./workspace-fs.ts";
+import { escapesWorkspace, type ScanFs } from "./workspace-fs.ts";
 import type { ScanSkipReason, ScannedFiles, WorkspaceScan } from "./workspace-scan.ts";
 
 export interface ChangedFile {
@@ -32,13 +32,18 @@ export interface WrittenFilesWindow {
 	 * the settling scan, and the cell owns the listed files it will hook until it lets go of them.
 	 */
 	settle(select: (changed: readonly ChangedFile[]) => Promise<WrittenFilesSelection>): Promise<WrittenFilesChange>;
+	/**
+	 * The cell starts the write hooks for a file now: false when it no longer owns the file or has closed, and then it
+	 * must not start them. From here the claim lasts until `hooked`, even past `close`.
+	 */
+	start(absolutePath: string): boolean;
 	/** The write hooks this cell ran for a file it reported returned: the state they left is this cell's, and it lets go. */
 	hooked(absolutePath: string): Promise<void>;
 	/** This cell will not run the write hooks for a file it owns (cancelled, unreadable): it lets go of it now. */
 	skipped(absolutePath: string): void;
 	/** This cell's hooks are done: it lets go of every file it still owns. */
 	release(): void;
-	/** Ends the window and lets go of its files; safe to call more than once. */
+	/** Ends the window and lets go of the files whose hooks have not started; safe to call more than once. */
 	close(): void;
 }
 
@@ -58,6 +63,7 @@ function offWindow(): WrittenFilesWindow {
 	return {
 		ready: Promise.resolve(),
 		settle: async () => ({ kind: "off" }),
+		start: () => false,
 		hooked: async () => {},
 		skipped: () => {},
 		release: () => {},
@@ -75,20 +81,29 @@ function offWindow(): WrittenFilesWindow {
  * rewrite a file, and that rewrite is the reporting cell's. A changed file it only counts (past the limit, not source)
  * or will not hook (no hooks on this host) stays unowned, so a later scan still reports a change made to it. Ownership
  * is taken inside the settling scan, so no later scan can run between the report and the claim, and a scan that finds
- * an owned file changed leaves it and its baseline alone;
- * once the hook returns, its result is recorded as hooked and the next scan compares with that. No lock is held over
- * the hooks: a hook may itself call `write` or run an eval cell, whose scans then queue behind nothing of this cell's.
- * Ownership ends when the hook call returns or fails, when the cell decides not to start it (cancelled, unreadable),
- * when its hooks stop or when it closes; the
- * host bounds each `tool_result` handler, so a stuck hook holds only its own file and only until that deadline.
+ * an owned file changed leaves it and its baseline alone. No lock is held over the hooks: a hook may itself call
+ * `write` or run an eval cell, whose scans then queue behind nothing of this cell's.
+ *
+ * A claim is pending until the cell starts that file's hooks (`start`, the one dispatch point) and started after.
+ * - Settlement selects files with hooks on, cell open: claims exactly the listed files, pending.
+ * - Cell closed before its selection returns: claims nothing, and `start` refuses, so nothing is dispatched.
+ * - Hooks stop at the limit, or no hooks here: the files past it, or all, are never claimed.
+ * - Cancelled before a file's dispatch, or the file is unreadable: `skipped` ends that pending claim now.
+ * - `start` while open: the claim becomes started; `start` after close, or without a claim, refuses.
+ * - Hook returns, throws, or the host's handler deadline ends it: `hooked` records the state left and ends the claim.
+ * - Settlement done (`release`): ends every claim left; none is started, as no hook of the cell is still running.
+ * - Cell closes (normally, cancelled before or during dispatch): ends its pending claims and keeps a started one
+ *   until its `hooked`, so a cancelled cell's running formatter is still the only one to own its rewrite.
+ * - A nested cell a hook starts: settles normally and skips the files the outer cell owns.
+ * The host bounds each `tool_result` handler, so a stuck hook holds only its own file and only until that deadline.
  */
 export class WrittenFilesTracker {
 	readonly #cwd: string;
 	readonly #scan: WrittenFilesTrackerOptions["scan"];
 	readonly #stat: ScanFs["stat"];
 	readonly #hooked = new Map<string, FileSignature>();
-	/** Reported files whose settlement's hooks are still running, and the window that settled them. */
-	readonly #owned = new Map<string, Owner>();
+	/** Reported files whose settlement's hooks are pending or running, keyed by workspace path. */
+	readonly #owned = new Map<string, Claim>();
 	#queue: Promise<void> = Promise.resolve();
 	#baseline: ScannedFiles | undefined;
 	#skipped: ScanSkipReason | undefined;
@@ -108,17 +123,28 @@ export class WrittenFilesTracker {
 		// A later cell also waits for the scan in flight, so its first writes are not swept into that scan.
 		const ready = this.#live === 1 ? this.#enqueue(() => this.#recordBaseline()) : this.#queue;
 		const owner: Owner = { closed: false };
-		const release = (path?: string) => {
-			for (const [owned, by] of this.#owned)
-				if (by === owner && (path === undefined || owned === path)) this.#owned.delete(owned);
+		const claimOf = (absolutePath: string) => {
+			const path = this.#workspacePath(absolutePath);
+			const claim = path === undefined ? undefined : this.#owned.get(path);
+			return claim?.owner === owner && path !== undefined ? { path, claim } : undefined;
+		};
+		const release = (keepStarted: boolean) => {
+			for (const [path, claim] of this.#owned)
+				if (claim.owner === owner && !(keepStarted && claim.started)) this.#owned.delete(path);
 		};
 		const releaseFile = (absolutePath: string) => {
-			const path = this.#workspacePath(absolutePath);
-			if (path !== undefined) release(path);
+			const owned = claimOf(absolutePath);
+			if (owned !== undefined) this.#owned.delete(owned.path);
 		};
 		return {
 			ready,
 			settle: (select) => this.#enqueue(() => this.#report(owner, select)),
+			start: (absolutePath) => {
+				const owned = claimOf(absolutePath);
+				if (owned === undefined || owner.closed) return false;
+				owned.claim.started = true;
+				return true;
+			},
 			hooked: async (absolutePath) => {
 				try {
 					await this.noteHooked(absolutePath);
@@ -127,11 +153,12 @@ export class WrittenFilesTracker {
 				}
 			},
 			skipped: releaseFile,
-			release: () => release(),
+			release: () => release(false),
 			close: () => {
 				if (owner.closed) return;
 				owner.closed = true;
-				release();
+				// A hook already running keeps its file: what it leaves is still this cell's (`hooked` ends that claim).
+				release(true);
 				this.#live -= 1;
 				if (this.#live > 0) return;
 				this.#baseline = undefined;
@@ -153,7 +180,7 @@ export class WrittenFilesTracker {
 	/** The workspace-relative POSIX path of a file inside the workspace. */
 	#workspacePath(absolutePath: string): string | undefined {
 		const inside = relative(this.#cwd, absolutePath);
-		return inside === "" || inside.startsWith("..") || isAbsolute(inside) ? undefined : inside.split(sep).join("/");
+		return inside === "" || escapesWorkspace(inside) ? undefined : inside.split(sep).join("/");
 	}
 
 	async #recordBaseline(): Promise<void> {
@@ -218,7 +245,8 @@ export class WrittenFilesTracker {
 		const selection = await select(files);
 		this.#baseline = { files: next, head: scan.head, tracked: scan.tracked };
 		// A cell that closed while the selection read its files hooks nothing, so it claims nothing.
-		if (selection.hooks && !owner.closed) for (const file of selection.listed) this.#owned.set(file.path, owner);
+		if (selection.hooks && !owner.closed)
+			for (const file of selection.listed) this.#owned.set(file.path, { owner, started: false });
 		return { kind: "changed", selection };
 	}
 
@@ -250,6 +278,12 @@ export class WrittenFilesTracker {
 /** The settling cell a claimed file belongs to. */
 interface Owner {
 	closed: boolean;
+}
+
+/** A file a settlement will hook; `started` once its hooks were dispatched, so closing the cell keeps it. */
+interface Claim {
+	readonly owner: Owner;
+	started: boolean;
 }
 
 function sameSignature(left: FileSignature, right: FileSignature): boolean {

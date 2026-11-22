@@ -102,6 +102,7 @@ export class WrittenFiles {
 						fs: this.#fs,
 						report,
 						noteHooked: (path) => window.hooked(path),
+						start: (path) => window.start(path),
 						skipped: (path) => window.skipped(path),
 						signal,
 					});

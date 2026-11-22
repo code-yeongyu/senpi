@@ -167,7 +167,7 @@ export class FakeWorkspace {
 	#workspaceFiles(): Array<[string, { readonly bytes: Uint8Array }]> {
 		return [...this.#files].flatMap(([path, file]) => {
 			const inside = relative(this.cwd, path);
-			return inside.startsWith("..") || this.#resolve(path) !== path ? [] : [[inside.split(sep).join("/"), file]];
+			return outside(inside) || this.#resolve(path) !== path ? [] : [[inside.split(sep).join("/"), file]];
 		});
 	}
 
@@ -201,10 +201,15 @@ export class FakeWorkspace {
 			if (!present.has(path)) records.push(`1 .D N... 100644 100644 000000 aaaa bbbb ${path}`);
 		for (const link of this.#links.keys()) {
 			const inside = relative(this.cwd, link);
-			if (!inside.startsWith("..")) records.push(`? ${inside.split(sep).join("/")}`);
+			if (!outside(inside)) records.push(`? ${inside.split(sep).join("/")}`);
 		}
 		return { kind: "ok", stdout: `${records.join("\0")}\0` };
 	};
+}
+
+/** Git's view: only the parent segment and what lies below it leave the work tree, so `..draft.ts` is inside. */
+function outside(inside: string): boolean {
+	return inside === ".." || inside.startsWith(`..${sep}`);
 }
 
 export interface WrittenFilesHarness {

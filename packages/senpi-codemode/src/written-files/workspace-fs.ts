@@ -63,9 +63,9 @@ export function workspaceFs(roots: WorkspaceRoots, access: FsAccess): ScanFs {
 		const located = join(directory, basename(path));
 		const inside = relative(root, located);
 		const segments = inside.split(sep);
-		if (escapes(inside) || !isSourcePath(segments.join("/")) || (await excludedAlias(root, segments)))
+		if (escapesWorkspace(inside) || !isSourcePath(segments.join("/")) || (await excludedAlias(root, segments)))
 			return undefined;
-		return artifacts === undefined || escapes(relative(artifacts, located)) ? located : undefined;
+		return artifacts === undefined || escapesWorkspace(relative(artifacts, located)) ? located : undefined;
 	};
 	return {
 		stat: async (path) => {
@@ -95,6 +95,10 @@ function sameFile(left: FileSignature, right: FileSignature): boolean {
 	return left.dev === right.dev && left.ino === right.ino;
 }
 
-function escapes(inside: string): boolean {
+/**
+ * Whether a path relative to a directory leaves it: the parent segment, a path below it, or another root. A name that
+ * only begins with two dots (`..draft.ts`) stays inside.
+ */
+export function escapesWorkspace(inside: string): boolean {
 	return inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside);
 }

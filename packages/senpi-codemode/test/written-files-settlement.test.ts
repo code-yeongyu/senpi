@@ -1,37 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { SOURCE_FILE_SNIFF_BYTES } from "../src/written-files/source-file.ts";
+import { holdRead, outcomeFiles } from "./eval/written-files-barriers.ts";
 import {
 	cellListing,
-	type FakeWorkspace,
 	reportedPaths,
 	type WrittenFilesHarness,
 	writtenFilesHarness,
 } from "./eval/written-files-fakes.ts";
-
-/** Holds the next read back for the hooks open until `finish`; the source sniff before it passes. */
-function holdReadBack(workspace: FakeWorkspace) {
-	let opened: () => void = () => {};
-	const reading = new Promise<void>((resolve) => {
-		opened = resolve;
-	});
-	let finish: () => void = () => {};
-	const finished = new Promise<void>((resolve) => {
-		finish = resolve;
-	});
-	workspace.afterRead = async (_path, limit) => {
-		if (limit <= SOURCE_FILE_SNIFF_BYTES) return;
-		workspace.afterRead = undefined;
-		opened();
-		await finished;
-	};
-	return { reading, finish };
-}
-
-function outcomeFiles(outcome: Awaited<ReturnType<ReturnType<WrittenFilesHarness["writtenFiles"]["open"]>["settle"]>>) {
-	return outcome?.kind === "written"
-		? { files: outcome.report.files, total: outcome.report.total, hooked: outcome.report.hooked }
-		: outcome;
-}
 
 // senpi#7232, fourth review: an unknown is never taken for an answer, and a hook's rewrite belongs to its own cell.
 describe("written files settle only what is known to be the cell's", () => {
@@ -193,7 +167,7 @@ describe("written files settle only what is known to be the cell's", () => {
 		await later.ready;
 		workspace.write("src/a.ts", "export const a = 1;\n");
 
-		const cancelledRead = holdReadBack(workspace);
+		const cancelledRead = holdRead(workspace, "readBack");
 		const settlingCancelled = cancelled.settle(controller.signal);
 		await cancelledRead.reading;
 		controller.abort();
@@ -203,7 +177,7 @@ describe("written files settle only what is known to be the cell's", () => {
 		const hookedWhenCancelled = [...reportedPaths(harness)];
 		// The normal path, through the same held read: a cell that is not cancelled sends its rewrite through the hooks.
 		workspace.write("src/a.ts", "export const a = 2;\n");
-		const laterRead = holdReadBack(workspace);
+		const laterRead = holdRead(workspace, "readBack");
 		const settlingLater = later.settle(new AbortController().signal);
 		await laterRead.reading;
 		laterRead.finish();
