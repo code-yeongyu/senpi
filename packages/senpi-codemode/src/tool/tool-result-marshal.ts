@@ -1,7 +1,9 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 
 export function marshalToolResult(result: AgentToolResult<unknown>) {
-	const texts = result.content.filter((part) => part.type === "text").map((part) => part.text);
+	// Model-only parts (placeholders, truncation notices) are prompt text, not output: the renderer skips them too.
+	const texts = result.content
+		.flatMap((part) => (part.type === "text" && part.audience !== "model" ? [part.text] : []));
 	const images = result.content
 		.filter((part) => part.type === "image")
 		.map((part) => ({ mimeType: part.mimeType, dataBase64: part.data }));

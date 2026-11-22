@@ -83,6 +83,17 @@ describe.skipIf(process.platform === "win32")("PTY bash tool model-facing output
 		expect(visible.map((part) => part.text).join("\n")).not.toContain("earlier output dropped");
 	});
 
+	it("marks the empty-output placeholder model-only so programmatic callers see no text (senpi#7209)", async () => {
+		const tool = createPtyBashTool(ctx);
+		const result = await withTimeout(
+			tool.execute("call-empty", { command: "true" }, undefined, undefined, undefined),
+			30000,
+			"empty foreground command",
+		);
+		expect(result.isError).toBeFalsy();
+		expect(result.content).toEqual([{ type: "text", text: "(no output)", audience: "model" }]);
+	});
+
 	it("strips ANSI sequences and collapses spinner frames in foreground results", async () => {
 		const tool = createPtyBashTool(ctx);
 		const frame = `\\r\\x1b[K\\x1b[36m⣾\\x1b[0m`;

@@ -152,7 +152,10 @@ export function createShellOutput(
 				notice = `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${snapshot.fullOutputPath}]`;
 			}
 		}
-		const content: TextContent[] = [{ type: "text", text: notice === undefined ? text : `${text}\n` }];
+		// The empty placeholder is for the model only (senpi#7209): programmatic callers see no text.
+		const content: TextContent[] = [
+			snapshot.content ? { type: "text", text: notice === undefined ? text : `${text}\n` } : modelOnlyText(text),
+		];
 		if (notice !== undefined) content.push(modelOnlyText(notice));
 		return { text: notice === undefined ? text : `${text}\n\n${notice}`, content, details };
 	};

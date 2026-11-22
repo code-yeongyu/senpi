@@ -519,6 +519,7 @@ describe("Coding Agent Tools", () => {
 
 			const empty = await bashTool.execute("test-call-9c", { command: "true" });
 			expect(getTextOutput(empty)).toBe("(no output)");
+			expect(empty.content).toEqual([{ type: "text", text: "(no output)", audience: "model" }]);
 			expect(empty.structuredContent).toMatchObject({ output: "", truncated: false });
 		});
 
