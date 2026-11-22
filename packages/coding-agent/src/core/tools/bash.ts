@@ -23,6 +23,7 @@ import {
 } from "./bash-schema.ts";
 import { defaultToolMachine, type ToolMachine } from "./machine.ts";
 import { createTempFileSpill } from "./output-accumulator.ts";
+import { mapWindowsNulRedirects } from "./windows-nul-redirect.ts";
 import { createShellRenderers } from "./renderers/bash.ts";
 import { type BashOperations, createShellOperations } from "./shell-operations.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -77,7 +78,13 @@ export function createLocalShellOperations(
  * standard local shell behavior while wrapping or rewriting commands.
  */
 export function createLocalBashOperations(options?: { shellPath?: string; machine?: ToolMachine }): BashOperations {
-	return createLocalShellOperations("bash", () => getShellConfig(options?.shellPath), options?.machine);
+	const operations = createLocalShellOperations("bash", () => getShellConfig(options?.shellPath), options?.machine);
+	if (process.platform !== "win32") return operations;
+	// Git Bash turns a cmd.exe-style `>nul` into a literal `nul` file (senpi#3765).
+	return {
+		...operations,
+		exec: (command, cwd, execOptions) => operations.exec(mapWindowsNulRedirects(command), cwd, execOptions),
+	};
 }
 
 /** A tool routed to the session's device by OMO_TOOLS_VIA_DAEMON found no device to run on; it never falls back to local. */
