@@ -130,6 +130,9 @@ Pause and resume wire events go only to connections attached to that session.
 `open_session.context.task_status`, updated through `set_session_context`, is the task owner's lifecycle label.
 Handover parks with `completed`, `cancelled`, `error`, `failed`, `lost`, or
 `interrupted` are removed with a stderr diagnostic instead of being reopened.
+`open_session.context.approvals = "refuse"` declares that no client answers this session's prompts (an agent
+opened it and nobody attaches to it): a tool call the permission preset would ask about is refused at once with a
+reason the model reads, never raised as a dialog. Any other value, or no value, keeps the prompt.
 Other context keys remain opaque.
 
 Automatic turn admission is also bounded independently of the hold. On unattended resume,

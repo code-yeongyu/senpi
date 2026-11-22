@@ -12,7 +12,7 @@ import { prepareMcpDispatchApproval } from "./dispatch-metadata.ts";
 import { createDispatchAuthorizer } from "./dispatch-policy.ts";
 import { createEventEmitter } from "./events.ts";
 import { INTERNAL_PERMISSION_TOOLS } from "./internal-tools.ts";
-import { handleNoUI } from "./non-interactive.ts";
+import { handleNoUI, REFUSE_APPROVALS_CONTEXT_KEY, REFUSE_APPROVALS_CONTEXT_VALUE } from "./non-interactive.ts";
 import {
 	createBuiltinParserRegistry,
 	type ParserRegistry,
@@ -145,6 +145,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const retireCellAuthorizers = new WeakMap<object, () => void>();
 	let cellSession: object | undefined;
 
+	const refusedByOpener = pi.sessionContext[REFUSE_APPROVALS_CONTEXT_KEY] === REFUSE_APPROVALS_CONTEXT_VALUE;
 	const nextRequestID = createRequestIDFactory();
 	// Rules this session already persisted at answer time; shutdown skips re-appending them.
 	const persistedAtAnswer = new Set<string>();
@@ -409,7 +410,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				continue;
 			}
 
-			if (ctx.hasUI) {
+			if (ctx.hasUI && !refusedByOpener) {
 				const reply = await showPermissionPrompt(ctx, request, signal);
 				activeService.reply(reply);
 				if (reply.reply === "always") {
@@ -425,6 +426,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 							}
 						},
 						presetBound: callPreset === "auto",
+						refusedByOpener,
 					}),
 				);
 			}
