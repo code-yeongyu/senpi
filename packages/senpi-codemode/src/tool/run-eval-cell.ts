@@ -22,6 +22,7 @@ import { EvalBackgroundCapacityError, resultAfterDetach, resultForDetachedState 
 import { buildEvalExecutionEventPayload, type EvalExecutionSettleOutcome } from "./eval-execution-event.ts";
 import { EvalKernelResetRefusedError } from "./eval-kernel-reset-refused-error.ts";
 import { evalTimeoutBehavior } from "./eval-request.ts";
+import { jsCellParseMessage } from "./js-cell-parse-message.ts";
 import type { CreateEvalToolOptions, EvalCellInvocation } from "./eval-tool-options.ts";
 import { describeTimeoutState } from "./interrupt-note.ts";
 import { loadCell } from "./load-cell.ts";
@@ -319,6 +320,15 @@ async function executeCell(
 			);
 			if (result.ok && state.pendingBridgeCalls.length > 0)
 				await execution.wait(Promise.all(state.pendingBridgeCalls));
+			if (
+				!result.ok &&
+				result.error.code === "js_cell_parse_error" &&
+				invocation.input.language === "js" &&
+				magic.kind === "ordinary"
+			) {
+				const message = jsCellParseMessage(invocation.input.code, result.error.message);
+				return await handler.finalize({ ...result, error: { ...result.error, message } });
+			}
 			return await handler.finalize(result);
 		};
 		return kernelTools ? await kernelToolsStorage.run(kernelTools, runBound) : await runBound();

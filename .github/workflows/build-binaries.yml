@@ -282,44 +282,38 @@ jobs:
   # standalone binaries, which ship in the GitHub Release and never in the npm
   # packages, and its macos-latest row could hold the npm publish for 30+ minutes
   # in the account's runner queue. The GitHub Release still needs the full smoke.
+  # This job only dispatches and finds the run (senpi#6851): it no longer holds a
+  # runner while npm publishes. The dispatched run gets this run's id, and
+  # whichever of finalize-release (below) and the publish run's
+  # finalize-github-release job sees both halves done finishes the release.
   publish-npm:
     runs-on: ubuntu-latest
     needs: build
     if: ${{ inputs.dry_run != true }}
-    # The dispatched run can sit queued for hosted runners for hours (senpi#4173);
-    # the await below keeps its own ceiling (AWAIT_MAX_SECONDS) under this limit.
-    timeout-minutes: 360
+    timeout-minutes: 15
     permissions:
       actions: write
       contents: read
-    # The cleanup job checks this run before deleting the draft: it can still publish
-    # after this job gives up or is cancelled (senpi#4173).
     outputs:
       run_id: ${{ steps.find.outputs.run_id }}
     env:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
-      - name: Checkout release scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          sparse-checkout: scripts
-          sparse-checkout-cone-mode: true
-
       - name: Dispatch publish-npm.yml
         id: dispatch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
 
           VERSION="${RELEASE_TAG#v}"
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           # One minute of lookback absorbs runner/GitHub clock skew when the
-          # await step matches the dispatched run by creation time.
+          # find step matches the dispatched run by creation time.
           echo "not_before=$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
-          gh workflow run publish-npm.yml -f version="${VERSION}" -f publish-only=true
+          gh workflow run publish-npm.yml -f version="${VERSION}" -f publish-only=true -f build_run_id="${BUILD_RUN_ID}"
 
       - name: Find dispatched publish-npm.yml run
         id: find
@@ -349,26 +343,26 @@ jobs:
           echo "run_id=${run_id}" >> "${GITHUB_OUTPUT}"
           echo "Found publish-npm.yml run ${run_id}: https://github.com/${GH_REPO}/actions/runs/${run_id}"
 
-      - name: Await publish-npm.yml completion
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUN_ID: ${{ steps.find.outputs.run_id }}
-          AWAIT_MAX_SECONDS: "19800"
-          AWAIT_INTERVAL: "30"
-        run: bash scripts/await-dispatched-run.sh
-
-  # npm no longer waits for the standalone-binary smoke (senpi#6627). When that smoke fails after npm
-  # published the version, fail loudly and open an issue naming the version and each failing OS, with the
-  # one-command rollback of npm `latest` for the release owner. This job never moves a dist-tag itself.
-  report-smoke-failure-after-npm:
+  # senpi#6851: finishes the release when the binary half is done: it publishes the staged draft once npm has the
+  # version, opens the rollback issue when the smoke failed after npm published (senpi#6627, it never moves a
+  # dist-tag), and runs the draft cleanup when staging or npm failed (senpi#4173). When the publish run is still going,
+  # it leaves all of that to the publish run's finalize-github-release job, which runs the same script once npm is
+  # done. The shared concurrency group runs the two one at a time, and every action is idempotent.
+  finalize-release:
     runs-on: ubuntu-latest
     needs:
+      - build
       - smoke-test-binaries
+      - stage-github-release
       - publish-npm
-    if: ${{ always() && inputs.dry_run != true && needs.publish-npm.result == 'success' && needs.smoke-test-binaries.result == 'failure' }}
+    if: ${{ always() && inputs.dry_run != true && needs.publish-npm.result != 'skipped' }}
+    concurrency:
+      group: release-finalize-${{ github.event.inputs.tag || github.ref_name }}
+      cancel-in-progress: false
+    timeout-minutes: 15
     permissions:
       actions: read
-      contents: read
+      contents: write
       issues: write
     env:
       GH_REPO: ${{ github.repository }}
@@ -381,71 +375,10 @@ jobs:
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
 
-      - name: Open an issue for the failed smoke and fail
+      - name: Finish the release once npm and the binaries are both done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node scripts/release-smoke-failure-issue.mjs
-
-  publish-github-release:
-    runs-on: ubuntu-latest
-    needs:
-      - stage-github-release
-      - publish-npm
-    permissions:
-      contents: write
-    env:
-      GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-    steps:
-      - name: Publish staged GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          existing_release="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
-          if [[ "${existing_release}" == "" ]]; then
-            echo "::error::Draft GitHub Release ${RELEASE_TAG} does not exist."
-            exit 1
-          fi
-          if [[ "${existing_release}" == "false" ]]; then
-            echo "::error::GitHub Release ${RELEASE_TAG} is already published."
-            exit 1
-          fi
-
-          gh release edit "${RELEASE_TAG}" --draft=false
-
-  cleanup-draft-github-release:
-    runs-on: ubuntu-latest
-    needs:
-      - build
-      - stage-github-release
-      - publish-npm
-      - publish-github-release
-    if: ${{ always() && needs.stage-github-release.result != 'skipped' && (needs.stage-github-release.result != 'success' || needs.publish-npm.result != 'success' || needs.publish-github-release.result != 'success') }}
-    permissions:
-      actions: read
-      contents: write
-    env:
-      GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-    steps:
-      - name: Checkout release scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          sparse-checkout: scripts
-          sparse-checkout-cone-mode: true
-
-      # Keeps (and fails loudly on) a draft that npm already has or that the dispatched
-      # publish run could still publish (senpi#4173).
-      - name: Delete draft GitHub Release after failure
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_RUN_ID: ${{ github.run_id }}
           PUBLISH_RUN_ID: ${{ needs.publish-npm.outputs.run_id }}
-          PUBLISH_JOB_RESULT: ${{ needs.publish-npm.result }}
-          STAGE_JOB_RESULT: ${{ needs.stage-github-release.result }}
-        run: bash scripts/release-draft-cleanup.sh
+          DISPATCH_RESULT: ${{ needs.publish-npm.result }}
+        run: node scripts/release-finalize.mjs

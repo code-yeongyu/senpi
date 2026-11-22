@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { processBootAtMs } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
+import {
+	processBootAtMs,
+	type ChildProcessIdentity,
+} from "../../src/core/extensions/builtin/terminal/process-identity.ts";
 import {
 	type RestoreContext,
 	type RestoreHandlerResult,
@@ -200,8 +203,14 @@ describe("restore orchestrator", () => {
 				child.kill("SIGKILL");
 			});
 			if (child.pid === undefined) throw new Error("spawn produced no pid");
-			const alive = { pid: child.pid, startedAtMs, bootAtMs: processBootAtMs(), argv: ["sleep", "30"] };
-			const dead = { pid: 2_147_000_000, startedAtMs, bootAtMs: processBootAtMs(), argv: ["sleep", "30"] };
+			const bootAtMs = await processBootAtMs();
+			const alive = { pid: child.pid, startedAtMs, bootAtMs, argv: ["sleep", "30"] } satisfies ChildProcessIdentity;
+			const dead = {
+				pid: 2_147_000_000,
+				startedAtMs,
+				bootAtMs,
+				argv: ["sleep", "30"],
+			} satisfies ChildProcessIdentity;
 			const { writer } = await manifestWith(
 				[],
 				[

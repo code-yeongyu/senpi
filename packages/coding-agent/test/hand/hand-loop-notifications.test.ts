@@ -10,7 +10,7 @@ import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { fieldsOf, loopEventMachine, MODEL, NOTIFICATIONS, toJson } from "./loop-event-fixture.ts";
+import { fieldsOf, loopEventMachine, MODEL, NOTIFICATIONS, toJson, noLateEffects } from "./loop-event-fixture.ts";
 import { cleanupHands } from "./remote-hand-fixture.ts";
 
 const noLateEffects: LateLoopRoute = () => {

@@ -1,3 +1,22 @@
+## 2026-11-19 - Claude Code receives senpi's MCP tool descriptions whole (senpi#7032)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/query-environment.ts`: `claudeCodeQueryEnvironment` adds `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH=16384` unless the host environment (new `hostEnvironment` parameter, default `process.env`) already sets it, and always returns a record.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/options.ts`: `queryOptions.env` is always that record.
+
+### Why
+
+- senpi's tools reach Claude Code as the `custom-tools` MCP server, and Claude Code 2.1.321 keeps only the first 4096 chars of an MCP tool description (16384 when loaded through its tool search). The ~8.1k eval description lost its eval-only tool list, so the model never learned the thread tools existed (oh-my-openagent#14291). 16384 is Claude Code's own ceiling for a loaded tool; a user-set value still wins.
+
+### Why an extension could not handle it
+
+- The Claude Code child environment is built inside this builtin provider extension; no other extension sees it.
+
+### Expected merge conflict zones
+
+- LOW: the body of `claudeCodeQueryEnvironment` and the `queryOptions.env` line in `buildAnthropicSubscriptionQueryOptions`.
+
 ## 2026-11-15 - Re-check stale Claude rate-limit blocks once per person-started turn (senpi#6727)
 
 ### What changed

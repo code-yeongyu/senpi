@@ -41,7 +41,7 @@ function holderChild(sessionFile: string, cwd: string) {
 	return spawnModuleChild(
 		[
 			`const { holdSessionFile } = await import(${JSON.stringify(srcUrl("core/session-holders.ts"))});`,
-			`const hold = holdSessionFile(${JSON.stringify(sessionFile)}, ${JSON.stringify(SESSION_ID)}, { cwd: ${JSON.stringify(cwd)}, expectExisting: true });`,
+			`const hold = await holdSessionFile(${JSON.stringify(sessionFile)}, ${JSON.stringify(SESSION_ID)}, { cwd: ${JSON.stringify(cwd)}, expectExisting: true });`,
 			'process.stdout.write("HELD\\n");',
 			'process.stdin.on("data", () => { hold.release(); process.stdout.write("RELEASED\\n", () => process.exit(0)); });',
 		].join("\n"),
@@ -88,7 +88,7 @@ describe("issue #2184 cross-process session hold", () => {
 
 	it("counts a hold of this very process until it is released", async () => {
 		const { oldCwd, newCwd, sessionFile } = fixture();
-		const hold = holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: true });
+		const hold = await holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: true });
 
 		await expect(rebindSessionFile(sessionFile, newCwd)).rejects.toBeInstanceOf(SessionHeldError);
 		hold.release();
@@ -98,14 +98,15 @@ describe("issue #2184 cross-process session hold", () => {
 		);
 	});
 
-	it("fails an open of a session that moved after it was read instead of writing to the old path", () => {
+	it("fails an open of a session that moved after it was read instead of writing to the old path", async () => {
 		const { oldCwd, sessionFile } = fixture();
 		renameSync(sessionFile, `${sessionFile}.elsewhere`);
 
-		expect(() => holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: true })).toThrow(
-			SessionMovedError,
-		);
-		expect(() => holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: false })).not.toThrow();
+		const moved = holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: true });
+		await expect(moved).rejects.toThrow(SessionMovedError);
+		await expect(moved).rejects.toThrow(new SessionMovedError(sessionFile).message);
+		const fresh = await holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: false });
+		fresh.release();
 	});
 
 	it("keeps opens and other rebinds out while a move is in progress", async () => {
@@ -122,8 +123,10 @@ describe("issue #2184 cross-process session hold", () => {
 		);
 		await mover.line("MOVING");
 
-		expect(() => holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: true })).toThrow(
-			SessionMovingError,
+		const moving = holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: true });
+		await expect(moving).rejects.toThrow(SessionMovingError);
+		await expect(moving).rejects.toThrow(
+			/^Session .+ is being moved by another process( \(pid \d+\))?\. Try again in a moment\.$/,
 		);
 		const busy = await rebindSessionFile(sessionFile, newCwd, undefined, { moveLockWaitMs: 0 }).then(
 			() => undefined,
@@ -134,7 +137,7 @@ describe("issue #2184 cross-process session hold", () => {
 
 		mover.send("go\n");
 		await mover.line("MOVED");
-		const hold = holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: true });
+		const hold = await holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: true });
 		hold.release();
 	});
 

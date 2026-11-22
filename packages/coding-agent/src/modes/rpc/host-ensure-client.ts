@@ -1,6 +1,11 @@
 /** This build as a host client: what it declares to `decideHostAction`, and when a host is compatible with it. */
 import { isToolRuntimeKind, toolRuntimeCapability } from "../../cli/tool-runtime.ts";
-import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import {
+	comparableEngines,
+	type EngineBuildIdentity,
+	engineBuildIdentity,
+	engineIdentityOf,
+} from "../../core/engine-build-identity.ts";
 import {
 	decideHostAction,
 	HOST_PROTOCOL_VERSION,
@@ -21,8 +26,24 @@ export function decideEnsureAction(
 ): Exclude<HostDecision, { action: "fallback" }> {
 	if (options.upgrade !== "if-engine-differs" || isHostGenerationProcess())
 		return decideHostAction(ensureClient(options, startedByUs), protocol, "never");
-	const decision = decideHostAction(ensureClient(options, startedByUs), protocol, "upgrade");
+	const client = ensureClient(options, startedByUs);
+	const decision = decideHostAction(client, protocol, "upgrade");
+	if (decision.action !== "handoff") reportUncomparableEngine(client.identity, protocol);
 	return decision.action === "fallback" ? { action: "reuse", reason: "compatible", upgradeable: false } : decision;
+}
+
+/**
+ * An upgrade that could not be judged is said out loud (senpi#7040): a host whose engine ordinal is not senpi
+ * CalVer (a compiled omo through 5.1.78 advertised its omo version) is never ordered against this build, so it is
+ * kept whichever engine is newer.
+ */
+function reportUncomparableEngine(client: EngineBuildIdentity, host: HostProtocolInfo | undefined): void {
+	if (host?.engineOrdinal === undefined) return;
+	const running = engineIdentityOf(host.engineVersion ?? "", host.engineOrdinal);
+	if (comparableEngines(client, running)) return;
+	process.stderr.write(
+		`senpi host: engine order uncomparable: this build ${client.text} [${client.ordinal.join(",")}], the running host ${running.text} [${running.ordinal.join(",")}]; only senpi CalVer ordinals are ordered, so the running host is kept\n`,
+	);
 }
 
 /** This build as a client: which protocol it speaks, what it needs from a host, and which build it is. */

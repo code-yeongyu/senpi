@@ -142,6 +142,7 @@ export function createShellToolCore(
 						signal,
 						timeout,
 						env: spawnContext.env,
+						...(exposeSessionEnvironment && ctx ? { sessionId: ctx.sessionManager.getSessionId() } : {}),
 					});
 					exitCode = result.exitCode;
 				} catch (err) {
