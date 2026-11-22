@@ -1,6 +1,6 @@
-// senpi#7282: the hand reports why a `run` ended. A child its own timer stopped is `timed_out`; a child that ends on
-// the same SIGTERM for another reason is `signaled`. A stub `git` on the hand's PATH stands in for a hung and a
-// self-signalled git, so neither case depends on what a real git does.
+// senpi#7282: the hand reports how a `run` ended as observed (`exited` or `signaled`) and, separately, that its own
+// timer expired and which signals it then sent; it never claims the timer caused the exit. A stub `git` on the hand's
+// PATH stands in for hung, self-signalled and signal-surviving gits, so no case depends on what a real git does.
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -24,10 +24,12 @@ writeFileSync(
 		'    --version) echo "git version 2.50.0"; exit 0 ;;',
 		"    --git-common-dir) exec sleep 600 ;;",
 		'    --verify) kill -TERM "$$"; exec sleep 600 ;;',
-		// Survives the timer's SIGTERM and exits 0 on its own instead.
 		// Records its pid, then ends on its own SIGTERM.
 		`    -D) echo $$ > "${markers}/pid"; kill -TERM "$$"; exec sleep 600 ;;`,
+		// Survives the timer's SIGTERM and exits 0 on its own instead.
 		"    --show-current) trap 'exit 0' TERM; while :; do sleep 1; done ;;",
+		// Survives the timer's SIGTERM, then ends on a SIGTERM of its own.
+		"    --batch) trap 'trap - TERM; kill -TERM $$' TERM; while :; do sleep 1; done ;;",
 		"  esac",
 		"done",
 		"exit 0",
@@ -56,10 +58,18 @@ const run = (argv: readonly string[], timeoutMs: number) =>
 	);
 
 describe.skipIf(process.platform === "win32")("hand run termination", () => {
-	it("reports timed_out when the hand's own timer stops a hung git", async () => {
+	it("records the expired timer and its SIGTERM next to the observed signal for a hung git", async () => {
 		const outcome = await run(["rev-parse", "--git-common-dir"], 100);
 		expect(outcome.signal).toBe("SIGTERM");
-		expect(outcome.termination).toEqual({ kind: "timed_out" });
+		expect(outcome.termination).toEqual({ kind: "signaled", timeout: { expired: true, signalsSent: ["SIGTERM"] } });
+	});
+
+	// #7308 review: same observed SIGTERM as a hung git, but the git sent it to itself after surviving the timer's.
+	// Nothing observable separates the two, so both carry the same record and neither claims a timeout.
+	it("records a git that survived the timer's SIGTERM and later signalled itself without claiming a timeout", async () => {
+		const outcome = await run(["cat-file", "--batch"], 1_000);
+		expect(outcome.signal).toBe("SIGTERM");
+		expect(outcome.termination).toEqual({ kind: "signaled", timeout: { expired: true, signalsSent: ["SIGTERM"] } });
 	});
 
 	it("reports signaled for a git that ends on SIGTERM before the timer", async () => {
@@ -68,15 +78,15 @@ describe.skipIf(process.platform === "win32")("hand run termination", () => {
 		expect(outcome.termination).toEqual({ kind: "signaled" });
 	});
 
-	it("reports exited, not timed_out, for a git that survives the timer's signal and exits 0", async () => {
+	it("reports exited with the timer provenance for a git that survives the timer's signal and exits 0", async () => {
 		const outcome = await run(["branch", "--show-current"], 1_000);
 		expect(outcome.code).toBe(0);
 		expect(outcome.signal).toBeNull();
-		expect(outcome.termination).toEqual({ kind: "exited" });
+		expect(outcome.termination).toEqual({ kind: "exited", timeout: { expired: true, signalsSent: ["SIGTERM"] } });
 	});
 
 	// #7308 review: the git ends on its own SIGTERM before the deadline, but the loop is held so its exit is not yet
-	// reaped when the hand's timer comes due, and kill() on that zombie succeeds. It is signaled, not timed_out.
+	// reaped when the hand's timer comes due, and kill() on that zombie would succeed. No timer provenance is recorded.
 	it.skipIf(process.platform !== "linux")(
 		"reports signaled for a git that ended on its own SIGTERM but was not yet reaped at the deadline",
 		async () => {

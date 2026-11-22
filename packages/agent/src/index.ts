@@ -144,7 +144,9 @@ export {
 	type DeviceFileOptions,
 	type DeviceRunRequest,
 	type DeviceRunResult,
+	type DeviceRunTermination,
 	type DeviceRunTerminationKind,
+	type DeviceRunTimeout,
 	type DeviceFileOutcome,
 	type DeviceFiles,
 	type DeviceFileStat,
@@ -157,7 +159,7 @@ export {
 	LOCAL_DEVICE_FILES,
 	RUN_CHANNEL,
 	fileOutcomeOf,
-	terminationKind,
+	runTermination,
 } from "./execution/device-files.ts";
 export { HELLO_WAIT_MS } from "./execution/remote-device-files.ts";
 export { fileRefusal, fileResult } from "./execution/remote-file-call.ts";

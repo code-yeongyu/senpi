@@ -4,6 +4,7 @@ import {
 	type DeviceFileOp,
 	type DeviceFiles,
 	type DeviceFileStat,
+	type DeviceRunTermination,
 	type DeviceRunTerminationKind,
 	decodeBase64,
 	encodeBase64,
@@ -67,14 +68,27 @@ function valueOf(reply: HandReply): JsonValue {
 	}
 }
 
-const TERMINATION_KINDS: ReadonlySet<string> = new Set<DeviceRunTerminationKind>(["exited", "signaled", "timed_out"]);
+const TERMINATION_KINDS: ReadonlySet<string> = new Set<DeviceRunTerminationKind>(["exited", "signaled"]);
 
-/** A hand that predates senpi#7282 sends no termination: left absent (unknown), never inferred from the signal. */
-function terminationOf(value: JsonValue | undefined): { termination?: { kind: DeviceRunTerminationKind } } {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
-	const { kind } = value as Record<string, JsonValue>;
+function isRecord(value: JsonValue | undefined): value is Record<string, JsonValue> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A hand that predates senpi#7282 sends no termination: left absent (unknown), never inferred from the signal. Timer
+ * provenance is kept only when well formed; a malformed one is dropped rather than read as a timeout.
+ */
+function terminationOf(value: JsonValue | undefined): { termination?: DeviceRunTermination } {
+	if (!isRecord(value)) return {};
+	const { kind, timeout } = value;
 	if (typeof kind !== "string" || !TERMINATION_KINDS.has(kind)) return {};
-	return { termination: { kind: kind as DeviceRunTerminationKind } };
+	const observed = kind as DeviceRunTerminationKind;
+	if (!isRecord(timeout) || timeout.expired !== true || !Array.isArray(timeout.signalsSent)) {
+		return { termination: { kind: observed } };
+	}
+	const signalsSent = timeout.signalsSent.filter((sig): sig is string => typeof sig === "string");
+	if (signalsSent.length !== timeout.signalsSent.length) return { termination: { kind: observed } };
+	return { termination: { kind: observed, timeout: { expired: true, signalsSent } } };
 }
 
 /**
