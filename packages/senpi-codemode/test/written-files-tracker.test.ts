@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FileSignature } from "../src/written-files/scan-boundaries.ts";
-import { WrittenFilesTracker } from "../src/written-files/tracker.ts";
+import { type ChangedFile, WrittenFilesTracker } from "../src/written-files/tracker.ts";
 import type { WorkspaceScan } from "../src/written-files/workspace-scan.ts";
 
 const CWD = join("/", "work");
@@ -38,9 +38,12 @@ function workspace() {
 	};
 }
 
+/** Lists and hooks every changed file. */
+const everyFile = async (changed: readonly ChangedFile[]) => ({ listed: changed, total: changed.length, hooks: true });
+
 async function settled(window: ReturnType<WrittenFilesTracker["open"]>): Promise<readonly string[] | string> {
-	const change = await window.settle();
-	return change.kind === "changed" ? change.files.map((file) => file.path) : change.kind;
+	const change = await window.settle(everyFile);
+	return change.kind === "changed" ? change.selection.listed.map((file) => file.path) : change.kind;
 }
 
 // senpi#7232
@@ -88,7 +91,7 @@ describe("written-files tracker", () => {
 		skips.push("over_budget");
 		const flaky = tracker.open();
 		await flaky.ready;
-		expect(await flaky.settle()).toEqual({ kind: "unchecked", reason: "over_budget", disabled: false });
+		expect(await flaky.settle(everyFile)).toEqual({ kind: "unchecked", reason: "over_budget", disabled: false });
 		flaky.close();
 
 		const healthy = tracker.open();
@@ -100,15 +103,15 @@ describe("written-files tracker", () => {
 		skips.push("over_budget", "over_budget", "over_budget");
 		const slow = tracker.open();
 		await slow.ready;
-		expect(await slow.settle()).toEqual({ kind: "unchecked", reason: "over_budget", disabled: false });
+		expect(await slow.settle(everyFile)).toEqual({ kind: "unchecked", reason: "over_budget", disabled: false });
 		slow.close();
 		const slowAgain = tracker.open();
 		await slowAgain.ready;
-		expect(await slowAgain.settle()).toEqual({ kind: "unchecked", reason: "over_budget", disabled: false });
+		expect(await slowAgain.settle(everyFile)).toEqual({ kind: "unchecked", reason: "over_budget", disabled: false });
 		slowAgain.close();
 		const slowThird = tracker.open();
 		await slowThird.ready;
-		expect(await slowThird.settle()).toEqual({ kind: "unchecked", reason: "over_budget", disabled: true });
+		expect(await slowThird.settle(everyFile)).toEqual({ kind: "unchecked", reason: "over_budget", disabled: true });
 		slowThird.close();
 		const scansWhenOff = scans();
 		const after = tracker.open();
@@ -124,6 +127,6 @@ describe("written-files tracker", () => {
 		const cell = tracker.open();
 		await cell.ready;
 
-		expect(await cell.settle()).toEqual({ kind: "unchecked", reason: "git_unavailable", disabled: true });
+		expect(await cell.settle(everyFile)).toEqual({ kind: "unchecked", reason: "git_unavailable", disabled: true });
 	});
 });

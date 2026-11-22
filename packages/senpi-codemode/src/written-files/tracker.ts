@@ -9,8 +9,17 @@ export interface ChangedFile {
 	readonly absolutePath: string;
 }
 
+/** What a settling cell does with the files that changed: the one choice both its claim and its hooks follow. */
+export interface WrittenFilesSelection {
+	/** The changed files the cell lists, in path order; it sends them through the write hooks when `hooks` is set. */
+	readonly listed: readonly ChangedFile[];
+	/** How many changed files the cell counts as written, listed or not. */
+	readonly total: number;
+	readonly hooks: boolean;
+}
+
 export type WrittenFilesChange =
-	| { readonly kind: "changed"; readonly files: readonly ChangedFile[] }
+	| { readonly kind: "changed"; readonly selection: WrittenFilesSelection }
 	/** The cell's writes could not be compared; `disabled` says the check is now off for the session. */
 	| { readonly kind: "unchecked"; readonly reason: ScanSkipReason; readonly disabled: boolean }
 	| { readonly kind: "off" };
@@ -18,10 +27,15 @@ export type WrittenFilesChange =
 export interface WrittenFilesWindow {
 	/** Resolves once the cell's code may start: the state its writes are compared with is recorded. */
 	readonly ready: Promise<void>;
-	/** After the cell's code finished: the files that changed since the last report, owned by this cell until released. */
-	settle(): Promise<WrittenFilesChange>;
+	/**
+	 * After the cell's code finished: the files that changed since the last report, sorted, go through `select` inside
+	 * the settling scan, and the cell owns the listed files it will hook until it lets go of them.
+	 */
+	settle(select: (changed: readonly ChangedFile[]) => Promise<WrittenFilesSelection>): Promise<WrittenFilesChange>;
 	/** The write hooks this cell ran for a file it reported returned: the state they left is this cell's, and it lets go. */
 	hooked(absolutePath: string): Promise<void>;
+	/** This cell will not run the write hooks for a file it owns (cancelled, unreadable): it lets go of it now. */
+	skipped(absolutePath: string): void;
 	/** This cell's hooks are done: it lets go of every file it still owns. */
 	release(): void;
 	/** Ends the window and lets go of its files; safe to call more than once. */
@@ -45,6 +59,7 @@ function offWindow(): WrittenFilesWindow {
 		ready: Promise.resolve(),
 		settle: async () => ({ kind: "off" }),
 		hooked: async () => {},
+		skipped: () => {},
 		release: () => {},
 		close: () => {},
 	};
@@ -56,12 +71,15 @@ function offWindow(): WrittenFilesWindow {
  * so a change is reported exactly once, by the first cell to settle after it. Cells that overlap cannot be told
  * apart; a cell that runs alone is charged only with what changed while it ran.
  *
- * A settlement owns the files it reports until its write hooks for them return: a hook (a formatter) may rewrite a
- * file, and that rewrite is the reporting cell's. Ownership is taken inside the settling scan, so no later scan can
- * run between the report and the claim, and a scan that finds an owned file changed leaves it and its baseline alone;
+ * A settlement owns the files it will send through the write hooks until those hooks return: a hook (a formatter) may
+ * rewrite a file, and that rewrite is the reporting cell's. A changed file it only counts (past the limit, not source)
+ * or will not hook (no hooks on this host) stays unowned, so a later scan still reports a change made to it. Ownership
+ * is taken inside the settling scan, so no later scan can run between the report and the claim, and a scan that finds
+ * an owned file changed leaves it and its baseline alone;
  * once the hook returns, its result is recorded as hooked and the next scan compares with that. No lock is held over
  * the hooks: a hook may itself call `write` or run an eval cell, whose scans then queue behind nothing of this cell's.
- * Ownership ends when the hook call returns or fails, when the cell's hooks stop (abort, limit) or when it closes; the
+ * Ownership ends when the hook call returns or fails, when the cell decides not to start it (cancelled, unreadable),
+ * when its hooks stop or when it closes; the
  * host bounds each `tool_result` handler, so a stuck hook holds only its own file and only until that deadline.
  */
 export class WrittenFilesTracker {
@@ -70,7 +88,7 @@ export class WrittenFilesTracker {
 	readonly #stat: ScanFs["stat"];
 	readonly #hooked = new Map<string, FileSignature>();
 	/** Reported files whose settlement's hooks are still running, and the window that settled them. */
-	readonly #owned = new Map<string, object>();
+	readonly #owned = new Map<string, Owner>();
 	#queue: Promise<void> = Promise.resolve();
 	#baseline: ScannedFiles | undefined;
 	#skipped: ScanSkipReason | undefined;
@@ -89,27 +107,30 @@ export class WrittenFilesTracker {
 		this.#live += 1;
 		// A later cell also waits for the scan in flight, so its first writes are not swept into that scan.
 		const ready = this.#live === 1 ? this.#enqueue(() => this.#recordBaseline()) : this.#queue;
-		const owner = {};
+		const owner: Owner = { closed: false };
 		const release = (path?: string) => {
 			for (const [owned, by] of this.#owned)
 				if (by === owner && (path === undefined || owned === path)) this.#owned.delete(owned);
 		};
-		let closed = false;
+		const releaseFile = (absolutePath: string) => {
+			const path = this.#workspacePath(absolutePath);
+			if (path !== undefined) release(path);
+		};
 		return {
 			ready,
-			settle: () => this.#enqueue(() => this.#report(owner)),
+			settle: (select) => this.#enqueue(() => this.#report(owner, select)),
 			hooked: async (absolutePath) => {
 				try {
 					await this.noteHooked(absolutePath);
 				} finally {
-					const path = this.#workspacePath(absolutePath);
-					if (path !== undefined) release(path);
+					releaseFile(absolutePath);
 				}
 			},
+			skipped: releaseFile,
 			release: () => release(),
 			close: () => {
-				if (closed) return;
-				closed = true;
+				if (owner.closed) return;
+				owner.closed = true;
 				release();
 				this.#live -= 1;
 				if (this.#live > 0) return;
@@ -148,7 +169,10 @@ export class WrittenFilesTracker {
 		this.#baseline = { files: new Map(scan.files), head: scan.head, tracked: scan.tracked };
 	}
 
-	async #report(owner: object): Promise<WrittenFilesChange> {
+	async #report(
+		owner: Owner,
+		select: (changed: readonly ChangedFile[]) => Promise<WrittenFilesSelection>,
+	): Promise<WrittenFilesChange> {
 		const baseline = this.#baseline;
 		if (baseline === undefined) {
 			const reason = this.#skipped ?? "scan_failed";
@@ -190,10 +214,12 @@ export class WrittenFilesTracker {
 			}
 			files.push({ path, absolutePath });
 		}
-		this.#baseline = { files: next, head: scan.head, tracked: scan.tracked };
-		for (const file of files) this.#owned.set(file.path, owner);
 		files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
-		return { kind: "changed", files };
+		const selection = await select(files);
+		this.#baseline = { files: next, head: scan.head, tracked: scan.tracked };
+		// A cell that closed while the selection read its files hooks nothing, so it claims nothing.
+		if (selection.hooks && !owner.closed) for (const file of selection.listed) this.#owned.set(file.path, owner);
+		return { kind: "changed", selection };
 	}
 
 	#skip(reason: ScanSkipReason): void {
@@ -219,6 +245,11 @@ export class WrittenFilesTracker {
 		);
 		return run;
 	}
+}
+
+/** The settling cell a claimed file belongs to. */
+interface Owner {
+	closed: boolean;
 }
 
 function sameSignature(left: FileSignature, right: FileSignature): boolean {

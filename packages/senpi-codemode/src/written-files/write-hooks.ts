@@ -2,7 +2,7 @@ import type { ExtensionToolContext } from "@code-yeongyu/senpi";
 import { capCodePoints } from "../tool/call-capture.ts";
 import type { ScanFs } from "./workspace-fs.ts";
 import { isSourceText, SOURCE_FILE_MAX_BYTES, SOURCE_FILE_SNIFF_BYTES } from "./source-file.ts";
-import type { ChangedFile } from "./tracker.ts";
+import type { ChangedFile, WrittenFilesSelection } from "./tracker.ts";
 
 /** Files listed in a cell result and sent through the write hooks; the rest are counted. */
 export const WRITTEN_FILES_LIMIT = 20;
@@ -31,32 +31,54 @@ export interface WriteHookDeps {
 	readonly report: ReportToolResult | undefined;
 	/** The hooks for this file returned or failed: what they left on disk is the reporting cell's. */
 	readonly noteHooked: (absolutePath: string) => Promise<void>;
+	/** The hooks for this listed file will not start: the cell lets go of it. */
+	readonly skipped: (absolutePath: string) => void;
 	readonly signal: AbortSignal;
 }
 
+/** The changed files a cell lists and, when `hooks` is set, sends through the write hooks: its first source files. */
+export async function selectWrittenFiles(
+	changed: readonly ChangedFile[],
+	fs: Pick<ScanFs, "read">,
+	hooks: boolean,
+): Promise<WrittenFilesSelection> {
+	const sources = await sourceFiles(changed, fs);
+	return { listed: sources.slice(0, WRITTEN_FILES_LIMIT), total: sources.length, hooks };
+}
+
 /**
- * Sends the content each written file has on disk through the `tool_result` handlers a `write` call triggers. Nothing
+ * Sends the content each listed file has on disk through the `tool_result` handlers a `write` call triggers. Nothing
  * is written again, so a hook sees exactly what the cell left and no change made meanwhile can be overwritten.
  */
 export async function reportWrittenFiles(
-	changed: readonly ChangedFile[],
+	selection: WrittenFilesSelection,
 	deps: WriteHookDeps,
 ): Promise<WrittenFilesReport | undefined> {
-	const sources = await sourceFiles(changed, deps.fs);
-	if (sources.length === 0) return undefined;
-	const listed = sources.slice(0, WRITTEN_FILES_LIMIT);
+	const { listed, total } = selection;
+	if (total === 0) return undefined;
 	const hookOutputs: { path: string; text: string }[] = [];
 	const hookFailures: { path: string; error: string }[] = [];
 	const fail = (path: string, error: string) =>
 		hookFailures.push({ path, error: capCodePoints(error, HOOK_ERROR_CODE_POINTS) });
 	let outputBudget = HOOK_OUTPUT_CELL_CODE_POINTS;
 	let hooked = 0;
+	const report = selection.hooks ? deps.report : undefined;
 	for (const file of listed) {
-		const report = deps.report;
-		if (report === undefined || deps.signal.aborted) break;
+		// Without hooks the selection claimed nothing, so there is nothing to let go of.
+		if (report === undefined) break;
+		if (deps.signal.aborted) {
+			deps.skipped(file.absolutePath);
+			continue;
+		}
 		const bytes = await deps.fs.read(file.absolutePath, SOURCE_FILE_MAX_BYTES + 1);
+		// The cell may have been cancelled during the read: a hook it has not started must not start.
+		if (deps.signal.aborted) {
+			deps.skipped(file.absolutePath);
+			continue;
+		}
 		if (bytes === undefined || bytes.length > SOURCE_FILE_MAX_BYTES) {
 			fail(file.path, "the file could not be read back for the hooks");
+			deps.skipped(file.absolutePath);
 			continue;
 		}
 		const written = `Successfully wrote to ${file.absolutePath}`;
@@ -83,7 +105,7 @@ export async function reportWrittenFiles(
 		// A hook may rewrite the file (a formatter), even one that then failed; that rewrite is not a later cell's write.
 		await deps.noteHooked(file.absolutePath);
 	}
-	return { files: listed.map((file) => file.path), total: sources.length, hooked, hookOutputs, hookFailures };
+	return { files: listed.map((file) => file.path), total, hooked, hookOutputs, hookFailures };
 }
 
 async function sourceFiles(changed: readonly ChangedFile[], fs: Pick<ScanFs, "read">): Promise<ChangedFile[]> {

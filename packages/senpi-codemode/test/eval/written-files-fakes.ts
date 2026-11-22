@@ -23,6 +23,8 @@ export class FakeWorkspace {
 	statusOutcome: GitOutcome | undefined;
 	/** Runs as a read starts, after the file was checked and before it is opened. */
 	beforeOpen: ((path: string) => void) | undefined;
+	/** Awaited once a read has its bytes, before it returns them: a test holds a read open with it. */
+	afterRead: ((path: string, limit: number) => Promise<void>) | undefined;
 	/** Set before the first write: whether the filesystem folds case, as macOS and Windows ones do by default. */
 	caseInsensitive = false;
 	/** Absolute paths whose identity lookup fails without telling whether anything is there (EACCES, EIO, ELOOP). */
@@ -134,7 +136,9 @@ export class FakeWorkspace {
 			const file = this.#files.get(opened);
 			if (file === undefined || !(await accept(file.signature))) return undefined;
 			this.reads.push(opened);
-			return file.bytes.subarray(0, limit);
+			const bytes = file.bytes.subarray(0, limit);
+			await this.afterRead?.(path, limit);
+			return bytes;
 		},
 	};
 

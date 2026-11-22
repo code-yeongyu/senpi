@@ -7,7 +7,7 @@ import type { FsAccess, RunGit } from "./scan-boundaries.ts";
 import { WrittenFilesTracker } from "./tracker.ts";
 import { type ScanFs, workspaceFs } from "./workspace-fs.ts";
 import { WorkspaceScanner } from "./workspace-scan.ts";
-import { reportWrittenFiles } from "./write-hooks.ts";
+import { reportWrittenFiles, selectWrittenFiles } from "./write-hooks.ts";
 
 export interface CellWrittenFiles {
 	readonly ready: Promise<void>;
@@ -95,13 +95,14 @@ export class WrittenFiles {
 			ready: window.ready,
 			settle: async (signal) => {
 				try {
-					const change = await window.settle();
+					const change = await window.settle((files) => selectWrittenFiles(files, this.#fs, report !== undefined));
 					if (change.kind === "off") return undefined;
 					if (change.kind === "unchecked") return change;
-					const written = await reportWrittenFiles(change.files, {
+					const written = await reportWrittenFiles(change.selection, {
 						fs: this.#fs,
 						report,
 						noteHooked: (path) => window.hooked(path),
+						skipped: (path) => window.skipped(path),
 						signal,
 					});
 					if (written === undefined) return undefined;

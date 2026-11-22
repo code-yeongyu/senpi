@@ -1,10 +1,37 @@
 import { describe, expect, it } from "vitest";
+import { SOURCE_FILE_SNIFF_BYTES } from "../src/written-files/source-file.ts";
 import {
 	cellListing,
+	type FakeWorkspace,
 	reportedPaths,
 	type WrittenFilesHarness,
 	writtenFilesHarness,
 } from "./eval/written-files-fakes.ts";
+
+/** Holds the next read back for the hooks open until `finish`; the source sniff before it passes. */
+function holdReadBack(workspace: FakeWorkspace) {
+	let opened: () => void = () => {};
+	const reading = new Promise<void>((resolve) => {
+		opened = resolve;
+	});
+	let finish: () => void = () => {};
+	const finished = new Promise<void>((resolve) => {
+		finish = resolve;
+	});
+	workspace.afterRead = async (_path, limit) => {
+		if (limit <= SOURCE_FILE_SNIFF_BYTES) return;
+		workspace.afterRead = undefined;
+		opened();
+		await finished;
+	};
+	return { reading, finish };
+}
+
+function outcomeFiles(outcome: Awaited<ReturnType<ReturnType<WrittenFilesHarness["writtenFiles"]["open"]>["settle"]>>) {
+	return outcome?.kind === "written"
+		? { files: outcome.report.files, total: outcome.report.total, hooked: outcome.report.hooked }
+		: outcome;
+}
 
 // senpi#7232, fourth review: an unknown is never taken for an answer, and a hook's rewrite belongs to its own cell.
 describe("written files settle only what is known to be the cell's", () => {
@@ -94,5 +121,105 @@ describe("written files settle only what is known to be the cell's", () => {
 			c: outcomeC,
 			hooked: reportedPaths(harness),
 		}).toEqual({ a: ["src/a.ts"], b: undefined, c: undefined, hooked: [workspace.absolute("src/a.ts")] });
+	});
+
+	// Fifth review: a cell owns only the files it will send through the hooks, and only until it decides not to.
+	it("leaves a file past the limit unclaimed, so a cell settling during the first cell's hook lists and hooks its rewrite", async () => {
+		const paths = Array.from({ length: 21 }, (_, index) => `src/f${String(index).padStart(2, "0")}.ts`);
+		let started: () => void = () => {};
+		const hookStarted = new Promise<void>((resolve) => {
+			started = resolve;
+		});
+		let resume: () => void = () => {};
+		const hookResumes = new Promise<void>((resolve) => {
+			resume = resolve;
+		});
+		const harness: WrittenFilesHarness = writtenFilesHarness(async () => {
+			if (harness.reported.length === 1) {
+				started();
+				await hookResumes;
+			}
+			return { toolCallId: `cell/reported-${harness.reported.length}`, result: undefined, failures: [] };
+		});
+		const { workspace, writtenFiles, ctx } = harness;
+		const signal = new AbortController().signal;
+		const cellA = writtenFiles.open(ctx);
+		await cellA.ready;
+		const cellB = writtenFiles.open(ctx);
+		await cellB.ready;
+		for (const path of paths) workspace.write(path, `export const path = "${path}";\n`);
+
+		const settledA = cellA.settle(signal);
+		await hookStarted;
+		workspace.write("src/f20.ts", "export const rewritten = 1;\n");
+		const outcomeB = await cellB.settle(signal);
+		resume();
+		const outcomeA = await settledA;
+		// No claim outlives either settlement: a later cell lists a rewrite of a file each of them hooked.
+		const cellC = writtenFiles.open(ctx);
+		await cellC.ready;
+		workspace.write("src/f00.ts", "export const again = 1;\n");
+		workspace.write("src/f20.ts", "export const again = 1;\n");
+		const outcomeC = await cellC.settle(signal);
+		for (const cell of [cellA, cellB, cellC]) cell.close();
+
+		const listedA = paths.slice(0, 20);
+		expect({
+			a: outcomeFiles(outcomeA),
+			b: outcomeFiles(outcomeB),
+			c: outcomeFiles(outcomeC),
+			hooked: reportedPaths(harness),
+		}).toEqual({
+			a: { files: listedA, total: 21, hooked: 20 },
+			b: { files: ["src/f20.ts"], total: 1, hooked: 1 },
+			c: { files: ["src/f00.ts", "src/f20.ts"], total: 2, hooked: 2 },
+			hooked: [
+				workspace.absolute("src/f00.ts"),
+				workspace.absolute("src/f20.ts"),
+				...listedA.slice(1).map((path) => workspace.absolute(path)),
+				workspace.absolute("src/f00.ts"),
+				workspace.absolute("src/f20.ts"),
+			],
+		});
+	});
+
+	it("starts no hook for a file whose read back was pending when the cell was cancelled, and lets go of it", async () => {
+		const harness = writtenFilesHarness();
+		const { workspace, writtenFiles, ctx } = harness;
+		const controller = new AbortController();
+		const cancelled = writtenFiles.open(ctx);
+		await cancelled.ready;
+		const later = writtenFiles.open(ctx);
+		await later.ready;
+		workspace.write("src/a.ts", "export const a = 1;\n");
+
+		const cancelledRead = holdReadBack(workspace);
+		const settlingCancelled = cancelled.settle(controller.signal);
+		await cancelledRead.reading;
+		controller.abort();
+		cancelled.close();
+		cancelledRead.finish();
+		const outcomeCancelled = await settlingCancelled;
+		const hookedWhenCancelled = [...reportedPaths(harness)];
+		// The normal path, through the same held read: a cell that is not cancelled sends its rewrite through the hooks.
+		workspace.write("src/a.ts", "export const a = 2;\n");
+		const laterRead = holdReadBack(workspace);
+		const settlingLater = later.settle(new AbortController().signal);
+		await laterRead.reading;
+		laterRead.finish();
+		const outcomeLater = await settlingLater;
+		later.close();
+
+		expect({
+			cancelled: outcomeFiles(outcomeCancelled),
+			hookedWhenCancelled,
+			later: outcomeFiles(outcomeLater),
+			hooked: reportedPaths(harness),
+		}).toEqual({
+			cancelled: { files: ["src/a.ts"], total: 1, hooked: 0 },
+			hookedWhenCancelled: [],
+			later: { files: ["src/a.ts"], total: 1, hooked: 1 },
+			hooked: [workspace.absolute("src/a.ts")],
+		});
 	});
 });
