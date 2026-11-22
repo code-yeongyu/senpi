@@ -54,6 +54,8 @@ describe("provider retry classification", () => {
 		["408 upstream request did not complete", true],
 		["Provider failed with status 408", true],
 		["Gateway error: 408 Request Timeout", true],
+		["Mistral API error (408): The gateway did not complete the request", true],
+		["Mistral API error (400): Expected a status other than HTTP 408 Request Timeout", false],
 		["Invalid parameter at position 408", false],
 	])("classifies legacy 408 text by its status wording: %s", (errorMessage, expected) => {
 		expect(isRetryableErrorMessage(errorMessage)).toBe(expected);

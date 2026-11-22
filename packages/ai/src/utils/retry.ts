@@ -169,6 +169,7 @@ const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 ]);
 
 // Legacy status text includes SDK status prefixes and the empty-body gateway's "returned 408".
+const MISTRAL_HTTP_STATUS_PREFIX = /^(?:Error:\s*)?Mistral API error \(([45]\d{2})\):/i;
 const HTTP_STATUS_IN_MESSAGE = /(?:^(?:Error:\s*)?|\b(?:HTTP|status|returned)\s+)([45]\d{2})(?=\s|[),:]|$)/i;
 const HTTP_408_REASON_PHRASE = /\b408\s+Request\s+Timeout\b/gi;
 
@@ -713,7 +714,8 @@ export function classifyErrorMessage(
 			return "non-retryable";
 		}
 	}
-	const status = httpStatus ?? HTTP_STATUS_IN_MESSAGE.exec(text)?.[1];
+	// The Mistral prefix is the HTTP status; anything after it is free-form response text.
+	const status = httpStatus ?? MISTRAL_HTTP_STATUS_PREFIX.exec(text)?.[1] ?? HTTP_STATUS_IN_MESSAGE.exec(text)?.[1];
 	// A reason phrase quoted in a non-408 body must not re-enter via the generic "timeout" pattern.
 	const without408Reason = text.replace(HTTP_408_REASON_PHRASE, "");
 	if (status === 408 || status === "408" || (status === undefined && without408Reason !== text)) {
