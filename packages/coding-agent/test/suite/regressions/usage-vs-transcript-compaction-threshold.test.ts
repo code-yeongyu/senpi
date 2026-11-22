@@ -96,6 +96,33 @@ describe("compaction threshold with small provider usage over a large transcript
 		expect(runAutoCompaction).not.toHaveBeenCalled();
 	});
 
+	it("admits an aggregate-billed search below threshold but compacts a genuinely oversized native result", async () => {
+		const harness = await createThresholdHarness();
+		harnesses.push(harness);
+		seedSession(harness, "search", 40_000);
+		const search = lastAssistant(harness);
+		harness.sessionManager.appendMessage({
+			...search,
+			usage: { ...createUsage(145_000), contextUsage: { input: 42_000, output: 100 } },
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		expect(getAutoCompactionReason(harness)).toBeUndefined();
+
+		harness.sessionManager.appendMessage({
+			...search,
+			usage: { ...createUsage(145_000), contextUsage: null },
+			content: [
+				{
+					type: "providerNative",
+					subtype: "web_search_tool_result",
+					raw: { type: "web_search_tool_result", content: "text ".repeat(80_000) },
+				},
+			],
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		expect(getAutoCompactionReason(harness)).toBe("threshold");
+	});
+
 	it("still compacts on provider usage alone when the transcript estimate is small", async () => {
 		const harness = await createThresholdHarness();
 		harnesses.push(harness);
