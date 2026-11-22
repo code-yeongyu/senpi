@@ -76,9 +76,24 @@ export interface DeviceRunRequest {
 	readonly activityLock?: boolean;
 }
 
+/**
+ * Why a run's process ended, as the side that spawned it saw it (senpi#7282): `timed_out` only when that side's own
+ * timer stopped the process, `signaled` for any other signal, `exited` for an exit code. A cancelled run is not a result:
+ * it rejects with `aborted`.
+ */
+export type DeviceRunTerminationKind = "exited" | "signaled" | "timed_out";
+
+/** The spawning side's record of why its child ended: `timedOut` is set only when its own timer stopped a live child. */
+export function terminationKind(timedOut: boolean, signal: string | null): DeviceRunTerminationKind {
+	if (timedOut) return "timed_out";
+	return signal === null ? "exited" : "signaled";
+}
+
 export interface DeviceRunResult {
 	readonly code: number | null;
 	readonly signal: string | null;
+	/** Absent when a hand predates it: the cause is unknown, and a signal alone never means a timeout. */
+	readonly termination?: { readonly kind: DeviceRunTerminationKind };
 	readonly stdout: Uint8Array;
 	readonly stderr: string;
 }

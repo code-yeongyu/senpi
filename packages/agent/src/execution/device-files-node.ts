@@ -8,6 +8,7 @@ import {
 	type DeviceFileStat,
 	type DeviceRunRequest,
 	type DeviceRunResult,
+	terminationKind,
 	FILE_CHANNEL_MAX_BYTES,
 	LOCAL_DEVICE_FILES,
 } from "./device-files.ts";
@@ -89,10 +90,13 @@ function runDirect(request: DeviceRunRequest, signal: AbortSignal | undefined): 
 		child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
 		child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
 		let killTimer: NodeJS.Timeout | undefined;
+		let timedOut = false;
 		const timer =
 			request.timeoutMs === undefined
 				? undefined
 				: setTimeout(() => {
+						if (child.exitCode !== null || child.signalCode !== null) return;
+						timedOut = true;
 						child.kill("SIGTERM");
 						killTimer = setTimeout(() => child.kill("SIGKILL"), 10_000);
 					}, request.timeoutMs);
@@ -103,6 +107,7 @@ function runDirect(request: DeviceRunRequest, signal: AbortSignal | undefined): 
 			done({
 				code,
 				signal: exitSignal,
+				termination: { kind: terminationKind(timedOut, exitSignal) },
 				stdout: new Uint8Array(Buffer.concat(out)),
 				stderr: Buffer.concat(err).toString("utf8"),
 			});

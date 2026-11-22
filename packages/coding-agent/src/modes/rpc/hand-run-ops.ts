@@ -6,6 +6,8 @@ import {
 	decodeBase64,
 	encodeBase64,
 	FILE_CHANNEL_MAX_BYTES,
+	type DeviceRunTerminationKind,
+	terminationKind,
 } from "@earendil-works/pi-agent-core";
 import { type Flock, holdActivityLock } from "./hand-activity-lock.ts";
 import type { NestedRequest } from "@earendil-works/pi-agent-core";
@@ -27,6 +29,8 @@ export interface RunArgs {
 export interface RunOutcome {
 	readonly code: number | null;
 	readonly signal: string | null;
+	/** Why the child ended, as the hand saw it (senpi#7282): `timed_out` only when the hand's own timer stopped it. */
+	readonly termination: { readonly kind: DeviceRunTerminationKind };
 	readonly stdout: string;
 	readonly stderr: string;
 }
@@ -129,7 +133,14 @@ function spawnBounded(
 				child.stderr?.destroy();
 			}, KILL_GRACE_MS);
 		};
-		const timeout = setTimeout(stop, Math.min(args.timeoutMs ?? DEFAULT_TIMEOUT_MS, RUN_TIMEOUT_CAP_MS));
+		let timedOut = false;
+		const timeout = setTimeout(
+			() => {
+				if (child.exitCode === null && child.signalCode === null) timedOut = true;
+				stop();
+			},
+			Math.min(args.timeoutMs ?? DEFAULT_TIMEOUT_MS, RUN_TIMEOUT_CAP_MS),
+		);
 		const onAbort = (): void => stop();
 		signal.addEventListener("abort", onAbort, { once: true });
 		const collect = (into: Buffer[], key: "out" | "err") => (chunk: Buffer) => {
@@ -153,6 +164,7 @@ function spawnBounded(
 			done({
 				code,
 				signal: exitSignal,
+				termination: { kind: terminationKind(timedOut, exitSignal) },
 				stdout: encodeBase64(new Uint8Array(Buffer.concat(out))),
 				stderr: Buffer.concat(err).toString("utf8"),
 			});

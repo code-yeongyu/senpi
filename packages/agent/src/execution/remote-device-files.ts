@@ -4,6 +4,7 @@ import {
 	type DeviceFileOp,
 	type DeviceFiles,
 	type DeviceFileStat,
+	type DeviceRunTerminationKind,
 	decodeBase64,
 	encodeBase64,
 	FILE_CHANNEL,
@@ -66,6 +67,16 @@ function valueOf(reply: HandReply): JsonValue {
 	}
 }
 
+const TERMINATION_KINDS: ReadonlySet<string> = new Set<DeviceRunTerminationKind>(["exited", "signaled", "timed_out"]);
+
+/** A hand that predates senpi#7282 sends no termination: left absent (unknown), never inferred from the signal. */
+function terminationOf(value: JsonValue | undefined): { termination?: { kind: DeviceRunTerminationKind } } {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+	const kind = value.kind;
+	if (typeof kind !== "string" || !TERMINATION_KINDS.has(kind)) return {};
+	return { termination: { kind: kind as DeviceRunTerminationKind } };
+}
+
 /**
  * A session's {@link DeviceFiles} on a hand (S40): each operation is one `file` message on the scope's lane, after the
  * hand announced the channel in its `hello` (or `unsupported`, sent nowhere). A write over the limit is refused here,
@@ -126,12 +137,13 @@ export function createRemoteDeviceFiles(link: HandLink, scope: ExecutionScope, m
 			const value = await call("run", args, options?.signal, RUN_CHANNEL);
 			if (typeof value !== "object" || value === null || Array.isArray(value))
 				throw new DeviceFileError("protocol", "malformed run outcome");
-			const { code, signal, stdout, stderr } = value as Record<string, JsonValue>;
+			const { code, signal, stdout, stderr, termination } = value as Record<string, JsonValue>;
 			if (typeof stdout !== "string" || typeof stderr !== "string")
 				throw new DeviceFileError("protocol", "malformed run outcome");
 			return {
 				code: typeof code === "number" ? code : null,
 				signal: typeof signal === "string" ? signal : null,
+				...terminationOf(termination),
 				stdout: decodeBase64(stdout),
 				stderr,
 			};
