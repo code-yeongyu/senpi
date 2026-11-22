@@ -195,7 +195,7 @@ Content`,
 
 			const result = await packageManager.resolve();
 			expect(result.skills.filter((r) => r.path.startsWith(skillsRoot))).toHaveLength(3);
-			expect(result.skillRoots.filter((p) => p.selectedRoot === skillsRoot)).toHaveLength(1);
+			expect(result.skillRoots?.filter((p) => p.selectedRoot === skillsRoot)).toHaveLength(1);
 		});
 
 		it("should auto-discover root markdown skills from .pi skill dirs", async () => {
