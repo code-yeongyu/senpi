@@ -23,6 +23,9 @@ function createApplyPatchEvalHarness(model: { readonly api: string; readonly id:
 	let activeToolNames: string[] = [];
 	let lazyToolActivator: LazyToolActivator | undefined;
 	const api: ApplyPatchExtensionApi = {
+		appendEntry() {
+			throw new Error("No edit-tool swap should be recorded by this fixture");
+		},
 		registerTool(tool: ApplyPatchToolDefinition) {
 			registeredTools.set(tool.name, tool);
 		},

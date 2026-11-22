@@ -15,6 +15,7 @@ const APPLY_PATCH_FREEFORM_APIS = new Set<Api>([
 const APPLY_PATCH_JSON_APIS = new Set<Api>(["openai-completions"]);
 const EDIT_TOOL_NAMES = new Set(["edit", "write"]);
 const APPLY_PATCH_NAME = "apply_patch";
+const EDIT_TOOL_SWAP_ENTRY = "gpt-apply-patch:edit-tool-swap";
 
 function isGptId(model: Pick<Model<string>, "api" | "id"> | undefined): model is Pick<Model<string>, "api" | "id"> {
 	return model !== undefined && /(?:^|[/@:._-])gpt(?:[._-]|\d)/i.test(model.id);
@@ -70,30 +71,33 @@ function syncToolset(
 	const mode = getApplyPatchWireMode(model);
 	state.wireMode = mode;
 	const currentToolNames = pi.getActiveTools();
+	const hasApplyPatch = currentToolNames.includes(APPLY_PATCH_NAME);
+	const replaced = state.removedEditToolNames;
 	if (mode !== "none") {
 		if (state.activeVariant !== mode) {
 			pi.registerTool(variants[mode]);
 			state.activeVariant = mode;
 		}
 		const activeEdit = currentToolNames.filter((toolName) => EDIT_TOOL_NAMES.has(toolName));
-		if (activeEdit.length > 0) state.removedEditToolNames = activeEdit;
 		pi.setActiveTools(replaceEditToolsWithApplyPatch(currentToolNames));
+		if (activeEdit.length > 0 || (!hasApplyPatch && replaced.length > 0)) {
+			state.removedEditToolNames = activeEdit;
+			pi.appendEntry(EDIT_TOOL_SWAP_ENTRY, activeEdit, { startupBookkeeping: true });
+		}
 		return;
 	}
-	// An active apply_patch stands in for the edit tools it replaced, even when this instance never saw the
-	// replacement: after a reload, resume or restart the active list outlives `removedEditToolNames` (senpi#3838).
-	const replaced =
-		state.removedEditToolNames.length > 0
-			? state.removedEditToolNames
-			: currentToolNames.includes(APPLY_PATCH_NAME)
-				? [...EDIT_TOOL_NAMES]
-				: [];
-	if (replaced.length === 0) return;
-	const registeredNames = new Set(pi.getAllTools().map((tool) => tool.name));
-	const restorable = replaced.filter((toolName) => registeredNames.has(toolName));
-	const restored = [...withoutApplyPatch(currentToolNames), ...restorable];
-	state.removedEditToolNames = [];
-	pi.setActiveTools([...new Set(restored)]);
+	if (hasApplyPatch) {
+		const registeredNames = new Set(pi.getAllTools().map((tool) => tool.name));
+		const restored = [
+			...withoutApplyPatch(currentToolNames),
+			...replaced.filter((name) => registeredNames.has(name)),
+		];
+		pi.setActiveTools([...new Set(restored)]);
+	}
+	if (replaced.length > 0) {
+		state.removedEditToolNames = [];
+		pi.appendEntry(EDIT_TOOL_SWAP_ENTRY, [], { startupBookkeeping: true });
+	}
 }
 
 function registerApplyPatchLazyActivator(
@@ -128,6 +132,14 @@ export function registerApplyPatchExtension(pi: ApplyPatchExtensionAPI): void {
 		return { isError: true };
 	});
 	pi.on("session_start", async (_event, ctx) => {
+		// The active list can survive a reload, but apply_patch can also be activated without a swap.
+		const swap = ctx.sessionManager
+			.getEntries()
+			.findLast((entry) => entry.type === "custom" && entry.customType === EDIT_TOOL_SWAP_ENTRY);
+		const names = swap?.type === "custom" ? swap.data : undefined;
+		state.removedEditToolNames = Array.isArray(names)
+			? names.filter((name): name is string => typeof name === "string" && EDIT_TOOL_NAMES.has(name))
+			: [];
 		syncToolset(pi, ctx.model, state, variants);
 	});
 	pi.on("model_select", async (event) => {
