@@ -43,7 +43,7 @@ export function formatSessionInfo(stats: SessionStats, sessionName?: string): st
 		info += `${theme.fg("dim", "Used:")} ${usedTokens} / ${totalWindow} (${percent})`;
 	}
 
-	if (stats.cost > 0) {
+	if (stats.cost > 0 || stats.costUnknown) {
 		info += `\n\n${theme.bold("Cost")}\n`;
 		info += `${theme.fg("dim", "Total:")} ${money.format(stats.cost)}${stats.costUnknown ? theme.fg("dim", " + unpriced turns") : ""}`;
 	}

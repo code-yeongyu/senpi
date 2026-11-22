@@ -112,6 +112,12 @@ describe("formatSessionInfo", () => {
 		expect(rendered).not.toContain("$0.00");
 	});
 
+	it("shows the lower bound when all turns are unpriced (#4075)", () => {
+		expect(stripAnsi(formatSessionInfo({ ...buildStats({ cost: 0 }), costUnknown: true }))).toContain(
+			"Total: $0.00 + unpriced turns",
+		);
+	});
+
 	it("formats large token counts with thousands separators", () => {
 		// given
 		const stats = buildStats({
