@@ -5063,6 +5063,7 @@ Response:
     "serviceTier": "priority",
     "fastMode": true,
     "isStreaming": false,
+    "activity": {"busy": true, "wakeSources": {"terminal-monitors": 2}},
     "isCompacting": false,
     "currentTurnId": "3",
     "steeringMode": "all",
@@ -5081,6 +5082,10 @@ Response:
   }
 }
 ```
+
+`activity.busy` uses the host's idle-eviction predicate: a session can own work even between model
+turns. `activity.wakeSources` reports current counts by extension source, not just changes since
+this client attached. Older engines may omit `activity`; absence is not evidence that the session is idle.
 
 `permissionPreset`, `permissionPresetSource`, `permissionPresetStatus` and `effectivePermissionPreset` report the approval mode the session enforces. `permissionPresetSource` is `client` when a client named a valid preset for this session (`open_session.permissionPreset`, an attach naming one, or `set_permission_preset`) and `host_default` when the host's own default applies (its `--permission-preset` flag, then project and global settings, then `full-access`). `permissionPresetStatus` is `invalid` when the named preset or the host's setting cannot be parsed: the open is still accepted, but every gated tool call is refused, and an invalid preset never counts as one the client set. `effectivePermissionPreset` is the preset the next permission decision uses, `null` while the status is `invalid`. A client confirms a mode it asked for only when `permissionPreset` equals it and `permissionPresetStatus` is `applied`. The `open_session` reply carries the first three fields in `data` as well as in `data.state`.
 

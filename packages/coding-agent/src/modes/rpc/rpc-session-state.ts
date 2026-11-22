@@ -63,6 +63,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		serviceTier: session.effectiveServiceTier,
 		fastMode: session.isFastModeActive(),
 		isStreaming: session.isStreaming,
+		activity: session.ownedActivity,
 		pausedHeldInputCount: session.pausedHeldInputCount,
 		runPaused: session.runPaused,
 		pause: session.pauseView,

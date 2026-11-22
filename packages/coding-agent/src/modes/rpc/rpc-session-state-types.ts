@@ -2,7 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-works/pi-ai";
 
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
-import type { QueuedInput } from "../../core/agent-session.ts";
+import type { AgentSession, QueuedInput } from "../../core/agent-session.ts";
 import type { HoldKind } from "../../core/engine-turn-hold.ts";
 import type { PermissionMode } from "../../core/permission-mode.ts";
 import type { ProviderOrigin } from "../../core/provider-origin.ts";
@@ -193,6 +193,7 @@ export interface RpcSessionState extends Partial<PermissionMode> {
 	/** True when the active model is served at the priority ("fast") tier. */
 	fastMode: boolean;
 	isStreaming: boolean;
+	activity?: AgentSession["ownedActivity"];
 	/** Human input held for delivery when the session resumes (senpi#3811). */
 	pausedHeldInputCount?: number;
 	/** A run this session started is paused by its Stop (senpi#3811). */
