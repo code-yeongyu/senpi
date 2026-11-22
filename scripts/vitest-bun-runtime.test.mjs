@@ -15,7 +15,7 @@ const vitest = pathToFileURL(join(dirname(require.resolve("vitest/package.json")
 
 // Package runtime contract (#4763): exercise the real test script, coordinator and fork.
 // Existing runner tests cover temp ownership, not which runtime executes the suite.
-for (const name of ["client", "protocol", "server"]) {
+for (const name of ["client", "protocol"]) {
 	test(`${name} test script runs Vitest and its fork on Bun (#4763)`, { timeout: 90_000 }, () => {
 		const fixture = mkdtempSync(join(tmpdir(), "vb-"));
 		try {
@@ -73,34 +73,36 @@ test("worker runtime", () => {
 	});
 }
 
-test("telemetry test script executes a test with native Bun (#4763)", () => {
-	const fixture = mkdtempSync(join(tmpdir(), "nb-"));
-	try {
-		const temporary = mkdtempSync(join(fixture, "tmp-"));
-		const probe = join(fixture, "probe.test.mjs");
-		const report = join(fixture, "report.xml");
-		writeFileSync(
-			probe,
-			`import { expect, test } from "bun:test";
+for (const workspace of ["telemetry", "session-backends/sqlite-bun", "server"]) {
+	test(`${workspace} test script executes a test with native Bun (#4763)`, () => {
+		const fixture = mkdtempSync(join(tmpdir(), "nb-"));
+		try {
+			const temporary = mkdtempSync(join(fixture, "tmp-"));
+			const probe = join(fixture, "probe.test.mjs");
+			const report = join(fixture, "report.xml");
+			writeFileSync(
+				probe,
+				`import { expect, test } from "bun:test";
 test("native runner probe", () => {
 	expect(process.versions.bun).toBeDefined();
 });`,
-		);
-		const pm = detectPackageManager();
-		const invocation = packageManagerInvocation(
-			pm,
-			runScriptArguments(pm, "test", [probe, "--reporter=junit", `--reporter-outfile=${report}`]),
-		);
-		const result = spawnSync(invocation.command, invocation.args, {
-			cwd: join(root, "packages", "telemetry"),
-			env: { ...process.env, TMPDIR: temporary, TEMP: temporary, TMP: temporary },
-			encoding: "utf8",
-			timeout: 60_000,
-		});
-		assert.equal(result.error, undefined);
-		assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-		assert.match(readFileSync(report, "utf8"), /<testcase name="native runner probe"/);
-	} finally {
-		rmSync(fixture, { recursive: true, force: true });
-	}
-});
+			);
+			const pm = detectPackageManager();
+			const invocation = packageManagerInvocation(
+				pm,
+				runScriptArguments(pm, "test", [probe, "--reporter=junit", `--reporter-outfile=${report}`]),
+			);
+			const result = spawnSync(invocation.command, invocation.args, {
+				cwd: join(root, "packages", workspace),
+				env: { ...process.env, TMPDIR: temporary, TEMP: temporary, TMP: temporary },
+				encoding: "utf8",
+				timeout: 60_000,
+			});
+			assert.equal(result.error, undefined);
+			assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+			assert.match(readFileSync(report, "utf8"), /<testcase name="native runner probe"/);
+		} finally {
+			rmSync(fixture, { recursive: true, force: true });
+		}
+	});
+}
