@@ -134,22 +134,24 @@ function isOpenGatewayChatModel(model: AnyModel): model is OpenGatewayModel {
  * new release corrected.
  */
 export function createOpenGatewayCatalog(shipped: readonly OpenGatewayModel[], shippedGeneratedAt: number | undefined) {
+	const shippedById = new Map(shipped.map((model) => [model.id, model]));
 	let current: readonly OpenGatewayModel[] = shipped;
 	return {
 		getModels: (): readonly OpenGatewayModel[] => current,
 		refresh: async (context: RefreshModelsContext): Promise<void> => {
 			const stored = context.stored;
 			const storedCheckedAt = stored?.checkedAt;
+			const restored = stored?.models.filter(isOpenGatewayChatModel) ?? [];
 			const usable =
-				stored !== undefined &&
+				restored.length > 0 &&
 				storedCheckedAt !== undefined &&
 				(shippedGeneratedAt === undefined || storedCheckedAt > shippedGeneratedAt);
-			if (usable && stored) {
-				const restored = stored.models.filter(isOpenGatewayChatModel);
+			if (usable) {
 				if (
 					!(await context.publish({
 						update: () => {
-							current = restored;
+							// The listing owns membership (including retirements); shipped rows own metadata.
+							current = restored.map((model) => shippedById.get(model.id) ?? model);
 						},
 					}))
 				)
