@@ -23,11 +23,21 @@ vi.mock("../../src/core/session-move/bundle.ts", async (importOriginal) => {
 class LosesAcceptedWrite extends MoveLedger {
 	landed: string | undefined;
 
-	override commit<T>(moveId: MoveId, rename: () => T | Promise<T>): Promise<T> {
-		return super.commit(moveId, async () => {
-			this.landed = String(await rename());
-			throw new Error("the accepted write failed");
-		});
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
+		prepare?: () => void,
+	): Promise<T> {
+		return super.commit(
+			moveId,
+			target,
+			async (stampStands) => {
+				this.landed = String(await rename(stampStands));
+				throw new Error("the accepted write failed");
+			},
+			prepare,
+		);
 	}
 }
 
@@ -44,13 +54,23 @@ class RenamesAfterGate extends MoveLedger {
 	readonly reached = deferred();
 	readonly gate = deferred();
 
-	override commit<T>(moveId: MoveId, rename: () => T | Promise<T>): Promise<T> {
-		return super.commit(moveId, async () => {
-			this.reached.resolve();
-			await this.gate.promise;
-			this.landed = String(await rename());
-			throw new Error("the accepted write failed");
-		});
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
+		prepare?: () => void,
+	): Promise<T> {
+		return super.commit(
+			moveId,
+			target,
+			async (stampStands) => {
+				this.reached.resolve();
+				await this.gate.promise;
+				this.landed = String(await rename(stampStands));
+				throw new Error("the accepted write failed");
+			},
+			prepare,
+		);
 	}
 }
 

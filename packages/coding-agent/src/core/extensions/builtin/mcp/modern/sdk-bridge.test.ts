@@ -21,9 +21,31 @@ const discovery = {
 describe("modern SDK lifecycle bridge", () => {
 	it("populates SDK state through local initialize while keeping all wire traffic modern", async () => {
 		const sent: { method: string; body: string; headers: Headers }[] = [];
+		const streamClosed = Promise.withResolvers<void>();
+		const cancelStream = vi.fn(() => streamClosed.resolve());
 		const fetch = vi.fn(async (_url: string | URL, init?: RequestInit) => {
 			sent.push({ method: String(init?.method), body: String(init?.body), headers: new Headers(init?.headers) });
 			const message = JSON.parse(String(init?.body));
+			if (message.method === "subscriptions/listen") {
+				const stream = new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(
+							new TextEncoder().encode(
+								`data: ${JSON.stringify({
+									jsonrpc: "2.0",
+									method: "notifications/subscriptions/acknowledged",
+									params: {
+										_meta: { "io.modelcontextprotocol/subscriptionId": message.id },
+										notifications: { toolsListChanged: true },
+									},
+								})}\n\n`,
+							),
+						);
+					},
+					cancel: cancelStream,
+				});
+				return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+			}
 			const result =
 				message.method === "tools/list"
 					? {
@@ -50,10 +72,19 @@ describe("modern SDK lifecycle bridge", () => {
 			expect(client.getInstructions()).toBe(discovery.instructions);
 			expect((await client.listTools()).tools[0]?.name).toBe("echo");
 			expect(await client.callTool({ name: "echo" })).toMatchObject({ content: [{ text: "ok" }] });
+			expect(cancelStream).not.toHaveBeenCalled();
 		} finally {
 			await client.close();
 		}
-		expect(sent.map(({ body }) => JSON.parse(body).method)).toEqual(["tools/list", "tools/call"]);
+		// #4193: advertised list changes require a listen stream, but neither SDK call waits for its end.
+		await streamClosed.promise;
+		expect(cancelStream).toHaveBeenCalledOnce();
+		expect(sent.map(({ body }) => JSON.parse(body).method)).toEqual([
+			"subscriptions/listen",
+			"tools/list",
+			"tools/call",
+		]);
+		expect(JSON.parse(sent[0]?.body ?? "{}").params.notifications).toEqual({ toolsListChanged: true });
 		for (const request of sent) {
 			expect(request.method).toBe("POST");
 			expect(request.headers.get("MCP-Protocol-Version")).toBe(MODERN_PROTOCOL_VERSION);
@@ -67,10 +98,32 @@ describe("modern SDK lifecycle bridge", () => {
 	it("keeps SDK notification and elicitation handlers on the same client", async () => {
 		const replies: JSONRPCMessage[] = [];
 		const received = Promise.withResolvers<void>();
+		const streamEnded = Promise.withResolvers<void>();
+		let subscriptionId: string | number | undefined;
 		const inner: Transport = {
 			start: async () => {},
-			close: async () => inner.onclose?.(),
+			close: async () => {
+				streamEnded.resolve();
+				inner.onclose?.();
+			},
 			send: async (message) => {
+				if ("method" in message) {
+					if (message.method === "subscriptions/listen" && "id" in message) {
+						subscriptionId = message.id;
+						inner.onmessage?.({
+							jsonrpc: "2.0",
+							method: "notifications/subscriptions/acknowledged",
+							params: {
+								_meta: { "io.modelcontextprotocol/subscriptionId": message.id },
+								notifications: { toolsListChanged: true },
+							},
+						});
+						await streamEnded.promise;
+					} else if (message.method === "tools/list" && "id" in message) {
+						inner.onmessage?.({ jsonrpc: "2.0", id: message.id, result: { tools: [] } });
+					}
+					return;
+				}
 				replies.push(message);
 				received.resolve();
 			},
@@ -81,7 +134,14 @@ describe("modern SDK lifecycle bridge", () => {
 		client.setRequestHandler(ElicitRequestSchema, async () => ({ action: "accept", content: { answer: "yes" } }));
 		try {
 			await client.connect(new ModernSdkBridge(inner, discovery, MODERN_PROTOCOL_VERSION));
-			inner.onmessage?.({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+			await client.listTools();
+			expect(subscriptionId).toBeDefined();
+			// #4193: deliver a notification only after its subscription is acknowledged.
+			inner.onmessage?.({
+				jsonrpc: "2.0",
+				method: "notifications/tools/list_changed",
+				params: { _meta: { "io.modelcontextprotocol/subscriptionId": subscriptionId } },
+			});
 			await notified.promise;
 			inner.onmessage?.({
 				jsonrpc: "2.0",
@@ -99,6 +159,7 @@ describe("modern SDK lifecycle bridge", () => {
 		} finally {
 			await client.close();
 		}
+		await streamEnded.promise;
 	});
 
 	it("refuses unsupported discovery versions and malformed SDK capabilities", () => {

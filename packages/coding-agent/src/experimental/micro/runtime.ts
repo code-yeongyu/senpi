@@ -76,7 +76,7 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 		const env = new NodeExecutionEnv({ cwd: location.cwd });
 		executionEnv = env;
 		const microTools = createMicroTools(env);
-		const picoModels = createPicoModels(modelRuntime, microTools.modelMetadata);
+		const picoModels = createPicoModels(modelRuntime, microTools.modelMetadata, location.cwd);
 		const selectedTools = microTools.declarations.map((tool) => tool.name);
 		const preferredModel = modelRuntime.getModel(DEFAULT_MODEL.provider, DEFAULT_MODEL.modelId);
 		const initial = location.created
@@ -462,6 +462,7 @@ interface UsageAccumulator {
 	cacheRead: number;
 	cacheWrite: number;
 	totalCost: number;
+	totalCostUnknown?: true;
 	lastAssistantId: number;
 	lastCacheHitRate?: number;
 }
@@ -500,6 +501,7 @@ function accumulateUsage(accumulator: UsageAccumulator, entry: Entry): void {
 		accumulator.cacheRead += usage.cacheRead;
 		accumulator.cacheWrite += usage.cacheWrite;
 		accumulator.totalCost += usage.cost.total;
+		if (usage.costUnknown) accumulator.totalCostUnknown = true;
 	}
 	if (
 		assistant &&
@@ -542,6 +544,7 @@ function usageView(
 		cacheRead: cumulative.cacheRead,
 		cacheWrite: cumulative.cacheWrite,
 		totalCost: cumulative.totalCost,
+		...(cumulative.totalCostUnknown ? { totalCostUnknown: true as const } : {}),
 		...(cumulative.lastCacheHitRate === undefined ? {} : { lastCacheHitRate: cumulative.lastCacheHitRate }),
 		contextTokens,
 		contextWindow,

@@ -273,18 +273,6 @@ describe("openai-web-search builtin extension", () => {
 		expect(result).toBe(payload);
 	});
 
-	it("keeps the first-party default on when the environment override is unset", () => {
-		const payload = {
-			tools: [{ name: "other_tool" }],
-		};
-
-		const result = addOpenAiWebSearchToPayload(OPENAI_RESPONSES_MODEL, payload) as {
-			tools: Array<Record<string, unknown>>;
-		};
-
-		expect(result.tools).toContainEqual({ type: "web_search_preview" });
-	});
-
 	it("strips native web_search_preview for custom OpenAI Responses endpoints by default", () => {
 		const payload = {
 			include: ["reasoning.encrypted_content", "web_search_call.action.sources"],

@@ -1,5 +1,5 @@
 import type { Api, AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type Options,
 	overrideSdkBoundary,
@@ -18,7 +18,10 @@ import {
 	recordBranchInfo,
 	resetSessionRegistryBoundary,
 } from "../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
-import { submitSessionTurn } from "../src/core/extensions/builtin/anthropic-subscription/session-registry-pump.ts";
+import {
+	SESSION_TURN_ADMISSION_WAIT_MS,
+	submitSessionTurn,
+} from "../src/core/extensions/builtin/anthropic-subscription/session-registry-pump.ts";
 import { streamAnthropicSubscription } from "../src/core/extensions/builtin/anthropic-subscription/stream.ts";
 
 const model: Model<Api> = {
@@ -282,6 +285,8 @@ class ResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 		else this.queued.push(message);
 	}
 
+	protected beforeResult(_submittedCount: number): Promise<void> | void {}
+
 	private async consume(prompt: AsyncIterable<SDKUserMessage>): Promise<void> {
 		for await (const message of prompt) {
 			this.submitted.push(message);
@@ -302,6 +307,7 @@ class ResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 					session_id: sessionId,
 				}),
 			);
+			await this.beforeResult(this.submitted.length);
 			this.emit(
 				sdkMessage({
 					type: "result",
@@ -313,6 +319,33 @@ class ResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 				}),
 			);
 		}
+	}
+}
+
+/** Holds the first turn's terminal result until the test releases it, so a second turn overlaps the first. */
+class HeldFirstResultQuery extends ResidentQuery {
+	readonly firstSubmitted: Promise<void>;
+	readonly release: () => void;
+	private markFirstSubmitted!: () => void;
+	private readonly held: Promise<void>;
+
+	constructor(prompt: AsyncIterable<SDKUserMessage>, options: Options) {
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		super(prompt, options);
+		this.held = held;
+		this.release = release;
+		this.firstSubmitted = new Promise((resolve) => {
+			this.markFirstSubmitted = resolve;
+		});
+	}
+
+	protected override async beforeResult(submittedCount: number): Promise<void> {
+		if (submittedCount !== 1) return;
+		this.markFirstSubmitted();
+		await this.held;
 	}
 }
 
@@ -464,7 +497,7 @@ describe("Claude SDK OAuth stream events", () => {
 				sdkMessage({ type: "result", subtype: "success", result: "hello", stop_reason: "end_turn" }),
 			]),
 		});
-		const events = await collect(streamAnthropicSubscription(model, { messages: [] }));
+		const events = await collect(streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }));
 		expect(events[0]).toMatchObject({ type: "start" });
 		expect(events.findIndex((event) => event.type === "start")).toBeLessThan(
 			events.findIndex((event) => event.type === "text_delta"),
@@ -484,7 +517,7 @@ describe("Claude SDK OAuth stream events", () => {
 		const first = await streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "seed", timestamp: 1 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		);
 		await first.result();
 		const stream = streamAnthropicSubscription(
@@ -496,7 +529,7 @@ describe("Claude SDK OAuth stream events", () => {
 					{ role: "user", content: "next", timestamp: 3 },
 				],
 			},
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		);
 		const iterator = stream[Symbol.asyncIterator]();
 		try {
@@ -522,7 +555,7 @@ describe("Claude SDK OAuth stream events", () => {
 				},
 			}),
 		});
-		const stream = streamAnthropicSubscription(model, { messages: [] });
+		const stream = streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() });
 		const events = await collect(stream);
 		const result = await stream.result();
 		expect(events.filter((event) => event.type === "text_delta").map((event) => event.delta)).toEqual(["Hello"]);
@@ -558,7 +591,7 @@ describe("Claude SDK OAuth stream events", () => {
 				}),
 			]),
 		});
-		const stream = streamAnthropicSubscription(model, { messages: [] });
+		const stream = streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() });
 		const result = await stream.result();
 		expect(result.content).toEqual([{ type: "text", text: "fallback" }]);
 	});
@@ -595,7 +628,11 @@ describe("Claude SDK OAuth stream events", () => {
 			}),
 		});
 		const controller = new AbortController();
-		const stream = streamAnthropicSubscription(model, { messages: [] }, { signal: controller.signal });
+		const stream = streamAnthropicSubscription(
+			model,
+			{ messages: [] },
+			{ cwd: process.cwd(), signal: controller.signal },
+		);
 		await queryStarted;
 		controller.abort();
 		const result = await stream.result();
@@ -615,7 +652,7 @@ describe("Claude SDK OAuth stream events", () => {
 			close() {},
 		});
 		overrideSdkBoundary({ query: throwingQuery });
-		const stream = streamAnthropicSubscription(model, { messages: [] });
+		const stream = streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() });
 		const events = await collect(stream);
 		const failure = events.at(-1);
 		expect(failure).toMatchObject({
@@ -675,7 +712,7 @@ describe("Claude SDK OAuth stream events", () => {
 		const stream = streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "stream now", timestamp: 1 }] },
-			mainOptions("resident-live-delivery"),
+			{ cwd: process.cwd(), ...mainOptions("resident-live-delivery") },
 		);
 		const iterator = stream[Symbol.asyncIterator]();
 		await deltaProduced;
@@ -707,7 +744,7 @@ describe("Claude SDK OAuth stream events", () => {
 		const stream = streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "end early", timestamp: 1 }] },
-			mainOptions("resident-missing-result"),
+			{ cwd: process.cwd(), ...mainOptions("resident-missing-result") },
 		);
 		const events = await collect(stream);
 
@@ -807,16 +844,20 @@ describe("Claude SDK OAuth stream events", () => {
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
 		const user2 = { role: "user" as const, content: "two", timestamp: 3 };
 		const user3 = { role: "user" as const, content: "three", timestamp: 5 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2, assistant("a2", 4), user3] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		recordBranchInfo(sessionId, { oldLeafId: "old", newLeafId: "new" });
 
@@ -824,7 +865,7 @@ describe("Claude SDK OAuth stream events", () => {
 		const stream = streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			{ ...mainOptions(sessionId), signal: abort.signal },
+			{ cwd: process.cwd(), ...mainOptions(sessionId), signal: abort.signal },
 		);
 		const initializing = await initializingQuery;
 		await initializing.initializationStarted;
@@ -841,7 +882,7 @@ describe("Claude SDK OAuth stream events", () => {
 		const queries = residentBoundary();
 		const sessionId = "resident-reuse";
 		const first: Context = { messages: [{ role: "user", content: "first", timestamp: 1 }] };
-		await streamAnthropicSubscription(model, first, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(model, first, { cwd: process.cwd(), ...mainOptions(sessionId) }).result();
 		const second: Context = {
 			messages: [
 				first.messages[0]!,
@@ -849,7 +890,7 @@ describe("Claude SDK OAuth stream events", () => {
 				{ role: "user", content: "second", timestamp: 3 },
 			],
 		};
-		await streamAnthropicSubscription(model, second, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(model, second, { cwd: process.cwd(), ...mainOptions(sessionId) }).result();
 
 		expect(queries).toHaveLength(1);
 		expect(queries[0]?.submitted).toHaveLength(2);
@@ -859,29 +900,87 @@ describe("Claude SDK OAuth stream events", () => {
 		expect(queries[0]?.closes).toBe(0);
 	});
 
+	it("computes a turn's delta after the turn it waited behind settles, so the earlier message is not sent again", async () => {
+		let residentCreated!: (query: HeldFirstResultQuery) => void;
+		const created = new Promise<HeldFirstResultQuery>((resolve) => {
+			residentCreated = resolve;
+		});
+		const queries = residentBoundary(new Set(), (prompt, options) => {
+			const query = new HeldFirstResultQuery(prompt, options);
+			residentCreated(query);
+			return query;
+		});
+		const sessionId = "resident-admission-wait-delta";
+		const firstMessage: Context["messages"][number] = { role: "user", content: "first", timestamp: 1 };
+		const first: Context = { messages: [firstMessage] };
+		const second: Context = {
+			messages: [firstMessage, assistant("first answer", 2), { role: "user", content: "second", timestamp: 3 }],
+		};
+		// The second turn starts its bounded admission wait by scheduling the admission deadline: that call is the
+		// event the test waits for before releasing the first turn's terminal result.
+		const realSetTimeout = globalThis.setTimeout;
+		let admissionWaitStarted!: () => void;
+		const waiting = new Promise<void>((resolve) => {
+			admissionWaitStarted = resolve;
+		});
+		const timers = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+			callback: () => void,
+			delayMs?: number,
+		) => {
+			if (delayMs !== SESSION_TURN_ADMISSION_WAIT_MS) return realSetTimeout(callback, delayMs);
+			admissionWaitStarted();
+			return { unref: () => undefined } as unknown as ReturnType<typeof setTimeout>;
+		}) as typeof setTimeout);
+		try {
+			const firstResult = streamAnthropicSubscription(model, first, {
+				cwd: process.cwd(),
+				...mainOptions(sessionId),
+			}).result();
+			const resident = await created;
+			await resident.firstSubmitted;
+			const secondResult = streamAnthropicSubscription(model, second, {
+				cwd: process.cwd(),
+				...mainOptions(sessionId),
+			}).result();
+			await waiting;
+			resident.release();
+			expect((await firstResult).stopReason).toBe("stop");
+			expect((await secondResult).stopReason).toBe("stop");
+		} finally {
+			timers.mockRestore();
+		}
+
+		expect(queries).toHaveLength(1);
+		expect(queries[0]?.submitted.map(textFrom)).toEqual([expect.stringContaining("first"), "second"]);
+	});
+
 	it("resumes and forks at an assistant boundary when tree navigation is a strict sent-stream prefix", async () => {
 		const queries = residentBoundary();
 		const sessionId = "resident-prefix-branch";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
 		const user2 = { role: "user" as const, content: "two", timestamp: 3 };
 		const user3 = { role: "user" as const, content: "three", timestamp: 5 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2, assistant("a2", 4), user3] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		recordBranchInfo(sessionId, { oldLeafId: "old", newLeafId: "new" });
 
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(queries).toHaveLength(2);
@@ -899,18 +998,22 @@ describe("Claude SDK OAuth stream events", () => {
 		const sessionId = "resident-diverged-branch";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
 		const user2 = { role: "user" as const, content: "two", timestamp: 3 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		recordBranchInfo(sessionId, { oldLeafId: "old", newLeafId: "new" });
 
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), { role: "user", content: "other", timestamp: 4 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(queries).toHaveLength(2);
@@ -923,12 +1026,16 @@ describe("Claude SDK OAuth stream events", () => {
 		const queries = residentBoundary();
 		const sessionId = "resident-compaction";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		markTainted(sessionId, "compaction");
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), { role: "user", content: "two", timestamp: 3 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(queries).toHaveLength(2);
@@ -943,23 +1050,27 @@ describe("Claude SDK OAuth stream events", () => {
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
 		const user2 = { role: "user" as const, content: "two", timestamp: 3 };
 		const user3 = { role: "user" as const, content: "three", timestamp: 5 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2, assistant("a2", 4), user3] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		recordBranchInfo(sessionId, { oldLeafId: "old", newLeafId: "new" });
 
 		const result = await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(queries).toHaveLength(3);
@@ -989,7 +1100,7 @@ describe("Claude SDK OAuth stream events", () => {
 		});
 		const sessionId = "auxiliary-registry-gate";
 		sessionIds.add(sessionId);
-		await streamAnthropicSubscription(model, { messages: [] }, { sessionId }).result();
+		await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd(), sessionId }).result();
 
 		expect(queries).toBe(1);
 		expect(getSession(sessionId)).toBeUndefined();

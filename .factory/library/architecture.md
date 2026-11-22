@@ -153,7 +153,7 @@ The builder takes a `TodoItem[]`, counts completed items plus remaining non-term
 - `packages/coding-agent/test/suite/todowrite-extension.test.ts` (path update only for its `TODOWRITE_EXTENSION_PATH` constant; assertions remain unchanged).
 - New test files under `packages/coding-agent/test/suite/` for continuation + unit tests for state helpers.
 - `packages/coding-agent/test/suite/harness.ts` — additive test-only helper for observing injected user messages (no changes to production code).
-- `packages/coding-agent/CHANGELOG.md` — entry under `[Unreleased]`.
+- `changes/unreleased/<pr>.md` — a `packages/coding-agent/CHANGELOG.md` block.
 
 ## Test infrastructure
 

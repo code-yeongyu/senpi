@@ -1,0 +1,136 @@
+import { dirname, join } from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
+import { catalogDigest } from "../../../src/modes/rpc/compact-catalog-codec.ts";
+import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
+import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
+import { compareAdmissionGoldens } from "./4272-admission-golden-support.ts";
+
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
+	vi.useRealTimers();
+});
+
+it("T2 golden a-e: real request, identity, paged baseline, before-answer suffix and overlapping routes", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-29T00:00:00.000Z") });
+	await using host = await statusHost();
+	const peer = host.client("peer");
+	const sessionPath = join(host.cwd, "golden.jsonl");
+	const answer = await peer.request({ type: "open_session", cwd: host.cwd, sessionPath, admissionId: "golden-a" });
+	const baseline = await peer.waitFor(
+		(frame) => frame.type === "recovery_manifest" && frame.admissionId === "golden-a",
+	);
+	const early = peer.inbox
+		.slice(0, peer.inbox.indexOf(answer))
+		.filter((frame) => frame.sessionId === answer.sessionId);
+	expect(early.some((frame) => frame.type === "session_opened")).toBe(true);
+	for (const frame of early) expect(frame).toMatchObject({ admissionId: "golden-a", generation: 1 });
+	const page = await peer.request({
+		type: "get_recovery_page",
+		sessionId: answer.sessionId,
+		admissionId: "golden-a",
+		token: baseline.token,
+		componentRef: "manifest",
+		requestId: "golden-page",
+	});
+	expect(page).toMatchObject({ success: true, sessionId: answer.sessionId, admissionId: "golden-a", generation: 1 });
+	const pageRequest: unknown = JSON.parse(peer.sent[1] ?? "");
+	// #4272: the leased startup entry contains cwd; normalize its verified bytes, not its raw path-dependent length.
+	// It is read while golden-a still routes the session, so its reply carries golden-a's tag.
+	const entryFrame = early.find((frame) => frame.type === "entry_appended");
+	const entryLease = entryFrame?.eventLease as { kind: "event"; id: string; length: number; digest: string };
+	expect(entryLease).toBeDefined();
+	const entryPage = await peer.request({
+		type: "get_recovery_page",
+		sessionId: answer.sessionId,
+		admissionId: "golden-a",
+		lease: { kind: entryLease.kind, id: entryLease.id },
+		componentRef: "record",
+		requestId: "golden-entry",
+	});
+	// RULING-117: a completed re-open by the same socket supersedes golden-a's route; golden-b is the only route left.
+	const second = await peer.request({ type: "open_session", cwd: host.cwd, sessionPath, admissionId: "golden-b" });
+	await peer.waitFor((frame) => frame.type === "recovery_manifest" && frame.admissionId === "golden-b");
+	expect(second).toMatchObject({ sessionId: answer.sessionId, generation: 1 });
+	const from = peer.inbox.length;
+	host.writer.enqueue(String(answer.sessionId), { type: "agent_idle" });
+	await host.writer.flush();
+	const suffix = peer.inbox.slice(from).filter((frame) => frame.type === "agent_idle");
+	expect(suffix.map((frame) => frame.admissionId)).toEqual(["golden-b"]);
+	// golden-a's route is retired: an admission-ledger request naming it is refused unknown_admission.
+	const retired = await peer.request({ type: "reset_stream", sessionId: answer.sessionId, admissionId: "golden-a" });
+	expect(retired).toMatchObject({ success: false, code: "unknown_admission", admissionId: "golden-a" });
+	const entryData = dataOf(entryPage);
+	expect(entryData).toMatchObject({ offset: 0, complete: true, length: entryLease.length });
+	const entryBytes = Buffer.from(String(entryData.bytes), "base64");
+	expect(entryBytes.length).toBe(entryLease.length);
+	expect(catalogDigest("leaf", entryBytes)).toBe(entryLease.digest);
+	await compareAdmissionGoldens(
+		{
+			"a-request.json": { request: JSON.parse(peer.sent[0] ?? "") as unknown },
+			"b-answer.json": { answer },
+			"c-baseline.json": { baseline, request: pageRequest, page },
+			"d-before-answer.json": { frames: early, answer, entryPage },
+			"e-overlap.json": {
+				requests: [JSON.parse(peer.sent[0] ?? ""), JSON.parse(peer.sent[3] ?? "")] as unknown[],
+				answers: [answer, second],
+				suffix,
+				retired: { request: JSON.parse(peer.sent[4] ?? "") as unknown, answer: retired },
+			},
+		},
+		dirname(host.cwd),
+	);
+}, 600_000);
+
+it("T2/X04 golden g: late cancelled physical open closes once and indexed lookup repeats the typed refusal", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	await using host = await statusHost();
+	const peer = host.client("peer");
+	const entered = Promise.withResolvers<void>();
+	const finish = Promise.withResolvers<void>();
+	const open = RpcSessionRegistry.prototype.openSession;
+	vi.spyOn(RpcSessionRegistry.prototype, "openSession").mockImplementationOnce(async function (
+		this: RpcSessionRegistry,
+		...args
+	) {
+		entered.resolve();
+		await finish.promise;
+		return open.apply(this, args);
+	});
+	const closed = vi.spyOn(RpcSessionRegistry.prototype, "closeMarked");
+	const command = { type: "open_session", cwd: host.cwd, admissionId: "golden-g" };
+	const pending = peer.request(command);
+	let cancelled: WireRecord | undefined;
+	try {
+		await entered.promise;
+		cancelled = await peer.request({ type: "cancel_attempt", admissionId: "golden-g" });
+		expect(dataOf(cancelled)).toEqual({ outcome: "cancelled" });
+	} finally {
+		finish.resolve();
+	}
+	const answer = await pending;
+	const replay = await peer.request(command);
+	for (const frame of [answer, replay]) {
+		expect(frame).toMatchObject({
+			success: false,
+			code: "attempt_cancelled",
+			admissionId: "golden-g",
+			generation: 1,
+		});
+		expect(frame).not.toHaveProperty("sessionId");
+	}
+	expect(host.core.router.sessionCount).toBe(0);
+	expect(closed).toHaveBeenCalledTimes(1);
+	await compareAdmissionGoldens(
+		{
+			"g-cancelled.json": {
+				request: JSON.parse(peer.sent[0] ?? "") as unknown,
+				cancelled,
+				answer,
+				replay,
+			},
+		},
+		dirname(host.cwd),
+	);
+}, 600_000);

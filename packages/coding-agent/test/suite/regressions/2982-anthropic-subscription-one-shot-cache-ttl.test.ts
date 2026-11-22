@@ -43,6 +43,8 @@ describe("senpi#2982 the one-shot cache breakpoint matches Claude Code's pinned 
 	it.each([
 		["oauth-slots", {}, "1h"],
 		["config-dir", {}, "1h"],
+		["claude-cli", {}, "1h"],
+		["claude-cli", { FORCE_PROMPT_CACHING_5M: "1" }, "5m"],
 		["oauth-slots", { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }, "5m"],
 		["ambient", { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" }, "1h"],
 		["oauth-slots", { FORCE_PROMPT_CACHING_5M: "1" }, "5m"],

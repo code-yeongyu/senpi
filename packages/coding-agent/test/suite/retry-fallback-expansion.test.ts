@@ -43,14 +43,15 @@ function lookup(models: Model<Api>[], oauthProviders: string[] = [], unauthentic
 }
 
 describe("bare fallback expansion provider policy", () => {
-	it("excludes Cursor models from bare fallback candidates", () => {
+	it("excludes Cursor and other non-first-party models from bare fallback candidates", () => {
 		const cursorKimi = model("cursor", "kimi-k3");
 		const apitopiaKimi = model("apitopia", "kimi-k3");
+		const moonshotKimi = model("moonshotai", "kimi-k3");
 		const resolved = canonicalizeFallbackChains(
 			{ "openai/gpt-5.4": ["kimi-k3:max"] },
-			lookup([model("openai", "gpt-5.4"), cursorKimi, apitopiaKimi]),
+			lookup([model("openai", "gpt-5.4"), cursorKimi, apitopiaKimi, moonshotKimi], ["cursor", "apitopia"]),
 		);
-		expect(resolved["openai/gpt-5.4"]).toEqual(["apitopia/kimi-k3:max"]);
+		expect(resolved["openai/gpt-5.4"]).toEqual(["moonshotai/kimi-k3:max"]);
 	});
 });
 
@@ -73,13 +74,17 @@ describe("bare model-id family expansion", () => {
 		});
 	});
 
-	it("expands an explicit kimi-k3 alias to providers that expose the model as kimi-k3", () => {
-		// Issue #793: OpenCode Go serves Kimi K3 as `kimi-k3`, which the bare `k3`
-		// family cannot match; the explicit fixture carries an alias entry.
-		const registry = [...sdkAndAnthropic, model("opencode-go", "kimi-k3")];
-		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(registry));
+	it("reaches a reseller's kimi-k3 only through a selector that names it", () => {
+		// Issue #793: OpenCode Go serves Kimi K3 as `kimi-k3`. It resells Moonshot's
+		// model, so the bare alias stays on Moonshot's own lanes and the user names
+		// OpenCode Go explicitly to route there.
+		const registry = [...sdkAndAnthropic, model("opencode-go", "kimi-k3"), model("moonshotai", "kimi-k3")];
+		const bare = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(registry));
+		const named = canonicalizeFallbackChains({ [FABLE]: ["opencode-go/kimi-k3:max"] }, lookup(registry));
 
-		expect(chains[`anthropic/${FABLE}`]).toContain("opencode-go/kimi-k3:max");
+		expect(bare[`anthropic/${FABLE}`]).toContain("moonshotai/kimi-k3:max");
+		expect(bare[`anthropic/${FABLE}`]).not.toContain("opencode-go/kimi-k3:max");
+		expect(named[`anthropic/${FABLE}`]).toEqual(["opencode-go/kimi-k3:max"]);
 	});
 
 	it("expands a bare key into one canonical key per serving provider", () => {
@@ -88,26 +93,37 @@ describe("bare model-id family expansion", () => {
 		expect(Object.keys(chains).sort()).toEqual([`anthropic-subscription/${FABLE}`, `anthropic/${FABLE}`]);
 	});
 
-	it("ranks OAuth-credential providers ahead of API-key providers for bare candidates", () => {
+	it("keeps a session's same-vendor rungs on its own lane even when another lane holds the OAuth credential", () => {
 		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(sdkAndAnthropic, ["anthropic"]));
 
-		// anthropic holds the OAuth credential here, so it outranks the sdk provider
-		// even though the tie-break table would otherwise prefer anthropic-subscription.
-		expect(chains[`anthropic-subscription/${FABLE}`]?.slice(0, 3)).toEqual([
+		// senpi#5518: the API-key lane holding OAuth never pulls a subscription session onto it.
+		expect(chains[`anthropic-subscription/${FABLE}`]).toEqual([
 			"kimi-coding/k3:max",
-			`anthropic/${OPUS5}:xhigh`,
 			`anthropic-subscription/${OPUS5}:xhigh`,
+			`anthropic-subscription/${OPUS48}:xhigh`,
 		]);
 	});
 
+	it("ranks another vendor's OAuth-credential provider ahead of its API-key provider for a bare rung", () => {
+		const registry = [...sdkAndAnthropic, model("kimi-coding", "kimi-k3"), model("moonshotai", "kimi-k3")];
+		const chains = canonicalizeFallbackChains(
+			{ [`anthropic/${FABLE}`]: ["kimi-k3:max"] },
+			lookup(registry, ["moonshotai"]),
+		);
+
+		// moonshotai holds the OAuth credential, so it outranks kimi-coding despite the tie-break table.
+		expect(chains[`anthropic/${FABLE}`]).toEqual(["moonshotai/kimi-k3:max", "kimi-coding/kimi-k3:max"]);
+	});
+
 	it("breaks ties with the fixed provider table when no provider holds OAuth", () => {
+		const registry = [...sdkAndAnthropic, model("kimi-coding", "kimi-k3"), model("moonshotai", "kimi-k3")];
+		const crossVendor = canonicalizeFallbackChains({ [`anthropic/${FABLE}`]: ["kimi-k3:max"] }, lookup(registry));
 		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(sdkAndAnthropic));
 
+		expect(crossVendor[`anthropic/${FABLE}`]).toEqual(["kimi-coding/kimi-k3:max", "moonshotai/kimi-k3:max"]);
 		expect(chains[`anthropic/${FABLE}`]).toEqual([
 			"kimi-coding/k3:max",
-			`anthropic-subscription/${OPUS5}:xhigh`,
 			`anthropic/${OPUS5}:xhigh`,
-			`anthropic-subscription/${OPUS48}:xhigh`,
 			`anthropic/${OPUS48}:xhigh`,
 		]);
 	});
@@ -129,17 +145,26 @@ describe("bare model-id family expansion", () => {
 	});
 
 	it("matches namespaced provider ids by family without substring false positives", () => {
+		// A vendor with no first-party entry stays on the session's provider, so a
+		// re-host serving it under namespaced ids still matches the bare family.
+		const models = [
+			model("acme-cloud", "global.acme.coder-5"),
+			model("acme-cloud", "global.acme.coder-4"),
+			model("other", "not-coder-5"),
+		];
+		const chains = canonicalizeFallbackChains({ "coder-5": ["coder-4:xhigh"] }, lookup(models));
+
+		expect(Object.keys(chains).sort()).toEqual(["acme-cloud/global.acme.coder-5"]);
+		expect(chains["acme-cloud/global.acme.coder-5"]).toEqual(["acme-cloud/global.acme.coder-4:xhigh"]);
+	});
+
+	it("never expands a bare Claude selector onto a cloud re-host", () => {
 		const models = [
 			model("amazon-bedrock", `global.anthropic.${FABLE}`),
 			model("amazon-bedrock", `global.anthropic.${OPUS5}`),
-			model("other", `not-${FABLE}`),
 		];
-		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(models));
 
-		expect(Object.keys(chains).sort()).toEqual([`amazon-bedrock/global.anthropic.${FABLE}`]);
-		expect(chains[`amazon-bedrock/global.anthropic.${FABLE}`]).toEqual([
-			`amazon-bedrock/global.anthropic.${OPUS5}:xhigh`,
-		]);
+		expect(canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(models))).toEqual({});
 	});
 
 	// Issue #2774: gateway credentials do not authorize implicit provider switches.
@@ -218,11 +243,8 @@ describe("bare-key opt-out tombstones", () => {
 		const chains = canonicalizeFallbackChains(resolved.chains, lookup(sdkAndAnthropic));
 
 		expect(chains[`anthropic/${FABLE}`]).toEqual([`anthropic/${OPUS48}:max`]);
-		// The other provider variant keeps the shipped ladder, expanded OAuth-tier first.
-		expect(chains[`anthropic-subscription/${FABLE}`]).toEqual([
-			`anthropic-subscription/${OPUS5}:max`,
-			`anthropic/${OPUS5}:max`,
-		]);
+		// The other provider variant keeps the shipped ladder on its own lane (senpi#5518).
+		expect(chains[`anthropic-subscription/${FABLE}`]).toEqual([`anthropic-subscription/${OPUS5}`]);
 	});
 });
 

@@ -1,0 +1,56 @@
+{
+	"caseId": "out-of-order-offset",
+	"kind": "receiver",
+	"contractIds": [
+		"R4.B3",
+		"R4.B5",
+		"RULING-37",
+		"RULING-44"
+	],
+	"description": "The second delivered record is the third fragment (offset 262144) although the previous record ends at 131072. The receiver must answer page-reset-needed and must not complete or deliver the value.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"generator": {
+			"kind": "segments",
+			"params": {
+				"segments": [
+					{
+						"kind": "xorshift32",
+						"seed": 1592590353,
+						"length": 262145
+					}
+				]
+			}
+		}
+	},
+	"sourceLength": 262145,
+	"sourceDigest": "b618710c3aee8e14990aeef50db4e403be5ba6c79e8fb48c30dcf72639c774b4",
+	"fault": {
+		"recordIndex": 1,
+		"field": "offset",
+		"expectedOffset": 131072,
+		"declaredOffset": 262144
+	},
+	"input": [
+		{
+			"offset": 0,
+			"length": 131072,
+			"digest": "096eb5beba4b3ce0de31abd8aac30f050bd58e107e45ff1eab9a3ca65d648e3f",
+			"next": 131072,
+			"complete": false
+		},
+		{
+			"offset": 262144,
+			"length": 1,
+			"digest": "878940f830bb47fb3538f2dda42391228987dd70d053003b06c8e6ea12e41711",
+			"next": null,
+			"complete": true
+		}
+	],
+	"expectedOutcome": "page-reset-needed"
+}

@@ -1,11 +1,12 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { CustomMessage } from "./messages.ts";
-import { STOP_RESUME_CUSTOM_TYPE, stopResumeDirective } from "./stop-resume-directive.ts";
+import { stopResumeDirective } from "./stop-resume-directive.ts";
 
 type Message = Pick<CustomMessage, "customType" | "content" | "display" | "details">;
 type Part = Extract<CustomMessage["content"], readonly unknown[]>[number];
 
 export interface RunResumePorts {
+	readonly resumeCause?: "stop" | "interrupted";
 	readonly heldInputs: () => readonly {
 		readonly inputId: string;
 		readonly text: string;
@@ -41,17 +42,18 @@ export async function startRunResumeTurn(
 	const inputs = ports.heldInputs();
 	const continues = ports.continueInputs();
 	const wakes = ports.heldWakes();
+	const directive = stopResumeDirective(ports.resumeCause);
 	const content: Part[] = [
 		...inputs.flatMap((input): Part[] => [
 			{ type: "text", text: `The user wrote while the run was paused:\n${input.text}` },
 			...(input.images ?? []),
 		]),
 		...wakes.flatMap((wake) => partsOf(wake.message.content)),
-		...partsOf(stopResumeDirective().content),
+		...partsOf(directive.content),
 	];
 	const sendSettled = Promise.withResolvers<void>();
 	const started = ports.turnStarted(sendSettled.promise);
-	const sending = ports.send({ customType: STOP_RESUME_CUSTOM_TYPE, content, display: inputs.length > 0 });
+	const sending = ports.send({ ...directive, content, display: inputs.length > 0 });
 	sending.then(sendSettled.resolve, sendSettled.resolve);
 	const turnId = await started;
 	const delivered = (async () => {

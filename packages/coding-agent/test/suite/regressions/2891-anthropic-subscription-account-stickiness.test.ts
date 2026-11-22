@@ -16,15 +16,13 @@ import {
 	type ContinuityDecisionInput,
 	decideNativeContinuity,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 type AttemptEvent = { type: "done"; value: string };
 
 const PROVIDER = "anthropic-subscription";
 const SESSION = "senpi-2891-session";
-const pool: AccountSlot[] = [
-	{ name: "alpha", refresh: "r-alpha", access: "a-alpha", expires: 1, source: "login" },
-	{ name: "bravo", refresh: "r-bravo", access: "a-bravo", expires: 1, source: "login" },
-];
+const pool: AccountSlot[] = [cliSlot("alpha"), cliSlot("bravo")];
 const [home, other] = rendezvousOrder(SESSION, pool).map((account) => account.name) as [string, string];
 
 async function storeWithPool(): Promise<CredentialStore> {

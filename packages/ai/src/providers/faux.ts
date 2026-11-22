@@ -21,6 +21,7 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { enableAssistantCapture } from "../utils/assistant-capture.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { getCurrentSystemPrompt, getCurrentTools } from "../utils/transcript.ts";
@@ -483,7 +484,11 @@ async function streamWithDeltas(
 				stream.end(aborted);
 				return;
 			}
-			stream.push({ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
+			// Faux never parses its generated chunks; only the end installs the arguments.
+			stream.push(
+				{ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } },
+				{ parsedThrough: 0 },
+			);
 		}
 		(partial.content[index] as ToolCall).arguments = block.arguments;
 		stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: { ...partial } });
@@ -575,6 +580,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 
 	const stream: StreamFunction<string, SimpleStreamOptions> = (requestModel, context, streamOptions) => {
 		const outer = createAssistantMessageEventStream();
+		enableAssistantCapture(outer);
 		const step = pendingResponses.shift();
 		state.callCount++;
 		callLog.push({
@@ -658,6 +664,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		fetchOptions?: DeferredFetchOptions,
 	): AssistantMessageEventStream => {
 		const outer = createAssistantMessageEventStream();
+		enableAssistantCapture(outer);
 		state.deferredFetchCount++;
 
 		queueMicrotask(async () => {

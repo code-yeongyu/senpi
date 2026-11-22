@@ -1,26 +1,26 @@
 /**
  * The subscription accounts a usage poll can speak for, named exactly as turns name them in the store
  * (senpi#3684): a Claude account by its slot name, a ChatGPT account by its pool slot name (`default` for a
- * single login). The token is read only when a poll is actually due, through the credential store, and an
- * expiring Claude token is renewed by the same refresh a turn would run. Tokens never leave this module's
- * callers: they go into one request header and nowhere else.
+ * single login). The token is read only when a poll is actually due. A Claude account polls with its
+ * `CLAUDE_CODE_OAUTH_TOKEN` env token, or, for a claude CLI account, with the access token the CLI keeps in its
+ * own store, read as it stands: senpi never refreshes a Claude token (senpi#4436), so an expired one waits for
+ * the CLI's next turn. Tokens never leave this module's callers: they go into one request header and nowhere else.
  */
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import { listSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
-import { AUTH_BLOCK_REPROBE_MS } from "../credential-pool/auth-reprobe.ts";
 import {
 	type AnthropicSubscriptionCredential,
 	emptyCredential,
 	envSlotToken,
+	isEnvSlot,
 	listAccounts,
-	refreshSlot,
-	type SlotRefresher,
 } from "../extensions/builtin/anthropic-subscription/accounts.ts";
-import { isGrantRejected } from "../extensions/builtin/anthropic-subscription/refresh-failure.ts";
-import { CredentialStoreBusyError } from "../lockfile-policy.ts";
+import {
+	accountDirFor,
+	isValidAccountDirId,
+	readClaudeCliAccessToken,
+} from "../extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts";
 import type { UsageProvider } from "./usage-endpoints.ts";
-
-const EXPIRING_WITHIN_MS = 5 * 60_000;
 
 /** `undefined`: nothing usable to ask with right now (an expired ChatGPT token a turn will renew). */
 export type AccessResult = { readonly access: string } | { readonly error: string } | undefined;
@@ -34,8 +34,9 @@ export interface PollAccount {
 export interface AccountSources {
 	readonly store: CredentialStore;
 	readonly env: (name: string) => string | undefined;
-	readonly refresher: SlotRefresher;
 	readonly now: () => number;
+	/** Where the claude CLI account dirs live; without it, only env token accounts are polled. */
+	readonly agentDir?: string;
 }
 
 export const SIGN_IN_NEEDED = "auth stale - run /login";
@@ -50,73 +51,32 @@ export async function listPollAccounts(sources: AccountSources): Promise<PollAcc
 
 function claudeAccounts(stored: Credential | undefined, sources: AccountSources): PollAccount[] {
 	const credential = stored?.type === "oauth" ? (stored as AnthropicSubscriptionCredential) : emptyCredential();
-	return listAccounts(credential, sources.env).map((slot) => ({
-		provider: "anthropic-subscription",
-		account: slot.name,
-		async access(signal) {
-			if (slot.source === "env") {
-				const token = envSlotToken(sources.env, slot.name);
-				return token === undefined ? undefined : { access: token };
-			}
-			const expiring = (expires: number) => sources.now() >= expires - EXPIRING_WITHIN_MS;
-			if (!expiring(slot.expires)) return { access: slot.access };
-			// A login the token endpoint already rejected is not re-redeemed here; a turn owns that recovery.
-			if (slot.blockReason === "auth_error") return { error: SIGN_IN_NEEDED };
-			try {
-				const refreshed = await refreshSlot(
-					sources.store,
-					"anthropic-subscription",
-					slot.name,
-					sources.refresher,
-					signal,
-					expiring,
-				);
-				const renewed =
-					refreshed?.type === "oauth"
-						? listAccounts(refreshed as AnthropicSubscriptionCredential).find(
-								(candidate) => candidate.name === slot.name,
-							)
-						: undefined;
-				return renewed === undefined || expiring(renewed.expires)
-					? { error: SIGN_IN_NEEDED }
-					: { access: renewed.access };
-			} catch (error) {
-				// An aborted refresh (shutdown) and a busy store say nothing about the grant, exactly as in
-				// auth-lane.ts prepareSlot: retried next interval, never a lock. A rejected grant is recorded on the
-				// slot the way a turn records it, so later polls stop at the auth_error branch above instead of asking
-				// the token endpoint again; only /login (or a turn's one-shot recovery) lifts it.
-				if (signal.aborted || error instanceof CredentialStoreBusyError) return undefined;
-				if (!isGrantRejected(error)) return undefined;
-				try {
-					await markAuthRejected(sources, slot.name, slot.refresh);
-				} catch {
-					// The lock could not be written (a busy store): the next pass asks again and records it then.
-				}
-				return { error: SIGN_IN_NEEDED };
-			}
-		},
-	}));
-}
-
-/**
- * Locks the slot only while it still holds the grant that was rejected: a /login, a sibling's refresh or a
- * turn's recovery may have written new material since, and that token must not be locked (as failover.ts
- * persistBlock guards).
- */
-async function markAuthRejected(sources: AccountSources, name: string, rejectedRefresh: string): Promise<void> {
-	const now = sources.now();
-	await sources.store.modify("anthropic-subscription", async (current) => {
-		if (current?.type !== "oauth") return current;
-		const credential = current as AnthropicSubscriptionCredential;
-		if (!credential.accounts?.some((slot) => slot.name === name && slot.refresh === rejectedRefresh)) return current;
-		return {
-			...credential,
-			accounts: credential.accounts.map((slot) =>
-				slot.name === name
-					? { ...slot, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error", blockedAt: now }
-					: slot,
-			),
-		};
+	return listAccounts(credential, sources.env).flatMap((slot): PollAccount[] => {
+		if (isEnvSlot(slot)) {
+			return [
+				{
+					provider: "anthropic-subscription",
+					account: slot.name,
+					async access() {
+						const token = envSlotToken(sources.env, slot.name);
+						return token === undefined ? undefined : { access: token };
+					},
+				},
+			];
+		}
+		const agentDir = sources.agentDir;
+		if (agentDir === undefined || slot.signInRequired !== undefined || !isValidAccountDirId(slot.dirId)) return [];
+		const accountDir = accountDirFor(agentDir, slot.dirId);
+		return [
+			{
+				provider: "anthropic-subscription",
+				account: slot.name,
+				async access() {
+					const token = await readClaudeCliAccessToken(accountDir, sources.now());
+					return token === undefined ? undefined : { access: token };
+				},
+			},
+		];
 	});
 }
 

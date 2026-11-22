@@ -1,5 +1,6 @@
 import { detectLiteralBearerWarnings, resolveServerAuth } from "./auth/context.ts";
-import type { McpServerConfig } from "./config-schema.ts";
+import { type McpConfigGeneration, mcpConnectionIdentity, mcpGenerationRenewal } from "./config-generation.ts";
+import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
 import type { McpElicitationUiProvider } from "./elicitation.ts";
 import type { McpOutputArtifacts } from "./guard/output-guard.ts";
@@ -20,8 +21,10 @@ interface SessionConnectionOptions {
 	readonly key: string;
 	readonly name: string;
 	readonly configHash: string;
-	readonly config: McpServerConfig;
+	readonly generation: McpConfigGeneration;
+	readonly declared: McpServerDeclaredConfig;
 	readonly session: McpSessionOptions;
+	readonly elicitationEnabled: boolean;
 	readonly cwd: string;
 	readonly ui: McpElicitationUiProvider;
 	readonly artifacts: McpOutputArtifacts;
@@ -32,8 +35,10 @@ interface SessionConnectionOptions {
 }
 
 export function createMcpSessionConnection(options: SessionConnectionOptions): McpConnectionEntry {
-	const { config, session, name, key, registry } = options;
-	const projectPolicy = getProjectMcpAuthority(config);
+	const { session, name, key, registry } = options;
+	const config = options.generation.config;
+	// The project authority is keyed by the declared config object; the generation snapshot is a new object.
+	const projectPolicy = getProjectMcpAuthority(options.declared);
 	const logger = createMcpLogger(name, { logDir: session.logDir });
 	const authPlan = resolveServerAuth({
 		agentDir: session.agentDir,
@@ -42,7 +47,17 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 		logger,
 		serverName: name,
 	});
-	for (const warning of detectLiteralBearerWarnings(name, config)) logger.warn(warning);
+	for (const warning of detectLiteralBearerWarnings(name, options.declared)) logger.warn(warning);
+	const rekey = () => {
+		options
+			.onCredentialsChanged?.()
+			.catch((error: unknown) => logger.warn("Failed to re-key MCP connection", { error }));
+	};
+	const renewal = mcpGenerationRenewal(
+		{ serverName: name, declared: options.declared, env: session.env, agentDir: session.agentDir },
+		options.generation.configHash,
+		rekey,
+	);
 	const connectionOptions = {
 		projectPolicy,
 		credentialIdentity: options.credentialIdentity,
@@ -51,15 +66,17 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 		config,
 		env: projectPolicy?.initial.env ?? session.env,
 		elicitationUiProvider: options.ui,
+		elicitationEnabled: options.elicitationEnabled,
 		logger,
 		serverName: name,
+		...(renewal === undefined ? {} : { resolveConfig: renewal.resolveConfig, onGenerationChanged: rekey }),
 	};
 	const connection =
 		options.share && session.agentDir !== undefined && shareable(config, options.cwd)
 			? registry.attachShared(key, options.owner, {
 					...connectionOptions,
 					agentDir: session.agentDir,
-					configHash: options.configHash,
+					configHash: mcpConnectionIdentity(options.configHash, options.generation.configHash),
 				})
 			: registry.attach(key, options.owner, () => new ServerConnection(connectionOptions));
 	const entry: McpConnectionEntry = {
@@ -75,6 +92,8 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 		key,
 		name,
 		configHash: options.configHash,
+		generationHash: mcpConnectionIdentity(options.configHash, options.generation.configHash),
+		...(renewal === undefined ? {} : { generationChanged: renewal.changed }),
 		connection,
 		logger,
 		createdAtMs: Date.now(),

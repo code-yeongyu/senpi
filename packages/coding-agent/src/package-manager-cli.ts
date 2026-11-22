@@ -14,7 +14,8 @@ import chalk from "chalk";
 import lockfile from "proper-lockfile";
 // BETA(omo-local-update): removable beta import - delete with src/beta/omo-local-update.ts
 import { runOmoLocalUpdateBeta } from "./beta/omo-local-update.ts";
-import { CONFIG_IMPORT_PI_ARGV, CONFIG_IMPORT_PI_USAGE, runConfigImportPi } from "./cli/config-import-pi.ts";
+import { CONFIG_IMPORT_PI_ARGV, runConfigImportPi } from "./cli/config-import-pi.ts";
+import { CONFIG_COMMAND_USAGE, printConfigCommandHelp } from "./cli/config-command-help.ts";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
@@ -22,6 +23,7 @@ import {
 	CONFIG_DIR_NAME,
 	DISPLAY_VERSION,
 	detectInstallMethod,
+	type InstallMethod,
 	getAgentDir,
 	getInstallPackageDir,
 	getSelfUpdateCommand,
@@ -284,29 +286,6 @@ function getPackageCommandUsage(command: PackageCommand): string {
 		case "list":
 			return `${APP_NAME} list [--approve|--no-approve]`;
 	}
-}
-
-const CONFIG_COMMAND_USAGE = `${APP_NAME} config [-l] [--approve|--no-approve]`;
-
-function printConfigCommandHelp(): void {
-	console.log(`${chalk.bold("Usage:")}
-  ${CONFIG_COMMAND_USAGE}
-
-Open the resource configuration TUI to enable or disable package resources.
-Without -l, starts in global settings (~/${CONFIG_DIR_NAME}/agent/settings.json).
-Press Tab in the TUI to switch between global and project-local modes.
-
-Options:
-  -l, --local       Edit project overrides (${CONFIG_DIR_NAME}/settings.json)
-  -a, --approve     Trust project-local files for this command with -l
-  -na, --no-approve Ignore project-local files for this command with -l
-
-  ${CONFIG_IMPORT_PI_USAGE}
-
-Copy config files you edited in ~/.pi/agent after its one-time copy into ~/${CONFIG_DIR_NAME}/agent,
-saving each replaced file as <file>.bak-<time> first. Without file names, imports every edited file.
-~/.pi/agent itself is only read.
-`);
 }
 
 function printPackageCommandHelp(command: PackageCommand): void {
@@ -679,12 +658,26 @@ function printSelfUpdateNote(note: string): void {
 	console.log();
 }
 
-interface SelfUpdatePlan {
+export interface SelfUpdatePlan {
 	packageName: string;
 	installSpec: string;
 	version: string;
 	shouldRun: boolean;
 	note?: string;
+}
+
+/**
+ * The latest-version lookup failed. A standalone binary cannot update itself in place, and since senpi#6633 its lookup
+ * asks the unauthenticated GitHub API (60 requests per hour per IP), so a failed lookup points it at the download page
+ * instead of failing `update --self`. Every other install still fails, because it would run an install command.
+ */
+export function selfUpdatePlanAfterLookupFailure(installMethod: InstallMethod, reason: string): SelfUpdatePlan {
+	if (installMethod !== "bun-binary") {
+		throw new Error(`Could not determine latest ${APP_NAME} version${reason ? `: ${reason}` : "."}`);
+	}
+	console.log(chalk.yellow(`Could not check the latest ${APP_NAME} release${reason ? ` (${reason})` : ""}.`));
+	console.log(chalk.cyan("Download from: https://github.com/code-yeongyu/senpi/releases/latest"));
+	return { packageName: PACKAGE_NAME, installSpec: PACKAGE_NAME, version: VERSION, shouldRun: false };
 }
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
@@ -704,12 +697,14 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 	try {
 		latestRelease = await getLatestPiRelease(VERSION, { retry: true });
 	} catch (error: unknown) {
-		throw new Error(`Could not determine latest ${APP_NAME} version: ${formatVersionCheckError(error)}`, {
-			cause: error,
-		});
+		try {
+			return selfUpdatePlanAfterLookupFailure(detectInstallMethod(), formatVersionCheckError(error));
+		} catch (planError: unknown) {
+			throw planError instanceof Error ? Object.assign(planError, { cause: error }) : planError;
+		}
 	}
 	if (!latestRelease) {
-		throw new Error(`Could not determine latest ${APP_NAME} version.`);
+		return selfUpdatePlanAfterLookupFailure(detectInstallMethod(), "");
 	}
 
 	const packageName = latestRelease.packageName ?? PACKAGE_NAME;

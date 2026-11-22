@@ -16,6 +16,7 @@ export interface ChildToolContext {
 	thinkingLevel?: string;
 	serviceTier?: string;
 	browserEngine?: BrowserEngine;
+	sessionEnv?: Readonly<Record<string, string>>;
 	goalStoreFile?: string;
 }
 
@@ -28,6 +29,7 @@ export interface NarrowableContext {
 	readonly thinkingLevel?: string | undefined;
 	readonly serviceTier?: string | undefined;
 	readonly browserEngine?: BrowserEngine | undefined;
+	readonly sessionEnv?: Readonly<Record<string, string>> | undefined;
 	readonly goalStoreFile?: string | undefined;
 	isProjectTrusted(): boolean;
 }
@@ -48,6 +50,7 @@ export function narrowContext(
 	if (ctx.thinkingLevel !== undefined) narrowed.thinkingLevel = ctx.thinkingLevel;
 	if (ctx.serviceTier !== undefined) narrowed.serviceTier = ctx.serviceTier;
 	if (ctx.browserEngine !== undefined) narrowed.browserEngine = ctx.browserEngine;
+	if (ctx.sessionEnv !== undefined) narrowed.sessionEnv = { ...ctx.sessionEnv };
 	if (ctx.goalStoreFile !== undefined) narrowed.goalStoreFile = ctx.goalStoreFile;
 	return narrowed;
 }

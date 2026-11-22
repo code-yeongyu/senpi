@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { isOpenAIResponsesPromptCacheModel } from "../src/api/openai-responses-prompt-cache.ts";
 import { warmPromptCache } from "../src/api/warm-prompt-cache.ts";
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { Context, Model } from "../src/types.ts";
@@ -49,6 +50,22 @@ function captureFetch(serviceTier?: string) {
 // senpi#2096: prewarm the GPT-5.6+ stable prefix with prompt_cache_options.prewarm.
 describe("warmPromptCache for OpenAI Responses GPT-5.6+", () => {
 	afterEach(() => vi.restoreAllMocks());
+
+	// senpi#5101: SIWC plan usage cannot prewarm even when the catalog enables explicit caching.
+	it("reports SIWC prewarm ineligible without making a request", async () => {
+		const base = getModel("openai", "gpt-6-luna");
+		const model: Model<"openai-responses"> = {
+			...base,
+			compat: { ...base.compat, siwc: true, supportsExplicitPromptCacheMode: true },
+		};
+		const { fetch } = captureFetch();
+
+		expect(isOpenAIResponsesPromptCacheModel(model)).toBe(false);
+		await expect(warmPromptCache(model, context, { apiKey: "test-key", fetch })).resolves.toEqual({
+			supported: false,
+		});
+		expect(fetch).not.toHaveBeenCalled();
+	});
 
 	it("sends only the stable prefix with prompt_cache_options.prewarm and parses cache-write usage", async () => {
 		const model = getModel("openai", "gpt-6-luna");
@@ -114,7 +131,7 @@ describe("warmPromptCache for OpenAI Responses GPT-5.6+", () => {
 			serviceTier: "priority",
 		});
 
-		expect(bodies[0]?.prompt_cache_options).toEqual({ ttl: "30m", prewarm: true });
+		expect(bodies[0]?.prompt_cache_options).toEqual({ ttl: "12h", prewarm: true });
 		expect(bodies[0]?.service_tier).toBe("priority");
 		expect(result.supported).toBe(true);
 		if (!result.supported) return;

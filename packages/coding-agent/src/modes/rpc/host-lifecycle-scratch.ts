@@ -3,6 +3,7 @@
  * identity, and the boot settings it reads. Split out of `host-lifecycle-launch.ts` (senpi#2566).
  */
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,15 +22,27 @@ const SHORT_TEMP_ROOT = "/tmp";
  */
 export function internalHostDirRoots(): readonly string[] {
 	const primary = tmpdir();
-	return primary === SHORT_TEMP_ROOT ? [primary] : [primary, SHORT_TEMP_ROOT];
+	// One directory under two names (a TMPDIR symlinked to /tmp, macOS /private/tmp) is one root, kept
+	// under its shorter name: the long name is the one that can overflow sun_path.
+	if (canonicalPath(primary) !== canonicalPath(SHORT_TEMP_ROOT)) return [primary, SHORT_TEMP_ROOT];
+	return [Buffer.byteLength(primary) < Buffer.byteLength(SHORT_TEMP_ROOT) ? primary : SHORT_TEMP_ROOT];
+}
+
+function canonicalPath(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
 }
 
 function internalHostDirRoot(name: string): string {
 	for (const root of internalHostDirRoots()) {
 		if (Buffer.byteLength(join(root, name, "host.sock")) <= MAX_SOCKET_PATH_BYTES) return root;
 	}
+	const tried = internalHostDirRoots().map((root) => join(root, name, "host.sock"));
 	throw new Error(
-		`internal_socket_path_too_long: ${join(tmpdir(), name, "host.sock")} exceeds ${MAX_SOCKET_PATH_BYTES} bytes and /tmp cannot hold it either; set TMPDIR to a shorter directory`,
+		`internal_socket_path_too_long: every candidate exceeds ${MAX_SOCKET_PATH_BYTES} bytes (${tried.join(", ")}); set TMPDIR to a shorter directory`,
 	);
 }
 

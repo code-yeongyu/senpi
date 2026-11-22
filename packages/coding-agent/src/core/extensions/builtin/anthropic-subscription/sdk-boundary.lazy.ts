@@ -20,12 +20,13 @@
  * (`packages/ai/src/api/*.lazy.ts`); `test/startup-import-graph.test.ts` fails
  * if a static edge to the SDK reappears.
  */
-import type { createSdkMcpServer, getSessionMessages, query } from "@anthropic-ai/claude-agent-sdk";
+import type { createSdkMcpServer, getSessionMessages, query, resolveSettings } from "@anthropic-ai/claude-agent-sdk";
 
 export type ClaudeAgentSdkModule = {
 	query: typeof query;
 	createSdkMcpServer: typeof createSdkMcpServer;
 	getSessionMessages: typeof getSessionMessages;
+	resolveSettings: typeof resolveSettings;
 };
 
 let loaded: ClaudeAgentSdkModule | undefined;
@@ -43,6 +44,7 @@ export function loadClaudeAgentSdk(): Promise<ClaudeAgentSdkModule> {
 				query: module.query,
 				createSdkMcpServer: module.createSdkMcpServer,
 				getSessionMessages: module.getSessionMessages,
+				resolveSettings: module.resolveSettings,
 			};
 			return loaded;
 		})

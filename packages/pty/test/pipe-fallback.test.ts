@@ -165,6 +165,15 @@ async function within<T>(event: string, pending: Promise<T>): Promise<T> {
 	}
 }
 
+// Signals one exact pid (never a group); a child that already exited (ESRCH) needs nothing.
+function killExactChild(pid: number): void {
+	try {
+		process.kill(pid, "SIGKILL");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+	}
+}
+
 describe("PipeFallbackSession terminal detachment", () => {
 	const posixIt = it.skipIf(process.platform === "win32");
 
@@ -189,18 +198,32 @@ describe("PipeFallbackSession terminal detachment", () => {
 					if (buffered.includes("READY")) resolve();
 				});
 			});
-			const exited = session.waitExit();
+			let settled = false;
+			const exited = session.waitExit().then((exit) => {
+				settled = true;
+				return exit;
+			});
 			session.start();
 
-			await within("the child printing READY", ready);
-			const pid = session.pid;
-			expect(pid).toBeGreaterThan(1);
-			// Signal 0 delivers nothing; it only fails (ESRCH) when no process group has this id.
-			expect(() => process.kill(-(pid as number), 0)).not.toThrow();
+			try {
+				await within("the child printing READY", ready);
+				const pid = session.pid;
+				expect(pid).toBeGreaterThan(1);
+				// Signal 0 delivers nothing; it only fails (ESRCH) when no process group has this id.
+				expect(() => process.kill(-(pid as number), 0)).not.toThrow();
 
-			expect(session.kill("SIGTERM").ok).toBe(true);
-			const exit = await within("the child exiting after SIGTERM", exited);
-			expect(exit.signal).toBe("SIGTERM");
+				expect(session.kill("SIGTERM").ok).toBe(true);
+				const exit = await within("the child exiting after SIGTERM", exited);
+				expect(exit.signal).toBe("SIGTERM");
+			} finally {
+				// A failed assertion above must not leave the detached child running past the test. Cleanup signals only
+				// that exact child pid, never a process group, and never a pid <= 1.
+				const pid = session.pid;
+				if (!settled && pid !== undefined && pid > 1) {
+					killExactChild(pid);
+					await within("the child exiting after cleanup", exited);
+				}
+			}
 		},
 		DETACHMENT_BREAKER_MS,
 	);

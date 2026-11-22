@@ -1,3 +1,192 @@
+## 2026-10-30 - Reauthorize the selected SIWC registration (senpi#5046)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts` reuses that account's issued client ID and retained hints, omits `agent_name_hint`, binds both callback paths to the pending client, and rejects a different verified subject before returning credentials.
+
+### Why
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts` must preserve the registration and verified identity required by OpenAI's SIWC sign-in sections 2-4.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts` owns callback validation and token exchange before credential persistence.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: callback arguments, authorize parameters, and post-exchange identity validation.
+
+## 2026-10-30 - Keep SIWC identity sign-in when plan usage is disabled (senpi#5044)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: validate callback state before handling consent denial; stop with a typed decline without exchanging tokens. Keep validated sign-in credentials without direct scope, recompute plan permission on refresh, and refuse request auth with a typed error offering plan consent or an API key. Explicit plan consent reuses the saved client ID, full scopes, and `prompt=consent`; ordinary sign-in does not force consent.
+
+### Why
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: OpenAI's SIWC sign-in and errors-and-recovery contracts distinguish a declined attempt from a valid identity-only sign-in and prohibit inference without direct plan permission.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: callback validation, token conversion, and request-auth derivation are internal to the bundled OAuth implementation.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: callback parsing/listener handling, token conversion, login authorization parameters, and `toAuth`. W3 owns returning-account identity and authorize hints; W4 owns callback-port selection.
+
+## 2026-10-30 - Classify SIWC token refresh recovery (senpi#5003, PR #5033)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts` maps the six documented unusable-refresh-token codes to a typed reauthorization error and `invalid_client` to a typed configuration error. Transient HTTP failures keep the existing classification.
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts` extracts machine codes from OAuth error strings, error objects with `code` or `type`, nested `error.error` objects, and top-level `code` fields through one parser. Diagnostic descriptions, non-JSON bodies, and empty bodies do not select recovery.
+
+### Why
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts` previously exposed only an HTTP error with response text, so callers could not distinguish reauthorization from invalid client configuration without parsing prose.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts` owns the token endpoint response before the common refresh error wrapper.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: token endpoint rejection handling and refresh-error imports.
+
+## 2026-10-30 - Validate SIWC ID tokens before returning credentials (senpi#5012)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts` verifies the code exchange's ID token before returning a credential, carrying the attempt nonce and issued client ID into validation. Fetch and the clock are injectable. Refresh preserves the sign-in's validated identity and retained ID token.
+- `packages/ai/src/auth/oauth/openai-id-token.ts` verifies RS256 signatures with WebCrypto, discovers and caches OpenAI's JWKS, reloads unfamiliar keys, and requires issuer, audience, expiry, nonce, and subject. Validation failures have a typed error.
+
+### Why
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: OpenAI's SIWC sign-in section 4 requires signature and claim validation before trusting an account identity. The vendored flow previously checked only that an ID token was present.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: code exchange and credential construction are internal to the bundled OAuth flow; an extension cannot validate its pending nonce before the flow returns credentials.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: code exchange, login arguments, and refresh credential construction.
+
+## 2026-10-30 - SIWC uses an available IPv4 loopback callback port (senpi#5003 W4)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: bind `127.0.0.1:1455` first, then an OS-assigned port on `EADDRINUSE`. Carry the bound redirect URI through authorization, token exchange and pasted-URL validation, preserving `closeAllConnections()` cleanup.
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: accept an optional preferred callback port on SIWC login, defaulting to 1455. Tests supply OS-assigned ports and hold their own busy listeners instead of depending on the production port.
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: deliberately drop the upstream `PI_OAUTH_CALLBACK_HOST` override for SIWC; the callback host is always `127.0.0.1`, as OpenAI's loopback rule requires. Do not restore the override in an upstream sync.
+
+### Why
+
+OpenAI permits the loopback port to vary but requires the authorization and code exchange redirect URIs to match exactly. A busy preferred port must not send a new login to another process's callback listener.
+
+### Why an extension could not handle it
+
+The bundled OAuth flow owns the listener, authorization URL, token exchange and manual callback parser before an extension can intervene.
+
+### Expected merge conflict zones
+
+- MEDIUM: callback binding, redirect URI validation and authorization-code exchange in `packages/ai/src/auth/oauth/openai-chatgpt.ts`.
+- MEDIUM: upstream's `getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1"` callback-host line; keep the fixed `127.0.0.1` here.
+
+## 2026-10-27 - The ChatGPT authorize hint names the host product, not "Pi" (senpi#4434, closes #4432)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: `agent_name_hint` on the first-time `dynamic_agent_client` authorize URL is the caller's `appName`, else the brand the host set with `setOAuthPageBrand` (`configuredOAuthBrandName()`), else the wire identity (`senpi` by default). Main's SIWC change already replaced the old `AGENT_NAME_HINT = "Pi"` with `appName ?? getWireIdentity()`; this PR adds the host-brand step between the two. The flow stays vendored and unregistered in the fork.
+
+### Why
+
+- OpenAI shows `agent_name_hint` on its consent screen; branded hosts must not show "Pi" (#4432). OpenAI documents it as editable display metadata, not identity, and it is not tied to the issued client ID, so a host name is safe.
+
+### Why an extension could not handle it
+
+- The value is built inside the bundled login flow; no hook reaches the authorize URL.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `agent_name_hint` line in `loginOpenAIChatGPT`; the fork's chain is `options?.appName ?? configuredOAuthBrandName() ?? getWireIdentity()`, upstream passes `options?.agentName ?? AGENT_NAME_HINT`.
+
+## 2026-10-30 - SIWC host and app identity (senpi#5014, part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: use the configured product name for initial registration, with the standalone wire identity as the default, and require UUIDv4 host IDs.
+
+### Why
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: OpenAI requires a stable UUIDv4 host identifier and the app's actual name rather than upstream's hard-coded name.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: the bundled OAuth flow owns the authorization parameters.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: authorization URL construction and host ID validation.
+
+## 2026-10-30 - Implement SIWC renewable-session revocation (part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: discovers the revocation endpoint, posts the refresh token and issued client ID, accepts empty HTTP 200, and bounds network/5xx retries with injectable backoff.
+
+### Why
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: local token deletion alone does not end the renewable SIWC session.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: the bundled provider owns the session's OAuth protocol.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: OAuth hook object and token-operation helpers.
+
+## 2026-10-31 - Kimi Code's refused refresh says so on its error (senpi#5010)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/kimi-coding.ts`: a refresh refused with 401, 403 or `invalid_grant` throws `OAuthTokenEndpointError` with `credentialRefused: true` and the body's `oauthError`; other failed refreshes carry `oauthError` only.
+- `packages/ai/src/auth/oauth/radius.ts`: `OAuthResponseError` passes its OAuth code to the base class instead of declaring its own `oauthError` field.
+
+### Why
+
+- Kimi's refusal message has no OAuth JSON, so the credential pool stopped blocking a dead Kimi login and failing over to a sibling account (senpi#5010 review).
+
+### Why an extension could not handle it
+
+- The Kimi refresh runs inside the bundled OAuth adapter; no extension hook can annotate its error.
+
+### Expected merge conflict zones
+
+- LOW: the unauthorized branch of `refreshToken` in `kimi-coding.ts`; `OAuthResponseError` in `radius.ts`.
+
+## 2026-10-27 - The hand-rolled Anthropic OAuth (PKCE) flow is removed (senpi#4436, S7)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/anthropic.ts`: deleted (`loginAnthropic`, `loginAnthropicCopyCode`, `refreshAnthropicToken`, `anthropicOAuth`, the browser/copy-code login methods).
+- `packages/ai/src/auth/oauth/anthropic-callback-listener.ts`: deleted (the loopback listener on port 53692).
+- `packages/ai/src/auth/oauth/authorization-input.ts`, `packages/ai/src/auth/oauth/error-details.ts`: deleted; their only user was `anthropic.ts` (the other providers keep their own local parsers).
+- `packages/ai/src/auth/oauth/load.ts`: `loadAnthropicOAuth` and the `anthropic` key of the bundled loaders are removed.
+
+### Why
+
+- senpi#4436, owner ruling R7: Claude sign-in runs only through the bundled Claude Code CLI (`claude auth login`), which keeps and renews its own login. The PKCE direct-login route and all its code, token refresh included, are removed.
+
+### Why an extension could not handle it
+
+- These are pi-ai's own built-in OAuth flow modules and loader registry.
+
+### Expected merge conflict zones
+
+- MEDIUM: an upstream change to `auth/oauth/anthropic.ts` or its listener lands on deleted files; keep them deleted. LOW: the loader type and the removed `loadAnthropicOAuth` in `load.ts`.
+
 ## 2026-10-09 - Restore oauth-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

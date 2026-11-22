@@ -36,7 +36,7 @@ const RECOVERED = "SENPI-QA-2480-RECOVERED";
 const CURRENT_TURN = "SENPI-QA-2480-CONTINUE the task";
 // Compaction's summarization requests reuse the agent's system prompt and tools (prompt-cache
 // reuse) and append one of these internal instructions; core's fallback prompt is the last one.
-const SUMMARY_SIGNATURES = ["INSTRUCTION — NOT CONVERSATION HISTORY]", "You are a context summarization assistant."];
+const SUMMARY_SIGNATURES = ["INSTRUCTION: NOT CONVERSATION HISTORY]", "You are a context summarization assistant."];
 
 const WORDINGS = {
 	bare: () => "prompt is too long",

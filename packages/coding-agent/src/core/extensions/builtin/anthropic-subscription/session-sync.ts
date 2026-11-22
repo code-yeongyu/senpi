@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Context, Message } from "@earendil-works/pi-ai";
-import { appendSdkContentBlocks } from "./content-blocks.ts";
+import { appendSdkContentBlocks, neutralizeToolResultText } from "./content-blocks.ts";
 import { longContextAvailable } from "./long-context.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { ContentBlockParam, Options } from "./sdk-boundary.ts";
@@ -149,6 +149,9 @@ export function configFingerprint(
 			// Claude Code reads its window once at spawn, so a switch to a model planned at another window
 			// restarts the resident process at that window instead of keeping the old one (senpi#3801).
 			contextWindow: options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+			// Claude Code reads its endpoint once at spawn, so a changed models.json baseUrl restarts the resident
+			// process; unset (no override) drops out of the digest and leaves existing fingerprints unchanged.
+			baseUrl: options.env?.ANTHROPIC_BASE_URL,
 			extraArgs: options.extraArgs,
 			pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
 			includePartialMessages: options.includePartialMessages,
@@ -180,7 +183,9 @@ export function buildDeltaPromptBlocks(
 				text: `Tool result (${mapPiToolNameToSdk(message.toolName, customToolNameToSdk)}, id=${message.toolCallId}):\n`,
 			});
 		}
+		const contentStart = blocks.length;
 		appendContent(blocks, message.content);
+		if (message.role === "toolResult") neutralizeToolResultText(blocks, contentStart);
 	}
 	return blocks;
 }

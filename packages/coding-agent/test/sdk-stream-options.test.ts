@@ -280,6 +280,14 @@ describe("createAgentSession stream options", () => {
 		expect(options?.timeoutMs).toBe(1234);
 	});
 
+	it("forwards the session cwd rather than the shared host cwd", async () => {
+		expect(cwd).not.toBe(process.cwd());
+
+		const options = await captureStreamOptions("claude-sdk-oauth", {});
+
+		expect(options?.cwd).toBe(cwd);
+	});
+
 	it("lets request timeoutMs override httpIdleTimeoutMs for ChatGPT Subscription", async () => {
 		const options = await captureStreamOptions(
 			"openai-codex-responses",

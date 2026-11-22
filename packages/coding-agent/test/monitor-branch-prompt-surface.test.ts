@@ -63,7 +63,7 @@ function stubTerminalCtx(): TerminalToolContext {
 
 function monitorToolSurface(): string {
 	const tool = createMonitorTool(stubTerminalCtx());
-	return [tool.description, tool.promptSnippet ?? "", ...(tool.promptGuidelines ?? [])].join("\n");
+	return [tool.description, tool.promptSnippet ?? "", buildTerminalPromptSection({ evalOnly: false })].join("\n");
 }
 
 function terminalToolsDoc(): string {
@@ -71,7 +71,7 @@ function terminalToolsDoc(): string {
 }
 
 describe("monitor create-branch prompt coverage gate", () => {
-	it("every create-branch schema property is named by the tool's own surface", () => {
+	it("every create-branch schema property is named by the tool and canonical prompt guidance", () => {
 		const surface = monitorToolSurface();
 		const missing = CREATE_BRANCH_PROPERTIES.filter((property) => !surface.includes(property));
 		expect(missing, "monitor schema properties absent from its description/snippet/guidelines").toEqual([]);

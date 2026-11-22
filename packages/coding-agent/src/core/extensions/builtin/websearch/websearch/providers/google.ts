@@ -13,7 +13,12 @@ import {
 	withConfigHeaders,
 } from "./shared.ts";
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+/**
+ * Catalog GA flash alias: it tracks the current stable flash model, so the default
+ * cannot age into a retired generation (gemini-2.5-flash 404s for new accounts).
+ * An entry-level `model` still overrides it.
+ */
+export const DEFAULT_MODEL = "gemini-flash-latest";
 
 function generateContentUrl(config: BuildContext["config"]): string {
 	const root = providerUrl(config).replace(/\/+$/, "");

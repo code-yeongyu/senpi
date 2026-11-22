@@ -160,11 +160,11 @@ describe("pending widget mouse (#1645)", () => {
 	});
 	it.each([
 		["iTerm.app", "darwin", "option+drag"],
-		["Apple_Terminal", "darwin", "option+drag"],
+		["Apple_Terminal", "darwin", "cmd+r (toggle mouse reporting)"],
 		["vscode", "darwin", "option+drag (with terminal.integrated.macOptionClickForcesSelection)"],
 		["vscode", "win32", "shift+drag"],
 		["vscode", "linux", "shift+drag"],
-		["tmux", "darwin", "shift+drag (option+drag on iTerm2/Terminal.app)"],
+		["tmux", "darwin", "shift+drag (option+drag on iTerm2)"],
 		["ghostty", "darwin", "shift+drag"],
 		["WezTerm", "linux", "shift+drag"],
 		["", "win32", "shift+drag"],

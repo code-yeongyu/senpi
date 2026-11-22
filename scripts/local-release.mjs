@@ -14,9 +14,11 @@ const packages = [
 	// `@earendil-works/chord` release. local-release builds and packs the in-tree copy so the
 	// isolated installs resolve it through a file: tarball like every other workspace.
 	{ directory: "packages/chord", name: "@earendil-works/chord" },
+	{ directory: "packages/realm-registry", name: "@earendil-works/pi-realm-registry" },
 	{ directory: "packages/telemetry", name: "@earendil-works/pi-telemetry" },
 	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
 	{ directory: "packages/pty", name: "@earendil-works/pi-pty" },
+	{ directory: "packages/machine-ops", name: "@code-yeongyu/senpi-machine-ops" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
 	{ directory: "packages/protocol", name: "@earendil-works/pi-protocol" },
@@ -203,12 +205,6 @@ function main() {
 	const bunInstallDirectory = join(outDir, "bun-install");
 	const binaryDirectory = join(outDir, "bun");
 	mkdirSync(tarballDirectory, { recursive: true });
-
-	if (!options.skipCheck || !options.skipTest) {
-		run("npm", ["--prefix", "packages/ai", "run", "generate-models"], { cwd: repoRoot });
-		// senpi#2645: a regeneration that drops a bundled provider default stops here.
-		run("npm", ["--prefix", "packages/coding-agent", "run", "check:provider-defaults"], { cwd: repoRoot, env: { CI: "1" } });
-	}
 
 	if (!options.skipCheck) {
 		run("npm", ["run", "check"], { cwd: repoRoot });

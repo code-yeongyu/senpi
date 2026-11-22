@@ -6,6 +6,11 @@ export const MONITOR_STATUS_KEY = "monitors";
 const MAX_STATUS_LENGTH = 48;
 /** Marks the status as a live watch at a glance (same glyph family as the session selector). */
 const WATCH_GLYPH = "◉";
+/**
+ * Gentle pulse for the watch glyph while the agent idles on monitors: one frame per elapsed
+ * second, so a waiting footer never reads as frozen. Same glyph family keeps the width stable.
+ */
+const WATCH_PULSE_FRAMES = ["◉", "◎", "○", "◎"] as const;
 
 function truncateEnd(text: string, max: number): string {
 	if (text.length <= max) return text;
@@ -76,18 +81,27 @@ export function monitorElapsedSeconds(snapshot: readonly MonitorSnapshotEntry[],
 	return Math.max(0, Math.round((nowMs - oldest) / 1000));
 }
 
-/** Brief footer text for the active monitors; undefined clears the status. */
-export function formatMonitorStatus(snapshot: readonly MonitorSnapshotEntry[], nowMs: number): string | undefined {
+/**
+ * Brief footer text for the active monitors; undefined clears the status. `animate` swaps the
+ * static watch glyph for the pulse frame matching the elapsed second.
+ */
+export function formatMonitorStatus(
+	snapshot: readonly MonitorSnapshotEntry[],
+	nowMs: number,
+	animate = false,
+): string | undefined {
 	if (snapshot.length === 0) return undefined;
+	const elapsedSeconds = monitorElapsedSeconds(snapshot, nowMs);
+	const glyph = animate ? WATCH_PULSE_FRAMES[elapsedSeconds % WATCH_PULSE_FRAMES.length] : WATCH_GLYPH;
 	const pausedCount = snapshot.filter((entry) => entry.paused).length;
 	const pausedPart = pausedCount === 0 ? "" : pausedCount === snapshot.length ? ", muted" : `, ${pausedCount} muted`;
-	const suffix = ` (${formatElapsedSeconds(monitorElapsedSeconds(snapshot, nowMs))}${pausedPart})${formatExpirySuffix(snapshot, nowMs)}`;
+	const suffix = ` (${formatElapsedSeconds(elapsedSeconds)}${pausedPart})${formatExpirySuffix(snapshot, nowMs)}`;
 	if (snapshot.length === 1) {
-		const head = `${WATCH_GLYPH} watching `;
+		const head = `${glyph} watching `;
 		const description = truncateEnd(snapshot[0]?.description ?? "", MAX_STATUS_LENGTH - head.length - suffix.length);
 		return head + description + suffix;
 	}
-	const head = `${WATCH_GLYPH} watching ${snapshot.length}: `;
+	const head = `${glyph} watching ${snapshot.length}: `;
 	const names = snapshot.map((entry) => entry.description);
 	return head + packDescriptions(names, MAX_STATUS_LENGTH - head.length - suffix.length) + suffix;
 }

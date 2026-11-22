@@ -11,6 +11,7 @@ import {
 	PROMPT_COMPACTION_DEADLINE_MS,
 	REQUEST_DEADLINE_MS,
 } from "../../src/modes/rpc/rpc-request-deadline.ts";
+import { answerProtocolInfo } from "../helpers/rpc-legacy-protocol.ts";
 
 // Captured before any test installs fake timers, so a lost event fails fast instead of hanging.
 const realSetTimeout = globalThis.setTimeout;
@@ -37,6 +38,7 @@ async function createHost(autoOpenSessions = false) {
 			) {
 				throw new Error("Invalid client request");
 			}
+			if (answerProtocolInfo(socket, command)) return;
 			if (autoOpenSessions && command.type === "open_session") {
 				socket.write(
 					serializeJsonLine({

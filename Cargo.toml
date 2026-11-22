@@ -2,6 +2,7 @@
 members = [
     "crates/senpi-pty",
     "crates/senpi-grep",
+    "crates/senpi-socket-secret",
 ]
 resolver = "2"
 

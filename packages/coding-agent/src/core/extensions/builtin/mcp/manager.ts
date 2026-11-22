@@ -2,7 +2,7 @@ import { type SelectItem, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { resolveAuthMode } from "./auth/context.ts";
 import { updateMcpServerConfig } from "./config-edit.ts";
-import type { McpServerConfig } from "./config-schema.ts";
+import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import { collectAllPages } from "./expose/pagination.ts";
 import { McpManagerView } from "./manager-view.ts";
 import type { McpService } from "./service.ts";
@@ -135,7 +135,7 @@ async function manage(
 						cancelLabel: "back",
 					}));
 				} else if (action === "enable" || action === "disable" || action === "exposure") {
-					let exposure: McpServerConfig["exposure"] | undefined;
+					let exposure: McpServerDeclaredConfig["exposure"] | undefined;
 					if (action === "exposure") {
 						const choice = await view.menu(() => ({
 							title: `Exposure of ${name}`,
@@ -175,7 +175,7 @@ function isWritable(snapshot: McpServerSnapshot): boolean {
 
 function serverActions(
 	snapshot: McpServerSnapshot,
-	config: McpServerConfig | undefined,
+	config: McpServerDeclaredConfig | undefined,
 	loggedIn: boolean,
 ): SelectItem[] {
 	const items: SelectItem[] = [

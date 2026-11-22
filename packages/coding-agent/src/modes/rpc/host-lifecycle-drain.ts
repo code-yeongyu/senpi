@@ -5,8 +5,8 @@
  * which keeps the supervisor's orchestration (senpi#2566). Nothing here sends a terminating signal.
  */
 import type { ChildProcess } from "node:child_process";
-import { processIsLive, readProcessStartTime } from "../../utils/process-identity.ts";
-import type { HostStopSender } from "./host-crash-record.ts";
+import { readProcessStartTime } from "../../utils/process-identity.ts";
+import { type HostStopSender, recordHostCrash } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";
 import { DEFAULT_HANDOFF_GRACE_MS, HANDOFF_GRACE_MS_ENV, parseIdleExitMs } from "./host-lifecycle-policy.ts";
 import { watchDrainRequest, writeDrainRequest, writeDrainWatch } from "./host-stop-intent.ts";
@@ -21,21 +21,25 @@ export class SupervisorDrain {
 	private readonly shuttingDown: () => boolean;
 	private readonly beginStopping: () => void;
 	private readonly relay: { readonly file: string; readonly sender: HostStopSender } | undefined;
+	private readonly overdue: ((drainingForMs: number) => void) | undefined;
 
 	/**
 	 * `relay` is the child's drain-request file (host-stop-intent.ts): the one way to reach a child
-	 * on every platform. Without it the request is the POSIX signal alone.
+	 * on every platform. Without it the request is the POSIX signal alone. `overdue` hears every grace
+	 * period the child is still draining (senpi#7098).
 	 */
 	constructor(
 		child: ChildProcess,
 		shuttingDown: () => boolean,
 		beginStopping: () => void = () => {},
 		relay?: { readonly file: string; readonly sender: HostStopSender },
+		overdue?: (drainingForMs: number) => void,
 	) {
 		this.child = child;
 		this.shuttingDown = shuttingDown;
 		this.beginStopping = beginStopping;
 		this.relay = relay;
+		this.overdue = overdue;
 	}
 
 	get active(): boolean {
@@ -53,11 +57,7 @@ export class SupervisorDrain {
 		this.beginStopping();
 		supervisorLog("draining into the next generation");
 		const graceMs = parseIdleExitMs(process.env[HANDOFF_GRACE_MS_ENV]) ?? DEFAULT_HANDOFF_GRACE_MS;
-		this.graceTimer = setTimeout(() => {
-			supervisorLog(JSON.stringify({ event: "handoff_grace_expired", graceMs }));
-			this.requestChildDrain();
-		}, graceMs);
-		this.graceTimer.unref();
+		this.armGrace(graceMs, graceMs);
 		// The listening handle is deliberately NOT closed: libuv unlinks a pipe's bound NAME when it
 		// closes, and after a handoff that name is the successor's entry. Nothing can reach this
 		// listener by path any more (the rename moved the name), and the accept guard turns away
@@ -68,6 +68,19 @@ export class SupervisorDrain {
 
 	stop(): void {
 		if (this.graceTimer) clearTimeout(this.graceTimer);
+	}
+
+	/** Every expiry while the child still runs is reported and re-asks for a drain; nothing is ever cut short. */
+	private armGrace(graceMs: number, drainingForMs: number): void {
+		this.graceTimer = setTimeout(() => {
+			const { child } = this;
+			if (this.shuttingDown() || child.exitCode !== null || child.signalCode !== null) return;
+			supervisorLog(JSON.stringify({ event: "handoff_grace_expired", graceMs, drainingForMs }));
+			this.overdue?.(drainingForMs);
+			this.requestChildDrain();
+			this.armGrace(graceMs, drainingForMs + graceMs);
+		}, graceMs);
+		this.graceTimer.unref();
 	}
 
 	/**
@@ -104,6 +117,16 @@ export class SupervisorDrain {
 	}
 }
 
+/** The alarm a drain past its grace leaves beside the generation's crash records, which host alarms read. */
+export function recordDrainOverdue(daemonDir: string, generation: string, drainingForMs: number): void {
+	recordHostCrash(daemonDir, {
+		at: new Date().toISOString(),
+		kind: "rpc-host-drain-overdue",
+		generation,
+		drainingForMs,
+	});
+}
+
 /**
  * Losing the public entry IS a drain request: nothing can reach this supervisor by path any more, and
  * the handoff that replaced it may never have signalled (#1893). A name that was deleted rather than
@@ -130,42 +153,104 @@ export function drainOnPublicSocketLoss(
 	});
 }
 
+const CHILD_IDENTITY_TICK_MS = 500;
+/** Ticks before the first repeated start-time read; the gap doubles after every read up to the cap (one a minute). */
+const CHILD_IDENTITY_READ_GAP_TICKS = 10;
+const CHILD_IDENTITY_READ_GAP_MAX_TICKS = 120;
+
+type ChildLiveness = "alive" | "dead" | "unknown";
+
 /**
- * win32 only: a child whose identity changes or disappears has exited even when no exit event came.
- * A failed baseline read is UNKNOWN - readProcessStartTime THROWS when the 1s CIM probe fails, and a
- * supervisor that died on it took its host with it (`connect ENOENT`, `reported dead`) - so the
- * watchdog then starts without one and relies on its own comparisons.
+ * kill(pid, 0) spawns nothing. On win32 it opens the pid and reads its exit code, so ESRCH also covers a child
+ * that exited while a handle still pins its pid. EPERM or any other error cannot say whose process the pid is now.
+ */
+function childLiveness(pid: number): ChildLiveness {
+	try {
+		process.kill(pid, 0);
+		return "alive";
+	} catch (cause) {
+		return cause instanceof Error && "code" in cause && cause.code === "ESRCH" ? "dead" : "unknown";
+	}
+}
+
+/**
+ * win32 only: a child that is gone, or whose pid now names another process, has exited even when no exit event came.
+ *
+ * The start time (a cold PowerShell CIM spawn) is read ONCE, at registration: it never changes while the pid is
+ * live, and reading it every tick cost one or two WMI cold starts a second for the host's whole life (senpi#4684).
+ * Each tick is a free `childLiveness`. Two dead ticks in a row are death. The pid can only be reused after the
+ * child died, and our own child cannot answer EPERM, so the start time is read again only when the pid looked
+ * dead and answers again, or liveness is inconclusive; a different start time is then death. Those reads, and the
+ * retries of a failed registration read, back off to one a minute. A failed or absent read is UNKNOWN, never
+ * death: a supervisor that died on a timed-out probe took its host with it (`connect ENOENT`, `reported dead`).
  */
 export async function watchWin32ChildIdentity(
-	child: ChildProcess,
+	child: Pick<ChildProcess, "pid" | "exitCode" | "signalCode">,
 	shuttingDown: () => boolean,
 	onGone: () => void,
 ): Promise<() => void> {
 	const pid = child.pid;
 	if (pid === undefined) return () => {};
-	const childStartTime = await readProcessStartTime(pid, process.platform, 1_000).catch(() => undefined);
-	let missingIdentityChecks = 0;
-	let checking = false;
+	const readStartTime = () => readProcessStartTime(pid, process.platform, 1_000);
+	let baseline = await readStartTime().catch(() => undefined);
+	// A late registration read is only adopted while every tick since spawn has seen the child alive.
+	let adoptable = true;
+	let suspect = false;
+	let deadTicks = 0;
+	let reading = false;
+	let ended = false;
+	let ticksUntilRead = 0;
+	let readGapTicks = CHILD_IDENTITY_READ_GAP_TICKS;
+	const backOff = (): void => {
+		ticksUntilRead = readGapTicks;
+		readGapTicks = Math.min(readGapTicks * 2, CHILD_IDENTITY_READ_GAP_MAX_TICKS);
+	};
+	const end = (): void => {
+		ended = true;
+		onGone();
+	};
+	const settle = (current: string | undefined): void => {
+		if (ended) return;
+		if (baseline === undefined) {
+			if (current !== undefined && adoptable && childLiveness(pid) === "alive") baseline = current;
+			else backOff();
+			return;
+		}
+		if (current !== undefined && current !== baseline) return end();
+		if (current === baseline) suspect = false;
+		backOff();
+	};
 	const check = (): void => {
-		if (shuttingDown() || checking || child.exitCode !== null || child.signalCode !== null) return;
-		checking = true;
-		void readProcessStartTime(pid, process.platform, 1_000)
-			.then((currentStartTime) => {
-				// An absent identity is only believed once kill(pid, 0) agrees the child is gone: this
-				// probe is a 1s PowerShell CIM spawn polled every 500ms, so a loaded runner produced two
-				// consecutive timeouts and shut down a healthy host. A timed-out probe means UNKNOWN.
-				if (currentStartTime === undefined && !processIsLive(pid)) missingIdentityChecks++;
-				else if (currentStartTime !== undefined) missingIdentityChecks = 0;
-				const identityChanged =
-					childStartTime !== undefined && currentStartTime !== undefined && currentStartTime !== childStartTime;
-				if (identityChanged || missingIdentityChecks >= 2) onGone();
+		if (ended || shuttingDown() || child.exitCode !== null || child.signalCode !== null) return;
+		if (ticksUntilRead > 0) ticksUntilRead--;
+		const liveness = childLiveness(pid);
+		if (liveness === "dead") {
+			deadTicks++;
+			if (deadTicks >= 2) return end();
+			suspect = true;
+			adoptable = false;
+			return;
+		}
+		if (deadTicks > 0 || liveness === "unknown") {
+			suspect = true;
+			adoptable = false;
+		}
+		deadTicks = 0;
+		const wantRead = baseline === undefined ? adoptable : suspect;
+		if (!wantRead || reading || ticksUntilRead > 0) return;
+		reading = true;
+		void readStartTime()
+			.then(settle, () => {
+				if (!ended) backOff();
 			})
-			.catch(() => {})
 			.finally(() => {
-				checking = false;
+				reading = false;
 			});
 	};
-	const timer = setInterval(check, 500);
+	const timer = setInterval(check, CHILD_IDENTITY_TICK_MS);
 	timer.unref?.();
-	return () => clearInterval(timer);
+	return () => {
+		ended = true;
+		clearInterval(timer);
+	};
 }

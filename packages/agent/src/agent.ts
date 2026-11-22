@@ -6,6 +6,7 @@ import {
 	readProviderDiagnostic,
 	type SimpleStreamOptions,
 	sanitizeProviderDiagnostic,
+	sanitizeProviderErrorMessage,
 	type TextContent,
 	type ThinkingBudgets,
 	type TranscriptContext,
@@ -17,6 +18,12 @@ import {
 	runAgentLoopContinue,
 } from "./agent-loop.ts";
 import { ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
+import {
+	dispatchInternalAgent,
+	type InternalAgentChannel,
+	type InternalLoopConfig,
+	internalLoopSink,
+} from "./internal-events.ts";
 import { isLocalFailure, localFailurePort, markLocalFailure } from "./local-failure.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
@@ -100,6 +107,7 @@ function createMutableAgentState(initialState?: AgentInitialState): MutableAgent
 
 	return {
 		systemPrompt: initialState?.systemPrompt ?? "",
+		systemPromptStablePrefix: initialState?.systemPromptStablePrefix,
 		model: initialState?.model ?? DEFAULT_MODEL,
 		thinkingLevel: initialState?.thinkingLevel ?? "off",
 		reasoningBaseline: initialState?.reasoningBaseline,
@@ -126,6 +134,8 @@ function createMutableAgentState(initialState?: AgentInitialState): MutableAgent
 
 /** Options for constructing an {@link Agent}. */
 export interface AgentOptions {
+	/** @internal Construction-time channel for senpi's session layer only. */
+	internalChannel?: InternalAgentChannel;
 	initialState?: AgentInitialState;
 	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
@@ -156,8 +166,16 @@ export interface AgentOptions {
 	streamStartTimeoutMs?: number;
 	/** Maximum time to await each raw subscriber; defaults to 60 seconds. */
 	listenerTimeoutMs?: number;
+	streamKeepAliveTimeoutMs?: number;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	toolHost?: AgentLoopConfig["toolHost"];
+	batchStoreFactory?: AgentLoopConfig["batchStoreFactory"];
+	afterToolFreeze?: AgentLoopConfig["afterToolFreeze"];
+	executionScope?: AgentLoopConfig["executionScope"];
+	/** Makes each finished model step durable before the loop acts on it (hosted custody, C6 C.P3); unset on fused and split-local. */
+	commitStep?: AgentLoopConfig["commitStep"];
+	onExecutionPipeline?: AgentLoopConfig["onExecutionPipeline"];
 	removedToolHints?: Record<string, string>;
 	resolveUnknownToolCall?: AgentLoopConfig["resolveUnknownToolCall"];
 	abortServerSideFallback?: boolean;
@@ -239,6 +257,11 @@ class PendingMessageQueue {
 		return this.messages.slice(0, end);
 	}
 
+	/** Every queued message, whatever the drain mode. */
+	all(): AgentMessage[] {
+		return this.messages.slice();
+	}
+
 	drain(): AgentMessage[] {
 		const drained = this.peek();
 		this.messages = this.messages.slice(drained.length);
@@ -290,12 +313,15 @@ type ActiveRun = {
  * and exposes queueing APIs for steering and follow-up messages.
  */
 export class Agent {
+	readonly #internalChannel: InternalAgentChannel | undefined;
 	private _state: MutableAgentState;
 	private readonly listeners = new Set<AgentListener>();
 	private readonly listenerIds = new WeakMap<AgentListener, number>();
 	private nextListenerId = 0;
 	private readonly steeringQueue: PendingMessageQueue;
 	private readonly followUpQueue: PendingMessageQueue;
+	/** The last run ended in a provider error with follow-ups queued: the next run takes them at its first turn. */
+	private followUpsParked = false;
 
 	public convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	public transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
@@ -333,10 +359,19 @@ export class Agent {
 	/** Optional bound on the wait for the first provider stream event. */
 	public streamStartTimeoutMs?: number;
 	public readonly listenerTimeoutMs: number;
+	/** Optional bound on how long keep-alives alone may hold a provider request without content. */
+	public streamKeepAliveTimeoutMs?: number;
 	/** Optional cap for provider-requested retry delays. */
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	public toolHost?: AgentLoopConfig["toolHost"];
+	public batchStoreFactory?: AgentLoopConfig["batchStoreFactory"];
+	public afterToolFreeze?: AgentLoopConfig["afterToolFreeze"];
+	public executionScope: NonNullable<AgentLoopConfig["executionScope"]>;
+	private readonly commitStep?: AgentLoopConfig["commitStep"];
+	public getExecutionScope?: () => NonNullable<AgentLoopConfig["executionScope"]>;
+	public onExecutionPipeline?: AgentLoopConfig["onExecutionPipeline"];
 	/** Migration guidance returned when a removed tool name is called. */
 	public removedToolHints: Record<string, string>;
 	/** Optional call-time resolver for tools absent from the request context. */
@@ -357,6 +392,7 @@ export class Agent {
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
 		const runtimeOptions: Partial<AgentOptions> = options ?? {};
+		this.#internalChannel = runtimeOptions.internalChannel;
 		this._state = createMutableAgentState(runtimeOptions.initialState);
 		this.convertToLlm = runtimeOptions.convertToLlm ?? defaultConvertToLlm;
 		this.transformContext = runtimeOptions.transformContext;
@@ -383,8 +419,15 @@ export class Agent {
 		if (!Number.isFinite(this.listenerTimeoutMs) || this.listenerTimeoutMs <= 0) {
 			throw new RangeError("listenerTimeoutMs must be positive and finite");
 		}
+		this.streamKeepAliveTimeoutMs = runtimeOptions.streamKeepAliveTimeoutMs;
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+		this.toolHost = runtimeOptions.toolHost;
+		this.batchStoreFactory = runtimeOptions.batchStoreFactory;
+		this.afterToolFreeze = runtimeOptions.afterToolFreeze;
+		this.executionScope = runtimeOptions.executionScope ?? { id: crypto.randomUUID(), root: "" };
+		this.commitStep = runtimeOptions.commitStep;
+		this.onExecutionPipeline = runtimeOptions.onExecutionPipeline;
 		this.removedToolHints = runtimeOptions.removedToolHints ?? {};
 		this.resolveUnknownToolCall = runtimeOptions.resolveUnknownToolCall;
 		this.abortServerSideFallback = runtimeOptions.abortServerSideFallback;
@@ -475,8 +518,10 @@ export class Agent {
 		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
 	}
 
-	/** Preview the messages selected for the next turn without consuming them. */
-	peekQueuedMessages(): AgentMessage[] {
+	/** Preview next-turn messages, or both queues with { all: true }, without consuming them. */
+	peekQueuedMessages(options?: { all?: boolean }): AgentMessage[] {
+		// `all` is every queued message: in `one-at-a-time` mode a queue's next drain is only its head (omo#14428).
+		if (options?.all) return [...this.steeringQueue.all(), ...this.followUpQueue.all()];
 		const steering = this.steeringQueue.peek();
 		return steering.length > 0 ? steering : this.followUpQueue.peek();
 	}
@@ -661,7 +706,9 @@ export class Agent {
 			await runAgentLoop(
 				messages,
 				this.createContextSnapshot(),
-				this.createLoopConfig(options),
+				// A run started from new input takes follow-ups an error-ended run parked; a retry or other continuation
+				// leaves them for that run (omo#14428).
+				this.createLoopConfig({ ...options, takeParkedFollowUps: true }),
 				(event) => this.processEvents(event),
 				signal,
 				this.streamFunction,
@@ -679,6 +726,8 @@ export class Agent {
 	): Promise<void> {
 		const pendingQueue = queue === "steering" ? this.steeringQueue : this.followUpQueue;
 		const port = this.queuedInputPort;
+		// This run starts from the queue itself, so it takes the parked input in the queue's own drain order.
+		this.followUpsParked = false;
 		if (!port) {
 			await this.runPromptMessages(pendingQueue.drain(), options);
 			return;
@@ -753,6 +802,9 @@ export class Agent {
 	private createContextSnapshot(): AgentContext {
 		return {
 			systemPrompt: this._state.systemPrompt,
+			...(this._state.systemPromptStablePrefix === undefined
+				? {}
+				: { systemPromptStablePrefix: this._state.systemPromptStablePrefix }),
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
 			...(this._state.declaredTools ? { declaredTools: this._state.declaredTools.slice() } : {}),
@@ -764,9 +816,12 @@ export class Agent {
 			skipInitialSteeringPoll?: boolean;
 			initialRequestTimeoutMs?: number;
 			initialRequestStreamStartTimeoutMs?: number;
+			takeParkedFollowUps?: boolean;
 		} = {},
-	): AgentLoopConfig {
+	): InternalLoopConfig {
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
+		const takeFollowUpsAtStart = options.takeParkedFollowUps === true && this.followUpsParked;
+		if (takeFollowUpsAtStart) this.followUpsParked = false;
 		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		const finishTurn = this.finishTurn;
@@ -775,6 +830,7 @@ export class Agent {
 			this.giveBack(queue, messages, queue === "steering" ? steeringQueueGeneration : followUpQueueGeneration);
 		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
 		return {
+			...internalLoopSink(this.#internalChannel),
 			model: this._state.model,
 			reasoning: reasoning === "off" ? undefined : reasoning,
 			thinkingSelection: this._state.thinkingSelection,
@@ -786,12 +842,19 @@ export class Agent {
 			thinkingBudgets: this.thinkingBudgets,
 			timeoutMs: this.timeoutMs,
 			streamStartTimeoutMs: this.streamStartTimeoutMs,
+			streamKeepAliveTimeoutMs: this.streamKeepAliveTimeoutMs,
 			initialRequestTimeoutMs: options.initialRequestTimeoutMs,
 			initialRequestStreamStartTimeoutMs: options.initialRequestStreamStartTimeoutMs,
 			maxRetryDelayMs: this.maxRetryDelayMs,
 			abortServerSideFallback: this.abortServerSideFallback,
 			cursorExecHandlers: this.cursorExecHandlers,
 			toolExecution: this.toolExecution,
+			toolHost: this.toolHost,
+			batchStoreFactory: this.batchStoreFactory,
+			afterToolFreeze: this.afterToolFreeze,
+			executionScope: this.getExecutionScope?.() ?? this.executionScope,
+			...(this.commitStep ? { commitStep: this.commitStep } : {}),
+			onExecutionPipeline: this.onExecutionPipeline,
 			removedToolHints: this.removedToolHints,
 			resolveUnknownToolCall: this.resolveUnknownToolCall,
 			beforeToolCall: this.beforeToolCall,
@@ -829,6 +892,7 @@ export class Agent {
 				};
 				return queuedInputPort ? queuedInputPort.claim("steering", drain) : drain();
 			},
+			takeFollowUpsAtStart,
 			getFollowUpMessages: async () => {
 				const drain = () => {
 					followUpQueueGeneration = this.followUpQueue.getClearGeneration();
@@ -884,11 +948,24 @@ export class Agent {
 			) {
 				await this.runQueuedMessagesAfterAgentEnd(abortController.signal);
 			}
+			// Follow-ups an error-ended run parked join the next run's first turn boundary, so their entries are
+			// written even when that run's provider request fails too (omo#14428). A suppressed drain only hands this
+			// run's post-run decision to its owner (a retry, a compaction, agent_before_settle); the mark affects only
+			// the next run, so it holds either way.
+			this.followUpsParked =
+				!abortController.signal.aborted &&
+				this.followUpQueue.hasItems() &&
+				this.lastAssistantStopReason() === "error";
 		} catch (error) {
 			await this.handleRunFailure(error, abortController.signal.aborted && error !== run.listenerFailure);
 		} finally {
 			this.finishRun();
 		}
+	}
+
+	private lastAssistantStopReason(): string | undefined {
+		const lastMessage = this._state.messages.at(-1);
+		return lastMessage?.role === "assistant" ? lastMessage.stopReason : undefined;
 	}
 
 	private canDrainQueuedMessagesAfterRun(): boolean {
@@ -944,6 +1021,8 @@ export class Agent {
 			...(!aborted && isLocalFailure(error) ? { failureSource: "local" as const } : {}),
 			timestamp: Date.now(),
 		} satisfies AgentMessage;
+		// A thrown provider error never passed the stream boundary: classify and redact it the same way (senpi#4282).
+		sanitizeProviderErrorMessage(failureMessage);
 		await this.processEvents({ type: "message_start", message: failureMessage });
 		await this.processEvents({ type: "message_end", message: failureMessage });
 		await this.processEvents({ type: "turn_end", message: failureMessage, toolResults: [] });
@@ -1010,6 +1089,8 @@ export class Agent {
 		if (!run) {
 			throw new Error("Agent listener invoked outside active run");
 		}
+		const internal = dispatchInternalAgent(this.#internalChannel, { event });
+		if (internal) await internal;
 		for (const listener of this.listeners) {
 			await this.awaitListener(listener, event, run);
 		}

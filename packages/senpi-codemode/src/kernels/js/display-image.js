@@ -150,7 +150,7 @@ function frame(mimeType, dataBase64) {
 }
 
 function dropped(reason) {
-	return [{ kind: "text", text: `[display: image dropped — ${reason}]` }];
+	return [{ kind: "text", text: `[display: image dropped - ${reason}]` }];
 }
 
 export function resolveDisplayOps(value) {

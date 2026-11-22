@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hermeticProviderEnv } from "../helpers/rpc-hermetic.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 const children = new Set<ChildProcessWithoutNullStreams>();
@@ -105,26 +106,17 @@ async function startHost(supervised: boolean): Promise<{
 	const root = await mkdtemp(join(tmpdir(), "rpc-owner-"));
 	roots.push(root);
 	const agentDir = join(root, "agent");
-	await mkdir(agentDir);
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	await mkdir(agentDir, { mode: 0o700 });
 	const socketPath = join(root, "rpc.sock");
 	const args = supervised
-		? [
-				"--import",
-				"tsx",
-				join(packageRoot, "src/modes/rpc/host-lifecycle.ts"),
-				"--socket",
-				socketPath,
-				"--agent-dir",
-				agentDir,
-			]
+		? [join(packageRoot, "src/modes/rpc/host-lifecycle.ts"), "--socket", socketPath, "--agent-dir", agentDir]
 		: [join(packageRoot, "src/cli.ts"), "--mode", "rpc", "--listen", `unix://${socketPath}`];
 	const child = spawn(process.execPath, args, {
-		// The package root keeps `--import tsx` resolvable from node_modules for the
-		// supervisor route (the existing lifecycle suite spawns the same way); the
-		// hermetic scratch directories above carry every path the host touches.
+		// The hermetic scratch directories above carry every path the host touches.
 		cwd: packageRoot,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...hermeticProviderEnv(),
 			PI_OFFLINE: "1",
 			PI_TELEMETRY: "0",

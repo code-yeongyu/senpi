@@ -27,39 +27,52 @@
  * ensure and `host gc`: an ensure arriving meanwhile attaches to whichever generation the handoff
  * left registered, and gc never judges the endpoint halfway through.
  */
+import { getAgentDir } from "../../config.ts";
+import {
+	type EngineBuildIdentity,
+	engineBuildIdentity,
+	engineIdentityOf,
+	olderEngineDetail,
+} from "../../core/engine-build-identity.ts";
+import type { Duplex } from "node:stream";
 import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
-import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
-import { handoffUnregisteredHost, SESSION_COUNT_TIMEOUT_MS } from "./host-handoff-unregistered.ts";
+import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
+import { handoffUnregisteredHost } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
+import { electPointer } from "./host-pointer-election.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
-import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
+import type { HostProtocolInfo } from "./host-protocol-info.ts";
+import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
+import { startupEnvelope } from "./host-startup-policy.ts";
+import { startSuccessor } from "./host-successor.ts";
 
 const HANDOFF_PROBE_TIMEOUT_MS = 10_000;
 
-/**
- * The longest a handoff holds the ensure lock: its probe of the running host, the two session counts
- * an unregistered host gets (before the swap and the recount after it), then the successor's start.
- */
-export const HANDOFF_LOCK_HOLD_MS = HANDOFF_PROBE_TIMEOUT_MS + 2 * SESSION_COUNT_TIMEOUT_MS + SUCCESSOR_START_BUDGET_MS;
-
-/**
- * How long a handoff waits for the lock. The longest holder is an ensure that probes the running host
- * and then hands it off itself (its upgrade path), or one that waits out a stopped host's stall before
- * starting a replacement; 10 s of headroom for a slow runner.
- */
-const HANDOFF_LOCK_WAIT_MS =
-	HANDOFF_PROBE_TIMEOUT_MS + Math.max(HANDOFF_LOCK_HOLD_MS, STOP_WAIT_BUDGET_MS + 10_000) + 10_000;
-
 export interface HandoffHostOptions {
+	/**
+	 * The launch owner's enrollment channel. A provider (a running host's deferred handover) is called only when the
+	 * successor reaches its presenter phase, so its permit is fresh for the exchange (senpi#4602).
+	 */
+	readonly presenterBootstrap?: Duplex | (() => Promise<Duplex | undefined>);
+	/** Deployment opt-in. An enforcing predecessor never downgrades during replacement. */
+	readonly mcpPresenterEnforcement?: boolean;
 	readonly socket: string;
 	readonly agentDir?: string;
 	/** Extra CLI arguments the successor's host child is launched with (provider pinning, extensions). */
 	readonly hostArgs?: readonly string[];
 	/** Environment for the successor; a `null` value removes an inherited variable. */
 	readonly env?: Readonly<Record<string, string | null>>;
+	/**
+	 * The engine the successor runs. Defaults to THIS process's build; a running host performing an idle handover
+	 * passes the engine the requesting CLI stated. A successor strictly older than the running host is refused
+	 * `older_engine` unless `allowDowngrade` (senpi#7018).
+	 */
+	readonly successorEngine?: EngineBuildIdentity;
+	/** The caller's explicit consent to hand a newer host down to an older engine. */
+	readonly allowDowngrade?: boolean;
 	/** The runtimeBuildId the successor must compute; set on its environment, never inherited by later daemons. */
 	readonly expectedRuntimeBuildId?: string;
 	readonly policy?: HostLifecyclePolicyInput;
@@ -67,11 +80,11 @@ export interface HandoffHostOptions {
 	 * How the successor is launched from supervisor argv. Defaults to THIS process's runtime; a
 	 * running host performing an idle handover passes the runtime of the CLI that asked for it.
 	 */
-	readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
+	readonly launch?: (args: readonly string[]) => SuccessorLaunch;
 	readonly _test?: {
 		readonly readinessTimeoutMs?: number;
 		/** Builds the spawnable command from supervisor argv; tests point it at the source entry. */
-		readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
+		readonly launch?: (args: readonly string[]) => SuccessorLaunch;
 		/** Runs after the public socket identity is captured and before the successor is spawned. */
 		readonly beforeSpawn?: () => Promise<void>;
 		/** Runs once the successor is spawned and its generation recorded, before its answer is awaited. */
@@ -80,6 +93,13 @@ export interface HandoffHostOptions {
 		readonly beforeRegistration?: () => Promise<void>;
 		readonly platform?: NodeJS.Platform;
 	};
+}
+
+/** `reportsStartup`: the command is the engine's own supervisor, which reports its startup phases (senpi#4602). */
+export interface SuccessorLaunch {
+	readonly command: string;
+	readonly args: readonly string[];
+	readonly reportsStartup?: boolean;
 }
 
 /** Why a handoff did not happen. Every one of them leaves the running host untouched. */
@@ -92,6 +112,8 @@ export type HandoffRefusal =
 	| "upgrade_unsupported"
 	/** No record proves which process serves this socket, and that host holds sessions (or will not say). */
 	| "unknown_owner"
+	/** The running host belongs to another agent dir; only a client of that dir may replace it (#3560). */
+	| "foreign_agent_dir"
 	/** A host from before layout 2, proven by its flat record, holds sessions; `detail` says how to retire it. */
 	| "legacy_host"
 	/** The public socket stopped being the one this handoff was decided against. */
@@ -99,7 +121,9 @@ export type HandoffRefusal =
 	/** `<public>.next-<gen>` would exceed the platform's socket path limit. */
 	| "socket_path_too_long"
 	/** The successor never answered on the public socket; it was stopped and nothing was replaced. */
-	| "successor_unavailable";
+	| "successor_unavailable"
+	/** The successor's engine is older than the running host's and the caller did not allow a downgrade. */
+	| "older_engine";
 
 export type HandoffResult =
 	| {
@@ -118,11 +142,14 @@ export type HandoffResult =
 
 /**
  * Hands the socket to a new generation of this build. Forced by design: the caller decides
- * whether an upgrade is warranted (`decideHostAction`); this performs the one it asked for.
+ * whether an upgrade is warranted (`decideHostAction`); this performs the one it asked for, except
+ * a downgrade: a successor whose engine is older than the running host's is refused unless the caller
+ * says `allowDowngrade` (senpi#7018), so no caller can hand a newer host down by accident.
  */
 export async function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
 	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
-	const release = await acquireHostEnsureLock(options.socket, HANDOFF_LOCK_WAIT_MS);
+	// W: the same bound an ensure waits, covering one compliant holder H (senpi#4602).
+	const release = await acquireHostEnsureLock(options.socket, startupEnvelope(childStalledStopMaxMs()).lockWait);
 	try {
 		return await handoffHostLocked(options);
 	} finally {
@@ -131,22 +158,37 @@ export async function handoffHost(options: HandoffHostOptions): Promise<HandoffR
 }
 
 /** The handoff itself, for a caller that already holds this socket's ensure lock: an ensure's upgrade. */
-export async function handoffHostLocked(options: HandoffHostOptions): Promise<HandoffResult> {
-	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
-	const paths = createHostDaemonPaths({
-		socket: options.socket,
-		...(options.agentDir ? { agentDir: options.agentDir } : {}),
-	});
+export async function handoffHostLocked(requested: HandoffHostOptions): Promise<HandoffResult> {
+	if (handoffUnsupported(requested)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
+	// One agent dir for the guard, the daemon paths and the successor's environment alike (an empty
+	// string keeps its pre-#3563 meaning: this process's default).
+	const options = { ...requested, agentDir: requested.agentDir || getAgentDir() };
+	const paths = createHostDaemonPaths({ socket: options.socket, agentDir: options.agentDir });
+	// Created before the agent-dir guard on purpose: realpath needs the caller's dir to exist, so a refused
+	// foreign caller may leave an empty daemon dir under its own agent dir (harmless).
 	await createDaemonDirectories(paths);
 	const host = await probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS);
 	if (!host) return { action: "refuse", reason: "no_host", upgradeable: false };
 	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
 		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
 	}
+	const downgrade = downgradeRefusal(options, host);
+	if (downgrade) return downgrade;
+	const foreign = await foreignAgentDirRefusal(options.socket, options.agentDir, host);
+	if (foreign) return foreign;
+	// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
+	await electPointer(paths);
 	const registered = await readHostRegistration(paths);
 	const owner = await provenOwner(registered, options.socket);
 	if (!owner) return handoffUnregisteredHost(options, paths, host);
 	return startSuccessor({ options, paths, host, owner });
+}
+
+function downgradeRefusal(options: HandoffHostOptions, host: HostProtocolInfo): HandoffResult | undefined {
+	if (options.allowDowngrade === true || host.engineOrdinal === undefined) return undefined;
+	const running = engineIdentityOf(host.engineVersion ?? "", host.engineOrdinal);
+	const detail = olderEngineDetail(options.successorEngine ?? engineBuildIdentity(), running);
+	return detail === undefined ? undefined : { action: "refuse", reason: "older_engine", upgradeable: false, detail };
 }
 
 function handoffUnsupported(options: HandoffHostOptions): boolean {

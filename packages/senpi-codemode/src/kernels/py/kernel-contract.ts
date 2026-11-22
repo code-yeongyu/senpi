@@ -1,8 +1,11 @@
 import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalKernelRunInput } from "../../tool/types.ts";
-import type { SessionEnvironment } from "../session-env.ts";
+import type { InheritedEnvironment, SessionEnvironment } from "../session-env.ts";
 import type { KernelLifecycle } from "../shared/kernel-death.ts";
+import type { InvocationPermissions } from "../shared/invocation-authority.ts";
+import type { AttestKernelSpawn } from "../shared/session-spawn-attestation.ts";
+import type { CellDecider, RevocationFailedEvent } from "../js/kernel-contract.ts";
 import type { PeerKernelToolsDescribe } from "./kernel-tools-host.ts";
 import type { KernelSpawnProcess, KillProcessGroup } from "./process.ts";
 import type { PythonStartupStage } from "./startup.ts";
@@ -12,10 +15,18 @@ export interface PythonKernelStartOptions extends KernelLifecycle {
 	readonly interpreterPath: string;
 	readonly sessionId: string;
 	readonly cwd: string;
+	readonly permissions?: InvocationPermissions & { readonly decide?: CellDecider };
+	readonly onRevocationFailed?: (event: RevocationFailedEvent) => void;
 	readonly connection: BridgeConnectionConfig;
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** Attests the interpreter process to the session it runs for (senpi#6972). */
+	readonly attestSpawn?: AttestKernelSpawn;
+	/** The host environment kernel children inherit, without the RPC host's supervisor hand-off (senpi#5635); defaults to process.env. */
+	readonly inheritedEnv?: InheritedEnvironment;
+	/** The kill guard (senpi#5349): the host's protected pids; absent = the guard is off for this kernel. */
+	readonly killGuard?: { readonly protectedPids: readonly number[] };
 	/** How long a starting interpreter may show no stage change, output or CPU use before startup fails. */
 	readonly startupTimeoutMs?: number;
 	/** Total startup backstop for an interpreter that stays busy but never becomes ready. */

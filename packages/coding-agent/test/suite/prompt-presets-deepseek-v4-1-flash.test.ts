@@ -1,8 +1,14 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
+import type { PromptSurface } from "../../src/core/dynamic-prompt/build.ts";
+import { buildWorkstationSection } from "../../src/core/dynamic-prompt/workstation.ts";
 import { DEEPSEEK_V4_RULES } from "../../src/core/extensions/builtin/prompt-preset/deepseek-v4.ts";
-import { EXECUTION_TOOLING_RULES } from "../../src/core/extensions/builtin/prompt-preset/execution-tooling.ts";
+import {
+	DEEPSEEK_V41_FLASH_RULES,
+	DEEPSEEK_V41_FLASH_SECTIONS,
+	type DeepseekV41FlashRule,
+} from "../../src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash-rules.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -55,7 +61,7 @@ const V41_FLASH_MODEL_IDS: ReadonlyArray<readonly [id: string, provider: string]
 const SNAPSHOT_1017 = /v4[.p -]?1[- ]flash[- (]+1017/i;
 const SHIPPED_1017_ROWS: ReadonlyArray<readonly [provider: string, id: string, model: Model<Api>]> =
 	getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[])
+		getModels(provider)
 			.filter((model) => SNAPSHOT_1017.test(`${model.id} ${model.name}`))
 			.map((model) => [provider, model.id, model] as const),
 	);
@@ -112,11 +118,19 @@ function hasV4FlashSignal(searchable: string): boolean {
 
 function getV41CatalogModels(): Model<Api>[] {
 	return getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[]).filter((model) => {
+		getModels(provider).filter((model) => {
 			const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
 			return hasV41Signal(searchable) || (model.provider === "deepseek" && hasV4FlashSignal(searchable));
 		}),
 	);
+}
+
+// Image input and reasoning are per-provider serving choices, not snapshot facts: models.dev lists mistral's
+// deepseek-v4-1-flash-1017 as text-only (attachment false), so the release's catalog regeneration can add such a
+// row (senpi#4762). Every shipped row must reach the V4.1 preset; the curated KNOWN_1017_ROWS pin the multimodal set.
+function expectShipped1017Row(model: Model<Api>): void {
+	expect(model.input).toContain("text");
+	expect(resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
 }
 
 describe("DeepSeek V4.1 Flash prompt preset", () => {
@@ -186,29 +200,48 @@ describe("DeepSeek V4.1 Flash prompt preset", () => {
 	});
 
 	it.each(SHIPPED_1017_ROWS)("ships the 1017 snapshot row on %s (%s) on the V4.1 preset", (_provider, _id, model) => {
-		// then
-		expect(model.reasoning).toBe(true);
-		expect(model.input).toContain("image");
-		expect(resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
+		expectShipped1017Row(model);
 	});
 
-	it.each(KNOWN_1017_ROWS)("still ships the 1017 snapshot row on %s (%s)", (provider, id) => {
+	it("accepts a text-only 1017 row as the release's catalog regeneration can add one", () => {
+		// given models.dev's mistral row, served text-only upstream
+		const model = { ...createModel("deepseek-v4-1-flash-1017", "mistral"), input: ["text"] } satisfies Model<Api>;
+
 		// then
-		expect(SHIPPED_1017_ROWS.some(([p, i]) => p === provider && i === id)).toBe(true);
+		expectShipped1017Row(model);
 	});
+
+	it.each(KNOWN_1017_ROWS)(
+		"still ships the 1017 snapshot row on %s (%s) as a multimodal reasoning row",
+		(provider, id) => {
+			// when
+			const model = SHIPPED_1017_ROWS.find(([p, i]) => p === provider && i === id)?.[2];
+
+			// then
+			expect(model?.reasoning).toBe(true);
+			expect(model?.input).toContain("image");
+		},
+	);
 });
 
-describe("DeepSeek V4.1 Flash prompt content", () => {
-	const settings = { promptPreset: "deepseek-v4-1-flash" } as PromptPresetSettings;
+// senpi#7100: the core is rule data rendered once per rule under the section that owns it.
+describe("DeepSeek V4.1 Flash core", () => {
+	const FORCED: PromptPresetSettings = { promptPreset: "deepseek-v4-1-flash" };
+	const SURFACES: readonly PromptSurface[] = ["terminal", "app", "chat"];
+	const RULES: readonly DeepseekV41FlashRule[] = DEEPSEEK_V41_FLASH_RULES;
+	const TOOL_BOUND = RULES.filter((rule) => rule.requiresTool !== undefined);
+	const UNBOUND_TOOLS = ["read", "edit", "bash"];
+	const SESSION_TOOLS = [...UNBOUND_TOOLS, ...new Set(TOOL_BOUND.flatMap((rule) => rule.requiresTool ?? []))];
 
-	function buildPrompt(selectedTools: string[]): string {
-		const preset = resolvePreset(createModel("deepseek-flash", "deepseek"), settings, {
+	function render(selectedTools: readonly string[], surface: PromptSurface): string {
+		const preset = resolvePreset(createModel("deepseek-flash", "deepseek"), FORCED, {
 			cwd: "/workspace",
-			selectedTools,
-			toolSnippets: {},
-			promptGuidelines: [],
+			selectedTools: [...selectedTools],
+			toolSnippets: { read: "READ_SNIPPET" },
+			promptGuidelines: ["GUIDELINE_SENTINEL"],
 			contextFiles: [],
 			skills: [],
+			surface,
 		});
 		if (!preset) {
 			throw new Error("deepseek-v4-1-flash did not resolve");
@@ -216,32 +249,97 @@ describe("DeepSeek V4.1 Flash prompt content", () => {
 		return preset.prompt;
 	}
 
-	it("carries none of the V4 Flash repair rules", () => {
+	function sectionsOf(prompt: string): Map<string, string> {
+		const sections = new Map<string, string>();
+		for (const part of prompt.split(/^## /m).slice(1)) {
+			const breakIndex = part.indexOf("\n");
+			sections.set(part.slice(0, breakIndex).trim(), part.slice(breakIndex + 1));
+		}
+		return sections;
+	}
+
+	function occurrences(haystack: string, needle: string): number {
+		return haystack.split(needle).length - 1;
+	}
+
+	it.each(SURFACES)("renders each rule of the %s surface once, under its own section", (surface) => {
 		// given
-		const prompt = buildPrompt(["read", "edit", "bash", "eval", "todo"]);
+		const prompt = render(SESSION_TOOLS, surface);
+		const sections = sectionsOf(prompt);
 
 		// then
-		for (const rule of DEEPSEEK_V4_RULES) {
-			expect(prompt, rule.id).not.toContain(rule.directive);
+		for (const rule of RULES) {
+			const expected = rule.surfaces === undefined || rule.surfaces.includes(surface) ? 1 : 0;
+			expect(occurrences(prompt, rule.directive), rule.id).toBe(expected);
+			expect(occurrences(sections.get(rule.section) ?? "", rule.directive), `${rule.id} in ${rule.section}`).toBe(
+				expected,
+			);
 		}
-		expect(prompt).not.toContain("You are running on DeepSeek");
+		expect([...sections.keys()]).toEqual([...DEEPSEEK_V41_FLASH_SECTIONS, "Tool Guidelines"]);
 	});
 
-	it("renders the claude-dialect eval-routing stance only when eval is selected", () => {
+	it("renders a tool-bound rule for any one of its tools and drops it without them", () => {
 		// given
-		const withEval = buildPrompt(["read", "edit", "bash", "eval"]);
-		const withoutEval = buildPrompt(["read", "edit", "bash"]);
+		expect(TOOL_BOUND.length).toBeGreaterThan(0);
+		const unbound = render(UNBOUND_TOOLS, "terminal");
 
 		// then
-		expect(withEval).toContain("<execution_tooling>");
-		expect(withoutEval).not.toContain("<execution_tooling>");
-		for (const rule of EXECUTION_TOOLING_RULES) {
-			expect(withEval).toContain(rule.directive.claude);
-			expect(withoutEval).not.toContain(rule.directive.claude);
+		for (const rule of TOOL_BOUND) {
+			expect(occurrences(unbound, rule.directive), `${rule.id} without its tools`).toBe(0);
+			const surface = rule.surfaces?.[0] ?? "terminal";
+			for (const tool of rule.requiresTool ?? []) {
+				expect(occurrences(render(["read", tool], surface), rule.directive), `${rule.id} with ${tool}`).toBe(1);
+			}
 		}
 	});
 
-	it("uses the claude workstation dialect", () => {
-		expect(buildPrompt(["bash"])).toContain("<execution_context>");
+	it("drops a section whose rules are all unmounted", () => {
+		// given
+		const emptied = DEEPSEEK_V41_FLASH_SECTIONS.filter((section) =>
+			RULES.filter((rule) => rule.section === section).every((rule) => rule.requiresTool !== undefined),
+		);
+		expect(emptied.length).toBeGreaterThan(0);
+
+		// when
+		const sections = sectionsOf(render(UNBOUND_TOOLS, "terminal"));
+
+		// then
+		for (const section of emptied) expect(sections.has(section), section).toBe(false);
+	});
+
+	it("keeps the guidelines and renders no tool list", () => {
+		// when
+		const sections = sectionsOf(render(SESSION_TOOLS, "terminal"));
+
+		// then
+		expect(sections.get("Tool Guidelines")).toContain("GUIDELINE_SENTINEL");
+		expect(sections.has("Available Tools")).toBe(false);
+		expect([...sections.values()].join("\n")).not.toContain("READ_SNIPPET");
+	});
+
+	it("shares no rule text with the V4 presets", () => {
+		// when
+		const prompt = render(SESSION_TOOLS, "terminal");
+
+		// then
+		for (const rule of DEEPSEEK_V4_RULES) expect(prompt, rule.id).not.toContain(rule.directive);
+	});
+
+	// The emphasis budget of this core: no bold, no capitalized emphasis, and "Never" only for the
+	// invariants (the limits and the refusal rule).
+	it("spends no emphasis outside the limits and the refusal rule", () => {
+		for (const rule of RULES) {
+			expect(rule.directive, rule.id).not.toMatch(/\*\*|\b[A-Z]{3,}\b|\p{Extended_Pictographic}/u);
+			const invariant = rule.section === "Limits" || rule.id === "refusal-is-final";
+			expect(/\bNever\b/.test(rule.directive), rule.id).toBe(invariant);
+		}
+	});
+
+	it("uses the codex workstation dialect", () => {
+		// given
+		const workstation = buildWorkstationSection({ selectedTools: ["bash"], dialect: "codex" });
+
+		// then
+		expect(render(["bash"], "terminal")).toContain(workstation);
 	});
 });

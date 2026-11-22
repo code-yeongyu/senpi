@@ -8,6 +8,7 @@
 import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
+import { childEnvironmentOf } from "../host-identity-env.ts";
 import { openChannelListener, type ToolChildChannel } from "./channel.ts";
 import {
 	type ChildContainment,
@@ -188,7 +189,11 @@ export class ToolChildClient {
 		const child = spawnToolChild({
 			generation,
 			channelEnv: listener.env,
-			env: typeof this.#options.env === "function" ? this.#options.env() : (this.#options.env ?? process.env),
+			// Whatever the env's source, the host's supervisor hand-off never reaches the tool child, which never reads
+			// it and whose extension spawns inherit its view (senpi#5635).
+			env: childEnvironmentOf(
+				typeof this.#options.env === "function" ? this.#options.env() : (this.#options.env ?? process.env),
+			),
 			command: this.#options.command ?? (await toolChildCommand()),
 			cwd: this.#options.cwd,
 			refsRoot: this.#refsRoot,

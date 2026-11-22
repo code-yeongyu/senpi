@@ -60,7 +60,7 @@ describe("a failing session_move_import handler (senpi#3681 review)", () => {
 		);
 		expect(customTypes(sessionPath)).not.toContain(MOVED_STATE_RESTORED);
 		expect(existsSync(join(pendingDir, "probe", "state.json"))).toBe(true);
-		expect(pendingMovedState(sessionPath)).toMatchObject({ moveId: "move-61", dir: pendingDir });
+		expect(await pendingMovedState(sessionPath)).toMatchObject({ moveId: "move-61", dir: pendingDir });
 
 		const reopenedId = (first.data as { sessionId: string }).sessionId;
 		expect(

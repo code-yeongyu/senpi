@@ -87,6 +87,8 @@ export interface ResolvedResource {
 
 export interface ResolvedPaths {
 	skillRoots?: readonly SkillProvenance[];
+	/** SKILL.md files of auto-discovered skill folders that an ignore file hid (senpi#5060). */
+	ignoredSkills?: readonly string[];
 	extensions: ResolvedResource[];
 	skills: ResolvedResource[];
 	prompts: ResolvedResource[];
@@ -183,6 +185,7 @@ interface ResourceAccumulator {
 	prompts: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	themes: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	hooks: Map<string, { metadata: PathMetadata; enabled: boolean }>;
+	ignoredSkills: Set<string>;
 }
 
 /**
@@ -2409,7 +2412,10 @@ export class DefaultPackageManager implements PackageManager {
 			const selected = this.selectSkillRoot(root, metadata, "project-auto");
 			addResources(
 				"skills",
-				collectAutoSkillEntries(root, mode, { provenance: selected.skillProvenance }),
+				collectAutoSkillEntries(root, mode, {
+					provenance: selected.skillProvenance,
+					onIgnoredSkill: (skillFile) => accumulator.ignoredSkills.add(skillFile),
+				}),
 				selected,
 				overrides,
 				base,
@@ -2637,6 +2643,7 @@ export class DefaultPackageManager implements PackageManager {
 			prompts: new Map(),
 			themes: new Map(),
 			hooks: new Map(),
+			ignoredSkills: new Set(),
 		};
 	}
 
@@ -2669,6 +2676,7 @@ export class DefaultPackageManager implements PackageManager {
 			prompts: mapToResolved(accumulator.prompts),
 			themes: mapToResolved(accumulator.themes),
 			hooks: mapToResolved(accumulator.hooks),
+			ignoredSkills: [...accumulator.ignoredSkills].sort(),
 		};
 	}
 
