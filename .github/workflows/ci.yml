@@ -22,6 +22,7 @@ env:
   SENPI_TEST_TEMP_GUARD: "1"
 
 jobs:
+  # Measured 2026-11-21 over 51 CI runs: tuned job caps are ceil(2 × runner-duration p95), with a 5-minute floor.
   # Hosted macOS and Windows runners are scarce, so a pull request runs the jobs that need one only with the
   # run-full-ci label (ci-full-label.yml); its diff never turns them on (scripts/ci-platform-scope.mjs, senpi#6834).
   # A push to main always runs the full set, and platform-red.yml files an issue when a macOS/Windows job fails there.
@@ -51,7 +52,7 @@ jobs:
   codemode-gate:
     name: codemode-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 22
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -112,7 +113,7 @@ jobs:
   codemode-tests:
     name: codemode-tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -158,7 +159,7 @@ jobs:
   check:
     name: Static checks
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 6
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -439,7 +440,7 @@ jobs:
   fused-equivalence:
     name: Fused equivalence (EQ E01-E20, Node smoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -508,7 +509,7 @@ jobs:
           echo "EQ_GONDOLIN_IMAGE_STORE=$GONDOLIN_IMAGE_STORE" >> "$GITHUB_ENV"
 
       - name: EQ compare against the B0 goldens
-        timeout-minutes: 25
+        timeout-minutes: 10
         run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --placement fused --evidence eq-ci
 
       - name: Z1.n Node smoke (node vs bun)
@@ -604,7 +605,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -639,7 +640,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -682,7 +683,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -753,7 +754,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 6
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -928,7 +929,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 14
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1026,7 +1027,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 6
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1095,7 +1096,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1172,7 +1173,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1235,7 +1236,7 @@ jobs:
         # Windows only for a full run (senpi#3957); Linux always.
         os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 7
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1265,7 +1266,7 @@ jobs:
 
       - name: Run eval kernel WebView suites (Bun)
         shell: bash
-        timeout-minutes: 12
+        timeout-minutes: 7
         env:
           SENPI_WEBVIEW_READINESS_LOG: ${{ runner.temp }}/webview-readiness.log
         run: |
@@ -1332,7 +1333,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1369,7 +1370,7 @@ jobs:
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Run the process-mode kernel suite
-        timeout-minutes: 12
+        timeout-minutes: 5
         run: node ../../scripts/run-tests.mjs vitest run test/js-process-kernel.test.ts --reporter=verbose --reporter=json --outputFile=vitest-process.json
         working-directory: packages/senpi-codemode
 
@@ -1410,7 +1411,7 @@ jobs:
     needs: platform-scope
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -1507,7 +1508,7 @@ jobs:
               --workspace packages/telemetry
               --workspace packages/tui
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 7
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1552,7 +1553,7 @@ jobs:
 
       # The workspace runner is the same code path root `npm run test` / `bun run test` use.
       - name: Workspace tests
-        timeout-minutes: 25
+        timeout-minutes: 7
         run: node scripts/run-workspaces.mjs --if-present ${{ matrix.workspaces }} test
 
       - name: Workflow summary
@@ -1672,7 +1673,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 6
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1835,7 +1836,7 @@ jobs:
     # Each suite step keeps the cap it had on its old leg: its own step timeout where it had one
     # (process and WebView: 12), else its old job cap (the terminal part's two steps share its 30).
     # The job cap is the sum of those step caps plus 10 minutes of shared setup, so one hung suite
-    # holds the macOS runner only for its own budget and the later suites still run.
+    # holds the macOS runner only for its own budget and the later suites still run (#7192).
     timeout-minutes: 99
     steps:
       - name: Checkout
@@ -2082,7 +2083,7 @@ jobs:
         # Windows only for a full run (senpi#3957); Linux always.
         os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2127,7 +2128,7 @@ jobs:
         # Windows only for a full run (senpi#3957); Linux always.
         os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
