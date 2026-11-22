@@ -632,6 +632,13 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	server.on("error", (cause) => {
 		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
 	});
+	// A listener that closes outside shutdown leaves a host that runs its sessions but takes no connection (omo#14725).
+	server.on("close", () => {
+		if (!shuttingDown)
+			process.stderr.write(
+				`senpi rpc socket listener closed: ${formatSocketAddress(socketPath)} accepts no connection\n`,
+			);
+	});
 	// Long-lived hosts outlive many session workers, and a terminated worker thread
 	// takes its children's exit watchers with it (measured: every spawn API leaks
 	// that way). The reaper claims those abandoned children; it never touches one a

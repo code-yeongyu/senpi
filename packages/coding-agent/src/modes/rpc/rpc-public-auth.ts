@@ -71,6 +71,10 @@ export class PublicRpcConnection {
 			this.input.end();
 		});
 		socket.once("end", () => this.raw.end());
+		// After the peer's FIN (and its last line, which the reader above flushes first) this side ends once its queued
+		// answers are out, then the socket closes; a runtime that leaves the FIN to the socket's owner never closes it
+		// otherwise, and the connection is held for good (oh-my-openagent#14725).
+		this.raw.once("end", () => socket.end(() => socket.destroy()));
 		this.input.on("drain", () => socket.resume());
 		socket.on("data", (chunk: Buffer) => {
 			// Feed a coalesced chunk one LF segment at a time: proof verification can remove

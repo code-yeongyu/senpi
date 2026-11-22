@@ -11,6 +11,7 @@ import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
 import { listen as bindOwnedSocket } from "./host-socket-bind.ts";
 import { connectInternalConnection } from "./internal-channel.ts";
+import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { PublicRpcConnection } from "./rpc-public-auth.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
@@ -46,6 +47,8 @@ export interface PublicProxyOptions {
 
 export function createPublicProxy(options: PublicProxyOptions): Server {
 	const { internalSocket, internalSecret, publicSecret, clients } = options;
+	// Each public client the host's own listener refuses is reset; say so once per outage, not once per client (omo#14725).
+	let refused = 0;
 	return createServer((client) => {
 		const auth = options.publicEndpoint ? new PublicRpcConnection(client, options.publicEndpoint) : undefined;
 		const accept = async (): Promise<void> => {
@@ -75,6 +78,8 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 					internal && options.internalKey
 						? await connectInternalConnection(internal, options.internalKey)
 						: internal;
+				if (refused > 0) supervisorLog(`host child accepts connections again after refusing ${refused}`);
+				refused = 0;
 				if (client.destroyed) {
 					hop?.destroy();
 					return;
@@ -82,7 +87,12 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 				proxyWithAdmission(client, hop, options.admission, auth, publicSecret !== undefined);
 				// An authenticated endpoint resumes the client itself once its key record is published.
 				if (!auth) client.resume();
-			} catch {
+			} catch (cause) {
+				// A client that left first ended this hop itself: that is no refusal.
+				if (!client.destroyed && refused++ === 0)
+					supervisorLog(
+						`host child refused a client connection on ${internalSocket} (${errorMessage(cause)}); resetting public connections until it accepts again`,
+					);
 				detach();
 			}
 		};

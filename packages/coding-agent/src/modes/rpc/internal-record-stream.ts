@@ -1,5 +1,5 @@
 import { hkdfSync } from "node:crypto";
-import { Duplex } from "node:stream";
+import { Duplex, type DuplexOptions } from "node:stream";
 import { INTERNAL_RECORD_MAX, type InternalDirection, InternalRecordCipher } from "./internal-record-cipher.ts";
 
 /** A bounded byte stream: record boundaries are invisible to the existing JSONL reader. */
@@ -16,10 +16,14 @@ export function createInternalRecordStream(
 			Buffer.from(hkdfSync("sha256", key, salt, `senpi-rpc-internal ${direction}`, 32)),
 			direction,
 		);
+	// The host side keeps the contract of the net.Server socket it stands in for (`allowHalfOpen: false`): the peer's FIN
+	// ends this side once its queued writes are out, and the stream closes, whatever the runtime does with that FIN
+	// (oh-my-openagent#14725). The supervisor side keeps its half-close: its proxy decides when the client leg ends.
 	return new InternalRecordStream(
 		wire,
 		cipher(role === "client" ? "c2s" : "s2c"),
 		cipher(role === "client" ? "s2c" : "c2s"),
+		{ allowHalfOpen: role === "client" },
 	);
 }
 
@@ -38,8 +42,8 @@ class InternalRecordStream extends Duplex {
 	private wireClosed = false;
 	private ended = false;
 
-	constructor(wire: Duplex, sender: InternalRecordCipher, receiver: InternalRecordCipher) {
-		super();
+	constructor(wire: Duplex, sender: InternalRecordCipher, receiver: InternalRecordCipher, options: DuplexOptions) {
+		super(options);
 		this.wire = wire;
 		this.sender = sender;
 		this.receiver = receiver;
