@@ -87,6 +87,7 @@ it.each([false, true])("renegotiates late grants and revocation on a legacy conn
 	const service = new McpService(shared ? { mcpRegistry: registry } : {});
 	const peer = shared ? new McpService({ mcpRegistry: registry }) : undefined;
 	const tui = mrtrTui();
+	const pi = fakePi();
 	const writer = new SessionEventWriter(() => {});
 	const authority = writer.enableMcpPresenters();
 	const shown = vi.fn();
@@ -134,7 +135,7 @@ it.each([false, true])("renegotiates late grants and revocation on a legacy conn
 		await service.attachSession(
 			{ type: "session_start", reason: "startup" },
 			{ cwd: root.cwd, isProjectTrusted: () => true, mode: "rpc", ui: tui.ui },
-			fakePi(),
+			pi,
 			{ agentDir: root.agentDir },
 		);
 		expect(await service.whenAttachSettled(10_000)).toBe("settled");
@@ -177,6 +178,17 @@ it.each([false, true])("renegotiates late grants and revocation on a legacy conn
 		expect(writer.getMcpFormBinding("peer")?.capture()).toBeUndefined();
 		await transition(connection, () => owner.revoke(registration));
 		expect(initializations).toEqual([{}, { elicitation: {} }, {}]);
+		// senpi#4245: after a rebind (new binding epoch) on the live connection, a grant on the new binding
+		// renegotiates exactly like a grant on the first one.
+		writer.bindMcpForms("session", "durable-rebound", tui.ui, admit);
+		service.bindMcpMrtrPresentation(pi, tui.ui);
+		const rebound = writer.getMcpFormBinding("session");
+		if (!rebound || rebound === binding) throw new Error("Missing rebound binding");
+		const reboundRegistration = owner.register(rebound, sender, { kind: "desktop" });
+		await transition(connection, () => {
+			owner.acquire(reboundRegistration);
+		});
+		expect(initializations).toEqual([{}, { elicitation: {} }, {}, { elicitation: {} }]);
 	} finally {
 		await peer?.dispose("quit");
 		await service.dispose("quit");

@@ -143,6 +143,9 @@ export class ServerConnection {
 			.then(() => this.renew())
 			.finally(() => {
 				this.#renegotiatingForms = undefined;
+				// Readiness that changed while this flight ran (a grant or revocation after its own check) would
+				// otherwise wait for an unrelated reconnect (senpi#4245).
+				this.#refreshLegacyForms();
 			});
 		void this.#renegotiatingForms.catch((error: unknown) => {
 			this.markDegraded(error instanceof Error ? error : new Error(String(error)));
@@ -153,8 +156,9 @@ export class ServerConnection {
 		if (this.#state === "disabled") {
 			return Promise.reject(this.#connectError(`MCP server ${this.serverName} is disabled`, "connect"));
 		}
-		if (this.#elicitationUiProvider?.enforced?.())
-			this.#stopFormReadiness ??= this.#elicitationUiProvider.subscribe?.(() => this.#refreshLegacyForms());
+		// Subscribe even before a private binding exists: the subscription follows later bindings and epochs, and
+		// #refreshLegacyForms does nothing while enforcement is off (senpi#4245).
+		this.#stopFormReadiness ??= this.#elicitationUiProvider?.subscribe?.(() => this.#refreshLegacyForms());
 		if (this.#state === "connected") return Promise.resolve(this.client);
 		if (this.#pendingConnect) return this.#pendingConnect;
 

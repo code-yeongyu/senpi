@@ -2,7 +2,12 @@ import { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-referen
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
 import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
-import { getMcpMrtrPresentation } from "../../../mcp-mrtr-presentations.ts";
+import type { McpFormBinding } from "../../../mcp-form-types.ts";
+import {
+	getMcpMrtrPresentation,
+	notifyMcpMrtrPresentationChange,
+	onMcpMrtrPresentationChange,
+} from "../../../mcp-mrtr-presentations.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import {
 	getToolSearchService,
@@ -1202,7 +1207,10 @@ export class McpService {
 	bindMcpMrtrPresentation(pi: object, ui: ExtensionUIContext, sessionManager?: object): void {
 		const binding = this.#bindings.get(pi);
 		const presentation = getMcpMrtrPresentation(ui);
-		if (binding && presentation) scopes.bindScopePresentation(binding, presentation, sessionManager);
+		if (binding && presentation) {
+			scopes.bindScopePresentation(binding, presentation, sessionManager);
+			notifyMcpMrtrPresentationChange();
+		}
 	}
 
 	#requestOrigin(
@@ -1244,7 +1252,28 @@ export class McpService {
 		};
 		return Object.assign(() => this.getMcpElicitationUi(), {
 			enforced: () => privateBinding() !== undefined,
-			subscribe: (listener: () => void) => privateBinding()?.subscribe?.(listener) ?? (() => {}),
+			// Follow the current form epoch: a rebind replaces the private binding, and a grant on the new one must
+			// renegotiate exactly like a grant on the first (senpi#4245).
+			subscribe: (listener: () => void) => {
+				let current: McpFormBinding | undefined;
+				let stop = () => {};
+				const follow = () => {
+					const next = privateBinding();
+					if (next === current) return false;
+					stop();
+					current = next;
+					stop = next?.subscribe?.(listener) ?? (() => {});
+					return true;
+				};
+				follow();
+				const stopFollowing = onMcpMrtrPresentationChange(() => {
+					if (follow()) listener();
+				});
+				return () => {
+					stopFollowing();
+					stop();
+				};
+			},
 			eligible: () => {
 				const binding = privateBinding();
 				return binding === undefined || binding.capture()?.ready() === true;

@@ -10,6 +10,22 @@ export interface McpMrtrPresentation {
 	readonly privateForms?: McpFormBinding;
 }
 const presentations = new WeakMap<object, McpMrtrPresentation>();
+const presentationChanges = new Set<() => void>();
+
+/**
+ * Runs `listener` whenever a host registers or rebinds a presentation (a new private-form epoch), so a readiness
+ * subscription can follow the current binding instead of the one it first saw (senpi#4245).
+ */
+export function onMcpMrtrPresentationChange(listener: () => void): () => void {
+	presentationChanges.add(listener);
+	return () => {
+		presentationChanges.delete(listener);
+	};
+}
+
+export function notifyMcpMrtrPresentationChange(): void {
+	for (const listener of [...presentationChanges]) listener();
+}
 
 export function registerMcpMrtrPresentation(
 	ui: ExtensionUIContext,
@@ -18,6 +34,7 @@ export function registerMcpMrtrPresentation(
 	privateForms?: McpFormBinding,
 ): ExtensionUIContext {
 	presentations.set(ui, { ui, signal, admit, privateForms });
+	notifyMcpMrtrPresentationChange();
 	return ui;
 }
 
