@@ -29,7 +29,7 @@ writeFileSync(
 		// Survives the timer's SIGTERM and exits 0 on its own instead.
 		"    --show-current) trap 'exit 0' TERM; while :; do sleep 1; done ;;",
 		// Survives the timer's SIGTERM, then ends on a SIGTERM of its own.
-		"    --batch) trap 'trap - TERM; kill -TERM $$' TERM; while :; do sleep 1; done ;;",
+		`    --batch) trap 'echo survived > "${markers}/survived"; trap - TERM; kill -TERM $$' TERM; while :; do sleep 1; done ;;`,
 		"  esac",
 		"done",
 		"exit 0",
@@ -68,6 +68,9 @@ describe.skipIf(process.platform === "win32")("hand run termination", () => {
 	// Nothing observable separates the two, so both carry the same record and neither claims a timeout.
 	it("records a git that survived the timer's SIGTERM and later signalled itself without claiming a timeout", async () => {
 		const outcome = await run(["cat-file", "--batch"], 1_000);
+		// Written from the handler of the timer's SIGTERM before the self-signal: the matching final signal alone would
+		// not prove the git survived the timer's.
+		expect(readFileSync(join(markers, "survived"), "utf8").trim()).toBe("survived");
 		expect(outcome.signal).toBe("SIGTERM");
 		expect(outcome.termination).toEqual({ kind: "signaled", timeout: { expired: true, signalsSent: ["SIGTERM"] } });
 	});

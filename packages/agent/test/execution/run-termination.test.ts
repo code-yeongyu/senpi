@@ -114,17 +114,26 @@ describe.skipIf(process.platform === "win32")("fused run termination", () => {
 	// #7308 review: the child survives the timer's SIGTERM and later ends on SIGTERM of its own. The record says what
 	// was observed and what the timer did; it does not attribute the exit to the timer.
 	it("records a child that survived the timer's SIGTERM and later signalled itself without claiming a timeout", async () => {
-		const result = await localDeviceFiles().run({
-			exe: node,
-			argv: [
-				"-e",
-				"process.once('SIGTERM', () => setImmediate(() => process.kill(process.pid, 'SIGTERM'))); setInterval(() => {}, 1000)",
-			],
-			cwd: process.cwd(),
-			timeoutMs: 1_000,
-		});
-		expect(result.signal).toBe("SIGTERM");
-		expect(result.termination).toEqual({ kind: "signaled", timeout: { expired: true, signalsSent: ["SIGTERM"] } });
+		// The marker is written from the handler of the first (the timer's) SIGTERM, before the self-signal: the matching
+		// final signal alone would not prove the child survived the timer's.
+		const dir = mkdtempSync(join(tmpdir(), "run-termination-survived-"));
+		const marker = join(dir, "survived");
+		try {
+			const result = await localDeviceFiles().run({
+				exe: node,
+				argv: [
+					"-e",
+					`process.once("SIGTERM", () => { require("fs").writeFileSync(${JSON.stringify(marker)}, "survived"); setImmediate(() => process.kill(process.pid, "SIGTERM")); }); setInterval(() => {}, 1000)`,
+				],
+				cwd: process.cwd(),
+				timeoutMs: 1_000,
+			});
+			expect(readFileSync(marker, "utf8")).toBe("survived");
+			expect(result.signal).toBe("SIGTERM");
+			expect(result.termination).toEqual({ kind: "signaled", timeout: { expired: true, signalsSent: ["SIGTERM"] } });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("reports signaled without timer provenance when the child ends on SIGTERM before any timeout", async () => {
