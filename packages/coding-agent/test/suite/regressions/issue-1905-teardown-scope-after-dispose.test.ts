@@ -27,11 +27,11 @@ const profile = (cwd: string, sessionPath: string): RpcSessionLaunchProfile => (
 // Runtime disposal is `session_shutdown` emission (the slow part: extension handlers)
 // followed by a synchronous `AgentSession.dispose()`, so the slow handler is where the
 // disposal's lifetime is modelled.
-function runtime(
+async function runtime(
 	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
 	onSessionShutdown: () => Promise<void>,
-): CreateAgentSessionRuntimeResult {
-	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+): Promise<CreateAgentSessionRuntimeResult> {
+	await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
 			...fakeSessionBase(options),

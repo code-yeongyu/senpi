@@ -16,7 +16,7 @@ import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
-import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
+import type { DynamicSystemPromptPart, PromptSurface } from "../dynamic-prompt/build.ts";
 import {
 	createEventBus,
 	type EventBus,
@@ -149,6 +149,7 @@ import {
 	twoSidedExtensions,
 } from "./two-sided-forwarding.ts";
 import { combinedToolCallSignal } from "./tool-call-signal.ts";
+import { toolResultHandlerTimeoutMs, waitForToolHook } from "./tool-hook-wait.ts";
 
 const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
 	"offload",
@@ -767,6 +768,8 @@ export class ExtensionRunner {
 	private executeToolFn: ExtensionContextActions["executeTool"];
 	private offloadFn: ExtensionContextActions["offload"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
+	private isModelIssuedToolCallFn: (toolCallId: string) => boolean = () => false;
+	private promptSurfaceOfFn: (toolCallId: string) => PromptSurface | undefined = () => undefined;
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
@@ -838,9 +841,15 @@ export class ExtensionRunner {
 		 * and `pi.isLoopRemote()` answers true. Without it they stay loop-side and unbound.
 		 */
 		readonly loopWake?: LoopWakeRoute;
+		/** Backs `ExtensionToolContext.issuedByModel` on a runtime without a session (a hand's calls from the brain). */
+		readonly isModelIssuedToolCall?: (toolCallId: string) => boolean;
+		/** Backs `ExtensionToolContext.promptSurface` on a runtime without a session: the brain's, sent with the call. */
+		readonly promptSurfaceOf?: (toolCallId: string) => PromptSurface | undefined;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
 		if (facts.getAgentDir !== undefined) this.getAgentDirFn = facts.getAgentDir;
+		if (facts.isModelIssuedToolCall !== undefined) this.isModelIssuedToolCallFn = facts.isModelIssuedToolCall;
+		if (facts.promptSurfaceOf !== undefined) this.promptSurfaceOfFn = facts.promptSurfaceOf;
 		this.loopHookCallFn = facts.loopHookCall;
 		const send = facts.loopHookSend;
 		const wake = facts.loopWake;
@@ -988,6 +997,8 @@ export class ExtensionRunner {
 		this.onUserActivityFn = contextActions.onUserActivity;
 		this.executeToolFn = contextActions.executeTool;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
+		this.isModelIssuedToolCallFn = contextActions.isModelIssuedToolCall ?? (() => false);
+		this.promptSurfaceOfFn = () => this.getSystemPromptOptionsFn().surface;
 		// Servers registered from now on reach the extension that connects them right away. Servers
 		// registered during loading are read on session_start.
 		this.runtime.mcpServers.setChangeListener(() => {
@@ -2120,6 +2131,12 @@ export class ExtensionRunner {
 		const runner = this;
 		// createContext() returns a fresh object, so adding properties does not affect other contexts.
 		return Object.defineProperties(baseContext as ExtensionToolContext, {
+			issuedByModel: { value: runner.isModelIssuedToolCallFn(toolCallId) },
+			promptSurface: {
+				get() {
+					return runner.promptSurfaceOfFn(toolCallId);
+				},
+			},
 			tools: {
 				get() {
 					runner.assertActive();
@@ -2613,10 +2630,28 @@ export class ExtensionRunner {
 				});
 				let endStatus: ExtensionToolHookLifecycleStatus = "completed";
 				let errorMessage: string | undefined;
+				const toolResultSignal = hookRun.context.signal;
 				try {
-					const handlerResult = (await handler(currentEvent, hookRun.context)) as
-						| ToolResultEventResult
-						| undefined;
+					const waited = await waitForToolHook({
+						run: () => handler(currentEvent, hookRun.context),
+						// A turn that was already aborted still runs its tool_result handlers (they record the aborted
+						// result); only an abort that arrives during the wait ends it.
+						signal: toolResultSignal?.aborted ? undefined : toolResultSignal,
+						timeoutMs: toolResultHandlerTimeoutMs(ext.path),
+					});
+					if (waited.kind === "aborted") {
+						endStatus = "failed";
+						errorMessage = "interrupted";
+						continue;
+					}
+					if (waited.kind === "timed_out") {
+						endStatus = "failed";
+						errorMessage = `handler timed out after ${waited.elapsedMs}ms; the tool result continues without it`;
+						this.emitError({ extensionPath: ext.path, event: "tool_result", error: errorMessage });
+						continue;
+					}
+					if (waited.kind === "failed") throw waited.error;
+					const handlerResult = waited.value as ToolResultEventResult | undefined;
 					if (!handlerResult) continue;
 
 					if (handlerResult.content !== undefined) {
@@ -2706,7 +2741,19 @@ export class ExtensionRunner {
 				let endStatus: ExtensionToolHookLifecycleStatus = "completed";
 				let errorMessage: string | undefined;
 				try {
-					const handlerResult = await handler(event, hookRun.context);
+					// No deadline: a tool_call handler may hold an approval prompt open. The turn's abort still ends the wait,
+					// and the tool then does not run.
+					const waited = await waitForToolHook({
+						run: () => handler(event, hookRun.context),
+						signal: hookRun.context.signal,
+						timeoutMs: 0,
+					});
+					if (waited.kind === "aborted") {
+						endStatus = "blocked";
+						return { block: true, reason: "Operation aborted" };
+					}
+					if (waited.kind === "failed") throw waited.error;
+					const handlerResult = waited.kind === "settled" ? waited.value : undefined;
 
 					if (handlerResult) {
 						result = handlerResult as ToolCallEventResult;

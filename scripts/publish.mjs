@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
 import { rewriteOwnedRegistryAliases } from "./prepare-senpi-publish-manifest.mjs";
-import { buildPublishArgs } from "./publish-command.mjs";
+import { buildPublishArgs, publishPackage } from "./publish-command.mjs";
 import { assertLiveRunOnMain } from "./release-ref-guard.mjs";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
 import { parseNpmPackJson } from "./npm-pack-json.mjs";
@@ -198,9 +198,24 @@ try {
 			continue;
 		}
 
-		run("npm", publishArgs, {
-			cwd: pkg.publishDirectory,
-		});
+		const outcome = publishPackage(
+			pkg,
+			() => {
+				const { stdout, stderr } = run("npm", publishArgs, { capture: true, cwd: pkg.publishDirectory });
+				if (stdout) process.stdout.write(stdout);
+				if (stderr) process.stderr.write(stderr);
+			},
+			(spec) =>
+				queryWithRetry(() => {
+					const result = queryNpmRegistry(spec, "version");
+					// After a duplicate-version conflict, a 404 may still be registry propagation lag.
+					if (result === null) throw new Error(`${spec} is not yet visible on npm`);
+					return JSON.parse(result);
+				}),
+		);
+		if (outcome === "already-published") {
+			console.log(`Skipping ${pkg.name}@${pkg.version}: a concurrent run already published this version.`);
+		}
 		console.log();
 	}
 } finally {

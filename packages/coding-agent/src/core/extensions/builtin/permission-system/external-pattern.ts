@@ -3,7 +3,39 @@ import { basename, dirname, isAbsolute, join, parse, sep } from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import { Wildcard } from "./wildcard.ts";
 
-/** Recover on-disk case without replacing any lexical ancestor with its symlink target. */
+/** `name` with the case of every letter inverted; equal to `name` when it has no cased letter. */
+function swapCase(name: string): string {
+	let swapped = "";
+	for (const char of name) {
+		const upper = char.toUpperCase();
+		swapped += char === upper ? char.toLowerCase() : upper;
+	}
+	return swapped;
+}
+
+/**
+ * Whether another case spelling of an existing component can name the same entry, the only case in which its
+ * on-disk spelling may differ from `part`: on a case-sensitive directory the swapped spelling is missing or another
+ * entry, and a name with no cased letter has one spelling.
+ */
+function mayHaveOtherCase(parent: string, part: string, identity: BigIntStats): boolean {
+	const swapped = swapCase(part);
+	if (swapped === part) return false;
+	try {
+		const other = lstatSync(`${parent}${parent.endsWith(sep) ? "" : sep}${swapped}`, { bigint: true });
+		return other.dev === identity.dev && other.ino === identity.ino;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Recover on-disk case without replacing any lexical ancestor with its symlink target.
+ *
+ * A directory is listed only when that can change the answer: the component exists and a case-swapped spelling is
+ * the same entry. Listing opens the directory, and that open(2) blocks on a wedged mount or the macOS `/home` autofs
+ * trigger while lstat below it answers at once; running on the host loop, it froze the engine (senpi#7150, #1416).
+ */
 export function canonicalPathCase(
 	value: string,
 	listDirectory: (directory: string) => readonly string[] = readdirSync,
@@ -15,9 +47,9 @@ export function canonicalPathCase(
 	for (let index = 0; index < parts.length; index++) {
 		const part = parts[index];
 		try {
-			const entries = listDirectory(parent);
+			const identity = lstatSync(`${parent}${parent.endsWith(sep) ? "" : sep}${part}`, { bigint: true });
+			const entries = mayHaveOtherCase(parent, part, identity) ? listDirectory(parent) : [part];
 			if (!entries.includes(part)) {
-				const identity = lstatSync(`${parent}${parent.endsWith(sep) ? "" : sep}${part}`, { bigint: true });
 				const spelling = entries.find((entry) => {
 					if (entry.toLowerCase() !== part.toLowerCase()) return false;
 					const candidate = lstatSync(`${parent}${parent.endsWith(sep) ? "" : sep}${entry}`, { bigint: true });

@@ -246,7 +246,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			// historical continuations must not reignite on load. Skip the auto-queue,
 			// leave the goal active (no status rewrite), and tell the user how to resume.
 			const trailing = readTrailingGoalContinuations(ctx.sessionManager.getBranch());
-			if (trailing.counted >= GOAL_CONTINUATION_CAP) {
+			// A session a host restart interrupted is not a cold resume (senpi#7020): its streak goes on.
+			if (trailing.counted >= GOAL_CONTINUATION_CAP && event.continued !== true) {
 				// The load-time flood suppression parks the goal without rewriting its
 				// status, so the only resume signal left is the user's next message.
 				// Arm the one-shot latch the direct-input lifecycle fires when that
@@ -264,9 +265,16 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	// A Stop that lands while no turn runs emits no `session_abort`, so the goal pauses and resumes with the session here.
-	pi.on("session_hold_changed", async (event, ctx) => {
-		if (event.change === "paused") await pauseGoalWithHeldSession(ctx);
-		else await resumeGoalWithReleasedSession(ctx);
+	// Edges are applied one at a time against the hold as it is now: an input that admits no turn (a slash command)
+	// releases the Stop and takes it back within milliseconds, and handling those two edges concurrently let the resume
+	// write land after the pause read, leaving the goal running under a live Stop (senpi#6897).
+	let holdChange: Promise<void> = Promise.resolve();
+	pi.on("session_hold_changed", (_event, ctx) => {
+		const applied = holdChange.then(() =>
+			stopHoldLive(ctx) ? pauseGoalWithHeldSession(ctx).then(() => {}) : resumeGoalWithReleasedSession(ctx),
+		);
+		holdChange = applied.catch(() => {});
+		return applied;
 	});
 
 	pi.on("held_wakes_released", async (event, ctx) => {
@@ -409,7 +417,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("session_shutdown", async (_event, ctx) => {
+	pi.on("session_shutdown", async (event, ctx) => {
 		retireLifecycleCollector?.();
 		activeContext = undefined;
 		unsubscribeGoalStoreChanged();
@@ -417,6 +425,9 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			await accountCurrentAgentTurn(ctx, "active");
 		}
 		clearAgentGoalAccounting();
+		// A graceful close stops the goal cleanly (oh-my-openagent#14313): it reopens paused, never mid-continuation.
+		if (event.closed === true && (await readGoal(goalStoreRef(ctx)))?.status === "active")
+			await updateGoal(goalStoreRef(ctx), { status: "paused" }, "user");
 		goalTicker.stop();
 		monitorContinuation.dispose();
 	});

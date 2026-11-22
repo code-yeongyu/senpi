@@ -8,6 +8,8 @@
  * socket or a registry, so the derivation table is pinned by unit tests rather than by timing.
  */
 import type { SessionKind } from "../../core/extensions/types.ts";
+import type { RetryWait } from "../../core/retry-wait.ts";
+import type { SettledFields, ThreadSettledBy } from "../../core/session-settled.ts";
 import type { RpcSessionState } from "./session-registry-types.ts";
 
 export type SessionStatusValue =
@@ -35,7 +37,10 @@ export type SessionStatusCause =
 	| "park"
 	| "close"
 	| "context"
-	| "rename";
+	| "rename"
+	| "archive"
+	| "settle"
+	| "retry";
 
 export type SessionStatusActor = "client" | "agent" | "host";
 
@@ -54,9 +59,15 @@ export interface SessionStatusEntryView {
 	readonly kind: SessionKind;
 	readonly cwd: string;
 	readonly attachments: number;
+	/** Milliseconds since the Unix epoch of the holder's last observed activity, if known. */
+	readonly lastActivityAt?: number;
 	readonly durableSessionId?: string;
 	readonly sessionPath?: string;
 	readonly name?: string;
+	/** The session file's archived flag; absent reads as not archived. */
+	readonly archived?: boolean;
+	/** The session file's Done flag; absent reads as not settled. */
+	readonly settled?: SettledFields;
 	readonly context: PublishedSessionContext;
 	/**
 	 * The context the session was opened with, before any `set_session_context` patch. `childrenOf`
@@ -75,6 +86,7 @@ export interface SessionStatusRuntimeView {
 	readonly steering: number;
 	readonly followUp: number;
 	readonly pendingQuestions: number;
+	readonly waiting?: RetryWait;
 }
 
 /** The fanout's pending `question` frames for the session (replayed on attach); undefined when the count is unknown. */
@@ -92,9 +104,13 @@ export interface DerivedSessionStatus {
 	readonly durableSessionId?: string;
 	readonly sessionPath?: string;
 	readonly name?: string;
+	readonly archived: boolean;
+	readonly settled: boolean;
+	readonly settledBy?: ThreadSettledBy;
 	readonly model?: { readonly provider: string; readonly id: string };
 	readonly thinkingLevel?: string;
 	readonly pendingQueue: { readonly steering: number; readonly followUp: number };
+	readonly waiting?: RetryWait;
 	readonly context: PublishedSessionContext;
 }
 
@@ -116,14 +132,20 @@ export interface SessionStatusRecord {
 	readonly kind: SessionKind;
 	readonly cwd: string;
 	readonly name?: string;
+	readonly archived: boolean;
+	readonly settled: boolean;
+	readonly settledBy?: ThreadSettledBy;
 	readonly status: SessionStatusValue;
 	readonly reason?: string;
 	readonly attachments: number;
 	readonly model?: { readonly provider: string; readonly id: string };
 	readonly thinkingLevel?: string;
 	readonly pendingQueue: { readonly steering: number; readonly followUp: number };
+	/** senpi#7025: the auto-retry wait the running session sleeps through; absent when it is not waiting. */
+	readonly waiting?: RetryWait;
 	readonly context?: PublishedSessionContext;
 	readonly lastEffect?: SessionStatusLastEffect;
+	/** The last published status change. With no recorded change, snapshots use last known activity, or subscription time if unknown. */
 	readonly lastChange: { readonly at: string; readonly cause: SessionStatusCause; readonly by: SessionStatusActor };
 }
 
@@ -182,9 +204,12 @@ export function deriveSessionStatus(
 		...(entry.durableSessionId !== undefined ? { durableSessionId: entry.durableSessionId } : {}),
 		...(entry.sessionPath !== undefined ? { sessionPath: entry.sessionPath } : {}),
 		...(entry.name !== undefined ? { name: entry.name } : {}),
+		archived: entry.archived === true,
+		...(entry.settled ?? { settled: false }),
 		...(runtime?.model !== undefined ? { model: { provider: runtime.model.provider, id: runtime.model.id } } : {}),
 		...(runtime?.thinkingLevel !== undefined ? { thinkingLevel: runtime.thinkingLevel } : {}),
 		pendingQueue: { steering: runtime?.steering ?? 0, followUp: runtime?.followUp ?? 0 },
+		...(runtime?.waiting !== undefined && status === "running" ? { waiting: runtime.waiting } : {}),
 		context: entry.context,
 	};
 }
@@ -235,8 +260,15 @@ export function causeOfRecord(record: {
 			return "park";
 		case "session_closed":
 			return "close";
+		case "session_archived_changed":
+			return "archive";
+		case "session_settled_changed":
+			return "settle";
 		case "question_resolved":
 			return "question";
+		case "auto_retry_start":
+		case "auto_retry_end":
+			return "retry";
 		case "extension_ui_request":
 			return record.method === "question" ? "question" : undefined;
 		case "compaction_start":

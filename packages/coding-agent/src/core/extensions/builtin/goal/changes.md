@@ -1,3 +1,58 @@
+## 2026-11-19 - A continued session keeps its goal streak (senpi#7020)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: the load-time suppression of a goal ending on `GOAL_CONTINUATION_CAP` trailing continuations skips a `session_start` with `continued`.
+
+### Why
+
+- A long-running goal that a host restart interrupted stayed parked until a person wrote, although nothing about it was cold.
+
+### Why an extension could not handle it
+
+- This is the builtin goal extension's own session-start policy.
+
+### Expected merge conflict zones
+
+- LOW: one condition in the `session_start` handler.
+
+## 2026-11-18 - The audit-free continuation prompt follows the Astra family (senpi#6975)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts`: `isGpt6AstraReceiver` now delegates to the new `hasGpt6AstraSignal` family matcher instead of exact-set membership on `gpt-6-astra` / `gpt-6-astra-fast`.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts`: new `hasGpt6AstraSignal` id grammar beside the existing family signals.
+
+### Why
+
+- The receiver set held two exact launch ids, so gpt-6.2-astra and every future Astra release silently fell back to the full audit prompt the short form was created to avoid (senpi#2796): the audits amplify Astra's over-verification and contradict the preset's settled-check rule on every wake.
+
+### Why an extension could not handle it
+
+- The receiver choice sits inside the goal builtin itself and in the preset matcher module both extensions already share; there is no outer extension seam.
+
+### Expected merge conflict zones
+
+- LOW: the receiver check is three lines in `goal/prompt.ts`; `matchers.ts` gains one pure export with no callers moved.
+
+## 2026-11-17 - A Stop-paused goal stays paused when an input releases and retakes the hold (senpi#6897)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: `session_hold_changed` edges are applied one at a time, each against the current hold (Stop live pauses the goal, released resumes it), instead of trusting the edge's direction.
+
+### Why
+
+- An input that admits no turn (a slash command) releases the Stop and takes it back within milliseconds. The two edges were handled concurrently: the resume write landed after the pause read, leaving the goal active and ticking under a live Stop.
+
+### Why an extension could not handle it
+
+- The goal extension owns its own hold handling; the fix is inside it.
+
+### Expected merge conflict zones
+
+- LOW: the `session_hold_changed` handler in `goal/index.ts`.
+
 ## 2026-11-11 - A goal waiting out a limit resumes when its session reopens (senpi#4085)
 
 ### What changed

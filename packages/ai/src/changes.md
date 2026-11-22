@@ -1,3 +1,39 @@
+## 2026-11-17 - Root export of the OAuth refresh (custody CK18, senpi#5865)
+
+### What changed
+
+- `packages/ai/src/index.ts`: exports `refreshOAuthCredential` and `OAuthRefreshRequest` from `auth/oauth-refresh.ts`.
+
+### Why
+
+`AuthStorage.refreshOAuthCredential` in the coding-agent package delegates to it, so a refresh started there and one started by request-time resolution take the same per-account refresh lock (#5837).
+
+### Why an extension could not handle it
+
+The package root's export list is the public contract; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- LOW: the `auth/` export block in `index.ts`.
+
+## 2026-11-18 - GPT-6.2 ids in the map-less effort inference (senpi#6948, senpi#6942)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `GPT_6_NO_NONE_EFFORT_MODEL_IDS`, `XHIGH_MODEL_IDS` and `OPENAI_MAX_MODEL_IDS` gain `gpt-6.2-astra` and `gpt-6.2-sol`.
+
+### Why
+
+- A custom provider or gateway row for either id without a `thinkingLevelMap` would otherwise lose `xhigh` and `max` and keep `off` selectable, which sends `reasoning.effort: none`. Both models reject that value.
+
+### Why an extension could not handle it
+
+- The inference runs inside the core thinking-level resolution that every provider row goes through. An extension can only supply an explicit map for its own rows.
+
+### Expected merge conflict zones
+
+- LOW: the three id lists.
+
 ## 2026-11-11 - Provider strict mode and scope are one registry per realm (omo#12965)
 
 ### What changed

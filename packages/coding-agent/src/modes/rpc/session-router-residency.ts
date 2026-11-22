@@ -21,13 +21,16 @@ const reportRecordFailure = (sessionId: string) => (cause: unknown) => {
 /**
  * Writes the record entry of a retained session under `sessionPath`, stamped with this host instance, and drops
  * the entry it was recorded under before when the session has since moved to another transcript (senpi#6190).
- * `resident` stamps the writing process: the session is open here. A park writes it unstamped.
+ * `resident` stamps the writing process: the session is open here. A park writes it unstamped. `live` records that the
+ * session was loaded when this host let it go (senpi#7020): every resident stamp is, and so is a handoff or clean-stop
+ * park; an idle-sweep park and an unload are not.
  */
 export async function recordRetainedSession(
 	host: RouterContext,
 	retained: RpcSessionEntry,
 	sessionPath: string,
 	resident: boolean,
+	live: boolean = resident,
 ): Promise<void> {
 	const dir = host.handoverParkedDir;
 	if (dir === undefined) return;
@@ -46,7 +49,8 @@ export async function recordRetainedSession(
 			Object.keys(host.defaults.hostContext ?? {}),
 		),
 		parkedBy: host.defaults.hostContext?.host_instance ?? hostInstanceId(),
-		...(resident ? { residentWriter: currentResidentWriter() } : {}),
+		...(resident ? { residentWriter: await currentResidentWriter() } : {}),
+		...(live ? { live: true as const } : {}),
 	});
 }
 

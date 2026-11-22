@@ -6,8 +6,9 @@ import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.
 import { errorCode } from "./extensions/builtin/terminal/lease-file.ts";
 import {
 	BOOT_INSTANT_TOLERANCE_MS,
+	type OwnBootReader,
+	ownBootAtMs,
 	ownProcessStartedAtMs,
-	processBootAtMs,
 	sameBoot,
 } from "./extensions/builtin/terminal/process-identity.ts";
 import { readProcessStartMs } from "./extensions/builtin/terminal/process-start-probe.ts";
@@ -30,7 +31,7 @@ export interface WriterClaim {
 export interface WriterProbes {
 	readonly pidAlive: (pid: number) => boolean;
 	readonly readProcessStartMs: (pid: number) => Promise<number | undefined>;
-	readonly bootAtMs: () => number;
+	readonly bootAtMs: OwnBootReader;
 	readonly host: () => string;
 	readonly self: () => { readonly pid: number; readonly processStartedAtMs: number };
 }
@@ -63,7 +64,7 @@ export const realWriterProbes: WriterProbes = {
 		}
 	},
 	readProcessStartMs,
-	bootAtMs: () => processBootAtMs(),
+	bootAtMs: ownBootAtMs,
 	host: () => hostname(),
 	self: () => ({ pid: process.pid, processStartedAtMs: ownProcessStartedAtMs() }),
 };
@@ -80,14 +81,21 @@ export async function acquireWriterClaim(
 ): Promise<WriterClaim> {
 	await mkdir(dir, { recursive: true });
 	const current = await latestClaim(dir);
-	if (current !== undefined && !(await ownerGone(dir, current, probes))) throw new SessionWriterBusyError(current);
+	// Resolved before the claim check, so nothing yields between proving the owner gone and publishing the next claim.
+	// A claim from another boot is checked against a fresh read first: a cached record that a wall-clock step made
+	// stale must not call a live writer's claim gone.
+	let bootAtMs = await probes.bootAtMs();
+	if (current !== undefined && current.host === probes.host() && !sameBoot(bootAtMs, current.bootAtMs))
+		bootAtMs = await probes.bootAtMs({ fresh: true });
+	if (current !== undefined && !(await ownerGone(dir, current, probes, bootAtMs)))
+		throw new SessionWriterBusyError(current);
 	const self = probes.self();
 	const claim: WriterClaim = {
 		generation: (current?.generation ?? 0) + 1,
 		nonce: randomUUID(),
 		host: probes.host(),
 		pid: self.pid,
-		bootAtMs: probes.bootAtMs(),
+		bootAtMs,
 		processStartedAtMs: self.processStartedAtMs,
 		canonicalPath,
 	};
@@ -132,11 +140,11 @@ async function latestClaim(dir: string): Promise<WriterClaim | undefined> {
 	return parseClaim(await readFile(join(dir, `${last}.json`), "utf8"), dir);
 }
 
-async function ownerGone(dir: string, claim: WriterClaim, probes: WriterProbes): Promise<boolean> {
+async function ownerGone(dir: string, claim: WriterClaim, probes: WriterProbes, bootAtMs: number): Promise<boolean> {
 	if (await releasedWith(dir, claim)) return true;
 	// A writer on another host (a shared or network directory) cannot be probed from here: never displace it.
 	if (claim.host !== probes.host()) return false;
-	if (!sameBoot(probes.bootAtMs(), claim.bootAtMs)) return true;
+	if (!sameBoot(bootAtMs, claim.bootAtMs)) return true;
 	if (!probes.pidAlive(claim.pid)) return true;
 	const startedAtMs = await probes.readProcessStartMs(claim.pid);
 	if (startedAtMs === undefined) return false;
