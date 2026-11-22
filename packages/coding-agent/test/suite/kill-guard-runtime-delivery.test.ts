@@ -9,7 +9,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import { emitSessionShutdownEvent } from "../../src/core/extensions/runner.ts";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
-import { activateKillGuardRuntime, releaseKillGuardRuntime } from "../../src/core/kill-guard/runtime.ts";
+import {
+	activateKillGuardRuntime,
+	activeKillGuardEnvironment,
+	releaseKillGuardRuntime,
+} from "../../src/core/kill-guard/runtime.ts";
 import { type BashOperations, createBashTool } from "../../src/core/tools/bash.ts";
 import { getShellEnv, getUserShellEnv } from "../../src/utils/shell.ts";
 import { createHarness, createTestUiContext, type Harness } from "./harness.ts";
@@ -181,5 +185,18 @@ describe.runIf(posix)("kill guard runtime layer delivery", () => {
 		const windows = activateKillGuardRuntime({ holder, agentDir, protectedPids: () => [1], platform: "win32" });
 		expect(windows).toBeUndefined();
 		expect(getShellEnv().PATH?.includes(shimRoot(agentDir))).toBe(false);
+	});
+});
+
+// Last: a held record stays installed for its agent dir, and the first record seeds later records' protected pids.
+describe.runIf(posix)("kill guard runtime layer per agent dir", () => {
+	// senpi#5369: a kernel takes the layer of its own session's agent dir, not the most recently activated one.
+	it("gives an agent dir its own runtime layer while another agent dir activated later", () => {
+		const first = agentDirectory();
+		const second = agentDirectory();
+		hold(first);
+		hold(second);
+		expect(activeKillGuardEnvironment({ PATH: "" }, first).BASH_ENV?.startsWith(shimRoot(first))).toBe(true);
+		expect(activeKillGuardEnvironment({ PATH: "" }).BASH_ENV?.startsWith(shimRoot(second))).toBe(true);
 	});
 });
