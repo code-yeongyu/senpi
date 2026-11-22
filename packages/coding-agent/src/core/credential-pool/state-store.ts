@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { extractChatGptSubscriptionAccountId } from "@earendil-works/pi-ai/utils/chatgpt-subscription-auth";
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
+import { hasRefusedGrant } from "./auth-reprobe.ts";
 import { CredentialStoreBusyError, FILE_STORAGE_LOCK_RETRY_BUDGET_MS } from "../lockfile-policy.ts";
 import { acquireStateFileLock, readStateFile, writeStateFileAtomic } from "./state-file.ts";
 
@@ -23,6 +24,7 @@ const slotStateSchema = z.looseObject({
 	stateVersion: z.number().int().nonnegative(),
 	blockedUntil: z.number().int().positive().optional(),
 	blockReason: z.enum(["auth_error", "rate_limit", "account_disabled"]).optional(),
+	refusedGrant: z.literal(true).optional(),
 	usageLimit: z.literal(true).optional(),
 	failureCount: z.number().int().nonnegative().optional(),
 	lastSuccessAt: z.number().int().positive().optional(),
@@ -46,6 +48,7 @@ export type CredentialSlotState = Readonly<{
 	stateVersion: number;
 	blockedUntil?: number;
 	blockReason?: "auth_error" | "rate_limit" | "account_disabled";
+	refusedGrant?: true;
 	/** SIWC usage-limit pause; it has no known reset time, so the cooldown is only a probe interval. */
 	usageLimit?: true;
 	failureCount?: number;
@@ -164,7 +167,7 @@ export function slotHealth(state: CredentialSlotState | undefined, now: number):
 	if (!state) return "ready";
 	// A billing block has no expiry; only credential replacement clears it. An auth
 	// block lasts until its re-probe time (senpi#3264), like a cooldown.
-	if (state.blockReason === "account_disabled") return "blocked";
+	if (state.blockReason === "account_disabled" || hasRefusedGrant(state)) return "blocked";
 	if (state.blockedUntil !== undefined && state.blockedUntil > now) return "blocked";
 	if (state.blockedUntil !== undefined && state.lease !== undefined && state.lease.expiresAt > now) {
 		return "half_open";
