@@ -1,12 +1,13 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	authorizeToolDispatch,
 	type DispatchPolicy,
 	type DispatchRequest,
 	prepareDispatchApproval,
 	registerDispatchAuthorizer,
+	transferDispatchApproval,
 } from "../../src/core/extensions/builtin/permission-system/dispatch.ts";
 import { createHarness } from "../suite/harness.ts";
 
@@ -260,3 +261,71 @@ async function observed<T>(event: Promise<T>): Promise<T> {
 		deadline.removeEventListener("abort", onDeadline);
 	}
 }
+
+// senpi#5795: the prepared executor executes a frozen copy of the preflight's arguments object.
+describe("transferDispatchApproval", () => {
+	const policy: DispatchPolicy = { action: "ask", fingerprint: "explicit-ask" };
+	const approve = (fx: ReturnType<typeof fixture>, input: Record<string, unknown>) =>
+		prepareDispatchApproval(fx.session, fx.request(input), policy)();
+
+	it("moves an unchanged approval to the frozen copy and off the preflight object", async () => {
+		const fx = fixture();
+		const preflight = { value: "same" };
+		approve(fx, preflight);
+		const frozen = JSON.parse(JSON.stringify(preflight));
+		transferDispatchApproval(preflight, frozen);
+		await fx.authorize(fx.request(frozen));
+		expect(fx.ask).not.toHaveBeenCalled();
+		await fx.authorize(fx.request(preflight));
+		expect(fx.ask).toHaveBeenCalledOnce();
+	});
+
+	it("does not move an approval whose input changed in place after it was given", async () => {
+		const fx = fixture();
+		const preflight: Record<string, unknown> = { value: "same" };
+		approve(fx, preflight);
+		preflight.value = "changed";
+		const frozen = JSON.parse(JSON.stringify(preflight));
+		transferDispatchApproval(preflight, frozen);
+		await fx.authorize(fx.request(frozen));
+		expect(fx.ask).toHaveBeenCalledOnce();
+	});
+
+	it("does not move an approval of a retired authorizer", async () => {
+		const fx = fixture();
+		const preflight = { value: "same" };
+		approve(fx, preflight);
+		fx.retire();
+		const frozen = JSON.parse(JSON.stringify(preflight));
+		transferDispatchApproval(preflight, frozen);
+		registerDispatchAuthorizer(fx.session, fx.authorizer);
+		await fx.authorize(fx.request(frozen));
+		expect(fx.ask).toHaveBeenCalledOnce();
+	});
+
+	it("keeps the approval bound to its call: another toolCallId still asks", async () => {
+		const fx = fixture();
+		const preflight = { value: "same" };
+		approve(fx, preflight);
+		const frozen = JSON.parse(JSON.stringify(preflight));
+		transferDispatchApproval(preflight, frozen);
+		await fx.authorize({ ...fx.request(frozen), toolCallId: "another-id" });
+		expect(fx.ask).toHaveBeenCalledOnce();
+	});
+
+	it("is a no-op without an approval or for non-object arguments", async () => {
+		const fx = fixture();
+		const frozen = { value: "same" };
+		for (const [from, to] of [
+			[{ value: "same" }, frozen],
+			[null, frozen],
+			["text", frozen],
+			[frozen, null],
+			[frozen, 7],
+		] as const) {
+			expect(() => transferDispatchApproval(from, to)).not.toThrow();
+		}
+		await fx.authorize(fx.request(frozen));
+		expect(fx.ask).toHaveBeenCalledOnce();
+	});
+});

@@ -47,6 +47,7 @@ function createMockUI(overrides: Partial<ExtensionUIContext> = {}): ExtensionUIC
 		setFooter: vi.fn(),
 		setHeader: vi.fn(),
 		setTitle: vi.fn(),
+		setProgramStatus: vi.fn(),
 		custom: vi.fn().mockResolvedValue(undefined),
 		pasteToEditor: vi.fn(),
 		setEditorText: vi.fn(),

@@ -1159,8 +1159,10 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			if (data === `\x1b${rawCtrl}`) return true;
 		}
 
-		if (modifier === MODIFIERS.alt && !_kittyProtocolActive && (isLetter || isDigit || SYMBOL_KEYS.has(key))) {
-			// Legacy: alt+printable key is ESC followed by the key
+		if (modifier === MODIFIERS.alt && (isLetter || isDigit || SYMBOL_KEYS.has(key))) {
+			// Legacy: alt+printable key is ESC followed by the key. Accepted with Kitty active too: a
+			// conforming Kitty terminal sends Escape as CSI 27 u, and under ConPTY the reply comes from the
+			// outer terminal while the console host still encodes Alt as ESC <key> (#6058).
 			if (data === `\x1b${key}`) return true;
 		}
 
@@ -1291,9 +1293,9 @@ export function parseKey(data: string): string | undefined {
 	if (data === "\x1b\x7f" || data === "\x1b\b") return "alt+backspace";
 	if (!_kittyProtocolActive && data === "\x1bB") return "alt+left";
 	if (!_kittyProtocolActive && data === "\x1bF") return "alt+right";
-	if (!_kittyProtocolActive && data.length === 2 && data[0] === "\x1b") {
+	if (data.length === 2 && data[0] === "\x1b") {
 		const code = data.charCodeAt(1);
-		if (code >= 1 && code <= 26) {
+		if (!_kittyProtocolActive && code >= 1 && code <= 26) {
 			return `ctrl+alt+${String.fromCharCode(code + 96)}`;
 		}
 		// Legacy alt+letter/digit/symbol (ESC followed by the key)

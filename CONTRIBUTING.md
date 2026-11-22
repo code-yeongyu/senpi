@@ -34,7 +34,7 @@ bun install --ignore-scripts
 npm install --ignore-scripts # Contributor-compatible alternative
 bun scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
 bun scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
-bun run check     # oxlint + oxfmt + lint ratchet + tsc + browser-smoke check (pre-commit equivalent)
+bun run check     # oxlint + bun fmt + lint ratchet + tsc + browser-smoke check (pre-commit equivalent)
 bun run test          # Vitest across workspaces (skips live-API)
 ./pi-test.sh      # Optional: live-API integration suite (env-gated; requires API keys)
 ```
@@ -128,8 +128,8 @@ PRs that bloat the core or skip `changes.md` will be asked to convert to an exte
 
 ## Style
 
-- TAB indent (oxfmt `tabWidth: 3`). 120-column line width.
-- Match the style of the surrounding file. The codebase is largely consistent — oxlint, oxfmt and the existing patterns are the source of truth.
+- TAB indent (`.oxfmtrc.json` `tabWidth: 3`, applied by `bun fmt`). 120-column line width.
+- Match the style of the surrounding file. The codebase is largely consistent — oxlint, `bun fmt` and the existing patterns are the source of truth.
 - Use the path aliases defined in root `tsconfig.json` (`@earendil-works/pi-*`, `@code-yeongyu/senpi*`).
 
 ### Why are weekend issues lower priority?

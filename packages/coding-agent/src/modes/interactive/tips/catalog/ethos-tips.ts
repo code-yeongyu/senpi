@@ -24,14 +24,14 @@ export const ETHOS_TIPS = [
 		bindings: [],
 		requiresCommand: "tasks",
 		render: () =>
-			"Try ulw-plan on fable-5.1 xhigh. A patient sage obsessed with the essence does the agonizing for you and fills in every blank you were pretending not to see.",
+			"Try ulw-plan on fable-5.2 xhigh. A patient sage obsessed with the essence does the agonizing for you and fills in every blank you were pretending not to see.",
 	},
 	{
 		id: "ethos.ulw-loop-shallow",
 		bindings: [],
 		requiresCommand: "tasks",
 		render: () =>
-			"For days when deep thought sounds awful, run the ulw loop with gpt-6-sol fast/medium. Fair warning: shallow thinking sends invoices.",
+			"For days when deep thought sounds awful, run the ulw loop with gpt-6.2-sol fast/medium. Fair warning: shallow thinking sends invoices.",
 	},
 	{
 		id: "ethos.monitor-subscribe",

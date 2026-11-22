@@ -94,7 +94,7 @@ describe("issue #2184 /resume choice", () => {
 
 	it("reports the process that still holds the session instead of moving it", async () => {
 		const { oldCwd, cwd, sessionFile, readIdentity } = sameRepoElsewhere();
-		const hold = holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: true });
+		const hold = await holdSessionFile(sessionFile, SESSION_ID, { cwd: oldCwd, expectExisting: true });
 
 		await expect(
 			resolveResumeTarget({ sessionPath: sessionFile, cwd, readIdentity, confirm: async () => true }),
@@ -130,8 +130,12 @@ async function continueIn(cwd: string, appMode: "interactive" | "print", answer?
 		{},
 		cwd,
 	);
-	if (answer !== undefined) child.send(answer);
-	const line = await child.line("RESULT ");
+	const result = child.line("RESULT ");
+	if (answer !== undefined) {
+		await child.waitForOutput(`${REBIND_PROMPT} [y/N] `);
+		child.send(answer);
+	}
+	const line = await result;
 	await child.exit();
 	return {
 		output: child.output(),

@@ -1,10 +1,10 @@
 /**
  * The subscription accounts a usage poll can speak for, named exactly as turns name them in the store
  * (senpi#3684): a Claude account by its slot name, a ChatGPT account by its pool slot name (`default` for a
- * single login). The token is read only when a poll is actually due. A Claude account polls only with a
- * `CLAUDE_CODE_OAUTH_TOKEN` env token; a claude CLI account's token lives in the CLI's own store, and senpi
- * never refreshes a Claude token (senpi#4436). Tokens never leave this module's callers: they go into one
- * request header and nowhere else.
+ * single login). The token is read only when a poll is actually due. A Claude account polls with its
+ * `CLAUDE_CODE_OAUTH_TOKEN` env token, or, for a claude CLI account, with the access token the CLI keeps in its
+ * own store, read as it stands: senpi never refreshes a Claude token (senpi#4436), so an expired one waits for
+ * the CLI's next turn. Tokens never leave this module's callers: they go into one request header and nowhere else.
  */
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import { listSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
@@ -15,6 +15,11 @@ import {
 	isEnvSlot,
 	listAccounts,
 } from "../extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	accountDirFor,
+	isValidAccountDirId,
+	readClaudeCliAccessToken,
+} from "../extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts";
 import type { UsageProvider } from "./usage-endpoints.ts";
 
 /** `undefined`: nothing usable to ask with right now (an expired ChatGPT token a turn will renew). */
@@ -30,6 +35,8 @@ export interface AccountSources {
 	readonly store: CredentialStore;
 	readonly env: (name: string) => string | undefined;
 	readonly now: () => number;
+	/** Where the claude CLI account dirs live; without it, only env token accounts are polled. */
+	readonly agentDir?: string;
 }
 
 export const SIGN_IN_NEEDED = "auth stale - run /login";
@@ -44,16 +51,33 @@ export async function listPollAccounts(sources: AccountSources): Promise<PollAcc
 
 function claudeAccounts(stored: Credential | undefined, sources: AccountSources): PollAccount[] {
 	const credential = stored?.type === "oauth" ? (stored as AnthropicSubscriptionCredential) : emptyCredential();
-	return listAccounts(credential, sources.env)
-		.filter(isEnvSlot)
-		.map((slot) => ({
-			provider: "anthropic-subscription",
-			account: slot.name,
-			async access() {
-				const token = envSlotToken(sources.env, slot.name);
-				return token === undefined ? undefined : { access: token };
+	return listAccounts(credential, sources.env).flatMap((slot): PollAccount[] => {
+		if (isEnvSlot(slot)) {
+			return [
+				{
+					provider: "anthropic-subscription",
+					account: slot.name,
+					async access() {
+						const token = envSlotToken(sources.env, slot.name);
+						return token === undefined ? undefined : { access: token };
+					},
+				},
+			];
+		}
+		const agentDir = sources.agentDir;
+		if (agentDir === undefined || slot.signInRequired !== undefined || !isValidAccountDirId(slot.dirId)) return [];
+		const accountDir = accountDirFor(agentDir, slot.dirId);
+		return [
+			{
+				provider: "anthropic-subscription",
+				account: slot.name,
+				async access() {
+					const token = await readClaudeCliAccessToken(accountDir, sources.now());
+					return token === undefined ? undefined : { access: token };
+				},
 			},
-		}));
+		];
+	});
 }
 
 function chatgptAccounts(stored: Credential | undefined, now: () => number): PollAccount[] {

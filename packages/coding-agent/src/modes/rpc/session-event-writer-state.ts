@@ -2,6 +2,9 @@ import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { McpPresenterAuthority, McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import { LegacyRecordRefusals } from "./legacy-record-depth.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
+import type { DelegationDescriptor } from "./delegation-record.ts";
+import type { ConnectionLocality } from "./raiser-notices.ts";
+import type { RpcRemoteOrigin } from "./remote-origin.ts";
 import { SecretInputPresentations } from "./secret-input-presentations.ts";
 import { RpcSecurityPresentations } from "./security-presentations.ts";
 import { SessionEventFanout } from "./session-event-fanout.ts";
@@ -32,11 +35,21 @@ export abstract class SessionEventWriterState {
 	protected readonly records = new SessionRecordAccounting();
 	protected readonly queues = new Map<string, RecordQueue>();
 	protected readonly fanout = new SessionEventFanout();
-	readonly connectionContext = new SessionConnectionContext((id) => this.fanout.get(id)?.owner);
+	readonly connectionContext = new SessionConnectionContext(
+		(id) => this.fanout.get(id)?.owner,
+		(id) => this.delegationDescriptorOf(id),
+	);
+	/** Set by the host wiring: the remote device a connection declared it speaks for (`set_client_info.remoteOrigin`). */
+	originOf?: (connection: string) => RpcRemoteOrigin | undefined;
+	protected readonly locality: ConnectionLocality = {
+		isRemote: (connection) => this.isRemoteConnection(connection),
+		originOf: (connection) => this.originOf?.(connection),
+	};
 	protected readonly securityPresentations = new RpcSecurityPresentations(
 		this.fanout,
 		(id, task) => this.withConnection(id, task),
 		() => this.requestFlush(),
+		this.locality,
 	);
 	readonly workerSecurityBridge: boolean = false;
 	protected readonly controlQueue: RecordQueue = { latestByKey: new Map(), ready: false };
@@ -98,6 +111,7 @@ export abstract class SessionEventWriterState {
 			() => this.currentConnection(),
 			(line) => this.writeRaw(line),
 			() => this.requestFlush(),
+			this.locality,
 		);
 		this.fanout.onConnectionClosed = (id) => {
 			this.secretPresentations.detach(id);
@@ -118,6 +132,12 @@ export abstract class SessionEventWriterState {
 	abstract withConnection<T>(id: string, task: () => T): T;
 
 	abstract currentConnection(): string | undefined;
+
+	/** Delegated (senpi#5632) or declared remote: never a background route for a secret or grant select (D11 S3-5). */
+	protected abstract isRemoteConnection(connection: string): boolean;
+
+	/** The delegation a line of connection `id` captures at its start (omo-relay-daemon#307). */
+	protected abstract delegationDescriptorOf(id: string): DelegationDescriptor | undefined;
 
 	protected abstract requestFlush(): void;
 }

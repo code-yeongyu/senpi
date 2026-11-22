@@ -86,7 +86,7 @@ export class JavaScriptKernel {
 			clearToolCalls: () => this.#toolCalls.clear(),
 		});
 		this.#memory = new JavaScriptKernelMemory(options, () => this.#slot.processPid);
-		this.#children = new WorkerChildren(options.collectOrphanedChildren);
+		this.#children = new WorkerChildren(options.collectOrphanedChildren, options.attestSpawn);
 		this.#moduleLoader = new LocalModuleLoader(options);
 		this.#slot = new WorkerSlot(
 			options,

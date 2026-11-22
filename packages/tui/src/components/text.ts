@@ -1,4 +1,5 @@
 import { type Component, nextRenderRevision } from "../tui.ts";
+import { setLineSource } from "../selection-source.ts";
 import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 /**
@@ -115,6 +116,10 @@ export class Text implements Component {
 		}
 
 		const result = [...emptyLines, ...contentLines, ...emptyLines];
+		for (let row = 0; row < emptyLines.length; row++) {
+			setLineSource(result, row, null);
+			setLineSource(result, result.length - row - 1, null);
+		}
 		flattenLines(result);
 
 		// Update cache

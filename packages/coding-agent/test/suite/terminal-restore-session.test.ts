@@ -7,7 +7,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from "vitest";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
-import { acquireTerminalLease, currentLeaseToken } from "../../src/core/extensions/builtin/terminal/manifest-lease.ts";
+import {
+	acquireTerminalLease,
+	currentLeaseToken,
+	type LeaseRecord,
+} from "../../src/core/extensions/builtin/terminal/manifest-lease.ts";
 import { processBootAtMs } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
 import { readProcessStartMs } from "../../src/core/extensions/builtin/terminal/process-start-probe.ts";
 import { RESTORE_DIGEST_CUSTOM_TYPE } from "../../src/core/extensions/builtin/terminal/restore-digest.ts";
@@ -216,9 +220,9 @@ describe.runIf(process.platform !== "win32")("terminal restore session: lease, k
 				pid,
 				startedAtMs: Date.now(),
 				acquiredAtMs: Date.now(),
-				bootAtMs: processBootAtMs(),
+				bootAtMs: await processBootAtMs(),
 				processStartedAtMs: options.forgeStart ? realStart - 3_600_000 : realStart,
-			}),
+			} satisfies Required<LeaseRecord>),
 		);
 		return child;
 	}

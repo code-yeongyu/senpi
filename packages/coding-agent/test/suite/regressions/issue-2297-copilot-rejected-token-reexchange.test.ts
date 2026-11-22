@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessageEvent, AssistantMessageEventStream, Credential } from "@earendil-works/pi-ai";
@@ -93,9 +94,10 @@ beforeEach(() => {
 	vi.stubGlobal("fetch", vi.fn(fakeCopilot));
 });
 
-afterEach(() => {
+afterEach(async () => {
 	vi.unstubAllGlobals();
-	rmSync(dir, { recursive: true, force: true });
+	// The pool appends its block log into `dir` without awaiting it; an awaited rm waits for that append (senpi#6488).
+	await rm(dir, { recursive: true, force: true });
 });
 
 describe("issue #2297: a Copilot token GitHub refuses is re-exchanged once", () => {

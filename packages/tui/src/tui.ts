@@ -14,6 +14,7 @@ import {
 	parseKittyGraphicsProbeResponse,
 } from "./kitty-graphics-probe.ts";
 import { isMultiplexerSession, useLegacyMuxRender, viewportRenderEnabled } from "./mux.ts";
+import { copyLineSources } from "./selection-source.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	parseOscColorResponse,
@@ -938,12 +939,20 @@ const JOIN_BATCH = 1024;
  * which keeps a frame over a long transcript from paying a per-line iterator and push.
  */
 export function joinLineArrays(chunks: readonly (readonly string[])[]): string[] {
-	if (chunks.length <= JOIN_BATCH) return ([] as string[]).concat(...chunks);
+	if (chunks.length <= JOIN_BATCH) {
+		const result = ([] as string[]).concat(...chunks);
+		let offset = 0;
+		for (const chunk of chunks) {
+			copyLineSources(chunk, result, offset);
+			offset += chunk.length;
+		}
+		return result;
+	}
 	const batches: string[][] = [];
 	for (let start = 0; start < chunks.length; start += JOIN_BATCH) {
-		batches.push(([] as string[]).concat(...chunks.slice(start, start + JOIN_BATCH)));
+		batches.push(joinLineArrays(chunks.slice(start, start + JOIN_BATCH)));
 	}
-	return ([] as string[]).concat(...batches);
+	return joinLineArrays(batches);
 }
 
 /**
@@ -3419,10 +3428,13 @@ export abstract class TuiBase extends Container {
 			const isImage = isImageLine(line);
 			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
 			if (imageReservedRows > 1) {
+				// Reserving rows at or past the viewport bottom scrolls the terminal exactly like appended text, and the
+				// relative move back up still lands on the image's first row; only an image that starts above the viewport
+				// or is taller than it cannot be placed in place (senpi#4583).
 				const imageStartScreenRow = i - viewportTop;
-				if (imageStartScreenRow < 0 || imageStartScreenRow + imageReservedRows > height) {
+				if (imageStartScreenRow < 0 || imageReservedRows > height) {
 					logRedraw(
-						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
+						`kitty image cannot be placed in place (start row ${imageStartScreenRow}, ${imageReservedRows} rows, height ${height})`,
 					);
 					fullRender(true, !preserveMuxScrollback);
 					return;

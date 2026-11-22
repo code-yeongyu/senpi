@@ -1,13 +1,10 @@
-import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
-import { spawn } from "child_process";
 import path from "path";
 import { type Static, Type } from "typebox";
-import { signalSpawnedChild } from "../../utils/child-signal.ts";
-import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
+import { defaultToolMachine, type ToolMachine } from "./machine.ts";
 import { modelOnlyText } from "./model-only-text.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { findRenderers } from "./renderers/find.ts";
@@ -71,6 +68,8 @@ export interface FindToolOptions {
 	operations?: FindOperations;
 	/** Extension-registered filesystem policy checker. */
 	filesystemPolicy?: FilesystemPolicyChecker;
+	/** Operation layer and policy gate. Default: the process-wide local machine. */
+	machine?: ToolMachine;
 }
 
 export function createFindToolDefinition(
@@ -78,6 +77,7 @@ export function createFindToolDefinition(
 	options?: FindToolOptions,
 ): ToolDefinition<typeof findSchema, FindToolDetails | undefined> {
 	const customOps = options?.operations;
+	const machine = options?.machine ?? defaultToolMachine();
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
@@ -101,22 +101,22 @@ export function createFindToolDefinition(
 				}
 
 				let settled = false;
-				let stopChild: (() => void) | undefined;
 				const settle = (fn: () => void) => {
 					if (settled) return;
 					settled = true;
 					signal?.removeEventListener("abort", onAbort);
-					stopChild = undefined;
 					fn();
 				};
+				// files.glob stops its fd child on the same signal.
 				const onAbort = () => {
-					stopChild?.();
 					settle(() => reject(new Error("Operation aborted")));
 				};
 				signal?.addEventListener("abort", onAbort, { once: true });
 
 				(async () => {
 					try {
+						const admitted = machine.begin("files.glob", { pattern, path: searchDir, limit }, signal);
+						if (admitted !== undefined) await admitted;
 						const searchPath = resolveToCwd(searchDir || ".", ctx?.cwd || cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 						const ops = customOps ?? defaultFindOperations;
@@ -190,137 +190,60 @@ export function createFindToolDefinition(
 							return;
 						}
 
-						// Default implementation uses fd.
-						const fdPath = await ensureTool("fd");
+						// Default implementation: the shared operation layer's fd search (files.glob).
+						const { entries } = await machine.ops.files.glob(
+							{ pattern, cwd: searchPath, limit: effectiveLimit },
+							machine.context(signal),
+						);
 						if (signal?.aborted) {
 							settle(() => reject(new Error("Operation aborted")));
 							return;
 						}
-						if (!fdPath) {
-							settle(() => reject(new Error("fd is not available and could not be downloaded")));
+						const lines = entries.map((entry) => entry.path);
+						const output = lines.join("\n");
+						if (!output) {
+							settle(() =>
+								resolve({
+									content: [{ type: "text", text: "No files found matching pattern" }],
+									details: undefined,
+								}),
+							);
 							return;
 						}
 
-						const args: string[] = ["--glob", "--color=never", "--hidden"];
-
-						// fd normally ignores .gitignore outside git repos, so keep --no-require-git
-						// there. Inside repos, use fd's default git-aware behavior so parent
-						// .gitignore rules stop at nested repo boundaries:
-						// https://github.com/earendil-works/pi/issues/5960
-						let insideGitRepo = false;
-						for (let current = searchPath; ; ) {
-							if (await pathExists(path.join(current, ".git"))) {
-								insideGitRepo = true;
-								break;
-							}
-							const parent = path.dirname(current);
-							if (parent === current) break;
-							current = parent;
+						const relativized: string[] = [];
+						for (const rawLine of lines) {
+							const line = rawLine.replace(/\r$/, "").trim();
+							if (!line) continue;
+							relativized.push(relativizeFindResultPath(line, searchPath));
 						}
-						if (!insideGitRepo) args.push("--no-require-git");
-						args.push("--max-results", String(effectiveLimit));
 
-						// fd --glob matches against the basename unless --full-path is set; in --full-path
-						// mode it matches against the absolute candidate path, so a path-containing
-						// pattern like 'src/**/*.spec.ts' needs a leading '**/' to match anything.
-						let effectivePattern = pattern;
-						if (pattern.includes("/")) {
-							args.push("--full-path");
-							if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") {
-								effectivePattern = `**/${pattern}`;
-							}
-							// fd matches full paths using native separators on Windows.
-							if (process.platform === "win32")
-								effectivePattern = effectivePattern.replaceAll("/", String.raw`[/\\]`);
-						}
-						args.push("--", effectivePattern, searchPath);
-
-						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-						const rl = createInterface({ input: child.stdout });
-						let stderr = "";
-						const lines: string[] = [];
-
-						stopChild = () => {
-							if (!child.killed) {
-								signalSpawnedChild(child);
-							}
-						};
-
-						const cleanup = () => {
-							rl.close();
-						};
-
-						child.stderr?.on("data", (chunk) => {
-							stderr += chunk.toString();
-						});
-
-						rl.on("line", (line) => {
-							lines.push(line);
-						});
-
-						child.on("error", (error) => {
-							cleanup();
-							settle(() => reject(new Error(`Failed to run fd: ${error.message}`)));
-						});
-
-						child.on("close", (code) => {
-							cleanup();
-							if (signal?.aborted) {
-								settle(() => reject(new Error("Operation aborted")));
-								return;
-							}
-							const output = lines.join("\n");
-							if (code !== 0) {
-								const errorMsg = stderr.trim() || `fd exited with code ${code}`;
-								if (!output) {
-									settle(() => reject(new Error(errorMsg)));
-									return;
-								}
-							}
-							if (!output) {
-								settle(() =>
-									resolve({
-										content: [{ type: "text", text: "No files found matching pattern" }],
-										details: undefined,
-									}),
-								);
-								return;
-							}
-
-							const relativized: string[] = [];
-							for (const rawLine of lines) {
-								const line = rawLine.replace(/\r$/, "").trim();
-								if (!line) continue;
-								relativized.push(relativizeFindResultPath(line, searchPath));
-							}
-
-							const resultLimitReached = relativized.length >= effectiveLimit;
-							const rawOutput = relativized.join("\n");
-							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-							const details: FindToolDetails = {};
-							const notices: string[] = [];
-							if (resultLimitReached) {
-								notices.push(
-									`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
-								);
-								details.resultLimitReached = effectiveLimit;
-							}
-							if (truncation.truncated) {
-								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-								details.truncation = truncation;
-							}
-							const content: TextContent[] = [{ type: "text", text: truncation.content }];
-							if (notices.length > 0) {
-								content[0].text += "\n";
-								content.push(modelOnlyText(`[${notices.join(". ")}]`));
-							}
-							settle(() =>
-								resolve({
-									content,
-									details: Object.keys(details).length > 0 ? details : undefined,
-								}),
+						const resultLimitReached = relativized.length >= effectiveLimit;
+						const rawOutput = relativized.join("\n");
+						const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
+						const details: FindToolDetails = {};
+						const notices: string[] = [];
+						if (resultLimitReached) {
+							notices.push(
+								`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
 							);
-						});
+							details.resultLimitReached = effectiveLimit;
+						}
+						if (truncation.truncated) {
+							notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+							details.truncation = truncation;
+						}
+						const content: TextContent[] = [{ type: "text", text: truncation.content }];
+						if (notices.length > 0) {
+							content[0].text += "\n";
+							content.push(modelOnlyText(`[${notices.join(". ")}]`));
+						}
+						settle(() =>
+							resolve({
+								content,
+								details: Object.keys(details).length > 0 ? details : undefined,
+							}),
+						);
 					} catch (e) {
 						if (signal?.aborted) {
 							settle(() => reject(new Error("Operation aborted")));

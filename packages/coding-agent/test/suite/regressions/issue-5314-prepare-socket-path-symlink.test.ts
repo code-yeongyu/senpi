@@ -64,7 +64,7 @@ describe.skipIf(process.platform === "win32")("prepareSocketPath never follows a
 		await symlink(target, socket);
 		const planted = await identity(socket);
 
-		await expect(prepareSocketPath(socket)).rejects.toThrow("address already in use by a live server");
+		await expect(prepareSocketPath(socket)).rejects.toThrow("address already in use, occupied by a non-socket entry");
 
 		expect(await identity(socket)).toEqual(planted);
 		expect(await readlink(socket)).toBe(target);
@@ -79,7 +79,7 @@ describe.skipIf(process.platform === "win32")("prepareSocketPath never follows a
 		await symlink(target, socket);
 		const planted = await identity(socket);
 
-		await expect(prepareSocketPath(socket)).rejects.toThrow("the entry is not a socket");
+		await expect(prepareSocketPath(socket)).rejects.toThrow("occupied by a non-socket entry");
 
 		expect(await identity(socket)).toEqual(planted);
 		expect(await identity(target)).toEqual(targetBefore);

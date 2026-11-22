@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rendezvousOrder as genericOrder, selectSlot } from "@earendil-works/pi-ai/auth/pool/select";
@@ -84,7 +85,7 @@ it("keeps HRW, pins, sidecar health and Claude restart bindings keyed by the imm
 		});
 		expect(decision).toMatchObject({ kind: "reattach", sdkSessionId: "sdk-session", from: 1 });
 	} finally {
-		rmSync(sidecarDir, { recursive: true, force: true });
+		await rm(sidecarDir, { recursive: true, force: true });
 	}
 });
 

@@ -23,13 +23,12 @@ export class SessionWorkerRequests {
 	private serial = 0;
 	private closed = false;
 	/**
-	 * Armed by the FIRST open message, never at construction. The open sequence (commit then
-	 * bind) deliberately shares one budget - resetting it between them is what
-	 * "does not reset the opening deadline between commit and bind" forbids - but a queue
-	 * built long before its first open must not be charged for the wait, which is the
-	 * silent instant timeout senpi#1719 reports on a loaded machine.
+	 * When the worker's owed, timed answers run out of no-progress budget. Re-armed whenever the worker
+	 * starts owing one after owing none, and on every message from it: idle time, when the worker owes
+	 * nothing, is never charged (senpi#1719 for the first open, senpi#6452 for a request after a quiet
+	 * spell), while a request sent behind another still owed shares that answer's deadline.
 	 */
-	private openingDeadline: number | undefined;
+	private progressDeadline = 0;
 	private readonly send: (message: Request) => void;
 	private readonly timeout: () => void;
 
@@ -38,11 +37,30 @@ export class SessionWorkerRequests {
 		this.timeout = timeout;
 	}
 
-	/** Remaining share of the open budget, armed on first use so idle time before it is free. */
-	private remainingOpenMs(): number {
+	/**
+	 * Any inbound worker message shows the request pipeline is alive: a request that merely runs long
+	 * under load is not a dead worker, so the no-progress deadline restarts instead of quarantining the
+	 * session (senpi#6452). The timeout VALUE is unchanged; only a worker that stops answering at all
+	 * reaches it. Interrupt and extension-UI timers keep their own `controlMs` bound from send: an abort
+	 * the worker never answers is cut even while the worker streams other messages.
+	 */
+	noteProgress(): void {
+		if (this.closed) return;
+		this.progressDeadline = Date.now() + SESSION_WORKER_LIMITS.openMs;
+		for (const pending of this.pending.values()) {
+			if (pending.timer === undefined || pending.control) continue;
+			clearTimeout(pending.timer);
+			pending.timer = setTimeout(this.timeout, SESSION_WORKER_LIMITS.openMs);
+		}
+	}
+
+	/** What is left of the no-progress budget for a new timed request; a worker that owed nothing starts afresh. */
+	private progressBudgetMs(): number {
 		const now = Date.now();
-		if (this.openingDeadline === undefined) this.openingDeadline = now + SESSION_WORKER_LIMITS.openMs;
-		return Math.max(0, this.openingDeadline - now);
+		let owed = false;
+		for (const pending of this.pending.values()) if (pending.timer !== undefined && !pending.control) owed = true;
+		if (!owed) this.progressDeadline = now + SESSION_WORKER_LIMITS.openMs;
+		return Math.max(0, this.progressDeadline - now);
 	}
 
 	get activeCount(): number {
@@ -51,11 +69,13 @@ export class SessionWorkerRequests {
 
 	request(message: WorkerRequestInput): Promise<Reply> {
 		if (this.closed) return Promise.reject(new Error("session_closing"));
+		// A sealed secret answer is a human answer like a forwarded `extension_ui_response` (D11 secret phase 5.5).
 		const control =
-			message.type === "command" &&
-			"type" in message.command &&
-			typeof message.command.type === "string" &&
-			["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(message.command.type);
+			message.type === "secret_sealed_answer" ||
+			(message.type === "command" &&
+				"type" in message.command &&
+				typeof message.command.type === "string" &&
+				["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(message.command.type));
 		const bytes = Buffer.byteLength(JSON.stringify(message));
 		let count = 0;
 		let pendingBytes = 0;
@@ -74,7 +94,7 @@ export class SessionWorkerRequests {
 			const timer =
 				message.type === "command" && !control
 					? undefined
-					: setTimeout(this.timeout, control ? SESSION_WORKER_LIMITS.controlMs : this.remainingOpenMs());
+					: setTimeout(this.timeout, control ? SESSION_WORKER_LIMITS.controlMs : this.progressBudgetMs());
 			this.pending.set(request, { resolve, reject, bytes, control, timer });
 			try {
 				this.send({ ...message, request });

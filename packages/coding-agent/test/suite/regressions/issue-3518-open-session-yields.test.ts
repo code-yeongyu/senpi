@@ -238,11 +238,11 @@ describe("issue #3518: opening a large session yields to the event loop", () => 
 		const sessionPath = join(dir, "host.jsonl");
 		writeTranscript(sessionPath, dir);
 		const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
-			new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+			await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 			return {
 				session: {
 					...fakeSessionBase(options),
-					extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+					extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 					abort: async () => {},
 					abortBash: () => {},
 					waitForIdle: async () => {},

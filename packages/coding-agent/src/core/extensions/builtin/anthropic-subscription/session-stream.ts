@@ -33,19 +33,23 @@ import {
 	sentMessageHashes,
 	sentMessages,
 } from "./session-sync.ts";
-import { createSessionTurnAttempt } from "./session-turn-attempt.ts";
+import { admitSettledTurn, createSessionTurnAttempt } from "./session-turn-attempt.ts";
 import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
 
 export type ResidentSessionStreamInput = {
 	model: Model<Api>;
 	context: Context;
 	streamOptions: SimpleStreamOptions;
+	recheckedAccounts?: Set<string>;
 	providerSettings: AnthropicSubscriptionProviderSettings;
 	pinnedAccount?: string;
 	buildOptions: Parameters<typeof queryWithAuthLane>[0]["buildOptions"];
 	customToolNameToSdk: ReadonlyMap<string, string>;
 	toolWatchNote?: string;
 	onResumeFallback: (error: unknown) => void;
+	onLongContextFallback?: () => void;
+	contextTokens?: () => number;
+	outputReserveTokens?: number;
 	onAttemptStart?: () => void;
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
 	/** Called once per attempt, before dispatch, with whether it re-sends the whole history and that re-send's bytes/4 estimate. */
@@ -92,10 +96,13 @@ async function createResidentAttempt(
 	const sessionId = input.streamOptions.sessionId!;
 	const messages = sentMessages(input.context);
 	const hashes = sentMessageHashes(messages);
+	// Continuity and the delta are read from the settled previous turn, never from one still in flight.
+	const { binding, transcriptAvailable } = await admitSettledTurn(sessionId, input.streamOptions.signal, () =>
+		admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane),
+	);
 	const existing = getSession(sessionId);
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
-	const { binding, transcriptAvailable } = await admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane);
 	const servedLineage = getBinding(sessionId);
 	const lineageSeat = existing?.accountName ?? servedLineage?.accountName ?? binding?.accountName;
 	const seat = {
@@ -275,6 +282,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		prompt: "",
 		query: getSdkBoundary().query,
 		providerSettings: input.providerSettings,
+		recheckedAccounts: input.recheckedAccounts,
 		env: input.streamOptions.env,
 		signal: input.streamOptions.signal,
 		sessionId: input.streamOptions.affinitySessionId ?? input.streamOptions.sessionId,
@@ -282,6 +290,9 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		pinnedAccount: input.pinnedAccount,
 		...(preferredAccount === undefined ? {} : { preferredAccount }),
 		buildOptions: input.buildOptions,
+		contextTokens: input.contextTokens,
+		outputReserveTokens: input.outputReserveTokens,
+		...(input.onLongContextFallback === undefined ? {} : { onLongContextFallback: input.onLongContextFallback }),
 		onAttemptStart: input.onAttemptStart,
 		createAttempt: (auth) => createResidentAttempt(input, auth),
 	});

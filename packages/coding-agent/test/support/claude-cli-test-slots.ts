@@ -23,6 +23,11 @@ export function cliSlot(name: string, extra: Partial<ClaudeCliAccountSlot> = {})
 	return { name, source: "login", store: "claude-cli", dirId: cliDirId(name), ...extra };
 }
 
+/** An `auth_error` block as this engine stores it on a Claude CLI slot: bound to the slot's sign-in (senpi#5623). */
+export function cliAuthBlock(dirId: string, blockedUntil: number, blockedAt: number): Partial<ClaudeCliAccountSlot> {
+	return { blockReason: "auth_error", blockedUntil, blockedAt, authVerdict: { dirId, at: blockedAt } };
+}
+
 /** The account a turn ran on, read from the config dir the lane handed the SDK child. */
 export function cliAccountOf(env: Record<string, string | undefined> | undefined): string {
 	const configDir = env?.CLAUDE_CONFIG_DIR;

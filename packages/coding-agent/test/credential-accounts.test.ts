@@ -13,7 +13,7 @@ import { CredentialFailoverError, runCredentialFailover } from "../src/core/cred
 import { listRotationSlots } from "../src/core/credential-pool/rotation-slots.ts";
 import { CredentialSlotRepository } from "../src/core/credential-pool/state-store.ts";
 import { getProviderAccounts } from "../src/core/extensions/builtin/anthropic-subscription/account-management.ts";
-import { emptyCredential } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import { emptyCredential, listAccounts } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import {
 	AllAccountsBlockedError,
 	selectAccount as selectClaudeAccount,
@@ -30,6 +30,8 @@ const ELAPSED = 1;
 type StoredBlock = {
 	readonly blockReason?: "auth_error" | "rate_limit" | "account_disabled";
 	readonly blockedUntil?: number;
+	readonly blockedAt?: number;
+	readonly authVerdict?: { readonly dirId: string; readonly at: number };
 };
 type ListedBlock = Pick<CredentialAccountSummary, "blocked" | "blockedReason" | "blockedUntil">;
 
@@ -42,12 +44,15 @@ const storedSlot = (block: StoredBlock) => ({
 	...block,
 });
 
+const CLAUDE_DIR_ID = "c".repeat(32);
+const CLAUDE_VERDICT = { dirId: CLAUDE_DIR_ID, at: ELAPSED };
+
 /** A stored Claude account is a claude CLI account and holds no token (senpi#4436). */
 const storedClaudeSlot = (block: StoredBlock) => ({
 	name: "default",
 	source: "login" as const,
 	store: "claude-cli" as const,
-	dirId: "c".repeat(32),
+	dirId: CLAUDE_DIR_ID,
 	...block,
 });
 
@@ -77,7 +82,8 @@ async function laneSelectorAccepts(provider: string, block: StoredBlock): Promis
 			for await (const _event of stream) {
 				// Consuming the real failover engine proves this slot reached an attempt.
 			}
-		} else if (provider === "anthropic-subscription") selectClaudeAccount([storedClaudeSlot(block)]);
+		} else if (provider === "anthropic-subscription")
+			selectClaudeAccount(listAccounts({ ...emptyCredential(), accounts: [storedClaudeSlot(block)] }));
 		else selectCursorAccount([storedSlot(block)]);
 		return true;
 	} catch (error) {
@@ -138,8 +144,19 @@ const STORED_BLOCK_CASES: readonly {
 	{
 		provider: "anthropic-subscription",
 		label: "live auth block",
-		stored: { blockReason: "auth_error", blockedUntil: NOW_FAR_FUTURE },
+		stored: {
+			blockReason: "auth_error",
+			blockedUntil: NOW_FAR_FUTURE,
+			blockedAt: ELAPSED,
+			authVerdict: CLAUDE_VERDICT,
+		},
 		listed: { blocked: true, blockedReason: "auth_error", blockedUntil: NOW_FAR_FUTURE },
+	},
+	{
+		provider: "anthropic-subscription",
+		label: "live auth block another engine wrote with no verdict (senpi#5623)",
+		stored: { blockReason: "auth_error", blockedUntil: NOW_FAR_FUTURE, blockedAt: ELAPSED },
+		listed: { blocked: false },
 	},
 	{ provider: "openai", label: "healthy", stored: {}, listed: { blocked: false } },
 	{

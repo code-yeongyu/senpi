@@ -21,7 +21,7 @@ fixtures/schema/       nasty-input.schema.json + nasty-input.typebox.golden.json
 | Roots/config/process lifecycle | `fixtures/service-lifecycle.ts` — `makeRoot`, `setConfig`, `stdioServer`, `waitForCondition`, `assertAlive`, `cleanupRoots` |
 | Spin up a fixture MCP server | `fixtures/sdk-server.ts` (`createFixtureServer`), `fixtures/stdio-server.ts`, `fixtures/http-server.ts` |
 | Fault injection flags | `fixtures/options.ts` — `parseFixtureOptions`, `maybeWedge`, `delaySlowStart` |
-| OAuth IDP | `fixtures/oauth-idp.ts`, `fixtures/oauth-idp-core.ts` (`pkceS256`, `parseIdpOptions`), `fixtures/spawn-idp.ts` |
+| OAuth IDP | `fixtures/oauth-idp.ts`, `fixtures/oauth-idp-core.ts` (`pkceS256`), `fixtures/oauth-idp-options.ts` (`parseIdpOptions`), `fixtures/spawn-idp.ts` |
 | Cross-process workers | `fixtures/token-store-worker.ts`, `fixtures/oauth-race-worker.ts` |
 | Provider-native search mocks | `fixtures/native-search-mocks.ts` (`buildAnthropicSse`, `buildOpenAiResponseEvents`) |
 

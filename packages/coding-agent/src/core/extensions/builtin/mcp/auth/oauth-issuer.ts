@@ -1,10 +1,26 @@
-import type { OAuthServerInfo } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { OAuthDiscoveryState, OAuthServerInfo } from "@modelcontextprotocol/sdk/client/auth.js";
 import { OAuthFlowError } from "./oauth-errors.ts";
 import type { McpStoredAuth } from "./token-store.ts";
 
 // Credential stamps tolerate only the slash spelling of an origin-only URL, not URL normalization.
 export function canonicalAuthorizationServerIssuer(issuer: string): string {
 	return issuer.replace(/^(https?:\/\/[^/?#]+)\/$/, "$1");
+}
+
+/**
+ * Whether a stored discovery record carries its own evidence for the authorization server it names (senpi#4924):
+ * that server's metadata, the MCP server's protected-resource metadata naming it, or the MCP server's own origin
+ * (the SDK's legacy root fallback). A bare URL from anywhere else would send the SDK to an unverified server.
+ */
+export function discoveryNamesItsServer(state: OAuthDiscoveryState, serverUrl: string): boolean {
+	if (state.authorizationServerMetadata !== undefined) return true;
+	const named = canonicalAuthorizationServerIssuer(String(state.authorizationServerUrl));
+	if (named === new URL(serverUrl).origin) return true;
+	return (
+		state.resourceMetadata?.authorization_servers?.some(
+			(server) => canonicalAuthorizationServerIssuer(String(server)) === named,
+		) ?? false
+	);
 }
 
 // RFC 8414 section 3.3: identifiers from metadata are compared verbatim, not as normalized URLs.
