@@ -15,7 +15,7 @@ it("refuses sealed reattach and answers old-handle commands instead of silently 
 	const registry = new RpcSessionRegistry({
 		agentDir: dir,
 		createRuntime: async (options) => {
-			new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+			await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 			return {
 				session: {
 					...fakeSessionBase(options),
@@ -29,7 +29,7 @@ it("refuses sealed reattach and answers old-handle commands instead of silently 
 					favoriteModels: [],
 					scopedModels: [],
 					isBashRunning: false,
-					extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+					extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 					abort: async () => {},
 					waitForIdle: async () => {},
 					dispose: () => {},

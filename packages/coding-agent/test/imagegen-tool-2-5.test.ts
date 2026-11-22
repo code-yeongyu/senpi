@@ -46,8 +46,8 @@ beforeEach(async () => {
 	registerImagesApiProvider({ api: "openai-images", generateImages: generate }, STUB_SOURCE_ID);
 	harness = await createHarness({ extensionFactories: [(pi) => pi.registerTool(generateImageTool)] });
 	await harness.session.bindExtensions({});
-	// generate_image is search-exposed: these tests exercise the tool body directly, so they opt
-	// into the same active set the by-name call would have produced.
+	// generate_image is eval-exposed and this harness registers no eval tool, so it is a direct tool;
+	// these tests exercise the tool body and keep it in the active set explicitly.
 	harness.session.setActiveToolsByName([...harness.session.getActiveToolNames(), "generate_image"]);
 });
 
@@ -63,16 +63,72 @@ function execute(params: Record<string, unknown>) {
 	return harness.session.executeTool<GenerateImageDetails>("generate_image", params);
 }
 
+function failed(model: ImageModel<ImageApi>, errorMessage: string): AssistantImages {
+	return {
+		api: "openai-images",
+		provider: model.provider,
+		model: model.id,
+		output: [],
+		stopReason: "error",
+		errorMessage,
+		timestamp: 0,
+	};
+}
+
+const GATEWAY_LACKS_MODEL =
+	'400 {"error":{"message":"Model gpt-image-2.6-sunburst is not supported on /v1/images/generations or /v1/images/edits.","type":"invalid_request_error"}}';
+
+describe("generate_image GPT Image 2.6 fallback (senpi#5820)", () => {
+	it("retries once on the 2.5 counterpart without complexity when the endpoint lacks 2.6", async () => {
+		generate.mockImplementationOnce(async (model) => failed(model, GATEWAY_LACKS_MODEL));
+		const result = await execute({ prompt: "a red fox", complexity: "low", output_path: "fox.png" });
+
+		expect(generate.mock.calls.map((call) => call[0].id)).toEqual([
+			"gpt-image-2.6-sunburst",
+			"gpt-image-2.5-sunburst",
+		]);
+		expect(generate.mock.calls[0]?.[2]?.complexity).toBe("low");
+		expect(generate.mock.calls[1]?.[2]).not.toHaveProperty("complexity");
+		expect(result.details).toMatchObject({
+			model: "gpt-image-2.5-sunburst",
+			fallbackFrom: "gpt-image-2.6-sunburst",
+			generated: 1,
+		});
+		expect(result.content[0]).toMatchObject({
+			text: expect.stringContaining("generated with gpt-image-2.5-sunburst"),
+		});
+	});
+
+	it.each([
+		["a rate limit on 2.6", "gpt-image-2.6-flare", "429: rate limited, retry after 3s"],
+		["an explicit 2.5 request the endpoint lacks", "gpt-image-2.5-flare", GATEWAY_LACKS_MODEL],
+	])("reports %s without retrying", async (_label, model, message) => {
+		generate.mockImplementationOnce(async (target) => failed(target, message));
+		const result = await execute({ prompt: "a red fox", model });
+
+		expect(generate).toHaveBeenCalledTimes(1);
+		expect(result.details).toMatchObject({ reason: "provider_error", model });
+		expect(result.details.fallbackFrom).toBeUndefined();
+	});
+
+	it("rejects complexity on a model that predates 2.6 before any request", async () => {
+		const result = await execute({ prompt: "a red fox", model: "gpt-image-2.5-sunburst", complexity: "high" });
+
+		expect(result.details.reason).toBe("invalid_params");
+		expect(generate).not.toHaveBeenCalled();
+	});
+});
+
 describe("generate_image GPT Image 2.5", () => {
-	it("defaults to Sunburst and saves the returned PNG", async () => {
+	it("defaults to 2.6 Sunburst and saves the returned PNG", async () => {
 		const result = await execute({ prompt: "a red fox", output_path: "fox.png" });
 
 		expect(generate.mock.calls[0]?.[0]).toMatchObject({
-			id: "gpt-image-2.5-sunburst",
-			name: "GPT Image 2.5 Sunburst",
+			id: "gpt-image-2.6-sunburst",
+			name: "GPT Image 2.6 Sunburst",
 			input: ["text", "image"],
 		});
-		expect(result.details.model).toBe("gpt-image-2.5-sunburst");
+		expect(result.details.model).toBe("gpt-image-2.6-sunburst");
 		expect(readFileSync(join(harness.tempDir, "fox.png"))).toEqual(Buffer.from(PNG_BASE64, "base64"));
 	});
 

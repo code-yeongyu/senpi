@@ -151,3 +151,41 @@ describe.skipIf(process.platform === "win32")("idle exit after a session closed 
 		expect(observer.messages.filter((record) => record.type === "session_closed")).toEqual([]);
 	}, 120_000);
 });
+
+// oh-my-openagent#14272: a client whose sessions on the host have all closed stops counting, though it stays connected.
+describe.skipIf(process.platform === "win32")("idle exit under a connected client that holds no session", () => {
+	const sessionless = (record: WireRecord) =>
+		record.decision === "idle" && (record.activity as WireRecord).connections === 0;
+
+	it("exits one idle window after the client's last session closed, with the client still connected", async ({
+		signal,
+	}) => {
+		const { qa, client, message, advance, exited, stderr } = await clockHostWithHeldTurn("own", signal);
+		const sessionId = openedSessionId(
+			await client.request({ id: "open", type: "open_session", cwd: qa.cwd, kind: "worker" }),
+		);
+		expect(await advance(0)).toMatchObject({ shuttingDown: false, decision: "active" });
+		const idle = message("activity", sessionless);
+
+		await client.request({ id: "close", type: "close_session", sessionId });
+		await idle;
+
+		expect(await advance(IDLE_EXIT_MS - 1)).toMatchObject({ shuttingDown: false, decision: "idle" });
+		expect(await advance(IDLE_EXIT_MS)).toMatchObject({ shuttingDown: true, decision: "exit" });
+		expect(await exited).toEqual([0, null]);
+		expect(stderr()).toContain("senpi rpc host supervisor: idle shutdown");
+		await client.waitForClose();
+	});
+
+	it("stays up past the window while the connected client still holds an idle session", async ({ signal }) => {
+		const { qa, client, advance } = await clockHostWithHeldTurn("hld", signal);
+		const sessionId = openedSessionId(
+			await client.request({ id: "open", type: "open_session", cwd: qa.cwd, kind: "worker" }),
+		);
+		// A round trip after the open: the host's occupancy report for it has reached the supervisor.
+		await client.request({ id: "state", type: "get_state", sessionId });
+
+		expect(await advance(0)).toMatchObject({ shuttingDown: false, decision: "active" });
+		expect(await advance(IDLE_EXIT_MS * 10)).toMatchObject({ shuttingDown: false, decision: "active" });
+	});
+});

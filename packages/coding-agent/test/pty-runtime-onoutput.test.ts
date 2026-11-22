@@ -51,6 +51,7 @@ vi.mock("@earendil-works/pi-pty", () => pty);
 
 import { TerminalRuntimeSession } from "../src/core/extensions/builtin/terminal/runtime-session.ts";
 import { createThrottledEmitter } from "../src/core/extensions/builtin/terminal/tools/bash.ts";
+import { processBootAtMs } from "../src/core/extensions/builtin/terminal/process-identity.ts";
 
 function latestSession(): InstanceType<typeof pty.TerminalSession> {
 	const session = pty.sessions.at(-1);
@@ -59,8 +60,8 @@ function latestSession(): InstanceType<typeof pty.TerminalSession> {
 }
 
 describe("PTY runtime output subscriptions", () => {
-	it("delivers decoded chunks in order, supports unsubscribe, and drops listeners on dispose", () => {
-		const runtime = new TerminalRuntimeSession("output-listener-fixture", {});
+	it("delivers decoded chunks in order, supports unsubscribe, and drops listeners on dispose", async () => {
+		const runtime = new TerminalRuntimeSession("output-listener-fixture", {}, await processBootAtMs());
 		const received: string[] = [];
 		const unsubscribe = runtime.onOutput((chunk) => received.push(chunk));
 		const throwingUnsubscribe = runtime.onOutput(() => {

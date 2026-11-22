@@ -61,7 +61,7 @@ async function launch(qa: Awaited<ReturnType<typeof hostCliSandbox>>, spec: stri
 
 // #4749: the public CLI, real ensure, real supervisor and registered extension all participate.
 describe.skipIf(process.platform === "win32")("private descriptor host CLI deployment", () => {
-	it("survives ensure exit, refuses reuse injection, and replaces only with a fresh channel", async () => {
+	it("survives ensure exit, refuses reuse injection, and replaces only with a fresh channel", async ({ signal }) => {
 		const qa = await hostCliSandbox("pf");
 		writeRpcModelsJson(qa.agentDir, "http://127.0.0.1:1");
 		const spec = join(qa.specDir, "launch.json");
@@ -85,13 +85,17 @@ describe.skipIf(process.platform === "win32")("private descriptor host CLI deplo
 		const peer = await Peer.connect(qa.socket);
 		sockets.push(peer.socket);
 		await authenticate(peer, qa.agentDir);
-		await acknowledgedRequest(peer, {
-			id: "open",
-			type: "open_session",
-			cwd: qa.root,
-			provider: MOCK_PROVIDER,
-			modelId: MOCK_MODEL,
-		});
+		await acknowledgedRequest(
+			peer,
+			{
+				id: "open",
+				type: "open_session",
+				cwd: qa.root,
+				provider: MOCK_PROVIDER,
+				modelId: MOCK_MODEL,
+			},
+			signal,
+		);
 		const received = once(first.channel, "data", { signal: AbortSignal.timeout(15_000) });
 		first.channel.write("inspect");
 		expect(JSON.parse(String((await received)[0]))).toEqual({ childExit: 0 });
@@ -112,13 +116,17 @@ describe.skipIf(process.platform === "win32")("private descriptor host CLI deplo
 		const freshPeer = await Peer.connect(qa.socket);
 		sockets.push(freshPeer.socket);
 		await authenticate(freshPeer, qa.agentDir);
-		await acknowledgedRequest(freshPeer, {
-			id: "new",
-			type: "open_session",
-			cwd: qa.root,
-			provider: MOCK_PROVIDER,
-			modelId: MOCK_MODEL,
-		});
+		await acknowledgedRequest(
+			freshPeer,
+			{
+				id: "new",
+				type: "open_session",
+				cwd: qa.root,
+				provider: MOCK_PROVIDER,
+				modelId: MOCK_MODEL,
+			},
+			signal,
+		);
 		const freshEcho = once(fresh.channel, "data", { signal: AbortSignal.timeout(15_000) });
 		fresh.channel.write("new");
 		expect(String((await freshEcho)[0])).toBe("echo:new");

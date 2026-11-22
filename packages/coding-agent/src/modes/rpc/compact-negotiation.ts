@@ -1,6 +1,6 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
-import { CONNECTION_ROLE_FIXED } from "./connection-roles.ts";
+import { CONNECTION_ROLE_FIXED, DELEGATION_INCARNATION_STALE, type RoleDeclaration } from "./connection-roles.ts";
 import type { RpcCommand } from "./rpc-types.ts";
 import { COMPACT_EVENTS_CAPABILITY } from "./custom-capability.ts";
 import { EVENT_RESYNC_CAPABILITY } from "./socket-peer-recovery.ts";
@@ -73,21 +73,29 @@ export function declarationReply(record: object, selection: CompactSelection | u
 	if (response.id === undefined) return compactUpdatesEnabled() ? undefined : record;
 	return response.success && selection?.selected ? { ...record, data: selection.ack() } : record;
 }
-/** Shared handler applies session flags only after host validation; classic handlers never select compact. */
+/**
+ * Shared handler applies session flags only after host validation; classic handlers never select compact. `incarnation`
+ * is the one the declaring command captured (omo-relay-daemon#307); a declaration from a retired one is refused for
+ * this command only (`delegation_incarnation_stale`), locally or by the host.
+ */
 export function sessionDeclaration(
 	options: RpcConnectionOptions,
 	command: Extract<RpcCommand, { type: "set_client_info" }>,
 	current: readonly string[] | undefined,
-	declare: (caps: string[]) => boolean,
+	declare: (caps: string[], incarnation: number | undefined) => RoleDeclaration,
 	replace: (caps: string[]) => void,
+	incarnation: number | undefined,
 ) {
 	const caps = command.capabilities;
 	if (caps !== undefined) {
 		if (!options.clientInfo && compactUpdatesEnabled() && caps.includes(COMPACT_UPDATES_CAPABILITY))
 			return { capabilities: current, refusal: "compact_endpoint_unsupported" };
-		if (!declare(caps)) return { capabilities: current, refusal: CONNECTION_ROLE_FIXED };
+		const verdict = declare(caps, incarnation);
+		if (verdict === "stale") return { capabilities: current, refusal: DELEGATION_INCARNATION_STALE };
+		if (verdict === "fixed") return { capabilities: current, refusal: CONNECTION_ROLE_FIXED };
 		if (!options.clientInfo) replace(caps);
-		else options.clientInfo.setCapabilities(options.clientInfo.connectionId(), caps);
+		else if (options.clientInfo.setCapabilities(options.clientInfo.connectionId(), caps, incarnation) === "stale")
+			return { capabilities: current, refusal: DELEGATION_INCARNATION_STALE };
 	}
 	return {
 		capabilities: caps ?? current,

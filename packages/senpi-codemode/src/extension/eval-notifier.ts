@@ -21,6 +21,8 @@ export interface EvalNotifierDeps {
 	) => void;
 	readonly getContext: () => ExtensionContext | undefined;
 	readonly getMode: () => EvalNotifyMode;
+	/** On a hand (`pi.isLoopRemote()`), the loop that receives a notice applies the session guards, not this side. */
+	readonly loopRemote?: () => boolean;
 }
 
 /** Session-scoped completion injector with the same no-spin guards as terminal notifications. */
@@ -40,8 +42,10 @@ export class EvalNotifier implements EvalDetachedCellNotifier {
 	notify(cells: readonly EvalDetachedCellNotification[]): void {
 		const mode = this.#deps.getMode();
 		if (mode === "off") return;
-		const ctx = this.#deps.getContext();
-		if (ctx === undefined || NON_INTERACTIVE_MODES.has(ctx.mode) || ctx.model === undefined) return;
+		if (this.#deps.loopRemote?.() !== true) {
+			const ctx = this.#deps.getContext();
+			if (ctx === undefined || NON_INTERACTIVE_MODES.has(ctx.mode) || ctx.model === undefined) return;
+		}
 		const pending = cells.filter((cell) => !this.#notified.has(cell.cellId));
 		if (pending.length === 0) return;
 		for (const cell of pending) this.#notified.add(cell.cellId);

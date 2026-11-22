@@ -31,6 +31,7 @@ export interface TerminalSettings {
 	monitorRunawayLinesPerMinute?: number; // default: 120 (runaway guard: matched lines a minute that count as a flood)
 	monitorRunawayMinutes?: number; // default: 5 (runaway guard: consecutive flood minutes before a persistent command monitor is paused, max 1440)
 	maxDurableMonitors?: number | "unlimited";
+	backgroundAutoReapMinutes?: number; // default: unset (off); stop a background session once it has run this many minutes (senpi#6201)
 	killGuard?: "on" | "off"; // default: "on" (refuse agent signals that match everything or hit protected processes); read from user settings only // default: "unlimited" (persistent monitors per session; invalid values mean unlimited)
 }
 

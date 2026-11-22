@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import {
+	attestSessionSpawn,
 	decideKillGuardRequest,
 	KILL_GUARD_MODULE_URL,
 	killGuardProtectedPids,
@@ -16,10 +17,12 @@ import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import type { KernelToolsCapability, KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
 import type { SessionEnvironment } from "../kernels/session-env.ts";
 import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
+import type { CellToolUpdateSink } from "../tool/nested-tool-output.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
 import { type BridgeDispatchContext, dispatchBridgeCompletion } from "./bridge-dispatch.ts";
 import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-call.ts";
 import { CellKernelTools } from "./cell-kernel-tools.ts";
+import { CellToolUpdates } from "./cell-tool-updates.ts";
 import { parkWhenIdle } from "./idle-parking-kernel.ts";
 import { KernelGlobalsLedger } from "./kernel-globals-ledger.ts";
 import {
@@ -78,6 +81,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	/** One per language for the manager's life, so an idle-park restart never re-announces an earlier generation. */
 	readonly #ledgers = new Map<EvalLanguage, Promise<KernelGlobalsLedger>>();
 	readonly #cellKernelTools = new CellKernelTools();
+	readonly #cellToolUpdates = new CellToolUpdates();
 	#context: ExtensionContext | undefined;
 	#generation = 0;
 	#disposePromise: Promise<void> | undefined;
@@ -111,12 +115,21 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 
 	async #call(request: BridgeToolCallRequest): Promise<unknown> {
 		return await this.#cellKernelTools.run(request.cellToken, () =>
-			routeBridgeToolCall(this.#options, request, this.#context?.evalHandleHost),
+			routeBridgeToolCall(
+				this.#options,
+				request,
+				this.#context?.evalHandleHost,
+				this.#cellToolUpdates.sinkFor(request.cellToken),
+			),
 		);
 	}
 
 	bindCellKernelTools(token: string, capability: KernelToolsCapability): () => void {
 		return this.#cellKernelTools.bind(token, capability);
+	}
+
+	bindCellToolUpdates(token: string, sink: CellToolUpdateSink): () => void {
+		return this.#cellToolUpdates.bind(token, sink);
 	}
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
@@ -278,6 +291,12 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		const localRoots =
 			this.#options.localRoots ??
 			(this.#options.artifactsDir ? { local: join(this.#options.artifactsDir, "local") } : undefined);
+		// senpi#6972: the kernels attest their processes to the session id the host gave them, never one a cell sets.
+		const attestedSessionId = this.#options.sessionEnv?.PI_SESSION_ID;
+		const attestation =
+			attestedSessionId === undefined
+				? {}
+				: { attestSpawn: (pid: number) => attestSessionSpawn(attestedSessionId, pid) };
 		if (language === "js") {
 			const memoryThresholds = resolveKernelMemoryThresholds(this.#options.settings.memory);
 			const processIsolation = resolveJsIsolation(this.#options.settings) === "process";
@@ -290,12 +309,14 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				foreignLanguageNames: () => this.#foreignKernelToolNames(),
 				memory: memoryThresholds,
 				collectOrphanedChildren,
+				...attestation,
 				...(processIsolation ? { isolation: "process" as const } : {}),
 				...(processIsolation && memoryThresholds !== undefined
 					? { processMemory: { thresholds: memoryThresholds, readFootprint: readProcessFootprint } }
 					: {}),
 				...(resolveKernelToolsEnabled(this.#options.settings) ? {} : { kernelToolsEnabled: false }),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
+				...(this.#options.inheritedEnv ? { inheritedEnv: this.#options.inheritedEnv } : {}),
 				...(this.#options.killGuard === true
 					? { killGuard: { moduleUrl: KILL_GUARD_MODULE_URL, agentPid: process.pid } }
 					: {}),
@@ -321,6 +342,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			sessionId: this.#options.sessionId,
 			cwd: this.#options.cwd,
 			...(sessionEnv ? { sessionEnv } : {}),
+			...attestation,
+			...(this.#options.inheritedEnv ? { inheritedEnv: this.#options.inheritedEnv } : {}),
 			...(this.#options.killGuard === true ? { killGuard: { protectedPids: killGuardProtectedPids() } } : {}),
 			connection,
 			onMessage,

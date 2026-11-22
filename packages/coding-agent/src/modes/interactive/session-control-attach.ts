@@ -13,12 +13,15 @@
  * so a retry is answered from its receipt instead of being delivered twice.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { isSessionArchived } from "../../core/session-archived.ts";
+import { readSessionSettled, settledFields } from "../../core/session-settled.ts";
 import { ConnectionRoles } from "../rpc/connection-roles.ts";
 import { SessionEventWriter } from "../rpc/session-event-writer.ts";
 import { subscribeSessionRecords } from "../rpc/session-record-stream.ts";
 import type { SessionStatusEntryView } from "../rpc/session-status.ts";
 import { sessionRuntimeView } from "../rpc/session-status-source.ts";
 import type { ControlConnection } from "./session-control-server.ts";
+import type { TerminalPresenterSurface } from "./terminal-presenter-surface.ts";
 
 export class ControlAttachments {
 	readonly writer = new SessionEventWriter(() => {});
@@ -27,9 +30,12 @@ export class ControlAttachments {
 	private readonly attached = new Set<string>();
 	private readonly stopRecords: () => void;
 	private readonly session: AgentSession;
+	/** The terminal's MCP form presenters (D11 S3-6b), when enforcement is on. */
+	readonly presenters: TerminalPresenterSurface | undefined;
 
-	constructor(session: AgentSession, pendingQuestions: () => number) {
+	constructor(session: AgentSession, pendingQuestions: () => number, presenters?: TerminalPresenterSurface) {
 		this.session = session;
+		this.presenters = presenters;
 		this.writer.status.setSource({
 			sessionIds: () => [this.handle],
 			entryView: (id) => (id === this.handle ? this.entryView() : undefined),
@@ -51,12 +57,14 @@ export class ControlAttachments {
 
 	opened(connection: ControlConnection): void {
 		this.writer.registerConnection(keyOf(connection), connection.transport);
+		this.presenters?.opened(keyOf(connection), connection.transport);
 	}
 
 	closed(connection: ControlConnection): void {
 		const key = keyOf(connection);
 		if (this.attached.delete(key)) this.writer.status.publish(this.handle, "detach", "client");
 		this.roles.release(key);
+		this.presenters?.closed(key);
 		this.writer.unregisterConnection(key);
 	}
 
@@ -64,6 +72,7 @@ export class ControlAttachments {
 	detach(connection: ControlConnection): boolean {
 		const key = keyOf(connection);
 		if (!this.attached.delete(key)) return false;
+		this.presenters?.detach(key);
 		this.writer.detachConnectionFromSession(key, this.handle);
 		this.writer.status.publish(this.handle, "detach", "client");
 		return true;
@@ -74,6 +83,7 @@ export class ControlAttachments {
 		const key = keyOf(connection);
 		if (this.attached.has(key)) return false;
 		this.attached.add(key);
+		this.presenters?.attach(key);
 		this.writer.attachConnectionToSession(key, this.handle);
 		this.writer.status.publish(this.handle, "attach", "client");
 		return true;
@@ -108,6 +118,8 @@ export class ControlAttachments {
 			durableSessionId: this.session.sessionId,
 			...(path !== undefined ? { sessionPath: path } : {}),
 			...(name !== undefined ? { name } : {}),
+			archived: isSessionArchived(manager),
+			settled: settledFields(readSessionSettled(manager)),
 			context: {},
 		};
 	}
@@ -119,11 +131,12 @@ const NULL_CONNECTION = "tui-null";
 export interface TerminalInputReceipt {
 	/** What was sent: a retry with the same id and different content is a conflict, as on a host. */
 	readonly fingerprint: string;
-	readonly disposition: "started" | "queued";
+	/** `held`: kept as a held notice under a Stop or an interrupted run until the person releases it (senpi#6490). */
+	readonly disposition: "started" | "queued" | "held";
 	readonly admission: {
 		readonly clientMessageId: string;
 		readonly durableSessionId: string;
-		readonly disposition: "started" | "queued";
+		readonly disposition: "started" | "queued" | "held";
 	};
 }
 

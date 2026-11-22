@@ -124,3 +124,14 @@ export interface DurableStore {
 	 */
 	importSnapshot(epoch: number, snapshot: StoreSnapshot): Promise<void>;
 }
+
+/**
+ * A backend whose commit is durable when it returns (memory; Bun SQLite with `synchronous=FULL`). `commitSync` keeps the
+ * `commit` contract on the same call: a refusal throws before it returns and leaves the store unchanged. A Durable Object
+ * store confirms durability only asynchronously, so it does not offer this.
+ */
+export interface SyncCommit {
+	commitSync(epoch: number, writes: readonly StoreWrite[], adopt: (result: CommitResult) => void): CommitResult;
+}
+
+export type SyncCommitStore = DurableStore & SyncCommit;
