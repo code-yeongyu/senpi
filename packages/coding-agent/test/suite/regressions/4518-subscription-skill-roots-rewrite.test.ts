@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -96,33 +96,8 @@ describe("regression senpi#4518: the subscription lane rewrites skill roots to C
 		},
 	);
 
-	it("uses the Claude-form root when it resolves to the same directory", () => {
-		const cwd = mkdtempSync(join(tmpdir(), "senpi-4518-"));
-		temporaryDirectories.push(cwd);
-		const home = mkdtempSync(join(tmpdir(), "senpi-4518-home-"));
-		temporaryDirectories.push(home);
-		const globalRoot = join(getAgentDir(), "skills");
-		mkdirSync(globalRoot, { recursive: true });
-		const catalog = formatSkillsForPrompt([skill(globalRoot, "same-skill")]);
-		mkdirSync(join(home, ".claude"), { recursive: true });
-		symlinkSync(globalRoot, join(home, ".claude", "skills"));
-		const previousHome = process.env.HOME;
-		process.env.HOME = home;
-		try {
-			expect(
-				roots(
-					appendFor(
-						`before${catalog}
-after`,
-						cwd,
-					),
-				),
-			).toEqual(["r0=~/.claude/skills"]);
-		} finally {
-			process.env.HOME = previousHome;
-			rmSync(globalRoot, { recursive: true, force: true });
-		}
-	});
+	// The Claude-form rewrite itself (same-file identity, the ~/.claude/skills and .claude/skills forms) is owned by
+	// subscription-skill-path-reads-loaded-copy.test.ts (senpi#6089, senpi#6107); this file carries the roots-table rows.
 
 	it("legacy XML catalog with absolute locations: a location keeps its real path when no same-file Claude copy exists", () => {
 		const cwd = mkdtempSync(join(tmpdir(), "senpi-4518-"));
