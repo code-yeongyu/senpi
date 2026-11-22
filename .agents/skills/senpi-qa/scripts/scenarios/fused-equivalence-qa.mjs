@@ -5,6 +5,8 @@
 //
 //   node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare \
 //     --placement fused [--cases E01,E02] [--surface rpc] [--repeat N] [--child node|binary:<path>] --evidence <slug>
+// The console previews mismatches. For full values and rows, read results[].diffs and results[].repeatDiffs
+// in the evidence directory's receipt.json (`--evidence eq-ci` in CI).
 //
 // `--surface tui` (EQ.tui, plan P0-05c) runs the cases that list O8 through the real interactive TUI instead
 // (lib/equivalence-tui-cases.mjs) and compares their TUI captures against `golden-tui/<platform>`.
@@ -35,6 +37,7 @@ import {
 	validateDeferredList,
 } from "../lib/equivalence-deferred.mjs";
 import { diffNormalized } from "../lib/equivalence-normalize.mjs";
+import { summarizeDiffs } from "../lib/equivalence-diff-summary.mjs";
 import { tuiCaptureHash, tuiGoldenDir } from "../lib/equivalence-tui-capture.mjs";
 import { diffTuiObservations, tuiVerdictLine } from "../lib/equivalence-tui-compare.mjs";
 import { runTuiCase, TUI_CASE_IDS } from "../lib/equivalence-tui-cases.mjs";
@@ -116,15 +119,6 @@ async function runCaseWithWitness(testCase, { surface }, witnessFile) {
 		await run.stop();
 		run.box.cleanup();
 	}
-}
-
-function summarizeDiffs(diffs) {
-	return diffs
-		.slice(0, 12)
-		.map(
-			(row) =>
-				`    ${row.path}: golden=${JSON.stringify(row.golden)?.slice(0, 160)} actual=${JSON.stringify(row.actual)?.slice(0, 160)}`,
-		);
 }
 
 async function main() {
