@@ -71,6 +71,7 @@ import { NOT_SETTLED, type SessionSettled, settledStateOf } from "./session-sett
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
 import type { SpawnedBy } from "./session-lifecycle-types.ts";
+import { engineBuildIdentity } from "./engine-build-identity.ts";
 import { compactUpdatesEnabled } from "./engine-socket-flag.ts";
 import { planLoadedTail } from "./session-loaded-tail.ts";
 import {
@@ -222,6 +223,8 @@ export const CURRENT_SESSION_VERSION = 3;
 export interface SessionHeader {
 	type: "session";
 	version?: number; // v1 sessions don't have this
+	/** Build that minted the header; absent in older files. */
+	engineVersion?: string;
 	id: string;
 	timestamp: string;
 	cwd: string;
@@ -1542,6 +1545,7 @@ export class SessionManager {
 		const header: SessionHeader = {
 			type: "session",
 			version: CURRENT_SESSION_VERSION,
+			engineVersion: engineBuildIdentity().text,
 			id: this.sessionId,
 			timestamp,
 			cwd: this.cwd,
@@ -3373,6 +3377,7 @@ export class SessionManager {
 		const header: SessionHeader = {
 			type: "session",
 			version: CURRENT_SESSION_VERSION,
+			engineVersion: engineBuildIdentity().text,
 			id: newSessionId,
 			timestamp,
 			cwd: this.cwd,
@@ -3600,6 +3605,7 @@ export class SessionManager {
 		const newHeader: SessionHeader = {
 			type: "session",
 			version: CURRENT_SESSION_VERSION,
+			engineVersion: engineBuildIdentity().text,
 			id: newSessionId,
 			timestamp,
 			cwd: resolvedTargetCwd,

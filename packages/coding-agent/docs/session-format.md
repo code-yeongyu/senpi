@@ -219,8 +219,12 @@ interface SessionEntryBase {
 First line of the file. Metadata only, not part of the tree (no `id`/`parentId`).
 
 ```json
-{"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project"}
+{"type":"session","version":3,"engineVersion":"2026.11.22-2","id":"uuid","timestamp":"2026-11-22T14:00:00.000Z","cwd":"/path/to/project"}
 ```
+
+`version` identifies the file format. `engineVersion` identifies the engine build that created this
+file; it does not identify the engine used for every later turn. Older headers can omit it and are
+not backfilled on resume. Forked files record the build that created the fork.
 
 For sessions with a parent (created via `/fork`, `/clone`, or `newSession({ parentSession })`):
 
