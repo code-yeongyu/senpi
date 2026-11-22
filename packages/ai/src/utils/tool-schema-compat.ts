@@ -1,3 +1,5 @@
+import { objectFormBranches } from "./tool-schema-boolean-branches.ts";
+
 /**
  * JSON Schema normalization for tool parameters sent to OpenAI-compatible
  * backends. Some gateways (e.g. Apitopia → Kimi / Moonshot) enforce a stricter
@@ -313,7 +315,9 @@ export function normalizeToolParametersForObjectRoot(schema: Record<string, unkn
 	for (const combiner of COMBINER_KEYS) {
 		const branches = normalized[combiner];
 		if (Array.isArray(branches)) {
-			normalized[combiner] = branches.map((branch) =>
+			const kept = objectFormBranches(branches, combiner);
+			if (kept.length === 0) continue;
+			normalized[combiner] = kept.map((branch) =>
 				isJsonObject(branch) ? normalizeToolParametersForObjectRoot(branch) : branch,
 			);
 		}
