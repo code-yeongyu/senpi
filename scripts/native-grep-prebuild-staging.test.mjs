@@ -33,6 +33,9 @@ function writeCodingAgentFixture(packageDir) {
 		"vendor/pi-client/index.d.ts",
 		"vendor/pi-protocol/index.js",
 		"vendor/pi-protocol/index.d.ts",
+		"vendor/senpi-machine-ops/index.js",
+		"vendor/senpi-machine-ops/index.d.ts",
+		"vendor/senpi-machine-ops/process/in-process-holder.js",
 	]) {
 		mkdirSync(join(packageDir, path, ".."), { recursive: true });
 		writeFileSync(join(packageDir, path), "export {};\n");

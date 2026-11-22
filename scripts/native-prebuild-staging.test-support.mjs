@@ -46,8 +46,15 @@ export const targets = [
 	{ host: "darwin-arm64", platform: "darwin", arch: "arm64", napi: "aarch64-apple-darwin", rust: "aarch64-apple-darwin", built: "darwin-arm64" },
 ];
 
+// sisyphuslabs/omo-desktop-app#4199: Windows rows also build the socket-secret bridge.
+export const windowsTargets = [
+	{ host: "win32-x64", platform: "win32", arch: "x64", napi: "x86_64-pc-windows-msvc", rust: "x86_64-pc-windows-msvc", built: "win32-x64-msvc" },
+	{ host: "win32-arm64", platform: "win32", arch: "arm64", napi: "aarch64-pc-windows-msvc", rust: "aarch64-pc-windows-msvc", built: "win32-arm64-msvc" },
+];
+
 export const ptyBytes = (host) => Buffer.from(`senpi_pty addon bytes for ${host}\n`);
 export const grepBytes = (host) => Buffer.from(`senpi_grep addon bytes for ${host}\n`);
+export const secretBytes = (host) => Buffer.from(`senpi_socket_secret addon bytes for ${host}\n`);
 
 // Runs the producer's Stage artifact step for one matrix row against a napi output dir that
 // holds BOTH addons with distinct bytes, and returns the staged artifact directory.
@@ -58,6 +65,9 @@ export function stageArtifact(root, target, producerScript = stepRunBlock(produc
 	// napi writes the grep addon first in sort order, which is what made an index-based copy wrong.
 	writeFileSync(join(outputDir, `senpi_grep.${target.built}.node`), grepBytes(target.host));
 	writeFileSync(join(outputDir, `senpi_pty.${target.built}.node`), ptyBytes(target.host));
+	if (target.platform === "win32" && target.withSecret !== false) {
+		writeFileSync(join(outputDir, `senpi_socket_secret.${target.built}.node`), secretBytes(target.host));
+	}
 	const script = producerScript.replaceAll("${{ matrix.artifact }}", `native-prebuild-${target.host}`);
 	const result = runBash(script, {
 		cwd: root,
@@ -79,6 +89,18 @@ export function mergeArtifacts(artifactDirs, destination) {
 	for (const artifactDir of artifactDirs) {
 		cpSync(artifactDir, destination, { recursive: true });
 	}
+}
+
+// A pty package with the loader-visible files the pack guard checks.
+export function writePtyPackageFixture(packageDir) {
+	mkdirSync(join(packageDir, "dist"), { recursive: true });
+	mkdirSync(join(packageDir, "native"), { recursive: true });
+	writeFileSync(
+		join(packageDir, "package.json"),
+		JSON.stringify({ name: "@earendil-works/pi-pty", version: "0.0.0", files: ["dist", "native"] }),
+	);
+	writeFileSync(join(packageDir, "dist/index.js"), "export {};\n");
+	writeFileSync(join(packageDir, "native/index.js"), "export {};\n");
 }
 
 export function packedFiles(packageDir) {
