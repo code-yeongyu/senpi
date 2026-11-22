@@ -3128,11 +3128,13 @@ A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the 
 
 #### Replacement identity event
 
-When `new_session`, `switch_session`, or `fork` swaps the live session - including replacements an extension drives, which a client never issued - every attached connection receives:
+When `new_session`, `switch_session`, `fork`, or `clone` swaps the live session - including replacements an extension drives, which a client never issued - every attached connection receives:
 
 ```json
-{ "type": "session_replaced", "durableSessionId": "…", "sessionFile": "…", "cwd": "…", "sessionName": "…" }
+{ "type": "session_replaced", "replacedSessionId": "old-id", "replacedSessionFile": "old-file", "durableSessionId": "new-id", "sessionFile": "new-file", "cwd": "…", "sessionName": "…" }
 ```
+
+Hosts advertising `session_replaced_origin` include the previous durable ID and, when present, its backing file. A client can follow only when `replacedSessionId` matches the session it was bound to. Older hosts omit these fields.
 
 The command response reports only `{ cancelled }`, so this event is the only push channel carrying the new identity. The identity is `durableSessionId`, never `sessionId`: top-level `sessionId` is reserved for the per-connection routing handle that multi-session hosts tag every record with, and that tag is applied last, so reusing the key would overwrite the identity the event exists to deliver. Classic mode emits the event untagged.
 

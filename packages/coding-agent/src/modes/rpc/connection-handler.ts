@@ -1043,7 +1043,7 @@ export function createRpcConnectionHandler(
 		unsubscribeSecurityNotices?.();
 		unsubscribeLoadedSurfaces?.();
 		unsubscribeExtensionEvents?.();
-		const replacedSession = session !== runtimeHost.session;
+		const replacedSession = session !== runtimeHost.session ? session : undefined;
 		session = runtimeHost.session;
 		const hostedSecurity = options.bindSecurityPresentation?.(session, {
 			...createExtensionUIContext(),
@@ -1098,6 +1098,8 @@ export function createRpcConnectionHandler(
 				// the window the refresh takes.
 				outputEvent({
 					type: "session_replaced",
+					replacedSessionId: replacedSession.sessionId,
+					replacedSessionFile: replacedSession.sessionFile,
 					durableSessionId: session.sessionId,
 					sessionFile: session.sessionFile,
 					cwd: session.sessionManager.getCwd(),

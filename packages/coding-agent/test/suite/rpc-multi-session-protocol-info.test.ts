@@ -32,6 +32,7 @@ describe("multi-session RPC protocol info", () => {
 					"session_lifecycle",
 					"expected_host_instance",
 					"attach_session",
+					"session_replaced_origin",
 					"release_attachment",
 					"release_caller_aware",
 					"reclaim_session",

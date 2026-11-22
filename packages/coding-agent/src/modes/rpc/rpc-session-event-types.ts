@@ -89,6 +89,10 @@ export interface RpcServiceTierChangedEvent {
  */
 export interface RpcSessionReplacedEvent {
 	type: "session_replaced";
+	/** Previous durable identity; older hosts omit this pair. */
+	replacedSessionId?: string;
+	/** Previous backing file, if the session had one. */
+	replacedSessionFile?: string;
 	/**
 	 * Durable session id of the session now bound to this connection.
 	 *
