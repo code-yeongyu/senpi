@@ -1,8 +1,9 @@
 /**
  * Which workspace files `read_project_file` / `write_project_file` may touch, and where they resolve on disk.
  *
- * The allowlist is the instruction files the engine itself reads: `AGENTS.md` / `CLAUDE.md` at the workspace root or
- * in any folder below it, and anything under `.omo/rules/`. A path is relative, `/`-separated and canonical (no empty,
+ * The allowlist is the project files the engine itself reads: `AGENTS.md` / `CLAUDE.md` at the workspace root or
+ * in any folder below it, anything under `.omo/rules/`, and the folder's OmO config `.omo/omo.jsonc` (per-agent and
+ * per-category model routing; at the workspace root only, where OmO reads it). A path is relative, `/`-separated and canonical (no empty,
  * `.` or `..` segment), and never passes through `.git` or `node_modules`. Resolution walks the path one segment at a
  * time with `lstat` from the real workspace root and refuses any symlink or non-folder on the way, so neither a
  * traversal nor a link can reach a file outside the workspace.
@@ -35,7 +36,8 @@ export function parseProjectFilePath(input: string): ProjectFilePath | undefined
 	}
 	const name = segments[segments.length - 1] ?? "";
 	const isRule = segments.length >= 3 && segments[0] === ".omo" && segments[1] === "rules";
-	if (!isRule && !INSTRUCTION_FILE_NAMES.has(name)) return undefined;
+	const isOmoConfig = segments.length === 2 && segments[0] === ".omo" && name === "omo.jsonc";
+	if (!isRule && !isOmoConfig && !INSTRUCTION_FILE_NAMES.has(name)) return undefined;
 	return { relative: segments.join("/"), segments };
 }
 

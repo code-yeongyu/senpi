@@ -35,7 +35,7 @@ it("open_session attended:false holds an active goal, and a subsequent attach re
 	const registry = new RpcSessionRegistry({
 		agentDir: a.session.agentDir,
 		createRuntime: async (options) => {
-			new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+			await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 			resumed = await createHarness({
 				siblingOf: a,
 				cwd: options.cwd,

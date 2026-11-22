@@ -412,6 +412,13 @@ function joinSentences(...parts: readonly string[]): string {
 	return parts.filter((part) => part.length > 0).join(" ");
 }
 
+/** A surface variant derived from the terminal wording; an anchor that no longer matches throws instead of leaving a silent copy (senpi#6966). */
+function swap(text: string, anchor: string | RegExp, replacement: string): string {
+	const swapped = text.replace(anchor, replacement);
+	if (swapped === text) throw new Error(`gpt-6-astra: surface anchor not found: ${String(anchor)}`);
+	return swapped;
+}
+
 // The rule table carries the terminal wording; the app surface has no routing line to open with or refer back to.
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open a new request with one short routing line:
@@ -422,11 +429,12 @@ The declared stop condition is binding: work until it holds, then stop (see Stop
 	app: "Open a new request by settling the exact, observable condition that ends the task. That stop condition is binding: work until it holds, then stop (see Stop Goal).",
 };
 
-const APP_STEERING = STEERING.replace(
+const APP_STEERING = swap(
+	STEERING,
 	"keep going under the reading you already declared, so the reply opens with the work instead of another routing line;",
 	"keep going under the reading you already settled, so the reply opens with the work;",
 );
-const APP_FINAL_MESSAGE_SHAPE = FINAL_MESSAGE_SHAPE.replace("anything left unverified", GPT_APP_UNVERIFIED_SLOT);
+const APP_FINAL_MESSAGE_SHAPE = swap(FINAL_MESSAGE_SHAPE, "anything left unverified", GPT_APP_UNVERIFIED_SLOT);
 
 // Chat takes the app wording and replaces the handoff block with the chat reply rule.
 const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport: string; finalMessageShape: string }> =
@@ -434,13 +442,14 @@ const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport
 		terminal: { steering: STEERING, handoffReport: HANDOFF_REPORT, finalMessageShape: FINAL_MESSAGE_SHAPE },
 		app: {
 			steering: APP_STEERING,
-			handoffReport: HANDOFF_REPORT.replace(GPT_HANDOFF_MOMENTS.terminal, GPT_HANDOFF_MOMENTS.app),
+			handoffReport: swap(HANDOFF_REPORT, GPT_HANDOFF_MOMENTS.terminal, GPT_HANDOFF_MOMENTS.app),
 			finalMessageShape: APP_FINAL_MESSAGE_SHAPE,
 		},
 		chat: {
 			steering: APP_STEERING,
-			handoffReport: HANDOFF_REPORT.replace(/^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
-			finalMessageShape: APP_FINAL_MESSAGE_SHAPE.replace(
+			handoffReport: swap(HANDOFF_REPORT, /^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
+			finalMessageShape: swap(
+				APP_FINAL_MESSAGE_SHAPE,
 				"The final message of a change is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs",
 				`${CHAT_FINAL_MESSAGE} and stands alone: the outcome first, then what a reader needs`,
 			),

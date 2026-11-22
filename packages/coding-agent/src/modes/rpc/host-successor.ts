@@ -52,6 +52,7 @@ import {
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { successorHostEnvironment } from "./host-spawn-environment.ts";
 import { signalGeneration } from "./host-stop.ts";
+import { placeHostLaunch } from "./host-unit-placement.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
 import {
 	generationBindPath,
@@ -140,20 +141,23 @@ export async function startSuccessor(context: {
 					? ["ignore", "ignore", stderr.fd, "pipe"]
 					: ["ignore", "ignore", stderr.fd],
 		);
-		const spawned = spawnWithPrivateFds(spawn, launch.command, [...launch.args], {
+		const env = {
+			...successorHostEnvironment({
+				agentDir: options.agentDir,
+				env: options.env,
+				expectedRuntimeBuildId: options.expectedRuntimeBuildId,
+				paths,
+				generation,
+				instanceId,
+			}),
+			...attempt.env,
+		};
+		// The successor gets its own unit too, never the unit of whoever asked for the handoff (senpi#7099).
+		const placed = await placeHostLaunch(launch, instanceId, env);
+		const spawned = spawnWithPrivateFds(spawn, placed.command, [...placed.args], {
 			detached: true,
 			windowsHide: true,
-			env: {
-				...successorHostEnvironment({
-					agentDir: options.agentDir,
-					env: options.env,
-					expectedRuntimeBuildId: options.expectedRuntimeBuildId,
-					paths,
-					generation,
-					instanceId,
-				}),
-				...attempt.env,
-			},
+			env,
 			stdio,
 		});
 		const presenter = successorPresenter(options.presenterBootstrap, spawned, host, attempt.coordinated);

@@ -145,6 +145,8 @@ describe("pi.executeTool hook dispatch", () => {
 
 			expect(textOf(result)).toBe("replacement");
 			expect(result.details).toEqual({ replacement: true });
+			// senpi#6904: the rewritten result keeps the hook's error flag, so a caller such as codemode sees the failure.
+			expect(result.isError).toBe(true);
 		} finally {
 			harness.cleanup();
 		}

@@ -142,7 +142,7 @@ export async function runInstalledPlugin(outDir) {
 	try {
 		await mkdir(outDir, { recursive: true });
 		await mkdir(join(box.cwd, ".omo"), { recursive: true });
-		for (const key of Object.keys(box.env)) if (/API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i.test(key) || key.endsWith("_PACKAGE_DIR")) delete box.env[key];
+		for (const key of Object.keys(box.env)) if (/API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i.test(key)) delete box.env[key];
 		Object.assign(box.env, { XDG_CONFIG_HOME: join(box.dir, "xdg"), XDG_DATA_HOME: join(box.dir, "data"), XDG_CACHE_HOME: join(box.dir, "cache"), XDG_STATE_HOME: join(box.dir, "state"), OMO_DISABLE_TELEMETRY: "1", OMO_SENPI_QA: "1" });
 		await writeFile(join(box.agentDir, "settings.json"), JSON.stringify({ packages: [plugin], defaultProjectTrust: "ask" }));
 		await writeFile(join(box.agentDir, "trust.json"), JSON.stringify({ [box.cwd]: true }));

@@ -5,7 +5,7 @@
  */
 import type { After, LiveHandle } from "./live-handle.ts";
 
-export const KEY_GAP_MS = 30;
+const KEY_GAP_MS = 30;
 
 const NAMED: Readonly<Record<string, string>> = {
 	enter: "\r",
