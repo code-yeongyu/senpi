@@ -5160,6 +5160,8 @@ same id again. A transcript that cannot be read is refused with
 
 Account-scoped usage failures are projected as recovery advice with `errorCause: {"type":"usage_limit","scope":"account"}` in `message_*`, `agent_end`, `entry_appended`, `get_messages`, `get_entries`, and `get_tree`. The engine message and session file retain the original provider error for diagnostics; these raw stored messages are not the user-facing RPC representation. Entry ids, parent links, timestamps, tree labels, and provider diagnostics are preserved by the projection.
 
+`errorCause` is optional on assistant messages. `usage_limit.scope` is `"account"` or `"model"`. A `model_config` cause carries `model`, the provider/model selector the route does not serve. A `sign_in_required` cause carries `accountNames`, an array of affected local account labels (for example, `{"type":"sign_in_required","accountNames":["work"]}`). Clients can offer sign-in from this typed cause without parsing `errorMessage`.
+
 Get all messages in the conversation.
 
 ```json
@@ -7178,11 +7180,12 @@ When the run ended with a provider error (the last assistant message has `stopRe
 }
 ```
 
-`failure` is built only from the failed message's structured `providerDiagnostic`, never from `errorMessage` text. `httpStatus` and `code` are copied from it when present. `provider` and `model` are the ids of the request that failed. When that request ran on a model other than the one the user selected (a fallback rung, or the model a virtual model routed to), `selectedProvider` and `selectedModel` name the selected one; both are absent otherwise. Every category carries a `reason` and an `action`:
+`failure` describes the failed assistant message. Provider rejection details come from its structured `providerDiagnostic`; `httpStatus` and `code`, when present on a diagnostic-based failure, are copied from that diagnostic. Local sign-in requirements come from `errorCause`, not from matching provider prose. `provider` and `model` identify the failing route, even when sign-in was required before any request could be sent. When that route differs from the one the user selected (a fallback rung, or the model a virtual model routed to), `selectedProvider` and `selectedModel` name the selected one; both are absent otherwise. Every category carries a `reason` and an `action`:
 
 | `category` | `action` |
 | --- | --- |
 | `auth` | re-authenticate the provider |
+| `sign_in_required` | sign in again with the provider |
 | `request_refused` | send the message again or choose another model; if it keeps failing, re-authenticate `<provider>` |
 | `model_unavailable` | choose another model, or check that your plan or key includes this model |
 | `rate_limit` | retry later or set a fallback model |
@@ -7192,6 +7195,8 @@ When the run ended with a provider error (the last assistant message has `stopRe
 | `provider_unavailable` | retry or switch provider |
 | `network` | check connectivity |
 | `unknown` | send the message again; if it repeats, choose another model |
+
+Only `sign_in_required` carries `failure.accountNames`, copied from the assistant message's typed cause. For `provider: "anthropic-subscription"`, this means a retired sign-in or a confirmed signed-out CLI account needs a new login. The labels identify local accounts, not credentials. An HTTP 401 alone does not establish that condition: it stays `auth` unless the recent-success rule below makes it `request_refused`.
 
 `unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` is the generic `the provider returned an unexpected error`, and the provider's code or status, when it sent one, is only in `httpStatus` and `code`. No `reason` or `action` text carries a code or status. When `resetsAt` is set, `reason` ends with that time in the host's local time zone. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. An `unknown` failure the provider answered with HTTP 404 is `model_unavailable` instead: a model endpoint returns 404 for a model id this account cannot use, as the ChatGPT subscription backend does for a model not yet rolled out to the plan. Retry and fallback decisions do not read `failure`.
 

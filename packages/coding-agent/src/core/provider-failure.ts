@@ -60,7 +60,7 @@ export interface ProviderFailure {
 
 const ACTIONS: Record<Exclude<ProviderFailureCategory, "unknown">, { reason: string; action: string }> = {
 	auth: { reason: "the provider rejected the credentials", action: "re-authenticate the provider" },
-	sign_in_required: { reason: "Claude requires a new sign-in", action: "sign in again with Claude" },
+	sign_in_required: { reason: "the provider requires a new sign-in", action: "sign in again with the provider" },
 	request_refused: {
 		reason: "the provider refused this request, but the same key worked moments ago, so it may still be valid",
 		action: "send the message again or choose another model; if it keeps failing, re-authenticate",
