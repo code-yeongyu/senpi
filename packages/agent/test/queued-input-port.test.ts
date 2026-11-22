@@ -319,4 +319,19 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 
 		expect(log).toEqual(["request:first", "request:first|later"]);
 	});
+	// senpi#4068: naming a queue removes only from it, so a message can never be moved between queues.
+	it("removes a queued message only from the named queue", () => {
+		const agent = new Agent({ streamFn: recordingStream([]) });
+		const steer = user("steer");
+		const followUp = user("follow-up");
+		agent.steer(steer);
+		agent.followUp(followUp);
+
+		expect(agent.removeQueuedMessage(steer, "followUp")).toBe(false);
+		expect(agent.removeQueuedMessage(followUp, "steer")).toBe(false);
+		expect(texts(agent.peekQueuedMessages({ all: true }))).toEqual(["steer", "follow-up"]);
+		expect(agent.removeQueuedMessage(steer, "steer")).toBe(true);
+		expect(agent.removeQueuedMessage(followUp, "followUp")).toBe(true);
+		expect(agent.hasQueuedMessages()).toBe(false);
+	});
 });

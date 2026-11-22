@@ -472,8 +472,13 @@ export class Agent {
 		this.followUpQueue.enqueue(message);
 	}
 
-	/** Remove one queued steering or follow-up message by identity; false once it was drained into a turn. */
-	removeQueuedMessage(message: AgentMessage): boolean {
+	/**
+	 * Remove one queued steering or follow-up message by identity; false once it was drained into a turn.
+	 * Naming a queue removes only from that queue.
+	 */
+	removeQueuedMessage(message: AgentMessage, queue?: "steer" | "followUp"): boolean {
+		if (queue === "steer") return this.steeringQueue.remove(message);
+		if (queue === "followUp") return this.followUpQueue.remove(message);
 		return this.steeringQueue.remove(message) || this.followUpQueue.remove(message);
 	}
 

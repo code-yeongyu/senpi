@@ -4597,11 +4597,10 @@ export class AgentSession {
 					}
 					// A failed first response consumes the exemption but must not continue the run: input queued behind it
 					// waits for the next prompt, exactly as after a failed response without a compaction (#4036).
+					// Input parked behind this exemption was already released when the exemption was consumed
+					// (`_releasePostCompactionDeferral`), so no flush is needed here (#4068).
 					allowsPostCompactionUsageExemptContinuation =
 						this._postCompactionUsageExemptAssistants.has(msg) && msg.stopReason !== "error" && msg.stopReason !== "aborted";
-					if (allowsPostCompactionUsageExemptContinuation) {
-						this._flushPostCompactionDeferredMessages();
-					}
 					// Released before the admission re-sample below, which would otherwise still read the armed
 					// exemption's "threshold" placeholder and fail the prompt with a false RequiredCompactionError.
 					if (this._releaseSpentPostCompactionExemption(msg)) {
@@ -7490,13 +7489,12 @@ export class AgentSession {
 		const orderOf = (message: AgentMessage): number => enqueueOrderOf.get(message) ?? Number.POSITIVE_INFINITY;
 		const oldestParked = Math.min(...parked.map(orderOf));
 		const parkedSet = new Set(parked);
-		const newer = this._queuedInputOrder
+		const candidates = this._queuedInputOrder
 			.filter((input) => input.mode === mode && input.enqueueOrder > oldestParked)
 			.map((input) => this._queuedMessages.get(input.queuedId))
-			.filter(
-				(message): message is AgentMessage =>
-					message !== undefined && !parkedSet.has(message) && this.agent.removeQueuedMessage(message),
-			);
+			.filter((message): message is AgentMessage => message !== undefined && !parkedSet.has(message));
+		// Remove only from the queue of this mode, so a message can never move between queues (#4068).
+		const newer = candidates.filter((message) => this.agent.removeQueuedMessage(message, mode));
 		for (const message of [...parked, ...newer].sort((a, b) => orderOf(a) - orderOf(b))) {
 			if (mode === "steer") this.agent.steer(message);
 			else this.agent.followUp(message);
