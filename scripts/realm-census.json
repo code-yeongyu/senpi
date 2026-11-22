@@ -5619,6 +5619,10 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/terminal/process-identity.ts#kernelBootRecords": {
+			"class": "per-copy-safe",
+			"reason": "memoized kernel probe; each copy reads the same host boot record, and readers refresh before trusting a boot mismatch"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/terminal/pty.lazy.ts#loaded": {
 			"class": "per-copy-safe",
 			"reason": "lazy-load cache (design 3.3)"

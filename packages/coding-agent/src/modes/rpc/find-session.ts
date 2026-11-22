@@ -8,9 +8,14 @@
  * host's own session folder, never a path from the request, which carries the durable id alone. It is bounded: a host
  * with more session files than `FIND_SESSION_FILE_LIMIT` answers a typed error instead of a partial answer, and no
  * file is read before that bound is decided.
+ *
+ * senpi names every session file it creates `<timestamp>_<durable id>.jsonl`, so the files named for the id are read
+ * first and every other header only when none of them carries it (senpi#7136): on a host with ~10,000 session files the
+ * full header pass took about a second, long enough to push a device's closed-session lookup past the account's probe
+ * bound. A file created under a caller-chosen name (`--session <path>`) is still found by that full pass.
  */
 import { open, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { RpcResponse } from "./rpc-types.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 
@@ -99,11 +104,18 @@ async function sessionFiles(agentDir: string): Promise<string[]> {
 		if (files.length >= FIND_SESSION_FILE_LIMIT) throw new FindSessionTooManyError(FIND_SESSION_FILE_LIMIT);
 		files.push(join(dir, name));
 	};
+	const folders: string[] = [];
 	for (const entry of entries) {
 		if (entry.isFile()) add(root, entry.name);
-		if (!entry.isDirectory()) continue;
-		const folder = join(root, entry.name);
-		for (const name of await readdir(folder).catch(() => [])) add(folder, name);
+		if (entry.isDirectory()) folders.push(join(root, entry.name));
+	}
+	// One folder per cwd: a host with thousands of them lists them `READERS` at a time, not one after another (senpi#7136).
+	for (let index = 0; index < folders.length; index += READERS) {
+		const batch = folders.slice(index, index + READERS);
+		const listed = await Promise.all(batch.map((folder) => readdir(folder).catch(() => [])));
+		batch.forEach((folder, offset) => {
+			for (const name of listed[offset] ?? []) add(folder, name);
+		});
 	}
 	return files;
 }
@@ -159,8 +171,29 @@ export async function findSession(
 	}
 }
 
+/** The files among `files` whose header carries `durableSessionId`, read `READERS` at a time. */
+async function carrying(
+	files: readonly string[],
+	durableSessionId: string,
+): Promise<{ readonly file: string; readonly cwd: string }[]> {
+	const matches: { file: string; cwd: string }[] = [];
+	for (let index = 0; index < files.length; index += READERS) {
+		const batch = files.slice(index, index + READERS);
+		const headers = await Promise.all(batch.map((file) => headerOf(file)));
+		batch.forEach((file, offset) => {
+			const header = headers[offset];
+			if (header?.id === durableSessionId) matches.push({ file, cwd: header.cwd });
+		});
+	}
+	return matches;
+}
+
 async function findSessionFile(options: FindSessionOptions): Promise<FindSessionAnswer> {
 	const files = await sessionFiles(options.agentDir);
+	const suffix = `_${options.durableSessionId}.jsonl`;
+	const named = files.filter((file) => basename(file).endsWith(suffix));
+	let matches = await carrying(named, options.durableSessionId);
+	if (matches.length === 0) matches = await carrying(files, options.durableSessionId);
 	const byPath = new Map<string, Candidate>();
 	for (const row of options.hosted) {
 		if (row.durableSessionId !== options.durableSessionId || row.sessionPath === undefined) continue;
@@ -170,17 +203,11 @@ async function findSessionFile(options: FindSessionOptions): Promise<FindSession
 			open: true,
 		});
 	}
-	for (let index = 0; index < files.length; index += READERS) {
-		const batch = files.slice(index, index + READERS);
-		const headers = await Promise.all(batch.map((file) => headerOf(file)));
-		batch.forEach((file, offset) => {
-			const header = headers[offset];
-			if (header?.id !== options.durableSessionId) return;
-			const key = canonicalSessionPath(file);
-			// A hosted row for the same file already says an engine holds it; the file never takes that back.
-			if (byPath.has(key)) return;
-			byPath.set(key, { sessionPath: file, cwd: header.cwd, open: false });
-		});
+	for (const { file, cwd } of matches) {
+		const key = canonicalSessionPath(file);
+		// A hosted row for the same file already says an engine holds it; the file never takes that back.
+		if (byPath.has(key)) continue;
+		byPath.set(key, { sessionPath: file, cwd, open: false });
 	}
 	const found = [...byPath.values()];
 	if (found.length === 0) return { unknown: true };

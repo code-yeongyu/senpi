@@ -12,6 +12,46 @@
 
 ### Removed
 
+## [2026.11.22-2] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.22] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `find_session` reads the session files named for the durable id before reading every header, and lists the session folders 16 at a time, so a device with thousands of session files answers a closed-session lookup in about 0.1 s instead of about a second; a file under a caller-chosen name is still found ([#7137](https://github.com/code-yeongyu/senpi/pull/7137))
+
+### Removed
+
+## [2026.11.21-2] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A tool call naming a path below a wedged mount (on macOS any `/home/<user>/...` path when the automounter does not answer) no longer freezes the session. The `external_directory` permission check no longer opens a directory to recover a component's case unless that case can differ ([#7151](https://github.com/code-yeongyu/senpi/pull/7151)).
+
+### Removed
+
 ## [2026.11.21] - 2026-11-21
 
 ### Breaking Changes

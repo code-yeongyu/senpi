@@ -14,7 +14,7 @@
 		"src"
 	],
 	"scripts": {
-		"test": "node ../../../scripts/run-tests.mjs bun --bun ../../../node_modules/vitest/vitest.mjs run",
+		"test": "node ../../../scripts/run-tests.mjs bun test --isolate",
 		"clean": "node -e \"\"",
 		"build": "node -e \"\""
 	},
@@ -22,7 +22,7 @@
 		"bun": ">=1.4.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^2026.11.21"
+		"@earendil-works/pi-agent-core": "^2026.11.22-2"
 	},
 	"devDependencies": {
 		"vitest": "5.0.1"

@@ -1,3 +1,23 @@
+## 2026-11-12 - A multi-session switch takes the replacement's hold first; the resident writer reads the boot instant asynchronously (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry-switch.ts`: the replacement runtime's hold is taken with `holdRuntimeSession` and passed into its constructor BEFORE the switched runtime releases its own, as before, so the shared holder record never disappears in between; a throwing construction releases the new hold.
+- `packages/coding-agent/src/modes/rpc/host-handover-resident-writer.ts`: `currentResidentWriter` is async, and the handover verdict closure resolves the boot instant before it reads or records a verdict; a writer that looks like another boot is checked against a fresh read first.
+- `packages/coding-agent/src/modes/rpc/session-router-residency.ts`: awaits `currentResidentWriter()` while retaining the separate `live` flag on handover records.
+
+### Why
+
+- The boot instant is read asynchronously (senpi#3152), and the session hold moved out of the runtime's constructor.
+
+### Why an extension could not handle it
+
+- The RPC registry and handover are host internals.
+
+### Expected merge conflict zones
+
+- LOW: `createEntrySwitchSession` and `currentResidentWriter`.
+
 ## 2026-11-20 - A generation handoff never runs a session twice, hands every session over at its next turn boundary, and alarms when overdue (senpi#7098)
 
 ### What changed
