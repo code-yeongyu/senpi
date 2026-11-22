@@ -21,8 +21,9 @@ import helpExtension from "./help/index.ts";
 import herdrExtension from "./herdr/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
-import htmlRenderExtension from "./html-render/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
+import killGuardExtension from "./kill-guard/index.ts";
+import credentialProxyExtension from "./credential-proxy/index.ts";
 import importReproExtension from "./import-repro.ts";
 import jobWidgetsExtension from "./job-widgets/extension.ts";
 import lookAtExtension from "./look-at/index.ts";
@@ -75,6 +76,10 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "loop-guard", factory: loopGuardExtension },
 	// Ahead of hooks and permission-system: a path the desktop moved is refused before any hook runs or prompt asks.
 	{ id: "moved-path-guard", factory: movedPathGuardExtension },
+	// Beside moved-path-guard for the same reason: a signal it refuses never reaches a hook or a permission prompt.
+	{ id: "kill-guard", factory: killGuardExtension },
+	// Withholds declared credentials before any tool can spawn a child; the proxy starts at session start.
+	{ id: "credential-proxy", factory: credentialProxyExtension },
 	{ id: "hooks", factory: hooksExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
@@ -126,9 +131,6 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "relocate-session", factory: relocateSessionExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
-	// HTML page rendering for standalone senpi (TUI/local); the desktop thread reaches the
-	// same capability through the desktop's MCP server instead.
-	{ id: "html-render", factory: htmlRenderExtension },
 	// Provider-neutral account listing; sits before the provider lanes so their
 	// dedicated commands (claude-account, cursor accounts) keep their own names.
 	{ id: "account", factory: accountExtension },

@@ -77,22 +77,39 @@ describe.skipIf(process.platform === "win32")("public POSIX authentication", { t
 			expect(await client.request({ id: "list", type: "list_sessions" })).toMatchObject({ success: true });
 			const keys = join(qa.agentDir, "rpc", "keys");
 			expect((await stat(keys)).mode & 0o777).toBe(0o700);
-			const entries = await readdir(keys);
-			expect(entries).toHaveLength(1);
-			const file = join(keys, entries[0]);
-			expect((await stat(file)).mode & 0o777).toBe(0o600);
-			const record = JSON.parse(await readFile(file, "utf8"));
+			// A supervised generation also publishes its private route endpoint's record (senpi#7098).
+			const records = await Promise.all(
+				(await readdir(keys)).map(async (name) => {
+					const file = join(keys, name);
+					expect((await stat(file)).mode & 0o777).toBe(0o600);
+					return { name, record: JSON.parse(await readFile(file, "utf8")) as { endpoint?: unknown } };
+				}),
+			);
+			const published = records.filter(({ record }) => record.endpoint === qa.socket);
+			expect(published).toHaveLength(1);
+			const [{ name, record }] = published;
 			expect(record).toMatchObject({
 				key: expect.stringMatching(/^[a-f0-9]{64}$/),
 				pid: expect.any(Number),
 				version: 1,
-				launch_id: entries[0],
+				launch_id: name,
 				process_start: expect.any(String),
 				endpoint: qa.socket,
 				created_at: expect.any(String),
 			});
 		});
 	}
+
+	// #5280: ensure prints ONE line for every outcome, a start it refused or gave up on included, so its JSON
+	// is not a ready signal. A non-socket entry at the endpoint makes ensure refuse it.
+	it("ensured: a start that ensure does not complete is a failed launch, never a ready host", async () => {
+		const qa = await sandbox();
+		cleanups.push(() => teardown(qa.root));
+		await writeFile(qa.socket, "");
+		await expect(launchHost(qa, "ensured")).rejects.toThrow(
+			/ensure exited with code 3 [\s\S]*"action":"refuse","reason":"endpoint_occupied"/,
+		);
+	});
 
 	it("starts and authenticates with a normal recursive-mkdir 0755 agent directory", async () => {
 		const qa = await sandbox();

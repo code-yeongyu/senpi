@@ -75,7 +75,7 @@ const mutations = [
 		apply: (dir: string) =>
 			patch(
 				join(dir, "interpose.js"),
-				"}, bootstrap, {\n\tpermissionIO,\n\tresolverIO: originals,\n\tcleanupExecFile,\n\tactivate,\n\tinstallGuardedWorker,\n});",
+				"}, bootstrap, {\n\tpermissionIO,\n\tresolverIO: originals,\n\tcleanupExecFile,\n\tkillGuardSpawnSync,\n\tactivate,\n\tinstallGuardedWorker,\n});",
 				"}, bootstrap);",
 			),
 	},

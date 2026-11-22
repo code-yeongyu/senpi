@@ -4,7 +4,8 @@ import { dataOf, statusHost } from "./rpc-session-status-support.ts";
 describe("set_session_context attachment refusal", () => {
 	it("returns a dedicated code when a connected client has not attached", async () => {
 		// Given: the owner has a session, but the observer has no attachment.
-		await using rig = await statusHost();
+		// Below vitest's 30 s testTimeout: a hung wait fails naming its predicate before the test times out.
+		await using rig = await statusHost({ deadlineMs: 20_000 });
 		const owner = rig.client("owner");
 		const observer = rig.client("observer");
 		const opened = dataOf(await owner.request({ type: "open_session", cwd: rig.cwd }));

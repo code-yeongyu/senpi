@@ -15,8 +15,8 @@ export const mutations = Object.freeze([
 		// VER-E19-RAW: E19 sees the prompt through the raw-hash blobs (the system prompt blob's content).
 		cases: ["E01", "E19"],
 		expect: {
-			E01: /^\$\.O1\[0\]\.body\.messages\[0\]\.content: golden=".*- Judgment asks \(what do you think, review\).*" actual="(?![\s\S]*Judgment asks \(what do you think)/,
-			E19: /^\$\.O1\[0\]\.body\.blobs\[\d+\]\.content\.content: golden=".*- Judgment asks \(what do you think, review\).*" actual="(?![\s\S]*Judgment asks \(what do you think)/,
+			E01: /^\$\.O1\[0\]\.body\.messages\[0\]\.content: golden=".*- Judgment ask \(what do you think, review\).*" actual="(?![\s\S]*Judgment ask \(what do you think)/,
+			E19: /^\$\.O1\[0\]\.body\.blobs\[\d+\]\.content\.content: golden=".*- Judgment ask \(what do you think, review\).*" actual="(?![\s\S]*Judgment ask \(what do you think)/,
 		},
 	},
 	{
@@ -149,5 +149,14 @@ export const mutations = Object.freeze([
 		expect: {
 			E30: /^error: Error: E30 solo compare: session A differs from its solo run in \d+ row\(s\): \$\.O6\[0\]\.events\[\d+\]\.type: solo="[a-z_]+" concurrent="tool_execution_end";/,
 		},
+	},
+	{
+		id: "bypass-executor",
+		row: "bypass the prepared executor",
+		observation: "witness",
+		surface: "rpc",
+		patch: "bypass-executor.patch",
+		cases: ["E01"],
+		expect: { E01: /^witness\.pipeline: actual="missing"$/ },
 	},
 ]);

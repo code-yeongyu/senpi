@@ -7,11 +7,13 @@
  * `data` shape: `{ state, operation_id, ... }` for an operation, `{ refused, detail }` for a refusal.
  */
 
+import { type EngineBuildIdentity, engineIdentityOf } from "../../core/engine-build-identity.ts";
 import { writeDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { handoffHost } from "./host-handoff.ts";
 import type { HandoverAnswer, HandoverOutcome, HandoverView, IdleHandoverRequest } from "./host-idle-handover.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
+import { parseEngineOrdinal } from "./host-protocol-info.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import { selectDrainVerdicts } from "./session-drain.ts";
 import type { RpcSessionRegistry } from "./session-registry.ts";
@@ -44,18 +46,37 @@ export function parseBeginHandover(record: Readonly<Record<string, unknown>>): I
 	if (agent_dir !== undefined && (typeof agent_dir !== "string" || agent_dir === "")) {
 		return "agent_dir must be a non-empty string";
 	}
+	const targetEngine = parseTargetEngine(record.target_engine);
+	if (targetEngine === null) return "target_engine must be { text, ordinal: [y, m, d, n, epoch] }";
+	const allowDowngrade = record.allow_downgrade;
+	if (allowDowngrade !== undefined && typeof allowDowngrade !== "boolean") return "allow_downgrade must be a boolean";
 	return {
 		operationId: operation_id,
 		ifInstanceId: if_instance_id,
 		ifGeneration: if_generation,
 		targetRuntimeBuildId: target_runtime_build_id,
-		launch: { command: launch.command, args: launch.args },
+		// A requester of this build launches a successor that reports its startup phases (senpi#4602).
+		launch: {
+			command: launch.command,
+			args: launch.args,
+			...(launch.reports_startup === true && { reportsStartup: true }),
+		},
 		hostArgs: host_args,
 		env: env as Readonly<Record<string, string>>,
 		...(mcpPresenterEnforcement !== undefined && { mcpPresenterEnforcement }),
 		...(policy !== undefined && { policy }),
 		...(agent_dir !== undefined && { agentDir: agent_dir }),
+		...(targetEngine !== undefined && { targetEngine }),
+		...(allowDowngrade === true && { allowDowngrade }),
 	};
+}
+
+/** `undefined` when the requester sent none (a CLI before senpi#7018), `null` when what it sent is malformed. */
+function parseTargetEngine(value: unknown): EngineBuildIdentity | undefined | null {
+	if (value === undefined) return undefined;
+	if (!isRecord(value) || typeof value.text !== "string") return null;
+	const ordinal = parseEngineOrdinal(value.ordinal);
+	return ordinal === undefined ? null : engineIdentityOf(value.text, ordinal);
 }
 
 export function beginHandoverResponse(id: unknown, answer: HandoverAnswer | string): Record<string, unknown> {
@@ -142,7 +163,8 @@ export async function performIdleHandover(context: {
 	readonly request: IdleHandoverRequest;
 	readonly socket: string;
 	readonly agentDir: string;
-	readonly presenterBootstrap?: Duplex;
+	/** Called only when the successor reaches its P7 (senpi#4602). */
+	readonly presenterBootstrap?: () => Promise<Duplex | undefined>;
 }): Promise<HandoverOutcome> {
 	const { request, socket, agentDir } = context;
 	const env: Record<string, string | null> = {};
@@ -156,8 +178,14 @@ export async function performIdleHandover(context: {
 		hostArgs: request.hostArgs,
 		env,
 		expectedRuntimeBuildId: request.targetRuntimeBuildId,
+		...(request.targetEngine !== undefined && { successorEngine: request.targetEngine }),
+		...(request.allowDowngrade === true && { allowDowngrade: true }),
 		...(request.policy !== undefined && { policy: request.policy }),
-		launch: (argv) => ({ command: request.launch.command, args: [...request.launch.args, ...argv] }),
+		launch: (argv) => ({
+			command: request.launch.command,
+			args: [...request.launch.args, ...argv],
+			...(request.launch.reportsStartup === true && { reportsStartup: true }),
+		}),
 	});
 	if (result.action === "refuse") {
 		return { ok: false, reason: result.detail === undefined ? result.reason : `${result.reason}: ${result.detail}` };

@@ -11,6 +11,13 @@ process.stdin.on("data", (chunk) => {
 });
 process.stdin.on("end", () => {
 	const input = JSON.parse(stdin);
-	const line = { event: input.hook_event_name, toolCallId: input.tool_use_id, toolName: input.tool_name };
+	const line = {
+		event: input.hook_event_name,
+		toolCallId: input.tool_use_id,
+		toolName: input.tool_name,
+		session_id: input.session_id,
+		pid: process.pid,
+		timestamp: new Date().toISOString(),
+	};
 	appendFileSync(tracePath, `${JSON.stringify(line)}\n`);
 });

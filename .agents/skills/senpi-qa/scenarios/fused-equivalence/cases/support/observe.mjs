@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pinnedWorkstation } from "../../../../scripts/lib/equivalence-host-pin.mjs";
 import { createNormalizer, directoryRoots } from "../../../../scripts/lib/equivalence-normalize.mjs";
 import { collectors } from "./collectors.mjs";
 import { childRuntimeFacts, goldenPlatform, hostFacts } from "./host.mjs";
@@ -72,6 +73,8 @@ export function baselineManifest({ repo, childRuntime, command }) {
 			fixtures: hashTree(join(EQ_DIR, "fixtures")),
 		},
 		command,
+		// The host facts every CLI child rendered (the determinism contract, scripts/lib/equivalence-host-pin.mjs).
+		hostPin: pinnedWorkstation(),
 	};
 }
 

@@ -1,0 +1,36 @@
+{
+  "search_id": "REDACTEDSEARCHID",
+  "results": [
+    {
+      "url": "https://blog.logrocket.com/javascript-typescript-shorthands",
+      "title": "18 JavaScript and TypeScript shorthands to know - LogRocket Blog",
+      "publish_date": "2023-01-03",
+      "excerpts": [
+        "Editor’s note: This guide to the most useful JavaScript and TypeScript shorthands was last updated on 3 January 2023 to address errors in the code and include information about the satisfies operator …",
+        "Version 4.9 of TypeScript adds the `satisfies` operator,\nwhich validates a type without widening the expression."
+      ]
+    },
+    {
+      "url": "https://www.zetcode.com/typescript/satisfies/",
+      "title": "TypeScript satisfies Operator: Validate Types Without Widening",
+      "excerpts": [
+        "* MySQL Java ebook TypeScript satisfies Operator last modified October 15, 2026 The satisfies operator, added in TypeScript 4.9, checks that an expression matches a type without changing the type of …"
+      ]
+    },
+    {
+      "url": "https://blog.logrocket.com/type-casting-typescript",
+      "title": "How and when to use type casting in TypeScript - LogRocket Blog",
+      "publish_date": "2025-05-08",
+      "excerpts": [
+        "By using the as operator, you cast animal as Dog , allowing you to access the bark() method specific to the Dog class. The code should output this: Type Casting With The As Operator To Access The …"
+      ]
+    }
+  ],
+  "warnings": [],
+  "usage": [
+    {
+      "name": "sku_search_fast",
+      "count": 1
+    }
+  ]
+}

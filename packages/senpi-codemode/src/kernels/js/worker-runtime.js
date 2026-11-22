@@ -39,8 +39,10 @@ export class JsWorkerRuntime {
 	#onChildEvent;
 	#onShellWaitChange;
 	#tools;
+	#killGuard;
 
 	constructor(options) {
+		this.#killGuard = options.killGuard;
 		this.#parallelPoolWidth = options.parallelPoolWidth;
 		this.#onChildEvent = typeof options.onChildEvent === "function" ? options.onChildEvent : null;
 		this.#onShellWaitChange = options.onShellWaitChange;
@@ -79,7 +81,15 @@ export class JsWorkerRuntime {
 			const shadowed = [];
 			const source = bindKernelBun(wrapUserCode(cellCode, shadowed));
 			if (shadowed.length > 0) this.#emitText("stderr", shadowNote(shadowed));
-			const value = await awaitMaybePromise(indirectEval(source, sourceName));
+			let pending;
+			try {
+				pending = indirectEval(source, sourceName);
+			} catch (error) {
+				// User code runs inside an async function: its exceptions reject the promise instead.
+				if (error instanceof SyntaxError) error.code = "js_cell_parse_error";
+				throw error;
+			}
+			const value = await awaitMaybePromise(pending);
 			await this.#drainPendingDisplays();
 			return value;
 		} finally {
@@ -219,6 +229,7 @@ export class JsWorkerRuntime {
 			isActive: () => this.#hooks !== null,
 			emitText: (stream, data) => this.#emitText(stream, data),
 			onChild: (child, spawnOptions) => this.#trackChild(child, spawnOptions),
+			...(this.#killGuard === undefined ? {} : { killGuard: this.#killGuard }),
 			onShellWait: (promise, waiting) => {
 				if (waiting) this.#shellWaits.add(promise);
 				else this.#shellWaits.delete(promise);

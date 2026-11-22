@@ -139,7 +139,7 @@ Use quick-set in non-TUI modes; the no-argument menu requires interactive UI. Pa
 
 Senpi ships built-in extensions that inject provider-native server tools when the active model supports them. These run as ordinary extensions internally but are always loaded and require no user configuration beyond having valid credentials.
 
-**openai-image-gen** injects the OpenAI Responses `image_generation` server tool when the model uses `openai-responses` on `api.openai.com`. It arbitrates against the client-side `generate_image` function tool so exactly one image surface is offered per request. A `message_end` handler decodes completed image results, writes them to `generated-images/`, and replaces the provider-native block with a text path reference before session persistence, so base64 payloads never reach the session file. Set `PI_OPENAI_IMAGE_GEN=false` to force the client tool path. Azure Responses endpoints default to the client tool unless `compat.supportsImageGeneration` opts in.
+**openai-image-gen** injects the OpenAI Responses `image_generation` server tool when the model uses `openai-responses` on `api.openai.com`. It arbitrates against the client-side `generate_image` function tool so exactly one image surface is offered per request. `generate_image` itself is eval-only like `bash` (`exposure: "eval"`): whenever an `eval` tool is registered it is withheld from the model's direct tool list and called as `tool.generate_image({ prompt: "..." })` inside a cell; without an eval tool it is an ordinary direct tool. A `message_end` handler decodes completed image results, writes them to `generated-images/`, and replaces the provider-native block with a text path reference before session persistence, so base64 payloads never reach the session file. Set `PI_OPENAI_IMAGE_GEN=false` to force the client tool path. Azure Responses endpoints default to the client tool unless `compat.supportsImageGeneration` opts in.
 
 **openai-web-search** injects the OpenAI Responses `web_search_preview` server tool following the same pattern: credential-gated, stripped on unsupported endpoints, arbitrated against its client-side counterpart.
 
@@ -493,6 +493,12 @@ journaled terminal. Later wakes tagged with the run are admitted again, fences f
 run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
 emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
 
+`ctx.registerRunBackgroundJob({ kind, id, description?, stop })` records a background job under the turn running at
+that moment (outside a turn it records nothing), and returns the release to call once the job ended on its own. An RPC
+`interrupt` with `background: "stop"` calls `stop(turnId)` for each job that turn recorded and names it in its answer;
+`stop` ends the job without waking the session and rejects with the reason it could not. The terminal builtin records
+every background bash session this way.
+
 #### held_wakes_released
 
 `pi.on("held_wakes_released", (event, ctx) => ...)` receives
@@ -838,6 +844,10 @@ pi.on(
 
 Opt in only when the handler has no side effects in a preview: it returns the same `systemPrompt` a real turn would get and consumes no one-shot state, starts no work, and changes nothing a later turn observes (the builtin `compaction`, `hooks`, and `prompt-url-widget` handlers return early; `rules` and `openai-image-gen` compose without committing state). A handler registered without the option is never called for a preview. While any registered `before_agent_start` handler lacks it, senpi skips the preview entirely, because a prefix composed without that handler's additions would not match the first turn; the prewarm then appends a `prompt-cache-prewarm` custom entry with `phase: "skipped"` and a `reason` naming the extensions.
 
+Set `systemPromptCache` on the result to say whether your change to `systemPrompt` is the same in every session (`"stable"`) or differs between sessions, turns or commits (`"volatile"`, e.g. a memory block or per-prompt hook output). Builtin extensions default to `"stable"`, every other extension to `"volatile"`. senpi sends the prompt up to the first volatile change as its own cached prefix where the provider supports it (Anthropic: a separate `system` block holding the system cache breakpoint), so a new session in the same working directory reads tools and that prefix from cache even when its tail differs (the base prompt names the cwd, so sessions in different directories do not share it); the rendered prompt text is unchanged (senpi#4447). Extensions that build their own provider request from `ctx.getSystemPrompt()` pass `ctx.getSystemPromptStablePrefix()` as `systemPromptStablePrefix` so that request splits the prompt the same way.
+
+Register with `{ runLast: true }` to run after every `before_agent_start` handler registered without it, whatever order the extensions loaded in; run-last handlers keep their registration order among themselves, on real turns and previews alike. Builtin run-last handlers run after every other extension's run-last handlers: the builtin MCP extension uses this so `<mcp_instructions>` always closes the system prompt, even after your own run-last addition (senpi#4448). Because those instructions are also declared `"volatile"`, every stable addition, including one from an extension that loads after MCP, lands before them inside the cached prefix.
+
 `ctx.getPromptCachePrefixRequest({ signal })` resolves `{ status: "ready", request }` or `{ status: "skipped", reason }`. It is skipped when a handler is not preview-safe, when no model is selected, when `signal` aborts, and when a user prompt starts its turn first: senpi cancels every in-flight preview before a real turn dispatches `before_agent_start`, so the two passes never run the same handlers concurrently.
 
 #### agent_start / agent_end / agent_settled
@@ -851,12 +861,17 @@ pi.on("agent_end", async (event, ctx) => {
   // event.messages - messages from this low-level run
 });
 
-pi.on("agent_settled", async (_event, ctx) => {
+pi.on("agent_settled", async (event, ctx) => {
   // ctx.isIdle() is true here unless another extension started a new run.
+  // event.fallbackExhausted - present when every fallback rung failed and a failure was limit-shaped;
+  //   resumeAt (epoch ms) is the soonest future reset, or latest past reset if all collected resets passed
+  //   no resumeAt means no reset was collected; outage-only exhaustion keeps ordinary provider recovery
 });
 ```
 
-`agent_before_settle` fires just before `agent_settled` and is the final actionable boundary: like `turn_end`, its handlers can append entries and request one continuation (see [turn_start / turn_end](#turn_start--turn_end)). `agent_settled` stays notification-only. Runs requested from `agent_settled` handlers start after every settled handler has finished, so handlers never see a reentrant `agent_start` during the same notification.
+`agent_before_settle` fires just before `agent_settled` and is the final actionable boundary: like `turn_end`, its handlers can append entries and request one continuation (see [turn_start / turn_end](#turn_start--turn_end)). `agent_settled` stays notification-only. Runs requested from `agent_settled` handlers start after every settled handler has finished, so handlers never see a reentrant `agent_start` during the same notification. Session subscribers (RPC clients, the TUI) receive `agent_settled` before these handlers run, so a slow handler never delays a client's view of the finished turn; anything that tears a session down (TUI shutdown, host idle exit, a release or move) waits for `agent_idle`, which follows the handlers; host idle exit waits at most one idle window, so a handler that never resolves cannot keep the host alive. A person's next prompt stops the host waiting on every settled handler that is still running: they keep running, `session.log` records the held one as `extension_handler_stalled` with `stage: "released"`, nothing is shown as an error, and the prompt's turn starts at once. A slow `agent_settled` handler is logged, never shown as a notice.
+
+For a run that settles without a continuation, the order is: extension `agent_end` handlers, session `agent_end` subscribers, extension `agent_before_settle` handlers, session `agent_settled` subscribers, then extension `agent_settled` handlers. The publish-first rule applies only to `agent_settled`; other hooks retain their existing ordering. Handler failures still reach extension error listeners; failures after a handler was released are recorded as `extension_handler_stalled` with `stage: "late_failure"`.
 
 #### ui_prompt_start / ui_prompt_end
 
@@ -876,6 +891,18 @@ pi.on("ui_prompt_end", async (event, ctx) => {
 });
 ```
 
+#### Permission mode and session-wide dialogs
+
+`pi.getPermissionPreset()` returns the preset the permission system enforces for this session right now, or `undefined` when no permission system runs for it or its setup failed.
+
+When a client moves a live session to another preset (`set_permission_preset`, or an attach naming one), the session announces it on the `pi.events` bus. A session's initial preset is not announced; read it with `pi.getPermissionPreset()`.
+
+| Channel | Payload | Meaning |
+|---------|---------|---------|
+| `permission_preset_changed` | `{ permissionPreset, permissionPresetSource, permissionPresetStatus, effectivePermissionPreset }` | The session's approval mode changed; the payload is the same mode `get_state` reports. |
+
+`pi.sessionDialog.select / confirm / input / editor` raise a dialog addressed to every client attached to the session, not only to the connection whose command is running. Use it for a prompt raised after that command returned, such as a background child's permission request a task runner forwards. The first answer wins; a later answer to the same dialog is refused with `already_answered`. In the terminal UI it shows like any other dialog. The same addressing is available on `ctx.ui` dialogs with the `audience: "session"` option.
+
 #### Pending-question bus events
 
 These additive events use `pi.events.on(...)`, not `pi.on(...)`:
@@ -885,7 +912,7 @@ These additive events use `pi.events.on(...)`, not `pi.on(...)`:
 | `ask-user:asked` | `{ ctx, request, variant }` | One fresh runtime registration of a built-in question, in either `waitForAnswer` mode. The hooks builtin dispatches a `Notification` with `kind: "ask-user-asked"`, the request ID and question headers. |
 | `ask-user:settled` | `{ ctx, request, response, variant }` | The existing answer notification, still skipped for `cancelled`. `response.resolvedBy` identifies the answering surface when present. |
 | `ask-user:closed` | `{ requestId, status, resolvedBy? }` | Exactly one terminal outcome per question, including cancellation, timeout, orphaned restart recovery and unavailable UI. |
-| `herdr:blocked` | `{ active: true, label, id }` or `{ active: false, id }` | A built-in question or host select/confirm/input/editor dialog opens or settles. Question labels are `<header> — <question>`; dialog labels are their titles. |
+| `herdr:blocked` | `{ active: true, label, id, kind? }` or `{ active: false, id }` | A built-in question or host select/confirm/input/editor dialog opens or settles. Question labels are `<header> — <question>`; dialog labels are their titles. `kind` is `"question"` for a built-in question and `"permission"` for a dialog opened with `toolCallId` (a permission request); other dialogs carry none. |
 
 Track blocked IDs as a set, not a boolean: requests can overlap. Each question registration emits one active/inactive pair, including cancellation, timeout, abort and orphaned restart recovery. A dangling disk call recovered after restart gets one new runtime registration; its persisted recovery marker prevents registering it again. Reconnect replay and UI hydration reuse an existing registration and do not repeat arrival events or the terminal bell. The builtin owns question events, so UI integrations must not emit a second pair when resolving the question.
 
@@ -1053,6 +1080,16 @@ pi.on("before_provider_request", (event, ctx) => {
 ```
 
 This is mainly useful for debugging provider serialization and cache behavior.
+
+`before_provider_request`, `provider_stream_event` and `after_provider_response` handlers can declare the providers whose requests or streams they read or change:
+
+```typescript
+pi.on("before_provider_request", (event) => ({ ...event.payload, metadata: { tag: "x" } }), {
+  providers: ["anthropic"],
+});
+```
+
+The declaration does not filter dispatch: the handler still receives every event. A device serving a hosted session advertises it, so the hosted side knows which providers' calls need that device's hooks. A handler without `providers` counts as touching every provider. The value must be a non-empty array of provider ids; anything else throws at registration, also for a handler whose `runs` side does not register it. Every other event ignores `providers`.
 
 #### after_provider_response
 
@@ -1287,6 +1324,7 @@ pi.on("input", async (event, ctx) => {
   // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
   // event.attribution - "user" (a person sent it) or "agent" (an extension, tool, subagent, another agent's RPC client, or the session)
   // event.streamingBehavior - "steer" | "followUp" | undefined
+  // event.chainCount - the hop count of a thread call from another session (RPC `chainCount`), else undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
   //   "followUp" for messages queued until the agent finishes
 
@@ -1346,7 +1384,7 @@ Current run mode: `"tui"`, `"rpc"`, `"json"`, or `"print"`. Use `ctx.mode === "t
 
 ### ctx.hasUI
 
-`true` in TUI and RPC modes. `false` in print mode (`-p`) and JSON mode. Use this to guard dialog methods (`select`, `confirm`, `input`, `editor`) and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setEditorText`) that work in both TUI and RPC modes. In RPC mode, some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
+`true` in TUI and RPC modes. `false` in print mode (`-p`) and JSON mode. Use this to guard dialog methods (`select`, `confirm`, `input`, `editor`) and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setEditorText`) that work in both TUI and RPC modes. `setProgramStatus` reaches the terminal only in TUI mode; RPC, print and JSON modes own no terminal and ignore it. In RPC mode, some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
 
 ### ctx.cwd
 
@@ -1370,7 +1408,9 @@ export default function (pi: ExtensionAPI) {
 
 Optional read-only list of resolved paths for every successfully loaded extension, including event-only extensions. Builtin and inline factories retain synthetic identifiers such as `<builtin:herdr>`. The runner resolves file paths against the session working directory and provides this list to event, command, and tool contexts; older hosts and hand-built contexts may omit it.
 
-The builtin `herdr` reporter reads this list at session start. Inside a herdr TUI pane it reports pending questions and host dialogs as `blocked`, active turns/subagents/monitors as `working`, and otherwise `idle`, using source `custom:senpi`. It reports session titles and releases the pane only on quit, not reload or session navigation.
+The builtin `herdr` reporter reads this list at session start. Inside a herdr TUI pane it reports pending questions and host dialogs as `blocked`, an active turn and bounded background work that will start a turn (subagents, DAG runs, detached eval cells, one-shot monitors with a deadline) as `working`, and otherwise `idle`; once the turn has ended, monitors with no deadline and background terminal sessions are named in the idle report's message instead of keeping the pane `working`, using source `custom:senpi`. It reports session titles and releases the pane only on quit, not reload or session navigation.
+
+In every TUI session, herdr pane or not, the same reporter also publishes that state through `ctx.ui.setProgramStatus` (OSC 7501), so terminals that read the Program Status Protocol, such as herdr-core panes, see it too. A built-in question is reported with `kind: "question"` and a permission prompt with `kind: "permission"`; other dialogs carry no kind. The status is cleared on quit. Deferring to a user reporter affects only the herdr socket, not this status.
 
 To avoid competing lifecycle reporters, it defers to a loaded user-authored `herdr-*.ts`, `.js`, or `.mjs` file. A managed file whose first 400 bytes contain `HERDR_INTEGRATION_ID=` does not trigger deferral: herdr's managed `herdr-agent-state.ts` can remain installed. Remove your own reporter from the loaded extensions if you want the builtin to take over; no user files are changed automatically.
 
@@ -1861,8 +1901,8 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 | Method | Returns | Behaviour |
 |---|---|---|
 | `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. An endpoint lives for one extension generation: a reload disposes the endpoints the retiring generation registered (also one whose registration finishes after the reload began, which answers `failed`), so register again from `session_start` with reason `reload`. Repeated failures of `drain` show one notice until a pass succeeds. |
-| `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
-| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
+| `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while input the user submitted is still on its way into the runtime. A draft still in the composer never holds a delivery (senpi#7043). |
+| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch, holds? }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake), `held` (with `holds`: the session is idle under a person's Stop, an interrupted run or a parent's run hold, which a peer cannot release; the delivery is kept as a held notice and starts once that hold is released; an `unattended` hold alone is released by the delivery, senpi#6490) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
 | `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
 | `relocationOffered()` | `boolean` | Whether the session's host offers continuing it on another computer right now. The builtin relocation tools are active only while it is `true`. |
@@ -2308,6 +2348,10 @@ From a command handler, send the text before the handler returns: messages anoth
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
+### pi.isLoopRemote()
+
+`true` when this extension runs on a hand whose agent loop runs on another machine (a hosted loop). There, `pi.sendMessage()` and `pi.sendUserMessage()` from work that outlives the call that started it (a background command, a watch, a detached task) reach that loop as durable wakes, and so does a `ctx.ui.notify()` made outside any call. The loop delivers each one as a local session would, and applies its own delivery checks (its mode, its model). A notifier that normally waits for `session_start` before it sends anything should send on a hand without one, because a hand never gets `session_start` for builtins. Everywhere else it is `false`.
+
 ### pi.appendEntry(customType, data?, options?)
 
 Persist extension data. Custom entries do NOT participate in LLM context. In interactive mode, they can also render inside the chat transcript when paired with `pi.registerEntryRenderer()`.
@@ -2478,6 +2522,22 @@ pi.registerMemoryReporter("myCache", () => ({ entries: cache.size, approxBytes: 
 
 Names the report owns (`sessionId`, `takenAt`, `pid`, `main`, `kernels`, `residentStore`, `tuiRenderCache`, `heapSnapshot`, `reporterErrors`) throw at registration. When two extensions register the same name, the first loaded wins.
 
+### pi.registerRpcRemoteSource(source)
+
+Serve `monitor` rpc targets that name a session on another device: `<device>/<session>` or `<device>/*` (see [terminal tools](terminal-tools.md#session-status-rpc-branch)). senpi knows no transport; the source does. `open(target, { events, exclude, resumeFrom? }, handlers)` resolves to `{ initial, stop }`, where `initial` is `{ rows, settledTurns?, generation?, cursor? }` and its `rows` are snapshot-shaped (`sessionId`, `status`, ...). Through `handlers` the source reports `record(record)` for each live record, `resynced(state)` after a gap, `cursor(cursor)` when its resume position moves, `lost(reason)` when the device stops answering, and `ended(reason)` when the watch can never continue. senpi renders every record with the local renderer, reports each settled turn a resync names in `settledTurns` once and each live `agent_settled` as it arrives, and saves the cursor in a persistent monitor's checkpoint, so a restore passes it back as `resumeFrom`. Reject `open` with a typed reason when the target cannot be watched.
+
+```typescript
+const unregister = pi.registerRpcRemoteSource({
+  async open(target, options, handlers) {
+    const stream = await myTransport.watch(target.device, target.session, options.resumeFrom);
+    stream.on("record", handlers.record);
+    return { initial: stream.state, stop: () => stream.close() };
+  },
+});
+```
+
+The latest registration wins; it is removed on unregister, a failed load or runtime invalidation. Without one, a remote target is refused.
+
 ### pi.registerEntryRenderer(customType, renderer)
 
 Register a custom TUI renderer for custom entries with your `customType`. Custom entries are created with `pi.appendEntry()` and do not participate in LLM context.
@@ -2519,6 +2579,18 @@ pi.registerShortcut("ctrl+shift+p", {
 });
 ```
 
+### pi.registerDeviceMachine(machine)
+
+Register the operation layer of the device this session's tools run on (a `ToolMachine`, for example from `createToolMachine({ ops })`). Only tools named in `OMO_TOOLS_VIA_DAEMON` use it, today `bash`, and the bash tool reads it when a command runs. With the flag on and no machine registered, bash fails with `DeviceUnavailableError` and never runs locally.
+
+One registration per session: a second one, from any extension, throws `DeviceMachineConflictError` (`code: "device_machine_conflict"`, with `registeredBy` and `attemptedBy`). A registration made by an extension whose factory then throws is discarded with the rest of that load. If another extension registers a device machine while this load's registration is still staged (for example from an event fired during this factory), the conflict is found when the load commits: the factory cannot catch it, and the extension fails to load as a whole with `DeviceMachineConflictError`.
+
+```typescript
+import { createToolMachine } from "@code-yeongyu/senpi";
+
+pi.registerDeviceMachine(createToolMachine({ ops: myDeviceOps }));
+```
+
 ### pi.registerFlag(name, options)
 
 Register a CLI flag.
@@ -2546,6 +2618,16 @@ pi.on("tool_call", () => {
     // Nothing will prompt for permission in this session.
   }
 });
+```
+
+### pi.engine
+
+The engine this extension is running in: the same exports `import * as engine from "@code-yeongyu/senpi"` gives when the loader serves that specifier. Read the running engine's exports here when your extension is bundled or loaded in a way where its own import of that specifier could evaluate a second copy of the engine. The property is read-only and gives nothing an import does not.
+
+```typescript
+export default function (pi: ExtensionAPI) {
+  const { createAgentSession } = pi.engine;
+}
 ```
 
 ### pi.getSubscriptionLimits()
@@ -3408,6 +3490,10 @@ Add these fields to `pi.registerTool(...)`:
 
 A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate })`. Nested calls go through argument validation and the `tool_call` and `tool_result` handlers like model-issued calls; their events carry `parentToolCallId` and ids of the form `<calling id>/<n>`. They do not appear in the transcript: a bounded record is kept as `nestedCalls` on the calling tool's result, and their usage counts toward the session cost.
 
+`ctx.issuedByModel` says whether the model issued the running call, either through the agent loop or through a provider's exec channel (Cursor), so its result joins the transcript. On a hand (brain/hand split), a call the brain's agent loop dispatched counts too. It is `false` for a call made through `ctx.executeTool()` or `pi.executeTool()`.
+
+`ctx.promptSurface` is the prompt surface (`"terminal"`, `"app"` or `"chat"`) of the session the running call belongs to, which says what that session's host does with a result. On a hand it is the brain session's, sent with the call. It is absent when the runtime knows none.
+
 #### Prompt Cache Warning
 
 Activating a tool that includes `promptSnippet` or `promptGuidelines` rebuilds the system prompt. Even when the provider supports deferred schemas, changing the system prompt may invalidate the cached prefix. Lazily loaded tools should usually rely on their `description` and omit active-only prompt metadata to get the best cache performance.
@@ -3579,6 +3665,64 @@ const text = await ctx.ui.editor("Edit:", "prefilled text");
 ctx.ui.notify("Done!", "info");  // "info" | "warning" | "error"
 ```
 
+#### Private secret input
+
+`ctx.ui.input(title, placeholder, { secret: true })` collects a single-line secret
+without putting it into model messages, session history, ordinary answer ledgers,
+or replay buffers. The string goes only to the requesting extension. The TUI masks
+it; RPC requires the presenting connection's explicit `secret_input_v1` and
+`interactive_user` handshake. Ordinary input is unchanged.
+
+Check the descriptor first: older JavaScript hosts silently ignore unknown options.
+The descriptor promises the guarded contract, not a currently connected presenter.
+
+```typescript
+if (ctx.ui.capabilities?.secretInput !== true) {
+  return { applied: false, reason: "host_unsupported" };
+}
+let value: string | undefined;
+try {
+  value = await ctx.ui.input("Credential", undefined, { secret: true });
+} catch (error: unknown) {
+  if (typeof error === "object" && error !== null &&
+      "code" in error && error.code === "secret_input_unavailable" &&
+      "reason" in error &&
+      (error.reason === "headless" || error.reason === "client_unsupported" ||
+       error.reason === "no_presenter")) {
+    return { applied: false, reason: error.reason };
+  }
+  throw error;
+}
+if (value === undefined) return { applied: false, reason: "cancelled" };
+// Consume value privately here. Never log, notify, throw, or return the value.
+return { applied: true, length: value.length };
+```
+
+Empty strings, Unicode and leading/trailing spaces are preserved. Control characters
+and multiline input are refused, never normalized. Cancellation, abort and timeout
+return `undefined`. Secret input defaults to a 30-minute deadline; a supplied timeout
+must be finite and positive. Repainting, progress or re-presentation cannot renew it.
+An already-aborted signal returns `undefined` without opening a dialog.
+
+Print/JSON mode throws `SecretInputUnavailableError` with code
+`secret_input_unavailable` and reason `headless`, while `ctx.hasUI` remains false.
+An unsupported RPC client gets `client_unsupported`; an ownerless call with no
+eligible presenter gets `no_presenter`. There is no plaintext or stdin fallback.
+The `ephemeral` option does not weaken secret privacy.
+
+Typed-secret login prompts use this API on supporting contexts. A new host refuses
+API-key `/login` from an old external client or attach binary, with fixed guidance:
+“This client cannot collect a secret; use the TUI or the host's settings route.”
+Older contexts without the descriptor retain their existing plain login call, an
+explicit legacy gap. Text, manual-code and select prompts retain their behavior.
+
+This is not taint tracking or a sandbox for extensions. Trusted extension code can
+leak the returned string. Keep labels and placeholders non-secret. File staging,
+if needed, belongs to the extension on the agent host, with private permissions,
+exclusive creation and explicit cleanup. The engine creates no secret file and
+cannot promise erasure of immutable JavaScript strings or protection from OS-level
+terminal recording, debuggers or a malicious client.
+
 #### Timed Dialogs with Countdown
 
 Dialogs support a `timeout` option that auto-dismisses with a live countdown display:
@@ -3685,6 +3829,12 @@ ctx.ui.setFooter(undefined);  // Restore built-in footer
 
 // Terminal title
 ctx.ui.setTitle("pi - my-project");
+
+// Program status (OSC 7501): state is idle, working, blocked, done or error; kind is sent only with blocked.
+// The TUI writes it to the terminal with the app name (senpi, or omo under OmO); identical reports are not repeated.
+// RPC, print and JSON modes own no terminal and ignore it.
+ctx.ui.setProgramStatus({ state: "blocked", kind: "question", message: "Which flow?" });
+ctx.ui.setProgramStatus(undefined);  // Clear; the TUI also clears an active status when it exits
 
 // Editor text
 ctx.ui.setEditorText("Prefill text");

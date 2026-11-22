@@ -108,7 +108,6 @@
     "packages/telemetry/src/index.ts",
     "packages/tui/src/index.ts",
     "packages/tui/test/native-platform.test.ts",
-    "packages/coding-agent/src/core/agent-session.ts",
-    "packages/coding-agent/test/suite/recommended-models-fable55-launch.test.ts"
+    "packages/coding-agent/src/core/agent-session.ts"
   ]
 }

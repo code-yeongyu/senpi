@@ -9,6 +9,7 @@ import {
 	sanitizeProviderDiagnostic,
 	stripTurnRetrySuppressionPrefix,
 } from "@earendil-works/pi-ai";
+import { type TransportTrustFailure, transportTrustFailure } from "../engine-trust/transport-failure.ts";
 import { type FallbackModelLookup, parseFallbackSelector } from "./retry-fallback/chains.ts";
 
 /**
@@ -44,6 +45,11 @@ export interface ProviderFailure {
 	readonly resetsAt?: number;
 	readonly reason: string;
 	readonly action: string;
+	/**
+	 * Present when the request failed TLS chain verification while the engine runs on a fallback trust
+	 * generation: the fallback reason and its repair action id (senpi#5244).
+	 */
+	readonly trust?: TransportTrustFailure;
 }
 
 const ACTIONS: Record<Exclude<ProviderFailureCategory, "unknown">, { reason: string; action: string }> = {
@@ -150,12 +156,15 @@ export function providerFailureOf(
 ): ProviderFailure | undefined {
 	const last = messages.findLast((message) => message.role === "assistant");
 	if (last === undefined || last.role !== "assistant" || last.stopReason !== "error") return undefined;
-	const failure =
+	const diagnostic = sanitizeProviderDiagnostic(last.providerDiagnostic);
+	const described =
 		notConfiguredFailure(last) ??
-		describeProviderFailure(sanitizeProviderDiagnostic(last.providerDiagnostic), last.provider, {
+		describeProviderFailure(diagnostic, last.provider, {
 			model: last.model,
 			requestRefused: isRequestLevelRefusal(last),
 		});
+	const trust = transportTrustFailure(diagnostic);
+	const failure = trust === undefined ? described : { ...described, trust };
 	if (selected === undefined || (selected.provider === last.provider && selected.model === last.model)) {
 		return failure;
 	}

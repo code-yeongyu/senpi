@@ -57,6 +57,8 @@ it("T1 T5 a cut frozen after an accepted end and before its append keeps that re
 			{
 				kind: "append",
 				id: "e1",
+				type: "message",
+				parentId: null,
 				entry: JSON.stringify({ type: "message", id: "e1", message: first.record.message }),
 				owningMessageId: first.carrier.messageId,
 				recoveryEpoch: rig.lane.recoveryEpoch,
@@ -156,13 +158,13 @@ it("T5 the pinned transcript keeps its version, leaf and ids across a later bran
 			ok: false,
 			failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: 2 },
 		});
-		const read = readTranscriptRoot(pinned);
+		const read = await readTranscriptRoot(pinned);
 		expect(read.ok && read.entries.filter((entry) => entry.type === "message").map((entry) => entry.id)).toEqual([
 			firstId,
 		]);
 		expect(String(manager.getSessionFile())).not.toBe(pinnedFile);
 		truncateSync(pinnedFile, 0);
-		expect(readTranscriptRoot(pinned)).toEqual({ ok: false, error: "base_file_truncated" });
+		expect(await readTranscriptRoot(pinned)).toEqual({ ok: false, error: "base_file_truncated" });
 		checkpoints.release(token);
 		checkpoints.release(after);
 		expect(lane.liveRoots).toBe(0);
@@ -194,7 +196,7 @@ it("RULING-50 (3) the pinned transcript root is not reclaimed while its token is
 		lane.applyTranscript(manager.drainTranscript());
 		expect(lane.liveRoots, "only the live token's root stays pinned").toBe(1);
 		expect(unwrap(checkpoints.transcript(token, caller)), "the same pinned root, not a newer one").toBe(pinned);
-		const read = readTranscriptRoot(pinned);
+		const read = await readTranscriptRoot(pinned);
 		expect(read.ok && read.entries.filter((entry) => entry.type === "message").map((entry) => entry.id)).toEqual([
 			firstId,
 		]);

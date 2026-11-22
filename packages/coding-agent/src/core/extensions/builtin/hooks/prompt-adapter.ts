@@ -22,6 +22,7 @@ export function buildUserPromptHookInput(options: UserPromptHookInputOptions): H
 	return {
 		cwd: options.cwd,
 		event: "UserPromptSubmit",
+		hook_event_name: "UserPromptSubmit",
 		permission_mode: options.permissionMode,
 		prompt: options.prompt,
 		session_id: options.sessionId,

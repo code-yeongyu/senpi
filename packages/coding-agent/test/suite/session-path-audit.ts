@@ -33,7 +33,9 @@ export const SESSION_PATH_ROOT_FILES = [
  */
 export const RECOVERY_PATH_FILES = [
 	"src/modes/rpc/session-event-fanout.ts",
+	"src/modes/rpc/session-recovery-pins.ts",
 	"src/modes/rpc/compact-recovery-state.ts",
+	"src/modes/rpc/compact-recovery-streams.ts",
 	"src/modes/rpc/compact-recovery-types.ts",
 ] as const;
 
@@ -45,7 +47,11 @@ export const SESSION_PATH_ROOT_DIRECTORY = "src/core/tools";
  * rebind an import commits through. Nothing in these files may call synchronous I/O, and no ledger entry may name one.
  */
 export const MOVE_PATH_DIRECTORY = "src/core/session-move";
-export const MOVE_PATH_EXTRA_FILES = ["src/modes/rpc/session-move-commands.ts", "src/core/session-rebind.ts"] as const;
+export const MOVE_PATH_EXTRA_FILES = [
+	"src/modes/rpc/session-move-commands.ts",
+	"src/modes/rpc/session-move-import.ts",
+	"src/core/session-rebind.ts",
+] as const;
 
 export type { SessionPathFindingKind };
 

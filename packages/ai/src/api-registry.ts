@@ -1,3 +1,4 @@
+import { isActiveScopeWith, lookupProviderScopeRegistry } from "./provider-scope-registry.ts";
 import { getRegisteredFauxProvider } from "./providers/faux.ts";
 import type {
 	Api,
@@ -40,7 +41,7 @@ export type RegisteredApiProvider = {
 	survivesClear?: boolean;
 };
 
-/** Browser-neutral shape installed by the node-only provider-scope subpath. */
+/** Browser-neutral shape of the scope object the node-only provider-scope subpath places in the realm's registry. */
 export interface ProviderScopeAccess {
 	state: "active" | "closed";
 	overlay: Map<string, RegisteredApiProvider>;
@@ -48,23 +49,38 @@ export interface ProviderScopeAccess {
 
 const apiProviderRegistry = new Map<string, RegisteredApiProvider>();
 const builtinApiProviderRegistry = new Map<string, RegisteredApiProvider>();
-let getProviderScope: () => ProviderScopeAccess | undefined = () => undefined;
-let providerScopeStrictMode = false;
-
-/** Installs the optional node-only scope lookup without importing node APIs here. */
-export function installProviderScopeAccessor(accessor: () => ProviderScopeAccess | undefined): void {
-	getProviderScope = accessor;
-}
+// Strict mode this copy was given while the realm had no provider-scope instance. It stays in force for this copy
+// until this copy sets it again; once an instance exists, every set goes to the instance (omo#12965).
+let strictModeBeforeRegistry = false;
 
 export function setProviderScopeStrictMode(enabled: boolean): void {
-	providerScopeStrictMode = enabled;
+	const registry = lookupProviderScopeRegistry();
+	strictModeBeforeRegistry = registry === undefined && enabled;
+	registry?.setStrictMode(enabled);
+}
+
+function isProviderScopeAccess(scope: unknown): scope is ProviderScopeAccess {
+	return isActiveScopeWith(scope, "overlay");
+}
+
+/**
+ * The active scope any pi-ai copy in this realm entered, read structurally. `"closed"` covers a closed scope and one
+ * whose members another copy shaped differently: both refuse.
+ */
+function currentProviderScope(): ProviderScopeAccess | "closed" | undefined {
+	const scope: unknown = lookupProviderScopeRegistry()?.current();
+	if (scope === undefined) return undefined;
+	return isProviderScopeAccess(scope) ? scope : "closed";
 }
 
 function getActiveProviderScope(): ProviderScopeAccess | undefined {
-	const scope = getProviderScope();
-	if (scope?.state === "closed") throw new Error("Provider scope is closed");
-	if (!scope && providerScopeStrictMode) throw new Error("Provider scope is required in strict mode");
-	return scope;
+	const scope = currentProviderScope();
+	if (scope === "closed") throw new Error("Provider scope is closed");
+	if (scope !== undefined) return scope;
+	// A strict mode that is not a boolean (a newer copy's value) reads as on.
+	const strict = strictModeBeforeRegistry || (lookupProviderScopeRegistry()?.strictMode() ?? false) !== false;
+	if (strict) throw new Error("Provider scope is required in strict mode");
+	return undefined;
 }
 
 function wrapStream<TApi extends Api, TOptions extends StreamOptions>(
@@ -127,7 +143,20 @@ export function getBuiltinApiProvider(api: Api): ApiProviderInternal | undefined
 }
 
 export function getApiProvider(api: Api): ApiProviderInternal | undefined {
-	const scope = getActiveProviderScope();
+	return resolveApiProvider(api, getActiveProviderScope());
+}
+
+/**
+ * `getApiProvider` for the built-in registration a module runs while it evaluates: the same resolution, but it never
+ * throws. Strict mode is shared by every copy in the realm, so a copy evaluated while it is on must still load
+ * (omo#12965); a closed scope reads as no scope. Every runtime lookup keeps `getApiProvider`.
+ */
+export function getApiProviderAtEvaluation(api: Api): ApiProviderInternal | undefined {
+	const scope = currentProviderScope();
+	return resolveApiProvider(api, scope === "closed" ? undefined : scope);
+}
+
+function resolveApiProvider(api: Api, scope: ProviderScopeAccess | undefined): ApiProviderInternal | undefined {
 	if (scope) return scope.overlay.get(api)?.provider ?? builtinApiProviderRegistry.get(api)?.provider;
 
 	const faux = getRegisteredFauxProvider(api);

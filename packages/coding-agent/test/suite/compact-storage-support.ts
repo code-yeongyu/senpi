@@ -78,6 +78,26 @@ export function controlledIo(): {
 	};
 }
 
+/** The store's own file seam, kept in memory: a 100,000-page value spills in milliseconds instead of 100,000 files. */
+export function memoryIo(): CompactStorageIo {
+	const files = new Map<string, Buffer>();
+	const missing = (path: string) => Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
+	return {
+		async writeFile(path, data) {
+			if (files.has(path)) throw Object.assign(new Error(`EEXIST ${path}`), { code: "EEXIST" });
+			files.set(path, Buffer.from(data));
+		},
+		async readFile(path, range) {
+			const data = files.get(path);
+			if (!data) throw missing(path);
+			return Buffer.from(range ? data.subarray(range.offset, range.offset + range.length) : data);
+		},
+		async unlink(path) {
+			if (!files.delete(path)) throw missing(path);
+		},
+	};
+}
+
 export async function spoolRoot(): Promise<{ dir: string; cleanup(): Promise<void> }> {
 	const root = await mkdtemp(join(tmpdir(), "senpi-compact-"));
 	return { dir: join(root, "recovery", "epoch-1"), cleanup: () => rm(root, { recursive: true, force: true }) };

@@ -1,5 +1,6 @@
 import type { ApiKeyCredential, Credential, CredentialStore, Model, Provider } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
+import { APP_NAME } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { CredentialSynchronizationError, ModelRuntime } from "../src/core/model-runtime.ts";
 
@@ -60,6 +61,26 @@ async function runtimeWithProvider(
 }
 
 describe("ModelRuntime credential synchronization", () => {
+	// senpi#5003: display branding, not the independently configured user agent.
+	it("passes the configured app name to OAuth registration", async () => {
+		const registered = provider("branded");
+		const login = vi.fn(async () => ({
+			type: "oauth" as const,
+			access: "synthetic",
+			refresh: "synthetic",
+			expires: Date.now() + 60_000,
+		}));
+		registered.auth.oauth = {
+			name: "Fixture",
+			login,
+			refresh: async (credential) => credential,
+			toAuth: async (credential) => ({ apiKey: credential.access }),
+		};
+		const runtime = await runtimeWithProvider(registered);
+		await runtime.login("branded", "oauth", { prompt: async () => "unused", notify: () => {} });
+		expect(login).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ appName: APP_NAME }));
+	});
+
 	it("publishes locally consistent availability before login and logout resolve", async () => {
 		const credentials = AuthStorage.inMemory();
 		const runtime = await runtimeWithProvider(provider("dynamic"), credentials);
@@ -67,7 +88,11 @@ describe("ModelRuntime credential synchronization", () => {
 		await runtime.login("dynamic", "api_key", { prompt: async () => "unused", notify: () => {} });
 		expect(runtime.hasConfiguredAuth("dynamic")).toBe(true);
 		expect(runtime.getAvailableSnapshot().map((entry) => entry.id)).toContain("dynamic");
-		expect(await credentials.read("dynamic")).toEqual({ type: "api_key", key: "dynamic-key" });
+		expect(await credentials.read("dynamic")).toEqual({
+			type: "api_key",
+			key: "dynamic-key",
+			loginId: expect.any(String),
+		});
 
 		await runtime.logout("dynamic");
 		expect(runtime.hasConfiguredAuth("dynamic")).toBe(false);
@@ -306,7 +331,7 @@ describe("ModelRuntime credential synchronization", () => {
 			name: "CredentialSynchronizationError",
 			credential: { type: "api_key", key: "delayed-commit-key" },
 		});
-		expect(stored).toEqual({ type: "api_key", key: "delayed-commit-key" });
+		expect(stored).toEqual({ type: "api_key", key: "delayed-commit-key", loginId: expect.any(String) });
 	});
 
 	it("reports a typed error when cancellation interrupts post-commit synchronization", async () => {
@@ -346,6 +371,7 @@ describe("ModelRuntime credential synchronization", () => {
 		expect(await credentials.read("cancelled-sync")).toEqual({
 			type: "api_key",
 			key: "cancelled-sync-key",
+			loginId: expect.any(String),
 		});
 	});
 
@@ -370,6 +396,10 @@ describe("ModelRuntime credential synchronization", () => {
 			credential: { type: "api_key", key: "broken-sync-key" },
 		});
 		await expect(login).rejects.toBeInstanceOf(CredentialSynchronizationError);
-		expect(await credentials.read("broken-sync")).toEqual({ type: "api_key", key: "broken-sync-key" });
+		expect(await credentials.read("broken-sync")).toEqual({
+			type: "api_key",
+			key: "broken-sync-key",
+			loginId: expect.any(String),
+		});
 	});
 });
