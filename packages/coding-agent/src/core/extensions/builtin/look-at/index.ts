@@ -4,10 +4,11 @@ import { LOOK_AT_PARAMETERS, normalizeLookAtArgs, prepareLookAtArguments, valida
 import { registerLookAtCommand } from "./commands.ts";
 import { replaceImagesNamingTool } from "./image-placeholder.ts";
 import { resolveVisionModel } from "./model-selector.ts";
-import { LOOK_AT_DESCRIPTION, LOOK_AT_PROMPT_SNIPPET } from "./prompts.ts";
+import { LOOK_AT_DESCRIPTION, LOOK_AT_PROMPT_SNIPPET, TOOL_IMAGE_DESCRIPTION_GOAL } from "./prompts.ts";
 import { type LookAtToolDetails, renderLookAtCall, renderLookAtResult } from "./render.ts";
 import { runLookAt } from "./runner.ts";
 import { createLookAtStore, loadLookAtChain, loadLookAtEnabled } from "./settings.ts";
+import { describeToolResultImages } from "./tool-result-images.ts";
 
 const TOOL_NAME = "look_at";
 
@@ -78,6 +79,35 @@ export default function lookAtExtension(pi: ExtensionAPI): void {
 		},
 		{ mutatesMessages: false },
 	);
+
+	// Runs once per tool call, before the result is stored: the description takes the image's place in
+	// the transcript and no later request describes it again. An image that could not be described
+	// stays in the result and gets the placeholder above.
+	pi.on("tool_result", async (event, ctx) => {
+		// A nested call's result goes to the tool that issued it, not to the model.
+		if (event.parentToolCallId !== undefined || !Array.isArray(event.content) || !describesImagesFor(ctx)) {
+			return undefined;
+		}
+		const { content, failures } = await describeToolResultImages(event.content, TOOL_NAME, async (image) => {
+			ctx.updateToolHookStatus?.("look_at: describing image");
+			const result = await runLookAt(
+				{ image_data_list: [`data:${image.mimeType};base64,${image.data}`], goal: TOOL_IMAGE_DESCRIPTION_GOAL },
+				ctx.signal,
+				ctx,
+				store,
+			);
+			return { model: result.model, text: result.text };
+		});
+		if (failures.length > 0 && !ctx.signal?.aborted) {
+			const reasons = [...new Set(failures)].join("; ");
+			ctx.ui.notify(`look_at could not describe an image from ${event.toolName}: ${reasons}`, "warning");
+		}
+		if (!content) return undefined;
+		return {
+			content,
+			...(event.structuredContent === undefined ? {} : { structuredContent: event.structuredContent }),
+		};
+	});
 
 	registerLookAtCommand(pi, {
 		store,
