@@ -19,8 +19,12 @@ import { resolveSocketTransportAddress } from "./socket-transport.ts";
 const LOCK_BUSY_WAIT_MS = 100;
 
 /** The endpoint lock every ensure of `socket` serializes on, without its `.lock` suffix. */
-export function hostEnsureLockTarget(socket: string): string {
-	return join(tmpdir(), "senpi-rpc-host-locks", createSocketLockName(socket));
+export function hostEnsureLockTarget(socket: string, uid: number = process.getuid?.() ?? 0): string {
+	// senpi#6738: the OS temp directory is shared by every user of the machine, and the first user's root
+	// directory is not writable by a second one, so the same socket's ensure lock deadlocked across users
+	// (EACCES). The root is per user; the socket name inside it is unchanged, so existing single-user
+	// installs keep their lock files' names.
+	return join(tmpdir(), `senpi-rpc-host-locks-${uid}`, createSocketLockName(socket));
 }
 
 export async function acquireHostEnsureLock(socket: string, waitMs: number): Promise<() => Promise<void>> {
