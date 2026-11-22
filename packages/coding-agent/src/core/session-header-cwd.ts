@@ -1,5 +1,6 @@
 import { open } from "node:fs/promises";
 import { parseSessionEntryLine, SessionLineSplitter } from "./session-entry-file.ts";
+import { loadEntriesFromFileAsync } from "./session-manager.ts";
 
 /** The same bounds the session manager scans a header with (`readSessionHeader`). */
 const SCAN_LIMIT_BYTES = 1024 * 1024;
@@ -19,6 +20,10 @@ function candidate(line: string): { readonly cwd: string | undefined } | undefin
  * leading lines are skipped, and the first parsed entry decides (`session-manager.ts`, `readSessionHeader`).
  * `undefined` when there is no file yet (ENOENT, ENOTDIR) or the file names no folder; every other failure to read an
  * existing file throws, so a caller never mistakes an unreadable file for one that names nothing.
+ *
+ * The bounded scan is a discovery step, not the answer: a file whose header lies past the bound (a very long first
+ * line) is loaded whole, as `SessionManager.open` loads it, so such a session still opens where its header says
+ * instead of in the host's folder (senpi#6427).
  */
 export async function readHeaderCwd(sessionFile: string): Promise<string | undefined> {
 	let handle: Awaited<ReturnType<typeof open>>;
@@ -43,8 +48,17 @@ export async function readHeaderCwd(sessionFile: string): Promise<string | undef
 				if (found) return found.cwd;
 			}
 		}
-		return undefined;
 	} finally {
 		await handle.close();
 	}
+	return headerCwdFromWholeFile(sessionFile);
+}
+
+/** The header of a file whose first entry lies past the scan bound: the whole file decides, as the manager does. */
+async function headerCwdFromWholeFile(sessionFile: string): Promise<string | undefined> {
+	for (const entry of await loadEntriesFromFileAsync(sessionFile)) {
+		const found = candidate(JSON.stringify(entry));
+		if (found) return found.cwd;
+	}
+	return undefined;
 }

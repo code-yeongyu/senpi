@@ -6,8 +6,9 @@
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { classifyRpcMethod } from "../../src/modes/rpc/method-classes.ts";
+import { disposeFolderHosts, startFolderHost } from "./project-folder-verbs-host.ts";
 import { startHost } from "./projectHost.ts";
 
 interface FileData {
@@ -39,6 +40,15 @@ describe("read_project_file", () => {
 		const answer = await host.read("AGENTS.md");
 		expect(answer).toMatchObject({ success: true, command: "read_project_file" });
 		expect(answer.data).toMatchObject({ path: "AGENTS.md", exists: false, content: null, etag: null });
+	});
+
+	// omo-desktop-app#7459: a remote desktop edits a folder's model routing in its .omo/omo.jsonc.
+	it("reads the folder's .omo/omo.jsonc while the project is untrusted", async () => {
+		const host = await startHost();
+		mkdirSync(join(host.cwd, ".omo"), { recursive: true });
+		writeFileSync(join(host.cwd, ".omo", "omo.jsonc"), '{ "agents": {} }\n');
+		const data = (await host.read(".omo/omo.jsonc")).data as FileData;
+		expect(data).toMatchObject({ path: ".omo/omo.jsonc", exists: true, content: '{ "agents": {} }\n' });
 	});
 
 	it("reads an existing file while the project is untrusted, with an etag", async () => {
@@ -106,7 +116,7 @@ describe("write_project_file", () => {
 	it("creates a nested AGENTS.md and a rule file under .omo/rules, making the folders", async () => {
 		const host = await startHost();
 		await host.trust();
-		for (const path of ["packages/app/AGENTS.md", ".omo/rules/style/naming.md"]) {
+		for (const path of ["packages/app/AGENTS.md", ".omo/rules/style/naming.md", ".omo/omo.jsonc"]) {
 			expect(await host.write(path, `# ${path}\n`, null)).toMatchObject({ success: true });
 			expect(readFileSync(join(host.cwd, path), "utf8")).toBe(`# ${path}\n`);
 		}
@@ -118,6 +128,24 @@ describe("write_project_file", () => {
 		const answer = await host.write("AGENTS.md", "x".repeat(512 * 1024 + 1), null);
 		expect(answer).toMatchObject({ success: false, errorCode: "project_file_too_large" });
 		expect(existsSync(join(host.cwd, "AGENTS.md"))).toBe(false);
+	});
+});
+
+describe("project file verbs: the machine's own edit permission", () => {
+	afterEach(disposeFolderHosts);
+
+	// omo-desktop-app#7459: .omo/omo.jsonc decides which models run, so its writes pass the same per-write gate as the
+	// folder MCP and skill-file writes (senpi#6485).
+	it.each(["AGENTS.md", ".omo/omo.jsonc"])("refuses a write to %s that the permission rules deny", async (path) => {
+		const host = await startFolderHost({
+			settings: { permission: { edit: { "**/AGENTS.md": "deny", "**/omo.jsonc": "deny" } } },
+		});
+		await host.trust();
+		expect(await host.call("write_project_file", { path, content: "x", ifEtag: null })).toMatchObject({
+			success: false,
+			errorCode: "project_file_permission_denied",
+		});
+		expect(existsSync(join(host.cwd, path))).toBe(false);
 	});
 });
 
@@ -154,6 +182,9 @@ describe("project file verbs: only allowlisted paths inside the workspace", () =
 		"src/index.ts",
 		"README.md",
 		".omo/mcp.json",
+		".omo/omo.json",
+		"packages/app/.omo/omo.jsonc",
+		".omo/omo.jsonc/x",
 		".omo/rules",
 		".git/AGENTS.md",
 		"node_modules/x/AGENTS.md",
@@ -166,7 +197,11 @@ describe("project file verbs: only allowlisted paths inside the workspace", () =
 	it.each(refused)("refuses %j for read and write", async (path) => {
 		const host = await startHost();
 		await host.trust();
-		expect(await host.read(path)).toMatchObject({ success: false, errorCode: "project_file_not_allowed" });
+		expect(await host.read(path)).toMatchObject({
+			success: false,
+			errorCode: "project_file_not_allowed",
+			errorData: { path, reason: "not_listed" },
+		});
 		expect(await host.write(path, "x", null)).toMatchObject({
 			success: false,
 			errorCode: "project_file_not_allowed",
@@ -185,7 +220,11 @@ describe("project file verbs: only allowlisted paths inside the workspace", () =
 		symlinkSync(join(host.outside, "AGENTS.md"), join(host.cwd, "AGENTS.md"));
 		symlinkSync(host.outside, join(host.cwd, "linked"));
 		for (const path of ["AGENTS.md", "linked/AGENTS.md"]) {
-			expect(await host.read(path)).toMatchObject({ success: false, errorCode: "project_file_not_allowed" });
+			expect(await host.read(path)).toMatchObject({
+				success: false,
+				errorCode: "project_file_not_allowed",
+				errorData: { path, reason: "unsafe" },
+			});
 			expect(await host.write(path, "pwned\n", null)).toMatchObject({
 				success: false,
 				errorCode: "project_file_not_allowed",

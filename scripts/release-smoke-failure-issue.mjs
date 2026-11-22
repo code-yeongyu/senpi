@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Build Binaries dispatches the npm publish without waiting for the standalone-binary smoke (senpi#6627).
- * When that smoke then fails on a runner while npm already published the version, this opens an issue naming
+ * scripts/release-finalize.mjs runs this once both halves of the release are done (senpi#6851). When that smoke then fails on a runner while npm already published the version, this opens an issue naming
  * the version and each failing OS, with the one command the release owner runs to point npm `latest` back at
  * the previous version, and exits non-zero so the run fails loudly. It never changes a dist-tag itself.
  *
@@ -84,6 +84,12 @@ function main() {
 	if (dryRun) {
 		process.stdout.write(`[dry-run] would open: ${issue.title}\n\n${issue.body}\n`);
 		return 0;
+	}
+	// Build Binaries and the publish run each finalize the release (senpi#6851); open the issue once.
+	const existing = run("gh", ["issue", "list", "--repo", GH_REPO, "--state", "all", "--search", `${version} standalone-binary smoke in:title`, "--json", "title", "--jq", ".[].title"]);
+	if (existing.split("\n").includes(issue.title)) {
+		process.stderr.write(`::error::${issue.title} (issue already open)\n`);
+		return 1;
 	}
 	const dir = mkdtempSync(join(tmpdir(), "smoke-failure-"));
 	try {

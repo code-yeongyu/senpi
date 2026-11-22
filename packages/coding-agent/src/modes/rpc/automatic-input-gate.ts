@@ -17,3 +17,8 @@ export function holdAutomaticInput(session: AgentSession, command: InputCommand,
 	if (interactiveUser || command.expectedTurnId !== undefined) return false;
 	return session.noteAutomaticInput(command.message);
 }
+
+/** Whether `holdAutomaticInput` would keep this connection's input as a notice right now, without storing anything. */
+export function automaticInputWouldBeHeld(session: AgentSession, interactiveUser: boolean): boolean {
+	return !interactiveUser && session.automaticInputHoldLive();
+}

@@ -206,15 +206,6 @@ function main() {
 	const binaryDirectory = join(outDir, "bun");
 	mkdirSync(tarballDirectory, { recursive: true });
 
-	if (!options.skipCheck || !options.skipTest) {
-		// senpi#4067: same release opt-in as scripts/release-artifacts.mjs runGenerateModels.
-		run("npm", ["--prefix", "packages/ai", "run", "generate-models", "--", "--keep-last-good-opengateway"], {
-			cwd: repoRoot,
-		});
-		// senpi#2645: a regeneration that drops a bundled provider default stops here.
-		run("npm", ["--prefix", "packages/coding-agent", "run", "check:provider-defaults"], { cwd: repoRoot, env: { CI: "1" } });
-	}
-
 	if (!options.skipCheck) {
 		run("npm", ["run", "check"], { cwd: repoRoot });
 	}

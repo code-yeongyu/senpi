@@ -19,6 +19,11 @@ export function reachableToolNames(pi: ReachableToolRegistry): Set<string> {
 	return names;
 }
 
+/** The tools the session withholds from the model and routes through eval only, in registration order (senpi#6886). */
+export function evalOnlyToolNames(pi: ReachableToolRegistry): string[] {
+	return registeredTools(pi).flatMap((tool) => (tool.evalOnly === true ? [tool.name] : []));
+}
+
 // The loader's registry methods throw until the runtime binds (the dedupe probe in
 // coding-agent's codemode-builtin-dedupe.test.ts registers eval before that point); an
 // unreadable registry adds nothing, like promptKernelPreludes.

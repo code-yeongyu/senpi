@@ -1,3 +1,161 @@
+## 2026-11-21 - The release ships the committed model catalog and never regenerates it (senpi#2287)
+
+### What changed
+
+- `scripts/release.mjs`: the test-evidence step no longer regenerates the model catalog, re-checks the provider defaults or commits a release-only catalog commit; it waits for the release commit's green "Check and test" as before. `--tested-sha` is gone: `--sha <sha> --shard-results <dir>` releases the commit the forced-suite matrix jobs tested, which is now always the dispatched commit, and preflight requires HEAD reachable from origin/main with no catalog-child exception.
+- `scripts/local-release.mjs`: the local release smoke no longer regenerates the catalog or runs `check:provider-defaults` before its check; it builds and packs the committed catalog, as the release does.
+
+### Why
+
+- The regeneration was the single root cause of four release failure modes measured 2026-11-07..21: the refusal that asked for `force_tests` (runs 44873606382, 44755112301), the 25-28 min forced cuts it forced, the pinned merge-back conflict on `providers/data/.manifest.json` and `openrouter.json` (run 44870406986, senpi#6119), and models a test pins dropped by an untested regeneration (senpi#2287, senpi#4127). Catalog changes reach main through the refresh workflows' own PRs, whose CI tests them.
+
+### Why an extension could not handle it
+
+- This is release tooling. Extensions do not run in the release workflow.
+
+### Expected merge conflict zones
+
+- LOW: the module docblock, `preflight` and `main()` of `scripts/release.mjs`; the check/test block of `scripts/local-release.mjs`.
+
+## 2026-11-21 - Publish-only accepts a version already shipped by a concurrent run (senpi#1831)
+
+### What changed
+
+- `scripts/publish.mjs`: captures npm publish errors and uses the existing bounded registry retry to verify the exact `name@version` after a duplicate-version conflict. It continues only when the registry returns the requested version and never retries the publish.
+- `scripts/publish-command.mjs`: distinguishes duplicate-version conflicts from other failures and preserves the original publish error when registry verification cannot confirm the version.
+
+### Why
+
+- A pre-publish registry lookup can miss a concurrent publication. The next PUT then conflicts even though another run already shipped the version.
+
+### Why an extension could not handle it
+
+- The release workflow calls the repository's publish script directly; no extension runs on that path.
+
+### Expected merge conflict zones
+
+- LOW: the publish loop in `scripts/publish.mjs`.
+
+## 2026-11-16 - release-finalize.mjs joins the binary and npm halves of a release (senpi#6851)
+
+### What changed
+
+- `scripts/release-finalize.mjs` (new): reads the Build Binaries run's staging and smoke jobs and the publish run's `release` job, then does one of the following.
+  - If either half is still running, it does nothing (exit 0).
+  - Otherwise it publishes the draft (and does nothing more when the release is already public), or runs `release-smoke-failure-issue.mjs` when the smoke failed after npm, or runs `release-draft-cleanup.sh` when staging or npm failed. Each of these exits non-zero.
+- `scripts/release-draft-cleanup.sh`: a new `PUBLISH_RELEASE_RESULT` env carries the publish run's `release` job result. When it is set, it decides instead of the run status, because the run stays in progress while its finalize job runs.
+- `scripts/release-smoke-failure-issue.mjs`: opens no second issue when one with the same title exists.
+- `scripts/await-dispatched-run.sh` and its test: removed; nothing polls the publish run any more.
+- Tests:
+  - `scripts/release-finalize.test.mjs` (new) covers the state readers, the decision table and the script against fake `gh`/`npm`.
+  - `scripts/build-binaries-release-recovery.test.mjs`, `scripts/build-binaries-npm-dispatch.test.mjs`, `scripts/release-smoke-failure-issue.test.mjs` and `scripts/release-draft-cleanup.test.mjs` pin the new graph, the shared concurrency group and the new cases.
+
+### Why
+
+- A runner must not idle while the publish run works, and the release must still finish exactly as before.
+
+### Why an extension could not handle it
+
+- These are the repository's own release scripts.
+
+### Expected merge conflict zones
+
+- LOW: the publish-run branch of `scripts/release-draft-cleanup.sh`.
+
+## 2026-11-16 - A dry run with a CI-basis receipt previews the refusal of a red hosted run (senpi#6859 follow-up)
+
+### What changed
+
+- `scripts/release-ci-evidence.mjs`: with `--dry-run --ci-basis-receipt`, when the previewed hosted "Check and test" run concluded red, the dry run logs `the live run would refuse: CI failed on <sha>: ...; a ci_basis_receipt waives only the wait for hosted CI, not a red result` instead of `no CI wait (...)`. The live refusal and the preview share one message (`receiptRefusal`).
+
+### Why
+
+- Review of senpi#6867 (LOW L1): the dry run said the release would go ahead while the live run stops on that red run.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the dry-run branch and the receipt branch of `secureCiEvidence`.
+
+## 2026-11-16 - A CI-basis receipt waives the hosted CI wait, not a red hosted run (senpi#6859 follow-up)
+
+### What changed
+
+- `scripts/release-ci-evidence.mjs`: with `--ci-basis-receipt`, `secureCiEvidence` reads the pinned commit's "Check and test" runs once (no polling, no wait) and stops the release when that run concluded red; an unfinished, missing, superseded or unreadable run is waived as before.
+- `scripts/release-cli-args.mjs`: `--ci-basis-receipt` refuses a blank or space-padded id.
+
+### Why
+
+- Review of senpi#6861 (LOWs L1, L2): the receipt waives the wait for hosted CI; it must not override a hosted result that is already known to be red, and the CLI must refuse the same blank ids the workflow refuses.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the receipt branch at the end of `secureCiEvidence` and the receipt checks in `parseArgs`.
+
+## 2026-11-16 - release.mjs --ci-basis-receipt skips only the hosted CI wait (senpi#6859)
+
+### What changed
+
+- `scripts/release-cli-args.mjs`: new `--ci-basis-receipt <id>`; it needs `--sha` and refuses `--force-tests` and `--tested-sha`.
+- `scripts/release-ci-evidence.mjs`, `scripts/release.mjs`: with a receipt, `secureCiEvidence` logs `test gate: hosted CI wait waived by ci_basis_receipt <id> for the pinned commit <sha>` and returns instead of calling `awaitCiEvidence`. The catalog regeneration and its force_tests rule, the pinned-commit checks and the platform gate still run.
+
+### Why
+
+- The release workflow's receipt step (senpi#6859) needs a way to tell the release CLI that the hosted CI wait was waived for the pinned commit.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the option table of `parseArgs` and the tail of `secureCiEvidence`.
+
+## 2026-11-16 - The release refuses while a macOS/Windows job is red on main (senpi#6834)
+
+### What changed
+
+- `scripts/release.mjs`: after the test evidence (all three paths: CI evidence, `--force-tests`, `--tested-sha`), `assertPlatformsGreen` (`scripts/release-ci-evidence.mjs`) reads the latest settled main push run of each workflow with macOS/Windows legs (`scripts/ci-platform-red.mjs`) and refuses before the version commit when one has a failed macOS/Windows job or cannot be read. A dry run only reports it.
+
+### Why
+
+- Pull requests no longer run macOS/Windows (senpi#6834), so main is where those legs are tested; a release must not ship over a red one.
+
+### Why an extension could not handle it
+
+- The release CLI is repository tooling, not agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the line after the evidence block in `main()` of `release.mjs`.
+
+## 2026-11-13 - run-workspaces --alongside runs one workspace next to the others (senpi#6649)
+
+### What changed
+
+- `scripts/run-workspaces.mjs`: `--alongside <workspace>` runs that workspace in its own lane while the other selected workspaces run one at a time in path order in a second lane; refused together with `--parallel`; a selection that leaves the workspace out runs as before.
+- `scripts/run-workspaces-lanes.mjs` (new): the second lane starts only when `os.availableParallelism()` (or `RUN_WORKSPACES_PARALLELISM`) is at least 8, else the run stays sequential; both lanes share one signal fan-out and the second lane starts nothing after a signal.
+- `scripts/package-manager.mjs`: `createSignalFanout()` exposes `signalled()`.
+
+### Why
+
+- Lets the root `test` script use idle cores without oversubscribing small machines (senpi#6646).
+
+### Why an extension could not handle it
+
+- These are root orchestration scripts; no extension hook runs workspace scripts.
+
+### Expected merge conflict zones
+
+- LOW: the argument parser and the dispatch block in `runWorkspaces` in `run-workspaces.mjs`; the fan-out object in `createSignalFanout`.
+
 ## 2026-11-15 - Entry-graph budget for the pi-agent-core read-folders subpath (senpi#6740)
 
 ### What changed

@@ -18,7 +18,7 @@ on:
       - '.github/workflows/model-catalog-refresh.yml'
       - 'scripts/model-catalog-refresh.mjs'
       - 'scripts/publish-catalog-refresh.mjs'
-      - 'scripts/release-test-gate.mjs'
+      - 'scripts/model-catalog-drift.mjs'
       - 'packages/ai/scripts/generate-models.ts'
 
 permissions:

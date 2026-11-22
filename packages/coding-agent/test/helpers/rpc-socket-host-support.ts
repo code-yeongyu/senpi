@@ -30,7 +30,9 @@ export function scratch(label: string): {
 	const agentDir = join(root, "agent");
 	const sessionDir = join(root, "sessions");
 	const cwd = join(root, "work");
-	mkdirSync(agentDir, { recursive: true });
+	// 0700 under any umask: the host refuses to publish its key into an agent dir writable by group or others
+	// (unsafe_key_record) and exits before readiness, so a 0002 umask failed every real-host test here.
+	mkdirSync(agentDir, { recursive: true, mode: 0o700 });
 	mkdirSync(sessionDir, { recursive: true });
 	mkdirSync(cwd, { recursive: true });
 	return {

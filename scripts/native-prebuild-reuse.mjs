@@ -3,7 +3,7 @@
 // Inputs arrive through env, never through the step's shell text.
 //
 //   keys                       RUSTC_VV                   -> outputs keys, rustc
-//   select  --cache-root <d>   KEYS, MATCHED_KEYS, RUSTC  -> outputs reused, matrix, missing, missing_count
+//   select  --cache-root <d>   KEYS, MATCHED_KEYS, RUSTC, FULL -> outputs reused, matrix, missing, missing_count
 //   record  --artifact-dir <d> TARGET_ARTIFACT, KEY, RUSTC_VV
 //   collect --download-root <d> --cache-root <d>  KEYS, RUSTC, MISSING -> outputs save
 
@@ -40,14 +40,21 @@ function keys() {
 	output("keys", map);
 }
 
-// A restored cache directory is reused only when its record verifies; anything else is built.
+// A restored cache directory is reused only when its record verifies; anything else is built. FULL=false (a pull
+// request without the run-full-ci label, senpi#6834) leaves the macOS and Windows targets out altogether.
 function select(cacheRoot) {
 	const map = JSON.parse(requireEnv("KEYS"));
 	const matched = JSON.parse(requireEnv("MATCHED_KEYS"));
 	const rustc = requireEnv("RUSTC");
+	const full = requireEnv("FULL");
+	if (full !== "true" && full !== "false") throw new Error(`FULL must be true or false, got ${full}`);
 	const reused = [];
 	const include = [];
 	for (const target of loadTargets(repoRoot)) {
+		if (full === "false" && !target.linux) {
+			console.error(`${target.artifact}: SKIP (macOS/Windows run only for a full run)`);
+			continue;
+		}
 		const key = map[target.artifact];
 		if (!key) throw new Error(`KEYS has no key for ${target.artifact}`);
 		const dir = join(cacheRoot, target.artifact);
