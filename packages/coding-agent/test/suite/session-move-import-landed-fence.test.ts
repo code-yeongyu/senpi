@@ -103,7 +103,7 @@ class FailedBeforeCommit extends MoveLedger {
 	override async commit<T>(
 		moveId: MoveId,
 		target: string,
-		rename: () => T | Promise<T>,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
 		prepare?: () => void | Promise<void>,
 	): Promise<T> {
 		await this.fail(moveId, "import_failed");
@@ -187,7 +187,7 @@ class CannotRemoveStagingAfterItsCommit extends HoldsAfterReceive {
 	override commit<T>(
 		moveId: MoveId,
 		target: string,
-		rename: () => T | Promise<T>,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
 		prepare?: () => void | Promise<void>,
 	): Promise<T> {
 		cannotBeRemoved.add(join(dirname(target), ".move-staging", encodeURIComponent(moveId)));

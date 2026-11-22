@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
 import { pathExists } from "../tools/path-utils.ts";
-import { readManifest } from "./bundle.ts";
+import { readKeptBundle } from "./bundle.ts";
 import { outgoingStateDir } from "./extension-state.ts";
 import type { MoveAnswer } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
@@ -69,7 +69,7 @@ export function finishMove(options: FinishMoveOptions): Promise<FinishOutcome> {
 async function settleMove(options: FinishMoveOptions): Promise<FinishOutcome> {
 	const { sessionFile, bundleDir, moveId, answer } = options;
 	if (await pathExists(bundleDir)) {
-		const bundled = (await readManifest(bundleDir)).moveId;
+		const bundled = (await readKeptBundle(bundleDir)).moveId;
 		if (bundled !== moveId) throw new MoveMismatchError(moveId, bundled, "the kept bundle");
 	}
 	const entries = await loadEntriesFromFileAsync(sessionFile);
@@ -150,6 +150,6 @@ function reclaimed(entries: readonly { type: string; customType?: string; data?:
 
 export async function requeueDroppedInput(sessionFile: string, bundleDir: string): Promise<void> {
 	if (!(await pathExists(bundleDir))) return;
-	const manifest = await readManifest(bundleDir);
-	await requeueInput(sessionFile, manifest.moveId, manifest.droppedUserMessages);
+	const kept = await readKeptBundle(bundleDir);
+	await requeueInput(sessionFile, kept.moveId, kept.droppedUserMessages);
 }

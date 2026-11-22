@@ -9,8 +9,16 @@
  *
  * Refusals change nothing and answer `outcome: "refused"` with `reason`, `detail` and `action`:
  * - `turn_active` / `work_pending`: an agent run, a prompt in preflight, compaction, barrier-held work,
- *   bash, an admitted delivery or another request for the session. `interrupt` aborts the run and bash
- *   and waits (bounded) before the final check.
+ *   bash, an admitted delivery (named in `pending.deliveries`) or another request for the session. With
+ *   `deliveries: "refuse"` a busy session (any `turn_active` blocker) that holds an admitted delivery not yet written
+ *   is refused `work_pending` before anything is interrupted: its work would still read those deliveries, and the
+ *   caller decides whether to drop them (senpi#7004). An idle session's unwritten deliveries are stranded, so they are
+ *   handed back in either mode. `interrupt` aborts the run and bash
+ *   and waits (bounded) before the final check; a delivery the aborted run left queued is handed back
+ *   unwritten (`dropped.deliveries`), so an interrupted run never pins its session (oh-my-openagent#14169). A run whose only work is waiting on a dialog nobody
+ *   answered (a permission prompt) is no refusal: the unload aborts it, which cancels the dialog, as if
+ *   `interrupt` were set (senpi#6683). A run with a tool body executing is not parked, even when a dialog
+ *   is open: the body may be doing real work beside the dialog.
  * - `extension_work`: a published wake source other than child tasks (background terminal jobs, monitors,
  *   detached eval cells, a pending question). The teardown stops that work and most of it does not come
  *   back on reopen, so only `force` unloads past it; the refusal names the sources.
@@ -25,7 +33,17 @@ import { beginEffect, effectAnswer, isEffectBegin } from "./effect-commands.ts";
 import { EffectLedger } from "./effect-ledger.ts";
 import type { EffectActor } from "./effect-record.ts";
 import type { RpcCommand, RpcResponse, RpcUnloadAnswer, UnloadRefusalReason } from "./rpc-types.ts";
+import { sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
+import {
+	drainFacts,
+	drainUntilQuiet,
+	fenceForClose,
+	type GracefulDrain,
+	gracefulWaitMs,
+	recordGracefulClose,
+	reopenAfterDrain,
+} from "./session-graceful-close.ts";
 import { abortAndSettle, type ReleaseSettlePort } from "./session-release-interrupt.ts";
 
 export type UnloadSessionCommand = Extract<RpcCommand, { type: "unload_session" }>;
@@ -52,14 +70,22 @@ interface Refusal {
 	readonly reason: UnloadRefusalReason;
 	readonly detail: string;
 	readonly action?: string;
+	/** The run only waits on an unanswered dialog: ending it stops no work, so no `interrupt` is needed. */
+	readonly parked?: true;
+	/** `work_pending` caused by admitted deliveries not yet written: their ids. */
+	readonly deliveries?: readonly string[];
 }
 
 const ACTIONS = {
 	extension_work: "let the named work finish, or unload with force: true (it is stopped, not resumed on reopen)",
 	turn_active: "wait for the turn to end, or unload with interrupt: true to stop it first",
 	work_pending: "wait for the work to finish, or unload with interrupt: true",
+	work_pending_refused_deliveries:
+		"the session's work would still read these deliveries: wait for it, or unload with interrupt: true and without deliveries to hand them back to their senders",
 	children_live: 'wait for the child tasks, or unload with children: "detach" to leave them running',
 	attached: "ask the other clients to detach, or unload with force: true (they receive session_parked)",
+	graceful_expired:
+		"the session is still open and admitting again: retry with a longer waitMs, or unload with interrupt: true to stop the turn",
 } as const;
 
 export async function unloadSession(port: SessionUnloadPort, command: UnloadSessionCommand): Promise<RpcResponse> {
@@ -67,6 +93,15 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 		return answer(
 			command,
 			refused({ reason: "host_draining", detail: "this host is draining and parks every session itself" }),
+		);
+	if (command.graceful === true && command.interrupt === true)
+		return answer(
+			command,
+			refused({
+				reason: "unsupported",
+				detail: "graceful and interrupt exclude each other",
+				action: "send one of them",
+			}),
 		);
 	const first = loaded(port, command.sessionId);
 	if ("reason" in first) return answer(command, refused(first));
@@ -80,43 +115,122 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 		if ("replay" in begun)
 			return answer(command, {
 				outcome: begun.replay.state === "failed" ? "refused" : "unloaded",
-				// A replayed refusal answers the same reason, detail and action as the first one.
+				// A replayed refusal answers the same reason, detail and action as the first one, and either answer names
+				// the deliveries the first one handed back.
 				...refusalFields(begun.replay.outcome),
+				...(begun.replay.pending === undefined ? {} : { pending: begun.replay.pending }),
+				...(begun.replay.dropped === undefined ? {} : { dropped: begun.replay.dropped }),
 				...effectAnswer(begun.replay, command.sessionId, true),
 			});
 	}
 	const blocked = blockers(port, command, first.session, first.durableSessionId);
+	if (command.graceful === true) return closeGracefully(port, command, first, blocked);
+	// senpi#7004: a busy session's unread deliveries are what its work would still read. With `deliveries: "refuse"` they
+	// decide the answer before anything else, with or without `interrupt`: the caller learns their ids, nothing stops.
+	const unread = blocked.find((refusal) => refusal.deliveries !== undefined);
+	if (
+		command.deliveries === "refuse" &&
+		unread !== undefined &&
+		blocked.some((refusal) => refusal.reason === "turn_active")
+	)
+		return fail(command, first.session, { ...unread, action: ACTIONS.work_pending_refused_deliveries });
 	// Never stop work for an unload that would still be refused: only interruptible blockers are interrupted.
-	const standing = blocked.find((refusal) => !interruptible(refusal) || command.interrupt !== true);
+	const standing = blocked.find(
+		(refusal) => !interruptible(refusal) || (command.interrupt !== true && refusal.parked !== true),
+	);
 	if (standing !== undefined) return fail(command, first.session, standing);
-	if (blocked.length > 0) await abortAndSettle(port, command.sessionId, first.session);
-	return claimAndUnload(port, command);
+	const handedBack = blocked.length > 0 ? await abortAndSettle(port, command.sessionId, first.session) : [];
+	return claimAndUnload(port, command, handedBack);
+}
+
+/**
+ * `graceful` (oh-my-openagent#14313): the turn and the work an interrupt would stop end on their own, bounded by
+ * `waitMs`, behind the fence `fenceForClose` raises; published extension work is stopped cleanly by the teardown. A
+ * drain that outlives the bound is refused `turn_active` with `timed_out`, and the session stays open and admitting.
+ */
+async function closeGracefully(
+	port: SessionUnloadPort,
+	command: UnloadSessionCommand,
+	first: { session: AgentSession; durableSessionId: string },
+	blocked: readonly Refusal[],
+): Promise<RpcResponse> {
+	const standing = blocked.find((refusal) => !interruptible(refusal));
+	if (standing !== undefined) return fail(command, first.session, standing);
+	const drain = fenceForClose(first.session);
+	const busy = () =>
+		blockers(port, command, first.session, first.durableSessionId)
+			.filter(interruptible)
+			.map((refusal) => refusal.detail);
+	const settling = () => [port.otherRequestsSettled(command.sessionId), ...port.pendingPrompts(command.sessionId)];
+	if (await drainUntilQuiet(first.session, { busy, settling }, gracefulWaitMs(command.waitMs)))
+		return claimAndUnload(port, command, drain.dropped.deliveries, drain);
+	reopenAfterDrain(first.session);
+	const facts = drainFacts(first.session, drain);
+	const expired: Refusal = {
+		reason: "turn_active",
+		detail: `still working after ${facts.waited_ms} ms: ${busy().join(", ")}`,
+		action: ACTIONS.graceful_expired,
+	};
+	return fail(command, first.session, expired, droppedOf(drain.dropped.deliveries, drain), {
+		timed_out: true,
+		open: true,
+		admission: "reopened",
+		...facts,
+	});
+}
+
+function droppedOf(
+	handedBack: readonly string[],
+	drain: GracefulDrain | undefined,
+): { readonly dropped?: { deliveries: string[]; user_messages?: string[] } } {
+	if (drain !== undefined)
+		return { dropped: { deliveries: [...handedBack], user_messages: [...drain.dropped.user_messages] } };
+	return handedBack.length === 0 ? {} : { dropped: { deliveries: [...handedBack] } };
 }
 
 /** The final check and the unload, without an await between them and the close claim. */
-async function claimAndUnload(port: SessionUnloadPort, command: UnloadSessionCommand): Promise<RpcResponse> {
+async function claimAndUnload(
+	port: SessionUnloadPort,
+	command: UnloadSessionCommand,
+	handedBack: readonly string[],
+	drain?: GracefulDrain,
+): Promise<RpcResponse> {
+	// Deliveries the interrupt handed back are gone from this runtime whatever the answer: every answer names them.
+	const dropped = droppedOf(handedBack, drain);
 	const ready = loaded(port, command.sessionId);
-	if ("reason" in ready) return answer(command, refused(ready));
+	if ("reason" in ready) return answer(command, { ...refused(ready), ...dropped });
 	const stillBlocked = blockers(port, command, ready.session, ready.durableSessionId);
-	if (stillBlocked.length > 0) return fail(command, ready.session, stillBlocked[0] as Refusal);
+	if (stillBlocked.length > 0) {
+		if (drain !== undefined) reopenAfterDrain(ready.session);
+		return fail(command, ready.session, stillBlocked[0] as Refusal, dropped);
+	}
 	if (command.clearQueue === true) {
 		ClientAdmissions.clearQueuedFor(ready.session);
 		ready.session.clearQueue();
 	}
+	const closed = drain === undefined ? undefined : recordGracefulClose(ready.session, drain);
 	const effect =
 		command.effectId === undefined
 			? undefined
-			: EffectLedger.forSession(ready.session).transition(command.effectId, "done", { disposition: "unloaded" });
+			: EffectLedger.forSession(ready.session).transition(command.effectId, "done", {
+					disposition: "unloaded",
+					...dropped,
+				});
 	if (!(await port.tearDown(command.sessionId, ready.sessionPath))) {
 		return answer(command, {
 			outcome: "refused",
 			reason: "session_closing",
 			detail: "another close of this session finished first",
+			...dropped,
 		});
 	}
 	return answer(command, {
 		outcome: "unloaded",
 		sessionPath: ready.sessionPath,
+		...dropped,
+		...(closed === undefined
+			? {}
+			: { graceful: { turn: closed.turn, waited_ms: closed.waited_ms, stopped: closed.stopped } }),
 		...(effect === undefined ? {} : effectAnswer(effect, command.sessionId)),
 	});
 }
@@ -139,19 +253,42 @@ function blockers(
 		activity.isCompacting && "compaction",
 		activity.hasSessionWork && "session work",
 	].filter((label): label is string => typeof label === "string");
-	if (running.length > 0)
+	// The run's own `prompt` call stays pending while it streams, so `pendingPrompts` does not count against a parked run.
+	// A tool body that is executing is real work, even when a dialog is open beside it: a dialog cannot be told apart
+	// from its opener (an MCP elicitation arrives on the server's channel), so any executing body rules out parked.
+	const parked =
+		activity.isStreaming &&
+		!activity.isCompacting &&
+		!activity.hasSessionWork &&
+		session.toolDispatcher.executing === 0 &&
+		(sessionDialogRequests.get(session)?.snapshot().length ?? 0) > 0;
+	if (parked)
+		found.push({
+			reason: "turn_active",
+			detail: "an agent run waiting on an unanswered prompt",
+			action: ACTIONS.turn_active,
+			parked: true,
+		});
+	else if (running.length > 0)
 		found.push({ reason: "turn_active", detail: running.join(", "), action: ACTIONS.turn_active });
+	const unwritten = session.externalAdmission.list().pending;
 	const pending = [
 		activity.isBashRunning && "a bash command",
-		session.externalAdmission.list().pending.length > 0 && "an admitted delivery not yet written",
+		unwritten.length > 0 && "an admitted delivery not yet written",
 		port.otherRequests(command.sessionId) > 0 && "another request for this session",
 	].filter((label): label is string => typeof label === "string");
 	if (pending.length > 0)
-		found.push({ reason: "work_pending", detail: pending.join(", "), action: ACTIONS.work_pending });
+		found.push({
+			reason: "work_pending",
+			detail: pending.join(", "),
+			action: ACTIONS.work_pending,
+			...(unwritten.length === 0 ? {} : { deliveries: [...unwritten] }),
+		});
 	const sources = session.activeWakeSources;
 	const childSources = sources.filter((source) => CHILD_TASK_SOURCE.test(source));
 	const otherSources = sources.filter((source) => !CHILD_TASK_SOURCE.test(source));
-	if (otherSources.length > 0 && command.force !== true)
+	// A graceful close stops this work cleanly in its teardown: monitors and loops are not restored on a reopen.
+	if (otherSources.length > 0 && command.force !== true && command.graceful !== true)
 		found.push({
 			reason: "extension_work",
 			detail: `work published by ${otherSources.join(", ")}`,
@@ -194,9 +331,17 @@ function loaded(
 }
 
 /** A refusal after the effect began records it `failed`; the answer carries the receipt. */
-function fail(command: UnloadSessionCommand, session: AgentSession, refusal: Refusal): RpcResponse {
-	if (command.effectId === undefined) return answer(command, refused(refusal));
+function fail(
+	command: UnloadSessionCommand,
+	session: AgentSession,
+	refusal: Refusal,
+	dropped: { readonly dropped?: { deliveries: string[]; user_messages?: string[] } } = {},
+	expiry: Pick<RpcUnloadAnswer, "timed_out" | "open" | "admission" | "turn" | "waited_ms"> = {},
+): RpcResponse {
+	if (command.effectId === undefined) return answer(command, { ...refused(refusal), ...dropped, ...expiry });
 	const status = EffectLedger.forSession(session).transition(command.effectId, "failed", {
+		...dropped,
+		...pendingOf(refusal),
 		outcome: {
 			kind: "refused",
 			reason: refusal.reason,
@@ -204,7 +349,7 @@ function fail(command: UnloadSessionCommand, session: AgentSession, refusal: Ref
 			...(refusal.action === undefined ? {} : { action: refusal.action }),
 		},
 	});
-	return answer(command, { ...refused(refusal), ...effectAnswer(status, command.sessionId) });
+	return answer(command, { ...refused(refusal), ...dropped, ...expiry, ...effectAnswer(status, command.sessionId) });
 }
 
 function refusalFields(
@@ -218,12 +363,17 @@ function refusalFields(
 	};
 }
 
+function pendingOf(refusal: Refusal): { pending?: { deliveries: string[] } } {
+	return refusal.deliveries === undefined ? {} : { pending: { deliveries: [...refusal.deliveries] } };
+}
+
 function refused(refusal: Refusal): RpcUnloadAnswer {
 	return {
 		outcome: "refused",
 		reason: refusal.reason,
 		detail: refusal.detail,
 		...(refusal.action === undefined ? {} : { action: refusal.action }),
+		...pendingOf(refusal),
 	};
 }
 

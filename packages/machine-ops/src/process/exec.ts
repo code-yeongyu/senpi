@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { MachineOpError } from "../errors.ts";
 import type { ExecRequest, ExecResult, ExecShell, OpContext } from "../types.ts";
+import { preferExecChildAsOomVictim } from "./oom-score.ts";
 import { newScopeToken, RUNTIME_ENV, SCOPE_ENV, type ScopeRegistry } from "./scopes.ts";
 import { waitForChildProcess } from "./wait-child.ts";
 
@@ -122,6 +123,7 @@ export async function runExec(req: ExecRequest, ctx: OpContext, deps: ExecDepend
 	}
 	const pid = child.pid;
 	if (pid !== undefined) {
+		preferExecChildAsOomVictim(pid);
 		if (token !== undefined) scopes?.attach(token, pid);
 		req.onSpawn?.(pid);
 		const onExit = req.onExit;

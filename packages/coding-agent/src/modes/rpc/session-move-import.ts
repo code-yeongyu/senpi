@@ -3,7 +3,8 @@
  * the request, the session lands in this host's session folder for `cwd` or in the one the caller names, and with
  * `open` the landed session is opened in the same answer.
  */
-import { stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../../core/session-manager.ts";
 import { importMovedSession } from "../../core/session-move/import.ts";
@@ -28,17 +29,27 @@ export interface MoveImportPort {
 }
 
 /**
- * Why a `sessionDir` cannot hold the session, when a file is in its place or above it: a request error, asked before
- * the import touches the move, so the move stays importable. `undefined` for a folder and for a path not there yet.
+ * Why a `sessionDir` cannot hold the session: a file is in its place or above it, this host could not look at it (no
+ * permission, a symlink loop), or it is a folder this host may not write into. A request error, asked before the
+ * import touches the move, so the move stays importable. `undefined` for a folder this host can write into and for a
+ * path that is not there yet (ENOENT), which the import creates.
  */
 export async function sessionDirRefusal(sessionDir: string | undefined): Promise<string | undefined> {
 	if (sessionDir === undefined) return undefined;
-	const found = await stat(normalizePath(sessionDir)).then(
-		(entry) => (entry.isDirectory() ? "folder" : "file"),
-		(cause: unknown) =>
-			typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOTDIR" ? "file" : "absent",
-	);
-	return found === "file" ? "sessionDir must be a folder: a file is in its place or above it." : undefined;
+	const dir = normalizePath(sessionDir);
+	const code = (cause: unknown) =>
+		typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "unknown";
+	const found = await stat(dir).then((entry) => (entry.isDirectory() ? "folder" : "file"), code);
+	if (found === "ENOENT") return undefined;
+	if (found === "folder") {
+		const denied = await access(dir, constants.W_OK | constants.X_OK).then(() => undefined, code);
+		return denied === undefined ? undefined : `sessionDir cannot be used (${denied}): this host cannot write there.`;
+	}
+	if (found === "file" || found === "ENOTDIR")
+		return "sessionDir must be a folder: a file is in its place or above it.";
+	// Any other answer (no permission, a symlink loop, an I/O error) is not "nothing there": the import would fail on
+	// the same path after the move began receiving, and settle it failed.
+	return `sessionDir cannot be used (${found}): this host could not look at it.`;
 }
 
 /** An inline bundle is staged in this host's own folder under `root`, then read exactly as a folder is. */

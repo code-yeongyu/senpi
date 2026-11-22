@@ -4,68 +4,10 @@
  *
  * A release never re-runs the test suite: it reuses the green "Check and test" run CI reported for the exact
  * commit it tags, the fan-in that succeeds only when every CI shard and required job passed. This module holds the
- * pure decisions (unit-testable without network): whether the regenerated catalog differs from HEAD, what to do
- * with the check runs CI reported, and the wait loop. `release.mjs` owns the `gh` and `git` calls.
+ * pure decisions (unit-testable without network): what to do with the check runs CI reported, and the wait loop. `release.mjs` owns the `gh` and `git` calls.
  */
-
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
 export const REQUIRED_CHECK_NAME = "Check and test";
-
-/** What `packages/ai/scripts/generate-models.ts` writes: the aggregator and the provider shards/data. */
-export const REGENERATED_CATALOG_PATHS = ["packages/ai/src/models.generated.ts", "packages/ai/src/providers"];
-
-/**
- * True when the release's catalog regeneration left the catalog different from HEAD (a changed or a
- * new file). HEAD's CI ran on the old catalog, so it says nothing about the regenerated one (senpi#2645).
- * @param {string} cwd repository root
- */
-export function catalogChangedSinceHead(cwd) {
-	const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ...REGENERATED_CATALOG_PATHS], {
-		cwd,
-		encoding: "utf8",
-	});
-	return status.trim().length > 0;
-}
-
-export const CATALOG_MANIFEST = "packages/ai/src/providers/data/.manifest.json";
-
-/**
- * True when two catalog manifests differ only in `generatedAt`, the timestamp every regeneration stamps.
- * @param {string} before manifest text at HEAD
- * @param {string} after regenerated manifest text
- */
-export function isTimestampOnlyManifestChange(before, after) {
-	const { generatedAt: _before, ...beforeRest } = JSON.parse(before);
-	const { generatedAt: _after, ...afterRest } = JSON.parse(after);
-	return isDeepStrictEqual(beforeRest, afterRest);
-}
-
-/**
- * Restore the catalog manifest when the regeneration changed nothing but its `generatedAt` stamp, so an unchanged
- * catalog reads as unchanged. Without this every regeneration looked like drift.
- * @param {string} cwd repository root
- * @returns {boolean} whether the stamp-only change was discarded
- */
-export function discardTimestampOnlyCatalogChange(cwd) {
-	const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ...REGENERATED_CATALOG_PATHS], {
-		cwd,
-		encoding: "utf8",
-	});
-	const changed = status
-		.split("\n")
-		.map((line) => line.slice(3).trim())
-		.filter(Boolean);
-	if (changed.length !== 1 || changed[0] !== CATALOG_MANIFEST) return false;
-	const before = execFileSync("git", ["show", `HEAD:${CATALOG_MANIFEST}`], { cwd, encoding: "utf8" });
-	const after = readFileSync(join(cwd, CATALOG_MANIFEST), "utf8");
-	if (!isTimestampOnlyManifestChange(before, after)) return false;
-	execFileSync("git", ["checkout", "--", CATALOG_MANIFEST], { cwd });
-	return true;
-}
 
 const SUPERSEDED_CONCLUSIONS = new Set(["cancelled", "stale", "skipped"]);
 

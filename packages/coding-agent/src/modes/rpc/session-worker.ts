@@ -134,8 +134,12 @@ class WorkerEventWriter extends SessionEventWriter {
 			const replacement =
 				"type" in record &&
 				(record.type === "session_replaced" ||
+					record.type === "session_archived_changed" ||
+					record.type === "session_settled_changed" ||
 					record.type === "question_resolved" ||
 					record.type === "question_updated" ||
+					record.type === "auto_retry_start" ||
+					record.type === "auto_retry_end" ||
 					(record.type === "extension_ui_request" && "method" in record && record.method === "question"))
 					? workerSnapshot(entry)
 					: undefined;

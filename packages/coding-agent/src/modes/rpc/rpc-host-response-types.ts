@@ -113,6 +113,17 @@ export type RpcHostCommandResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "find_session";
+			success: true;
+			/**
+			 * Which session file of this host carries the durable id (senpi#6429). `open` says an engine holds it now.
+			 * `ambiguous` names no file: two of them carry that id. `unknown`: no session file of this host does.
+			 */
+			data: { found: { sessionPath: string; cwd: string; open: boolean } } | { ambiguous: true } | { unknown: true };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "detach_connection";
 			success: true;
 			/**
@@ -137,6 +148,9 @@ export type RpcHostCommandResponse =
 			data: {
 				sessions: Array<{
 					sessionId: string;
+					/** The generation currently writing this session, not necessarily the one answering the listing. */
+					generation?: number;
+					hostInstanceId?: string;
 					durableSessionId?: string;
 					sessionPath?: string;
 					cwd: string;
@@ -152,6 +166,11 @@ export type RpcHostCommandResponse =
 					tool_child?: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
 					presence?: RpcSessionPresence;
 				}>;
+				/**
+				 * senpi#7020: present while this host is still taking over a predecessor's sessions after a handoff, so
+				 * `sessions` is not yet the whole set: `pending` parks not yet reopened, and whether the predecessor still runs.
+				 */
+				handover?: { pending: number; predecessor_draining: boolean };
 			};
 	  }
 	| {

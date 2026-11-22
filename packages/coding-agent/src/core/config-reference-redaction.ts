@@ -3,21 +3,22 @@
  *
  * A process can evaluate this module more than once (the bundle's shared chunk, its self-contained session-worker
  * entry, and the SDK graph an in-process child loads), so the values are not kept in a module-local set: the first
- * copy pins a frozen registry on `globalThis` under `SLOT_KEY` (non-writable, non-configurable, non-enumerable) and
+ * copy pins a frozen registry on `globalThis` under `Symbol.for(SLOT_KEY_NAME)` (non-writable, non-configurable, non-enumerable) and
  * every later copy adopts it. The backing `Set` lives only in the installing copy's closure; the registry offers no
  * delete, clear or setter, so in-realm code cannot remove a value, replace the slot or turn redaction off. Any
- * in-realm code can `add` a string, which can only over-redact. This is a stopgap until one engine instance serves
- * the whole process; other realms (workers, `vm` contexts, child processes) keep their own registry.
+ * in-realm code can `add` a string, which can only over-redact. Other realms (workers, `vm` contexts, child processes) keep their own registry.
  *
  * Compatibility contract, permanent: the key string never changes. The v1 members `version` (1), `add(value)`,
  * `size` (an accessor reporting the live count) and `values()` (a fresh array) are never removed or repurposed; a
  * later contract keeps writing through this same slot and only adds members, and adopters ignore members they do not
- * know. A copy adopts only a slot pinned the way `pin` pins it, frozen, with those four members; anything else (a
+ * know. A copy adopts only a slot pinned the way the realm-registry helper pins it, frozen, with those four members; anything else (a
  * slot planted before the first copy loaded, an accessor, another version) makes the import throw
  * `ConfigReferenceRedactionSlotError`, because a copy running with a private set is the leak this registry removes.
+ * The adoption rule is the shared realm-registry helper's (omo#12965); this module keeps its own error class and code.
  */
+import { realmRegistry } from "@earendil-works/pi-realm-registry";
+
 const SLOT_KEY_NAME = "@code-yeongyu/senpi/config-reference-redaction/v1";
-const SLOT_KEY = Symbol.for(SLOT_KEY_NAME);
 const MIN_REDACTED_LENGTH = 4;
 /** The largest `$file` reference value (`config-reference-file.ts`); longer strings are never remembered. */
 const MAX_REMEMBERED_LENGTH = 65_536;
@@ -69,31 +70,12 @@ function isFrozenV1Registry(value: unknown): value is ResolvedValueRegistry {
 	);
 }
 
-function pin(registry: ResolvedValueRegistry): ResolvedValueRegistry {
-	try {
-		Object.defineProperty(globalThis, SLOT_KEY, {
-			value: registry,
-			writable: false,
-			configurable: false,
-			enumerable: false,
-		});
-	} catch (error) {
-		throw new ConfigReferenceRedactionSlotError(error);
-	}
-	return registry;
-}
-
-function sharedRegistry(): ResolvedValueRegistry {
-	const slot = Reflect.getOwnPropertyDescriptor(globalThis, SLOT_KEY);
-	if (slot === undefined) return pin(createRegistry());
-	const value: unknown = slot.value;
-	if (slot.writable !== false || slot.configurable !== false || !isFrozenV1Registry(value)) {
-		throw new ConfigReferenceRedactionSlotError();
-	}
-	return value;
-}
-
-const registry = sharedRegistry();
+const registry = realmRegistry(
+	SLOT_KEY_NAME,
+	createRegistry,
+	isFrozenV1Registry,
+	(cause) => new ConfigReferenceRedactionSlotError(cause),
+);
 let redactionForms: readonly string[] = [];
 let formsSize = 0;
 

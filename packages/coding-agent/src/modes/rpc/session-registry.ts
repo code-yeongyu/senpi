@@ -6,6 +6,7 @@ import { publishedSessionContext } from "./session-context-patch.ts";
 import { attachLiveSession, markPathAttached } from "./session-live-attachment.ts";
 import { beginPendingClaim, type PendingClaims, syncRuntimeMetadata } from "./session-registry-claims.ts";
 import { openRegistrySession } from "./session-registry-open.ts";
+import { sessionRowStatusFields } from "./session-status-source.ts";
 
 import {
 	type OpenRpcSession,
@@ -104,6 +105,9 @@ export class RpcSessionRegistry {
 	get size(): number {
 		return [...this.entries.values()].filter((entry) => !entry.speculative).length;
 	}
+	reserveHandle(): string {
+		return `rpc-${++this.nextHandle}`;
+	}
 
 	/** Commit the ledger's exclusive claim after its existing runtime has acquired a persistent file. */
 	async claimPark(handle: string, retainOnDisconnect: boolean): Promise<OpenRpcSession> {
@@ -150,7 +154,7 @@ export class RpcSessionRegistry {
 				teardownHost: this.teardownHost,
 				closeGraceMs: this.closeGraceMs,
 				now: this.now,
-				nextHandle: () => `rpc-${++this.nextHandle}`,
+				nextHandle: () => this.reserveHandle(),
 				validateProfile: (profile) => this.validateProfile(profile),
 				syncRuntimeMetadata: () => this.syncRuntimeMetadata(),
 			},
@@ -227,6 +231,7 @@ export class RpcSessionRegistry {
 				status: entry.state === "quarantined" ? "closing" : entry.state,
 				idleMs: Math.max(0, now - entry.lastCommandAt),
 				tool_child: entry.runtime?.session.toolChildRow() ?? { state: "none" },
+				...sessionRowStatusFields(entry),
 			}));
 	}
 

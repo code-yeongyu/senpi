@@ -16,10 +16,12 @@ function runtimeFor(availableModels: Model<Api>[]): InitialModelRuntime {
 }
 
 describe("OpenAI provider defaults", () => {
-	test("prefers GPT-6.1 Sol automatically while preserving explicit GPT-5.5", async () => {
+	test("prefers GPT-6.2 Sol automatically while preserving explicit GPT-5.5", async () => {
 		const openAiModels = getModels("openai");
 		const codexModels = getModels("chatgpt-subscription");
 		const availableModels: Model<Api>[] = [
+			openAiModels.find((model) => model.id === "gpt-6.2-sol"),
+			codexModels.find((model) => model.id === "gpt-6.2-sol"),
 			openAiModels.find((model) => model.id === "gpt-6.1-sol"),
 			codexModels.find((model) => model.id === "gpt-6.1-sol"),
 			openAiModels.find((model) => model.id === "gpt-6-sol"),
@@ -39,7 +41,7 @@ describe("OpenAI provider defaults", () => {
 			modelRuntime: runtime,
 		});
 
-		expect(automatic.model?.id).toBe("gpt-6.1-sol");
+		expect(automatic.model?.id).toBe("gpt-6.2-sol");
 		expect(automatic.provenance).toBe("provider-default");
 		expect(explicit.model?.id).toBe("gpt-5.5");
 		expect(explicit.provenance).toBe("settings");

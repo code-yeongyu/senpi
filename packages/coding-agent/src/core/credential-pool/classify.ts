@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { getOverflowPatterns } from "@earendil-works/pi-ai/utils/overflow";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
-import { siwcRecoveryFromDiagnostic } from "@earendil-works/pi-ai/utils/siwc-errors";
+import { isSiwcMissingResponsesScope, siwcRecoveryFromDiagnostic } from "@earendil-works/pi-ai/utils/siwc-errors";
 import { rateLimitModelFamily } from "./model-scope.ts";
 import { usageLimitResetMs } from "./reset-time.ts";
 import { isAccountUsageLimitText } from "./usage-limit.ts";
@@ -377,6 +377,9 @@ export function classifyCredentialFailure(
 		case "account_disabled":
 			return { kind: "failover", block: { reason: "account_disabled" } };
 		case "auth":
+			// An account without Responses access is not a rejected sign-in: a re-login cannot clear it, so
+			// the turn fails with the provider's message and the slot stays as it was (senpi#6643).
+			if (isSiwcMissingResponsesScope(text)) return { kind: "fail_request" };
 			return { kind: "failover", block: { reason: "auth_error" } };
 		case "request":
 			return { kind: "fail_request" };

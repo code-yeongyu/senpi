@@ -11,8 +11,8 @@ import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
 // senpi#3114. A handoff drain parks a session only once it is idle. An unattended session (its client is gone,
 // so nobody can steer or cancel it on this superseded generation) chained automatic turns - goal continuation,
 // monitor and codemode wakes - back to back, never went idle and kept running, its eval cells included, on a
-// generation nothing could reach. The drain now holds automatic turns of every session nobody is attached to,
-// so the in-flight run is the last one and the session parks when it settles.
+// generation nothing could reach. The drain now holds automatic turns of every session (attached ones too since
+// senpi#7098), so the in-flight run is the last one and the session parks when it settles.
 
 const scratchDirs: string[] = [];
 const harnesses: Harness[] = [];
@@ -63,7 +63,7 @@ it("a drained session starts no further automatic turn once its running turn set
 	expect(h.session.isSessionBusy).toBe(false);
 });
 
-it("the drain holds automatic turns of unattended sessions only", async () => {
+it("the drain holds automatic turns of attached and unattended sessions", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-3114-"));
 	scratchDirs.push(dir);
 	const exited = Promise.withResolvers<void>();
@@ -86,7 +86,7 @@ it("the drain holds automatic turns of unattended sessions only", async () => {
 	await rig.settle();
 
 	expect(childTurn.automaticTurnHolds).toBe(1);
-	expect(topTurn.automaticTurnHolds).toBe(0);
+	expect(topTurn.automaticTurnHolds).toBe(1);
 	expect(rig.registry.peek(unattended)).toBeDefined();
 	expect(rig.registry.peek(attended)).toBeDefined();
 

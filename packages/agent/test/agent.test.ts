@@ -1113,8 +1113,9 @@ describe("Agent", () => {
 
 		await agent.prompt("later admitted prompt");
 
+		// Steering, and a follow-up an error run parked (omo#14428), join the later prompt's first request.
 		expect(providerUserTexts).toEqual(
-			queue === "steering"
+			queue === "steering" || stopReason === "error"
 				? [["initial request"], ["initial request", "later admitted prompt", "retained queued input"]]
 				: [
 						["initial request"],

@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { SessionMovedAwayError } from "../../src/core/session-move/ownership.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { customTypes, devices, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
+import { customTypes, devices, importedOnB, landedOnB, move, revokedLandingOnB } from "./rpc-move-session-support.ts";
 
 const reclaimedData = (file: string) =>
 	readFileSync(file, "utf8")
@@ -24,7 +24,7 @@ describe("move_session finish with a revoked answer (senpi#4003)", () => {
 		const onB = await importedOnB(a, b, fixture, "move-f1", ["keep me"]);
 		await move(b, { op: "revoke", sessionPath: onB, moveId: "move-f1" });
 		const answer = (await move(b, { op: "status", moveId: "move-f1", sessionPath: onB })).data;
-		expect(answer).toEqual({ state: "accepted", revoked: true, ...landedOnB(fixture, onB) });
+		expect(answer).toEqual({ state: "accepted", revoked: true, ...revokedLandingOnB(fixture, onB, "move-f1") });
 
 		expect(
 			await move(a, { op: "finish", sessionPath: fixture.sessionPath, moveId: "move-f1", answer }),

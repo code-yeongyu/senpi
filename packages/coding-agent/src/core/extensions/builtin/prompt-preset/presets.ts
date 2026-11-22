@@ -29,6 +29,7 @@ import { buildGpt55Prompt } from "./gpt-5.5.ts";
 import { buildGpt56Prompt } from "./gpt-5.6.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
 import { buildGpt6AstraPrompt } from "./gpt-6-astra.ts";
+import { buildGpt62Prompt } from "./gpt-6.2.ts";
 import { buildGrok45Prompt } from "./grok-4.5.ts";
 import { buildGrok46Prompt } from "./grok-4.6.ts";
 import { buildGrok47Prompt } from "./grok-4.7.ts";
@@ -90,6 +91,8 @@ function renderPreset(
 	options: BuildDynamicSystemPromptOptions,
 ): Omit<ResolvedPromptPreset, "parts"> {
 	switch (name) {
+		case "gpt-6.2":
+			return { name, prompt: buildGpt62Prompt(options) };
 		case "gpt-6-astra":
 			return { name, prompt: buildGpt6AstraPrompt(options) };
 		case "gpt-5.6":
