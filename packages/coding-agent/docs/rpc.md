@@ -7922,11 +7922,14 @@ Assignment belongs only to that enrolled principal and live binding; re-enrollme
 including the same device and key enrolling again, or binding replacement requires a
 new assignment. It is not persisted, and a successor host knows no earlier principal.
 
-An account principal is also revoked, with its grants, when the embedding distribution
-reports a sign-out or an account switch, and when `attestedUntil` passes without an
-`account_reattest`. The connection receives `account_refused` with
-`presenter_account_unavailable`, `presenter_account_mismatch`, or `attestation_expired`
-and closes. A revoked grant ends its forms under the outcome rules below: a presented
+An account principal and its grants are revoked on any account-change notification from
+the embedding distribution, including a same-account sign-in. The connection receives
+`account_refused` with `presenter_account_unavailable` after sign-out or
+`presenter_account_mismatch` after an account switch. A same-account sign-in with a
+still-valid attestation also returns `presenter_account_mismatch`; that reason alone does
+not prove the account identity changed. If `attestedUntil` passes without an `account_reattest`,
+the reason is `attestation_expired`. In each case the connection closes.
+A revoked grant ends its forms under the outcome rules below: a presented
 form cancels without human admission, and one not yet presented is a processing
 failure. A dialog belongs to the grant it was created for. A later holder, including
 another device of the same account, never receives or answers a dialog created for

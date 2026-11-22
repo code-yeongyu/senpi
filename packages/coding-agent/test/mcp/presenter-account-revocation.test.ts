@@ -35,6 +35,11 @@ const triggers: readonly Trigger[] = [
 		act: (host) => host.switchAccount("account-b"),
 		refusal: "presenter_account_mismatch",
 	},
+	{
+		trigger: "a same-account sign-in notification",
+		act: (host) => host.switchAccount("account-a"),
+		refusal: "presenter_account_mismatch",
+	},
 	{ trigger: "sign-out", act: (host) => host.switchAccount(undefined), refusal: "presenter_account_unavailable" },
 	{ trigger: "attestation expiry", act: () => vi.advanceTimersByTime(601_000), refusal: "attestation_expired" },
 ];
