@@ -12,6 +12,8 @@ export {
 	formatSummary,
 	getTodoMarker,
 	getTodoResultLines,
+	GPT_HANDOFF_CUES,
+	GPT_HANDOFF_LABELS,
 	HANDOFF_CUES,
 	type HandoffMoment,
 	handoffMomentOf,

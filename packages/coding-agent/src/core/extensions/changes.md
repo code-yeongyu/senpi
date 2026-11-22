@@ -1,3 +1,265 @@
+## 2026-11-19 - tool_result handlers still run for a tool an abort cut (senpi#7073)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitToolResult()` hands the turn's abort signal to the hook wait only when it is not already aborted, so the `tool_result` handlers of a tool the abort cut run to completion as before; an abort that arrives during the wait still ends it.
+- `packages/coding-agent/src/core/extensions/tool-hook-wait.ts`: `SELF_BOUNDED_TOOL_HOOK_PATH` and `DEFAULT_TOOL_RESULT_HANDLER_TIMEOUT_MS` are module-private.
+
+### Why
+
+- senpi#7069 made the wait answer `aborted` at once for an already-aborted turn, which skipped the PostToolUse handlers after an abort mid-tool (fused equivalence case E09).
+
+### Why an extension could not handle it
+
+- The wait is the runner's own dispatch loop.
+
+### Expected merge conflict zones
+
+- LOW: the `waitForToolHook` call inside `emitToolResult()`.
+
+## 2026-11-19 - A tool hook handler cannot hold the tool loop (oh-my-openagent#14354)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/tool-hook-wait.ts` (new): `waitForToolHook()` waits on one handler until it settles, the turn's abort signal fires or a deadline passes; `toolResultHandlerTimeoutMs()` resolves the `tool_result` deadline (default 120 s, `SENPI_TOOL_RESULT_HANDLER_TIMEOUT_MS` overrides, 0 disables, the builtin hooks extension is exempt because its command hooks carry their own timeout).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitToolResult()` waits on each handler through `waitForToolHook()`: past the deadline the handler is abandoned, the tool result continues without it, the hook run ends `failed` and an extension error names the extension and the elapsed time; an abort of the turn ends the wait. `emitToolCall()` has no deadline, and an abort of the turn ends its wait and blocks the call as `Operation aborted`.
+
+### Why
+
+- A `tool_result` handler that never settled held the tool loop forever. The await had no deadline and ignored the turn's abort signal, so Esc and an RPC interrupt did nothing, and an in-process handler leaves no child to kill.
+
+### Why an extension could not handle it
+
+- The wait is the runner's own dispatch loop; an extension cannot bound another extension's handler.
+
+### Expected merge conflict zones
+
+- MEDIUM: the handler call inside the `emitToolResult()` and `emitToolCall()` loops in `runner.ts`, plus one import line.
+
+## 2026-11-19 - session_start says when a host restart continued the session (senpi#7020)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SessionStartEvent.continued?: boolean`, `true` when a host reopened the session because it was live when the previous host ended.
+
+### Why
+
+- A handler that suppresses work on a cold reopen (the goal extension's continuation-flood guard) must not suppress a session the restart merely interrupted.
+
+### Why an extension could not handle it
+
+- The event is emitted by the host's open; only the host knows why it reopened the session.
+
+### Expected merge conflict zones
+
+- LOW: one optional field on `SessionStartEvent`.
+
+## 2026-11-19 - `session_shutdown.closed` (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SessionShutdownEvent` gains `closed?: true`, set when a graceful close ended the session on request. The terminal builtin then records no monitor or background job to restore, loops end `stopped`, and an active goal is paused.
+
+### Why
+
+- oh-my-openagent#14313: a session closed on purpose must reopen with nothing restored and nothing held.
+
+### Why an extension could not handle it
+
+- The field is part of the public event contract that every extension's shutdown handler reads.
+
+### Expected merge conflict zones
+
+- LOW: the `SessionShutdownEvent` interface.
+
+## 2026-11-18 - ExtensionToolContext.promptSurface (senpi#6925)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionToolContext` gains the optional `promptSurface`: the prompt surface of the session the call belongs to. On a hand, that is the brain session's, sent with the call.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createToolContext` serves `promptSurface`. On a session it comes from `getSystemPromptOptions().surface`; on a runtime without a session, from the new `bindSessionlessFacts({ promptSurfaceOf })`.
+
+### Why
+
+- senpi#6921 L2. A tool on a hand must report what the brain session's host does with its result.
+
+### Why an extension could not handle it
+
+- Only the runtime that runs a call knows the surface of the session the call belongs to.
+
+### Expected merge conflict zones
+
+- LOW: the end of `ExtensionToolContext` in `types.ts`; the tool-context fields and `bindSessionlessFacts` in `runner.ts`.
+
+## 2026-11-17 - ExtensionToolContext.issuedByModel on hands (senpi#6920)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindSessionlessFacts` accepts `isModelIssuedToolCall`, which backs `ctx.issuedByModel` on a runtime without a session.
+- `packages/coding-agent/src/core/extensions/types.ts`: the `issuedByModel` contract names the hand case. On a hand, a call the brain's agent loop dispatched counts as issued by the model.
+
+### Why
+
+- senpi#6919 L2. Only `bindCore` provided the flag, so a hand reported every call as `false`, although the brain's model issued it.
+
+### Why an extension could not handle it
+
+- The origin of a hand's call is known only to the runtime that runs it.
+
+### Expected merge conflict zones
+
+- LOW: the `bindSessionlessFacts` parameter list and the head of its body in `runner.ts`; the `issuedByModel` doc comment in `types.ts`.
+
+## 2026-11-17 - ExtensionToolContext.issuedByModel (senpi#6917)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionToolContext` gains `readonly issuedByModel: boolean`. It is true when the model issued the running call, through the agent loop or a provider's exec channel (Cursor). `ExtensionContextActions` gains the optional `isModelIssuedToolCall(toolCallId)` that backs it.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createToolContext` sets `issuedByModel` from the bound `isModelIssuedToolCall`, and is false when no host binds one.
+
+### Why
+
+- senpi#6915 / senpi#6917 review M1. show_html_page must know whether its result joins the transcript, so the page counts against the session's page budget. Only the session knows a call's origin. Looking the id up in saved messages missed Cursor exec-frame calls, which run before their issuing message is saved.
+
+### Why an extension could not handle it
+
+- A tool sees only its call id; the origin of the call is known only to the session that ran it.
+
+### Expected merge conflict zones
+
+- LOW: the end of `ExtensionToolContext` and `ExtensionContextActions` in `types.ts`; the tool-context fields in `runner.ts` (`createToolContext`, the bound-action fields and their assignment).
+
+## 2026-10-30 - Declare host-supplied default extensions (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds `InlineExtension.host` so an SDK host can supply a default extension under existing per-name settings.
+
+### Why
+
+- Host tools must not live in the engine's unconditional catalog, and relocating them must not revive a tool the user disabled.
+
+### Why an extension could not handle it
+
+- The public factory contract tells the resource loader how to compose defaults before extension execution.
+
+### Expected merge conflict zones
+
+- The named `InlineExtension` variant in `packages/coding-agent/src/core/extensions/types.ts`.
+
+## 2026-11-17 - getAllTools() carries a tool's own row renderers (senpi#6903)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolInfo` picks `renderCall` and `renderResult` from the definition, beside `permissionParser`.
+
+### Why
+
+- A host that draws a tool's calls somewhere other than the tool's own row (codemode's nested `tool.<name>()` rows in an eval cell) had no way to reach the renderers, so those calls drew as raw fields (oh-my-openagent#12994).
+
+### Why an extension could not handle it
+
+- `ToolInfo` is the public shape `pi.getAllTools()` returns; codemode is an extension and reads tools only through it.
+
+### Expected merge conflict zones
+
+- LOW: the `ToolInfo` `Pick` list in `types.ts`.
+
+## 2026-11-17 - ToolInfo.evalOnly (senpi#6886)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolInfo.evalOnly?: true`, present while the session routes the tool through eval only.
+
+### Why
+
+- A model that searches for a tool a prompt names must be told it exists and is reachable as `tool.<name>(...)` in a cell.
+
+### Why an extension could not handle it
+
+- `ToolInfo` is the public projection `pi.getAllTools()` returns.
+
+### Expected merge conflict zones
+
+- LOW: the end of the `ToolInfo` type.
+
+## 2026-11-15 - pi.isLoopRemote() and the hand's wake route (senpi#5778, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.isLoopRemote()` and the runtime's `isLoopRemote`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the runtime answers `isLoopRemote` false until a host binds it; `pi.isLoopRemote()` reads it.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `LoopWakeRoute`; `bindSessionlessFacts({ loopWake })`: `pi.sendMessage`, `pi.sendUserMessage` and `pi.appendEntry` go to the live loop-hook call's sender or writer when a call's work makes them (#6751's `loopHookWrite`), and otherwise to the scope's wake route; `pi.isLoopRemote()` answers true. Without the route they stay loop-side and unbound.
+- `packages/coding-agent/src/core/extensions/ui-presentation.ts`: `PresentationBroker` takes an optional `lateNotify`; a notice made outside any call, or after its call's port closed, goes there instead of nowhere. It is presentation-only, so `hasUI` stays false.
+
+### Why
+
+- On a hand, a late `pi.sendMessage` threw `sendMessage is loop-side and not bound` (the sessionless binding in `packages/coding-agent/src/core/extensions/runner.ts`), and late notices reached no UI. Builtin notifiers (terminal, monitor, eval) never notified, because a hand never gets `session_start` for builtins and their guards read loop-side facts; `pi.isLoopRemote()` (`packages/coding-agent/src/core/extensions/types.ts`, backed by `packages/coding-agent/src/core/extensions/loader.ts`) tells them the loop applies those guards.
+
+### Why an extension could not handle it
+
+- The runtime's `sendMessage` / `sendUserMessage` / `appendEntry` binding (`packages/coding-agent/src/core/extensions/runner.ts`), the `pi` object built in `packages/coding-agent/src/core/extensions/loader.ts` and the `ExtensionAPI` contract in `packages/coding-agent/src/core/extensions/types.ts` are runner internals and the public API itself.
+
+### Expected merge conflict zones
+
+- MEDIUM: `bindSessionlessFacts` in `packages/coding-agent/src/core/extensions/runner.ts`; the `ExtensionAPI` message section of `packages/coding-agent/src/core/extensions/types.ts`.
+- LOW: the runtime literal and the `sendUserMessage` member of `pi` in `packages/coding-agent/src/core/extensions/loader.ts`.
+
+## 2026-11-15 - Tools declare that they act on the calling session (senpi#6749)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition.sessionBound?: boolean`, recorded with the definition only.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`, `builtin/goal/tool-registration.ts`, `builtin/tool-search/tool.ts`, `builtin/loop/tools.ts`, `builtin/schedule/tool.ts`, `builtin/relocate-session/index.ts`: `todo`, `create_goal`, `update_goal`, `get_goal`, `tool_search`, `schedule_wakeup`, `schedule_prompt`, `list_relocation_targets` and `relocate_session` declare `sessionBound: true`.
+
+### Why
+
+- Under the hosted parity design v4 the loop registers no tool, so these tools run on the hand too, reached with the session's state through the session port. The hand advertises them like every other tool, and the flag tells the loop which calls must carry that state. `runs: "brain"` cannot say this: `web_search`, `webfetch` and `ask_user` declare it, yet need no session state.
+
+### Why an extension could not handle it
+
+- The field is part of the tool definition contract the loader records.
+
+### Expected merge conflict zones
+
+- LOW: the `ToolDefinition` field list after `runs`; one line in each builtin's registration.
+
+## 2026-11-15 - A hand's loop-hook call reaches the session through the session port (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `LoopHookCallFacts` gains `appendEntry`, `sendUserMessage` and `hasPendingMessages`. `bindSessionlessFacts` takes `loopHookWrite`, routed like `loopHookSend`, so `pi.appendEntry` and `pi.sendUserMessage` from a loop-hook call's work reach that call. A call context binds `hasPendingMessages`.
+
+### Why
+
+- A hosted loop's Stop hook runs on the hand. It writes entries and a follow-up user message to a session that the loop owns, so those writes must go back to the loop instead of failing as loop-side.
+
+### Why an extension could not handle it
+
+- `pi.appendEntry` and `pi.sendUserMessage` are bound by the runner. An extension cannot redirect another extension's writes.
+
+### Expected merge conflict zones
+
+- LOW: `LoopHookCallFacts`, `bindSessionlessFacts` and the loop-hook call branch of `createContext`.
+
+## 2026-11-15 - A hand runs one forwarded loop event for the user's hooks (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitForwardedLoopEvent(event, only)` runs one loop-side event a hosted loop forwarded to this hand, for the extensions `only` accepts, serially under the host's event handler budget (the lifecycle dispatch, now with an optional filter). `getBuiltinProvenancePaths()` returns the paths of the extensions the loader shipped (`sourceInfo.source === "builtin"`: in-tree builtins, bundled modules, generated global-default shims).
+
+### Why
+
+- A hosted loop's lifecycle events must reach the user's hooks on the user's machine (K5), and a bundled builtin such as codemode has a file path, so only the loader's provenance tells it apart from a user extension.
+
+### Why an extension could not handle it
+
+- Event dispatch and extension provenance are runner state; no extension can run another extension's handlers or read its provenance.
+
+### Expected merge conflict zones
+
+- LOW: the `dispatchLifecycle` signature and the block before `getThirdPartySessionStartPaths`.
+
 ## 2026-11-16 - `transient-failure` doc comment no longer ties it to `circuit-breaker` (senpi#6772)
 
 ### What changed

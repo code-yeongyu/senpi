@@ -12,7 +12,7 @@ export type Opened = { sessionId: string; state: { sessionFile: string } };
 export const NO_ID = "00000000-0000-7000-8000-000000000000";
 /** Host commands carry no `sessionId` routing envelope; every other method is routed to the fresh session. */
 const HOST_METHODS = new Set(
-	"get_protocol_info open_session park_session claim_session close_session release_session unload_session detach_connection get_subscription_limits list_sessions subscribe_sessions unsubscribe_sessions set_session_context warm attach_session release_attachment reclaim_session move_session list_hands select_hand".split(
+	"get_protocol_info open_session park_session claim_session close_session release_session unload_session detach_connection get_subscription_limits list_sessions find_session subscribe_sessions unsubscribe_sessions set_session_context warm attach_session release_attachment reclaim_session move_session list_hands select_hand".split(
 		" ",
 	),
 );
@@ -51,6 +51,7 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	reclaim_session:
 		'{"sessionPath":"$PATH","durableSessionId":"$NO","expectedHostInstance":"$NO"} => no:session_identity_mismatch:session_identity_mismatch',
 	move_session: '{"op":"status","moveId":"$NO"} => ok{reason,state}',
+	find_session: '{"durableSessionId":"$NO"} => ok{unknown}',
 	prompt: '{"message":"Hello."} => ok{disposition,turnId}',
 	release_tool_barrier: '{"barrierId":"$NO"} => ok{released}',
 	send_custom_message: '{"customType":"x14","content":"note","display":false} => ok',
@@ -132,6 +133,8 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	get_tree: "ok{leafId,tree}",
 	get_last_assistant_text: "ok{}",
 	set_session_name: '{"name":"X14"} => ok',
+	set_session_archived: '{"archived":true} => ok',
+	set_session_settled: '{"settled":true,"by":{"kind":"user"}} => ok',
 	record_user_activity: '{"kind":"draft"} => ok',
 	import_jsonl: '{"inputPath":"$TMP/missing.jsonl"} => no::File not found: <tmp>/missing.jsonl',
 	get_messages: "ok{messages}",
@@ -145,7 +148,7 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 		'{"key":"1x14","value":true} => no:invalid_argument:set_project_setting requires an identifier \'key\' and a JSON \'value\' (null removes the key).',
 	read_project_file: '{"path":"AGENTS.md"} => ok{content,cwd,etag,exists,path,projectTrusted}',
 	write_project_file:
-		'{"path":"x14.ts","content":"x","ifEtag":null} => no:project_file_not_allowed:x14.ts is not an instruction file inside this workspace (AGENTS.md, CLAUDE.md or .omo/rules/**).',
+		'{"path":"x14.ts","content":"x","ifEtag":null} => no:project_file_not_allowed:x14.ts is not a project file inside this workspace (AGENTS.md, CLAUDE.md, .omo/rules/** or .omo/omo.jsonc).',
 	get_project_mcp_servers: "ok{cwd,etag,exists,mcpServers,parseError,path,projectTrusted}",
 	set_project_mcp_servers:
 		'{"patch":"x14","ifEtag":null} => no:invalid_argument:set_project_mcp_servers requires an object \'patch\' (server name to entry, or null to remove) and \'ifEtag\' (the etag read, or null to create).',
@@ -153,6 +156,10 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 		'{"skill":"x14-none"} => no:project_skill_not_listed:No skill named "x14-none" is listed for this session.',
 	write_project_skill_file:
 		'{"skill":"x14-none","content":"x","ifEtag":null} => no:project_skill_not_listed:No skill named "x14-none" is listed for this session.',
+	read_user_skill_file:
+		'{"skill":"x14-none"} => no:user_skill_not_listed:No user skill named "x14-none" is listed for this session.',
+	write_user_skill_file:
+		'{"skill":"x14-none","content":"x","ifEtag":null} => no:user_skill_not_listed:No user skill named "x14-none" is listed for this session.',
 	extension_request: '{"name":"x14-none"} => no::Unknown extension RPC request: x14-none',
 	"eval_cells.list": "ok:object",
 	"eval_cells.peek": '{"cellId":"$NO"} => no:eval_cell_not_found:Unknown detached eval cell "<uuid>"',

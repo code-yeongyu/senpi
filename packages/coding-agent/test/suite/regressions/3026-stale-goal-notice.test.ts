@@ -27,6 +27,7 @@ async function fixture() {
 		agentDir: base.cwd,
 		mode: "tui",
 		tools: [],
+		issuedByModel: true,
 		executeTool: async () => {
 			throw new Error("Unexpected nested tool execution");
 		},
