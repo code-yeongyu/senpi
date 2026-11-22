@@ -11,6 +11,8 @@ export type ReportedResult = Parameters<ReportToolResult>[0];
  * An in-memory repository behind the two boundaries the written-files check reads through: every write advances a
  * virtual clock, so signatures differ without real time, and `git status` lists what differs from the last commit.
  * Directories can be symlinks, which the filesystem follows in every entry but the last, as the operating system does.
+ * A file can be a symlink too, and an open follows it: this filesystem stands for a platform that cannot open without
+ * following the last entry.
  */
 export class FakeWorkspace {
 	readonly cwd = sep === "/" ? "/work" : "C:\\work";
@@ -19,10 +21,15 @@ export class FakeWorkspace {
 	readonly reads: string[] = [];
 	/** When set, `git status` answers with it instead of the repository's state. */
 	statusOutcome: GitOutcome | undefined;
+	/** Runs as a read starts, after the file was checked and before it is opened. */
+	beforeOpen: ((path: string) => void) | undefined;
 	/** Keyed by the file's absolute real path. */
 	readonly #files = new Map<string, { readonly bytes: Uint8Array; readonly signature: FileSignature }>();
 	/** A symlinked directory's absolute path and the absolute directory it points to. */
 	readonly #links = new Map<string, string>();
+	/** A symlinked file's absolute path and the absolute file it points to. */
+	readonly #fileLinks = new Map<string, string>();
+	readonly #ignored = new Set<string>();
 	readonly #committed = new Map<string, string>();
 	#clock = 0;
 
@@ -34,7 +41,7 @@ export class FakeWorkspace {
 	writeAt(absolutePath: string, content: string | Uint8Array): void {
 		const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
 		this.#clock += 1;
-		const signature = { size: bytes.length, mtimeMs: this.#clock, ctimeMs: this.#clock, ino: this.#clock };
+		const signature = { size: bytes.length, mtimeMs: this.#clock, ctimeMs: this.#clock, dev: 1, ino: this.#clock };
 		this.#files.set(this.#resolve(absolutePath), { bytes, signature });
 	}
 
@@ -47,6 +54,17 @@ export class FakeWorkspace {
 		const directory = this.absolute(path);
 		for (const file of [...this.#files.keys()]) if (file.startsWith(directory + sep)) this.#files.delete(file);
 		this.#links.set(directory, target);
+	}
+
+	/** Replaces the workspace file `path` with a symlink to the absolute file `target`. */
+	linkFile(path: string, target: string): void {
+		this.#files.delete(this.absolute(path));
+		this.#fileLinks.set(this.absolute(path), target);
+	}
+
+	/** Adds an ignore rule for the untracked workspace file `path`. */
+	ignore(path: string): void {
+		this.#ignored.add(path);
 	}
 
 	commit(): void {
@@ -62,10 +80,14 @@ export class FakeWorkspace {
 	readonly fs: FsAccess = {
 		realpath: async (path) => this.#resolve(path),
 		lstat: async (path) => this.#files.get(this.#followParents(path))?.signature,
-		read: async (path, limit) => {
-			const resolved = this.#followParents(path);
-			this.reads.push(resolved);
-			return this.#files.get(resolved)?.bytes.subarray(0, limit);
+		read: async (path, limit, accept) => {
+			this.beforeOpen?.(path);
+			const named = this.#followParents(path);
+			const opened = this.#fileLinks.get(named) ?? named;
+			const file = this.#files.get(opened);
+			if (file === undefined || !accept(file.signature)) return undefined;
+			this.reads.push(opened);
+			return file.bytes.subarray(0, limit);
 		},
 	};
 
@@ -102,8 +124,9 @@ export class FakeWorkspace {
 		const present = new Map(this.#workspaceFiles());
 		for (const [path, file] of present) {
 			const committed = this.#committed.get(path);
-			if (committed === undefined) records.push(`? ${path}`);
-			else if (committed !== new TextDecoder().decode(file.bytes))
+			if (committed === undefined) {
+				if (!this.#ignored.has(path)) records.push(`? ${path}`);
+			} else if (committed !== new TextDecoder().decode(file.bytes))
 				records.push(`1 .M N... 100644 100644 100644 aaaa bbbb ${path}`);
 		}
 		for (const path of this.#committed.keys())

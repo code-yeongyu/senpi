@@ -3,8 +3,9 @@ import { join, resolve } from "node:path";
 import type { ExtensionToolContext } from "@code-yeongyu/senpi";
 import type { TimeoutPauseHandle } from "../timeouts/idle-timeout.ts";
 import type { CellWrittenFilesOutcome } from "./report.ts";
-import { type FsAccess, type RunGit, type ScanFs, workspaceFs } from "./scan-boundaries.ts";
+import type { FsAccess, RunGit } from "./scan-boundaries.ts";
 import { WrittenFilesTracker } from "./tracker.ts";
+import { type ScanFs, workspaceFs } from "./workspace-fs.ts";
 import { WorkspaceScanner } from "./workspace-scan.ts";
 import { reportWrittenFiles } from "./write-hooks.ts";
 
@@ -65,7 +66,7 @@ export class WrittenFiles {
 
 	constructor(options: WrittenFilesOptions) {
 		this.#cwd = options.cwd;
-		const fs = workspaceFs(options.cwd, options.fs);
+		const fs = workspaceFs(options, options.fs);
 		this.#fs = fs;
 		this.#hooksRunHere = options.hooksRunHere ?? (() => true);
 		const scanner = new WorkspaceScanner({

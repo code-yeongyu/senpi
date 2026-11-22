@@ -623,15 +623,18 @@ that changed no source file gets no block. A detached cell delivers the block in
 its completion notification.
 
 - **Source file**: a regular file whose real location, with every directory in
-  its path resolved, is inside the session cwd (a path below a directory that
-  links out of the workspace is never listed, read or hooked), outside `.git`,
-  `node_modules` and the session's own artifacts directory, that the workspace
+  its path resolved, is inside the session cwd and outside `.git`,
+  `node_modules` and the session's own artifacts directory (a path below a
+  directory that links out of the workspace or into one of those is never
+  listed, read or hooked; a file is read only if the file opened is the regular
+  file just checked, so a symlink swapped in as the last entry is not followed), that the workspace
   does not ignore, at most 1 MiB, whose first 8 KiB are UTF-8 text. The definition lives in `src/written-files/source-file.ts`.
 - **Detection** compares the workspace before and after the cell, so it covers
   every way of writing. In a git repository it reads `git status` (files that
   differ from HEAD or are untracked, plus files committed while the cell ran,
-  plus the earlier scan's files, so a file written back to its HEAD content
-  counts as written);
+  plus the earlier scan's tracked files, so a tracked file written back to its
+  HEAD content counts as written; an untracked file the cell makes ignored does
+  not);
   elsewhere it lists the workspace through an empty repository kept in the
   session artifacts, so the workspace's own ignore files still apply. It needs
   `git`; without it the first cell says the check is off.

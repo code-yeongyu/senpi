@@ -79,4 +79,59 @@ describe("written files at the edges of the workspace", () => {
 
 		expect({ listed, hooked: reportedPaths(harness) }).toEqual({ listed: undefined, hooked: [] });
 	});
+
+	it.each([".git/hooks", "node_modules/pkg", "artifacts/cell"])(
+		"neither lists nor reads a tracked path whose directory now links to the excluded %s",
+		async (excluded) => {
+			const harness = writtenFilesHarness();
+			const { workspace } = harness;
+			workspace.write("lib/hidden.ts", "export const tracked = 1;\n");
+			workspace.commit();
+
+			const listed = await cellListing(harness, () => {
+				workspace.write(`${excluded}/hidden.ts`, "export const excluded = 2;\n");
+				workspace.link("lib", workspace.absolute(excluded));
+			});
+
+			expect({ listed, hooked: reportedPaths(harness) }).toEqual({ listed: undefined, hooked: [] });
+			expect(workspace.reads).not.toContain(workspace.absolute(`${excluded}/hidden.ts`));
+		},
+	);
+
+	it("reads nothing when the last entry is swapped for a link out of the workspace after it was checked", async () => {
+		const harness = writtenFilesHarness();
+		const { workspace } = harness;
+		workspace.write("src/swapped.ts", "export const value = 1;\n");
+		workspace.commit();
+		const outsideFile = join(OUTSIDE, "swapped.ts");
+		workspace.writeAt(outsideFile, "export const outside = 'not the workspace';\n");
+		workspace.beforeOpen = () => {
+			workspace.beforeOpen = undefined;
+			workspace.linkFile("src/swapped.ts", outsideFile);
+		};
+
+		const listed = await cellListing(harness, () => workspace.write("src/swapped.ts", "export const value = 2;\n"));
+
+		expect({ listed, hooked: reportedPaths(harness) }).toEqual({ listed: undefined, hooked: [] });
+		expect(workspace.reads).not.toContain(outsideFile);
+	});
+
+	it("drops an untracked file the cell ignores and rewrites, and still reports a tracked file restored to HEAD", async () => {
+		const harness = writtenFilesHarness();
+		const { workspace } = harness;
+		const committed = "export const value = 1;\n";
+		workspace.write("src/restored.ts", committed);
+		workspace.commit();
+		workspace.write("src/restored.ts", "export const value = 2;\n");
+		workspace.write("src/generated.ts", "export const generated = 1;\n");
+
+		const listed = await cellListing(harness, () => {
+			workspace.ignore("src/generated.ts");
+			workspace.write("src/generated.ts", "export const generated = 2;\n");
+			workspace.write("src/restored.ts", committed);
+		});
+
+		expect(listed).toEqual(["src/restored.ts"]);
+		expect(reportedPaths(harness)).toEqual([workspace.absolute("src/restored.ts")]);
+	});
 });

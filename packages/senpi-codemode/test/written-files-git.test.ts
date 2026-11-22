@@ -115,6 +115,28 @@ describe("written files against real git", () => {
 		expect(files).toEqual(["src/inside.ts"]);
 	});
 
+	it("does not list a tracked path whose directory now links into node_modules or into itself", async () => {
+		const root = tempRoot();
+		const repo = join(root, "repo");
+		mkdirSync(repo);
+		git(repo, "init", "--quiet");
+		put(repo, "lib/aliased.ts", "export const tracked = 1;\n");
+		put(repo, "loop/looped.ts", "export const tracked = 2;\n");
+		git(repo, "add", "--all");
+		git(repo, "commit", "--quiet", "--message", "init");
+
+		const files = await writtenBy(repo, join(root, "artifacts"), () => {
+			rmSync(join(repo, "lib"), { recursive: true });
+			put(repo, "node_modules/pkg/aliased.ts", "export const dependency = 1;\n");
+			symlinkSync(join(repo, "node_modules", "pkg"), join(repo, "lib"), "dir");
+			rmSync(join(repo, "loop"), { recursive: true });
+			symlinkSync(join(repo, "loop"), join(repo, "loop"), "dir");
+			put(repo, "src/inside.ts", "export const inside = 1;\n");
+		});
+
+		expect(files).toEqual(["src/inside.ts"]);
+	});
+
 	it("honours a workspace's own ignore file where there is no repository, and leaves out the session's artifacts", async () => {
 		const root = tempRoot();
 		const workspace = join(root, "plain");

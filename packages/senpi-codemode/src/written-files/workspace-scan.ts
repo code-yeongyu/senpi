@@ -1,5 +1,6 @@
 import { isAbsolute, join, relative, sep } from "node:path";
-import type { FileSignature, GitOutcome, RunGit, ScanFs } from "./scan-boundaries.ts";
+import type { FileSignature, GitOutcome, RunGit } from "./scan-boundaries.ts";
+import type { ScanFs } from "./workspace-fs.ts";
 import { excludedDirectories, isSourcePath, SOURCE_FILE_MAX_BYTES } from "./source-file.ts";
 
 /** One git process of a scan is killed at this deadline. */
@@ -20,15 +21,16 @@ export type ScanSkipReason = "git_unavailable" | "over_budget" | "scan_failed";
  * untracked, elsewhere every file its ignore rules leave. A candidate missing from an earlier scan was clean or absent
  * then, so two scans compare without a walk of the unchanged tree.
  */
-export type WorkspaceScan =
-	| { readonly kind: "files"; readonly files: ReadonlyMap<string, FileSignature>; readonly head: string | undefined }
-	| { readonly kind: "skipped"; readonly reason: ScanSkipReason };
-
-/** The scan a new one is compared with. */
-export interface PreviousScan {
+export interface ScannedFiles {
 	readonly files: ReadonlyMap<string, FileSignature>;
 	readonly head: string | undefined;
+	/** The paths of `files` git tracks. */
+	readonly tracked: ReadonlySet<string>;
 }
+
+export type WorkspaceScan =
+	| ({ readonly kind: "files" } & ScannedFiles)
+	| { readonly kind: "skipped"; readonly reason: ScanSkipReason };
 
 type ScanMode = { readonly kind: "repository"; readonly prefix: string } | { readonly kind: "plain" };
 
@@ -67,10 +69,10 @@ export class WorkspaceScanner {
 	}
 
 	/**
-	 * In a repository the candidates of `previous` stay candidates: a file written back to its HEAD content leaves
-	 * `git status`, and so do files committed since `previous`.
+	 * In a repository the tracked candidates of `previous` stay candidates: a file written back to its HEAD content
+	 * leaves `git status`, and so do files committed since `previous`.
 	 */
-	async scan(previous?: PreviousScan): Promise<WorkspaceScan> {
+	async scan(previous?: ScannedFiles): Promise<WorkspaceScan> {
 		const mode = this.#mode ?? (await this.#detectMode());
 		if (typeof mode === "string") return { kind: "skipped", reason: mode };
 		this.#mode = mode;
@@ -89,7 +91,7 @@ export class WorkspaceScanner {
 		return ignored.kind === "ok" ? { kind: "plain" } : { kind: "repository", prefix };
 	}
 
-	async #scanRepository(prefix: string, previous: PreviousScan | undefined): Promise<WorkspaceScan> {
+	async #scanRepository(prefix: string, previous: ScannedFiles | undefined): Promise<WorkspaceScan> {
 		const status = await this.#git([
 			"status",
 			"--porcelain=v2",
@@ -102,17 +104,21 @@ export class WorkspaceScanner {
 			".",
 		]);
 		if (status.kind !== "ok") return { kind: "skipped", reason: skipReason(status) };
-		const { head, paths } = parseStatus(status.stdout);
+		const { head, untracked, tracked } = parseStatus(status.stdout);
 		const previousHead = previous?.head;
 		if (previousHead !== undefined && head !== undefined && head !== previousHead && head !== INITIAL_HEAD) {
 			const since = previousHead === INITIAL_HEAD ? EMPTY_TREE : previousHead;
 			const committed = await this.#git(["diff", "--name-only", "-z", "--no-renames", since, head, "--", "."]);
 			if (committed.kind === "over_budget") return { kind: "skipped", reason: "over_budget" };
-			if (committed.kind === "ok") paths.push(...committed.stdout.split("\0"));
+			if (committed.kind === "ok") tracked.push(...committed.stdout.split("\0"));
 		}
 		// Porcelain paths are relative to the repository root, the workspace may be a directory below it.
-		const relative = paths.flatMap((path) => (path.startsWith(prefix) ? [path.slice(prefix.length)] : []));
-		return this.#signatures([...relative, ...(previous?.files.keys() ?? [])], head);
+		const inWorkspace = (paths: readonly string[]) =>
+			paths.flatMap((path) => (path.startsWith(prefix) ? [path.slice(prefix.length)] : []));
+		// Only tracked files are carried over: an untracked one leaves `git status` when it is deleted, committed (the
+		// diff above finds it) or ignored, and an ignored file is no candidate.
+		const trackedHere = [...inWorkspace(tracked), ...(previous?.tracked ?? [])];
+		return this.#signatures([...inWorkspace(untracked), ...trackedHere], head, new Set(trackedHere));
 	}
 
 	async #scanPlain(): Promise<WorkspaceScan> {
@@ -132,10 +138,14 @@ export class WorkspaceScanner {
 			...excludedDirectories().map((directory) => `--exclude=${directory}/`),
 		]);
 		if (listed.kind !== "ok") return { kind: "skipped", reason: skipReason(listed) };
-		return this.#signatures(listed.stdout.split("\0"), undefined);
+		return this.#signatures(listed.stdout.split("\0"), undefined, new Set());
 	}
 
-	async #signatures(paths: readonly string[], head: string | undefined): Promise<WorkspaceScan> {
+	async #signatures(
+		paths: readonly string[],
+		head: string | undefined,
+		tracked: ReadonlySet<string>,
+	): Promise<WorkspaceScan> {
 		const artifacts = this.#artifactsPrefix;
 		const candidates = [...new Set(paths)].filter(
 			(path) => isSourcePath(path) && (artifacts === undefined || !path.startsWith(artifacts)),
@@ -150,7 +160,7 @@ export class WorkspaceScanner {
 				if (signature !== undefined && signature.size <= SOURCE_FILE_MAX_BYTES) files.set(path, signature);
 			});
 		}
-		return { kind: "files", files, head };
+		return { kind: "files", files, head, tracked: new Set([...tracked].filter((path) => files.has(path))) };
 	}
 
 	#git(args: readonly string[]): Promise<GitOutcome> {
@@ -164,23 +174,24 @@ function skipReason(outcome: Exclude<GitOutcome, { kind: "ok" }>): ScanSkipReaso
 }
 
 /** Reads `git status --porcelain=v2 --branch -z`: one NUL-terminated record per header and per path. */
-function parseStatus(stdout: string): { head: string | undefined; paths: string[] } {
+function parseStatus(stdout: string): { head: string | undefined; untracked: string[]; tracked: string[] } {
 	let head: string | undefined;
-	const paths: string[] = [];
+	const untracked: string[] = [];
+	const tracked: string[] = [];
 	const records = stdout.split("\0");
 	for (let index = 0; index < records.length; index++) {
 		const record = records[index] ?? "";
 		if (record.startsWith(HEAD_RECORD)) head = record.slice(HEAD_RECORD.length);
-		else if (record.startsWith("? ")) paths.push(record.slice(2));
-		else if (record.startsWith("1 ")) paths.push(pathAfterFields(record, 8));
-		else if (record.startsWith("u ")) paths.push(pathAfterFields(record, 10));
+		else if (record.startsWith("? ")) untracked.push(record.slice(2));
+		else if (record.startsWith("1 ")) tracked.push(pathAfterFields(record, 8));
+		else if (record.startsWith("u ")) tracked.push(pathAfterFields(record, 10));
 		else if (record.startsWith("2 ")) {
-			paths.push(pathAfterFields(record, 9));
+			tracked.push(pathAfterFields(record, 9));
 			// A rename's source path follows as its own record.
 			index += 1;
 		}
 	}
-	return { head, paths };
+	return { head, untracked, tracked };
 }
 
 function pathAfterFields(record: string, fields: number): string {

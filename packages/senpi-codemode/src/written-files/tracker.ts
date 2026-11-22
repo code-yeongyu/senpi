@@ -1,6 +1,7 @@
 import { isAbsolute, join, relative, sep } from "node:path";
-import type { FileSignature, ScanFs } from "./scan-boundaries.ts";
-import type { PreviousScan, ScanSkipReason, WorkspaceScan } from "./workspace-scan.ts";
+import type { FileSignature } from "./scan-boundaries.ts";
+import type { ScanFs } from "./workspace-fs.ts";
+import type { ScanSkipReason, ScannedFiles, WorkspaceScan } from "./workspace-scan.ts";
 
 export interface ChangedFile {
 	/** Workspace-relative POSIX path. */
@@ -25,7 +26,7 @@ export interface WrittenFilesWindow {
 
 export interface WrittenFilesTrackerOptions {
 	readonly cwd: string;
-	readonly scan: (previous?: PreviousScan) => Promise<WorkspaceScan>;
+	readonly scan: (previous?: ScannedFiles) => Promise<WorkspaceScan>;
 	readonly stat: ScanFs["stat"];
 }
 
@@ -51,7 +52,7 @@ export class WrittenFilesTracker {
 	readonly #stat: ScanFs["stat"];
 	readonly #hooked = new Map<string, FileSignature>();
 	#queue: Promise<void> = Promise.resolve();
-	#baseline: PreviousScan | undefined;
+	#baseline: ScannedFiles | undefined;
 	#skipped: ScanSkipReason | undefined;
 	#skips = 0;
 	#live = 0;
@@ -103,7 +104,7 @@ export class WrittenFilesTracker {
 		}
 		this.#skips = 0;
 		this.#skipped = undefined;
-		this.#baseline = { files: new Map(scan.files), head: scan.head };
+		this.#baseline = { files: new Map(scan.files), head: scan.head, tracked: scan.tracked };
 	}
 
 	async #report(): Promise<WrittenFilesChange> {
@@ -142,7 +143,7 @@ export class WrittenFilesTracker {
 			}
 			files.push({ path, absolutePath });
 		}
-		this.#baseline = { files: next, head: scan.head };
+		this.#baseline = { files: next, head: scan.head, tracked: scan.tracked };
 		files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
 		return { kind: "changed", files };
 	}
@@ -153,7 +154,7 @@ export class WrittenFilesTracker {
 		if (reason === "git_unavailable" || this.#skips >= SKIPS_BEFORE_OFF) this.#disabled = true;
 	}
 
-	async #safeScan(previous: PreviousScan | undefined): Promise<WorkspaceScan> {
+	async #safeScan(previous: ScannedFiles | undefined): Promise<WorkspaceScan> {
 		try {
 			return await this.#scan(previous);
 		} catch {

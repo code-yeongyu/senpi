@@ -21,7 +21,7 @@ function workspace() {
 			if (reason !== undefined) return { kind: "skipped", reason };
 			const files = new Map(dirty);
 			await afterSnapshot.shift()?.();
-			return { kind: "files", files, head: undefined };
+			return { kind: "files", files, head: undefined, tracked: new Set() };
 		},
 		stat: async (path) => dirty.get(path.slice(CWD.length + 1).replaceAll("\\", "/")),
 	});
@@ -33,7 +33,7 @@ function workspace() {
 		scans: () => scans,
 		write(path: string): void {
 			stamp += 1;
-			dirty.set(path, { size: stamp, mtimeMs: stamp, ctimeMs: stamp, ino: 1 });
+			dirty.set(path, { size: stamp, mtimeMs: stamp, ctimeMs: stamp, ino: 1, dev: 1 });
 		},
 	};
 }

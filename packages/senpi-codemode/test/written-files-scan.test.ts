@@ -1,11 +1,12 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { FileSignature, GitOutcome, ScanFs } from "../src/written-files/scan-boundaries.ts";
+import type { FileSignature, GitOutcome } from "../src/written-files/scan-boundaries.ts";
+import type { ScanFs } from "../src/written-files/workspace-fs.ts";
 import { SOURCE_FILE_MAX_BYTES } from "../src/written-files/source-file.ts";
 import { type WorkspaceScan, WorkspaceScanner } from "../src/written-files/workspace-scan.ts";
 
 const CWD = join("/", "repo", "pkg");
-const SIGNATURE: FileSignature = { size: 10, mtimeMs: 1, ctimeMs: 1, ino: 1 };
+const SIGNATURE: FileSignature = { size: 10, mtimeMs: 1, ctimeMs: 1, ino: 1, dev: 1 };
 const records = (...lines: string[]): GitOutcome => ({ kind: "ok", stdout: `${lines.join("\0")}\0` });
 
 /** Scripts git by subcommand; every listed path is a regular file unless `sizes` says otherwise. */
@@ -85,20 +86,24 @@ describe("workspace scan", () => {
 			diff: records("src/committed.ts"),
 		});
 
-		expect(paths(await subject.scan({ head: "1111", files: new Map() }))).toEqual(["src/committed.ts"]);
+		expect(paths(await subject.scan({ head: "1111", files: new Map(), tracked: new Set() }))).toEqual([
+			"src/committed.ts",
+		]);
 		expect(calls.at(-1)).toEqual(["diff", "--name-only", "-z", "--no-renames", "1111", "2222", "--", "."]);
 	});
 
-	// Review finding: a file written back to its HEAD content leaves `git status`, so it is checked again from here.
-	it("keeps the candidates of the scan it is compared with, within the same path limit", async () => {
+	// Review findings: a tracked file written back to its HEAD content leaves `git status`, so it is checked again from
+	// here; an untracked one leaves it only when deleted, committed or ignored, so it is not.
+	it("keeps the tracked candidates of the scan it is compared with, within the same path limit", async () => {
 		const answers: Record<string, GitOutcome> = {
 			"rev-parse": { kind: "ok", stdout: AT_REPOSITORY_ROOT },
 			status: records("# branch.oid 1111", "? src/new.ts"),
 		};
-		const previous = (count: number) => ({
-			head: "1111",
-			files: new Map(Array.from({ length: count }, (_, index) => [`src/restored-${index}.ts`, SIGNATURE] as const)),
-		});
+		const previous = (count: number) => {
+			const tracked = Array.from({ length: count }, (_, index) => `src/restored-${index}.ts`);
+			const files = new Map([...tracked, "src/now-ignored.ts"].map((path) => [path, SIGNATURE] as const));
+			return { head: "1111", files, tracked: new Set(tracked) };
+		};
 
 		expect(paths(await scanner(answers).subject.scan(previous(1)))).toEqual(["src/new.ts", "src/restored-0.ts"]);
 		expect(paths(await scanner(answers).subject.scan(previous(5)))).toBe("over_budget");

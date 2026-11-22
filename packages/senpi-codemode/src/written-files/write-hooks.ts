@@ -1,6 +1,6 @@
 import type { ExtensionToolContext } from "@code-yeongyu/senpi";
 import { capCodePoints } from "../tool/call-capture.ts";
-import type { ScanFs } from "./scan-boundaries.ts";
+import type { ScanFs } from "./workspace-fs.ts";
 import { isSourceText, SOURCE_FILE_MAX_BYTES, SOURCE_FILE_SNIFF_BYTES } from "./source-file.ts";
 import type { ChangedFile } from "./tracker.ts";
 
