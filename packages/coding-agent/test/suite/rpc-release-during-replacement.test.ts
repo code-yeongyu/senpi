@@ -78,7 +78,7 @@ describe("a release or an unload while a replacement is still telling extensions
 		}
 		letGo();
 		expect(await replaced).toMatchObject({ success: true });
-	}, 120_000);
+	});
 
 	it("while the new session is still being built after the old one was disposed, a release and an unload act on nothing", async () => {
 		let holdBuild = false;
@@ -115,7 +115,7 @@ describe("a release or an unload while a replacement is still telling extensions
 		holdBuild = false;
 		letGo();
 		expect(await replaced).toMatchObject({ success: true });
-	}, 120_000);
+	});
 
 	it("a replacing command sent in the same turn as a release never runs on the released session", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -136,7 +136,7 @@ describe("a release or an unload while a replacement is still telling extensions
 		expect(sealedTranscripts(folder)).toEqual([s1.sessionPath]);
 		expect(replace.success).toBe(false);
 		expect(readdirSync(folder).filter((name) => name.endsWith(".jsonl"))).toEqual(["s1.jsonl"]);
-	}, 120_000);
+	});
 
 	it.each(
 		[false, true].flatMap((interrupt) =>
@@ -217,7 +217,6 @@ describe("a release or an unload while a replacement is still telling extensions
 			expect(existsSync(stagedRoot) ? readdirSync(stagedRoot) : []).toEqual([]);
 			expect(await replaced).toMatchObject({ success: true });
 		},
-		120_000,
 	);
 
 	it("a move release that crosses a switch back to the same session is refused and releases nothing", async () => {
@@ -267,7 +266,7 @@ describe("a release or an unload while a replacement is still telling extensions
 		expect(sealedTranscripts(folder)).toEqual([]);
 		const state = await host.send(send({ type: "get_state", id: "state", sessionId: s1.sessionId }));
 		expect(state.data).toMatchObject({ sessionId: s1.session.sessionId });
-	}, 120_000);
+	});
 
 	it.each([{ crossed: true }, { crossed: false }])(
 		"an interrupting release refused after another client attached says which session its taken input came from (crossed by a replacement: $crossed)",
@@ -337,7 +336,6 @@ describe("a release or an unload while a replacement is still telling extensions
 			});
 			expect(sealedTranscripts(folder)).toEqual([]);
 		},
-		120_000,
 	);
 
 	it("a refusal still names the session the release began on when that session's id is rewritten in place during the wait", async () => {
@@ -390,5 +388,5 @@ describe("a release or an unload while a replacement is still telling extensions
 			errorCode: "attached",
 			errorData: { interrupted: true, dropped: { user_messages: ["after the work"] }, taken_from: beganOn },
 		});
-	}, 120_000);
+	});
 });

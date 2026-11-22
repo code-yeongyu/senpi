@@ -47,7 +47,7 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 		expect(existsSync(outgoingStateDir(next.sessionFile, MOVE))).toBe(false);
 		const state = await host.send(send({ type: "get_state", id: "state", sessionId: handle }));
 		expect(state.data).toMatchObject({ sessionId: next.sessionId });
-	}, 120_000);
+	});
 
 	it("an interrupting release refused at the first compare takes nothing out of the running session", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -80,7 +80,7 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 		expect(running.isStreaming).toBe(true);
 		expect(running.pendingMessageCount).toBe(queued);
 		await host.send(send({ type: "abort", id: "stop", sessionId: handle }));
-	}, 120_000);
+	});
 
 	it("releases as before when the session behind the route is the expected one, and names it by file and id", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -101,36 +101,32 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 			data: { released: true, session_path: s1.sessionPath, session_id: s1.session.sessionId },
 		});
 		expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([s1.sessionPath]);
-	}, 120_000);
+	});
 
 	it.each([
 		{ name: "an empty string", value: "" },
 		{ name: "a string over the identifier limit", value: "a".repeat(513) },
 		{ name: "a string that is not a session id", value: "../s1" },
 		{ name: "a number", value: 42 },
-	])(
-		"refuses $name as invalid_session_id and releases nothing",
-		async ({ value }) => {
-			await using host = await startReleaseHost(gatewayFixture().extension);
-			const s1 = await host.open("s1");
+	])("refuses $name as invalid_session_id and releases nothing", async ({ value }) => {
+		await using host = await startReleaseHost(gatewayFixture().extension);
+		const s1 = await host.open("s1");
 
-			const answer = await host.send(
-				send({
-					type: "release_session",
-					id: "release",
-					sessionId: s1.sessionId,
-					reason: "takeover",
-					expectSessionId: value,
-				}),
-			);
+		const answer = await host.send(
+			send({
+				type: "release_session",
+				id: "release",
+				sessionId: s1.sessionId,
+				reason: "takeover",
+				expectSessionId: value,
+			}),
+		);
 
-			expect(answer).toMatchObject({ success: false, errorCode: "invalid_session_id" });
-			expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([]);
-			const state = await host.send(send({ type: "get_state", id: "state", sessionId: s1.sessionId }));
-			expect(state).toMatchObject({ success: true });
-		},
-		120_000,
-	);
+		expect(answer).toMatchObject({ success: false, errorCode: "invalid_session_id" });
+		expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([]);
+		const state = await host.send(send({ type: "get_state", id: "state", sessionId: s1.sessionId }));
+		expect(state).toMatchObject({ success: true });
+	});
 
 	it("a replacement that lands while a move release waits for the extensions' export is refused at the second compare, with no staged folder left", async () => {
 		let exportEntered!: () => void;
@@ -187,7 +183,7 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 		const stagedRoot = outgoingStateDir(s1.sessionPath, MOVE);
 		expect(existsSync(stagedRoot) ? readdirSync(stagedRoot) : []).toEqual([]);
 		expect(await replaced).toMatchObject({ success: true });
-	}, 120_000);
+	});
 
 	it("a mismatch found at the second compare after an interrupt hands back what was taken and says which session it came from", async () => {
 		let exportEntered!: () => void;
@@ -260,7 +256,7 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 		expect(JSON.stringify(answer)).not.toContain(String((state.data as Wire).sessionFile));
 		expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([]);
 		expect(await replaced).toMatchObject({ success: true });
-	}, 120_000);
+	});
 
 	it("a 512-character id is a valid id: it is compared, not refused as invalid", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -279,5 +275,5 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 
 		expect(answer).toMatchObject({ success: false, errorCode: "session_mismatch", errorData: { expected: longest } });
 		expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([]);
-	}, 120_000);
+	});
 });
