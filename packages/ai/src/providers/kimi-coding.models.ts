@@ -173,7 +173,6 @@ const values = {
 			"contextWindow": 262144,
 			"maxTokens": 131072,
 			"thinkingLevelMap": {
-				"off": null,
 				"minimal": null,
 				"low": "low",
 				"medium": null,
